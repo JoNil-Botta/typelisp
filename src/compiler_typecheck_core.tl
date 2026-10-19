@@ -21265,13 +21265,13 @@
                 (typed.TypedBinderId
                   (typed.typed-handle-copy
                     (& (array-ref bindings.entries index).binder.handle)))]
-              (match (typed.typed-binder-get!
-                store
-                lease
-                (typed.TypedBinderId (typed.typed-handle-copy (& id.handle))))
-                [(typed.TypedBinderView.Err error)
+              ;; The bindings outlive attempts, so an entry may name a binder
+              ;; a rolled-back attempt discarded: the store reads records
+              ;; without checking them again, so check the binder here.
+              (match (typed.typed-binder-ok (& store) (& id))
+                [(typed.TypedResult.Err error)
                   (TcSelectedBinderLookup.Err error)]
-                [(typed.TypedBinderView.Ok _)
+                [(typed.TypedResult.Ok _)
                   (TcSelectedBinderLookup.Ok (TcSelectedBinder.Found id))]))
             (TcSelectedBinderLookup.Ok TcSelectedBinder.Unrepresented))))]))
 

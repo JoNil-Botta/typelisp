@@ -151,23 +151,19 @@
     (set! (array-ref items 1) second)
     items))
 
-(define (typed-test-stale-node?
+(define (typed-test-unknown-type-use?
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [id : typed.TypedOccurrenceId]) : bool
-  (match (typed.typed-occurrence-get! store lease id)
-    [(typed.TypedNodeResult.Err error)
-      (match error
-        [(typed.TypedError.Stale) true]
-        [_ false])]
-    [_ false]))
-
-(define (typed-test-unknown-type?
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]
-  [id : typed.TypedTypeId]) : bool
-  (match (typed.typed-type-get! store lease id)
-    [(typed.TypedTypeResult.Err error)
+  [type : typed.TypedTypeId]
+  [origin : typed.TypedOriginId]) : bool
+  (match (typed.typed-binder-add!
+    store
+    lease
+    type
+    typed.TypedBinderKind.Local
+    origin
+    -1)
+    [(typed.TypedBinderResult.Err error)
       (match error
         [(typed.TypedError.Unknown) true]
         [_ false])]
@@ -352,9 +348,14 @@
       (= discarded-origin.handle.index replacement-origin.handle.index)
       (typed-test-node-type? (&mut store) (& lease) kept type 1)
       (typed-test-node-type? (&mut store) (& lease) replacement type 4)
-      (typed-test-stale-node? (&mut store) (& lease) child)
-      (typed-test-stale-node? (&mut store) (& lease) descendant)
-      (typed-test-unknown-type? (&mut store) (& lease) discarded-type)
+      ;; Discarded records are refused where a record would hold them.
+      (typed-test-stale-add? (&mut store) (& lease) type origin child)
+      (typed-test-stale-add? (&mut store) (& lease) type origin descendant)
+      (typed-test-unknown-type-use?
+        (&mut store)
+        (& lease)
+        discarded-type
+        origin)
       (match (typed.typed-occurrence-add!
         (&mut store)
         (& lease)
@@ -480,12 +481,7 @@
           literal.handle.index
           literal.handle.serial))]
     [foreign-handle : bool
-      (match (typed.typed-occurrence-get! (&mut store) (& lease) foreign)
-        [(typed.TypedNodeResult.Err error)
-          (match error
-            [(typed.TypedError.Stale) true]
-            [_ false])]
-        [_ false])]
+      (typed-test-stale-add? (&mut store) (& lease) type origin foreign)]
     ;; The body's next revision is another lease. Its pool pointer is
     ;; deliberately invalid too: rejecting the lease must happen before any
     ;; canonical pool, type payload, or origin is accessed.
@@ -504,8 +500,8 @@
         16
         (typed.typed-resolution-unavailable (& intern-state)))]
     [stale-lease : bool
-      (match (typed.typed-type-get! (&mut store) (& next) type)
-        [(typed.TypedTypeResult.Err error)
+      (match (typed.typed-type-add! (&mut store) (& next) ast.AstType.I64)
+        [(typed.TypedTypeIdResult.Err error)
           (match error
             [(typed.TypedError.Lease) true]
             [_ false])]
@@ -633,34 +629,24 @@
     [(typed.TypedOccurrenceResult.Ok id) id]
     [_ (io.panic "typed occurrence: fixture operation")]))
 
-(define (typed-test-stale-binder?
+;; A discarded binder, projection or call is refused where an operation
+;; would hold it (records are checked when written).
+(define (typed-test-stale-operation?
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [id : typed.TypedBinderId]) : bool
-  (match (typed.typed-binder-get! store lease id)
-    [(typed.TypedBinderView.Err error)
-      (match error
-        [(typed.TypedError.Stale) true]
-        [_ false])]
-    [_ false]))
-
-(define (typed-test-stale-projection?
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]
-  [id : typed.TypedProjectionId]) : bool
-  (match (typed.typed-projection-get! store lease id)
-    [(typed.TypedProjectionView.Err error)
-      (match error
-        [(typed.TypedError.Stale) true]
-        [_ false])]
-    [_ false]))
-
-(define (typed-test-stale-call?
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]
-  [id : typed.TypedCallId]) : bool
-  (match (typed.typed-call-get! store lease id)
-    [(typed.TypedCallView.Err error)
+  [type : typed.TypedTypeId]
+  [origin : typed.TypedOriginId]
+  [operation : typed.TypedOperation]
+  [children : (& children (__tl_dyn-array typed.TypedOccurrenceId))]) : bool
+  (match (typed.typed-occurrence-add!
+    store
+    lease
+    type
+    typed.TypedSyntax.Generated
+    origin
+    operation
+    children)
+    [(typed.TypedOccurrenceResult.Err error)
       (match error
         [(typed.TypedError.Stale) true]
         [_ false])]
@@ -867,9 +853,27 @@
       reused-projection
       reused-call
       (= temporary.handle.index replacement.handle.index)
-      (typed-test-stale-binder? (&mut store) (& lease) temporary)
-      (typed-test-stale-projection? (&mut store) (& lease) projection)
-      (typed-test-stale-call? (&mut store) (& lease) call)
+      (typed-test-stale-operation?
+        (&mut store)
+        (& lease)
+        type
+        origin
+        (typed.TypedOperation.Read temporary)
+        (& empty))
+      (typed-test-stale-operation?
+        (&mut store)
+        (& lease)
+        type
+        origin
+        (typed.TypedOperation.Project projection)
+        (& single))
+      (typed-test-stale-operation?
+        (&mut store)
+        (& lease)
+        type
+        origin
+        (typed.TypedOperation.Call call)
+        (& empty))
       (match (typed.typed-binder-add!
         (&mut store)
         (& lease)
@@ -1058,10 +1062,11 @@
         (typed-test-body (cast 4294967321 : u64))
         16
         (typed.typed-resolution-unavailable state))]
-    [id : typed.TypedTypeId
-      (typed.TypedTypeId (typed.typed-handle-copy (& fixture.type.handle)))]
-    (match (typed.typed-type-get! (&mut fixture.store) (& lease) id)
-      [(typed.TypedTypeResult.Err error)
+    (match (typed.typed-type-add!
+      (&mut fixture.store)
+      (& lease)
+      ast.AstType.I64)
+      [(typed.TypedTypeIdResult.Err error)
         (match error
           [(typed.TypedError.Lease) true]
           [_ false])]
@@ -1104,7 +1109,8 @@
         [_ (io.panic "typed occurrence: growing store")])]
     [initial-small : bool
       (and
-        (= (array-length store.types) 16)
+        (= store.record-capacity 16)
+        (= (array-length store.types) 0)
         (= (array-length store.children) 16)
         (= (array-length store.attempts) 16)
         (< store.work (typed.typed-setup-work (& limits))))]
@@ -1173,6 +1179,9 @@
           (= store.type-count 41)
           (= store.origin-count 41)
           (= (array-length store.types) 64)
+          (= store.record-capacity 64)
+          ;; A table no record needed is never allocated.
+          (= (array-length store.calls) 0)
           (= (array-length store.attempts) 64)
           (= (array-length store.children) 64)
           (typed-test-node-type? (&mut store) (& lease) first type 42)))
@@ -1205,17 +1214,11 @@
               origin
               typed.TypedSyntax.Generated
               7)]
+          ;; Rolled-back records are refused where a record would hold them.
           [stale : bool
-            (match (typed.typed-occurrence-get!
-              (&mut store)
-              (& lease)
-              discarded)
-              [(typed.TypedNodeResult.Err _) true]
-              [_ false])]
+            (typed-test-stale-add? (&mut store) (& lease) type origin discarded)]
           [stale-parent : bool
-            (match (typed.typed-occurrence-get! (&mut store) (& lease) sequence)
-              [(typed.TypedNodeResult.Err _) true]
-              [_ false])]
+            (typed-test-stale-add? (&mut store) (& lease) type origin sequence)]
           (set!
             ok
             (and
@@ -1227,7 +1230,11 @@
       (set! store.limits.work (+ store.work 1))
       (let
         [refused : bool
-          (match (typed.typed-reserve-records! (&mut store) (& lease) 65)
+          (match (typed.typed-reserve-records!
+            (&mut store)
+            (& lease)
+            65
+            typed.TypedTable.Types)
             [(typed.TypedResult.Err error)
               (match error
                 [(typed.TypedError.Budget) true]
@@ -1239,30 +1246,34 @@
         (typed.typed-store-retire! (&mut store))
         ok))))
 
-(define (typed-test-child-shape-error?
+(define (typed-test-stale-add?
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
-  [parent : typed.TypedOccurrenceId]) : bool
-  (match (typed.typed-child-get! store lease parent 0)
-    [(typed.TypedChildResult.Err error)
-      (match error
-        [(typed.TypedError.Shape) true]
-        [_ false])]
-    [_ false]))
+  [type : typed.TypedTypeId]
+  [origin : typed.TypedOriginId]
+  [child : typed.TypedOccurrenceId]) : bool
+  (let
+    [children : (__tl_dyn-array typed.TypedOccurrenceId)
+      (__tl_make-array typed.TypedOccurrenceId 1)]
+    [_child : unit (set! (array-ref children 0) child)]
+    (match (typed.typed-occurrence-add!
+      store
+      lease
+      type
+      typed.TypedSyntax.Generated
+      origin
+      typed.TypedOperation.Sequence
+      (& children))
+      [(typed.TypedOccurrenceResult.Err error)
+        (match error
+          [(typed.TypedError.Stale) true]
+          [_ false])]
+      [_ false])))
 
-;; Table extents are checked where a store enters a consumer, whatever its
-;; binding stamp says.
-(define (typed-test-admit-shape-error?
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]) : bool
-  (match (typed.typed-store-admit! store lease)
-    [(typed.TypedResult.Err error)
-      (match error
-        [(typed.TypedError.Shape) true]
-        [_ false])]
-    [_ false]))
-
-(define (typed-test-malformed-storage?) : bool
+;; A record is checked once, when it is written: a handle naming another body
+;; or a slot's earlier serial is rejected there, and a read checks only the
+;; caller's own index against the span the store wrote.
+(define (typed-test-written-records?) : bool
   (let
     [intern-state : ci.InternCompatState
       (ci.intern-compat-state-capture-active)]
@@ -1293,71 +1304,43 @@
         typed.TypedOperation.Sequence
         (& children))
         [(typed.TypedOccurrenceResult.Ok id) id]
-        [_ (io.panic "typed occurrence: malformed-storage fixture")])]
-    [_negative : unit
-      (set! (array-ref store.occurrences parent.handle.index).child-start -1)]
-    [negative : bool
-      (typed-test-child-shape-error? (&mut store) (& lease) parent)]
-    [_overflow : unit
-      (set!
-        (array-ref store.occurrences parent.handle.index).child-start
-        9223372036854775807)]
-    [overflow : bool
-      (typed-test-child-shape-error? (&mut store) (& lease) parent)]
-    [_start : unit
-      (set! (array-ref store.occurrences parent.handle.index).child-start 0)]
-    [_count : unit
-      (set!
-        (array-ref store.occurrences parent.handle.index).child-count
-        9223372036854775807)]
-    [overrun : bool
-      (typed-test-child-shape-error? (&mut store) (& lease) parent)]
-    [_restore : unit
-      (set! (array-ref store.occurrences parent.handle.index).child-count 1)]
-    [_table : unit (set! store.type-count (+ (array-length store.types) 1))]
-    [bad-table : bool (typed-test-admit-shape-error? (&mut store) (& lease))]
-    [_types : unit (set! store.type-count 1)]
-    [_edges : unit (set! store.child-count (+ (array-length store.children) 1))]
-    [bad-edges : bool (typed-test-admit-shape-error? (&mut store) (& lease))]
-    [_edge-restore : unit (set! store.child-count 1)]
-    [admitted : bool
-      (match (typed.typed-store-admit! (&mut store) (& lease))
-        [(typed.TypedResult.Ok _) true]
-        [_ false])]
+        [_ (io.panic "typed occurrence: written-records fixture")])]
     [valid : bool
       (match (typed.typed-child-get! (&mut store) (& lease) parent 0)
         [(typed.TypedChildResult.Ok id)
           (= id.handle.serial child.handle.serial)]
         [_ false])]
-    [_work : unit (set! store.work -1)]
-    [bad-work : bool (typed-test-admit-shape-error? (&mut store) (& lease))]
-    ;; Binding a different, structurally equal lease checks the shape too.
-    [rebound : (typed.TypedBodyLease intern-state)
-      (typed.typed-body-lease
-        lease.body
-        lease.pools
-        (& intern-state)
-        lease.resolutions
-        lease.resolution-count
-        (typed.typed-resolution-unavailable (& intern-state)))]
-    [bad-rebind : bool
-      (match (typed.typed-type-get! (&mut store) (& rebound) type)
-        [(typed.TypedTypeResult.Err error)
+    [beyond : bool
+      (match (typed.typed-child-get! (&mut store) (& lease) parent 1)
+        [(typed.TypedChildResult.Err error)
           (match error
-            [(typed.TypedError.Shape) true]
+            [(typed.TypedError.Unknown) true]
             [_ false])]
         [_ false])]
+    [foreign : bool
+      (typed-test-stale-add?
+        (&mut store)
+        (& lease)
+        type
+        origin
+        (typed.TypedOccurrenceId
+          (typed.TypedHandle
+            (typed-test-body (cast 4294967325 : u64))
+            child.handle.index
+            child.handle.serial)))]
+    [reused : bool
+      (typed-test-stale-add?
+        (&mut store)
+        (& lease)
+        type
+        origin
+        (typed.TypedOccurrenceId
+          (typed.TypedHandle
+            child.handle.body
+            child.handle.index
+            (+ child.handle.serial (cast 1000 : u64)))))]
     (typed.typed-store-retire! (&mut store))
-    (and
-      negative
-      overflow
-      overrun
-      bad-table
-      bad-edges
-      admitted
-      valid
-      bad-work
-      bad-rebind)))
+    (and valid beyond foreign reused)))
 
 (define (typed-test-place!
   [store : (&mut store typed.TypedStore)]
@@ -1384,6 +1367,21 @@
     children)
     [(typed.TypedOccurrenceResult.Ok id) id]
     [_ (io.panic "typed place: fixture occurrence")]))
+
+(define (typed-test-stale-place-use?
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [parent : typed.TypedPlaceId]
+  [projection : typed.TypedProjectionId]) : bool
+  (match (typed.typed-place-add!
+    store
+    lease
+    (typed.TypedPlaceKind.Projection parent projection))
+    [(typed.TypedPlaceResult.Err error)
+      (match error
+        [(typed.TypedError.Stale) true]
+        [_ false])]
+    [_ false]))
 
 (define (typed-test-places?) : bool
   (let
@@ -1607,20 +1605,20 @@
         (&mut store)
         (& lease)
         (typed.TypedPlaceKind.Root binder))]
+    ;; Discarded and foreign places are refused where a record would hold
+    ;; them (records are checked when written).
     [stale : bool
-      (match (typed.typed-place-get! (&mut store) (& lease) discarded)
-        [(typed.TypedPlaceView.Err error)
-          (match error
-            [(typed.TypedError.Stale) true]
-            [_ false])]
-        [_ false])]
+      (typed-test-stale-place-use?
+        (&mut store)
+        (& lease)
+        discarded
+        first-projection)]
     [stale-child : bool
-      (match (typed.typed-place-get! (&mut store) (& lease) discarded-child)
-        [(typed.TypedPlaceView.Err error)
-          (match error
-            [(typed.TypedError.Stale) true]
-            [_ false])]
-        [_ false])]
+      (typed-test-stale-place-use?
+        (&mut store)
+        (& lease)
+        discarded-child
+        first-projection)]
     [foreign : typed.TypedPlaceId
       (typed.TypedPlaceId (typed.typed-handle-copy (& place.handle)))]
     [_foreign : unit
@@ -1628,12 +1626,11 @@
         foreign.handle.body.owner
         (+ foreign.handle.body.owner (cast 1 : u64)))]
     [wrong-owner : bool
-      (match (typed.typed-place-get! (&mut store) (& lease) foreign)
-        [(typed.TypedPlaceView.Err error)
-          (match error
-            [(typed.TypedError.Stale) true]
-            [_ false])]
-        [_ false])]
+      (typed-test-stale-place-use?
+        (&mut store)
+        (& lease)
+        foreign
+        first-projection)]
     [query : typed.TypedAttemptId
       (typed-test-attempt! (&mut store) (& lease) typed.TypedMode.Query)]
     [query-refused : bool
@@ -1647,50 +1644,6 @@
             [_ false])]
         [_ false])]
     [_query : unit (typed-test-finish! (&mut store) (& lease) query false)]
-    [_category : unit
-      (set!
-        (array-ref store.occurrences first.handle.index).category
-        (typed.TypedOccurrenceCategory.Place place))]
-    [forged-category : bool
-      (match (typed.typed-occurrence-get! (&mut store) (& lease) first)
-        [(typed.TypedNodeResult.Err error)
-          (match error
-            [(typed.TypedError.Shape) true]
-            [_ false])]
-        [_ false])]
-    [_category-restore : unit
-      (set!
-        (array-ref store.occurrences first.handle.index).category
-        typed.TypedOccurrenceCategory.Value)]
-    [_origin-forge : unit
-      (set!
-        (array-ref store.projections first-projection.handle.index).origin.handle.serial
-        (+ origin.handle.serial (cast 1 : u64)))]
-    [forged-origin : bool
-      (match (typed.typed-projection-get!
-        (&mut store)
-        (& lease)
-        first-projection)
-        [(typed.TypedProjectionView.Err error)
-          (match error
-            [(typed.TypedError.Stale) true]
-            [_ false])]
-        [_ false])]
-    [_origin-restore : unit
-      (set!
-        (array-ref store.projections first-projection.handle.index).origin.handle.serial
-        origin.handle.serial)]
-    [_malform : unit
-      (set!
-        (array-ref store.places place.handle.index).kind
-        (typed.TypedPlaceKind.Projection place second-projection))]
-    [cycle : bool
-      (match (typed.typed-place-get! (&mut store) (& lease) place)
-        [(typed.TypedPlaceView.Err error)
-          (match error
-            [(typed.TypedError.Shape) true]
-            [_ false])]
-        [_ false])]
     (typed.typed-store-retire! (&mut store))
     (and
       formation-category
@@ -1705,10 +1658,7 @@
       stale-child
       wrong-owner
       query-refused
-      forged-origin
-      cycle
       (= store.place-count 4)
-      forged-category
       (= discarded.handle.index replacement.handle.index)
       (< discarded.handle.serial replacement.handle.serial)
       (> store.work before))))
@@ -1772,13 +1722,16 @@
         0
         0
         0)]
+    ;; A body binds its lease once: a lease captured before the mutation can
+    ;; no longer open a store, and a lease refreshed after it cannot bind to
+    ;; the store that pinned the old stamps.
     [stale : bool
-      (match (typed.typed-type-get! (&mut store) (& lease) id)
-        [(typed.TypedTypeResult.Err error)
+      (match (typed.typed-store-new (& lease) (typed-test-limits))
+        [(typed.TypedStoreResult.Err error)
           (match error
             [(typed.TypedError.Lease) true]
             [_ false])]
-        [_ false])]
+        [(typed.TypedStoreResult.Ok _) false])]
     [restamped : (typed.TypedBodyLease registries)
       (typed-test-resolution-lease
         (& state)
@@ -1786,36 +1739,35 @@
         (& registries)
         (cast 83 : u64))]
     [no-restamp : bool
-      (match (typed.typed-type-get! (&mut store) (& restamped) id)
-        [(typed.TypedTypeResult.Err error)
+      (match (typed.typed-type-add! (&mut store) (& restamped) ast.AstType.I64)
+        [(typed.TypedTypeIdResult.Err error)
           (match error
             [(typed.TypedError.Lease) true]
             [_ false])]
         [_ false])]
-    (typed.typed-store-retire! (&mut store))
-    (and read-only replacement wrong-owner exhaustion stale no-restamp)))
-
-(define (typed-test-type-error?
-  [result : (typed.TypedTypeResult store)]
-  [expected : typed.TypedError]) : bool
-  (match result
-    [(typed.TypedTypeResult.Err error)
-      (match error
-        [(typed.TypedError.Lease)
-          (match expected
-            [(typed.TypedError.Lease) true]
-            [_ false])]
-        [(typed.TypedError.Shape)
-          (match expected
-            [(typed.TypedError.Shape) true]
-            [_ false])]
+    [read : bool
+      (match (typed.typed-type-get! (&mut store) (& lease) id)
+        [(typed.TypedTypeResult.Ok _) true]
         [_ false])]
-    [(typed.TypedTypeResult.Ok _) false]))
+    (typed.typed-store-retire! (&mut store))
+    (and read-only replacement wrong-owner exhaustion stale no-restamp read)))
 
-(define (typed-test-type-ok? [result : (typed.TypedTypeResult store)]) : bool
-  (match result
-    [(typed.TypedTypeResult.Ok _) true]
-    [(typed.TypedTypeResult.Err _) false]))
+(define (typed-test-add-lease-error?
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]) : bool
+  (match (typed.typed-type-add! store lease ast.AstType.I64)
+    [(typed.TypedTypeIdResult.Err error)
+      (match error
+        [(typed.TypedError.Lease) true]
+        [_ false])]
+    [(typed.TypedTypeIdResult.Ok _) false]))
+
+(define (typed-test-add-ok?
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]) : bool
+  (match (typed.typed-type-add! store lease ast.AstType.I64)
+    [(typed.TypedTypeIdResult.Ok _) true]
+    [(typed.TypedTypeIdResult.Err _) false]))
 
 ;; A lease built without `typed.typed-body-lease` carries no serial.
 (define (typed-test-unsealed-lease
@@ -1854,8 +1806,6 @@
         (& registries)
         (cast 89 : u64))]
     [store : typed.TypedStore (typed-test-store (& lease))]
-    [id : typed.TypedTypeId
-      (typed-test-type! (&mut store) (& lease) ast.AstType.I64)]
     [other-body : (typed.TypedBodyLease registries)
       (typed-test-resolution-lease
         (& state)
@@ -1863,9 +1813,7 @@
         (& registries)
         (cast 97 : u64))]
     [wrong-body : bool
-      (typed-test-type-error?
-        (typed.typed-type-get! (&mut store) (& other-body) id)
-        typed.TypedError.Lease)]
+      (typed-test-add-lease-error? (&mut store) (& other-body))]
     [other-pools : (typed.TypedBodyLease registries)
       (typed.typed-body-lease
         lease.body
@@ -1881,9 +1829,7 @@
             (& declarations)
             (& registries))))]
     [wrong-pools : bool
-      (typed-test-type-error?
-        (typed.typed-type-get! (&mut store) (& other-pools) id)
-        typed.TypedError.Lease)]
+      (typed-test-add-lease-error? (&mut store) (& other-pools))]
     [other-count : (typed.TypedBodyLease registries)
       (typed.typed-body-lease
         lease.body
@@ -1896,9 +1842,7 @@
             (& declarations)
             (& registries))))]
     [wrong-count : bool
-      (typed-test-type-error?
-        (typed.typed-type-get! (&mut store) (& other-count) id)
-        typed.TypedError.Lease)]
+      (typed-test-add-lease-error? (&mut store) (& other-count))]
     [other-state : ci.InternCompatState (ci.intern-compat-state-new)]
     [other-interner : (typed.TypedBodyLease other-state)
       (typed.typed-body-lease
@@ -1912,9 +1856,7 @@
             (& declarations)
             (& registries))))]
     [wrong-interner : bool
-      (typed-test-type-error?
-        (typed.typed-type-get! (&mut store) (& other-interner) id)
-        typed.TypedError.Lease)]
+      (typed-test-add-lease-error? (&mut store) (& other-interner))]
     [unsealed : (typed.TypedBodyLease registries)
       (typed-test-unsealed-lease
         (& state)
@@ -1923,9 +1865,7 @@
         (cast 89 : u64))]
     [unsealed-rejected : bool
       (and
-        (typed-test-type-error?
-          (typed.typed-type-get! (&mut store) (& unsealed) id)
-          typed.TypedError.Lease)
+        (typed-test-add-lease-error? (&mut store) (& unsealed))
         (match (typed.typed-store-new (& unsealed) (typed-test-limits))
           [(typed.TypedStoreResult.Err error)
             (match error
@@ -1945,13 +1885,12 @@
             (& registries))))]
     [twin-binds : bool
       (and
-        (typed-test-type-ok? (typed.typed-type-get! (&mut store) (& twin) id))
-        (typed-test-type-ok? (typed.typed-type-get! (&mut store) (& lease) id)))]
+        (typed-test-add-ok? (&mut store) (& twin))
+        (typed-test-add-ok? (&mut store) (& lease)))]
     [scratch : symbols.CompilerSymbolMap
       (symbols.compiler-symbol-map-with-capacity 4)]
     [_scratch : unit (symbols.compiler-symbol-map-put! (&mut scratch) 1 10)]
-    [unrelated : bool
-      (typed-test-type-ok? (typed.typed-type-get! (&mut store) (& lease) id))]
+    [unrelated : bool (typed-test-add-ok? (&mut store) (& lease))]
     [_field : symbols.CompilerRegistries
       (symbols.compiler-registries-add-field-alias
         (& registries)
@@ -1959,10 +1898,15 @@
         (ci.intern "binding-owner")
         (ci.intern "binding-field")
         3)]
+    ;; The store bound its lease once and keeps it for the body; the lease's
+    ;; stale stamps are refused when it would bind again, to a new store.
     [field-stale : bool
-      (typed-test-type-error?
-        (typed.typed-type-get! (&mut store) (& lease) id)
-        typed.TypedError.Lease)]
+      (match (typed.typed-store-new (& lease) (typed-test-limits))
+        [(typed.TypedStoreResult.Err error)
+          (match error
+            [(typed.TypedError.Lease) true]
+            [_ false])]
+        [(typed.TypedStoreResult.Ok _) false])]
     (typed.typed-store-retire! (&mut store))
     (and
       wrong-body
@@ -2003,8 +1947,8 @@
     (typed-test-growing?)
     "typed occurrence: charged growth, retained handles and rollback")
   (test.assert-true
-    (typed-test-malformed-storage?)
-    "typed occurrence: malformed extents fail before array access")
+    (typed-test-written-records?)
+    "typed occurrence: records checked once, on write")
   (test.assert-true
     (typed-test-places?)
     "typed place: ordered formation, distinct value acquisition and transactional identities")

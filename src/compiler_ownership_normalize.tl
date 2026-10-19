@@ -411,16 +411,11 @@
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedTypeId]) : NormalizeInt
   ;; The store does not change while a body normalizes, so a record of this
-  ;; body fetched before validates again and gives the same body type (a
-  ;; class keeps the body type it is first given). Only the fetch's charge
-  ;; to the store remains, with its failure.
+  ;; body fetched before gives the same body type (a class keeps the body type
+  ;; it is first given); reading the store charges it nothing.
   (if (normalize-type-known? (& state) (& id))
-    (match (typed.typed-charge! store lease 1)
-      [(typed.TypedResult.Ok _)
-        (NormalizeInt.Ok
-          (- (array-ref state.type-results.cells (* 2 id.handle.index)) 1))]
-      [(typed.TypedResult.Err error)
-        (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))])
+    (NormalizeInt.Ok
+      (- (array-ref state.type-results.cells (* 2 id.handle.index)) 1))
     (match (normalize-type-fetch! state store lease id)
       [(NormalizeInt.Ok code) (normalize-type-remember! state (& id) code)]
       [(NormalizeInt.Err failure) (NormalizeInt.Err failure)])))
@@ -1351,8 +1346,7 @@
   (operands (__tl_dyn-array i64))
   ;; The occurrence's typed type record (its lifetime names).
   (typed i64)
-  ;; Its source expression, -1 for a generated one
-  ;; (`normalize-node-expression!`).
+  ;; Its source expression, -1 for a generated one.
   (expression i64))
 
 (defenum NormalizeNodeResult
@@ -1871,53 +1865,44 @@
   [lease : (& lease (typed.TypedBodyLease intern))]
   [record : typed.TypedCallId]) : NormalizeOperationResult
   ;; The call's occurrence, fetched again here once, gives the same record
-  ;; (the store does not change while a body normalizes): only that fetch's
-  ;; charge to the store remains, with its failure.
-  (let
-    [_fetched : unit
-      (match (typed.typed-charge! store lease 1)
-        [(typed.TypedResult.Ok _) unit]
-        [(typed.TypedResult.Err error)
-          (return
-            (NormalizeOperationResult.Err
-              (OwnershipNormalizeFailure.Typed error)))])]
-    (match (typed.typed-call-get! store lease record)
-      [(typed.TypedCallView.Ok call)
-        (let
-          [key : i64
-            (match (& call.kind)
-              [(typed.TypedCallKind.Declared key) key]
-              [(typed.TypedCallKind.Foreign key) key]
-              [(typed.TypedCallKind.Discharge key) key]
-              [_ -1])]
-          ;; A call through a function value has the callee as child 0.
-          [indirect? : bool
-            (match (& call.kind)
-              [(typed.TypedCallKind.Indirect _) true]
-              [_ false])]
-          ;; A constructor takes owners over into its value, as the declared
-          ;; cleanup function discharges them.
-          [discharge? : bool
-            (match (& call.kind)
-              [(typed.TypedCallKind.Discharge _) true]
-              [(typed.TypedCallKind.Construct) true]
-              [_ false])]
-          ;; The call's children: its arguments, after the callee if any.
-          [count : i64
-            (if indirect?
-              (+ call.argument-count 1)
-              call.argument-count)]
-          [signature-index : i64 call.signature.handle.index]
-          (NormalizeOperationResult.Ok
-            (NormalizeOperation.Call
-              key
-              count
-              discharge?
-              indirect?
-              signature-index
-              record.handle.index)))]
-      [(typed.TypedCallView.Err error)
-        (NormalizeOperationResult.Err (OwnershipNormalizeFailure.Typed error))])))
+  ;; (the store does not change while a body normalizes).
+  (match (typed.typed-call-get! store lease record)
+    [(typed.TypedCallView.Ok call)
+      (let
+        [key : i64
+          (match (& call.kind)
+            [(typed.TypedCallKind.Declared key) key]
+            [(typed.TypedCallKind.Foreign key) key]
+            [(typed.TypedCallKind.Discharge key) key]
+            [_ -1])]
+        ;; A call through a function value has the callee as child 0.
+        [indirect? : bool
+          (match (& call.kind)
+            [(typed.TypedCallKind.Indirect _) true]
+            [_ false])]
+        ;; A constructor takes owners over into its value, as the declared
+        ;; cleanup function discharges them.
+        [discharge? : bool
+          (match (& call.kind)
+            [(typed.TypedCallKind.Discharge _) true]
+            [(typed.TypedCallKind.Construct) true]
+            [_ false])]
+        ;; The call's children: its arguments, after the callee if any.
+        [count : i64
+          (if indirect?
+            (+ call.argument-count 1)
+            call.argument-count)]
+        [signature-index : i64 call.signature.handle.index]
+        (NormalizeOperationResult.Ok
+          (NormalizeOperation.Call
+            key
+            count
+            discharge?
+            indirect?
+            signature-index
+            record.handle.index)))]
+    [(typed.TypedCallView.Err error)
+      (NormalizeOperationResult.Err (OwnershipNormalizeFailure.Typed error))]))
 
 (define (normalize-node!
   [state : (&mut state NormalizeState)]
@@ -2244,9 +2229,8 @@
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedBinderId]) : NormalizeInt
-  ;; A binder met before validates again and has the same type, already
-  ;; given a body type (the store does not change while a body normalizes):
-  ;; only the two fetches' charges to the store remain, with their failure.
+  ;; A binder met before has the same type, already given a body type (the
+  ;; store does not change while a body normalizes).
   (let
     [known : i64 (normalize-table-ref (& state.binder-slots) id.handle.index)]
     (when
@@ -2255,14 +2239,6 @@
         (typed.typed-handle-equal?
           (& (array-ref state.binders (- known 1)).handle)
           (& id.handle)))
-      (match (typed.typed-charge! store lease 1)
-        [(typed.TypedResult.Ok _) unit]
-        [(typed.TypedResult.Err error)
-          (return (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error)))])
-      (match (typed.typed-charge! store lease 1)
-        [(typed.TypedResult.Ok _) unit]
-        [(typed.TypedResult.Err error)
-          (return (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error)))])
       (try (normalize-charge! state 0 known 0))
       (return (NormalizeInt.Ok (array-ref state.binders (- known 1)).place))))
   (let
@@ -4582,13 +4558,8 @@
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]) : NormalizeUnit
   (let
-    ;; The store enters the normalizer here, before any of its records is
-    ;; read: check it in full, its table shape included. Later accesses
-    ;; recheck only the events that can invalidate that check.
     [count : i64
-      (match (match (typed.typed-store-admit! store lease)
-        [(typed.TypedResult.Ok _) (typed.typed-place-count! store lease)]
-        [(typed.TypedResult.Err error) (typed.TypedCountResult.Err error)])
+      (match (typed.typed-place-count! store lease)
         [(typed.TypedCountResult.Ok value) value]
         [(typed.TypedCountResult.Err error)
           (return (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
@@ -4660,10 +4631,8 @@
         (typed.TypedPlaceId (normalize-handle-copy parent.handle))
         (typed.TypedProjectionId (normalize-handle-copy projection.handle)))]))
 
-;; `normalize-place-step!` for a place `normalize-projected!` fetched: it
-;; validates again and has the same step (the store does not change while a
-;; body normalizes), so only the fetch's charge to the store remains, with
-;; its failure.
+;; `normalize-place-step!` for a place `normalize-projected!` fetched: it has
+;; the same step (the store does not change while a body normalizes).
 (define (normalize-place-step-of!
   [state : (& state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
@@ -4675,13 +4644,9 @@
     (typed.typed-handle-equal?
       (& (array-ref state.place-memo-ids id.handle.index))
       (& id.handle)))
-    (match (typed.typed-charge! store lease 1)
-      [(typed.TypedResult.Ok _)
-        (NormalizePlaceStepResult.Ok
-          (normalize-place-step-copy
-            (& (array-ref state.place-memo-steps id.handle.index))))]
-      [(typed.TypedResult.Err error)
-        (NormalizePlaceStepResult.Err (OwnershipNormalizeFailure.Typed error))])
+    (NormalizePlaceStepResult.Ok
+      (normalize-place-step-copy
+        (& (array-ref state.place-memo-steps id.handle.index))))
     (normalize-place-step! store lease id)))
 
 ;; The place of field `ordinal` of a product place, or -1.
@@ -4913,18 +4878,6 @@
         (when
           (normalize-view-loan? (& state) referent)
           (normalize-view-site! state referent expression))))))
-
-;; The source expression id of `node`'s occurrence, or -1 (generated).
-(define (normalize-node-expression!
-  [store : (&mut store typed.TypedStore)]
-  [lease : (& lease (typed.TypedBodyLease intern))]
-  [node : (& node NormalizeNode)]) : i64
-  ;; The node's occurrence, fetched again here, validates again and has the
-  ;; same syntax (the store does not change while a body normalizes): only
-  ;; that fetch's charge to the store remains, and its failure gives -1.
-  (match (typed.typed-charge! store lease 1)
-    [(typed.TypedResult.Ok _) node.expression]
-    [(typed.TypedResult.Err _) -1]))
 
 (define (normalize-view-site!
   [state : (&mut state NormalizeState)]
@@ -5376,7 +5329,7 @@
           formed.place
           dest
           node.type
-          (normalize-node-expression! store lease node))
+          node.expression)
         (when
           (and
             (= (normalize-binder-owner (& state) formed.place) 1)
@@ -6151,10 +6104,7 @@
               (& (array-ref state.body.loans parent))))
           (normalize-push! state.view-loans parent))
         (normalize-push! state.view-loans loan)
-        (normalize-view-site!
-          state
-          loan
-          (normalize-node-expression! store lease node)))
+        (normalize-view-site! state loan node.expression))
       (normalize-element-site!
         state
         borrowed.block
@@ -7697,7 +7647,7 @@
               source
               dest
               type
-              (normalize-node-expression! store lease node))
+              node.expression)
             (when
               (and
                 (= (normalize-binder-owner (& state) source) 1)

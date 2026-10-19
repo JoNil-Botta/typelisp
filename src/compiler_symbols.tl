@@ -60,23 +60,7 @@
 (define compiler-symbol-map-next-owner : u64
   (cast 1 : u64))
 
-;; Advances on every map mutation and every new map owner: the only events
-;; that change what `compiler-symbol-map-revision-current?` reports for a
-;; live container. A holder that checked its stamps at one epoch may skip the
-;; live revision reads while the epoch is unchanged. It saturates at the
-;; maximum, which a holder must never record (zero is never current).
-(define compiler-symbol-map-epoch : u64
-  (cast 1 : u64))
-
-(define (compiler-symbol-map-epoch-advance!) : unit
-  (unless
-    (= compiler-symbol-map-epoch (cast 18446744073709551615 : u64))
-    (set!
-      compiler-symbol-map-epoch
-      (+ compiler-symbol-map-epoch (cast 1 : u64)))))
-
 (define (compiler-symbol-map-new-owner!) : u64
-  (compiler-symbol-map-epoch-advance!)
   (if (= compiler-symbol-map-next-owner (cast 18446744073709551615 : u64))
     (cast 0 : u64)
     (let
@@ -85,7 +69,6 @@
       owner)))
 
 (define (compiler-symbol-map-mutated! [map : (&mut map CompilerSymbolMap)]) : unit
-  (compiler-symbol-map-epoch-advance!)
   (let
     [revision : u64 (deref map.revision)]
     (set!

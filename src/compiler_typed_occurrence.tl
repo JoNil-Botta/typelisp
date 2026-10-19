@@ -398,6 +398,9 @@
   (Alternatives))
 
 (defenum TypedOperation
+  ;; First, so a record table's fresh cells (an operation's default variant)
+  ;; are all zero bytes and allocate by zeroing, not cell by cell.
+  (Sequence)
   (Literal ast.AstLiteral)
   (Read TypedBinderId)
   (Initialize TypedBinderId)
@@ -419,7 +422,6 @@
   (Call TypedCallId)
   (Unary ast.AstUnOp)
   (Binary ast.AstBinOp)
-  (Sequence)
   (If)
   ;; Structured scalar control: exits target the nearest enclosing While body.
   ;; The condition is evaluated outside that body's control scope.
@@ -566,12 +568,12 @@
   ;; a region tag naming one marks an arena allocation, not a value read
   ;; through a reference of that lifetime.
   (arena-regions (__tl_dyn-array i64))
-  ;; The binding stamp (`typed-lease-bound?`): the serial of the lease last
-  ;; validated in full against this store, and the resolver-map and interner
-  ;; generation epochs that validation observed.
+  ;; The serial of the lease validated against this store
+  ;; (`typed-lease-bound?`): the opening lease, or one bound since.
   (lease-serial u64)
-  (symbol-epoch u64)
-  (intern-epoch i64))
+  ;; The record capacity charged so far, shared by the seven record tables
+  ;; (`typed-reserve-records!`).
+  (record-capacity i64))
 
 (defenum TypedStoreResult
   (Ok TypedStore)
@@ -583,34 +585,31 @@
 (define (typed-body-copy [body : (& body own.OwnershipBodyId)]) : own.OwnershipBodyId
   (own.OwnershipBodyId body.owner body.generation body.revision))
 
+;; Handles are copied and compared on every access: spell their words out
+;; rather than calling the body-id helpers.
 (define (typed-handle-copy [handle : (& handle TypedHandle)]) : TypedHandle
-  (TypedHandle (typed-body-copy (& handle.body)) handle.index handle.serial))
+  (TypedHandle
+    (own.OwnershipBodyId
+      handle.body.owner
+      handle.body.generation
+      handle.body.revision)
+    handle.index
+    handle.serial))
 
 (define (typed-handle-equal?
   [left : (& left TypedHandle)]
   [right : (& right TypedHandle)]) : bool
   (and
-    (own.ownership-body-id-equal? (& left.body) (& right.body))
+    (= left.serial right.serial)
     (= left.index right.index)
-    (= left.serial right.serial)))
+    (= left.body.owner right.body.owner)
+    (= left.body.generation right.body.generation)
+    (= left.body.revision right.body.revision)))
 
 (define (typed-mode-copy [mode : (& mode TypedMode)]) : TypedMode
   (match mode
     [(TypedMode.Executable) TypedMode.Executable]
     [(TypedMode.Query) TypedMode.Query]))
-
-(define (typed-checkpoint-copy [point : (& point TypedCheckpoint)]) : TypedCheckpoint
-  (TypedCheckpoint
-    point.serial
-    point.occurrences
-    point.binders
-    point.projections
-    point.places
-    point.calls
-    point.origins
-    point.types
-    point.children
-    (typed-mode-copy (& point.previous-mode))))
 
 (define (typed-function-arity [value : (& value ast.AstType)]) : i64
   (match value
@@ -745,13 +744,15 @@
           limits
           (typed-setup-work (& capacity))
           (cast 1 : u64)
-          (__tl_make-array TypedOccurrence capacity.records)
-          (__tl_make-array TypedBinder capacity.records)
-          (__tl_make-array TypedProjection capacity.records)
-          (__tl_make-array TypedPlace capacity.records)
-          (__tl_make-array TypedCall capacity.records)
-          (__tl_make-array TypedOrigin capacity.records)
-          (__tl_make-array TypedType capacity.records)
+          ;; Each record table is allocated when it is first needed
+          ;; (`typed-reserve-records!`), within the charged capacity.
+          (__tl_make-array TypedOccurrence 0)
+          (__tl_make-array TypedBinder 0)
+          (__tl_make-array TypedProjection 0)
+          (__tl_make-array TypedPlace 0)
+          (__tl_make-array TypedCall 0)
+          (__tl_make-array TypedOrigin 0)
+          (__tl_make-array TypedType 0)
           (__tl_make-array TypedOccurrenceId capacity.children)
           (__tl_make-array TypedCheckpoint capacity.attempts)
           0
@@ -764,162 +765,87 @@
           0
           0
           (__tl_make-array i64 0)
-          ;; Unbound: the first access binds the lease (`typed-lease-bind!`).
-          (cast 0 : u64)
-          (cast 0 : u64)
-          0))]))
+          ;; Bound at open: the checks above validated this lease, and the
+          ;; store's identity is copied from it.
+          lease.serial
+          capacity.records))]))
 
-;; Check scalar lease identity before looking at stored strings, canonical
-;; types, or any pool cell. An active unrelated pool is never consulted.
-(define (typed-count-valid? [count : i64] [capacity : i64] [limit : i64]) : bool
-  (and (>= count 0) (<= count capacity) (<= count limit)))
-
-;; Public checked consumers may receive malformed records. Validate every
-;; logical table extent before a count can authorize an array access. This is
-;; constant work and touches only the store's live array descriptors/scalars.
-;; This module's mutators establish the shape at open and preserve it, so it
-;; can only break by a write to the store's fields from outside: it is checked
-;; whenever a store binds a lease and where a store enters a consumer
-;; (`typed-store-admit!`), not on every access.
-(define (typed-store-shape-ok? [store : (& store TypedStore)]) : bool
-  (and
-    (>= store.work 0)
-    (<= store.work store.limits.work)
-    (typed-count-valid?
-      store.occurrence-count
-      (array-length store.occurrences)
-      store.limits.records)
-    (typed-count-valid?
-      store.binder-count
-      (array-length store.binders)
-      store.limits.records)
-    (typed-count-valid?
-      store.projection-count
-      (array-length store.projections)
-      store.limits.records)
-    (typed-count-valid?
-      store.place-count
-      (array-length store.places)
-      store.limits.records)
-    (typed-count-valid?
-      store.call-count
-      (array-length store.calls)
-      store.limits.records)
-    (typed-count-valid?
-      store.origin-count
-      (array-length store.origins)
-      store.limits.records)
-    (typed-count-valid?
-      store.type-count
-      (array-length store.types)
-      store.limits.records)
-    (typed-count-valid?
-      store.child-count
-      (array-length store.children)
-      store.limits.children)
-    (typed-count-valid?
-      store.attempt-count
-      (array-length store.attempts)
-      store.limits.attempts)))
-
-;; The full check of a store against a lease: liveness, every identity the
-;; store pinned at open (body, resolutions and count, resolver stamps, pools,
-;; interner table and generation), the live resolver revisions, then shape.
-;; With `stamp-ok?`, a current binding stamp answers instead.
+;; The full check of a store against a lease, run once when a store binds a
+;; lease: liveness, every identity the store pinned at open (body,
+;; resolutions and count, resolver stamps, pools, interner table and
+;; generation) and the resolver's live revisions. A body binds its lease once:
+;; the store is leased for the whole body and nothing the check reads changes
+;; while the body is checked, so later accesses compare only the serial. The
+;; store's own mutators keep every count within its array (and `array-ref`
+;; bounds every index), so its table extents are not checked here either.
 (define (typed-store-validate
   [store : (& store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
-  [stamp-ok? : bool]) : TypedResult
-  (cond
-    [(and stamp-ok? (typed-lease-bound? store lease)) (TypedResult.Ok unit)]
-    [(not
-        (and
-          store.live?
-          lease.live?
-          (> lease.serial (cast 0 : u64))
-          (own.ownership-body-id-equal? (& store.body) (& lease.body))
-          (own.ownership-body-id-equal?
-            (& store.resolutions)
-            (& lease.resolutions))
-          (= store.resolution-count lease.resolution-count)
-          (typed-resolution-stamps-ok? store (& lease.resolution-authority))
-          (= store.expr-pool lease.pools.expr-pool)
-          (= store.type-pool lease.pools.type-pool)
-          (= store.pool-owner lease.pools.owner-arena)
-          (=
-            store.intern-table
-            (ci.intern-compat-state-table-id lease.intern-state))
-          (=
-            store.intern-generation
-            (ci.intern-compat-state-generation lease.intern-state))))
-      (TypedResult.Err TypedError.Lease)]
-    [(typed-store-shape-ok? store) (TypedResult.Ok unit)]
-    [else (TypedResult.Err TypedError.Shape)]))
+  [lease : (& lease (TypedBodyLease intern))]) : TypedResult
+  (if (and
+    store.live?
+    lease.live?
+    (> lease.serial (cast 0 : u64))
+    (own.ownership-body-id-equal? (& store.body) (& lease.body))
+    (own.ownership-body-id-equal? (& store.resolutions) (& lease.resolutions))
+    (= store.resolution-count lease.resolution-count)
+    (typed-resolution-stamps-ok? store (& lease.resolution-authority))
+    (= store.expr-pool lease.pools.expr-pool)
+    (= store.type-pool lease.pools.type-pool)
+    (= store.pool-owner lease.pools.owner-arena)
+    (= store.intern-table (ci.intern-compat-state-table-id lease.intern-state))
+    (=
+      store.intern-generation
+      (ci.intern-compat-state-generation lease.intern-state)))
+    (TypedResult.Ok unit)
+    (TypedResult.Err TypedError.Lease)))
 
-;; A full check's verdict holds until one of these events, so an access runs
-;; it again only after one:
-;; - The store retires: `live?`, read on every access.
-;; - A different lease is presented: its serial differs from the bound one.
-;;   Lease fields are fixed at construction (`typed-body-lease`), so the body,
-;;   resolutions, pools, interner table and liveness the check compared cannot
-;;   change under one serial.
-;; - A resolver map mutates or gets a new owner: every revision bump and owner
-;;   mint advances `symbols.compiler-symbol-map-epoch`, which therefore covers
-;;   what `compiler-resolution-lease-current?` reads from the live maps.
-;; - An interner generation is allocated: every reset of any table draws its
-;;   new generation from `ci.intern-next-generation`.
-;; - A write to the store's fields from outside this module breaks its shape:
-;;   the consumer boundary (`typed-store-admit!`) checks it again.
+;; A bound lease: the store is live and the presented lease is the one the
+;; full check accepted (lease fields are fixed at construction, so a serial
+;; names them all). A different lease binds only after its own full check.
 (define (typed-lease-bound?
   [store : (& store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]) : bool
-  (and
-    store.live?
-    (= store.lease-serial lease.serial)
-    (= store.symbol-epoch symbols.compiler-symbol-map-epoch)
-    (= store.intern-epoch ci.intern-next-generation)))
-
-;; A saturated resolver epoch is never recorded (a store stamped zero always
-;; runs the full check), so a later mutation cannot hide behind it.
-(define (typed-symbol-epoch-stamp) : u64
-  (if (= symbols.compiler-symbol-map-epoch (cast 18446744073709551615 : u64))
-    (cast 0 : u64)
-    symbols.compiler-symbol-map-epoch))
+  (and store.live? (= store.lease-serial lease.serial)))
 
 (define (typed-lease-ok
   [store : (& store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]) : TypedResult
-  (typed-store-validate store lease true))
+  (if (typed-lease-bound? store lease)
+    (TypedResult.Ok unit)
+    (typed-store-validate store lease)))
 
-(define (typed-lease-stamp!
-  [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]) : unit
-  (set! store.lease-serial lease.serial)
-  (set! store.symbol-epoch (typed-symbol-epoch-stamp))
-  (set! store.intern-epoch ci.intern-next-generation))
-
-;; Bind the presented lease: the full check unless the binding stamp is
-;; current, recording the stamp after a full check passes.
+;; Bind the presented lease: the full check unless it is already bound.
 (define (typed-lease-bind!
   [store : (&mut store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]) : TypedResult
   (if (typed-lease-bound? (& store) lease)
     (TypedResult.Ok unit)
     (begin
-      (try (typed-store-validate (& store) lease false))
-      (typed-lease-stamp! store lease)
+      (try (typed-store-validate (& store) lease))
+      (set! store.lease-serial lease.serial)
       (TypedResult.Ok unit))))
 
-;; Where a store enters a consumer from its producer, check it in full,
-;; including its shape, whatever its binding stamp says.
-(define (typed-store-admit!
-  [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]) : TypedResult
-  (try (typed-store-validate (& store) lease false))
-  (typed-lease-stamp! store lease)
-  (TypedResult.Ok unit))
-
+;; Every write charges here, so its common case is one flat test: a bound
+;; lease (`typed-lease-bound?`, spelled out so no call or frame is needed), no
+;; latched failure, and units within the budget. That is exactly when
+;; `typed-charge-checked!` would bind nothing, fail nothing and add the units,
+;; so the result and the store's state are the same.
 (define (typed-charge!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [units : i64]) : TypedResult
+  (if (and
+    store.live?
+    (= store.lease-serial lease.serial)
+    (not store.failed?)
+    (>= units 0)
+    (<= units (- store.limits.work store.work)))
+    (begin
+      (set! store.work (+ store.work units))
+      (TypedResult.Ok unit))
+    (typed-charge-checked! store lease units)))
+
+(define (typed-charge-checked!
   [store : (&mut store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
   [units : i64]) : TypedResult
@@ -952,11 +878,27 @@
     [(TypedMode.Executable) true]
     [(TypedMode.Query) false]))
 
-(define (typed-empty-handle) : TypedHandle
-  (TypedHandle
-    (own.OwnershipBodyId (cast 0 : u64) (cast 0 : u64) (cast 0 : u64))
-    0
-    (cast 0 : u64)))
+;; Replaces `cells` with an array of `capacity` cells whose first `count` hold
+;; its live rows, moved bitwise: the old array is dropped as it is replaced,
+;; so no row keeps two owners, and no placeholder is built to fill the slots
+;; it vacates. The cells past `count` are never read before a row is written.
+(defmacro (typed-grow-cells!
+  [cells : Expr]
+  [count : Expr]
+  [capacity : Expr]
+  ;; Spliced into the array's element type.
+  ;; lint-allow: unused-variable
+  [item-ty : Expr]) : Expr
+  `(let
+    [grown : (__tl_dyn-array ,item-ty) (__tl_make-array ,item-ty ,capacity)]
+    [at : i64 0]
+    (while (< at ,count)
+      (set!
+        (array-ref grown at)
+        (unsafe
+          (ptr-read (ptr-offset (__tl_array-data ,cells) at))))
+      (set! at (+ at 1)))
+    (set! ,cells grown)))
 
 ;; This bounded arithmetic is reached only after the requested count was checked
 ;; against the configured maximum. Storage growth never changes logical counts.
@@ -977,125 +919,101 @@
 ;; Move live rows, replacing each old slot before reusing its owner. Borrowed
 ;; views obey the normal rule: finish reading them before a mutable builder call.
 ;; No shallow store copy or second set of logical counters is created.
+;; The seven record tables share one charged capacity, `record-capacity`:
+;; growing it charges the initialization and moves of all seven tables, as
+;; when they were allocated together. Each table is allocated only when a
+;; record of it needs room, at the shared capacity, so a table a body barely
+;; uses is never grown with the others. The charges are those of growing all
+;; seven at once; the bytes allocated never exceed them.
+(defenum TypedTable
+  (Occurrences)
+  (Binders)
+  (Projections)
+  (Places)
+  (Calls)
+  (Origins)
+  (Types))
+
+(define (typed-table-length
+  [store : (& store TypedStore)]
+  [table : (& table TypedTable)]) : i64
+  (match table
+    [(TypedTable.Occurrences) (array-length store.occurrences)]
+    [(TypedTable.Binders) (array-length store.binders)]
+    [(TypedTable.Projections) (array-length store.projections)]
+    [(TypedTable.Places) (array-length store.places)]
+    [(TypedTable.Calls) (array-length store.calls)]
+    [(TypedTable.Origins) (array-length store.origins)]
+    [(TypedTable.Types) (array-length store.types)]))
+
 (define (typed-reserve-records!
   [store : (&mut store TypedStore)]
   [lease : (& lease (TypedBodyLease intern))]
-  [needed : i64]) : TypedResult
+  [needed : i64]
+  [table : TypedTable]) : TypedResult
   (try (typed-charge! store lease 1))
-  (when
-    (or (< needed 0) (> needed store.limits.records))
-    (return (typed-resource-fail! store TypedError.Budget)))
+  (cond
+    [(or (< needed 0) (> needed store.limits.records))
+      (typed-resource-fail! store TypedError.Budget)]
+    [(> needed store.record-capacity)
+      (typed-grow-records! store lease needed table)]
+    [(> needed (typed-table-length (& store) (& table)))
+      (typed-grow-table! store (& table))]
+    [else (TypedResult.Ok unit)]))
+
+;; Growth runs out of line, so a reservation that fits needs no frame for it.
+(define (typed-grow-records!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [needed : i64]
+  [table : TypedTable]) : TypedResult
   (let
-    [old : i64 (array-length store.occurrences)]
-    (when
-      (> needed old)
-      (let
-        [capacity : i64 (typed-grown-capacity old needed store.limits.records)]
-        ;; Upper-bound all live-row moves by the previous capacity. Both
-        ;; initialization and movement are charged before any allocation.
-        [charged : TypedLimits (TypedLimits (+ capacity old) 0 0 0)]
-        [units : i64 (typed-setup-work (& charged))]
-        (try (typed-charge! store lease units))
-        (let
-          [occurrences : (__tl_dyn-array TypedOccurrence)
-            (__tl_make-array TypedOccurrence capacity)]
-          [binders : (__tl_dyn-array TypedBinder)
-            (__tl_make-array TypedBinder capacity)]
-          [projections : (__tl_dyn-array TypedProjection)
-            (__tl_make-array TypedProjection capacity)]
-          [places : (__tl_dyn-array TypedPlace)
-            (__tl_make-array TypedPlace capacity)]
-          [calls : (__tl_dyn-array TypedCall)
-            (__tl_make-array TypedCall capacity)]
-          [origins : (__tl_dyn-array TypedOrigin)
-            (__tl_make-array TypedOrigin capacity)]
-          [types : (__tl_dyn-array TypedType)
-            (__tl_make-array TypedType capacity)]
-          [index : i64 0]
-          (while (< index old)
-            (when
-              (< index store.occurrence-count)
-              (set!
-                (array-ref occurrences index)
-                (replace!
-                  (array-ref store.occurrences index)
-                  (TypedOccurrence
-                    (cast 0 : u64)
-                    (TypedTypeId (typed-empty-handle))
-                    TypedOccurrenceCategory.Value
-                    TypedSyntax.Generated
-                    (TypedOriginId (typed-empty-handle))
-                    (TypedOperation.Literal ast.AstLiteral.Unit)
-                    0
-                    0))))
-            (when
-              (< index store.binder-count)
-              (set!
-                (array-ref binders index)
-                (replace!
-                  (array-ref store.binders index)
-                  (TypedBinder
-                    (cast 0 : u64)
-                    (TypedTypeId (typed-empty-handle))
-                    TypedBinderKind.Local
-                    (TypedOriginId (typed-empty-handle))
-                    -1))))
-            (when
-              (< index store.projection-count)
-              (set!
-                (array-ref projections index)
-                (replace!
-                  (array-ref store.projections index)
-                  (TypedProjection
-                    (cast 0 : u64)
-                    (TypedTypeId (typed-empty-handle))
-                    (TypedTypeId (typed-empty-handle))
-                    (TypedProjectionKind.TupleElement 0)
-                    (TypedOriginId (typed-empty-handle))))))
-            (when
-              (< index store.place-count)
-              (set!
-                (array-ref places index)
-                (replace!
-                  (array-ref store.places index)
-                  (TypedPlace
-                    (cast 0 : u64)
-                    (TypedTypeId (typed-empty-handle))
-                    (TypedPlaceKind.Root (TypedBinderId (typed-empty-handle)))
-                    0))))
-            (when
-              (< index store.call-count)
-              (set!
-                (array-ref calls index)
-                (replace!
-                  (array-ref store.calls index)
-                  (TypedCall
-                    (cast 0 : u64)
-                    (TypedTypeId (typed-empty-handle))
-                    (TypedCallKind.Indirect -1)
-                    0))))
-            (when
-              (< index store.origin-count)
-              (set!
-                (array-ref origins index)
-                (replace!
-                  (array-ref store.origins index)
-                  (TypedOrigin (cast 0 : u64) (own.OwnershipSource "" 0 0 "")))))
-            (when
-              (< index store.type-count)
-              (set!
-                (array-ref types index)
-                (replace!
-                  (array-ref store.types index)
-                  (TypedType (cast 0 : u64) ast.AstType.Unit))))
-            (set! index (+ index 1)))
-          (set! store.occurrences occurrences)
-          (set! store.binders binders)
-          (set! store.projections projections)
-          (set! store.places places)
-          (set! store.calls calls)
-          (set! store.origins origins)
-          (set! store.types types))))
+    [old : i64 store.record-capacity]
+    [capacity : i64 (typed-grown-capacity old needed store.limits.records)]
+    ;; Upper-bound all live-row moves by the previous capacity. Both
+    ;; initialization and movement are charged before any allocation.
+    [charged : TypedLimits (TypedLimits (+ capacity old) 0 0 0)]
+    (try (typed-charge! store lease (typed-setup-work (& charged))))
+    (set! store.record-capacity capacity)
+    (typed-grow-table! store (& table))))
+
+;; Grows one table to the shared capacity, already charged.
+(define (typed-grow-table!
+  [store : (&mut store TypedStore)]
+  [table : (& table TypedTable)]) : TypedResult
+  (let
+    [capacity : i64 store.record-capacity]
+    (match table
+      [(TypedTable.Occurrences)
+        (typed-grow-cells!
+          store.occurrences
+          store.occurrence-count
+          capacity
+          TypedOccurrence)]
+      [(TypedTable.Binders)
+        (typed-grow-cells!
+          store.binders
+          store.binder-count
+          capacity
+          TypedBinder)]
+      [(TypedTable.Projections)
+        (typed-grow-cells!
+          store.projections
+          store.projection-count
+          capacity
+          TypedProjection)]
+      [(TypedTable.Places)
+        (typed-grow-cells! store.places store.place-count capacity TypedPlace)]
+      [(TypedTable.Calls)
+        (typed-grow-cells! store.calls store.call-count capacity TypedCall)]
+      [(TypedTable.Origins)
+        (typed-grow-cells!
+          store.origins
+          store.origin-count
+          capacity
+          TypedOrigin)]
+      [(TypedTable.Types)
+        (typed-grow-cells! store.types store.type-count capacity TypedType)])
     (TypedResult.Ok unit)))
 
 (define (typed-reserve-children!
@@ -1103,34 +1021,36 @@
   [lease : (& lease (TypedBodyLease intern))]
   [needed : i64]) : TypedResult
   (try (typed-charge! store lease 1))
-  (when
-    (or (< needed 0) (> needed store.limits.children))
-    (return (typed-resource-fail! store TypedError.Budget)))
+  (cond
+    [(or (< needed 0) (> needed store.limits.children))
+      (typed-resource-fail! store TypedError.Budget)]
+    [(> needed (array-length store.children))
+      (typed-grow-children! store lease needed)]
+    [else (TypedResult.Ok unit)]))
+
+;; Growth runs out of line, so a reservation that fits needs no frame for it.
+(define (typed-grow-children!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [needed : i64]) : TypedResult
   (let
-    [old : i64 (array-length store.children)]
-    (when
-      (> needed old)
-      (let
-        [capacity : i64 (typed-grown-capacity old needed store.limits.children)]
-        (try
-          (typed-charge!
-            store
-            lease
-            (*
-              (+ capacity store.child-count)
-              (comptime (size-of (type TypedOccurrenceId))))))
-        (let
-          [children : (__tl_dyn-array TypedOccurrenceId)
-            (__tl_make-array TypedOccurrenceId capacity)]
-          [index : i64 0]
-          (while (< index store.child-count)
-            (set!
-              (array-ref children index)
-              (replace!
-                (array-ref store.children index)
-                (TypedOccurrenceId (typed-empty-handle))))
-            (set! index (+ index 1)))
-          (set! store.children children))))
+    [capacity : i64
+      (typed-grown-capacity
+        (array-length store.children)
+        needed
+        store.limits.children)]
+    (try
+      (typed-charge!
+        store
+        lease
+        (*
+          (+ capacity store.child-count)
+          (comptime (size-of (type TypedOccurrenceId))))))
+    (typed-grow-cells!
+      store.children
+      store.child-count
+      capacity
+      TypedOccurrenceId)
     (TypedResult.Ok unit)))
 
 (define (typed-reserve-attempts!
@@ -1138,49 +1058,44 @@
   [lease : (& lease (TypedBodyLease intern))]
   [needed : i64]) : TypedResult
   (try (typed-charge! store lease 1))
-  (when
-    (or (< needed 0) (> needed store.limits.attempts))
-    (return (typed-resource-fail! store TypedError.Budget)))
+  (cond
+    [(or (< needed 0) (> needed store.limits.attempts))
+      (typed-resource-fail! store TypedError.Budget)]
+    [(> needed (array-length store.attempts))
+      (typed-grow-attempts! store lease needed)]
+    [else (TypedResult.Ok unit)]))
+
+;; Growth runs out of line, so a reservation that fits needs no frame for it.
+(define (typed-grow-attempts!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [needed : i64]) : TypedResult
   (let
-    [old : i64 (array-length store.attempts)]
-    (when
-      (> needed old)
-      (let
-        [capacity : i64 (typed-grown-capacity old needed store.limits.attempts)]
-        (try
-          (typed-charge!
-            store
-            lease
-            (*
-              (+ capacity store.attempt-count)
-              (comptime (size-of (type TypedCheckpoint))))))
-        (let
-          [attempts : (__tl_dyn-array TypedCheckpoint)
-            (__tl_make-array TypedCheckpoint capacity)]
-          [index : i64 0]
-          (while (< index store.attempt-count)
-            (set!
-              (array-ref attempts index)
-              (replace!
-                (array-ref store.attempts index)
-                (TypedCheckpoint
-                  (cast 0 : u64)
-                  0
-                  0
-                  0
-                  0
-                  0
-                  0
-                  0
-                  0
-                  TypedMode.Executable)))
-            (set! index (+ index 1)))
-          (set! store.attempts attempts))))
+    [capacity : i64
+      (typed-grown-capacity
+        (array-length store.attempts)
+        needed
+        store.limits.attempts)]
+    (try
+      (typed-charge!
+        store
+        lease
+        (*
+          (+ capacity store.attempt-count)
+          (comptime (size-of (type TypedCheckpoint))))))
+    (typed-grow-cells!
+      store.attempts
+      store.attempt-count
+      capacity
+      TypedCheckpoint)
     (TypedResult.Ok unit)))
 
 (define (typed-mint-ok [store : (&mut store TypedStore)] [count : i64]) : TypedResult
   (cond
-    [(not (typed-executable? (& store))) (TypedResult.Err TypedError.Query)]
+    [(match (& store.mode)
+        [(TypedMode.Executable) false]
+        [(TypedMode.Query) true])
+      (TypedResult.Err TypedError.Query)]
     [(>= count store.limits.records)
       (typed-resource-fail! store TypedError.Budget)]
     [(= store.next-serial (cast 18446744073709551615 : u64))
@@ -1191,14 +1106,22 @@
   (let
     [serial : u64 store.next-serial]
     (set! store.next-serial (+ serial (cast 1 : u64)))
-    (TypedHandle (typed-body-copy (& store.body)) index serial)))
+    (TypedHandle
+      (own.OwnershipBodyId
+        store.body.owner
+        store.body.generation
+        store.body.revision)
+      index
+      serial)))
 
 (define (typed-handle-range?
   [store : (& store TypedStore)]
   [handle : (& handle TypedHandle)]
   [count : i64]) : bool
   (and
-    (own.ownership-body-id-equal? (& store.body) (& handle.body))
+    (= store.body.owner handle.body.owner)
+    (= store.body.generation handle.body.generation)
+    (= store.body.revision handle.body.revision)
     (>= handle.index 0)
     (< handle.index count)
     (> handle.serial 0)))
@@ -1222,7 +1145,8 @@
   [type : ast.AstType]) : TypedTypeIdResult
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.type-count))
-  (try (typed-reserve-records! store lease (+ store.type-count 1)))
+  (try
+    (typed-reserve-records! store lease (+ store.type-count 1) TypedTable.Types))
   (let
     [handle : TypedHandle (typed-fresh! store store.type-count)]
     (set!
@@ -1402,7 +1326,12 @@
   [source : own.OwnershipSource]) : TypedOriginResult
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.origin-count))
-  (try (typed-reserve-records! store lease (+ store.origin-count 1)))
+  (try
+    (typed-reserve-records!
+      store
+      lease
+      (+ store.origin-count 1)
+      TypedTable.Origins))
   (unless
     (own.ownership-source-valid? (& source))
     (return (TypedOriginResult.Err TypedError.Shape)))
@@ -1425,7 +1354,12 @@
   [name : i64]) : TypedBinderResult
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.binder-count))
-  (try (typed-reserve-records! store lease (+ store.binder-count 1)))
+  (try
+    (typed-reserve-records!
+      store
+      lease
+      (+ store.binder-count 1)
+      TypedTable.Binders))
   (try (typed-type-ok (& store) (& type)))
   (try (typed-origin-ok (& store) (& origin)))
   (match (& kind)
@@ -1451,7 +1385,12 @@
   [origin : TypedOriginId]) : TypedProjectionResult
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.projection-count))
-  (try (typed-reserve-records! store lease (+ store.projection-count 1)))
+  (try
+    (typed-reserve-records!
+      store
+      lease
+      (+ store.projection-count 1)
+      TypedTable.Projections))
   (try (typed-type-ok (& store) (& container)))
   (try (typed-type-ok (& store) (& result)))
   (try (typed-origin-ok (& store) (& origin)))
@@ -1512,7 +1451,12 @@
   [kind : TypedPlaceKind]) : TypedPlaceResult
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.place-count))
-  (try (typed-reserve-records! store lease (+ store.place-count 1)))
+  (try
+    (typed-reserve-records!
+      store
+      lease
+      (+ store.place-count 1)
+      TypedTable.Places))
   (let
     [index-count : i64 0]
     [type : TypedTypeId
@@ -1562,7 +1506,8 @@
   [argument-count : i64]) : TypedCallResult
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.call-count))
-  (try (typed-reserve-records! store lease (+ store.call-count 1)))
+  (try
+    (typed-reserve-records! store lease (+ store.call-count 1) TypedTable.Calls))
   (try (typed-type-ok (& store) (& signature)))
   (unless
     (and (>= argument-count 0) (<= argument-count store.limits.children))
@@ -1779,7 +1724,12 @@
   [children : (& children (__tl_dyn-array TypedOccurrenceId))]) : TypedOccurrenceResult
   (try (typed-charge! store lease 1))
   (try (typed-mint-ok store store.occurrence-count))
-  (try (typed-reserve-records! store lease (+ store.occurrence-count 1)))
+  (try
+    (typed-reserve-records!
+      store
+      lease
+      (+ store.occurrence-count 1)
+      TypedTable.Occurrences))
   (try (typed-type-ok (& store) (& type)))
   (try (typed-origin-ok (& store) (& origin)))
   (try (typed-operation-payload-ok! store lease (& operation)))
@@ -1902,68 +1852,67 @@
   (unless
     (= id.handle.index (- store.attempt-count 1))
     (return (TypedResult.Err TypedError.Order)))
+  ;; The checkpoint's scalars are read in place, one at a time.
   (let
-    [checkpoint : TypedCheckpoint
-      (typed-checkpoint-copy (& (array-ref store.attempts id.handle.index)))]
+    [index : i64 id.handle.index]
     (unless
-      (= checkpoint.serial id.handle.serial)
+      (= (array-ref store.attempts index).serial id.handle.serial)
       (return (TypedResult.Err TypedError.Stale)))
     (unless
       commit?
-      (set! store.occurrence-count checkpoint.occurrences)
-      (set! store.binder-count checkpoint.binders)
-      (set! store.projection-count checkpoint.projections)
-      (set! store.place-count checkpoint.places)
-      (set! store.call-count checkpoint.calls)
-      (set! store.origin-count checkpoint.origins)
-      (set! store.type-count checkpoint.types)
-      (set! store.child-count checkpoint.children))
-    (set! store.mode checkpoint.previous-mode)
+      (set! store.occurrence-count (array-ref store.attempts index).occurrences)
+      (set! store.binder-count (array-ref store.attempts index).binders)
+      (set! store.projection-count (array-ref store.attempts index).projections)
+      (set! store.place-count (array-ref store.attempts index).places)
+      (set! store.call-count (array-ref store.attempts index).calls)
+      (set! store.origin-count (array-ref store.attempts index).origins)
+      (set! store.type-count (array-ref store.attempts index).types)
+      (set! store.child-count (array-ref store.attempts index).children))
+    (set!
+      store.mode
+      (match (& (array-ref store.attempts index).previous-mode)
+        [(TypedMode.Executable) TypedMode.Executable]
+        [(TypedMode.Query) TypedMode.Query]))
     (set! store.attempt-count (- store.attempt-count 1))
     (TypedResult.Ok unit)))
 
+;; Reads trust the store. Every record, and every handle a record holds, was
+;; checked when it was written (`typed-occurrence-add!` and the other adds), a
+;; handle returned by an add or an enumeration names a written record, and
+;; this module's mutators keep each count within its array, so a read checks
+;; none of that again; `array-ref` still bounds every index. Nor does a read
+;; charge work: the store's budget bounds what inference writes, and the phase
+;; reading the store bounds its own reads (normalization charges its budget).
+;; A read reads no leased payload, so it needs no lease check; it still
+;; refuses a retired store, whose records may sit in reclaimed storage.
 (define (typed-occurrence-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedOccurrenceId]) : (TypedNodeResult store)
-  (try (typed-charge! store lease 1))
-  (try (typed-occurrence-ok (& store) (& id)))
-  (try
-    (typed-category-ok
-      (& store)
-      (& (array-ref store.occurrences id.handle.index))))
-  (TypedNodeResult.Ok (& (array-ref store.occurrences id.handle.index))))
+  (if store.live?
+    (TypedNodeResult.Ok (& (array-ref store.occurrences id.handle.index)))
+    (TypedNodeResult.Err TypedError.Lease)))
 
 (define (typed-place-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedPlaceId]) : (TypedPlaceView store)
-  (try (typed-charge! store lease 1))
-  (try (typed-place-shape-ok (& store) (& id)))
-  (try
-    (typed-type-ok (& store) (& (array-ref store.places id.handle.index).type)))
-  (TypedPlaceView.Ok (& (array-ref store.places id.handle.index))))
+  (if store.live?
+    (TypedPlaceView.Ok (& (array-ref store.places id.handle.index)))
+    (TypedPlaceView.Err TypedError.Lease)))
 
+;; `index` is the caller's, not a record's: it is checked against the node's
+;; written child span.
 (define (typed-child-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedOccurrenceId]
   [index : i64]) : TypedChildResult
-  (try (typed-charge! store lease 1))
-  (try (typed-occurrence-ok (& store) (& id)))
-  (let
-    [node : (& store TypedOccurrence)
-      (& (array-ref store.occurrences id.handle.index))]
-    (try (typed-category-ok (& store) node))
-    ;; Subtraction follows nonnegative/start-bound checks, so neither a
-    ;; forged span nor a full-width ordinal can overflow before rejection.
-    (if (not
-      (and
-        (>= node.child-start 0)
-        (>= node.child-count 0)
-        (<= node.child-start store.child-count)
-        (<= node.child-count (- store.child-count node.child-start))))
-      (TypedChildResult.Err TypedError.Shape)
+  (if (not store.live?)
+    (TypedChildResult.Err TypedError.Lease)
+    (let
+      [node : (& store TypedOccurrence)
+        (& (array-ref store.occurrences id.handle.index))]
       (if (and (>= index 0) (< index node.child-count))
         (TypedChildResult.Ok
           (TypedOccurrenceId
@@ -1973,11 +1922,11 @@
 
 (define (typed-type-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedTypeId]) : (TypedTypeResult store)
-  (try (typed-charge! store lease 1))
-  (try (typed-type-ok (& store) (& id)))
-  (TypedTypeResult.Ok (& (array-ref store.types id.handle.index).value)))
+  (if store.live?
+    (TypedTypeResult.Ok (& (array-ref store.types id.handle.index).value))
+    (TypedTypeResult.Err TypedError.Lease)))
 
 ;; Revocation is unconditional and allocation-free, including after exhaustion.
 ;; It does not dereference any leased payload and cannot publish a result.
@@ -1986,150 +1935,155 @@
 
 (define (typed-origin-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedOriginId]) : (TypedOriginView store)
-  (try (typed-charge! store lease 1))
-  (try (typed-origin-ok (& store) (& id)))
-  (TypedOriginView.Ok (& (array-ref store.origins id.handle.index).source)))
+  (if store.live?
+    (TypedOriginView.Ok (& (array-ref store.origins id.handle.index).source))
+    (TypedOriginView.Err TypedError.Lease)))
 
 (define (typed-binder-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedBinderId]) : (TypedBinderView store)
-  (try (typed-charge! store lease 1))
-  (try (typed-binder-ok (& store) (& id)))
-  (TypedBinderView.Ok (& (array-ref store.binders id.handle.index))))
+  (if store.live?
+    (TypedBinderView.Ok (& (array-ref store.binders id.handle.index)))
+    (TypedBinderView.Err TypedError.Lease)))
 
-;; Type records in publication order. Ownership normalization classifies each
-;; one before it reads the body; a rolled-back attempt's records are already
-;; truncated from the count.
+;; Enumeration is bounded by the published count (a rolled-back attempt's
+;; records are already truncated from it) and preserves each record's serial
+;; rather than manufacturing a new identity. Signature consumers must see
+;; unused parameters as well as referenced ones.
+(define (typed-count-result [store : (& store TypedStore)] [count : i64]) : TypedCountResult
+  (if store.live?
+    (TypedCountResult.Ok count)
+    (TypedCountResult.Err TypedError.Lease)))
+
+(define (typed-index-ok?
+  [store : (& store TypedStore)]
+  [index : i64]
+  [count : i64]) : bool
+  (and store.live? (>= index 0) (< index count)))
+
 (define (typed-type-count!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
-  (try (typed-charge! store lease 1))
-  (TypedCountResult.Ok store.type-count))
+  [_lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
+  (typed-count-result (& store) store.type-count))
 
 (define (typed-type-at!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [index : i64]) : TypedTypeIdResult
-  (try (typed-charge! store lease 1))
-  (if (and (>= index 0) (< index store.type-count))
+  (if (typed-index-ok? (& store) index store.type-count)
     (TypedTypeIdResult.Ok
       (TypedTypeId
-        (TypedHandle
-          (typed-body-copy (& store.body))
-          index
-          (array-ref store.types index).serial)))
-    (TypedTypeIdResult.Err TypedError.Unknown)))
+        (typed-fresh-at (& store) index (array-ref store.types index).serial)))
+    (TypedTypeIdResult.Err (typed-index-error (& store)))))
 
 ;; An owned copy of one type record's canonical value, for a consumer that
 ;; classifies it outside the lease (ownership type classes).
 (define (typed-type-value-at!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [index : i64]) : TypedTypeValueResult
-  (try (typed-charge! store lease 1))
-  (if (and (>= index 0) (< index store.type-count))
+  (if (typed-index-ok? (& store) index store.type-count)
     (TypedTypeValueResult.Ok (clone (array-ref store.types index).value))
-    (TypedTypeValueResult.Err TypedError.Unknown)))
+    (TypedTypeValueResult.Err (typed-index-error (& store)))))
 
-;; Signature consumers must see unused parameters as well as referenced ones.
-;; Enumeration is leased, bounded by the published count, and preserves the
-;; original serial rather than manufacturing a new binding identity.
 (define (typed-place-count!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
-  (try (typed-charge! store lease 1))
-  (TypedCountResult.Ok store.place-count))
+  [_lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
+  (typed-count-result (& store) store.place-count))
 
 (define (typed-place-at!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [index : i64]) : TypedPlaceResult
-  (try (typed-charge! store lease 1))
-  (if (and (>= index 0) (< index store.place-count))
+  (if (typed-index-ok? (& store) index store.place-count)
     (TypedPlaceResult.Ok
       (TypedPlaceId
-        (TypedHandle
-          (typed-body-copy (& store.body))
-          index
-          (array-ref store.places index).serial)))
-    (TypedPlaceResult.Err TypedError.Unknown)))
+        (typed-fresh-at (& store) index (array-ref store.places index).serial)))
+    (TypedPlaceResult.Err (typed-index-error (& store)))))
 
 (define (typed-binder-count!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
-  (try (typed-charge! store lease 1))
-  (TypedCountResult.Ok store.binder-count))
+  [_lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
+  (typed-count-result (& store) store.binder-count))
 
 (define (typed-binder-at!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [index : i64]) : TypedBinderResult
-  (try (typed-charge! store lease 1))
-  (if (and (>= index 0) (< index store.binder-count))
+  (if (typed-index-ok? (& store) index store.binder-count)
     (TypedBinderResult.Ok
       (TypedBinderId
-        (TypedHandle
-          (typed-body-copy (& store.body))
-          index
-          (array-ref store.binders index).serial)))
-    (TypedBinderResult.Err TypedError.Unknown)))
+        (typed-fresh-at (& store) index (array-ref store.binders index).serial)))
+    (TypedBinderResult.Err (typed-index-error (& store)))))
 
 (define (typed-projection-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedProjectionId]) : (TypedProjectionView store)
-  (try (typed-charge! store lease 1))
-  (try (typed-projection-ok (& store) (& id)))
-  (TypedProjectionView.Ok (& (array-ref store.projections id.handle.index))))
+  (if store.live?
+    (TypedProjectionView.Ok (& (array-ref store.projections id.handle.index)))
+    (TypedProjectionView.Err TypedError.Lease)))
 
 (define (typed-call-count!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
-  (try (typed-charge! store lease 1))
-  (TypedCountResult.Ok store.call-count))
+  [_lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
+  (typed-count-result (& store) store.call-count))
 
 (define (typed-call-at!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [index : i64]) : TypedCallResult
-  (try (typed-charge! store lease 1))
-  (if (and (>= index 0) (< index store.call-count))
+  (if (typed-index-ok? (& store) index store.call-count)
     (TypedCallResult.Ok
       (TypedCallId
-        (TypedHandle
-          (typed-body-copy (& store.body))
-          index
-          (array-ref store.calls index).serial)))
-    (TypedCallResult.Err TypedError.Unknown)))
+        (typed-fresh-at (& store) index (array-ref store.calls index).serial)))
+    (TypedCallResult.Err (typed-index-error (& store)))))
 
 ;; The body's occurrences in record order, as the call records are listed.
 (define (typed-occurrence-count!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
-  (try (typed-charge! store lease 1))
-  (TypedCountResult.Ok store.occurrence-count))
+  [_lease : (& lease (TypedBodyLease intern))]) : TypedCountResult
+  (typed-count-result (& store) store.occurrence-count))
 
 (define (typed-occurrence-at!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [index : i64]) : TypedOccurrenceResult
-  (try (typed-charge! store lease 1))
-  (if (and (>= index 0) (< index store.occurrence-count))
+  (if (typed-index-ok? (& store) index store.occurrence-count)
     (TypedOccurrenceResult.Ok
       (TypedOccurrenceId
-        (TypedHandle
-          (typed-body-copy (& store.body))
+        (typed-fresh-at
+          (& store)
           index
           (array-ref store.occurrences index).serial)))
-    (TypedOccurrenceResult.Err TypedError.Unknown)))
+    (TypedOccurrenceResult.Err (typed-index-error (& store)))))
 
 (define (typed-call-get!
   [store : (&mut store TypedStore)]
-  [lease : (& lease (TypedBodyLease intern))]
+  [_lease : (& lease (TypedBodyLease intern))]
   [id : TypedCallId]) : (TypedCallView store)
-  (try (typed-charge! store lease 1))
-  (try (typed-call-ok (& store) (& id)))
-  (TypedCallView.Ok (& (array-ref store.calls id.handle.index))))
+  (if store.live?
+    (TypedCallView.Ok (& (array-ref store.calls id.handle.index)))
+    (TypedCallView.Err TypedError.Lease)))
+
+;; A handle to an existing record of this store.
+(define (typed-fresh-at
+  [store : (& store TypedStore)]
+  [index : i64]
+  [serial : u64]) : TypedHandle
+  (TypedHandle
+    (own.OwnershipBodyId
+      store.body.owner
+      store.body.generation
+      store.body.revision)
+    index
+    serial))
+
+;; An enumeration index out of range, or a retired store.
+(define (typed-index-error [store : (& store TypedStore)]) : TypedError
+  (if store.live?
+    TypedError.Unknown
+    TypedError.Lease))

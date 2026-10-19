@@ -114,16 +114,8 @@
       [(= mode 8) (set! limits.work 32)]
       [(= mode 9) (set! limits.source-bytes 1)]
       [(= mode 10) (typed.typed-store-retire! (&mut store))]
-      [(= mode 11) (set! root.handle.body.owner (cast 9001 : u64))]
-      [(= mode 12)
-        (set!
-          (array-ref store.occurrences root.handle.index).child-start
-          9223372036854775807)]
-      [(= mode 13)
+      [(= mode 11)
         (set! (array-ref store.occurrences root.handle.index).child-count 1)]
-      ;; A malformed table extent: rejected where the store enters the
-      ;; normalizer, before any record is read.
-      [(= mode 14) (set! store.type-count (+ (array-length store.types) 1))]
       [else unit])
     (match (norm.ownership-normalize!
       (&mut store)
@@ -163,14 +155,12 @@
       [(norm.OwnershipNormalizeResult.Err failure)
         (match failure
           [(norm.OwnershipNormalizeFailure.Structural _)
-            (or (and (>= mode 1) (<= mode 5)) (= mode 13))]
+            (or (and (>= mode 1) (<= mode 5)) (= mode 11))]
           [(norm.OwnershipNormalizeFailure.Resource)
             (and (>= mode 6) (<= mode 9))]
           [(norm.OwnershipNormalizeFailure.Typed error)
             (match error
               [(typed.TypedError.Lease) (= mode 10)]
-              [(typed.TypedError.Stale) (= mode 11)]
-              [(typed.TypedError.Shape) (or (= mode 12) (= mode 14))]
               [_ false])]
           [_ false])])))
 
@@ -970,7 +960,7 @@
 (define (compiler-ownership-normalize-self-test) : i64
   (let
     [mode : i64 0]
-    (while (< mode 15)
+    (while (< mode 12)
       (begin
         (test.assert-true
           (normalize-test-primitive? mode)

@@ -1548,3 +1548,20 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+
+# Reference place reads preserve mutability, aliasing and consuming operands.
+replace_place_shared_reject|check-fail|tests/safety/replace_place_shared_reject.tl|-|replace! target must be a storage place
+replace_place_double_mut_reject|check-fail|tests/safety/replace_place_double_mut_reject.tl|-|E0207
+replace_place_prefix_move_reject|check-fail|tests/safety/replace_place_prefix_move_reject.tl|-|E0208
+replace_place_nested_move_reject|check-fail|tests/safety/replace_place_nested_move_reject.tl|-|E0208
+# A replace! place or &mut reborrow reaching a &mut through a shared reference
+# at any depth is rejected like a &mut borrow of it (E0207).
+replace_place_through_shared_tuple_reject|check-fail|tests/safety/replace_place_through_shared_tuple_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_ref_reject|check-fail|tests/safety/replace_place_through_shared_ref_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_array_reject|check-fail|tests/safety/replace_place_through_shared_array_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_field_reject|check-fail|tests/safety/replace_place_through_shared_field_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_box_reject|check-fail|tests/safety/replace_place_through_shared_box_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_copy_field_reject|check-fail|tests/safety/replace_place_through_shared_copy_field_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_alias_reject|check-fail|tests/safety/replace_place_through_shared_alias_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_inner_shared_reject|check-fail|tests/safety/replace_place_through_inner_shared_reject.tl|-|mutable borrow through a shared reference
+reborrow_through_inner_shared_array_reject|check-fail|tests/safety/reborrow_through_inner_shared_array_reject.tl|-|mutable borrow through a shared reference

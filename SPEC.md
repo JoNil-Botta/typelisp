@@ -1852,7 +1852,10 @@ Reference types are lifetime-bearing:
   through a shared reference `r` or through a shared reference stored in a
   field, is rejected (E0207), in a call argument as in a `let`. Storage behind
   a `Box` or a private buffer counts as owned through it: such a borrow reached
-  through a shared reference is rejected too.
+  through a shared reference is rejected too. A `&mut` reached through a shared
+  reference grants only shared access, so `(&mut (deref (deref r)))` with
+  `r : (& (&mut T))` is rejected the same way, and so is a `replace!` of such a
+  place (section 5.10.1).
   The checker enforces many immutable borrows or one mutable borrow for
   tracked local, parameter, and global place paths. Tracked aggregate-place
   paths conflict only when they are the same path or one is an ancestor of the
@@ -4734,7 +4737,11 @@ box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
 Projecting a field or tuple element through `(deref box)`, as in
 `(deref b).count`, reads the boxed storage in place: a `Copy` projection is
 copied without moving the box, so `b` stays usable, while moving a non-Copy
-projection out of the box is rejected.
+projection out of the box is rejected. A `deref` projection reads the same way:
+a `Copy` result of `(deref (deref b))` or `(deref (deref b).field)` is read
+through the inner Box or reference in place, so `b` stays usable whether it is
+an owned `(Box (Box T))` or a reference to a `(Box T)`; a non-Copy result keeps
+the moving `deref` of section 3.4.1.
 Dotted field projection and `tuple-ref` may copy out only copyable fields or
 slots, and may move out move-only fields/slots only where this tracked-path
 policy accepts the path. Fixed-array reads follow the matrix above: a non-`Copy`
@@ -5187,10 +5194,12 @@ guards.
   Copy globals, composed dotted fields, literal tuple slots, fixed-array or
   borrowed-Slice elements with literal/runtime indexes, and explicit `deref`
   projections through `Box` or `&mut`.
-- Shared references, temporaries/rvalues, raw pointers, moved fields, partially
-  moved whole roots, non-Copy globals, globals that another module declares
-  (§4.4.2), extern storage, and cleanup-owning or active explicit-cleanup
-  places reject. A selected initialized field may be
+- Shared references, places reached through a shared reference anywhere on
+  their path (including a `&mut` stored behind one; E0207 as for a `&mut`
+  borrow, section 3.10), temporaries/rvalues, raw pointers, moved fields,
+  partially moved whole roots, non-Copy globals, globals that another module
+  declares (§4.4.2), extern storage, and cleanup-owning or active
+  explicit-cleanup places reject. A selected initialized field may be
   replaced while a disjoint sibling remains moved.
 - `replacement` has the place value type after expected-type, region, and
   lifetime coercion. The result has that same type and is the independent old

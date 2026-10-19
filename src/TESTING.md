@@ -195,6 +195,8 @@ pages before and after the range. The native manifest runs it at opt0/1/2 on
 both hosts; its inline test runs the same checks. The focused runtime leaf test
 also compares the complete Linux/Windows search bodies after ABI substitution.
 
+## Reference and place reads
+
 `clone_reference_referent.tl` checks non-Copy struct, enum and array clones
 through shared/mutable references, projected and compound results, macro
 expansion, receiver evaluation count, independent storage and Box cleanup at
@@ -202,6 +204,20 @@ opt0/1/2 on both targets. The paired `clone_reference_*_reject.tl` safety cases
 preserve ordinary prefix/initializer moves, source use-after-move, callable
 shadowing and the unsupported direct-reference clone boundary. Keep these
 alongside the existing move-out-of-reference and clone capability controls.
+
+Reference-place regressions (#8696) extend the typechecker move-test table with
+valid mutable dereference replacements, reborrows and nested Copy box reads,
+plus exact shared-mutation, aliasing and move rejections. The
+`reference_place_read` native matrix checks transferred old values, retained
+storage, index evaluation and replacement order at opt0/1/2; the
+`replace_place_*_reject` safety rows preserve the consuming boundaries.
+`compiler-typecheck-place-through-shared-ok?` and the
+`replace_place_through_*` and `reborrow_through_inner_shared_array` rows
+reject a `replace!` place or `&mut` reborrow that reaches a `&mut` through a
+shared reference: directly, in a tuple, array, struct field or Box payload, as
+a Copy field, through two copies of one shared reference, and with a shared
+reference between two mutable ones. Each must report the `&mut` borrow
+diagnostic (E0207), not an incidental move error.
 
 ## Linux thread storage
 

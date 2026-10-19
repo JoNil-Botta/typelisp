@@ -4581,7 +4581,9 @@
   (ForeachCoordinate i64 i64 i64 i64)
   (CompactIndex)
   (CompactSlot)
-  ;; Ordered scans retain scalar semantics for uniform destinations.
+  ;; A sentinel above an ordered scan body's bindings (and a helper's, when
+  ;; the scan body calls it): iterations run in scalar order, so a varying
+  ;; write there needs no disjoint destination.
   (ScanBody)
   ;; foreach-active (#8306): the read-only lane binding, and the two sentinel
   ;; bindings the walker pushes. A barrier opens a foreach-active body; an
@@ -28601,10 +28603,23 @@
     [(ActiveBarrier) true]
     [_ false]))
 
+(define (tc-spmd-env-in-scan-body-from? [bindings : u64] [index : i64]) : bool
+  (if (< index 0)
+    false
+    (let
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
+      (match binding.role
+        [(ScanBody) true]
+        [(or (ForeachIndex) (ForeachCoordinate _ _ _ _) (CompactIndex)
+             (CompactSlot))
+          false]
+        [_ (tc-spmd-env-in-scan-body-from? bindings (- index 1))]))))
+
+;; True inside an ordered scan body or a helper it calls. The scan pushes its
+;; sentinel above its own index binding, so a parallel domain entered below it
+;; (a helper's `foreach`) binds a domain index above the sentinel and ends it.
 (define (tc-spmd-env-in-scan-body? [env : TcSpmdEnv]) : bool
-  (match (tc-spmd-env-lookup-id env tc-spmd-env-sentinel-name)
-    [(Found _ _ _ (ScanBody)) true]
-    [_ false]))
+  (tc-spmd-env-in-scan-body-from? env.bindings (- (tc-spmd-env-len env) 1)))
 
 ;; A value bound inside the gang that is not a scalar lane value may carry
 ;; per-lane state the SPMD class does not see: a closure can capture varying
@@ -43166,13 +43181,19 @@
                 args-class)
               (if (tc-spmd-varying? args-class)
                 (let
+                  ;; A helper called from an ordered scan body runs in its
+                  ;; scalar iteration order too.
+                  [body-spmd-env : TcSpmdEnv
+                    (if (tc-spmd-env-in-scan-body? spmd-env)
+                      (tc-spmd-env-push-sentinel helper-spmd-env ScanBody)
+                      helper-spmd-env)]
                   [body-info
                     (try
                       (tc-spmd-inline-helper-body
                         helper-ctx
                         expr-bases
                         helper-env
-                        helper-spmd-env
+                        body-spmd-env
                         name-id
                         body))]
                   (match body-info
@@ -45009,9 +45030,7 @@
     [body-env : TcTypeEnv
       (tc-bind-id index-env prefix-id (tc-global-shared-view prefix-ty))]
     [base-spmd-env : TcSpmdEnv
-      (tc-spmd-env-push-sentinel
-        (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env env))
-        ScanBody)]
+      (tc-spmd-env-mark-outer (tc-spmd-env-from-type-env env))]
     [index-spmd-env : TcSpmdEnv
       (tc-spmd-env-bind-role-id
         base-spmd-env
@@ -45021,7 +45040,9 @@
         Local
         ForeachIndex)]
     [body-spmd-env : TcSpmdEnv
-      (tc-spmd-env-bind-id index-spmd-env prefix-id prefix-ty Varying Local)]
+      (tc-spmd-env-push-sentinel
+        (tc-spmd-env-bind-id index-spmd-env prefix-id prefix-ty Varying Local)
+        ScanBody)]
     [result : ResultTcUnit Ok]
     [_
       (try

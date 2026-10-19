@@ -3767,7 +3767,7 @@
         [_ (None)])]
     [_ (None)]))
 
-(define (opt-aggregate-direct-alloc [instr : ir.CompilerIrInstr]) : OptMaybeAggregateAlloc
+(define (opt-aggregate-direct-alloc [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeAggregateAlloc
   (match instr
     [(Call dst name args ty)
       (if (and
@@ -3776,7 +3776,7 @@
         (match (opt-aggregate-tl-alloc-size (& args))
           [(Some size)
             (if (> size 0)
-              (Some dst ty size)
+              (Some dst (ast.ty-node-persist ty) size)
               (No))]
           [(None) (No)])
         (No))]
@@ -3969,7 +3969,7 @@
         (Ok ptrs accesses)
         (Reject))
       (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
         (if (not seen-alloc)
           (match (opt-aggregate-direct-alloc instr)
             [(Some dst alloc-ty alloc-size)
@@ -4048,7 +4048,10 @@
                 [(Some offset)
                   (opt_aggregate_access_vec.push-ref!
                     (&mut accesses)
-                    (OptAggregateAccess.Load dst offset load-ty))
+                    (OptAggregateAccess.Load
+                      dst
+                      offset
+                      (ast.ty-node-persist load-ty)))
                   (opt-aggregate-scan-instrs
                     type-segment-bases
                     base
@@ -4088,7 +4091,7 @@
                 accesses
                 (& ptr)
                 (& value)
-                store-ty)]
+                (ast.ty-node-persist store-ty))]
             [_
               (if (opt-aggregate-instr-has-pointer? instr base ptrs)
                 (Reject)
@@ -4383,8 +4386,7 @@
           (for [index (iterator.range 0 count)]
             (let
               [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-              (match (opt-aggregate-direct-alloc
-                (compiler-opt-global-shared-view instr))
+              (match (opt-aggregate-direct-alloc instr)
                 [(Some base ty size)
                   (match (opt-aggregate-promote-lookup slots base)
                     [(Some storage)
@@ -4924,9 +4926,7 @@
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (Some dst (String) 16)
         (No))]
-    [_
-      (opt-aggregate-direct-alloc
-        (owned_view.compiler-owned-reference-shared-view instr))]))
+    [_ (opt-aggregate-direct-alloc instr)]))
 
 ;; Word count of the allocation rooted at `index`: 0 when the instruction is not
 ;; a root at all, -1 when it is a root this pass will not take (a `tl_alloc`
@@ -30655,7 +30655,7 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [loop : (& loop OptNaturalLoop)]
   [preheader : i64]
-  [instr : ir.CompilerIrInstr]) : OptMaybeInductionFact
+  [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionFact
   (match instr
     [(Phi phi-var inputs ty)
       (if (opt-induction-i64-type? ty)
@@ -30670,7 +30670,9 @@
               phi-var
               next-var
               (& ty))
-              [(Some step) (Some (Fact phi-var start next-var step ty))]
+              [(Some step)
+                (Some
+                  (Fact phi-var start next-var step (ast.ty-node-persist ty)))]
               [(None)
                 ;; SSA renaming often routes the latch recurrence through a
                 ;; copy chain; chase it to the arithmetic before giving up.
@@ -30682,7 +30684,14 @@
                       phi-var
                       resolved
                       (& ty))
-                      [(Some step) (Some (Fact phi-var start next-var step ty))]
+                      [(Some step)
+                        (Some
+                          (Fact
+                            phi-var
+                            start
+                            next-var
+                            step
+                            (ast.ty-node-persist ty)))]
                       [(None) (No)])]
                   [(None) (No)])])]
           [(No) (No)])
@@ -30701,7 +30710,7 @@
       body-blocks
       loop
       preheader
-      (ir.compiler-ir-instr-seq-ref instrs index))
+      (ir.compiler-ir-instr-seq-borrow instrs index))
       [(Some fact) (return (Some fact))]
       [(No) unit]))
   (No))
@@ -31293,7 +31302,7 @@
   [offsets : (& offsets opt_i64_i64_map.Map)]
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
-  [instr : ir.CompilerIrInstr]) : OptMaybeInductionDerived
+  [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionDerived
   (match fact
     [(Fact phi-var _ _ step _)
       (match instr
@@ -31309,7 +31318,7 @@
                   (& rhs)
                   phi-var
                   step
-                  ty)
+                  (ast.ty-node-persist ty))
                 (No))]
             [(Add)
               (opt-induction-add-inv-derived
@@ -31319,7 +31328,7 @@
                 step
                 (& lhs)
                 (& rhs)
-                ty)]
+                (ast.ty-node-persist ty))]
             [_ (No)])]
         [(Gep _ base offset ty)
           (match (opt-induction-value-offset offsets offset phi-var)
@@ -31327,7 +31336,11 @@
               (if (and
                 (opt-induction-gep-stride-pays? type-segment-bases 1 (& ty))
                 (opt-induction-value-base-invariant? loop-defs base))
-                (Some (Gep base derived-offset ty))
+                (Some
+                  (Gep
+                    (ir.compiler-ir-clone-value base)
+                    derived-offset
+                    (ast.ty-node-persist ty)))
                 (No))]
             [(None)
               (match offset
@@ -31340,7 +31353,11 @@
                           scale
                           (& ty))
                         (opt-induction-value-base-invariant? loop-defs base))
-                        (Some (GepScaled base scale ty))
+                        (Some
+                          (GepScaled
+                            (ir.compiler-ir-clone-value base)
+                            scale
+                            (ast.ty-node-persist ty)))
                         (No))]
                     [(LookupMissing) (No)])]
                 [_ (No)])])]
@@ -31555,7 +31572,7 @@
       offsets
       scaled
       loop-defs
-      (ir.compiler-ir-instr-seq-ref instrs index))
+      (ir.compiler-ir-instr-seq-borrow instrs index))
       [(Some derived)
         (opt-induction-collect-derived-instr-seq-from
           type-segment-bases

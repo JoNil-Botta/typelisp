@@ -5,6 +5,20 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`compiler-lower-function-env-scratch` lowers several functions against one
+persistent module environment, including binding-store growth and a rejected
+function. It checks parent bindings and cache metadata after each scratch
+rewind, retirement of address-keyed memos, and readable escaped IR and errors.
+Run the lowering suite at opt0/1/2; poisoned full self-compiles also exercise
+post-rewind consumers across functions, closures and generated helpers.
+
+`array_field_store_growth.tl` exercises field stores after dynamic-array
+growth for register and memory-class elements, nested struct/tuple projections,
+one-time index selection and mutable slices at opt0/1/2 on both hosts. Its
+safety rows keep final bounds checks after the value's effects and reject
+immutable receivers; intermediate projection traps remain independently pinned
+by `set_intermediate_bounds_before_value_trap.tl`.
+
 The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
 pricing identical before and after backend frame-pointer omission enables an
 extra register, and checks that pricing restores its caller's pool. The IR
@@ -81,9 +95,45 @@ and compare selected payload bits. Shape rows retain ordered packed GT/GE
 on both target ABIs; backend IR-text cases cover register and spill operands
 and unchanged AVX-512 signed/unsigned integer predicates.
 
+`spmd_uniform_index_write.tl` preserves unmasked uniform receiver/index/value
+writes across empty and tail domains in scalar, AVX2 and AVX-512 modes. The
+paired safety cases reject a uniform destination when the value is varying,
+including local-class merges, conditionals, bool slices and rank-2 domains.
+Masked branches retain their canonical-index requirement even for uniform
+values; serialized `foreach-active` keeps its existing collision semantics.
+The positive fixture also pins ordered scan writes, including through a
+helper and into an array element's field, and skipped empty-range bounds
+checks. Compaction, a `foreach` following a scan and a `foreach` inside a
+helper called from a scan reject colliding varying stores, so the ordered scan
+context cannot authorize parallel writes. Field and tuple-element places
+through a uniform array index, and fields of a struct declared outside the
+`foreach`, reject varying values. `spmd_private_storage_write.tl` keeps
+varying writes into body-local and helper-local arrays and structs accepted;
+the paired private-store rejects show that values read back from that storage
+stay varying.
+
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
+
+`package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
+runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
+covers 8/16/24-byte integer structures, signed boundaries, floating and mixed
+register classes, stack pressure, hidden result pointers, references and
+borrowed strings. Saved values cross another call before use, including a
+tuple whose physical group appears only in the dependency signature. The
+lowering and IR smoke tests keep layout-only group facts, malformed transport
+types and conflicting group observations covered. The package runtime lifetime
+test compares ordinary and Windows package assembly at all three levels for
+constructor-free nominal groups with all four integer/SSE word masks. It runs
+on either host and checks the retained output after scope cleanup. Native Slice
+extern rejection remains in the safety corpus. The backend admission fixture
+exercises missing indices and entries, conflicting widths and register classes,
+and valid one-word/all four two-word layouts in parameter and result positions.
+Both assembly and object emitters on both targets must reject unresolved
+TypeLisp extern layouts while retaining native C extern behavior. Rebuilding the
+index must preserve missing facts even when native or pointer declarations of
+the same nominal type appear first.
 
 `gep_global_capture.tl` retains a raw pointer's selected global base and offset
 across rebinding and checks the old pointee alongside the new global value at
@@ -145,6 +195,8 @@ pages before and after the range. The native manifest runs it at opt0/1/2 on
 both hosts; its inline test runs the same checks. The focused runtime leaf test
 also compares the complete Linux/Windows search bodies after ABI substitution.
 
+## Reference and place reads
+
 `clone_reference_referent.tl` checks non-Copy struct, enum and array clones
 through shared/mutable references, projected and compound results, macro
 expansion, receiver evaluation count, independent storage and Box cleanup at
@@ -152,6 +204,20 @@ opt0/1/2 on both targets. The paired `clone_reference_*_reject.tl` safety cases
 preserve ordinary prefix/initializer moves, source use-after-move, callable
 shadowing and the unsupported direct-reference clone boundary. Keep these
 alongside the existing move-out-of-reference and clone capability controls.
+
+Reference-place regressions (#8696) extend the typechecker move-test table with
+valid mutable dereference replacements, reborrows and nested Copy box reads,
+plus exact shared-mutation, aliasing and move rejections. The
+`reference_place_read` native matrix checks transferred old values, retained
+storage, index evaluation and replacement order at opt0/1/2; the
+`replace_place_*_reject` safety rows preserve the consuming boundaries.
+`compiler-typecheck-place-through-shared-ok?` and the
+`replace_place_through_*` and `reborrow_through_inner_shared_array` rows
+reject a `replace!` place or `&mut` reborrow that reaches a `&mut` through a
+shared reference: directly, in a tuple, array, struct field or Box payload, as
+a Copy field, through two copies of one shared reference, and with a shared
+reference between two mutable ones. Each must report the `&mut` borrow
+diagnostic (E0207), not an incidental move error.
 
 ## Linux thread storage
 

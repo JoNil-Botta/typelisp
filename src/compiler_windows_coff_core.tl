@@ -436,7 +436,13 @@
         (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
           input-path))
       (compiler_driver_core.compiler-driver-advisories-for-job typecheck-state))
-    (begin
+    (let
+      [representations : compiler_ir_types.CompilerIrRepresentationIndex
+        (compiler_driver_core.compiler-driver-representation-index-for-backend
+          pools
+          (& program)
+          backend-state
+          typecheck-state)]
       (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state
         lower-state)
@@ -451,8 +457,8 @@
           pools
           opt-level
           profile-state
-          false
-          (compiler_ir_types.compiler-ir-representation-index-empty)
+          true
+          representations
           (compiler_optimize.OptInputRetirement.Retire
             lower-state.address
             compiler_driver_core.compiler-driver-retire-lowered-input!)))

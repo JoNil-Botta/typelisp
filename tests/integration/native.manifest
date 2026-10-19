@@ -21,6 +21,7 @@
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+spmd_uniform_index_write|all|0,1,2|tests/integration/spmd_uniform_index_write.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
 invariant_loop_call_skipped|all|0,2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|stage-stdlib
@@ -181,6 +182,7 @@ compile_profile_result_import|all|-|tests/integration/compile_profile_result_imp
 call_eval_order|all|-|tests/integration/call_eval_order.tl|42|-|-|-|-
 operator_operand_snapshot|all|0,1,2|tests/integration/operator_operand_snapshot.tl|42|-|-|stdlib/test.tl|-
 set_place_eval_order|all|0,1,2|tests/integration/set_place_eval_order.tl|42|-|-|stdlib/test.tl stdlib/string.tl|-
+array_field_store_growth|all|0,1,2|tests/integration/array_field_store_growth.tl|42|-|-|stdlib/test.tl|-
 call_arg_snapshot|all|0,1,2|tests/integration/call_arg_snapshot.tl|42|-|-|-|-
 call_arg_snapshot_c_abi|all|0,1,2|tests/integration/call_arg_snapshot_c_abi.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
@@ -983,3 +985,5 @@ global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_s
 indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|-|benchmarks/indirect_callee_never/baseline.c|stage-stdlib
 extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
 indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
+
+reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-

@@ -1852,7 +1852,10 @@ Reference types are lifetime-bearing:
   through a shared reference `r` or through a shared reference stored in a
   field, is rejected (E0207), in a call argument as in a `let`. Storage behind
   a `Box` or a private buffer counts as owned through it: such a borrow reached
-  through a shared reference is rejected too.
+  through a shared reference is rejected too. A `&mut` reached through a shared
+  reference grants only shared access, so `(&mut (deref (deref r)))` with
+  `r : (& (&mut T))` is rejected the same way, and so is a `replace!` of such a
+  place (section 5.10.1).
   The checker enforces many immutable borrows or one mutable borrow for
   tracked local, parameter, and global place paths. Tracked aggregate-place
   paths conflict only when they are the same path or one is an ancestor of the
@@ -4734,7 +4737,11 @@ box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
 Projecting a field or tuple element through `(deref box)`, as in
 `(deref b).count`, reads the boxed storage in place: a `Copy` projection is
 copied without moving the box, so `b` stays usable, while moving a non-Copy
-projection out of the box is rejected.
+projection out of the box is rejected. A `deref` projection reads the same way:
+a `Copy` result of `(deref (deref b))` or `(deref (deref b).field)` is read
+through the inner Box or reference in place, so `b` stays usable whether it is
+an owned `(Box (Box T))` or a reference to a `(Box T)`; a non-Copy result keeps
+the moving `deref` of section 3.4.1.
 Dotted field projection and `tuple-ref` may copy out only copyable fields or
 slots, and may move out move-only fields/slots only where this tracked-path
 policy accepts the path. Fixed-array reads follow the matrix above: a non-`Copy`
@@ -5187,10 +5194,12 @@ guards.
   Copy globals, composed dotted fields, literal tuple slots, fixed-array or
   borrowed-Slice elements with literal/runtime indexes, and explicit `deref`
   projections through `Box` or `&mut`.
-- Shared references, temporaries/rvalues, raw pointers, moved fields, partially
-  moved whole roots, non-Copy globals, globals that another module declares
-  (§4.4.2), extern storage, and cleanup-owning or active explicit-cleanup
-  places reject. A selected initialized field may be
+- Shared references, places reached through a shared reference anywhere on
+  their path (including a `&mut` stored behind one; E0207 as for a `&mut`
+  borrow, section 3.10), temporaries/rvalues, raw pointers, moved fields,
+  partially moved whole roots, non-Copy globals, globals that another module
+  declares (§4.4.2), extern storage, and cleanup-owning or active
+  explicit-cleanup places reject. A selected initialized field may be
   replaced while a disjoint sibling remains moved.
 - `replacement` has the place value type after expected-type, region, and
   lifetime coercion. The result has that same type and is the independent old
@@ -5628,10 +5637,11 @@ flattened, and the two coordinate names must differ.
   order: `(y-begin, x-begin)` first, `x` varying fastest, then the next `y`.
 - Both coordinates are varying and read-only: `set!` of either is rejected.
   A coordinate passed to a helper is an ordinary varying value there.
-- A non-atomic array-element destination index inside a rank-2 body must be
-  the row-major form `base + (y - a) * span + (x - b)` for uniform `base`,
-  `a`, and `b`, where `span` is `(- x-end x-begin)` over the header's own inner
-  bounds, or the bare `x-end` when `x-begin` is the literal `0`. Additive
+- Inside a rank-2 body, the canonical destination index of a varying write
+  into shared storage (see Array access below) is the row-major form
+  `base + (y - a) * span + (x - b)` for uniform `base`, `a`, and `b`, where
+  `span` is `(- x-end x-begin)` over the header's own inner bounds, or the
+  bare `x-end` when `x-begin` is the literal `0`. Additive
   terms may appear in any order and grouping, each coordinate exactly once and
   with positive sign. Uniform offsets must be constant across the whole
   domain: literals, outer variables the body never assigns, or closed scalar
@@ -5692,12 +5702,40 @@ runtime-sized buffers, reading through `array-ref` and writing through
 - Reads may use any SPMD-safe varying `i64` index expression, including
   gather-only reads through an index array such as `xs[ix[i]]`. Each read
   performs the ordinary bounds check for the logical iteration performing it.
-- Non-atomic array-element assignment indexes must be the loop index or a
-  simple uniform offset from it, such as `i` or `(+ base i)`. This makes
-  ordinary writes race-free by construction: no two logical instances write
-  the same element. Scatter writes through arbitrary varying indexes are
-  rejected; the only overlap-tolerant scatter surface is the explicit atomic
-  integer helper API below.
+- The canonical destination index of a rank-1 `foreach` is the loop index or
+  a simple uniform offset from it, such as `i`, `(+ base i)`, or `(- i base)`.
+  Rank-2 domains use the row-major form above and `spmd-compact` the slot form
+  below.
+- A non-atomic assignment to an array element, to a field or tuple element of
+  an array element, or to a field of a struct binding is a varying write when
+  its receiver, an index on its place path, or its value is varying.
+- Private storage is an inline fixed array, struct, or tuple binding declared
+  inside the gang (a `let` in the body, or a helper's local or by-value
+  parameter), together with the elements, fields, and tuple elements held
+  inline in it. Every logical instance owns its copy, so a varying write there
+  needs no destination proof. The binding then becomes varying: reads through
+  it yield varying values. Everything else is shared storage, including
+  storage reached through a reference, slice, dynamic array, or box, and a
+  body-local binding of an enclosing `foreach` seen from a nested one.
+- A varying write into shared storage must address an array element at the
+  canonical destination index; a field or tuple-element place uses the index
+  of the nearest array element under it. A varying field or tuple-element
+  write that reaches no array element, such as one to a struct declared
+  outside the `foreach`, is rejected like `set!` of that binding. This makes
+  ordinary writes race-free by construction: no two
+  logical instances write the same location. Scatter writes through arbitrary
+  varying indexes are rejected; the only overlap-tolerant varying scatter
+  surface is the explicit atomic integer helper API below.
+- An unmasked write whose receiver, indexes, and value are all uniform is a
+  uniform write: every instance stores the same value, as in the scalar
+  reference, so it is accepted at any destination index, including a uniform
+  one.
+- Masked branches (see Masked varying control flow) require the canonical
+  destination index for every array-element access, whatever the class of the
+  value and whether the storage is private.
+- An ordered `spmd-scan` body, including a helper it calls, runs its
+  iterations in scalar order, so it may write a varying value through a
+  uniform destination index (see SPMD reductions and scans).
 - The scalar lane element types are `i8`, `u8`, `i16`, `u16`, `i32`, `u32`,
   `i64`, `u64`, `f32`, `f64`, and `bool`. Bool array storage stays
   byte-compatible (`0` or `1` per element); lowering converts between byte
@@ -5972,8 +6010,9 @@ Explicit SPMD atomic scatter:
   unsized array. There is no public memory-order parameter; all helpers are
   sequentially consistent.
 - Inside `foreach`, the helper index and value arguments may be varying. This
-  is the only overlap-tolerant scatter update in the source surface; ordinary
-  array-element assignment with a varying non-contiguous index remains rejected.
+  is the only overlap-tolerant varying scatter update in the source surface;
+  ordinary array-element assignment with a varying non-contiguous index remains
+  rejected.
 - Atomic helpers synchronize only the exact element they operate on. They do
   not make surrounding non-atomic data race-free and do not permit
   unsynchronized mutation of other fields or array elements.
@@ -6097,6 +6136,12 @@ Evaluation and empty ranges:
   iteration. The `prefix` binding visible in `body` is the inclusive value
   after combining the current iteration's `value`; `value` and `body` are
   skipped for empty ranges.
+  Unmasked writes in a scan body, and in a helper the body calls, may store
+  any value, uniform or varying, through a uniform destination index; each
+  iteration's writes happen in scalar scan order, so the last iteration's
+  store remains. A varying destination index still needs the canonical
+  destination index, and a `foreach` inside such a helper is a parallel body
+  again.
 - For `spmd-compact`, `start`, `end`, and `init` are evaluated exactly once in
   that source order. Logical inputs are visited with `i` increasing from
   `start` to `end - 1`. `keep?` is evaluated exactly once per logical input.
@@ -6159,17 +6204,20 @@ Purity and varying rules:
   `foreach`/`spmd-reduce`/`spmd-scan`, and user-defined calls with varying
   arguments are rejected.
 - `spmd-scan` applies the same purity and index restrictions to `value`.
-  `body` must have type `unit` and follows the same side-effect rules as
-  `foreach` bodies; nested public SPMD constructs are rejected.
+  `body` must have type `unit` and follows the `foreach` effect, call, and
+  control-flow restrictions, except that a write through a uniform
+  destination index needs no disjoint destination (see Evaluation and empty
+  ranges); nested public SPMD constructs are rejected.
 - `spmd-compact` requires both declared binders and all three bound/seed
   expressions to have type `i64`; the two binder names must be distinct.
   `keep?` has type `bool`, may be varying, and follows the ordinary safe SPMD
   read and expression rules. `body` has type `unit` and follows the `foreach`
   effect, call, control-flow, and nested-SPMD restrictions.
-- The compact `slot` is a read-only varying binding. Every varying array
-  destination index in `body`, including one propagated through an accepted
-  direct helper, must be exactly `slot`, `slot + uniform`,
-  `uniform + slot`, or `slot - uniform`. The logical input index `i` may be
+- The compact `slot` is a read-only varying binding. A varying write into
+  shared storage in `body`, including one propagated through an accepted
+  direct helper, must use the canonical destination index: exactly `slot`,
+  `slot + uniform`, `uniform + slot`, or `slot - uniform`, even when the
+  written value alone is varying. The logical input index `i` may be
   used for ordinary SPMD-safe reads and computation but never proves a compact
   destination write disjoint. This makes selected output writes contiguous by
   construction while retaining the normal bounds checks on every write.

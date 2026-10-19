@@ -4098,23 +4098,31 @@
 (define (tc-selected-context-lease-ok
   [ctx : TcContext]
   [lease : (& lease (typed.TypedBodyLease intern))]) : typed.TypedResult
+  ;; Read only the scalar identities, in place: this runs for every inferred
+  ;; expression, and copying the whole source session and body-state records
+  ;; cost more than the comparisons.
   (let
-    [session : ci.InternSourceNameSession
-      (ci.intern-source-name-session-handle-session
-        (tc-context-source-names ctx))]
+    [names : ci.InternSourceNameSessionHandle (tc-context-source-names ctx)]
+    [table-id : i64 (ci.intern-source-name-session-handle-table-id names)]
+    [generation : i64
+      (ci.intern-source-name-session-handle-reset-generation names)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
     [reader-pools : ast.AstNodePoolContext (tc-context-expr-reader-pools ctx)]
-    [body-state : TcBodyStateData
-      (tc-body-state-data-value (tc-context-body-state ctx))]
+    [body-state : (Ptr TcBodyStateData)
+      (tc-body-state-view (tc-context-body-state ctx))]
     (if (and
       lease.live?
-      (= body-state.selected-owner lease.body.owner)
-      (= body-state.selected-revision lease.body.revision)
-      (= (cast session.reset-generation : u64) lease.body.generation)
-      (= session.table-id (ci.intern-compat-state-table-id lease.intern-state))
       (=
-        session.reset-generation
-        (ci.intern-compat-state-generation lease.intern-state))
+        (unsafe
+          (deref body-state).selected-owner)
+        lease.body.owner)
+      (=
+        (unsafe
+          (deref body-state).selected-revision)
+        lease.body.revision)
+      (= (cast generation : u64) lease.body.generation)
+      (= table-id (ci.intern-compat-state-table-id lease.intern-state))
+      (= generation (ci.intern-compat-state-generation lease.intern-state))
       (= pools.expr-pool lease.pools.expr-pool)
       (= pools.type-pool lease.pools.type-pool)
       (= pools.owner-arena lease.pools.owner-arena)

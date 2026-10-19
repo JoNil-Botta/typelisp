@@ -708,6 +708,8 @@ the server owner and semantic cache. Position coordinates use LSP's unsigned
 31-bit integer range. Structural selectors retain their path/name/position
 precedence; valid lookup misses and source-validation failures keep their
 existing contextual handler errors and `error.data`.
+The direct `tl/check` URI and structural paths retain precedence when present;
+a malformed primary selector is rejected instead of falling back to another.
 
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the

@@ -2541,7 +2541,7 @@
 (test
   lsp-required-parameter-admission
   (let
-    [cases : (Array (Tuple String String String) 51)
+    [cases : (Array (Tuple String String String) 52)
       (array
         (tuple "tl/getType" "null" "params must be an object")
         (tuple "tl/getType" "{}" "Missing uri")
@@ -2705,6 +2705,10 @@
         (tuple
           "tl/check"
           "{\"uri\":42,\"textDocument\":{\"uri\":\"file:///test.tl\"}}"
+          "uri")
+        (tuple
+          "tl/check"
+          "{\"uri\":\"file:///test.tl\",\"textDocument\":42}"
           "")
         (tuple "workspace/symbol" "{}" "query")
         (tuple "workspace/symbol" "{\"query\":\"\"}" "")
@@ -2770,6 +2774,9 @@
       (lsp-invalid-params-preserve-state?
         "{\"jsonrpc\":\"2.0\",\"method\":\"tl/replace\",\"params\":{\"textDocument\":{\"uri\":\"file:///missing.tl\"}}}"
         false)
+      (lsp-invalid-params-preserve-state?
+        "{\"jsonrpc\":\"2.0\",\"id\":\"uri\",\"method\":\"tl/check\",\"params\":{\"uri\":42,\"textDocument\":{\"uri\":\"file:///missing.tl\"}}}"
+        true)
       (lsp-invalid-params-preserve-state?
         "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":42}}}"
         false))

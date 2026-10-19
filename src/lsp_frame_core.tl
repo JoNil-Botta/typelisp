@@ -13584,16 +13584,30 @@
       [_ (return (Ok "params must be an object"))])
     (when
       document
-      (unless
-        (and (string.eq method "tl/check") (lsp-params-string? params "uri"))
-        (let
-          [key : String "textDocument"]
-          (match (lsp-json-field-ref params (& key))
-            [(Found text-document)
-              (unless
-                (lsp-params-string? text-document "uri")
-                (return (Ok "Missing or invalid uri in textDocument parameter")))]
-            [(Missing) (return (Ok "Missing uri in textDocument parameter"))]))))
+      (let
+        [direct-uri : bool false]
+        (when
+          (string.eq method "tl/check")
+          (let
+            [key : String "uri"]
+            (match (lsp-json-field-ref params (& key))
+              [(Found _)
+                (unless
+                  (lsp-params-string? params "uri")
+                  (return (Ok "Invalid uri parameter")))
+                (set! direct-uri true)]
+              [(Missing) unit])))
+        (unless
+          direct-uri
+          (let
+            [key : String "textDocument"]
+            (match (lsp-json-field-ref params (& key))
+              [(Found text-document)
+                (unless
+                  (lsp-params-string? text-document "uri")
+                  (return
+                    (Ok "Missing or invalid uri in textDocument parameter")))]
+              [(Missing) (return (Ok "Missing uri in textDocument parameter"))])))))
     (when
       position
       (match (lsp-params-position-error params)

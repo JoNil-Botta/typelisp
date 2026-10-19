@@ -6868,9 +6868,27 @@
             (set! active value.block)))
         (set! index (+ index 1))))
     ;; Reservations the evaluated operands made are never activated, and a
-    ;; store's receiver formed before the exit is never reserved.
+    ;; store's receiver formed before the exit is never reserved. An implicit
+    ;; reborrow's child loan exists from its reservation, so it is issued
+    ;; where the call would activate it, in the block nothing reaches: every
+    ;; loan keeps its one static definition.
     (when
       exited?
+      (let
+        [dropped : i64 mark]
+        (while (< dropped state.reserved-count)
+          (when
+            (>= (array-ref state.reserved-children dropped) 0)
+            (try
+              (normalize-emit!
+                state
+                active
+                (own.OwnershipOperation.Reborrow
+                  (own.OwnershipLoanId
+                    (typed.typed-body-copy (& state.body.id))
+                    (array-ref state.reserved-children dropped)))
+                (& node.source))))
+          (set! dropped (+ dropped 1))))
       (set! state.reserved-count mark)
       (match deferred
         [(NormalizeMaybeDeferred.Some receiver)

@@ -479,20 +479,16 @@
     (array-ref cells index)
     0))
 
-;; Set cell `index` (not negative) of a growable table; new cells are 0.
+;; Set cell `index` (not negative) of a growable table; new cells are 0. The
+;; table grows by pushes, never by storing a whole new array through `cells`:
+;; the published stage0 drops such a store (main's whole-array store through a
+;; reference), and the bootstrap's first stage is compiled by it.
 (define (normalize-table-set!
   [cells : (&mut cells (__tl_dyn-array i64))]
   [index : i64]
   [value : i64]) : unit
-  (when
-    (>= index (array-length cells))
-    (let
-      [grown : (__tl_dyn-array i64) (__tl_make-array i64 (+ 8 (* 2 index)))]
-      [at : i64 0]
-      (while (< at (array-length cells))
-        (set! (array-ref grown at) (array-ref cells at))
-        (set! at (+ at 1)))
-      (set! (deref cells) grown)))
+  (while (>= index (array-length cells))
+    (__tl_array-push! cells 0))
   (set! (array-ref cells index) value))
 
 ;; The field types of a product body type (empty for any other kind).

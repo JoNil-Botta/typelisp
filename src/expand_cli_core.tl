@@ -9,8 +9,6 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.byte_buf)
-(import stdlib.vector)
-(import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_driver_core)
@@ -22,9 +20,7 @@
   (line i64)
   (col i64)
   (max-bytes i64)
-  (stdlib-roots cli_svec.Vec)
-  (target target_cfg.CompilerTargetCfg)
-  (cfg-names cli_svec.Vec))
+  (options cli_option.CliCompileOptions))
 
 (defenum ResultSelfhostExpandConfig
   (Ok SelfhostExpandConfig)
@@ -146,9 +142,7 @@
             (/ position 4294967296)
             (% position 4294967296)
             max-bytes
-            options.stdlib-roots
-            options.target
-            options.cfgs))])))
+            options))])))
 
 (define (selfhost-expand-span-text
   [path : String]
@@ -253,10 +247,10 @@
       (match (expand.compiler-expand-source-at
         (owned_view.compiler-owned-shared-view config.input-path)
         (byte_buf.to-string contents)
-        (owned_view.compiler-owned-shared-view config.stdlib-roots)
+        (owned_view.compiler-owned-shared-view config.options.stdlib-roots)
         (target_cfg.compiler-target-cfgs-with-names
-          config.target
-          (owned_view.compiler-owned-shared-view config.cfg-names))
+          config.options.target
+          (owned_view.compiler-owned-shared-view config.options.cfgs))
         config.line
         config.col
         config.max-bytes)

@@ -4,8 +4,6 @@
 ;; duplicate `main`.
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
-(import stdlib.vector)
-(import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_check_core)
@@ -23,8 +21,8 @@
 (import sym_i64_env)
 
 (defenum SelfhostCheckConfig
-  (File String cli_svec.Vec target_cfg.CompilerTargetCfg cli_svec.Vec)
-  (Package String bool cli_svec.Vec target_cfg.CompilerTargetCfg cli_svec.Vec))
+  (File String cli_option.CliCompileOptions)
+  (Package String bool cli_option.CliCompileOptions))
 
 (defenum ResultSelfhostCheckConfig
   (Ok SelfhostCheckConfig)
@@ -72,44 +70,12 @@
       [args.failed (Err args.error)]
       [(and has-input has-manifest)
         (Err "selfhost-check: cannot combine input path with --manifest-path")]
-      [has-input
-        (Ok (File input-path options.stdlib-roots options.target options.cfgs))]
-      [else
-        (Ok
-          (Package
-            manifest-path
-            has-manifest
-            options.stdlib-roots
-            options.target
-            options.cfgs))])))
+      [has-input (Ok (File input-path options))]
+      [else (Ok (Package manifest-path has-manifest options))])))
 
 (define (selfhost-check-print-passed) : i64
   (io.print-format "{}" "Type checking passed!\n")
   0)
-
-(define (selfhost-check-file-doctests
-  [input-path : String]
-  [stdlib-roots : cli_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : i64
-  (doc_test.doc-test-report-status
-    (doc_test.doc-test-typecheck-file-with-roots-and-cfg
-      input-path
-      stdlib-roots
-      cfgs)))
-
-(define (selfhost-check-package-doctests
-  [paths : ast.AstDeclPathList]
-  [stdlib-roots : cli_svec.Vec]
-  [manifest-dir : String]
-  [deps : compiler_load.CompilerPkgDeps]
-  [cfgs : sym_i64_env.SymI64Env]) : i64
-  (doc_test.doc-test-report-status
-    (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
-      paths
-      stdlib-roots
-      manifest-dir
-      deps
-      cfgs)))
 
 (define (selfhost-check-report-diagnostics
   [diagnostics : cdiag.CompilerDiagnosticList]) : unit
@@ -127,17 +93,15 @@
 
 (define (selfhost-check-file
   [input-path : String]
-  [stdlib-roots : cli_svec.Vec]
-  [target : target_cfg.CompilerTargetCfg]
-  [cfg-names : cli_svec.Vec]) : i64
+  [options : cli_option.CliCompileOptions]) : i64
   (let
     [check-cfgs : sym_i64_env.SymI64Env
       (target_cfg.compiler-target-cfgs-with-names
-        target
-        (owned_view.compiler-owned-shared-view cfg-names))]
+        options.target
+        (owned_view.compiler-owned-shared-view options.cfgs))]
     (match (compiler_check_core.compiler-check-file-with-roots-and-cfg
       (owned_view.compiler-owned-shared-view input-path)
-      (owned_view.compiler-owned-shared-view stdlib-roots)
+      (owned_view.compiler-owned-shared-view options.stdlib-roots)
       check-cfgs)
       [(Ok _ advisories)
         (compiler_driver_core.compiler-driver-print-advisories (& advisories))
@@ -145,18 +109,21 @@
           [inline-test-status : i64
             (test_cli_core.tltest-inline-typecheck-file-with-cfg
               (owned_view.compiler-owned-shared-view input-path)
-              (owned_view.compiler-owned-shared-view stdlib-roots)
+              (owned_view.compiler-owned-shared-view options.stdlib-roots)
               (target_cfg.compiler-target-cfgs-with-names
-                target
-                (owned_view.compiler-owned-shared-view cfg-names))
+                options.target
+                (owned_view.compiler-owned-shared-view options.cfgs))
               "typecheck-prefix-inline-check")]
           (if (= inline-test-status 0)
             (let
               [doctest-status : i64
-                (selfhost-check-file-doctests
-                  input-path
-                  stdlib-roots
-                  (target_cfg.compiler-target-cfgs-with-names target cfg-names))]
+                (doc_test.doc-test-report-status
+                  (doc_test.doc-test-typecheck-file-with-roots-and-cfg
+                    input-path
+                    options.stdlib-roots
+                    (target_cfg.compiler-target-cfgs-with-names
+                      options.target
+                      options.cfgs)))]
               (if (= doctest-status 0)
                 (selfhost-check-print-passed)
                 doctest-status))
@@ -203,9 +170,7 @@
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
-  [stdlib-roots : cli_svec.Vec]
-  [target : target_cfg.CompilerTargetCfg]
-  [cfg-names : cli_svec.Vec]) : i64
+  [options : cli_option.CliCompileOptions]) : i64
   (match (package_source_core.package-source-discover-for
     "check"
     manifest-path
@@ -227,13 +192,13 @@
           (compiler_driver_core.compiler-driver-reset-file-state!)]
         (match (compiler_check_core.compiler-check-package-entry-file-with-roots-and-cfg
           entry-path
-          (owned_view.compiler-owned-shared-view stdlib-roots)
+          (owned_view.compiler-owned-shared-view options.stdlib-roots)
           (owned_view.compiler-owned-shared-view manifest-dir)
           (owned_view.compiler-owned-shared-view manifest.deps)
           emit-entry
           (target_cfg.compiler-target-cfgs-with-names
-            target
-            (owned_view.compiler-owned-shared-view cfg-names))
+            options.target
+            (owned_view.compiler-owned-shared-view options.cfgs))
           (tc.tc-serial-job-state))
           [(Ok _ paths advisories)
             (compiler_driver_core.compiler-driver-print-advisories
@@ -253,25 +218,26 @@
               [inline-test-status : i64
                 (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
                   source-set.sources
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  (owned_view.compiler-owned-shared-view options.stdlib-roots)
                   (owned_view.compiler-owned-shared-view manifest-dir)
                   name
                   (owned_view.compiler-owned-shared-view manifest.deps)
                   (target_cfg.compiler-target-cfgs-with-names
-                    target
-                    (owned_view.compiler-owned-shared-view cfg-names))
+                    options.target
+                    (owned_view.compiler-owned-shared-view options.cfgs))
                   "typecheck-prefix-inline-check-package")]
               (if (= inline-test-status 0)
                 (let
                   [doctest-status : i64
-                    (selfhost-check-package-doctests
-                      doctest-paths
-                      stdlib-roots
-                      manifest-dir
-                      manifest.deps
-                      (target_cfg.compiler-target-cfgs-with-names
-                        target
-                        cfg-names))]
+                    (doc_test.doc-test-report-status
+                      (doc_test.doc-test-typecheck-package-paths-with-roots-and-cfg
+                        doctest-paths
+                        options.stdlib-roots
+                        manifest-dir
+                        manifest.deps
+                        (target_cfg.compiler-target-cfgs-with-names
+                          options.target
+                          options.cfgs)))]
                   (if (= doctest-status 0)
                     (selfhost-check-print-passed)
                     doctest-status))
@@ -288,15 +254,9 @@
   (match (selfhost-check-config-from start count)
     [(Ok config)
       (match config
-        [(File input-path stdlib-roots target cfg-names)
-          (selfhost-check-file input-path stdlib-roots target cfg-names)]
-        [(Package manifest-path has-manifest stdlib-roots target cfg-names)
-          (selfhost-check-package
-            manifest-path
-            has-manifest
-            stdlib-roots
-            target
-            cfg-names)])]
+        [(File input-path options) (selfhost-check-file input-path options)]
+        [(Package manifest-path has-manifest options)
+          (selfhost-check-package manifest-path has-manifest options)])]
     [(Err message)
       (io.print-error message)
       1]))

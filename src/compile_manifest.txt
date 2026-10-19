@@ -118,6 +118,9 @@ end
 case|selfhost_compiler_ctfe|src/compiler_ctfe.tl|assembly|none|direct
 end
 
+case|selfhost_compiler_dependency_trace|src/compiler_dependency_trace.tl|assembly|none|direct
+end
+
 case|selfhost_compiler_diagnostic|src/compiler_diagnostic.tl|assembly|none|direct
 case|selfhost_compiler_global_effects|src/compiler_global_effects.tl|assembly|none|direct
 end
@@ -226,4 +229,7 @@ end
 
 case|selfhost_linker_archive_core_tests|src/linker_archive_core_tests.tl|assembly|exactly-one|direct
 contains|main:
+end
+
+case|selfhost_linker_ar_dialect_reader|src/linker_ar_dialect_reader.tl|assembly|none|direct
 end

@@ -3767,7 +3767,7 @@
         [_ (None)])]
     [_ (None)]))
 
-(define (opt-aggregate-direct-alloc [instr : ir.CompilerIrInstr]) : OptMaybeAggregateAlloc
+(define (opt-aggregate-direct-alloc [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeAggregateAlloc
   (match instr
     [(Call dst name args ty)
       (if (and
@@ -3776,7 +3776,7 @@
         (match (opt-aggregate-tl-alloc-size (& args))
           [(Some size)
             (if (> size 0)
-              (Some dst ty size)
+              (Some dst (ast.ty-node-persist ty) size)
               (No))]
           [(None) (No)])
         (No))]
@@ -3969,7 +3969,7 @@
         (Ok ptrs accesses)
         (Reject))
       (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
         (if (not seen-alloc)
           (match (opt-aggregate-direct-alloc instr)
             [(Some dst alloc-ty alloc-size)
@@ -4048,7 +4048,10 @@
                 [(Some offset)
                   (opt_aggregate_access_vec.push-ref!
                     (&mut accesses)
-                    (OptAggregateAccess.Load dst offset load-ty))
+                    (OptAggregateAccess.Load
+                      dst
+                      offset
+                      (ast.ty-node-persist load-ty)))
                   (opt-aggregate-scan-instrs
                     type-segment-bases
                     base
@@ -4088,7 +4091,7 @@
                 accesses
                 (& ptr)
                 (& value)
-                store-ty)]
+                (ast.ty-node-persist store-ty))]
             [_
               (if (opt-aggregate-instr-has-pointer? instr base ptrs)
                 (Reject)
@@ -4383,8 +4386,7 @@
           (for [index (iterator.range 0 count)]
             (let
               [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-              (match (opt-aggregate-direct-alloc
-                (compiler-opt-global-shared-view instr))
+              (match (opt-aggregate-direct-alloc instr)
                 [(Some base ty size)
                   (match (opt-aggregate-promote-lookup slots base)
                     [(Some storage)
@@ -4924,9 +4926,7 @@
       (if (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-alloc)
         (Some dst (String) 16)
         (No))]
-    [_
-      (opt-aggregate-direct-alloc
-        (owned_view.compiler-owned-reference-shared-view instr))]))
+    [_ (opt-aggregate-direct-alloc instr)]))
 
 ;; Word count of the allocation rooted at `index`: 0 when the instruction is not
 ;; a root at all, -1 when it is a root this pass will not take (a `tl_alloc`
@@ -30655,7 +30655,7 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [loop : (& loop OptNaturalLoop)]
   [preheader : i64]
-  [instr : ir.CompilerIrInstr]) : OptMaybeInductionFact
+  [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionFact
   (match instr
     [(Phi phi-var inputs ty)
       (if (opt-induction-i64-type? ty)
@@ -30670,7 +30670,9 @@
               phi-var
               next-var
               (& ty))
-              [(Some step) (Some (Fact phi-var start next-var step ty))]
+              [(Some step)
+                (Some
+                  (Fact phi-var start next-var step (ast.ty-node-persist ty)))]
               [(None)
                 ;; SSA renaming often routes the latch recurrence through a
                 ;; copy chain; chase it to the arithmetic before giving up.
@@ -30682,7 +30684,14 @@
                       phi-var
                       resolved
                       (& ty))
-                      [(Some step) (Some (Fact phi-var start next-var step ty))]
+                      [(Some step)
+                        (Some
+                          (Fact
+                            phi-var
+                            start
+                            next-var
+                            step
+                            (ast.ty-node-persist ty)))]
                       [(None) (No)])]
                   [(None) (No)])])]
           [(No) (No)])
@@ -30701,7 +30710,7 @@
       body-blocks
       loop
       preheader
-      (ir.compiler-ir-instr-seq-ref instrs index))
+      (ir.compiler-ir-instr-seq-borrow instrs index))
       [(Some fact) (return (Some fact))]
       [(No) unit]))
   (No))
@@ -31293,7 +31302,7 @@
   [offsets : (& offsets opt_i64_i64_map.Map)]
   [scaled : (& scaled opt_i64_i64_map.Map)]
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
-  [instr : ir.CompilerIrInstr]) : OptMaybeInductionDerived
+  [instr : (& instr ir.CompilerIrInstr)]) : OptMaybeInductionDerived
   (match fact
     [(Fact phi-var _ _ step _)
       (match instr
@@ -31309,7 +31318,7 @@
                   (& rhs)
                   phi-var
                   step
-                  ty)
+                  (ast.ty-node-persist ty))
                 (No))]
             [(Add)
               (opt-induction-add-inv-derived
@@ -31319,7 +31328,7 @@
                 step
                 (& lhs)
                 (& rhs)
-                ty)]
+                (ast.ty-node-persist ty))]
             [_ (No)])]
         [(Gep _ base offset ty)
           (match (opt-induction-value-offset offsets offset phi-var)
@@ -31327,7 +31336,11 @@
               (if (and
                 (opt-induction-gep-stride-pays? type-segment-bases 1 (& ty))
                 (opt-induction-value-base-invariant? loop-defs base))
-                (Some (Gep base derived-offset ty))
+                (Some
+                  (Gep
+                    (ir.compiler-ir-clone-value base)
+                    derived-offset
+                    (ast.ty-node-persist ty)))
                 (No))]
             [(None)
               (match offset
@@ -31340,7 +31353,11 @@
                           scale
                           (& ty))
                         (opt-induction-value-base-invariant? loop-defs base))
-                        (Some (GepScaled base scale ty))
+                        (Some
+                          (GepScaled
+                            (ir.compiler-ir-clone-value base)
+                            scale
+                            (ast.ty-node-persist ty)))
                         (No))]
                     [(LookupMissing) (No)])]
                 [_ (No)])])]
@@ -31555,7 +31572,7 @@
       offsets
       scaled
       loop-defs
-      (ir.compiler-ir-instr-seq-ref instrs index))
+      (ir.compiler-ir-instr-seq-borrow instrs index))
       [(Some derived)
         (opt-induction-collect-derived-instr-seq-from
           type-segment-bases
@@ -93551,9 +93568,10 @@
 ;; retires them, which also releases the frame slots.
 (defenum OptCtorFwdCopy
   (NoCopy)
-  ;; destination address value, source var, byte size, call result var (-1 for
-  ;; `CopyBytes`, which defines nothing).
-  (Copy ir.CompilerIrValue i64 i64 i64))
+  ;; destination address var (-1 when the address is not a var, which no site
+  ;; resolves), source var, byte size, call result var (-1 for `CopyBytes`,
+  ;; which defines nothing).
+  (Copy i64 i64 i64 i64))
 
 ;; Destination base var, its constant byte offset, and the index of the address
 ;; computation inside the block (-1 when the address enters the block already
@@ -93599,31 +93617,35 @@
     [(Slice _) 0]
     [_ -1]))
 
-(define (opt-ctor-fwd-memcpy-symbol? [symbol : i64]) : bool
-  (string.eq (ir.compiler-ir-symbol-text symbol) "tl_memcpy"))
-
 ;; A whole-aggregate copy out of an IR var: `CopyBytes` (the 16..112 B inline
-;; band) or the `tl_memcpy` runtime call lowering emits above that band.
-(define (opt-ctor-fwd-match-copy [instr : ir.CompilerIrInstr]) : OptCtorFwdCopy
+;; band) or the `tl_memcpy` runtime call lowering emits above that band. The
+;; instruction is read in place; only var ids come out.
+(define (opt-ctor-fwd-match-copy [instr : (& instr ir.CompilerIrInstr)]) : OptCtorFwdCopy
   (match instr
     [(CopyBytes dst src size)
       (match src
         [(Var src-var)
           (if (> size 0)
-            (Copy dst src-var size -1)
+            (Copy (opt-aggregate-split-value-var-or dst -1) src-var size -1)
             (NoCopy))]
         [_ (NoCopy)])]
     [(Call call-dst name args _)
       (match args
         [(Array values)
           (if (= (array-length values) 3)
-            (match (compiler-opt-global-array-element-shared-view values 2)
+            (match (& (array-ref values 2))
               [(I64 size)
-                (match (compiler-opt-global-array-element-shared-view values 1)
+                (match (& (array-ref values 1))
                   [(Var src-var)
-                    (if (and (> size 0) (opt-ctor-fwd-memcpy-symbol? name))
+                    (if (and
+                      (> size 0)
+                      (ir.compiler-ir-symbol-eq?
+                        name
+                        cbi.compiler-builtin-id-tl-memcpy))
                       (Copy
-                        (compiler-opt-global-array-element-shared-view values 0)
+                        (opt-aggregate-split-value-var-or
+                          (& (array-ref values 0))
+                          -1)
                         src-var
                         size
                         call-dst)
@@ -93637,22 +93659,31 @@
 ;; Cheap per-block admission: a block can only hold the pattern when it has both
 ;; a frame `addr_of` and a whole-aggregate copy out of a var. Everything else
 ;; (the exact use census, which allocates) is gated behind this.
+;;
+;; The copy test here is the opcode alone -- any `CopyBytes`, any call to
+;; `tl_memcpy` -- a superset of opt-ctor-fwd-match-copy, which the per-block
+;; scan still applies to every instruction. This scan runs over every
+;; instruction of every function, so it is kept a plain counted loop over the
+;; slot storage bound once, with no call in its body: loop versioning then
+;; checks `count <= length(slots)` once per block and the fast loop reads each
+;; element without a bounds check. A call in the body, or an early exit once
+;; both are seen, would take that away.
 (define (opt-ctor-fwd-block-candidate? [instrs : ir.CompilerIrInstrSeq]) : bool
   (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [slots (& instrs.slots)]
     [saw-addr : bool false]
     [saw-copy : bool false]
-    [i : i64 0]
-    (while (and (< i count) (not (and saw-addr saw-copy)))
+    (for [i (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
       (let
-        [instr (ir.compiler-ir-instr-seq-ref instrs i)]
-        (match (compiler-opt-global-shared-view instr)
+        [instr (& (array-ref slots i))]
+        (match instr
           [(AddrOf _ _) (set! saw-addr true)]
-          [_
-            (match (opt-ctor-fwd-match-copy instr)
-              [(Copy _ _ _ _) (set! saw-copy true)]
-              [(NoCopy) unit])])
-        (+= i 1)))
+          [(CopyBytes _ _ _) (set! saw-copy true)]
+          [(Call _ name _ _)
+            (when
+              (ir.compiler-ir-symbol-eq? name cbi.compiler-builtin-id-tl-memcpy)
+              (set! saw-copy true))]
+          [_ unit])))
     (and saw-addr saw-copy)))
 
 (define (opt-ctor-fwd-blocks-have-candidate?
@@ -93853,41 +93884,40 @@
       (+= i 1))
     found))
 
-;; Resolve the copy destination address into `(base var, byte offset, address
-;; instruction index)`.
+;; Resolve the copy destination address var into `(base var, byte offset,
+;; address instruction index)`. A negative var is a destination that is not a
+;; var, which never resolves.
 (define (opt-ctor-fwd-resolve-dest
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [copy-index : i64]
-  [dest-value : (& ir.CompilerIrValue)]) : OptCtorFwdDest
-  (match dest-value
-    [(Var dest-var)
-      (let
-        [def-index : i64
-          (opt-ctor-fwd-find-def instrs (- copy-index 1) dest-var)]
-        [gep-offset : i64
-          (if (< def-index 0)
-            -1
-            (match (ir.compiler-ir-instr-seq-borrow instrs def-index)
-              [(Gep _ source offset elem-ty)
-                (match elem-ty
-                  [(U8)
-                    (match source
-                      [(Var _)
-                        (match offset
-                          [(I64 k) k]
-                          [_ -1])]
-                      [_ -1])]
-                  [_ -1])]
-              [_ -1]))]
-        (if (>= gep-offset 0)
+  [dest-var : i64]) : OptCtorFwdDest
+  (if (< dest-var 0)
+    (NoDest)
+    (let
+      [def-index : i64 (opt-ctor-fwd-find-def instrs (- copy-index 1) dest-var)]
+      [gep-offset : i64
+        (if (< def-index 0)
+          -1
           (match (ir.compiler-ir-instr-seq-borrow instrs def-index)
-            [(Gep _ source _ _)
-              (match source
-                [(Var source-var) (Dest source-var gep-offset def-index)]
-                [_ (NoDest)])]
-            [_ (NoDest)])
-          (Dest dest-var 0 def-index)))]
-    [_ (NoDest)]))
+            [(Gep _ source offset elem-ty)
+              (match elem-ty
+                [(U8)
+                  (match source
+                    [(Var _)
+                      (match offset
+                        [(I64 k) k]
+                        [_ -1])]
+                    [_ -1])]
+                [_ -1])]
+            [_ -1]))]
+      (if (>= gep-offset 0)
+        (match (ir.compiler-ir-instr-seq-borrow instrs def-index)
+          [(Gep _ source _ _)
+            (match source
+              [(Var source-var) (Dest source-var gep-offset def-index)]
+              [_ (NoDest)])]
+          [_ (NoDest)])
+        (Dest dest-var 0 def-index)))))
 
 ;; Validate one gep off the temp. Returns the index of its store, `copy-index`
 ;; when the gep has no uses at all, or -1 when the gep disqualifies the site.
@@ -94048,7 +94078,7 @@
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [uses : (& uses (__tl_dyn-array i64))]
   [copy-index : i64]
-  [dest-value : (& ir.CompilerIrValue)]
+  [dest-var : i64]
   [temp : i64]
   [size : i64]
   [result-var : i64]
@@ -94077,7 +94107,7 @@
         (< slot 0)
         (not (= (opt-ctor-fwd-use-count uses slot) 1)))
         false
-        (match (opt-ctor-fwd-resolve-dest instrs copy-index dest-value)
+        (match (opt-ctor-fwd-resolve-dest instrs copy-index dest-var)
           [(NoDest) false]
           [(Dest dest-base dest-off dest-def)
             (let
@@ -94172,22 +94202,23 @@
             (set! (array-ref plan i) -1)
             (set! (array-ref bases i) 0))
           (for [i (iterator.range 0 count)]
-            (match (opt-ctor-fwd-match-copy
-              (ir.compiler-ir-instr-seq-ref instrs i))
-              [(Copy dest-value temp size result-var)
-                (if (opt-ctor-fwd-try-site
-                  instrs
-                  uses
-                  i
-                  (& dest-value)
-                  temp
-                  size
-                  result-var
-                  (&mut plan)
-                  (&mut bases))
-                  (set! changed true)
-                  unit)]
-              [(NoCopy) unit]))
+            (let
+              [instr (ir.compiler-ir-instr-seq-ref instrs i)]
+              (match (opt-ctor-fwd-match-copy (& instr))
+                [(Copy dest-var temp size result-var)
+                  (if (opt-ctor-fwd-try-site
+                    instrs
+                    uses
+                    i
+                    dest-var
+                    temp
+                    size
+                    result-var
+                    (&mut plan)
+                    (&mut bases))
+                    (set! changed true)
+                    unit)]
+                [(NoCopy) unit])))
           (if changed
             (Block
               label

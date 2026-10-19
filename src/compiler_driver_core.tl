@@ -206,21 +206,30 @@
           (compiler_backend.compiler-backend-state-set-advisory-sink!
             backend-state
             advisory-sink))
-        (CompilerDriverState
-          expr-cell
-          type-cell
-          (owned_view.compiler-owned-shared-view intern-cell)
-          (compiler_parse_core.compiler-parse-state-new-with-intern-state
-            (owned_view.compiler-owned-array-element-shared-view intern-cell 0))
-          builtin-cell
-          lower-cell
-          load-session
-          typecheck-state
-          backend-state
-          (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
-          pool-arena-cell
-          surface-arena
-          profile-state)])))
+        (let
+          [parser-state : compiler_parse_core.CompilerParseState
+            (compiler_parse_core.compiler-parse-state-new-with-intern-state
+              (owned_view.compiler-owned-array-element-shared-view
+                intern-cell
+                0))]
+          (compiler_typecheck_core.tc-job-state-set-parser-control!
+            typecheck-state
+            (compiler_parse_core.compiler-parse-state-control-addr
+              (& parser-state)))
+          (CompilerDriverState
+            expr-cell
+            type-cell
+            (owned_view.compiler-owned-shared-view intern-cell)
+            parser-state
+            builtin-cell
+            lower-cell
+            load-session
+            typecheck-state
+            backend-state
+            (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
+            pool-arena-cell
+            surface-arena
+            profile-state))])))
 
 ;; State-owned pools allocate fixed-size segments on demand. One expression
 ;; segment covers tiny programs while self-host-sized compiles append segments
@@ -496,6 +505,21 @@
         phase
         "reader-node-pool"
         (compiler_load.compiler-load-reader-node-pool-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "semantic-origin-storage"
+        (let
+          [control : i64
+            (if (= typecheck-state.address 0)
+              0
+              (compiler_typecheck_core.tc-job-state-parser-control
+                typecheck-state))]
+          (if (= control 0)
+            0
+            (compiler_parse_core.compiler-parse-origin-word
+              (compiler_parse_core.compiler-parse-origin-storage control)
+              0))))
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
@@ -829,8 +853,12 @@
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
     unit
-    (ci.intern-compat-state-persistent-arena-reset!
-      (&mut (array-ref state.intern-state 0)))))
+    (begin
+      (compiler_parse_core.compiler-parse-origin-reset!
+        (compiler_parse_core.compiler-parse-array-data-addr
+          state.parser-state.semantic-origins))
+      (ci.intern-compat-state-persistent-arena-reset!
+        (&mut (array-ref state.intern-state 0))))))
 
 ;; The state's owned builtin/CTFE id snapshot.
 (define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
@@ -1389,10 +1417,22 @@
 
 (cfg
   compile-profile
+  (define (compiler-driver-profile-origin-bytes [control : i64]) : i64
+    (+
+      (compiler-driver-profile-arena-bytes
+        (compiler_load.compiler-load-reader-node-pool-arena-handle))
+      (compiler-driver-profile-arena-bytes
+        (compiler_parse_core.compiler-parse-origin-word
+          (compiler_parse_core.compiler-parse-origin-storage control)
+          0)))))
+
+(cfg
+  compile-profile
   (define (compiler-driver-profile-start-load-lifetime!
     [state : profile_state.CompilerProfileState]
     [pools : compiler_ast_types.AstNodePoolContext]
-    [surface-arena : i64]) : unit
+    [surface-arena : i64]
+    [parser-control : i64]) : unit
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-input-bytes-metric
@@ -1417,8 +1457,7 @@
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-origin-start-metric
-      (compiler-driver-profile-arena-bytes
-        (compiler_load.compiler-load-reader-node-pool-arena-handle)))
+      (compiler-driver-profile-origin-bytes parser-control))
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-pool-base-start-metric
@@ -1457,7 +1496,8 @@
     [state : profile_state.CompilerProfileState]
     [pools : compiler_ast_types.AstNodePoolContext]
     [surface-arena : i64]
-    [boundary : String]) : unit
+    [boundary : String]
+    [parser-control : i64]) : unit
     (let
       [cumulative-alloc : i64
         (-
@@ -1490,11 +1530,12 @@
             state
             compiler-driver-load-profile-token-start-metric))]
       [origins : i64
-        (compiler-driver-profile-owner-delta
-          (compiler_load.compiler-load-reader-node-pool-arena-handle)
-          (compiler-driver-profile-value
-            state
-            compiler-driver-load-profile-origin-start-metric))]
+        (compiler-driver-profile-nonnegative
+          (-
+            (compiler-driver-profile-origin-bytes parser-control)
+            (compiler-driver-profile-value
+              state
+              compiler-driver-load-profile-origin-start-metric)))]
       [pool-base : i64
         (compiler-driver-profile-owner-delta
           (compiler_ast_types.ast-node-pool-context-base-arena pools)
@@ -4364,7 +4405,9 @@
         (compiler-driver-profile-start-load-lifetime!
           (compiler-driver-state-profile state)
           pools
-          (compiler-driver-state-surface-arena state))
+          (compiler-driver-state-surface-arena state)
+          (compiler_parse_core.compiler-parse-state-control-addr
+            (& state.parser-state)))
         unit)]
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
@@ -4386,7 +4429,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4423,7 +4468,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.handoff"))
+              "load.handoff"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase
@@ -4573,7 +4620,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4608,7 +4657,9 @@
         (compiler-driver-profile-start-load-lifetime!
           (compiler-driver-state-profile state)
           pools
-          (compiler-driver-state-surface-arena state))
+          (compiler-driver-state-surface-arena state)
+          (compiler_parse_core.compiler-parse-state-control-addr
+            (& state.parser-state)))
         unit)]
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
@@ -4628,7 +4679,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4655,7 +4708,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.handoff"))
+              "load.handoff"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase
@@ -4769,7 +4824,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase

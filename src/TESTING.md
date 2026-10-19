@@ -1,9 +1,31 @@
 # Selfhost compiler testing
 
+`linker_ar_dialect_reader_tests.tl` compares GNU `ar`/`ranlib`, LLVM GNU/64-bit
+and BSD archives against recorded `ar tO` and `nm --print-armap` oracles.
+The internal test runs no external tools. It checks duplicate/empty/byte names,
+ordered duplicate symbol hints, BSD sorted and extended index names, both BSD
+byte orders, odd payloads and internal alignment padding. Every byte offset of
+the GNU fixture is tried as an index target; only ordinary member headers pass.
+Every incomplete structure in six small 32-/64-bit index layouts is rejected,
+including repacked payload truncations with otherwise valid target offsets;
+the signature-only empty archive remains valid.
+Keep the exact-limit/one-below cases for all `ArchiveLimits` resources, unsigned
+overflow diagnostics, malformed names/tables, special ordering and stable
+input/revision identities. Run the suite with a fresh compiler at opt0/1/2;
+the complete inline suite runs the same cases on Linux and Windows.
+
 This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
+
+`tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
+with colliding numeric names while a decoy interner remains installed. It keeps
+an earlier job's payload readable through peer invalidation, shape rebuilds and
+retirement, and covers wrapped imports, empty/offset views, payload growth and
+owner-generation changes. The runnable typechecker smoke includes the same
+probe; driver cleanup coverage verifies post-lowering release uses its supplied
+job and preserves the other index.
 
 `compiler-lower-function-env-scratch` lowers several functions against one
 persistent module environment, including binding-store growth and a rejected
@@ -156,6 +178,14 @@ The arena-debug gate repeats all three fixtures with debug, profile, and backtra
 instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
+
+The parser origin-column tests exercise all thirteen kinds, compact-span
+boundaries and exact overflow after i64-to-i32 conversion, full-width name IDs
+and alias keys/slots, segment and directory growth, retained handles, suffix
+rollback, detached directory transfer, alias precedence and the 64-step depth
+bound. They also check independent jobs, failed/inactive nested modules and
+ordinary reader builder growth/reset. The load and semantic-index smokes cover
+cached file reuse and source-arena retirement on the production paths.
 
 ## Loader diagnostic codes
 
@@ -2028,6 +2058,16 @@ that require native `as`/`ld` either no-op by design or should be run through a
 Linux environment.
 
 ## Checklist for new coverage
+
+The required `stage2-core-ir-dependency-boundary` gate runs
+[`verify-core-ir-dependencies.sh`](../scripts/verify-core-ir-dependencies.sh)
+with the converged compiler. It compiles the canonical frontend inspector with
+`compiler-dependency-audit`, runs source and fact-stream fixtures, then checks
+the complete shared IR closure across the supported target/cfg space. See the
+[boundary decision](../docs/compiler-core-ir-dependencies.md) for authority,
+scope, policy maintenance and diagnostic-cfg retirement. Extend its table-driven
+fixtures for new dependency forms; retain the bounded resource report and
+measure full gate cost when changing discovery or orchestration.
 
 New behavior gets TypeLisp-owned coverage (see the implementation-language rule
 in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):

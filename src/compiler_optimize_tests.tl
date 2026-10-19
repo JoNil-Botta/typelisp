@@ -2490,13 +2490,11 @@
             (ir.compiler-ir-instr-effect (& hygienic-alloc))
             Unknown))
         4]
-      [(match (opt.opt-aggregate-direct-alloc
-          (opt.compiler-opt-global-shared-view runtime-alloc))
+      [(match (opt.opt-aggregate-direct-alloc runtime-alloc)
           [(Some _ _ _) false]
           [(No) true])
         5]
-      [(match (opt.opt-aggregate-direct-alloc
-          (opt.compiler-opt-global-shared-view hygienic-alloc))
+      [(match (opt.opt-aggregate-direct-alloc hygienic-alloc)
           [(No) false]
           [(Some _ _ _) true])
         6]

@@ -97,7 +97,7 @@
                 3
                 1)))
           (reader.sp-node-pool-truncate! mark)
-          (parser.compiler-parse-decl-origin-cache-reset!)
+          (parser.compiler-parse-standalone-origin-reset!)
           (set!
             ok
             (and
@@ -113,7 +113,7 @@
   [slot : i64]
   [index : i64]
   [expected-count : i64]
-  [expected-kind : String]
+  [expected-kind : parser.CompilerParseSemanticOriginKind]
   [expected-name : String]
   [start-line : i64]
   [start-col : i64]
@@ -133,10 +133,9 @@
             (parser.compiler-parse-semantic-origin-run-len (& run))
             expected-count)
           (= origin.ordinal index)
-          (string.eq
-            (reader.sp-text
-              (parser.compiler-parse-semantic-origin-kind-marker origin.kind))
-            expected-kind)
+          (=
+            (parser.compiler-parse-semantic-origin-kind-tag origin.kind)
+            (parser.compiler-parse-semantic-origin-kind-tag expected-kind))
           (compiler-parse-test-name-id? origin.written-name expected-name)
           (= (ast.ast-source-span-start-line span) start-line)
           (= (ast.ast-source-span-start-col span) start-col)
@@ -149,7 +148,7 @@
   [slot : i64]
   [index : i64]
   [expected-count : i64]
-  [expected-kind : String]
+  [expected-kind : parser.CompilerParseSemanticOriginKind]
   [expected-name : String]
   [start-line : i64]
   [start-col : i64]
@@ -189,9 +188,8 @@
                 (string.int->string
                   (parser.compiler-parse-semantic-origin-run-len (& run)))
                 ", kind "
-                (reader.sp-text
-                  (parser.compiler-parse-semantic-origin-kind-marker
-                    origin.kind))
+                (string.int->string
+                  (parser.compiler-parse-semantic-origin-kind-tag origin.kind))
                 ", span "
                 (string.int->string (ast.ast-source-span-start-line span))
                 ":"
@@ -253,7 +251,7 @@
                 0
                 0
                 2
-                "__tl_semantic_origin_module_definition"
+                (parser.CompilerParseSemanticOriginKind.ModuleDefinition)
                 "pkg"
                 1
                 9
@@ -264,7 +262,7 @@
                 0
                 1
                 2
-                "__tl_semantic_origin_module_definition"
+                (parser.CompilerParseSemanticOriginKind.ModuleDefinition)
                 "inner"
                 1
                 13
@@ -276,7 +274,7 @@
                 1
                 0
                 3
-                "__tl_semantic_origin_module_path"
+                (parser.CompilerParseSemanticOriginKind.ModulePath)
                 "foo"
                 2
                 9
@@ -287,7 +285,7 @@
                 1
                 1
                 3
-                "__tl_semantic_origin_module_path"
+                (parser.CompilerParseSemanticOriginKind.ModulePath)
                 "bar"
                 2
                 13
@@ -298,7 +296,7 @@
                 1
                 2
                 3
-                "__tl_semantic_origin_import_alias"
+                (parser.CompilerParseSemanticOriginKind.ImportAlias)
                 "bar"
                 2
                 13
@@ -309,7 +307,7 @@
                 2
                 2
                 3
-                "__tl_semantic_origin_import_alias"
+                (parser.CompilerParseSemanticOriginKind.ImportAlias)
                 "dep"
                 3
                 20
@@ -321,7 +319,7 @@
                 3
                 0
                 7
-                "__tl_semantic_origin_type_definition"
+                (parser.CompilerParseSemanticOriginKind.TypeDefinition)
                 "Pair"
                 4
                 12
@@ -332,7 +330,7 @@
                 3
                 1
                 7
-                "__tl_semantic_origin_struct_field_definition"
+                (parser.CompilerParseSemanticOriginKind.StructFieldDefinition)
                 "left"
                 5
                 4
@@ -343,7 +341,7 @@
                 3
                 2
                 7
-                "__tl_semantic_origin_module_path"
+                (parser.CompilerParseSemanticOriginKind.ModulePath)
                 "dep"
                 5
                 9
@@ -354,7 +352,7 @@
                 3
                 3
                 7
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Thing"
                 5
                 13
@@ -365,7 +363,7 @@
                 3
                 4
                 7
-                "__tl_semantic_origin_struct_field_definition"
+                (parser.CompilerParseSemanticOriginKind.StructFieldDefinition)
                 "right"
                 6
                 4
@@ -376,7 +374,7 @@
                 3
                 5
                 7
-                "__tl_semantic_origin_module_path"
+                (parser.CompilerParseSemanticOriginKind.ModulePath)
                 "dep"
                 6
                 17
@@ -387,7 +385,7 @@
                 3
                 6
                 7
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Thing"
                 6
                 21
@@ -398,7 +396,7 @@
                 4
                 0
                 5
-                "__tl_semantic_origin_type_definition"
+                (parser.CompilerParseSemanticOriginKind.TypeDefinition)
                 "Choice"
                 7
                 10
@@ -409,7 +407,7 @@
                 4
                 1
                 5
-                "__tl_semantic_origin_enum_variant_definition"
+                (parser.CompilerParseSemanticOriginKind.EnumVariantDefinition)
                 "Some"
                 8
                 4
@@ -420,7 +418,7 @@
                 4
                 4
                 5
-                "__tl_semantic_origin_enum_variant_definition"
+                (parser.CompilerParseSemanticOriginKind.EnumVariantDefinition)
                 "None"
                 9
                 4
@@ -432,7 +430,7 @@
                 5
                 0
                 2
-                "__tl_semantic_origin_module_path"
+                (parser.CompilerParseSemanticOriginKind.ModulePath)
                 "dep"
                 10
                 29
@@ -443,7 +441,7 @@
                 5
                 1
                 2
-                "__tl_semantic_origin_dispatch_function"
+                (parser.CompilerParseSemanticOriginKind.DispatchFunction)
                 "choose"
                 10
                 33
@@ -454,7 +452,7 @@
                 6
                 0
                 10
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Pair"
                 12
                 17
@@ -465,7 +463,7 @@
                 6
                 1
                 10
-                "__tl_semantic_origin_module_path"
+                (parser.CompilerParseSemanticOriginKind.ModulePath)
                 "dep"
                 12
                 28
@@ -476,7 +474,7 @@
                 6
                 2
                 10
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Thing"
                 12
                 32
@@ -487,7 +485,7 @@
                 6
                 3
                 10
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Pair"
                 12
                 42
@@ -498,7 +496,7 @@
                 6
                 4
                 10
-                "__tl_semantic_origin_module_path"
+                (parser.CompilerParseSemanticOriginKind.ModulePath)
                 "dep"
                 13
                 13
@@ -509,7 +507,7 @@
                 6
                 5
                 10
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Thing"
                 13
                 17
@@ -520,7 +518,7 @@
                 6
                 6
                 10
-                "__tl_semantic_origin_struct_field_use"
+                (parser.CompilerParseSemanticOriginKind.StructFieldUse)
                 "left"
                 17
                 38
@@ -531,7 +529,7 @@
                 6
                 7
                 10
-                "__tl_semantic_origin_struct_field_use"
+                (parser.CompilerParseSemanticOriginKind.StructFieldUse)
                 "left"
                 18
                 32
@@ -542,7 +540,7 @@
                 6
                 8
                 10
-                "__tl_semantic_origin_enum_variant_pattern"
+                (parser.CompilerParseSemanticOriginKind.EnumVariantPattern)
                 "Some"
                 20
                 11
@@ -553,7 +551,7 @@
                 6
                 9
                 10
-                "__tl_semantic_origin_enum_variant_pattern"
+                (parser.CompilerParseSemanticOriginKind.EnumVariantPattern)
                 "None"
                 20
                 17
@@ -563,7 +561,7 @@
         (io.print-error
           (str_cat.str-cat "semantic origin parse failed: " message "\n"))])
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (compiler-parse-semantic-origin-quote-depth-ok?) : bool
@@ -588,7 +586,7 @@
                 0
                 0
                 3
-                "__tl_semantic_origin_value_qualifier"
+                (parser.CompilerParseSemanticOriginKind.ValueQualifier)
                 "live"
                 4
                 16
@@ -599,7 +597,7 @@
                 0
                 1
                 3
-                "__tl_semantic_origin_value_name"
+                (parser.CompilerParseSemanticOriginKind.ValueName)
                 "field"
                 4
                 21
@@ -610,7 +608,7 @@
                 0
                 2
                 3
-                "__tl_semantic_origin_struct_field_use"
+                (parser.CompilerParseSemanticOriginKind.StructFieldUse)
                 "field"
                 4
                 21
@@ -623,7 +621,7 @@
             message
             "\n"))])
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (compiler-parse-semantic-origin-aliases-ok?) : bool
@@ -674,7 +672,7 @@
                 0
                 3
                 4
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Thing"
                 2
                 28
@@ -685,7 +683,7 @@
                 0
                 3
                 4
-                "__tl_semantic_origin_type_name"
+                (parser.CompilerParseSemanticOriginKind.TypeName)
                 "Thing"
                 2
                 28
@@ -696,7 +694,7 @@
               (compiler-parse-test-semantic-origin-none? (& generated) 1))))]
       [(Err _) unit])
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (compiler-parse-semantic-origin-nested-module-ok?) : bool
@@ -720,7 +718,7 @@
                       0
                       0
                       2
-                      "__tl_semantic_origin_module_definition"
+                      (parser.CompilerParseSemanticOriginKind.ModuleDefinition)
                       "outer"
                       1
                       9
@@ -731,7 +729,7 @@
                       0
                       1
                       2
-                      "__tl_semantic_origin_module_definition"
+                      (parser.CompilerParseSemanticOriginKind.ModuleDefinition)
                       "inner"
                       1
                       15
@@ -742,7 +740,7 @@
                       0
                       0
                       4
-                      "__tl_semantic_origin_type_definition"
+                      (parser.CompilerParseSemanticOriginKind.TypeDefinition)
                       "Inside"
                       1
                       32
@@ -753,7 +751,7 @@
                       0
                       3
                       4
-                      "__tl_semantic_origin_type_name"
+                      (parser.CompilerParseSemanticOriginKind.TypeName)
                       "Type"
                       1
                       50
@@ -762,7 +760,7 @@
             [_ unit]))]
       [(Err _) unit])
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (compiler-parse-semantic-origin-growth-reset-ok?) : bool
@@ -800,14 +798,14 @@
               19
               0
               1
-              "__tl_semantic_origin_module_definition"
+              (parser.CompilerParseSemanticOriginKind.ModuleDefinition)
               "m19"
               20
               9
               20
               12))
           (reader.sp-node-pool-truncate! mark)
-          (parser.compiler-parse-decl-origin-cache-reset!)
+          (parser.compiler-parse-standalone-origin-reset!)
           (set!
             ok
             (and ok (compiler-parse-test-semantic-origin-none? (& decls) 19))))]
@@ -815,7 +813,7 @@
     (if (> (reader.sp-node-pool-len) mark)
       (reader.sp-node-pool-truncate! mark)
       unit)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (compiler-parse-member-origin-boundary-ok?) : bool

@@ -1745,7 +1745,13 @@ generated binding is used. Run affected fixtures at opt0/1/2; an unused missing
 import that compiles successfully is not evidence of valid expansion.
 
 Source selected imports of generated exports are the mirror case. The
-`source_selected_generated_export` native row selects values, a function, a
+public-check `loader-selected-*` cases pin E0304 and the selected import's own
+span for both import orders, used and unused missing selections, source and
+package checking, and compilation. A cross-file case keeps pending generator
+exports valid while reporting a different missing item. Valid source, package
+and embedded-stdlib selections remain accepted, and the lazy loader smoke
+requires a selected item to materialize a provider after a summary-only import.
+The `source_selected_generated_export` native row selects values, a function, a
 struct, an enum and its constructors that exist only after the provider's
 module-scope generators have run, through a direct generator, an imported
 declaration macro with operands, nested generation, a target-conditional

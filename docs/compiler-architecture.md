@@ -1835,7 +1835,13 @@ whose parsed declarations still contain a module-scope generator
 (`compiler-load-module-has-pending-generator?`) is deferred rather than
 rejected, and each macro-expansion pass skips binding such a selection until a
 later pass has produced it. A module without generators has its final
-declarations at load time, so its missing items keep failing immediately. Errors use the marker's physical
+declarations at load time, so its missing items keep failing immediately. When
+an already-seen module reaches alias binding without a complete load-time
+check, a failed top-environment build reuses this path-aware validator to
+recover the selected import's canonical diagnostic. Macro setup permits pending
+generator exports; final typechecking requires complete exports. Recovery runs
+only on failure and adds no namespace scan to successful environment builds.
+Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
 import runtime fixtures and interleaved loader-state smoke guard these contracts.

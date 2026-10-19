@@ -2264,6 +2264,15 @@
           500000)
         (ast.ast-node-pool-context-expr-span-oracle-ok? pools)))))
 
+;; Every row-id accessor splits an id with the segment shift, so the expression
+;; segment size must be exactly 1 << shift (#9060).
+(test
+  compiler-ast-expr-segment-size-is-shift-power
+  (tl_test.assert-i64-eq
+    ast.ast-expr-node-pool-segment-size
+    (shl 1 ast.ast-expr-node-pool-segment-shift)
+    "expression segment size is 1 << segment shift"))
+
 ;; Force several fixed-size expression and type segments in two independently
 ;; owned contexts. Boundary ids must continue to address their original nodes,
 ;; hash-consing must survive type-segment growth, and neither context may alias
@@ -2287,19 +2296,20 @@
       (ast.ast-node-pool-context-expr-segment-bases (& a))]
     [b-expr-bases-before : i64
       (ast.ast-node-pool-context-expr-segment-bases (& b))]
+    [seg : i64 ast.ast-expr-node-pool-segment-size]
     [expr-index : i64 0]
     [type-index : i64 0]
     [a-last-expr : i64 -1]
     [b-last-expr : i64 -1]
     [a-last-type : i64 -1]
     [b-last-type : i64 -1]
-    (while (<= expr-index 131072)
+    (while (<= expr-index (* 2 seg))
       (set!
         a-last-expr
         (ast.ast-node-pool-context-expr-push
           a
           (Literal (ast.ast-lit-int expr-index))))
-      (if (<= expr-index 65536)
+      (if (<= expr-index seg)
         (set!
           b-last-expr
           (ast.ast-node-pool-context-expr-push
@@ -2328,11 +2338,11 @@
       [b-base : i64 (ast.ast-node-pool-context-base-arena b)]
       [ok : bool
         (and
-          (= a-last-expr 131072)
-          (= b-last-expr 65536)
+          (= a-last-expr (* 2 seg))
+          (= b-last-expr seg)
           (= a-last-type 2048)
           (= b-last-type 1024)
-          (= a-growth-view 131073)
+          (= a-growth-view (+ (* 2 seg) 1))
           (= a-dupe-type 1024)
           (= (ast.ast-node-pool-context-expr-segment-count a) 3)
           (= (ast.ast-node-pool-context-expr-segment-count b) 2)
@@ -2345,10 +2355,10 @@
             b-expr-bases-before
             (ast.ast-node-pool-context-expr-segment-bases (& b)))
           (compiler-ast-context-expr-int-lit? a 0 0)
-          (compiler-ast-context-expr-int-lit? a 65535 65535)
-          (compiler-ast-context-expr-int-lit? a 65536 65536)
-          (compiler-ast-context-expr-int-lit? a 131072 131072)
-          (compiler-ast-context-expr-int-lit? b 65536 -65536)
+          (compiler-ast-context-expr-int-lit? a (- seg 1) (- seg 1))
+          (compiler-ast-context-expr-int-lit? a seg seg)
+          (compiler-ast-context-expr-int-lit? a (* 2 seg) (* 2 seg))
+          (compiler-ast-context-expr-int-lit? b seg (- 0 seg))
           (= (ast.ast-node-pool-context-expr-canonical-span-count a) 1)
           (= (ast.ast-node-pool-context-expr-respan-count a) 0)
           (compiler-ast-maybe-span-start-line?
@@ -2364,7 +2374,7 @@
             (ast.ast-expr-unspan-with-segment-bases
               a-expr-bases-before
               (& (ast.ast-node-pool-context-expr-get (& a) a-growth-view)))
-            131072)
+            (* 2 seg))
           (match (ast.ast-node-pool-context-type-get a 1024)
             [(Var name) (= name 1024)]
             [_ false])

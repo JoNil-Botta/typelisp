@@ -5950,11 +5950,16 @@
                     (str_cat.str-cat collision.name "' is declared here"))))]
             [(None) diag]))))))
 
+(defenum CompilerLoadSelectedImportPolicy
+  (ImportCollisionsOnly)
+  (PendingSelectedImports)
+  (CompleteSelectedImports))
+
 (define (compiler-load-check-unqualified-imports
   [fallback-path : String]
   [decls : (& ast.AstDeclList)]
   [paths : (& paths ast.AstDeclPathList)]
-  [require-selected-items : bool]) : ResultCompilerLoadAliasCheck
+  [selected-policy : CompilerLoadSelectedImportPolicy]) : ResultCompilerLoadAliasCheck
   (let
     [state : CompilerLoadUnqualifiedImportState
       (CompilerLoadUnqualifiedImportState
@@ -5999,13 +6004,20 @@
               (Some alias)
               span))
             (when
-              (and
-                require-selected-items
-                (not
-                  (compiler-load-selected-item-present?
-                    (ModuleItem source-item)
-                    (Some source-module)
-                    decls)))
+              (match selected-policy
+                [(ImportCollisionsOnly) false]
+                [(PendingSelectedImports)
+                  (not
+                    (compiler-load-selected-item-present-or-pending?
+                      (ModuleItem source-item)
+                      (Some source-module)
+                      decls))]
+                [(CompleteSelectedImports)
+                  (not
+                    (compiler-load-selected-item-present?
+                      (ModuleItem source-item)
+                      (Some source-module)
+                      decls))])
               (return
                 (Err
                   (box
@@ -6043,13 +6055,21 @@
   [fallback-path : String]
   [decls : (& ast.AstDeclList)]
   [paths : (& paths ast.AstDeclPathList)]) : ResultCompilerLoadAliasCheck
-  (compiler-load-check-unqualified-imports fallback-path decls paths false))
+  (compiler-load-check-unqualified-imports
+    fallback-path
+    decls
+    paths
+    ImportCollisionsOnly))
 
 (define (compiler-load-check-expanded-unqualified-imports
   [fallback-path : String]
   [decls : (& ast.AstDeclList)]
   [paths : (& ast.AstDeclPathList)]) : ResultCompilerLoadAliasCheck
-  (compiler-load-check-unqualified-imports fallback-path decls paths true))
+  (compiler-load-check-unqualified-imports
+    fallback-path
+    decls
+    paths
+    CompleteSelectedImports))
 
 (define (compiler-load-session-state-surface-summary-owner-arena
   [state : (& state CompilerLoadSessionState)]) : i64

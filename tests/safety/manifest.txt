@@ -403,6 +403,11 @@ vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_m
 vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact.pop
 vector_full_unsupported_equality_nested_reject|check-fail|tests/safety/vector_full_unsupported_equality_nested_reject.tl|-|eq: unsupported type mutptr_i64
+clone_reference_prefix_move_reject|check-fail|tests/safety/clone_reference_prefix_move_reject.tl|-|use of moved value `cell`
+clone_reference_prefix_deref_reject|check-fail|tests/safety/clone_reference_prefix_deref_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_shadow_reject|check-fail|tests/safety/clone_reference_shadow_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_let_move_reject|check-fail|tests/safety/clone_reference_let_move_reject.tl|-|cannot move a `Cell` out of a shared reference
+clone_reference_direct_ref_reject|check-fail|tests/safety/clone_reference_direct_ref_reject.tl|-|clone unsupported type (& source Cell)
 clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper at LocalRawWrapper.item.ptr: (Ptr i64) has no clone capability
 gen_clone_missing_dependency_reject|check-fail|tests/safety/gen_clone_missing_dependency_reject.tl|-|gen-clone: missing explicit dependency clone-leaf
 gen_clone_cycle_reject|check-fail|tests/safety/gen_clone_cycle_reject.tl|-|gen-clone: cyclic clone dependency reaches
@@ -682,6 +687,23 @@ spmd_foreach_try_reject|check-fail|tests/safety/spmd_foreach_try_reject.tl|-|typ
 spmd_foreach_break_reject|check-fail|tests/safety/spmd_foreach_break_reject.tl|-|break inside foreach is not supported
 spmd_foreach_continue_reject|check-fail|tests/safety/spmd_foreach_continue_reject.tl|-|continue inside foreach is not supported
 spmd_unmasked_scatter_index_reject|check-fail|tests/safety/spmd_unmasked_scatter_index_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_varying_value_reject|check-fail|tests/safety/spmd_uniform_index_varying_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_local_value_reject|check-fail|tests/safety/spmd_uniform_index_local_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_conditional_value_reject|check-fail|tests/safety/spmd_uniform_index_conditional_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_slice_value_reject|check-fail|tests/safety/spmd_uniform_index_slice_value_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_uniform_index_reject|check-fail|tests/safety/spmd_foreach2_uniform_index_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_compact_uniform_index_reject|check-fail|tests/safety/spmd_compact_uniform_index_reject.tl|-|spmd-compact varying array destination indexes must use the compact slot plus a uniform offset
+spmd_scan_foreach_uniform_index_reject|check-fail|tests/safety/spmd_scan_foreach_uniform_index_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_masked_value_reject|check-fail|tests/safety/spmd_uniform_index_masked_value_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_uniform_index_masked_uniform_reject|check-fail|tests/safety/spmd_uniform_index_masked_uniform_reject.tl|-|SPMD masked if does not support gather/scatter-like array indexes
+spmd_uniform_index_write|run-exit|tests/integration/spmd_uniform_index_write.tl|42|-
+spmd_uniform_index_struct_field_reject|check-fail|tests/safety/spmd_uniform_index_struct_field_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_uniform_index_tuple_element_reject|check-fail|tests/safety/spmd_uniform_index_tuple_element_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_outer_struct_field_reject|check-fail|tests/safety/spmd_outer_struct_field_reject.tl|-|foreach cannot set binding declared outside foreach
+spmd_private_array_shared_store_reject|check-fail|tests/safety/spmd_private_array_shared_store_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_private_helper_shared_store_reject|check-fail|tests/safety/spmd_private_helper_shared_store_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_scan_helper_foreach_reject|check-fail|tests/safety/spmd_scan_helper_foreach_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_private_storage_write|run-exit|tests/safety/spmd_private_storage_write.tl|42|-
 spmd_slice_alias_call_reject|check-fail|tests/safety/spmd_slice_alias_call_reject.tl|-|cannot mutably borrow borrowed place `items`
 spmd_slice_lane_mut_ref_escape_reject|check-fail|tests/safety/spmd_slice_lane_mut_ref_escape_reject.tl|-|foreach varying value type is not supported: (&mut output i64)
 spmd_slice_scatter_reject|check-fail|tests/safety/spmd_slice_scatter_reject.tl|-|foreach does not support non-contiguous array element destination indexes
@@ -735,6 +757,8 @@ tuple_match_pattern_source_reuse_reject|check-fail|tests/safety/tuple_match_patt
 tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_after_move_reject.tl|-|use of moved value `pair.0`
 tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
 tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move a `(Tuple (Box i64) i64)` out of a shared reference
+array_shared_element_move_reject|check-fail|tests/safety/array_shared_element_move_reject.tl|-|cannot move a `String` out of a shared reference
+slice_shared_element_move_reject|check-fail|tests/safety/slice_shared_element_move_reject.tl|-|cannot move a `String` out of a shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 # A pattern matched through a shared reference binds Copy parts by value and a
 # `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`
@@ -1512,6 +1536,12 @@ set_place_shared_reject|check-fail|tests/safety/set_place_shared_reject.tl|-|set
 set_aggregate_value_before_bounds_trap|run-trap|tests/safety/set_aggregate_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
 
 set_intermediate_bounds_before_value_trap|run-trap|tests/safety/set_intermediate_bounds_before_value_trap.tl|134|array index out of bounds: index=1 length=1
+array_field_store_growth|run-exit|tests/integration/array_field_store_growth.tl|42|-
+set_array_field_value_before_bounds_trap|run-trap|tests/safety/set_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_array_field_bounds_trap|run-trap|tests/safety/set_array_field_bounds_trap.tl|134|array index out of bounds: index=1 length=1
+set_array_field_shared_reject|check-fail|tests/safety/set_array_field_shared_reject.tl|-|set! struct field requires mutable struct access
+set_unit_array_field_value_before_bounds_trap|run-trap|tests/safety/set_unit_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_array_field_indirection_before_value_trap|run-trap|tests/safety/set_array_field_indirection_before_value_trap.tl|134|array index out of bounds: index=0 length=0
 
 # A macro operand that fails to typecheck reports its own error when the macro
 # asks for its type (#8871).
@@ -1520,3 +1550,41 @@ macro_failed_operand_type_reject|check-fail|tests/safety/macro_failed_operand_ty
 # Packed field receivers retain identity without bypassing borrow checks.
 packed_field_receiver_borrow_reject|check-fail|tests/safety/packed_field_receiver_borrow_reject.tl|-|cannot assign to borrowed place `p`
 packed_field_receiver_shared_reject|check-fail|tests/safety/packed_field_receiver_shared_reject.tl|-|set! struct field requires mutable struct access
+
+# Store exits retain canonical validation of receivers, returns and unreachable tails.
+store_rhs_unreachable_reject|check-fail|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
+store_rhs_unreachable_reject-windows|check-fail-windows|tests/safety/store_rhs_unreachable_reject.tl|-|struct field assignment type mismatch
+store_rhs_return_type_reject|check-fail|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch
+store_rhs_return_type_reject-windows|check-fail-windows|tests/safety/store_rhs_return_type_reject.tl|-|return type mismatch
+store_rhs_immutable_reject|check-fail|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access
+store_rhs_immutable_reject-windows|check-fail-windows|tests/safety/store_rhs_immutable_reject.tl|-|set! struct field requires mutable struct access
+
+# Literal exits preserve return and unreachable-element type checking.
+literal_exit_return_type_reject|check-fail|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+literal_exit_return_type_reject-windows|check-fail-windows|tests/safety/literal_exit_return_type_reject.tl|-|return type mismatch
+tuple_exit_unreachable_type_reject|check-fail|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch
+tuple_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/tuple_exit_unreachable_type_reject.tl|-|tuple element type mismatch
+
+# An exiting let initializer leaves later bindings type-checked.
+let_exit_unreachable_type_reject|check-fail|tests/safety/let_exit_unreachable_type_reject.tl|-|let binding `q` type mismatch
+let_exit_unreachable_type_reject-windows|check-fail-windows|tests/safety/let_exit_unreachable_type_reject.tl|-|let binding `q` type mismatch
+
+# A cast of an exiting operand keeps its conversion type-checked.
+cast_exit_unsupported_reject|check-fail|tests/safety/cast_exit_unsupported_reject.tl|-|cast requires scalar numeric
+cast_exit_unsupported_reject-windows|check-fail-windows|tests/safety/cast_exit_unsupported_reject.tl|-|cast requires scalar numeric
+# Reference place reads preserve mutability, aliasing and consuming operands.
+replace_place_shared_reject|check-fail|tests/safety/replace_place_shared_reject.tl|-|replace! target must be a storage place
+replace_place_double_mut_reject|check-fail|tests/safety/replace_place_double_mut_reject.tl|-|E0207
+replace_place_prefix_move_reject|check-fail|tests/safety/replace_place_prefix_move_reject.tl|-|E0208
+replace_place_nested_move_reject|check-fail|tests/safety/replace_place_nested_move_reject.tl|-|E0208
+# A replace! place or &mut reborrow reaching a &mut through a shared reference
+# at any depth is rejected like a &mut borrow of it (E0207).
+replace_place_through_shared_tuple_reject|check-fail|tests/safety/replace_place_through_shared_tuple_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_ref_reject|check-fail|tests/safety/replace_place_through_shared_ref_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_array_reject|check-fail|tests/safety/replace_place_through_shared_array_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_field_reject|check-fail|tests/safety/replace_place_through_shared_field_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_box_reject|check-fail|tests/safety/replace_place_through_shared_box_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_copy_field_reject|check-fail|tests/safety/replace_place_through_shared_copy_field_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_shared_alias_reject|check-fail|tests/safety/replace_place_through_shared_alias_reject.tl|-|mutable borrow through a shared reference
+replace_place_through_inner_shared_reject|check-fail|tests/safety/replace_place_through_inner_shared_reject.tl|-|mutable borrow through a shared reference
+reborrow_through_inner_shared_array_reject|check-fail|tests/safety/reborrow_through_inner_shared_array_reject.tl|-|mutable borrow through a shared reference

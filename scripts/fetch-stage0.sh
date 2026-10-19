@@ -39,6 +39,9 @@ if [ "$#" -gt 2 ]; then
 fi
 
 TAG=${1:-${TYPELISP_STAGE0_TAG:-stage0-latest}}
+REQUESTED_TAG=$TAG
+REQUIRE_SUMS=0
+[ "$TAG" != stage0-latest ] || REQUIRE_SUMS=1
 OUT_DIR=${2:-${TYPELISP_STAGE0_DIR:-target/stage0}}
 REPO=${TYPELISP_STAGE0_REPO:-JoNil-Botta/typelisp}
 
@@ -90,7 +93,7 @@ ASSET_KIND=single
 download_asset() {
     asset=$1
     target="$TMP_DIR/$asset"
-    if curl -fsSL "$BASE_URL/$asset" -o "$target"; then
+    if asset_status=$(curl -fsSL -w '%{http_code}' "$BASE_URL/$asset" -o "$target"); then
         if [ ! -s "$target" ]; then
             echo "[stage0] downloaded stage0 asset is empty (possibly mid-republish): $asset" >&2
             rm -f "$target"
@@ -100,6 +103,7 @@ download_asset() {
         ASSET_TMP=$target
         return 0
     fi
+    [ "$asset_status" != 404 ] || RELEASE_MISSING=1
     rm -f "$target"
     return 1
 }
@@ -118,6 +122,7 @@ fetch_and_verify() {
     ASSET=
     ASSET_TMP=
     ASSET_KIND=single
+    RELEASE_MISSING=0
 
     if [ -n "$BUNDLE_ASSET" ]; then
         echo "[stage0] downloading $BUNDLE_ASSET from $REPO@$TAG"
@@ -136,7 +141,7 @@ fetch_and_verify() {
         fi
     fi
 
-    if curl -fsSL "$BASE_URL/SHA256SUMS" -o "$SUMS_TMP" 2>/dev/null; then
+    if sums_status=$(curl -fsSL -w '%{http_code}' "$BASE_URL/SHA256SUMS" -o "$SUMS_TMP" 2>/dev/null); then
         if ! command -v sha256sum >/dev/null 2>&1; then
             echo "SHA256SUMS is published but sha256sum is not available" >&2
             exit 1
@@ -150,7 +155,8 @@ fetch_and_verify() {
             return 1
         fi
     else
-        if [ "$TAG" = stage0-latest ]; then
+        [ "$sums_status" != 404 ] || RELEASE_MISSING=1
+        if [ "$REQUIRE_SUMS" -eq 1 ]; then
             echo "[stage0] SHA256SUMS is not visible for stage0-latest yet" >&2
             return 1
         fi
@@ -158,6 +164,54 @@ fetch_and_verify() {
     fi
 
     return 0
+}
+
+# Permanent generations are appended to GitHub's newest-first release list.
+# Continue past pages containing only drafts/unusable releases, but stop at the
+# newest usable generation instead of draining the historical pagination cap.
+# Compare the actual tag commit with main, not just target_commitish metadata.
+immutable_main_release() {
+    command -v jq >/dev/null 2>&1 || {
+        echo "[stage0] immutable fallback requires jq" >&2
+        return 1
+    }
+    api="https://api.github.com/repos/$REPO"
+    stage0_cr=$(printf '\r')
+    page=1
+    while :; do
+        curl -fsSL "$api/releases?per_page=100&page=$page" -o "$TMP_DIR/page.json" || return 1
+        jq -e 'type == "array"' "$TMP_DIR/page.json" >/dev/null || return 1
+        count=$(jq length "$TMP_DIR/page.json") || return 1
+        count=${count%"$stage0_cr"}
+        jq -r --arg asset "$SINGLE_ASSET" '
+        map(select(.draft == false and .prerelease == false and
+            (.published_at | type == "string" and length > 0) and
+            (.tag_name | test("^stage0-[0-9]{8}-[0-9]{6}-r[0-9]+$")) and
+            (.target_commitish | test("^[0-9a-f]{40}$")) and
+            any(.assets[]; .name == $asset and .state == "uploaded" and .size > 0) and
+            any(.assets[]; .name == "SHA256SUMS" and .state == "uploaded" and .size > 0))) |
+        sort_by([.published_at, .tag_name]) | reverse[] | [.tag_name, .target_commitish] | @tsv
+        ' "$TMP_DIR/page.json" > "$TMP_DIR/candidates" || return 1
+        while read -r candidate_tag candidate_sha; do
+            # Native Windows jq leaves CR on the final TSV field.
+            candidate_sha=${candidate_sha%"$stage0_cr"}
+            [ -n "$candidate_tag" ] || continue
+            if ! compare_status=$(curl -fsSL -w '%{http_code}' "$api/compare/$candidate_tag...main" -o "$TMP_DIR/compare.json"); then
+                [ "$compare_status" != 404 ] || continue
+                return 1
+            fi
+            if jq -e --arg sha "$candidate_sha" '
+                .base_commit.sha == $sha and (.status == "ahead" or .status == "identical")
+            ' "$TMP_DIR/compare.json" >/dev/null; then
+                printf '%s\n' "$candidate_tag"
+                return 0
+            fi
+        done < "$TMP_DIR/candidates"
+        [ "$count" -eq 100 ] || break
+        page=$((page + 1))
+    done
+    echo "[stage0] no published immutable main release with $SINGLE_ASSET and SHA256SUMS" >&2
+    return 1
 }
 
 FETCH_ATTEMPTS=${TYPELISP_STAGE0_FETCH_ATTEMPTS:-6}
@@ -169,6 +223,16 @@ attempt=1
 while :; do
     if fetch_and_verify; then
         break
+    fi
+    if [ "$TAG" = stage0-latest ] && [ "$RELEASE_MISSING" -eq 1 ]; then
+        if fallback_tag=$(immutable_main_release); then
+            echo "[stage0] $REQUESTED_TAG unavailable; falling back to $REPO@$fallback_tag" >&2
+            TAG=$fallback_tag
+            BASE_URL="https://github.com/$REPO/releases/download/$TAG"
+            if fetch_and_verify; then
+                break
+            fi
+        fi
     fi
     if [ "$attempt" -ge "$FETCH_ATTEMPTS" ]; then
         echo "failed to fetch a consistent stage0 from $REPO@$TAG after $attempt attempt(s)" >&2

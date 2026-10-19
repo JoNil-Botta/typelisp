@@ -307,6 +307,7 @@ self_test() {
         validate_published_release \
         103 false deadbeef 2026-07-23T00:00:00Z \
         "$expected_assets" "$expected_sha" "$expected_assets"
+    sh "$(dirname -- "$0")/verify-stage0-fetch.sh"
     echo "stage0 release verification self-test passed"
 }
 

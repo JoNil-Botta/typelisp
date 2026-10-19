@@ -42,6 +42,17 @@ The move checker matches expression payloads while retaining their source
 views. Conflict primaries name the read, and retained move/invalidation facts
 name the origin even under an unspanned synthetic function or lambda body.
 The unspanned root of a normalized dotted field read is viewed at that read.
+Fixed-array and Slice element reads through a reference are checked as
+transfers independently of region escape: matching lifetimes do not give a
+borrowed element an owner. The shared
+move walker distinguishes value transfers, projection-place reads and explicit
+result reads for borrows and canonical clone. Result reads follow conditional
+arms, let and match bodies, sequence tails and projection receivers. Conditions,
+initializers, scrutinees, sequence prefixes, indexes and stored/call/constructor
+values retain ordinary transfers; data-pointer operands are place reads. One
+callee classifier also drives clone's non-consuming AST adapter in the
+borrow-conflict walk, which forwards the read through the same forms. Receiver classification
+uses checked types, including reference-valued calls and projections.
 
 Linux and Windows share one lowerer and one backend. Target choices live in
 four places:
@@ -187,6 +198,27 @@ borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations
 also use native contracts outside the ordinary C signature subset.
 
+Package function externs carry `AstExternAbi.TypeLisp` and use their dependency
+bodies' internal convention. Lowering applies the same physical parameter and
+result types, including floating register words and hidden result-pointer
+positions. These declarations do not enter native C aggregate or borrowed-Slice
+checks. Before releasing typecheck caches, the driver seeds the job-owned
+representation index from resolved nominal layouts, then merges IR evidence.
+Thus a two-word value supplied only by a dependency needs no local `Pack` to
+retain its width and register classes. Encoded structural transport types also
+contribute their group facts when they occur only in an extern signature.
+Conflicting IR evidence stays unknown; no typecheck-owned layout escapes.
+The Windows batch/COFF entry point captures the same index before retiring
+frontend layouts. Its optimizer and object-or-assembly fallback share the
+primary backend's retained index until package scope cleanup. Backend admission
+rejects a TypeLisp extern's nominal value signature unless its representation
+is known. Layout capture records one-word representations too. The IR builder
+protects missing TypeLisp extern facts before ordinary occurrences, native C
+externs or referents can infer one word; that fallback is insufficient. Missing or conflicting facts produce a
+diagnostic before either assembly or object emission. Physical structural
+transports retain their explicit signature encoding, and referents do not
+require by-value layout facts.
+
 Borrowed pattern bindings share one type/lowering contract:
 `tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a
 shared reference, and otherwise retains a reference to the part. Lowering uses
@@ -318,6 +350,27 @@ store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.
 
+Store lowering uses the operand's actual flow type independently of its
+contextual value type. `Never` from a receiver, index or value stops evaluation
+before further operands, bounds checks, writes or packed-local refreshes.
+Annotations preserve that flow. Argument collectors carry an explicit `Exit`
+state, which callers propagate without snapshots, remaining arguments, calls
+or writebacks. Direct constructors and array-literal builders return their
+flow type so an exit cannot become a successful store through a state-only
+result. Box and tuple literals preserve the same flow before allocation,
+stores, later elements or result materialization. Tuple element builders carry
+that flow in `ResultLowerExpr`. Conditional exits still leave the surviving
+path available to commit.
+
+An exiting constructor or annotation reports `Never` with no value, so every
+consumer of an operand follows the same rule. Let and `with` bindings stop
+before later initializers and the body (`ResultLowerLetBindings` and
+`LowerResourceBindings` carry an `Exit` state). Match scrutinees, field, tuple
+and array projections, `deref`, casts, unary and binary operands, `if`
+conditions and owned `for` sources return the exit's state as `Never` instead
+of dispatching on the missing value. The exit itself cleans earlier `with`
+resources.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
@@ -397,6 +450,21 @@ the body, and local reads resolve through the existing value cache. Range
 proofs, masks, gather checks and scalar tails inspect both parts, including an
 unused binding; staging must neither drop an argument's checks nor introduce
 effects on inactive lanes.
+
+`compiler_spmd_logical_gang.tl` owns numeric native widths and checked logical
+gang geometry. It reuses the numeric policy's closed backend/lane enums; ABI
+projection happens in the lowerer, so generic, Linux and Windows modes have
+identical geometry. Scalar admits width 1; AVX2/AVX-512 admit logical widths
+1, 4, 8, 16, 32 and 64. A plan is a value descriptor with indexed, ordered
+pieces, with no mutable collection or ambient state. Checked piece access
+covers each logical lane once, even when a view needs several physical vectors
+or occupies only a prefix of one. Each piece carries a mask span that maps its
+logical lanes to physical lanes starting at zero and clears unoccupied lanes.
+The checked `u64` reference projection accepts arbitrary active sets and rejects
+bits beyond the logical width without shifting by 64. All descriptor arithmetic
+follows width/count validation. Conversion (#7163) and tiled-coordinate (#7192)
+consumers use these pieces and spans for their IR mask transport; this geometry
+does not itself select instructions or change source admission or fallback.
 
 SIMD `foreach` plans address their array operands as sequence variables: a
 dynamic-array descriptor, or a native Slice register group (data pointer, then
@@ -508,6 +576,21 @@ desugars the domain to private bound locals, emptiness tests, checked span and
 product traps, and nested `while` loops in every backend mode (#7190); native
 row-local gangs are #7191.
 
+Write disjointness uses the merged SPMD class of the receiver, index and
+value: a uniform index cannot authorize a parallel varying write. Array
+element writes and field or tuple-element writes share one destination
+proof, `tc-spmd-foreach-index`, applied to the nearest array element index of
+the place. Places rooted in an inline aggregate binding declared inside the
+gang are private (`tc-spmd-private-place-root`): a varying write there needs
+no proof and marks the owning binding varying, so its projections read back
+as varying lanes. Ordered scan bodies push a `ScanBody` sentinel above their
+index binding in the existing SPMD environment, and a helper called from the
+body receives it too. A uniform-index store of a varying value under that
+sentinel keeps scalar scan semantics; varying indexes still use the index
+proof. A domain index bound above the sentinel, as in a helper's `foreach`,
+ends the scan context. Masked accesses keep their canonical index rule
+regardless of the stored value's class.
+
 Borrowed aggregate patterns share `lower-bind-element-access`: a String name
 binding loads the stored handle to expose a `str` view, while nested aggregate
 patterns retain the address of inline storage. Struct fields follow the same
@@ -533,6 +616,14 @@ releasing another job cannot change those cells, even while its arena is
 current. Successful raw lower, pointer-proof and driver-lowered results carry
 the one-word lower owner through their consumers. A fresh standalone lowering
 failure releases its otherwise unreturned arenas after its diagnostic escapes.
+
+Function lowering forks the persistent type-environment store inside its
+existing scratch extent. Parameters, return/cleanup markers and local bindings
+append there while the immutable module tail stays borrowed. The inherited
+chain index detaches before a write. After IR, spans or an error escape,
+rewinding retires the store's address-keyed memos and diagnostic snapshot through
+the same helper used by function typechecking; no local environment reaches a
+later function.
 
 Lower scratch ends after lowering. At opt2, `OptimizeRequest` carries optional
 synchronous retirement authority: the exact lower owner's stable address and a
@@ -1104,6 +1195,20 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
+`lower-store-place` retains a selected array descriptor, index and inline
+field offset until the replacement value has been evaluated. The shared
+`lower-array-store-place` snapshot rules prevent later receiver/index writes
+from retargeting the store. `lower-store-destination-address` then checks the
+current length and uses the descriptor's current buffer. Struct and tuple
+projections add their `lower-inline-field-info` offsets without reading the
+element. A projection through a box or reference reads that indirection before
+the value runs, so its intermediate bounds checks remain eager. An inline
+fixed-array field of an element, as in
+`(set! (array-ref (array-ref a i).cells j) v)`, is still lowered as an eager
+array receiver: when `v` grows `a`, that store targets the buffer selected
+before the value ran (#9057). Borrow and `replace!` address selection
+continues to use `lower-mutable-place-address`.
+
 A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
 the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).
 Only a Copy aggregate's caller can still read its argument after the call: a
@@ -1472,6 +1577,19 @@ in load reuse, transitive call summaries, trap detection and builtin seeds.
 Declarations that disagree on the link classify as unknown. Exported entries
 retain their function bodies' summaries. These private-global masks do not
 describe arbitrary memory writes.
+
+Each natural-loop collection owns one lazily sized traversal workspace for its
+id walks. A walk resets its stack and discovery counts and reads only the
+initialized prefixes. Returned loops own independent membership marks, labels
+and ordered block storage; no returned loop borrows the workspace. Empty,
+acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
+arrays.
+
+Empty work records initially read one immutable zero-length array descriptor;
+each record replaces both handles before its first element write. The work
+record itself is private, never a shallow view of shared mutable storage. The
+builder borrows its CFG index and moves its independent membership marks into
+the result after their last query.
 
 Optimizer substitutions must prove their per-variable definition requirements;
 late IR may still contain mutable locals when SSA construction declines a

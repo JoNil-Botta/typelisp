@@ -1833,6 +1833,11 @@
     [signature-ty : ast.AstType (Struct signature-name)]
     [private-ty : ast.AstType (Struct private-name)]
     [malformed-ty : ast.AstType (Struct malformed-name)]
+    [external-ty : ast.AstType
+      (Struct
+        (compiler_ir_types.compiler-ir-symbol
+          "__tl_internal_abi_group_m1__RepresentationExternal"))]
+    [external-name : i64 (ci.intern "representation_external")]
     [group-id : i64
       (ast.ast-node-pool-context-type-push
         (ast.ast-node-pool-context-shared-view (& pools))
@@ -1899,12 +1904,25 @@
                   instrs))
               Ordinary))
           (& (compiler_ir_types.compiler-ir-function-seq-empty)))
-        (compiler_ir_types.compiler-ir-extern-seq-empty))]
+        (compiler_ir_types.compiler-ir-extern-seq1
+          (Extern
+            external-name
+            external-name
+            "representation_external"
+            (ast.ast-ty-func-with-pools
+              pools
+              (ast.ast-type-list-new)
+              (& external-ty))
+            (TypeLisp)
+            external-name
+            (ast.ast-extern-link-input-list-new)
+            false)))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     [index : compiler_ir_types.CompilerIrRepresentationIndex
       (compiler_ir_types.compiler-ir-representation-index-build
         bases
-        (& program))]
+        (& program)
+        (compiler_ir_types.compiler-ir-representation-index-empty))]
     (unless
       (compiler-ir-smoke-representation-kind-group?
         (compiler_ir_types.compiler-ir-representation-index-kind
@@ -1974,6 +1992,15 @@
           index
           (& (String))))
       (return 9))
+    (unless
+      (compiler-ir-smoke-representation-kind-group?
+        (compiler_ir_types.compiler-ir-representation-index-kind
+          bases
+          index
+          (& external-ty))
+        2
+        1)
+      (return 10))
     0))
 
 ;; --- private SPMD ABI integrity (#7405) ---------------------------------------

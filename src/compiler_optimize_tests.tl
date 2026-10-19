@@ -1,6 +1,7 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import compiler_ir_types as ir)
 (import compiler_ir_text as irt)
@@ -3169,6 +3170,15 @@
         (set! ok false)))
     ok))
 
+;; The carry while the survivors' source is still live, so nothing is refused.
+(define (opt-input-carry-live
+  [pools : ast.AstNodePoolContext]
+  [input : (&mut input opt.OptOptimizerInput)]
+  [survivors : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (match (opt.opt-optimizer-input-carry pools input survivors false)
+    [(Carried carried) carried]
+    [(Unplaced _) (ir.compiler-ir-function-seq-empty)]))
+
 ;; Every index body is placed as the stage finishes it, whether its caller was
 ;; rewritten or not, and whether or not it survives pruning. The survivors then
 ;; need no copy.
@@ -3200,7 +3210,7 @@
     [out-loop-leaf-calls : i64
       (opt-input-arena-leaf-calls (& out) "input_loop")]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry
+      (opt-input-carry-live
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (owned_view.compiler-owned-shared-view survivors))]
@@ -3238,7 +3248,7 @@
     [placed-before? : bool
       (opt-input-arena-all-placed? (& input) (& functions))]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry
+      (opt-input-carry-live
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         functions)]
@@ -3257,6 +3267,93 @@
       "the copied input_dead is intact")
     (unsafe
       (arena.tl_arena_destroy bodies))))
+
+;; The placed main and the never placed input_loop, as separate survivor
+;; sequences over the same bodies.
+(define (opt-input-arena-mixed-survivors
+  [candidates : (& candidates ir.CompilerIrFunctionSeq)]) : ir.CompilerIrFunctionSeq
+  (let
+    [builder : ir.CompilerIrFunctionBuilder
+      (ir.compiler-ir-function-builder-with-capacity 2)]
+    (ir.compiler-ir-function-builder-push!
+      (&mut builder)
+      (ir.compiler-ir-function-seq-ref candidates 0))
+    (ir.compiler-ir-function-builder-push!
+      (&mut builder)
+      (ir.compiler-ir-function-seq-ref candidates 1))
+    (ir.compiler-ir-function-builder-to-seq builder)))
+
+;; Once the lower-IR source has retired, a survivor the stage did not place
+;; would be read from freed storage, so the carry copies nothing and names it;
+;; the optimizer turns that into an internal compiler error. While the source
+;; is live the same survivor is copied, and a placed one passes either way.
+(test
+  optimizer-input-carry-refuses-unplaced-survivors-after-retirement
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [input : opt.OptOptimizerInput
+      (opt.opt-optimizer-input-new (opt.opt-optimizer-input-carrier 2) 4)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [placed-main : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        0
+        (ir.compiler-ir-function-seq-borrow (& functions) 0))]
+    [candidates : ir.CompilerIrFunctionSeq
+      (let
+        [builder : ir.CompilerIrFunctionBuilder
+          (ir.compiler-ir-function-builder-with-capacity 2)]
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-main)
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-function-seq-ref (& functions) 1))
+        (ir.compiler-ir-function-builder-to-seq builder))]
+    [placed-only : ir.CompilerIrFunctionSeq
+      (let
+        [builder : ir.CompilerIrFunctionBuilder
+          (ir.compiler-ir-function-builder-with-capacity 1)]
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-function-seq-ref (& candidates) 0))
+        (ir.compiler-ir-function-builder-to-seq builder))]
+    [refused : String
+      (match (opt.opt-optimizer-input-carry
+        pools
+        (&mut input)
+        (opt-input-arena-mixed-survivors (& candidates))
+        true)
+        [(Carried _) ""]
+        [(Unplaced name) name])]
+    [placed-carried : i64
+      (match (opt.opt-optimizer-input-carry pools (&mut input) placed-only true)
+        [(Carried carried) carried.len]
+        [(Unplaced _) -1])]
+    [copied : ir.CompilerIrFunctionSeq
+      (opt-input-carry-live
+        pools
+        (&mut input)
+        (opt-input-arena-mixed-survivors (& candidates)))]
+    (test.assert-owned-string-eq
+      refused
+      "input_loop"
+      "a retired source refuses the unplaced survivor by name")
+    (test.assert-i64-eq
+      placed-carried
+      1
+      "a placed survivor is carried after retirement")
+    (test.assert-i64-eq copied.len 2 "a live source carries both survivors")
+    (test.assert-true
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (ir.compiler-ir-function-seq-borrow (& copied) 0))
+      "the placed survivor is used as is")
+    (test.assert-false
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (ir.compiler-ir-function-seq-borrow (& copied) 1))
+      "the unplaced survivor is a copy")
+    (opt.opt-optimizer-input-release-all! (&mut input))))
 
 ;; Level 1 has no input arena: the stage places nothing and the loop reads the
 ;; stage's own sequence in place.
@@ -3277,7 +3374,7 @@
       (match inlined
         [(Program functions _) functions])]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry
+      (opt-input-carry-live
         (ast.ast-node-pool-reader-context-current)
         (&mut input)
         (owned_view.compiler-owned-shared-view out))]
@@ -3340,7 +3437,7 @@
           (ir.compiler-ir-function-seq-ref (& functions) 3))
         (ir.compiler-ir-function-builder-to-seq builder))]
     [carried : ir.CompilerIrFunctionSeq
-      (opt.opt-optimizer-input-carry pools (&mut input) survivors)]
+      (opt-input-carry-live pools (&mut input) survivors)]
     [release : opt.OptOptimizerInputRelease input.release]
     [copy (ir.compiler-ir-function-seq-borrow (& carried) 3)]
     (test.assert-true dead-placed? "a placed body matches its record")
@@ -30776,7 +30873,8 @@
         (Program
           (ir.compiler-ir-global-seq-empty)
           functions
-          (ir.compiler-ir-extern-seq-empty))))))
+          (ir.compiler-ir-extern-seq-empty)))
+      (ir.compiler-ir-representation-index-empty))))
 
 (define (opt-ssa-representation-index-for-function
   [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrRepresentationIndex
@@ -49555,6 +49653,262 @@
       ;; inside another loop
       [nested? 3]
       [else 42])))
+
+(define (opt-natural-loop-work-test-blocks [count : i64] [cyclic? : bool]) : ir.CompilerIrBlockList
+  (let
+    [text : String "entry:\n jump h0\n"]
+    (for [id (iterator.range 0 count)]
+      (set!
+        text
+        (str_cat.str-cat
+          text
+          "h"
+          (string.int->string id)
+          ":\n "
+          (if (and (= (+ id 1) count) (not cyclic?))
+            "return 0"
+            (str_cat.str-cat
+              "jump h"
+              (string.int->string
+                (if (= (+ id 1) count)
+                  0
+                  (+ id 1)))))
+          "\n")))
+    (irt.blocks text)))
+
+(define (opt-natural-loop-test-same?
+  [index : (& index opt.OptCfgIndex)]
+  [left : (& left opt.OptNaturalLoop)]
+  [right : (& right opt.OptNaturalLoop)]) : bool
+  (let
+    [left-labels : opt.OptLabelSet (opt.opt-natural-loop-body left)]
+    [right-labels : opt.OptLabelSet (opt.opt-natural-loop-body right)]
+    [left-blocks : ir.CompilerIrBlockList
+      (opt.opt-natural-loop-body-blocks left)]
+    [right-blocks : ir.CompilerIrBlockList
+      (opt.opt-natural-loop-body-blocks right)]
+    [left-seq (ir.compiler-ir-block-list-view left-blocks)]
+    [right-seq (ir.compiler-ir-block-list-view right-blocks)]
+    [same : bool
+      (and
+        (=
+          (opt.opt-natural-loop-header left)
+          (opt.opt-natural-loop-header right))
+        (= (opt.opt-natural-loop-latch left) (opt.opt-natural-loop-latch right))
+        (= (opt.opt-label-count left-labels) (opt.opt-label-count right-labels))
+        (= (array-length left-seq) (array-length right-seq))
+        (match (opt.opt-natural-loop-preheader left)
+          [(No)
+            (match (opt.opt-natural-loop-preheader right)
+              [(No) true]
+              [_ false])]
+          [(Some label)
+            (match (opt.opt-natural-loop-preheader right)
+              [(Some other) (= label other)]
+              [_ false])]))]
+    (when
+      same
+      (for [id (iterator.range 0 (opt.opt-label-count left-labels))]
+        (when
+          (!=
+            (opt.opt-label-ref left-labels id)
+            (opt.opt-label-ref right-labels id))
+          (set! same false)))
+      (for [id (iterator.range 0 (array-length left-seq))]
+        (match (& (array-ref left-seq id))
+          [(Block label _)
+            (match (& (array-ref right-seq id))
+              [(Block other _) (when (!= label other) (set! same false))])]))
+      (for [id (iterator.range -1 (+ (array-length index.labels) 1))]
+        (when
+          (!=
+            (opt.opt-natural-loop-body-contains-id? left id)
+            (opt.opt-natural-loop-body-contains-id? right id))
+          (set! same false))))
+    same))
+
+(test
+  natural-loop-workspace-retains-independent-loops
+  (let
+    [work : opt.OptNaturalLoopWork
+      (opt.OptNaturalLoopWork (__tl_make-array i64 0) (__tl_make-array i64 0))]
+    [large : ir.CompilerIrBlockList (opt-natural-loop-work-test-blocks 40 true)]
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt-natural-loop-work-test-blocks 40 true))]
+    [header : i64 (ir.compiler-ir-label "h0")]
+    [latch : i64 (ir.compiler-ir-label "h39")]
+    [kept : opt.OptNaturalLoop
+      (opt.opt-natural-loop-build
+        (&mut work)
+        large
+        context.pred-map
+        context.reachable
+        header
+        latch)]
+    [expected : opt.OptNaturalLoop
+      (opt.opt-natural-loop-build-by-label
+        large
+        context.pred-map
+        context.reachable
+        header
+        latch)]
+    [found-address : u64
+      (unsafe
+        (ptr->int (__tl_array-data work.found)))]
+    [stack-address : u64
+      (unsafe
+        (ptr->int (__tl_array-data work.stack)))]
+    [small : ir.CompilerIrBlockList (opt-natural-loop-nested-blocks)]
+    [small-context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt-natural-loop-nested-blocks))]
+    (test.assert-i64-eq
+      (opt.opt-label-count (opt.opt-natural-loop-body kept))
+      40
+      "exercise the full-scan body path before smaller walks reuse its buffers")
+    (for [round (iterator.range 0 5)]
+      (for [id (iterator.range 0 (array-length work.found))]
+        (set! (array-ref work.found id) -999)
+        (set! (array-ref work.stack id) -999))
+      (let
+        [next-header : i64
+          (ir.compiler-ir-label
+            (cond [(= round 0) "outer"] [(= round 4) "missing"] [else "inner"]))]
+        [next-latch : i64
+          (ir.compiler-ir-label
+            (cond
+              [(= round 0) "outer-latch"]
+              [(= round 1) "inner-body"]
+              [(= round 2) "inner"]
+              [(= round 4) "inner-body"]
+              [else "missing"]))]
+        [next : opt.OptNaturalLoop
+          (opt.opt-natural-loop-build
+            (&mut work)
+            small
+            small-context.pred-map
+            small-context.reachable
+            next-header
+            next-latch)]
+        [oracle : opt.OptNaturalLoop
+          (opt.opt-natural-loop-build-by-label
+            small
+            small-context.pred-map
+            small-context.reachable
+            next-header
+            next-latch)]
+        (test.assert-true
+          (opt-natural-loop-test-same? small-context.index next oracle)
+          "nested, self and missing-latch walks read only their initialized prefixes")))
+    (test.assert-true
+      (and
+        (=
+          found-address
+          (unsafe
+            (ptr->int (__tl_array-data work.found))))
+        (=
+          stack-address
+          (unsafe
+            (ptr->int (__tl_array-data work.stack)))))
+      "later walks reuse both existing buffers")
+    (test.assert-true
+      (opt-natural-loop-test-same? context.index kept expected)
+      "later walks and poisoned scratch cannot mutate an earlier loop")))
+
+(test
+  natural-loop-workspace-collection-shapes
+  (let
+    [sources
+      (array
+        ""
+        "entry:\n return 0"
+        "entry:\n jump loop\nloop:\n jump loop"
+        "entry:\n branch true, left, right\nleft:\n jump left\nright:\n jump right"
+        "entry:\n return 0\ndead:\n jump dead"
+        "entry:\n jump missing"
+        "entry:\n jump loop\nloop:\n jump loop\nloop:\n return 0")]
+    [counts : (Array i64 7) (array 0 0 1 2 0 0 1)]
+    (for [id (iterator.range 0 (array-length sources))]
+      (let
+        [blocks : ir.CompilerIrBlockList
+          (irt.blocks (string.copy (& (array-ref sources id))))]
+        [context : opt.OptCfgContext
+          (opt.opt-cfg-context-build
+            (irt.blocks (string.copy (& (array-ref sources id)))))]
+        [loops : opt_natural_loop_vec.Vec
+          (opt.opt-cfg-natural-loops-with-context
+            (irt.blocks (string.copy (& (array-ref sources id))))
+            context)]
+        [seq (opt_natural_loop_vec.view loops)]
+        [work : opt.OptNaturalLoopWork
+          (opt.OptNaturalLoopWork
+            (__tl_make-array i64 0)
+            (__tl_make-array i64 0))]
+        (test.assert-i64-eq
+          (array-length seq)
+          (array-ref counts id)
+          "empty, acyclic, self, sibling, unreachable and malformed CFG loop counts")
+        (for [pos (iterator.range 0 (array-length seq))]
+          (let
+            [loop : (& loops opt.OptNaturalLoop) (& (array-ref seq pos))]
+            [header : i64 (opt.opt-natural-loop-header loop)]
+            [latch : i64 (opt.opt-natural-loop-latch loop)]
+            [oracle : opt.OptNaturalLoop
+              (opt.opt-natural-loop-build-by-label
+                blocks
+                context.pred-map
+                context.reachable
+                header
+                latch)]
+            [direct : opt.OptNaturalLoop
+              (opt.opt-natural-loop-build
+                (&mut work)
+                blocks
+                context.pred-map
+                context.reachable
+                header
+                latch)]
+            (test.assert-true
+              (opt-natural-loop-test-same? context.index loop oracle)
+              "collection preserves discovery, block order, membership and preheaders")
+            (test.assert-true
+              (opt-natural-loop-test-same? context.index direct oracle)
+              "direct builder agrees with the fallback")))
+        (when
+          (not context.index.labels-unique)
+          (test.assert-i64-eq
+            (array-length work.found)
+            0
+            "duplicate-label fallback never sizes the id workspace")
+          (test.assert-i64-eq
+            (array-length work.stack)
+            0
+            "duplicate-label fallback never sizes the stack"))))))
+
+(cfg
+  test
+  (define (opt-natural-loop-test-collection-bytes
+    [blocks : ir.CompilerIrBlockList]
+    [context : (& context opt.OptCfgContext)]) : i64
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [start : i64
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes home)]
+      [_loops : opt_natural_loop_vec.Vec
+        (opt.opt-cfg-natural-loops-with-context blocks context)]
+      (-
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes home)
+        start))))
+
+(test
+  natural-loop-workspace-is-lazy
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (opt-natural-loop-work-test-blocks 1024 false)]
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt-natural-loop-work-test-blocks 1024 false))]
+    (test.assert-true
+      (< (opt-natural-loop-test-collection-bytes blocks context) 1024)
+      "an acyclic collection allocates no CFG-sized traversal buffers")))
 
 (define (compiler-optimize-natural-loop-self-test) : i64
   (let
@@ -76958,12 +77312,23 @@ return 0" true)
             (unsafe
               (ptr->int (__tl_array-data kept-context.index.labels))))
           "no candidate preserves context identity")])
+    ;; #9013: the input verifies, so the deliberately rejected rewrite is an
+    ;; internal error; captured here, the commit still returns its input.
+    (opt.opt-rewrite-ice-capture! true)
     (match (opt.opt-loop-call-function-with-context-result
       opt-loop-call-test-reject
       (& context)
       false
       (& func))
       [(Result rolled-back old-context)
+        (let
+          [ice : String (opt.opt-rewrite-ice-last)]
+          (opt.opt-rewrite-ice-capture! false)
+          (test.assert-true
+            (string.contains
+              (& ice)
+              "pass `loop_call` rewrote verified function")
+            "a rejected rewrite of a verified input is an internal error"))
         (test.assert-i64-eq
           (opt.opt-function-frame rolled-back)
           0
@@ -77064,8 +77429,13 @@ return 0" true)
         (ptr->int (__tl_array-data context.index.labels)))]
     [called? : bool false]
     [expected? : bool (and candidate? (not invalid?) change? (not reject?))]
+    ;; #9013: past the gate the input verifies, so a rejected change is an
+    ;; internal error. An input the gate turns down never reaches the rewrite.
+    [ice-expected? : bool (and candidate? (not invalid?) change? reject?)]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
     [result : opt.OptFunctionRewriteResult
       (opt.opt-branch-function-rewrite
+        "transaction_test"
         (owned_view.compiler-owned-shared-view func)
         context
         false
@@ -77083,9 +77453,25 @@ return 0" true)
               1
               0)
             change?)))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
     (test.assert-true
       (= called? (and candidate? (not invalid?)))
       "candidate and pre-verification gate transform execution")
+    (test.assert-true
+      (= (not (string.eq ice "")) ice-expected?)
+      "only a rejected rewrite of a gate-verified input is an internal error")
+    (when
+      ice-expected?
+      (test.assert-true
+        (and
+          (string.contains (& ice) "optimizer: internal error")
+          (string.contains (& ice) "pass `transaction_test`")
+          (string.contains
+            (& ice)
+            (& (ir.compiler-ir-symbol-text (opt.opt-function-name (& func)))))
+          (string.contains (& ice) "verifier rejects"))
+        "the internal error names the pass, the function and the verdict"))
     (test.assert-true
       (opt.opt-function-eq
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -77137,7 +77523,182 @@ return 0" true)
   (opt-branch-transaction-test-case true false false true false)
   (opt-branch-transaction-test-case true false true false false)
   (opt-branch-transaction-test-case true false true true false)
-  (opt-branch-transaction-test-case true false true true true))
+  (opt-branch-transaction-test-case true false true true true)
+  (opt-branch-transaction-test-case true true true true true))
+
+;; #9013: the commit for an input nothing has verified keeps today's fallback.
+;; A deliberately broken plan comes back as the unchanged input, with no
+;; internal error.
+(test
+  unverified-rewrite-commit-falls-back
+  (let
+    [func : ir.CompilerIrFunction (opt-loop-call-test-fixture)]
+    [snapshot : ir.CompilerIrFunction
+      (ir.compiler-ir-clone-function
+        (ast.ast-node-pool-reader-context-current)
+        (& func))]
+    [broken : ir.CompilerIrBlockList
+      (let
+        [blocks (opt.opt-function-blocks func)]
+        (opt.opt-bool-branch-clone-blocks blocks))]
+    [_edit : unit (opt-branch-transaction-test-edit broken true)]
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [result : opt.OptFunctionRewriteResult
+      (opt.opt-function-rewrite-commit
+        func
+        context
+        (opt.OptBlockRewriteResult.Result broken 0 true))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (string.eq ice "")
+      "no internal error on the fallback path")
+    (match result
+      [(Result next _ changed?)
+        (test.assert-true (not changed?) "a rejected plan is not committed")
+        (test.assert-true
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            next
+            snapshot)
+          "the fallback returns the exact input")])))
+
+;; #9013: bounds_group runs below the pipeline on a body nothing promises
+;; verifies: a function SSA construction could not rename keeps its duplicate
+;; definitions through every pass that refused it. The pass entry's first round
+;; therefore verifies the candidate itself. Trusting it would run the rewrite
+;; on the unverified body and report the verifier's rejection as an internal
+;; error.
+(define (opt-bg-duplicate-def-text) : String
+  "entry:
+     %2 = sub %0, 1 : i64
+     bounds_check %2, 2 message \"bg_dup_a\"
+     %3 = sub %0, 2 : i64
+     bounds_check %3, 2 message \"bg_dup_b\"
+     %4 = gep %1, %2 : i64
+     %5 = load %4 : i64
+     %6 = gep %1, %3 : i64
+     %7 = load %6 : i64
+     %8 = add %5, %7 : i64
+     jump tail
+   tail:
+     %9 = add %8, 1 : i64
+     %9 = add %8, 2 : i64
+     return %9")
+
+(test
+  bounds-group-entry-verifies-its-first-round
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [valid : ir.CompilerIrFunction
+      (opt-bg-text-function "bg_entry_valid" (opt-bg-stack-pair-text))]
+    [unverified : ir.CompilerIrFunction
+      (opt-bg-text-function "bg_entry_unverified" (opt-bg-duplicate-def-text))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [valid-out : ir.CompilerIrFunction (opt.opt-bg-function bases (& valid))]
+    [unverified-out : ir.CompilerIrFunction
+      (opt.opt-bg-function bases (& unverified))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (not (opt.opt-verify-ok? (& (opt.opt-verify-function (& unverified)))))
+      "the fixture reaches bounds_group unverified")
+    (test.assert-true
+      (not (opt.opt-function-eq bases valid-out valid))
+      "the verifying twin is rewritten")
+    (test.assert-true
+      (string.eq ice "")
+      "an unverified body raises no internal error")
+    (test.assert-true
+      (opt.opt-function-eq bases unverified-out unverified)
+      "an unverified body is handed back unchanged")))
+
+;; #9013: preheaders commits its own rewrite behind `opt-verify-gate`, so a
+;; rejected post-verify is an internal error. A correct pass cannot be made to
+;; break a verifying input, so the test tells the gate that a body with a
+;; duplicate definition verifies: the definition survives preheader synthesis,
+;; the post-verify rejects the result, and the commit raises and rolls back.
+;; Told the truth, the gate turns the body down and nothing is raised.
+(define (opt-preheaders-ice-function [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrFunction
+  (Function
+    (opt-test-symbol "preheaders_ice")
+    (ir.compiler-ir-param-seq-empty)
+    (I64)
+    1
+    blocks
+    Ordinary))
+
+(define (opt-preheaders-ice-broken) : ir.CompilerIrFunction
+  (opt-preheaders-ice-function
+    (irt.blocks
+      "entry:
+         %0 = mov 1 : i64
+         %0 = mov 2 : i64
+         branch true, pre-one, pre-two
+       pre-one:
+         jump loop
+       pre-two:
+         jump loop
+       loop:
+         branch true, body, exit
+       body:
+         jump loop
+       exit:
+         return %0")))
+
+(define (opt-preheaders-ice-run
+  [verified? : bool]
+  [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match (opt.opt-loop-preheaders-function-with-context-result
+    (opt.opt-cfg-context-build (opt.opt-function-blocks func))
+    verified?
+    func)
+    [(Result next _) next]))
+
+(test
+  preheaders-rejected-rewrite-is-internal-error
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [valid : ir.CompilerIrFunction
+      (opt-preheaders-ice-function (opt-natural-loop-no-preheader-blocks))]
+    [broken : ir.CompilerIrFunction (opt-preheaders-ice-broken)]
+    [_valid-capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [valid-out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run
+        true
+        (opt-preheaders-ice-function (opt-natural-loop-no-preheader-blocks)))]
+    [valid-ice : String (opt.opt-rewrite-ice-last)]
+    [_refused-capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [refused-out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run false (opt-preheaders-ice-broken))]
+    [refused-ice : String (opt.opt-rewrite-ice-last)]
+    [_trusted-capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [trusted-out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run true (opt-preheaders-ice-broken))]
+    [trusted-ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (and
+        (string.eq valid-ice "")
+        (not (opt.opt-function-eq bases valid-out valid)))
+      "a verifying body gets its preheader and raises nothing")
+    (test.assert-true
+      (and
+        (string.eq refused-ice "")
+        (opt.opt-function-eq bases refused-out broken))
+      "the gate turns an unverified body down without raising")
+    (test.assert-true
+      (and
+        (string.contains
+          (& trusted-ice)
+          "pass `preheaders` rewrote verified function `preheaders_ice`")
+        (string.contains (& trusted-ice) "duplicate var definition"))
+      "a rejected preheaders rewrite is an internal error naming the pass, the function and the verdict")
+    (test.assert-true
+      (opt.opt-function-eq bases trusted-out broken)
+      "the rejected rewrite rolls back to the input")))
 
 (define (opt-thread-branch-context-test [verified? : bool]) : unit
   (let
@@ -79752,3 +80313,14 @@ return 0" true)
               (ir.compiler-ir-label "body__bce_fast"))
             -1
             "midpoint overflow selects the slow copy while hi + 1 still fits"))))))
+
+(test
+  natural-loop-workspace-empty-sentinel-is-immutable
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-natural-loop-nested-blocks)]
+    [_loops : opt_natural_loop_vec.Vec (opt.opt-cfg-natural-loops blocks)]
+    (test.assert-i64-eq
+      (array-length opt-natural-loop-work-empty-slots)
+      0
+      "collection-local descriptor replacement leaves the shared empty slots unchanged")
+    unit))

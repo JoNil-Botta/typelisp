@@ -21,6 +21,7 @@
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+spmd_uniform_index_write|all|0,1,2|tests/integration/spmd_uniform_index_write.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
 invariant_loop_call_skipped|all|0,2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|stage-stdlib
@@ -113,6 +114,7 @@ array_qualified_macros|all|-|tests/integration/array_qualified_macros.tl|42|-|-|
 fixed_array_core_ops|all|-|tests/integration/fixed_array_core_ops.tl|42|-|-|-|-
 array_stride_24byte|all|-|tests/integration/array_stride_24byte.tl|42|-|-|-|-
 replace_fixed_array_elements|all|-|tests/integration/replace_fixed_array_elements.tl|42|-|-|stdlib/string.tl stdlib/test.tl|-
+array_reference_reads|all|0,1,2|tests/integration/array_reference_reads.tl|42|-|-|stdlib/string.tl stdlib/test.tl|-
 replace_places|all|-|tests/integration/replace_places.tl|42|-|-|stdlib/string.tl stdlib/test.tl stdlib/comptime.tl|-
 replace_large_values|all|-|tests/integration/replace_large_values.tl|42|-|-|stdlib/test.tl|-
 slice_whole_array|all|-|tests/integration/slice_whole_array.tl|42|-|-|-|-
@@ -180,6 +182,7 @@ compile_profile_result_import|all|-|tests/integration/compile_profile_result_imp
 call_eval_order|all|-|tests/integration/call_eval_order.tl|42|-|-|-|-
 operator_operand_snapshot|all|0,1,2|tests/integration/operator_operand_snapshot.tl|42|-|-|stdlib/test.tl|-
 set_place_eval_order|all|0,1,2|tests/integration/set_place_eval_order.tl|42|-|-|stdlib/test.tl stdlib/string.tl|-
+array_field_store_growth|all|0,1,2|tests/integration/array_field_store_growth.tl|42|-|-|stdlib/test.tl|-
 call_arg_snapshot|all|0,1,2|tests/integration/call_arg_snapshot.tl|42|-|-|-|-
 call_arg_snapshot_c_abi|all|0,1,2|tests/integration/call_arg_snapshot_c_abi.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
@@ -374,6 +377,7 @@ constructor_alias_two_phase|all|-,0,2|tests/integration/constructor_alias_two_ph
 arena_poison_clone_survives|all|-|tests/integration/arena_poison_clone_survives.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 arena_poison_stale_array_trap|linux|-|tests/integration/arena_poison_stale_array_trap.tl|139|-|-|stdlib/arena.tl stdlib/string.tl|-
 calc|all|-|tests/integration/calc.tl|14|-|-|token.tl|-
+clone_reference_referent|all|0,1,2|tests/integration/clone_reference_referent.tl|42|-|-|-|-
 clone_deep_copy|all|-|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 clone_macro_handoff|all|-|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
 explicit_clone_generation|all|-|tests/integration/explicit_clone_generation.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl|-
@@ -981,3 +985,9 @@ global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_s
 indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|-|benchmarks/indirect_callee_never/baseline.c|stage-stdlib
 extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
 indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
+
+store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|stdlib/test.tl|-
+store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
+exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
+reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-

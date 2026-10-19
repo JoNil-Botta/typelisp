@@ -576,8 +576,76 @@
       (cdiag.compiler-diagnostic-code-typecheck-type-mismatch)
       "typecheck")))
 
+(define (compiler-typecheck-clone-referent-tests-ok?) : bool
+  (let
+    [prefix : String
+      "(defenum Value (Empty) (Text String))
+(define (take [value : Value]) : unit unit)
+"]
+    [flows : (Array String 8)
+      (array
+        "(deref r)"
+        "(ann (deref r) : Value)"
+        "(begin 0 (deref r))"
+        "(if flag (deref r) (deref r))"
+        "(let [flag true] (deref r))"
+        "(match flag [true (deref r)] [false (deref r)])"
+        "(unsafe 0 (deref r))"
+        "(deref (if flag r r))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 8)]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat
+              (clone prefix)
+              "(define (copy [r : (& r Value)] [flag : bool]) : Value (clone "
+              (clone (array-ref flows index))
+              "))")))))
+    (and
+      ok
+      (compiler-typecheck-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (&mut r Value)]) : Value (clone (deref r)))"))
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : Value (deref r))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : Value
+  (clone (begin (take (deref r)) (deref r))))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : Value
+  (clone (let [value (deref r)] value)))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-code-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (clone [value : Value]) : Value value)
+(define (copy [r : (& r Value)]) : Value (clone (deref r)))")
+        "E0208"
+        "typecheck")
+      (compiler-typecheck-error-ok?
+        (str_cat.str-cat
+          (clone prefix)
+          "(define (copy [r : (& r Value)]) : (& r Value) (clone r))")
+        "typecheck: clone unsupported type (& r Value)"))))
+
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
+    (compiler-typecheck-clone-referent-tests-ok?)
     (clone_tests.clone-name-set-smoke-ok?)
     (clone_tests.clone-root-entries-smoke-ok?)
     (compiler-typecheck-ok?
@@ -1018,7 +1086,7 @@
                               (and
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view packet))
+                                    packet)
                                   24)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1041,7 +1109,7 @@
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view outer))
+                                    outer)
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1058,8 +1126,7 @@
                                     "tail")
                                   12)
                                 (=
-                                  (tc_core.tc-inline-aggregate-layout-size
-                                    (tc_core.tc-global-shared-view wide))
+                                  (tc_core.tc-inline-aggregate-layout-size wide)
                                   48)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
@@ -1117,10 +1184,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Vec2"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        16)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1206,10 +1270,7 @@
                   (compiler-typecheck-fixture-nominal-id program "Mixed"))
                   [(Ok layout)
                     (and
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
-                        48)
+                      (= (tc_core.tc-inline-aggregate-layout-size layout) 48)
                       (=
                         (tc_core.tc-inline-aggregate-layout-align
                           (tc_core.tc-global-shared-view layout))
@@ -1289,10 +1350,7 @@
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
     [(Ok layout)
       (and
-        (=
-          (tc_core.tc-inline-aggregate-layout-size
-            (tc_core.tc-global-shared-view layout))
-          want-size)
+        (= (tc_core.tc-inline-aggregate-layout-size layout) want-size)
         (=
           (tc_core.tc-inline-aggregate-layout-align
             (tc_core.tc-global-shared-view layout))
@@ -1812,8 +1870,7 @@
                             (compiler-typecheck-inline-field-id-at fields 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))
@@ -1878,8 +1935,7 @@
                             (compiler-typecheck-inline-variant-id-at variants 3)]
                           [_ -1])]
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-size
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-size layout)
                         24)
                         unit
                         (set! ok false))
@@ -9963,8 +10019,119 @@
     (begin (cleanup-file-handle p.a) 0)))")
       "typecheck: cleanup obligation of `p` is only partly discharged at the end of its let scope")))
 
+(define (compiler-typecheck-place-read-receivers-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(defstruct Outer (pt Pt))
+(define (bump [p : (&mut p Pt)]) : unit (set! p.x (+ p.x 1)))
+(define (two [a : (&mut a Pt)] [b : (&mut b Pt)]) : unit unit)
+(define (take [p : Pt]) : unit unit)
+"]
+    [valid : (Array String 6)
+      (array
+        "(define (probe [p : (&mut p Pt)]) : i64 (let [old (replace! (deref p) (Pt \"z\" 2))] old.x))"
+        "(define (probe [p : (&mut p Outer)]) : i64 (let [old (replace! (deref p).pt (Pt \"z\" 2))] old.x))"
+        "(define (probe [p : (&mut p Pt)]) : i64 (bump (&mut (deref p))) (deref p).x)"
+        "(define (probe [p : (& p (Box i64))]) : i64 (deref (deref p)))"
+        "(define (probe [p : (Box (Box String))]) : String (deref (deref p)))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [_old (replace! (deref (deref p)) \"z\")] unit))")]
+    [invalid : (Array String 9)
+      (array
+        "(define (probe [p : (& p Pt)]) : Pt (replace! (deref p) (Pt \"z\" 2)))"
+        "(define (probe [p : (& p Pt)]) : unit (bump (&mut (deref p))))"
+        "(define (probe [p : (&mut p Pt)]) : unit (two (&mut (deref p)) (&mut (deref p))))"
+        "(define (probe [p : (&mut p Pt)]) : Pt (deref p))"
+        "(define (probe [p : (&mut p Pt)]) : unit (bump (&mut (deref (begin (take (deref p)) p)))))"
+        "(define (probe [p : (& p (Box String))]) : unit (let [_old (deref (deref p))] unit))"
+        "(define (probe [p : (&mut p (Box String))]) : unit (let [_old (deref (deref p))] unit))"
+        "(define (probe [p : (Box (Box String))]) : String (let [old (deref (deref p))] (deref (deref p))))"
+        "(define (probe [p : (& p (Box String))]) : unit (let [_old (replace! (deref (deref p)) \"z\")] unit))")]
+    [codes : (Array String 9)
+      (array
+        "E0215"
+        "E0207"
+        "E0207"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0208"
+        "E0215")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))
+            (clone (array-ref codes index))
+            "typecheck"))))
+    ok))
+
+;; A `replace!` place or `&mut` reborrow that reaches a `&mut` through a shared
+;; reference, at any depth, writes through that shared reference.
+(define (compiler-typecheck-place-through-shared-ok?) : bool
+  (let
+    [prefix : String
+      "(defstruct Pt (name String) (x i64))
+(defstruct Holder (m (&mut program Pt)))
+(define (bump [p : (&mut p Pt)]) : unit (set! p.x (+ p.x 1)))
+"]
+    [valid : (Array String 3)
+      (array
+        "(define (probe [h : (&mut (Tuple (&mut Pt) i64))]) : i64 (let [old (replace! (deref (tuple-ref (deref h) 0)) (Pt \"z\" 2))] old.x))"
+        "(define (probe [h : (&mut (&mut Pt))]) : i64 (let [old (replace! (deref (deref h)) (Pt \"z\" 2))] old.x))"
+        "(define (probe [h : (&mut Holder)]) : i64 (let [old (replace! (deref (deref h).m) (Pt \"z\" 2))] old.x))")]
+    [invalid : (Array String 12)
+      (array
+        "(define (probe [h : (& (Tuple (&mut Pt) i64))]) : Pt (replace! (deref (tuple-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (&mut Pt))]) : Pt (replace! (deref (deref h)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (Array (&mut Pt) 1))]) : Pt (replace! (deref (array-ref (deref h) 0)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& Holder)]) : Pt (replace! (deref (deref h).m) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (Box (Tuple (&mut Pt) i64)))]) : Pt (replace! (deref (tuple-ref (deref (deref h)) 0)) (Pt \"z\" 2)))"
+        "(define (probe [h : (& (Tuple (&mut Pt) i64))]) : i64 (replace! (deref (tuple-ref (deref h) 0)).x 5))"
+        "(define (probe [h : (& (&mut i64))]) : i64 (replace! (deref (deref h)) 5))"
+        "(define (probe [a : (& (Tuple (&mut Pt) i64))] [b : (& (Tuple (&mut Pt) i64))]) : i64 (let [o1 (replace! (deref (tuple-ref (deref a) 0)) (Pt \"a\" 1))] [o2 (replace! (deref (tuple-ref (deref b) 0)) (Pt \"b\" 2))] (+ o1.x o2.x)))
+(define (alias [m : (&mut m Pt)]) : i64 (let [t : (Tuple (&mut m Pt) i64) (tuple m 1)] (probe (& t) (& t))))"
+        "(define (probe [h : (&mut (& (&mut Pt)))]) : Pt (replace! (deref (deref (deref h))) (Pt \"z\" 2)))"
+        "(define (probe [h : (&mut (Array (& (&mut Pt)) 1))]) : Pt (replace! (deref (deref (array-ref (deref h) 0))) (Pt \"z\" 2)))"
+        "(define (probe [h : (&mut (& (&mut Pt)))]) : unit (bump (&mut (deref (deref (deref h))))))"
+        "(define (probe [h : (&mut (Array (& (&mut Pt)) 1))]) : unit (bump (&mut (deref (deref (array-ref (deref h) 0))))))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 (array-length valid))]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref valid index)))))))
+    (for [index (iterator.range 0 (array-length invalid))]
+      (let
+        [src : String
+          (str_cat.str-cat (clone prefix) (clone (array-ref invalid index)))]
+        (set!
+          ok
+          (and
+            ok
+            (compiler-typecheck-error-code-ok? (clone src) "E0207" "typecheck")
+            (compiler-typecheck-error-ok?
+              src
+              "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)")))))
+    ok))
+
 (define (compiler-typecheck-move-tests-ok?) : bool
   (and
+    (compiler-typecheck-place-read-receivers-ok?)
+    (compiler-typecheck-place-through-shared-ok?)
     (compiler-typecheck-global-loan-provenance-ok?)
     (compiler-typecheck-moved-set-metrics-ok?)
     (compiler-typecheck-error-ok?

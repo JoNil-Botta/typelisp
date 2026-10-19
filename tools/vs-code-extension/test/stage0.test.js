@@ -35,7 +35,7 @@ const release = { tag_name: good, target_commitish: sha, draft: false, prereleas
   // Advance the retry clock without changing the network/file verification.
   global.setTimeout = (run, _ms, ...args) => originalTimeout(run, 0, ...args);
   try {
-    for (const scenario of ['public', 'missing', 'missing-asset', 'pagination', 'full-page', 'dangling-tag', 'no-release', 'bad-checksum', 'fallback-bad-checksum', 'no-sums', 'explicit-tag', 'api-failure', 'compare-failure', 'moved-tag', 'cached-bad-checksum', 'manifest-entry-lost', 'cached-current', 'cached-fallback-current', 'cached-offline']) {
+    for (const scenario of ['public', 'missing', 'missing-asset', 'pagination', 'full-page', 'dangling-tag', 'no-release', 'bad-checksum', 'fallback-bad-checksum', 'no-sums', 'explicit-tag', 'case-variant', 'alias-retry', 'api-failure', 'compare-failure', 'moved-tag', 'cached-bad-checksum', 'manifest-entry-lost', 'cached-current', 'cached-fallback-current', 'cached-offline']) {
       const dir = path.join(root, scenario);
       const logs = [];
       const calls = [];
@@ -48,7 +48,7 @@ const release = { tag_name: good, target_commitish: sha, draft: false, prereleas
       responses.set(api + '/releases?per_page=100&page=1', [200, JSON.stringify([{ ...release, tag_name: bad, published_at: '2026-10-19T12:00:00Z' }, release])]);
       responses.set(api + '/compare/' + bad + '...main', [200, JSON.stringify({ base_commit: { sha }, status: 'diverged' })]);
       responses.set(api + '/compare/' + good + '...main', [200, JSON.stringify({ base_commit: { sha }, status: 'ahead' })]);
-      if (!['public', 'bad-checksum', 'cached-bad-checksum', 'manifest-entry-lost', 'missing-asset', 'cached-current'].includes(scenario)) responses.set(base + 'stage0-latest/SHA256SUMS', [404, '']);
+      if (!['public', 'bad-checksum', 'cached-bad-checksum', 'manifest-entry-lost', 'missing-asset', 'cached-current', 'alias-retry'].includes(scenario)) responses.set(base + 'stage0-latest/SHA256SUMS', [404, '']);
       if (scenario === 'cached-offline') responses.set(base + 'stage0-latest/SHA256SUMS', [503, '']);
       if (scenario === 'missing-asset') responses.set(base + 'stage0-latest/' + platform.assetName, [404, '']);
       if (scenario === 'pagination') {
@@ -58,6 +58,7 @@ const release = { tag_name: good, target_commitish: sha, draft: false, prereleas
       if (scenario === 'full-page') responses.set(api + '/releases?per_page=100&page=1', [200, JSON.stringify([release, ...Array.from({ length: 99 }, () => ({ draft: true }))])]);
       if (scenario === 'no-release') responses.set(api + '/releases?per_page=100&page=1', [200, '[]']);
       if (scenario === 'api-failure') responses.set(api + '/releases?per_page=100&page=1', [503, '']);
+      if (scenario === 'alias-retry') responses.set(api + '/releases?per_page=100&page=1', [503, '']);
       if (scenario === 'compare-failure') responses.set(api + '/compare/' + bad + '...main', [503, '']);
       if (scenario === 'dangling-tag') responses.set(api + '/compare/' + bad + '...main', [404, '']);
       if (scenario === 'moved-tag') responses.set(api + '/compare/' + good + '...main', [200, JSON.stringify({ base_commit: { sha: 'wrong' }, status: 'ahead' })]);
@@ -67,6 +68,7 @@ const release = { tag_name: good, target_commitish: sha, draft: false, prereleas
       https.get = (url, _options, receive) => {
         calls.push(url);
         let [status, body] = responses.get(url) || [404, ''];
+        if (scenario === 'alias-retry' && url === base + 'stage0-latest/' + platform.assetName && calls.filter(item => item === url).length === 1) status = 404;
         if (scenario === 'manifest-entry-lost' && url === base + 'stage0-latest/SHA256SUMS' && ++manifestReads > 1) body = hash + '  another-asset\n';
         const response = Readable.from([Buffer.from(body)]);
         response.statusCode = status;
@@ -82,11 +84,11 @@ const release = { tag_name: good, target_commitish: sha, draft: false, prereleas
         await fs.mkdir(path.dirname(dest), { recursive: true });
         await fs.writeFile(dest, scenario.endsWith('current') ? payload : 'previous compiler');
       }
-      const result = await ensureStage0({ globalStorageUri: { fsPath: dir } }, { repo, releaseTag: scenario === 'explicit-tag' ? 'pinned-missing' : 'stage0-latest', autoUpdate: true }, { appendLine: (line) => logs.push(line) }, !['cached-current', 'cached-fallback-current', 'cached-offline'].includes(scenario));
-      if (['public', 'missing', 'missing-asset', 'pagination', 'full-page', 'dangling-tag', 'cached-current', 'cached-fallback-current'].includes(scenario)) {
+      const result = await ensureStage0({ globalStorageUri: { fsPath: dir } }, { repo, releaseTag: scenario === 'explicit-tag' ? 'pinned-missing' : scenario === 'case-variant' ? 'STAGE0-LATEST' : 'stage0-latest', autoUpdate: true }, { appendLine: (line) => logs.push(line) }, !['cached-current', 'cached-fallback-current', 'cached-offline'].includes(scenario));
+      if (['public', 'missing', 'missing-asset', 'pagination', 'full-page', 'dangling-tag', 'alias-retry', 'cached-current', 'cached-fallback-current'].includes(scenario)) {
         assert.equal(result, dest, scenario + ': ' + logs.join('\n'));
         assert.deepEqual(await fs.readFile(dest), payload, scenario);
-        if (!['public', 'cached-current'].includes(scenario)) assert(logs.some(line => line.includes('falling back to ' + repo + '@' + good)), scenario);
+        if (!['public', 'cached-current', 'alias-retry'].includes(scenario)) assert(logs.some(line => line.includes('falling back to ' + repo + '@' + good)), scenario);
       } else if (['cached-bad-checksum', 'cached-offline'].includes(scenario)) {
         assert.equal(result, dest);
         assert.equal(await fs.readFile(dest, 'utf8'), 'previous compiler');
@@ -94,7 +96,7 @@ const release = { tag_name: good, target_commitish: sha, draft: false, prereleas
         assert.equal(result, undefined, scenario + ': ' + logs.join('\n'));
         await assert.rejects(fs.access(dest), scenario);
       }
-      if (['public', 'bad-checksum', 'cached-bad-checksum', 'explicit-tag', 'manifest-entry-lost'].includes(scenario)) assert(!calls.some(url => url.startsWith(api)), scenario + ' unexpectedly selected another release');
+      if (['public', 'bad-checksum', 'cached-bad-checksum', 'explicit-tag', 'case-variant', 'manifest-entry-lost'].includes(scenario)) assert(!calls.some(url => url.startsWith(api)), scenario + ' unexpectedly selected another release');
       if (['cached-current', 'cached-fallback-current', 'cached-offline'].includes(scenario)) assert(!calls.some(url => url.endsWith('/' + platform.assetName)), scenario + ' unnecessarily downloaded the cached binary');
       assert(!(await fs.readdir(path.dirname(dest))).some(name => name.startsWith('.download.')), scenario + ' left temporary state');
       console.log('stage0 editor/' + scenario + ' passed');

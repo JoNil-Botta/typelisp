@@ -175,13 +175,20 @@ try {
             break
         } catch {
             $FetchError = $_.Exception.Message
-            if ($Tag -eq 'stage0-latest' -and $script:ReleaseUnavailable) {
-                $FallbackTag = Get-ImmutableMainRelease
-                [Console]::Error.WriteLine("[stage0] stage0-latest unavailable; falling back to $Repo@$FallbackTag")
-                $Tag = $FallbackTag
-                $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
-                $Attempt--
-                continue
+            if ($Tag -ceq 'stage0-latest' -and $script:ReleaseUnavailable) {
+                $FallbackTag = $null
+                try {
+                    $FallbackTag = Get-ImmutableMainRelease
+                } catch {
+                    Write-Warning ("[stage0] immutable fallback unavailable: {0}" -f $_.Exception.Message)
+                }
+                if ($FallbackTag) {
+                    [Console]::Error.WriteLine("[stage0] stage0-latest unavailable; falling back to $Repo@$FallbackTag")
+                    $Tag = $FallbackTag
+                    $BaseUrl = "https://github.com/$Repo/releases/download/$Tag"
+                    $Attempt--
+                    continue
+                }
             }
             Remove-Item -LiteralPath (Join-Path $TempDir $SingleAsset) -Force -ErrorAction SilentlyContinue
             Remove-Item -LiteralPath $SumsTmp -Force -ErrorAction SilentlyContinue

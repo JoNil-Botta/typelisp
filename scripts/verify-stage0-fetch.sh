@@ -24,6 +24,8 @@ done
 printf '%s\n' "$url" >> "$FETCH_FIXTURE/calls"
 record=$(jq -c --arg url "$url" '.[$url] // {status:404}' "$FETCH_FIXTURE/responses.json")
 status=$(printf '%s' "$record" | jq -r .status)
+first_status=$(printf '%s' "$record" | jq -r '.firstStatus // empty')
+if [ -n "$first_status" ] && [ "$(grep -Fxc "$url" "$FETCH_FIXTURE/calls")" -eq 1 ]; then status=$first_status; fi
 if [ "$write_status" -eq 1 ]; then printf '%s' "$status"; fi
 [ "$status" = 200 ] || exit 22
 file=$(printf '%s' "$record" | jq -r '.file // empty')
@@ -42,6 +44,10 @@ function Invoke-WebRequest {
     $Map = Get-Content -Raw -LiteralPath (Join-Path $env:FETCH_FIXTURE 'responses.json') | ConvertFrom-Json
     $Entry = $Map.PSObject.Properties[$Uri]
     $Status = if ($Entry) { $Entry.Value.status } else { 404 }
+    if ($Entry -and $Entry.Value.PSObject.Properties['firstStatus'] -and
+        @(Get-Content -LiteralPath (Join-Path $env:FETCH_FIXTURE 'calls') | Where-Object { $_ -ceq $Uri }).Count -eq 1) {
+        $Status = $Entry.Value.firstStatus
+    }
     if ($Status -ne 200) {
         $Response = [System.Net.Http.HttpResponseMessage]::new([System.Net.HttpStatusCode] $Status)
         throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('fixture HTTP failure', $Response)
@@ -72,7 +78,7 @@ case "$(uname -s)" in
     *) if command -v pwsh >/dev/null 2>&1; then fetchers='sh ps1'; fi ;;
 esac
 for fetcher in $fetchers; do
-    for scenario in public missing draft pagination full-page dangling-tag no-release bad-checksum fallback-bad-checksum no-sums explicit-tag explicit-no-sums api-failure compare-failure moved-tag empty-asset; do
+    for scenario in public missing draft pagination full-page dangling-tag no-release bad-checksum fallback-bad-checksum no-sums explicit-tag explicit-no-sums case-variant alias-retry api-failure compare-failure moved-tag empty-asset; do
         out="$work/out-$fetcher-$scenario"
         mkdir "$out"
         case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) output=typelisp.exe ;; *) output=typelisp ;; esac
@@ -92,7 +98,7 @@ for fetcher in $fetchers; do
         }' > "$work/responses.json"
         for tag in stage0-latest "$good" pinned-public; do
             status=200
-            if [ "$tag" = stage0-latest ] && [ "$scenario" != public ] && [ "$scenario" != bad-checksum ]; then status=404; fi
+            if [ "$tag" = stage0-latest ] && [ "$scenario" != public ] && [ "$scenario" != bad-checksum ] && [ "$scenario" != alias-retry ]; then status=404; fi
             for asset in typelisp-stage0-linux typelisp-stage0-windows.exe SHA256SUMS; do
                 file=payload
                 [ "$asset" != SHA256SUMS ] || file=SHA256SUMS
@@ -101,6 +107,9 @@ for fetcher in $fetchers; do
             done
         done
         case "$scenario" in
+            alias-retry)
+                jq --arg api "$api" 'with_entries(if (.key|contains("/stage0-latest/")) and (.key|endswith("/typelisp-stage0-linux") or endswith("/typelisp-stage0-windows.exe")) then .value.firstStatus=404 else . end) | .[$api+"/releases?per_page=100&page=1"]={status:503}' "$work/responses.json" > "$work/next.json"
+                mv "$work/next.json" "$work/responses.json" ;;
             pagination)
                 jq --arg api "$api" --argjson page "$page" '. + {($api+"/releases?per_page=100&page=1"):{status:200,body:([range(100)|{draft:true}]|tojson)},($api+"/releases?per_page=100&page=2"):{status:200,body:($page|tojson)}}' "$work/responses.json" > "$work/next.json"
                 mv "$work/next.json" "$work/responses.json" ;;
@@ -123,23 +132,26 @@ for fetcher in $fetchers; do
         tag=stage0-latest
         [ "$scenario" != explicit-tag ] || tag=pinned-missing
         [ "$scenario" != explicit-no-sums ] || tag=pinned-public
+        [ "$scenario" != case-variant ] || tag=STAGE0-LATEST
+        attempts=1
+        [ "$scenario" != alias-retry ] || attempts=2
         status=0
         if [ "$fetcher" = sh ]; then
-            PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS=1 TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
+            PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
                 sh "$ROOT/scripts/fetch-stage0.sh" "$tag" "$out" > "$work/result.log" 2>&1 || status=$?
         else
-            FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS=1 TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
+            FETCH_FIXTURE="$work" TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS="$attempts" TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
                 pwsh -NoProfile -File "$work/fetch.ps1" "$ROOT/scripts/fetch-stage0.ps1" "$tag" "$out" > "$work/result.log" 2>&1 || status=$?
         fi
         case "$scenario" in
-            public|missing|draft|pagination|full-page|dangling-tag|explicit-no-sums)
+            public|missing|draft|pagination|full-page|dangling-tag|explicit-no-sums|alias-retry)
                 if [ "$status" -ne 0 ] || ! cmp -s "$work/payload" "$out/$output"; then
                     cat "$work/result.log" >&2
                     echo "stage0 fetch $fetcher/$scenario failed" >&2
                     exit 1
                 fi
                 case "$scenario" in
-                    public|explicit-no-sums) : ;;
+                    public|explicit-no-sums|alias-retry) : ;;
                     *) grep -F "falling back to $repo@$good" "$work/result.log" >/dev/null ;;
                 esac
                 ;;
@@ -152,7 +164,7 @@ for fetcher in $fetchers; do
                 ;;
         esac
         case "$scenario" in
-            public|bad-checksum|explicit-tag|explicit-no-sums)
+            public|bad-checksum|explicit-tag|explicit-no-sums|case-variant)
                 if grep -F api.github.com "$work/calls" >/dev/null; then
                     echo "stage0 fetch $fetcher/$scenario unexpectedly selected another release" >&2
                     exit 1

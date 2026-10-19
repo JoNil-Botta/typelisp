@@ -794,6 +794,11 @@ mut_element_shared_array_reborrow_reject|check-fail|tests/safety/mut_element_sha
 mut_element_shared_slice_reborrow_reject|check-fail|tests/safety/mut_element_shared_slice_reborrow_reject.tl|tests/safety/mut_element_shared_slice_reborrow_reject.tl:7:3|mutable borrow through a shared reference
 mut_field_shared_holder_reborrow_reject|check-fail|tests/safety/mut_field_shared_holder_reborrow_reject.tl|tests/safety/mut_field_shared_holder_reborrow_reject.tl:12:3|mutable borrow through a shared reference
 mut_element_twice_one_call_reject|check-fail|tests/safety/mut_element_twice_one_call_reject.tl|tests/safety/mut_element_twice_one_call_reject.tl:12:3|cannot mutably borrow borrowed place `p`
+# A by-value match moves only what its pattern binds by move (SPEC; main moved
+# the whole scrutinee): the rest stays usable, a bound move-only part does not.
+match_partial_move_rest_usable_ok|run-exit|tests/safety/match_partial_move_rest_usable_ok.tl|42|-
+match_partial_move_bound_payload_reuse_reject|check-fail|tests/safety/match_partial_move_bound_payload_reuse_reject.tl|tests/safety/match_partial_move_bound_payload_reuse_reject.tl:20:15|use of moved value `m`
+match_partial_move_bound_slot_reuse_reject|check-fail|tests/safety/match_partial_move_bound_slot_reuse_reject.tl|tests/safety/match_partial_move_bound_slot_reuse_reject.tl:12:13|use of moved value `p.0`
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 # A pattern matched through a shared reference binds Copy parts by value and a
 # `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`

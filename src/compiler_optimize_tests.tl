@@ -49733,7 +49733,7 @@
       (opt.OptNaturalLoopWork (__tl_make-array i64 0) (__tl_make-array i64 0))]
     [large : ir.CompilerIrBlockList (opt-natural-loop-work-test-blocks 40 true)]
     [context : opt.OptCfgContext
-      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view large))]
+      (opt.opt-cfg-context-build (opt-natural-loop-work-test-blocks 40 true))]
     [header : i64 (ir.compiler-ir-label "h0")]
     [latch : i64 (ir.compiler-ir-label "h39")]
     [kept : opt.OptNaturalLoop
@@ -49759,7 +49759,7 @@
         (ptr->int (__tl_array-data work.stack)))]
     [small : ir.CompilerIrBlockList (opt-natural-loop-nested-blocks)]
     [small-context : opt.OptCfgContext
-      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view small))]
+      (opt.opt-cfg-context-build (opt-natural-loop-nested-blocks))]
     (test.assert-i64-eq
       (opt.opt-label-count (opt.opt-natural-loop-body kept))
       40
@@ -49829,14 +49829,13 @@
     (for [id (iterator.range 0 (array-length sources))]
       (let
         [blocks : ir.CompilerIrBlockList
-          (irt.blocks
-            (opt.compiler-opt-global-array-element-shared-view sources id))]
+          (irt.blocks (string.copy (& (array-ref sources id))))]
         [context : opt.OptCfgContext
           (opt.opt-cfg-context-build
-            (opt.compiler-opt-global-shared-view blocks))]
+            (irt.blocks (string.copy (& (array-ref sources id)))))]
         [loops : opt_natural_loop_vec.Vec
           (opt.opt-cfg-natural-loops-with-context
-            (opt.compiler-opt-global-shared-view blocks)
+            (irt.blocks (string.copy (& (array-ref sources id))))
             context)]
         [seq (opt_natural_loop_vec.view loops)]
         [work : opt.OptNaturalLoopWork
@@ -49887,16 +49886,14 @@
 (cfg
   test
   (define (opt-natural-loop-test-collection-bytes
-    [blocks : (& blocks ir.CompilerIrBlockList)]
+    [blocks : ir.CompilerIrBlockList]
     [context : (& context opt.OptCfgContext)]) : i64
     (let
       [home : i64 (arena.tl_arena_current)]
       [start : i64
         (allocation_profile.compiler-allocation-profile-arena-bump-bytes home)]
       [_loops : opt_natural_loop_vec.Vec
-        (opt.opt-cfg-natural-loops-with-context
-          (owned_view.compiler-owned-reference-shared-view blocks)
-          context)]
+        (opt.opt-cfg-natural-loops-with-context blocks context)]
       (-
         (allocation_profile.compiler-allocation-profile-arena-bump-bytes home)
         start))))
@@ -49907,7 +49904,7 @@
     [blocks : ir.CompilerIrBlockList
       (opt-natural-loop-work-test-blocks 1024 false)]
     [context : opt.OptCfgContext
-      (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))]
+      (opt.opt-cfg-context-build (opt-natural-loop-work-test-blocks 1024 false))]
     (test.assert-true
       (< (opt-natural-loop-test-collection-bytes blocks context) 1024)
       "an acyclic collection allocates no CFG-sized traversal buffers")))

@@ -28,6 +28,37 @@
 (import compiler_owned_view as owned_view)
 
 (test
+  compiler-lower-native-lane-table
+  (let
+    [types : (Array ast.AstType 13)
+      (array
+        (I8)
+        (U8)
+        (I16)
+        (U16)
+        (I32)
+        (U32)
+        (I64)
+        (U64)
+        (F32)
+        (F64)
+        (Bool)
+        (Char)
+        (Unit))]
+    [avx2 : (Array i64 13) (array 32 32 16 16 8 8 4 4 8 4 0 0 0)]
+    [abis : (Array lower.LowerModeAbi 3) (array (None) (Linux) (Windows))]
+    [simds : (Array lower.LowerModeSimd 3) (array (Scalar) (Avx2) (Avx512))]
+    (for [abi (iterator.range 0 3)]
+      (for [simd (iterator.range 0 3)]
+        (for [index (iterator.range 0 13)]
+          (test.assert-i64-eq
+            (lower.lower-simd-lanes-for-elem
+              (lower.lower-mode-of (array-ref abis abi) (array-ref simds simd))
+              (clone (array-ref types index)))
+            (* simd (array-ref avx2 index))
+            "shared geometry preserves all previous OS/backend lane choices"))))))
+
+(test
   compiler-lower-function-env-scratch
   (let
     [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]

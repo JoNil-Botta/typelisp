@@ -5,6 +5,7 @@
 ;; in `<name>/`;
 ;; `init [--lib] <name>` creates the skeleton in the current directory. Both
 ;; refuse to clobber an existing manifest or entry source.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -14,22 +15,22 @@
 
 ;; A package name must be non-empty and contain only name-safe characters
 ;; (alphanumerics, `-`, `_`): no path separators or whitespace.
-(define (scaffold-name-bad-char? [name : (& name str)] [idx : i64]) : bool
-  (if (>= idx (string.string-length name))
-    false
+(define (scaffold-name-bad-char? [name : (& name str)]) : bool
+  (for [idx (iterator.range 0 (string.string-length name))]
     (let
       [c : char (string.string-ref name idx)]
-      (if (or
-        (and (>= c 'a') (<= c 'z'))
-        (and (>= c 'A') (<= c 'Z'))
-        (and (>= c '0') (<= c '9'))
-        (= c '-')
-        (= c '_'))
-        (scaffold-name-bad-char? name (+ idx 1))
-        true))))
+      (unless
+        (or
+          (and (>= c 'a') (<= c 'z'))
+          (and (>= c 'A') (<= c 'Z'))
+          (and (>= c '0') (<= c '9'))
+          (= c '-')
+          (= c '_'))
+        (return true))))
+  false)
 
 (define (scaffold-name-ok? [name : (& name str)]) : bool
-  (and (> (string.string-length name) 0) (not (scaffold-name-bad-char? name 0))))
+  (and (> (string.string-length name) 0) (not (scaffold-name-bad-char? name))))
 
 ;; The `typelisp.pkg` manifest text, matching the `(package ...)` form parsed by
 ;; compiler_load.tl: name, version, kind ("bin"|"staticlib"), and entry path.

@@ -5,6 +5,7 @@
 ;; partial/corrupt. It does not fetch, resolve tag/branch pins, or update
 ;; lockfiles itself; build_cli_core.tl consumes these helpers for package build
 ;; cache reuse/refetch and lockfile integration.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.fs)
 (import stdlib.byte_buf)
@@ -113,15 +114,13 @@
 (define (package-cache-escape-component [text : (& text str)]) : String
   (let
     [n : i64 (string.string-length text)]
-    [i : i64 0]
     [out : String ""]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [code : i64 (cast (string.string-ref text i) : i64)]
         (if (package-cache-safe-code? code)
           (set! out (str_cat.str-cat out (string.substring text i 1) ""))
-          (set! out (str_cat.str-cat out (package-cache-escape-code code) "")))
-        (set! i (+ i 1))))
+          (set! out (str_cat.str-cat out (package-cache-escape-code code) "")))))
     out))
 
 (define (package-cache-unversioned-root [package-root : (& package-root str)]) : String

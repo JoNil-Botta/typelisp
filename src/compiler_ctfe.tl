@@ -8434,9 +8434,9 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
-          (ComptimeEvaluation)
+          (ComptimeFuel)
           expr
-          "compile-time evaluation limit exceeded")))
+          (ctfe-fuel-diagnostic-message))))
     (Ok value fold.fuel)))
 
 ;; `(expr-list-fold-if items when-true when-false continue-on-true?)` folds right
@@ -9081,9 +9081,9 @@
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
-                      (ComptimeEvaluation)
+                      (ComptimeFuel)
                       expr
-                      "compile-time evaluation limit exceeded")))]
+                      (ctfe-fuel-diagnostic-message))))]
               [else
                 (Ok
                   (PatternList

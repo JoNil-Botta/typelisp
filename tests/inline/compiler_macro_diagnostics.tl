@@ -2,6 +2,7 @@
 (import compiler_typecheck_core as tc)
 (import compiler_ast_types as ast)
 (import compiler_diagnostic as diag)
+(import compiler_ctfe as ctfe)
 (import compiler_intern as ci)
 (import stdlib.string)
 (import stdlib.iterator)
@@ -81,6 +82,10 @@
           "E0507"
           "comptime")
         (MacroDiagnosticCase
+          "(defmacro (many) : Expr (begin (pattern-list-bindings \"fuel\" 100001) (expr-int 0)))\n(define (main) : i64 (many))"
+          "E0507"
+          "comptime")
+        (MacroDiagnosticCase
           "(defmacro (bad) : Decls `(define (answer) : i64 (+ 1)))\n(bad)\n(define (main) : i64 0)"
           "E0103"
           "parse")
@@ -113,6 +118,50 @@
       [(Ok _) true]
       [(Err _) false])
     "untaken author errors remain successful"))
+
+(test
+  compiler-macro-fold-fuel-boundary
+  (let
+    [env : ctfe.CtfeEnv (ctfe.ctfe-env-empty)]
+    [condition : i64 (ctfe.ctfe-ast-push env (Literal (Bool true)))]
+    [yes : i64 (ctfe.ctfe-ast-push env (Literal (Int 1 "")))]
+    [no : i64 (ctfe.ctfe-ast-push env (Literal (Int 0 "")))]
+    [items : ctfe.CompilerCtfeValue
+      (ExprList (ast.ast-expr-cons condition (& (ast.ast-expr-list-new))))]
+    [when-true : ctfe.CompilerCtfeValue (Expr yes (I64))]
+    [when-false : ctfe.CompilerCtfeValue (Expr no (I64))]
+    (test.assert-true
+      (match (ctfe.ctfe-eval-expr-list-fold-if-values
+        (& items)
+        (& when-true)
+        (& when-false)
+        true
+        (& (Literal Unit))
+        env
+        0)
+        [(Err error)
+          (and
+            (string.eq
+              (diag.compiler-diagnostic-code-or-empty
+                (& (__tl-box-place error)))
+              "E0507")
+            (string.eq
+              (diag.compiler-diagnostic-message (& (__tl-box-place error)))
+              "compile-time evaluation limit exceeded"))]
+        [(Ok _ _) false])
+      "one fold needs one fuel unit")
+    (test.assert-true
+      (match (ctfe.ctfe-eval-expr-list-fold-if-values
+        (& items)
+        (& when-true)
+        (& when-false)
+        true
+        (& (Literal Unit))
+        env
+        1)
+        [(Ok _ fuel) (= fuel 0)]
+        [(Err _) false])
+      "exact fold fuel succeeds")))
 
 (test
   compiler-macro-coded-frame-transport

@@ -1236,3 +1236,63 @@ stderr contains error[E0206]
 stderr contains type mismatch
 stderr contains -->
 stderr not-contains __tl_tc_
+
+case fixed-array-reference-element-move
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each & &mut
+file -x main.tl
+(define (consume [text : String]) : i64 7)
+(define (via [items : ({{each}} (Array String 2))]) : i64
+  (consume (array-ref items 0)))
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: cannot move a `String` out of a
+stderr contains reference; `String` is not Copy
+stderr contains main.tl:3:
+stderr contains this reads the value through a reference
+stderr contains help: borrow it with `(& ...)` instead, or use an owned clone
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/invalid.s"
+exit 1
+stdout empty
+stderr contains error[E0208]: typecheck: cannot move a `String` out of a
+stderr contains reference; `String` is not Copy
+stderr contains main.tl:3:
+stderr contains this reads the value through a reference
+
+case fixed-array-reference-vector-move
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each & &mut
+file -x main.tl
+(import stdlib.vector)
+(import (vector.vector i64) as ivec)
+(define (grow [value : ivec.Vec]) : i64
+  (let [owned : ivec.Vec value]
+    (ivec.push-ref! (&mut owned) 7)
+    (ivec.len (& owned))))
+(define (via [items : ({{each}} (Array ivec.Vec 1))]) : i64
+  (grow (array-ref items 0)))
+(define (main) : i64 42)
+end-file
+step check
+run check "{{dir}}/main.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains reference;
+stderr contains is not Copy
+stderr contains this reads the value through a reference
+step compile
+run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/invalid.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains reference;
+stderr contains is not Copy
+stderr contains this reads the value through a reference

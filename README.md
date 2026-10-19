@@ -56,6 +56,9 @@ Hello, TypeLisp!
 factorial(5) = 120
 ```
 
+Fetching uses `curl`; recovery from an unavailable `stage0-latest` also
+requires `jq` to select a checksum-verified immutable release from `main`.
+
 ### Windows PowerShell
 
 ```powershell

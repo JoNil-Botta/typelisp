@@ -17389,7 +17389,7 @@
     ;; so the seq position is the block id.
     (for [pos (iterator.range 0 count)]
       (if (< pos (array-length index.reachable))
-        (match (array-ref seq pos)
+        (match (& (array-ref seq pos))
           [(Block label _)
             (opt-cfg-natural-loop-edges-csr
               (&mut work)

@@ -209,10 +209,10 @@
 
 (define (ownership-normalize-variances-empty) : OwnershipNormalizeVariances
   (OwnershipNormalizeVariances
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array bool 0)))
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-bools)))
 
 ;; The globals the body's calls may assign (#7904), from typing's global
 ;; effect graph: typed call record `calls[i]` may assign the module value
@@ -247,21 +247,21 @@
 
 (define (ownership-normalize-global-writes-empty) : OwnershipNormalizeGlobalWrites
   (OwnershipNormalizeGlobalWrites
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array bool 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array bool 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array bool 0)))
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-bools)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-bools)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-i64s)
+    (normalize-no-bools)))
 
 ;; The probed calls (`OwnershipNormalizeGlobalWrites`) at which a loan of the
 ;; global is live: callee and global nodes, the global binder's name, the
@@ -312,6 +312,19 @@
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [index : i64]) : NormalizeInt
+  ;; A class already given its body type answers at once.
+  (let
+    [known : i64
+      (cond
+        [(< index 0) -1]
+        [(>= index (array-length state.classes)) -1]
+        [(< (array-ref state.classes index).key 0) -1]
+        [(>=
+            (array-ref state.classes index).key
+            (array-length state.class-types))
+          -1]
+        [else (array-ref state.class-types (array-ref state.classes index).key)])]
+    (when (>= known 0) (return (NormalizeInt.Ok known))))
   (unless
     (and
       (>= index 0)
@@ -396,6 +409,26 @@
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedTypeId]) : NormalizeInt
+  ;; The store does not change while a body normalizes, so a record of this
+  ;; body fetched before validates again and gives the same body type (a
+  ;; class keeps the body type it is first given). Only the fetch's charge
+  ;; to the store remains, with its failure.
+  (if (normalize-type-known? (& state) (& id))
+    (match (typed.typed-charge! store lease 1)
+      [(typed.TypedResult.Ok _)
+        (NormalizeInt.Ok
+          (- (array-ref state.type-results (* 2 id.handle.index)) 1))]
+      [(typed.TypedResult.Err error)
+        (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))])
+    (match (normalize-type-fetch! state store lease id)
+      [(NormalizeInt.Ok code) (normalize-type-remember! state (& id) code)]
+      [(NormalizeInt.Err failure) (NormalizeInt.Err failure)])))
+
+(define (normalize-type-fetch!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [id : typed.TypedTypeId]) : NormalizeInt
   (match (typed.typed-type-get! store lease id)
     [(typed.TypedTypeResult.Ok ty)
       (match (normalize-type-code ty)
@@ -404,6 +437,63 @@
           (normalize-value-type! state store lease id.handle.index)])]
     [(typed.TypedTypeResult.Err error)
       (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))]))
+
+;; Whether record `id` of this body was given a body type before.
+(define (normalize-type-known?
+  [state : (& state NormalizeState)]
+  [id : (& id typed.TypedTypeId)]) : bool
+  (and
+    (>= id.handle.index 0)
+    (< (+ (* 2 id.handle.index) 1) (array-length state.type-results))
+    (> (array-ref state.type-results (* 2 id.handle.index)) 0)
+    (=
+      (array-ref state.type-results (+ (* 2 id.handle.index) 1))
+      (cast id.handle.serial : i64))
+    (= id.handle.body.owner state.body.id.owner)
+    (= id.handle.body.generation state.body.id.generation)
+    (= id.handle.body.revision state.body.id.revision)))
+
+;; Remember that record `id` of this body has body type `code`.
+(define (normalize-type-remember!
+  [state : (&mut state NormalizeState)]
+  [id : (& id typed.TypedTypeId)]
+  [code : i64]) : NormalizeInt
+  (when
+    (and
+      (>= id.handle.index 0)
+      (= id.handle.body.owner state.body.id.owner)
+      (= id.handle.body.generation state.body.id.generation)
+      (= id.handle.body.revision state.body.id.revision))
+    (normalize-table-set!
+      (&mut state.type-results)
+      (+ (* 2 id.handle.index) 1)
+      (cast id.handle.serial : i64))
+    (set! (array-ref state.type-results (* 2 id.handle.index)) (+ code 1)))
+  (NormalizeInt.Ok code))
+
+;; Cell `index` of a growable table, 0 past its end.
+(define (normalize-table-ref
+  [cells : (& cells (__tl_dyn-array i64))]
+  [index : i64]) : i64
+  (if (and (>= index 0) (< index (array-length cells)))
+    (array-ref cells index)
+    0))
+
+;; Set cell `index` (not negative) of a growable table; new cells are 0.
+(define (normalize-table-set!
+  [cells : (&mut cells (__tl_dyn-array i64))]
+  [index : i64]
+  [value : i64]) : unit
+  (when
+    (>= index (array-length cells))
+    (let
+      [grown : (__tl_dyn-array i64) (__tl_make-array i64 (+ 8 (* 2 index)))]
+      [at : i64 0]
+      (while (< at (array-length cells))
+        (set! (array-ref grown at) (array-ref cells at))
+        (set! at (+ at 1)))
+      (set! (deref cells) grown)))
+  (set! (array-ref cells index) value))
 
 ;; The field types of a product body type (empty for any other kind).
 (define (normalize-product-fields
@@ -461,6 +551,14 @@
 (defstruct NormalizeBools
   (items (__tl_dyn-array bool))
   (len i64))
+
+;; Fresh empty arrays (one call each keeps the body state's long constructor
+;; small).
+(define (normalize-no-i64s) : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
+(define (normalize-no-bools) : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
 
 (define (normalize-i64s) : NormalizeI64s
   (NormalizeI64s (__tl_make-array i64 0) 0))
@@ -1469,7 +1567,15 @@
   ;; Opaque-referent loans of a `&mut` reached through a view's loan, with that
   ;; loan: a write through the referent writes through the view.
   (opaque-route-loans (__tl_dyn-array i64))
-  (opaque-route-parents (__tl_dyn-array i64)))
+  (opaque-route-parents (__tl_dyn-array i64))
+  ;; 1 + the index of the binder of each typed binder handle index, and of
+  ;; each place (0 when absent): a binder is found without a scan.
+  (binder-slots (__tl_dyn-array i64))
+  (binder-places (__tl_dyn-array i64))
+  ;; Per typed type record index `i`: cell `2i` holds 1 + the body type
+  ;; `normalize-type!` gave it (0 when not yet given), and cell `2i + 1` the
+  ;; record's serial then.
+  (type-results (__tl_dyn-array i64)))
 
 (define (normalize-charge!
   [state : (&mut state NormalizeState)]
@@ -1493,17 +1599,55 @@
 (define (normalize-source-copy!
   [state : (&mut state NormalizeState)]
   [source : (& source own.OwnershipSource)]) : NormalizeSource
-  (try (normalize-source-charge! state source))
-  (normalize-source-clone source))
+  ;; `normalize-source-charge!`
+  (let
+    [bytes : i64
+      (+
+        (string.string-length (& source.path))
+        (string.string-length (& source.expansion)))]
+    (try (normalize-charge! state 1 bytes bytes))
+    (normalize-source-clone source)))
 
+;; The charges of `copies` copies of `source` (`normalize-source-copy!` each)
+;; and then of `records` and `work`, with nothing that can fail between them,
+;; as one charge (work only grows, so the sum runs out exactly when one of its
+;; parts would), and the first copy; the others clone it without a failure. An
+;; invalid source fails after the first copy's own charge, as it would alone.
+(define (normalize-source-copies!
+  [state : (&mut state NormalizeState)]
+  [source : (& source own.OwnershipSource)]
+  [copies : i64]
+  [records : i64]
+  [work : i64]) : NormalizeSource
+  (let
+    [bytes : i64
+      (+
+        (string.string-length (& source.path))
+        (string.string-length (& source.expansion)))]
+    (if (and
+      (> (string.string-length (& source.path)) 0)
+      (> source.line 0)
+      (> source.column 0))
+      (try
+        (normalize-charge!
+          state
+          (+ copies records)
+          (+ (* copies bytes) work)
+          (* copies bytes)))
+      (try (normalize-charge! state 1 bytes bytes)))
+    (normalize-source-clone source)))
+
+;; One record and the path's and expansion's bytes, as one charge: work only
+;; grows, so the sum runs out exactly when either part would.
 (define (normalize-source-charge!
   [state : (&mut state NormalizeState)]
   [source : (& source own.OwnershipSource)]) : NormalizeUnit
   (let
-    [path : i64 (string.string-length (& source.path))]
-    [expansion : i64 (string.string-length (& source.expansion))]
-    (try (normalize-charge! state 1 path path))
-    (normalize-charge! state 0 expansion expansion)))
+    [bytes : i64
+      (+
+        (string.string-length (& source.path))
+        (string.string-length (& source.expansion)))]
+    (normalize-charge! state 1 bytes bytes)))
 
 (define (normalize-source-clone [source : (& source own.OwnershipSource)]) : NormalizeSource
   (if (own.ownership-source-valid? source)
@@ -1512,7 +1656,7 @@
         (string.copy (& source.path))
         source.line
         source.column
-        (string.copy (& source.expansion))))
+        (own.ownership-text-copy (& source.expansion))))
     (NormalizeSource.Err
       (OwnershipNormalizeFailure.Structural
         "ownership normalization: invalid provenance"))))
@@ -1701,13 +1845,13 @@
             (return
               (NormalizeNodeResult.Err (OwnershipNormalizeFailure.Typed error)))])]
       [children : (__tl_dyn-array typed.TypedOccurrenceId)
-        (__tl_make-array typed.TypedOccurrenceId 0)]
+        (__tl_make-array typed.TypedOccurrenceId header.children)]
       [ordinal : i64 0]
       (while (< ordinal header.children)
         (begin
           (match (typed.typed-child-get! store lease id ordinal)
             [(typed.TypedChildResult.Ok child)
-              (__tl_array-push! children child)]
+              (set! (array-ref children ordinal) child)]
             [(typed.TypedChildResult.Err error)
               (return
                 (NormalizeNodeResult.Err
@@ -1738,11 +1882,10 @@
   (let
     [index : i64 state.place-count]
     [local : i64 state.local-count]
+    ;; Two copies of the source, then two records.
     [local-source : own.OwnershipSource
-      (try (normalize-source-copy! state source))]
-    [place-source : own.OwnershipSource
-      (try (normalize-source-copy! state source))]
-    (try (normalize-charge! state 2 2 0))
+      (try (normalize-source-copies! state source 2 2 2))]
+    [place-source : own.OwnershipSource (try (normalize-source-clone source))]
     (unless
       (normalize-storage-type? (& state) type)
       (return
@@ -1798,7 +1941,9 @@
                 [(own.OwnershipAccess.Write) true]
                 [(own.OwnershipAccess.Read) false])))]
         [_ unit])]
-    [copy : own.OwnershipSource (try (normalize-source-copy! state source))]
+    ;; The copy, then the instruction's record.
+    [copy : own.OwnershipSource
+      (try (normalize-source-copies! state source 1 1 1))]
     [index : i64 (array-ref state.instruction-counts block)]
     ;; A reference read here is a use of every loan its origin may hold; a
     ;; reference copied or moved also flows that origin into its destination.
@@ -1814,7 +1959,6 @@
         [(own.OwnershipOperation.Copy _ dest) dest.index]
         [(own.OwnershipOperation.Move _ dest) dest.index]
         [_ -1])]
-    (try (normalize-charge! state 1 1 0))
     (when
       (>= used 0)
       (begin
@@ -1964,14 +2108,24 @@
     [header : NormalizeBinderHeader
       (try (normalize-binder-header! store lease id))]
     [type : i64 (try (normalize-type! state store lease header.type))]
-    [index : i64 0]
-    (while (< index (array-length state.binders))
-      (begin
-        (try (normalize-charge! state 0 1 0))
-        (when
-          (= (array-ref state.binders index).handle.index id.handle.index)
-          (return (NormalizeInt.Ok (array-ref state.binders index).place)))
-        (set! index (+ index 1))))
+    ;; The binders are searched in order, one work unit per binder compared:
+    ;; the first match costs its position, a miss every binder. The units are
+    ;; charged at once (work only grows, so the sum runs out exactly when one
+    ;; unit of it would).
+    [slot : i64 (normalize-table-ref (& state.binder-slots) id.handle.index)]
+    (when
+      (> (array-length state.binders) 0)
+      (try
+        (normalize-charge!
+          state
+          0
+          (if (> slot 0)
+            slot
+            (array-length state.binders))
+          0)))
+    (when
+      (> slot 0)
+      (return (NormalizeInt.Ok (array-ref state.binders (- slot 1)).place)))
     (let
       [source : own.OwnershipSource
         (match (typed.typed-origin-get! store lease header.origin)
@@ -2007,6 +2161,20 @@
           header.name
           header.owner
           header.lifetime))
+      (when
+        (and
+          (>= id.handle.index 0)
+          (= (normalize-table-ref (& state.binder-slots) id.handle.index) 0))
+        (normalize-table-set!
+          (&mut state.binder-slots)
+          id.handle.index
+          (array-length state.binders)))
+      (when
+        (and (>= place 0) (= (normalize-binder-of (& state) place) 0))
+        (normalize-table-set!
+          (&mut state.binder-places)
+          place
+          (array-length state.binders)))
       (NormalizeInt.Ok place))))
 
 ;; Initialize is the single static declaration event, not a generic write.
@@ -2016,26 +2184,40 @@
   [state : (&mut state NormalizeState)]
   [place : i64]) : NormalizeUnit
   (let
-    [index : i64 0]
-    (while (< index (array-length state.binders))
-      (begin
-        (try (normalize-charge! state 0 1 0))
-        (when
-          (= (array-ref state.binders index).place place)
-          (when
-            (or
-              (array-ref state.binders index).parameter?
-              (array-ref state.binders index).initialized-definition?)
-            (return
-              (NormalizeUnit.Err
-                (OwnershipNormalizeFailure.Structural
-                  "ownership normalization: binder has multiple declaration initializers"))))
-          (set! (array-ref state.binders index).initialized-definition? true)
-          (return (NormalizeUnit.Ok unit)))
-        (set! index (+ index 1))))
-    (NormalizeUnit.Err
-      (OwnershipNormalizeFailure.Structural
-        "ownership normalization: missing initializer binder"))))
+    ;; The binder search charges as in `normalize-binder!`.
+    [slot : i64 (normalize-binder-of (& state) place)]
+    (when
+      (> (array-length state.binders) 0)
+      (try
+        (normalize-charge!
+          state
+          0
+          (if (> slot 0)
+            slot
+            (array-length state.binders))
+          0)))
+    (when
+      (= slot 0)
+      (return
+        (NormalizeUnit.Err
+          (OwnershipNormalizeFailure.Structural
+            "ownership normalization: missing initializer binder"))))
+    (let
+      [index : i64 (- slot 1)]
+      (when
+        (or
+          (array-ref state.binders index).parameter?
+          (array-ref state.binders index).initialized-definition?)
+        (return
+          (NormalizeUnit.Err
+            (OwnershipNormalizeFailure.Structural
+              "ownership normalization: binder has multiple declaration initializers"))))
+      (set! (array-ref state.binders index).initialized-definition? true)
+      (NormalizeUnit.Ok unit))))
+
+;; 1 + the index of the first binder of `place`, or 0.
+(define (normalize-binder-of [state : (& state NormalizeState)] [place : i64]) : i64
+  (normalize-table-ref (& state.binder-places) place))
 
 ;; Parameters are bound in canonical declaration order before body inference.
 ;; Visit all published binders through leased accessors so unused aggregate,
@@ -2763,14 +2945,10 @@
   [state : (& state NormalizeState)]
   [place : i64]) : i64
   (let
-    [index : i64 0]
-    [lifetime : i64 -1]
-    (while (and (< lifetime 0) (< index (array-length state.binders)))
-      (when
-        (= (array-ref state.binders index).place place)
-        (set! lifetime (array-ref state.binders index).lifetime))
-      (set! index (+ index 1)))
-    lifetime))
+    [slot : i64 (normalize-binder-of state place)]
+    (if (> slot 0)
+      (array-ref state.binders (- slot 1)).lifetime
+      -1)))
 
 (define (normalize-cleanup-owner? [kind : i64]) : bool
   (or (= kind 1) (= kind 2)))
@@ -2779,14 +2957,10 @@
   [state : (& state NormalizeState)]
   [place : i64]) : i64
   (let
-    [index : i64 0]
-    [kind : i64 0]
-    (while (and (= kind 0) (< index (array-length state.binders)))
-      (when
-        (= (array-ref state.binders index).place place)
-        (set! kind (array-ref state.binders index).owner))
-      (set! index (+ index 1)))
-    kind))
+    [slot : i64 (normalize-binder-of state place)]
+    (if (> slot 0)
+      (array-ref state.binders (- slot 1)).owner
+      0)))
 
 ;; An owner bound at `block`. A `let` owner's marker is set there, since a
 ;; loop rebinds the owner on every iteration: only moving the owner out whole
@@ -7979,24 +8153,6 @@
 ;; regions), keeps its per-place origin (conservative); so does any read not
 ;; matched to an instruction. A redirected read keeps its own place, so a
 ;; field read still relates the field's lifetimes (`normalize-note-redirect!`).
-;; Whether `loan` is in the union of the rows of `alt-places[start..start+count)`.
-(define (normalize-alt-row-has?
-  [bits : (& bits (__tl_dyn-array bool))]
-  [width : i64]
-  [places : (& places (__tl_dyn-array i64))]
-  [start : i64]
-  [count : i64]
-  [loan : i64]) : bool
-  (let
-    [at : i64 start]
-    [found : bool false]
-    (while (and (not found) (< at (+ start count)))
-      (when
-        (array-ref bits (+ (* (array-ref places at) width) loan))
-        (set! found true))
-      (set! at (+ at 1)))
-    found))
-
 ;; The number of successors of block `block`.
 (define (normalize-block-successor-count
   [state : (& state NormalizeState)]
@@ -10029,27 +10185,31 @@
                 (& aim-edges)
                 words
                 false))]
-          [live : (__tl_dyn-array bool) (__tl_make-array bool (* places width))]
-          [pointed : (__tl_dyn-array bool)
-            (__tl_make-array bool (* places width))]
           ;; Per place: the loans of all its root's regions (a use), and of
-          ;; the region its outer reference names (where it points).
+          ;; the region its outer reference names (where it points), as
+          ;; packed rows of `words` words.
+          [live : (__tl_dyn-array i64) (__tl_make-array i64 (* places words))]
+          [pointed : (__tl_dyn-array i64)
+            (__tl_make-array i64 (* places words))]
           (while (< index places)
-            (let
-              [all : (__tl_dyn-array i64)
-                (normalize-place-nodes (& state) shapes (& nodes) index)]
-              [outer : (__tl_dyn-array i64)
-                (normalize-outer-nodes (& state) shapes (& aim-nodes) index)]
-              [row : i64 (* index width)]
-              (normalize-rows-or! (& node-bits) (& all) words (&mut live) row)
-              (normalize-rows-or! (& aimed) (& outer) words (&mut pointed) row))
+            (normalize-place-rows-or!
+              (& state)
+              shapes
+              (& nodes)
+              (& node-bits)
+              (& aim-nodes)
+              (& aimed)
+              index
+              words
+              (&mut live)
+              (&mut pointed))
             (set! index (+ index 1)))
-          (try (normalize-patch-reborrows! state (& pointed) width))
-          (try (normalize-check-derefs! state (& pointed) width))
+          (try (normalize-patch-reborrows! state (& pointed) words))
+          (try (normalize-check-derefs! state (& pointed) width words))
           (normalize-insert-loan-uses!
             state
             (& live)
-            width
+            words
             (& alt-start)
             (& alt-count)
             (& alt-places)))))))
@@ -10096,64 +10256,170 @@
       [(NormalizeUnit.Ok _) (NormalizeWords.Ok bits)]
       [(NormalizeUnit.Err failure) (NormalizeWords.Err failure)])))
 
-;; OR the loan rows (of `words` words) of `nodes` into bool row `row` of
-;; `out`.
-(define (normalize-rows-or!
-  [bits : (& bits (__tl_dyn-array i64))]
-  [nodes : (& nodes (__tl_dyn-array i64))]
-  [words : i64]
-  [out : (&mut out (__tl_dyn-array bool))]
-  [row : i64]) : unit
+;; The lowest set bit of `word` at or above bit `from` (0..63), or 64.
+(define (normalize-low-bit [word : i64] [from : i64]) : i64
   (let
-    [at : i64 0]
-    (while (< at (array-length nodes))
-      (let
-        [base : i64 (* (array-ref nodes at) words)]
-        [word : i64 0]
-        (while (< word words)
-          (let
-            [value : i64 (array-ref bits (+ base word))]
-            [bit : i64 0]
-            (when
-              (!= value 0)
-              (while (< bit 64)
-                (when
-                  (!= (bit-and value (shl 1 bit)) 0)
-                  (set! (array-ref out (+ row (+ (* word 64) bit))) true))
-                (set! bit (+ bit 1)))))
-          (set! word (+ word 1))))
-      (set! at (+ at 1)))))
+    [rest : i64
+      (if (> from 0)
+        (bit-and word (shl -1 from))
+        word)]
+    [bit : i64 0]
+    (if (= rest 0)
+      64
+      (begin
+        (while (= (bit-and rest 255) 0)
+          (set! rest (bit-and (shr rest 8) 72057594037927935))
+          (set! bit (+ bit 8)))
+        (while (= (bit-and rest 1) 0)
+          (set! rest (bit-and (shr rest 1) 9223372036854775807))
+          (set! bit (+ bit 1)))
+        bit))))
+
+;; The first loan at or after `from` in the packed row of `words` words at
+;; `base`, or -1.
+(define (normalize-next-loan
+  [bits : (& bits (__tl_dyn-array i64))]
+  [base : i64]
+  [words : i64]
+  [from : i64]) : i64
+  (let
+    [w : i64 (/ from 64)]
+    [bit : i64
+      (if (< w words)
+        (normalize-low-bit (array-ref bits (+ base w)) (bit-and from 63))
+        64)]
+    (while (and (= bit 64) (< (+ w 1) words))
+      (set! w (+ w 1))
+      (set! bit (normalize-low-bit (array-ref bits (+ base w)) 0)))
+    (if (= bit 64)
+      -1
+      (+ (* w 64) bit))))
 
 ;; The region nodes a use of `place` demands: every node of its region root
 ;; and the universal nodes its type names; for the exit holder, every
-;; universal node.
-(define (normalize-place-nodes
+;; universal node. Place `place`'s row of `live` gets the loans of those nodes
+;; (rows of `bits`), and its row of `pointed` the loans of the nodes
+;; `normalize-outer-nodes` names (rows of `aimed`, over `aim-nodes`). Each
+;; node's row is ORed in directly; OR needs no node list.
+(define (normalize-place-rows-or!
   [state : (& state NormalizeState)]
   [shapes : (& shapes NormalizeShapes)]
   [nodes : (& nodes NormalizeNodes)]
-  [place : i64]) : (__tl_dyn-array i64)
+  [bits : (& bits (__tl_dyn-array i64))]
+  [aim-nodes : (& aim-nodes NormalizeNodes)]
+  [aimed : (& aimed (__tl_dyn-array i64))]
+  [place : i64]
+  [words : i64]
+  [live : (&mut live (__tl_dyn-array i64))]
+  [pointed : (&mut pointed (__tl_dyn-array i64))]) : unit
   (let
-    [out : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [row : i64 (* place words)]
+    [root : i64 (normalize-region-root state place)]
+    [shape : i64 (array-ref shapes.place-shapes place)]
     [index : i64 0]
     (if (= place state.exit-holder)
       (while (< index nodes.universal-count)
-        (__tl_array-push! out (+ nodes.universal-first index))
+        (normalize-row-or! bits (+ nodes.universal-first index) words live row)
         (set! index (+ index 1)))
-      (let
-        [root : i64 (normalize-region-root state place)]
-        (normalize-key-nodes-into!
+      (begin
+        (normalize-key-rows-or!
           nodes
           shapes
           root
           (array-ref shapes.place-shapes root)
-          (&mut out))
-        (normalize-key-nodes-into!
-          nodes
-          shapes
-          root
-          (array-ref shapes.place-shapes place)
-          (&mut out))))
-    out))
+          bits
+          words
+          live
+          row)
+        (normalize-key-rows-or! nodes shapes root shape bits words live row)))
+    (if (or (< shape 0) (= (array-ref shapes.lens.items shape) 0))
+      (normalize-key-rows-or!
+        aim-nodes
+        shapes
+        root
+        shape
+        aimed
+        words
+        pointed
+        row)
+      (let
+        [node : i64
+          (normalize-node-of
+            aim-nodes
+            shapes
+            root
+            (array-ref shapes.names.items (array-ref shapes.starts.items shape)))]
+        (if (>= node 0)
+          (normalize-row-or! aimed node words pointed row)
+          (normalize-key-rows-or!
+            aim-nodes
+            shapes
+            root
+            shape
+            aimed
+            words
+            pointed
+            row))))))
+
+;; OR node `node`'s loan row (of `words` words) into the row at `row` of `out`.
+(define (normalize-row-or!
+  [bits : (& bits (__tl_dyn-array i64))]
+  [node : i64]
+  [words : i64]
+  [out : (&mut out (__tl_dyn-array i64))]
+  [row : i64]) : unit
+  (let
+    [base : i64 (* node words)]
+    [word : i64 0]
+    (while (< word words)
+      (set!
+        (array-ref out (+ row word))
+        (bit-or (array-ref out (+ row word)) (array-ref bits (+ base word))))
+      (set! word (+ word 1)))))
+
+;; OR the loan rows of every node `normalize-key-nodes-into!` names into the
+;; row at `row` of `out`.
+(define (normalize-key-rows-or!
+  [nodes : (& nodes NormalizeNodes)]
+  [shapes : (& shapes NormalizeShapes)]
+  [key : i64]
+  [shape : i64]
+  [bits : (& bits (__tl_dyn-array i64))]
+  [words : i64]
+  [out : (&mut out (__tl_dyn-array i64))]
+  [row : i64]) : unit
+  (let
+    [index : i64 0]
+    [first : i64 0]
+    [count : i64 0]
+    (cond
+      [(>= key 0)
+        (set! first (array-ref nodes.place-first key))
+        (set! count (array-ref nodes.place-count key))]
+      [(<= key -2)
+        (set! first (array-ref nodes.call-first (- -2 key)))
+        (set! count (array-ref nodes.call-count (- -2 key)))]
+      [else unit])
+    (while (< index count)
+      (normalize-row-or! bits (+ first index) words out row)
+      (set! index (+ index 1)))
+    (when
+      (and
+        (>= shape 0)
+        (or (= key -1) (and (>= key 0) (array-ref nodes.parameter? key))))
+      (set! index 0)
+      (while (< index (array-ref shapes.lens.items shape))
+        (let
+          [node : i64
+            (normalize-node-of
+              nodes
+              shapes
+              -1
+              (array-ref
+                shapes.names.items
+                (+ (array-ref shapes.starts.items shape) index)))]
+          (when (>= node 0) (normalize-row-or! bits node words out row)))
+        (set! index (+ index 1))))))
 
 ;; The region node(s) a reference place's outer lifetime names: where it
 ;; points. A place of unknown type stands for all its root's nodes.
@@ -10184,48 +10450,54 @@
 ;; initialized from; its solved origin must be exactly that loan.
 (define (normalize-check-derefs!
   [state : (&mut state NormalizeState)]
-  [bits : (& bits (__tl_dyn-array bool))]
-  [width : i64]) : NormalizeUnit
+  [bits : (& bits (__tl_dyn-array i64))]
+  [width : i64]
+  [words : i64]) : NormalizeUnit
   (let
     [index : i64 0]
     (while (< index (array-length state.deref-places))
       (let
-        [row : i64 (* (array-ref state.deref-places index) width)]
+        [row : i64 (* (array-ref state.deref-places index) words)]
         [expected : i64 (array-ref state.deref-loans index)]
-        [loan : i64 0]
+        [word : i64 0]
         (try (normalize-charge! state 0 width 0))
-        (while (< loan width)
-          (when
-            (if (= loan expected)
-              (not (array-ref bits (+ row loan)))
-              (array-ref bits (+ row loan)))
+        ;; The packed row (loans below `width` only) must be exactly the
+        ;; expected loan.
+        (while (< word words)
+          (unless
+            (=
+              (array-ref bits (+ row word))
+              (if (and
+                (>= expected 0)
+                (< expected width)
+                (= (/ expected 64) word))
+                (shl 1 (bit-and expected 63))
+                0))
             (return
               (NormalizeUnit.Err
                 (OwnershipNormalizeFailure.Unsupported
                   "ownership normalization: dereference of a joined or reassigned reference"))))
-          (set! loan (+ loan 1)))
+          (set! word (+ word 1)))
         (set! index (+ index 1))))
     (NormalizeUnit.Ok unit)))
 
 (define (normalize-patch-reborrows!
   [state : (&mut state NormalizeState)]
-  [bits : (& bits (__tl_dyn-array bool))]
-  [width : i64]) : NormalizeUnit
+  [bits : (& bits (__tl_dyn-array i64))]
+  [words : i64]) : NormalizeUnit
   (let
     [index : i64 0]
     (while (< index (array-length state.reborrow-loans))
       (let
         [child : i64 (array-ref state.reborrow-loans index)]
-        [row : i64 (* (array-ref state.reborrow-places index) width)]
+        [row : i64 (* (array-ref state.reborrow-places index) words)]
         [parent : i64 -1]
         [count : i64 0]
-        [loan : i64 0]
-        (while (< loan (array-length state.body.loans))
-          (when
-            (array-ref bits (+ row loan))
-            (set! parent loan)
-            (set! count (+ count 1)))
-          (set! loan (+ loan 1)))
+        [loan : i64 (normalize-next-loan bits row words 0)]
+        (while (>= loan 0)
+          (set! parent loan)
+          (set! count (+ count 1))
+          (set! loan (normalize-next-loan bits row words (+ loan 1))))
         ;; Several possible parents need a reborrow of a joined origin,
         ;; which is not represented; a later parent cannot precede it.
         (unless
@@ -10298,12 +10570,14 @@
 ;; the borrow, as in Rust, where a borrow is a use of the borrowed variable.
 (define (normalize-insert-loan-uses!
   [state : (&mut state NormalizeState)]
-  [bits : (& bits (__tl_dyn-array bool))]
-  [width : i64]
+  [bits : (& bits (__tl_dyn-array i64))]
+  [words : i64]
   [alt-start : (& alt-start (__tl_dyn-array i64))]
   [alt-count : (& alt-count (__tl_dyn-array i64))]
   [alt-places : (& alt-places (__tl_dyn-array i64))]) : NormalizeUnit
   (let
+    ;; The loans one use demands, as a packed row.
+    [demanded : (__tl_dyn-array i64) (__tl_make-array i64 words)]
     [blocks : i64 (array-length state.body.blocks)]
     [counts : (__tl_dyn-array i64) (__tl_make-array i64 (+ blocks 1))]
     [order : (__tl_dyn-array i64)
@@ -10365,59 +10639,79 @@
                   position))
                 (let
                   [use : i64 (array-ref order cursor)]
-                  [row : i64 (* (array-ref state.use-places use) width)]
-                  [loan : i64 0]
+                  [used : i64 (array-ref state.use-places use)]
+                  [through : i64 (array-ref lenders used)]
+                  [word : i64 0]
+                  [loan : i64 -1]
                   [source : own.OwnershipSource
                     (if (< position (array-length old))
                       (own.ownership-source-copy
                         (& (array-ref old position).source))
                       (own.ownership-source-copy
                         (& (array-ref state.body.blocks block).source)))]
-                  (while (< loan (array-length state.body.loans))
-                    (when
-                      (if (> (array-ref alt-count use) 0)
-                        (normalize-alt-row-has?
-                          bits
-                          width
-                          alt-places
-                          (array-ref alt-start use)
-                          (array-ref alt-count use)
-                          loan)
-                        (array-ref bits (+ row loan)))
-                      (let
-                        [used : i64 (array-ref state.use-places use)]
-                        [through : i64 (array-ref lenders used)]
-                        ;; The root whose value holds the loan.
-                        [holder : i64
-                          (if (and
-                            (>= through 0)
-                            (= (array-ref alt-count use) 0)
-                            (array-ref bits (+ (* through width) loan)))
-                            through
-                            used)]
-                        (try (normalize-charge! state 1 1 0))
-                        (normalize-instruction-append!
-                          state
-                          block
-                          (own.OwnershipInstruction
-                            (own.OwnershipOperation.MayUseLoan
-                              (own.OwnershipLoanId
-                                (typed.typed-body-copy (& state.body.id))
-                                loan)
-                              (normalize-place-id (& state) holder))
-                            (own.ownership-source-copy (& source))))))
-                    (set! loan (+ loan 1)))
+                  ;; The use's loans: its place's row, or for a reassigned
+                  ;; binding the rows of the value places it reads instead.
+                  (while (< word words)
+                    (let
+                      [value : i64
+                        (if (> (array-ref alt-count use) 0)
+                          0
+                          (array-ref bits (+ (* used words) word)))]
+                      [at : i64 (array-ref alt-start use)]
+                      (while (<
+                        at
+                        (+ (array-ref alt-start use) (array-ref alt-count use)))
+                        (set!
+                          value
+                          (bit-or
+                            value
+                            (array-ref
+                              bits
+                              (+ (* (array-ref alt-places at) words) word))))
+                        (set! at (+ at 1)))
+                      (set! (array-ref demanded word) value))
+                    (set! word (+ word 1)))
+                  (set! loan (normalize-next-loan (& demanded) 0 words 0))
+                  (while (>= loan 0)
+                    (let
+                      ;; The root whose value holds the loan.
+                      [holder : i64
+                        (if (and
+                          (>= through 0)
+                          (= (array-ref alt-count use) 0)
+                          (!=
+                            (bit-and
+                              (array-ref bits (+ (* through words) (/ loan 64)))
+                              (shl 1 (bit-and loan 63)))
+                            0))
+                          through
+                          used)]
+                      (try (normalize-charge! state 1 1 0))
+                      (normalize-instruction-append!
+                        state
+                        block
+                        (own.OwnershipInstruction
+                          (own.OwnershipOperation.MayUseLoan
+                            (own.OwnershipLoanId
+                              (typed.typed-body-copy (& state.body.id))
+                              loan)
+                            (normalize-place-id (& state) holder))
+                          (own.ownership-source-copy (& source)))))
+                    (set!
+                      loan
+                      (normalize-next-loan (& demanded) 0 words (+ loan 1))))
                   (set! cursor (+ cursor 1))))
+              ;; The old instruction moves to its new position.
               (when
                 (< position (array-length old))
                 (normalize-instruction-append!
                   state
                   block
-                  (own.OwnershipInstruction
-                    (own.ownership-operation-copy
-                      (& (array-ref old position).operation))
-                    (own.ownership-source-copy
-                      (& (array-ref old position).source)))))
+                  (replace!
+                    (array-ref old position)
+                    (own.OwnershipInstruction
+                      (own.OwnershipOperation.CleanupFailure 0)
+                      (own.OwnershipSource "" 0 0 "")))))
               (set! position (+ position 1)))
             (normalize-trim-block! state block)
             (unless
@@ -11306,44 +11600,44 @@
             (__tl_make-array own.OwnershipBlock 0)
             (own.OwnershipBlockId (typed.typed-body-copy (& lease.body)) 0))
           classes
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array bool 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-bools)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           products
           variances
           writes
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (__tl_make-array own.OwnershipSource 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (__tl_make-array own.OwnershipSource 0)
-          (__tl_make-array bool 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-bools)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           -1
           -1
           false
@@ -11351,21 +11645,21 @@
           false
           false
           (__tl_make-array typed.TypedBinderId 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array bool 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-bools)
+          (normalize-no-i64s)
           0
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (__tl_make-array own.OwnershipSource 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array bool 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-bools)
           0
           false
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (__tl_make-array NormalizeNode 0)
           (__tl_make-array NormalizeBinder 0)
           limits
@@ -11377,9 +11671,9 @@
           -1
           0
           0
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
           0
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
           0
           0
           0
@@ -11387,12 +11681,12 @@
           0
           0
           -1
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (normalize-i64s)
           (normalize-i64s)
           (normalize-i64s)
@@ -11401,35 +11695,35 @@
           (normalize-bools)
           (normalize-i64s)
           -1
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array bool 0)
-          (__tl_make-array bool 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-bools)
+          (normalize-no-bools)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           0
           0
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (__tl_make-array own.OwnershipSource 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
           -1
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (__tl_make-array NormalizeDeferredReceiver 0)
           0
           (__tl_make-array i64 0)
@@ -11437,7 +11731,10 @@
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           (__tl_make-array i64 0)
-          (__tl_make-array i64 0))]
+          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s))]
       [_keys : unit
         (while (<
           (array-length state.type-keys)

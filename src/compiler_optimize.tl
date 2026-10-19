@@ -95166,10 +95166,9 @@
           (opt-ubound-fresh-label blocks site.latch "__ubound_exit" 0)]
         [trap-label : i64
           (opt-ubound-fresh-label blocks site.latch "__ubound_trap" 0)]
-        ;; The entry check copies the source check, so use the existing
-        ;; clone suffix that preserves its abort location through span lookup.
-        [seed-ok : i64
-          (opt-ubound-fresh-label blocks site.ok (opt-unroll-copy-suffix 0) 0)]
+        ;; The entry copy shares the source check's recognized copy-0 spelling,
+        ;; preserving its location without constructing a constant suffix.
+        [seed-ok : i64 (opt-ubound-fresh-label blocks site.ok "__u0" 0)]
         (opt-function-pass-commit
           (owned_view.compiler-owned-reference-shared-view func)
           (&

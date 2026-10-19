@@ -8614,7 +8614,7 @@
 ;;   `__u<digits>`   opt-unroll-copy-suffix (unroll trip copies; the
 ;;                   single-block versioner clones its kept checks through the
 ;;                   same helper with copy 0, spelling `__u0`; unsigned-bound
-;;                   narrowing uses it for the entry check's copy too)
+;;                   narrowing shares that spelling for its entry check)
 ;; The copy then misses the span table and the backend silently degrades
 ;; `tl_oob_abort_at` (file:line:col plus index/length) to the bare
 ;; `tl_oob_abort`. A clone's kept check traps at exactly the source check its

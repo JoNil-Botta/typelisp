@@ -71,6 +71,10 @@ compiler on startup and keeps it current:
   compiler when it actually changed. The download is checksum-verified, retries
   through the `stage0-latest` republish window, and the cached copy is reused
   when offline.
+- If `stage0-latest` is missing or hidden as a draft, the extension selects the
+  newest published immutable stage0 release whose actual tag commit is on
+  `main`. Its checksum is required and the selected tag appears in the output
+  log. Explicit release tags do not switch to another release.
 - The asset is selected for the current platform
   (`typelisp-stage0-windows.exe` on Windows, `typelisp-stage0-linux` on Linux
   x86_64). Only Linux and Windows x86_64 builds are published today; on macOS

@@ -161,6 +161,10 @@
     [(ast.AstType.F64) (NormalizeInt.Ok 11)]
     [(ast.AstType.Char) (NormalizeInt.Ok 12)]
     [(ast.AstType.Never) (NormalizeInt.Ok 13)]
+    ;; A region tag on a primitive (read through a reference) is dropped, as
+    ;; the graph drops one on any Copy value (`tc-selected-canonical-type`).
+    [(ast.AstType.Region _ inner)
+      (normalize-type-code (& (ast.ty-node-get inner)))]
     [_
       (NormalizeInt.Err
         (OwnershipNormalizeFailure.Unsupported

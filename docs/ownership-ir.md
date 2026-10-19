@@ -390,7 +390,20 @@ indices and arguments keep their ordinary moves. A projection receiver that
 an index evaluated after it can write (a variable the receiver may select,
 named in a writing position, the lowering's snapshot rule) is retained by
 value instead of lent, so the clone copies what the receiver selected before
-the write; any other read's loans live until the clone.
+the write; any other read's loans live until the clone. A compound argument
+of a shared-reference formal is read the same way (the call borrows it), and
+an annotation is transparent to the place it names.
+
+An explicit read through a reference (`deref`, `array-ref`, `tuple-ref`) is
+the referent's own value, of its plain type `T`, while typing tags it
+`(in p T)`. Where `(in p T)` is expected (a result, an annotated binding, an
+`ann`, a parameter), the graph compares beneath the region tags
+(`tc-selected-contextual-result`): the value is that read under `p`, kept as
+its own occurrence and converted to the expected type as a widening is. A
+move-only read there is thus still a move out of the reference (E0208), and a
+Copy one a copy; a region tag on a primitive is dropped as on any Copy value,
+and a signature's region-tagged parameter or result is admitted on the same
+terms (a view, or its Copy value).
 Computed Copy temporaries and unique Copy declaration writes use ordinary
 Assign in the core, allowing repeated execution without inventing a resource
 acquisition. Reads still require initialization on first entry and on every

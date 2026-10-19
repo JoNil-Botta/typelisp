@@ -719,10 +719,54 @@
   (let [copy (clone (if (taken? a) b b))] (take a) copy))")
         "typecheck: use of moved value `a`"))))
 
+;; A value read through a reference where its region-tagged type `(in p T)` is
+;; expected (a result, a binding, an annotation, an argument) is that value
+;; read under `p`: a move-only one moved there is a move out of the reference
+;; (E0208); a Copy one, or one only lent (to a shared-reference formal, or to
+;; `clone`), is accepted.
+(define (compiler-typecheck-region-read-tests-ok?) : bool
+  (let
+    [prefix : String
+      "(define (observe [text : (& str)]) : i64 7)
+(define (keep [p : (& p (Array String 2))] [s : (in p String)]) : i64 7)
+"]
+    [moves : (Array String 5)
+      (array
+        "(define (via [p : (& p (Array String 2))]) : (in p String) (array-ref p 0))"
+        "(define (via [p : (& p (Array String 2))]) : i64
+  (let [moved : (in p String) (array-ref p 0)] 0))"
+        "(define (via [p : (& p (Tuple String i64))]) : (in p String) (tuple-ref p 0))"
+        "(define (via [t : (& p String)]) : (in p String) (deref t))"
+        "(define (via [p : (& p (Array String 2))]) : i64 (keep p (array-ref p 0)))")]
+    [reads : (Array String 5)
+      (array
+        "(define (via [p : (& p (Array String 2))]) : i64
+  (observe (ann (array-ref p 0) : (in p String))))"
+        "(define (via [p : (& p (Array String 2))]) : String
+  (clone (ann (array-ref p 0) : (in p String))))"
+        "(define (via [p : (& p (Array String 2))] [flag : bool]) : i64
+  (observe (if flag (array-ref p 0) (array-ref p 1))))"
+        "(define (via [p : (& p (Array i64 2))]) : (in p i64) (array-ref p 0))"
+        "(define (via [p : (& p (Array String 2))]) : i64 (keep p (clone (array-ref p 0))))")]
+    [ok : bool true]
+    (for [index (iterator.range 0 5)]
+      (set!
+        ok
+        (and
+          ok
+          (compiler-typecheck-error-code-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref moves index)))
+            "E0208"
+            "typecheck")
+          (compiler-typecheck-ok?
+            (str_cat.str-cat (clone prefix) (clone (array-ref reads index)))))))
+    ok))
+
 (define (compiler-typecheck-clone-tests-ok?) : bool
   (and
     (compiler-typecheck-clone-referent-tests-ok?)
     (compiler-typecheck-clone-read-tests-ok?)
+    (compiler-typecheck-region-read-tests-ok?)
     (clone_tests.clone-name-set-smoke-ok?)
     (clone_tests.clone-root-entries-smoke-ok?)
     (compiler-typecheck-ok?

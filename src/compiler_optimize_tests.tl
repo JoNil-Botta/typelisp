@@ -4159,7 +4159,8 @@
           (Program
             (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-clone-function-seq pools (& functions))
-            (ir.compiler-ir-extern-seq-empty))
+            (ir.compiler-ir-extern-seq-empty)
+            (ir.CompilerIrReturnStorageAuthority.None))
           (ir.compiler-source-spans-empty)
           (opt.optimize-request pools 2)))
         [(Program result _) result])]
@@ -4180,7 +4181,8 @@
         (Program
           (ir.compiler-ir-global-seq-empty)
           input
-          (ir.compiler-ir-extern-seq-empty))
+          (ir.compiler-ir-extern-seq-empty)
+          (ir.CompilerIrReturnStorageAuthority.None))
         (ir.compiler-source-spans-empty)
         request))
       [(Program result _)
@@ -4232,7 +4234,7 @@
        entry:
          return 7
        }")
-      [(Program _ functions _) functions])
+      [(Program _ functions _ _) functions])
     (__tl_make-array 0 1 2 4)))
 
 ;; The stage validates bounds against its actual input before any release, and

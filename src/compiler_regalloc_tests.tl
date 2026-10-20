@@ -12811,8 +12811,11 @@
       (set! (array-ref slots index) -1)
       (set! (array-ref remap index) -1))
     (match func
-      [(Function _ _ _ vars blocks _)
+      [(Function _ params _ vars blocks _)
         (reg.compiler-reg-color-inline-storage
+          (ast.ast-node-pool-reader-type-segment-bases)
+          params
+          (ir.compiler-ir-representation-index-empty)
           (& blocks)
           (& intervals)
           (&mut slots)

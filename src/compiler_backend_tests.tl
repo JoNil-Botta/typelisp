@@ -42557,7 +42557,8 @@ user_fn:
             [else (C)])
           link
           (ast.ast-extern-link-input-list-new)
-          (>= kind 5)))
+          (>= kind 5)
+          (ir.CompilerIrReturnStorage.None)))
       (let
         [index : backend.CompilerBackendProgramIndex
           (compiler-backend-program-index-build
@@ -42795,7 +42796,8 @@ user_fn:
       abi
       id
       (ast.ast-extern-link-input-list-new)
-      false)))
+      false
+      (ir.CompilerIrReturnStorage.None))))
 
 (define (compiler-backend-convention-site-builtin-call
   [symbol : String]
@@ -42903,7 +42905,8 @@ user_fn:
                return %0")
             Ordinary))
         (& functions))
-      (ir.compiler-ir-extern-builder-snapshot-seq (& externs)))))
+      (ir.compiler-ir-extern-builder-snapshot-seq (& externs))
+      (ir.CompilerIrReturnStorageAuthority.None))))
 
 ;; The text from `label` through the end of its function's first `ret`.
 (define (compiler-backend-convention-site-body

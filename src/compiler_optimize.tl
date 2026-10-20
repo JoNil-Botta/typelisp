@@ -21042,9 +21042,11 @@
     [_ (opt-function-addr-taken-install! frame blocks)]))
 
 (define (opt-licm-writes-addr-taken? [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (match (opt-instr-def-var instr)
-    [(Some dst) (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
-    [(None) false]))
+  (and
+    (> (array-length opt-function-addr-taken.marks) 0)
+    (opt-addr-taken-var?
+      (& opt-function-addr-taken.marks)
+      (ir.compiler-ir-instr-dst instr))))
 
 ;; The vars a loop may redefine: its own defs plus every address-taken local.
 (define (opt-licm-loop-defs
@@ -127926,12 +127928,14 @@
           [(Some dst) (opt-load-global-bases-drop-var bases dst)]
           [(None) bases]))]))
 
-;; How a classified store writes memory (Unknown clears the whole table). Both
-;; classified forms carry the STORED TYPE: the typed-word rule in
+;; How a classified store writes memory (Unknown clears the whole table).
+;; TypedUnknown has no location proof; only a distinct known type class survives.
+;; Classified forms carry the STORED TYPE: the typed-word rule in
 ;; `opt-load-entry-survives-store-location?` compares it against the loaded type
 ;; of each table entry.
 (defenum OptLoadStoreClass
   (OptLoadStoreUnknown)
+  (OptLoadStoreTypedUnknown ast.AstType)
   (OptLoadStoreElement ast.AstType)
   (OptLoadStoreField i64 i64 i64 bool ast.AstType))
 
@@ -128371,76 +128375,89 @@
   [type-segment-bases : i64]
   [class : (& OptLoadStoreClass)]
   [entry : (& OptLoadEntry)]) : bool
-  (match class
-    [(OptLoadStoreElement sty)
-      ;; Element stores write data-buffer memory. Descriptor-field entries
-      ;; (header-typed base) and named global CELLS are provably outside every
-      ;; buffer whatever the stored type is; everything else survives only on
-      ;; the TYPED-WORD rule -- a store of class C writes only words whose
-      ;; static type is class C, so an entry read at a different known class
-      ;; names a different word even inside the same buffer.
-      ;;
-      ;; The global-cell arm is the same allocation-layer argument the header
-      ;; arm makes, one level up the descriptor chain: an element address is
-      ;; derived from a data pointer LOADED out of a descriptor slot, so it
-      ;; addresses that allocation's payload, while a `GlobalField` key
-      ;; addresses a named cell in the static data segment, which no payload
-      ;; allocation overlaps. An inline global array cannot produce the key
-      ;; either -- a variable-offset gep off a global drops its global-base
-      ;; binding (opt-load-global-bases-step), so only constant-offset cell
-      ;; words are ever keyed this way.
-      (match (opt-load-entry-key
-        (owned_view.compiler-owned-reference-shared-view entry))
-        [(Field _ _ ety header?)
-          (or
-            header?
+  (let
+    [key : OptLoadKey
+      (opt-load-entry-key
+        (owned_view.compiler-owned-reference-shared-view entry))]
+    (match class
+      [(OptLoadStoreElement sty)
+        ;; Element stores write data-buffer memory. Descriptor-field entries
+        ;; (header-typed base) and named global CELLS are provably outside every
+        ;; buffer whatever the stored type is; everything else survives only on
+        ;; the TYPED-WORD rule -- a store of class C writes only words whose
+        ;; static type is class C, so an entry read at a different known class
+        ;; names a different word even inside the same buffer.
+        ;;
+        ;; The global-cell arm is the same allocation-layer argument the header
+        ;; arm makes, one level up the descriptor chain: an element address is
+        ;; derived from a data pointer LOADED out of a descriptor slot, so it
+        ;; addresses that allocation's payload, while a `GlobalField` key
+        ;; addresses a named cell in the static data segment, which no payload
+        ;; allocation overlaps. An inline global array cannot produce the key
+        ;; either -- a variable-offset gep off a global drops its global-base
+        ;; binding (opt-load-global-bases-step), so only constant-offset cell
+        ;; words are ever keyed this way.
+        (match key
+          [(Field _ _ ety header?)
+            (or
+              header?
+              (opt-load-alias-classes-distinct?
+                type-segment-bases
+                (& sty)
+                (& ety)))]
+          [(GlobalField _ _ _ _) true]
+          ;; An element or unclassified address may name a word inside the very
+          ;; buffer this store writes -- but not a word of a different class.
+          [(or (Raw _ ety _) (ScaledField _ _ ety _))
             (opt-load-alias-classes-distinct?
               type-segment-bases
               (& sty)
-              (& ety)))]
-        [(GlobalField _ _ _ _) true]
-        ;; An element or unclassified address may name a word inside the very
-        ;; buffer this store writes -- but not a word of a different class.
-        [(or (Raw _ ety _) (ScaledField _ _ ety _))
-          (opt-load-alias-classes-distinct? type-segment-bases (& sty) (& ety))])]
-    [(OptLoadStoreField sbase slo swidth sheader? sty)
-      (match (opt-load-entry-key
-        (owned_view.compiler-owned-reference-shared-view entry))
-        [(Raw _ ety element?)
-          ;; A descriptor-field store cannot touch buffer memory; a generic
-          ;; field store might (inline structs live inside buffers) -- unless
-          ;; the two static types are different known classes.
-          (or
-            (and element? sheader?)
+              (& ety))])]
+      [(OptLoadStoreField sbase slo swidth sheader? sty)
+        (match key
+          [(Raw _ ety element?)
+            ;; A descriptor-field store cannot touch buffer memory; a generic
+            ;; field store might (inline structs live inside buffers) -- unless
+            ;; the two static types are different known classes.
+            (or
+              (and element? sheader?)
+              (opt-load-alias-classes-distinct?
+                type-segment-bases
+                (& sty)
+                (& ety)))]
+          [(Field ebase eoff ety _)
+            (if (= ebase sbase)
+              ;; SAME object (same un-redefined base var): byte ranges only. No
+              ;; class exemption here -- a Bitcast can hand out two differently
+              ;; typed views of one object's own storage, and the range rule is
+              ;; what already covers the honest field-vs-field case.
+              (opt-load-ranges-disjoint?
+                slo
+                swidth
+                eoff
+                (opt-load-loc-type-size type-segment-bases (& ety)))
+              ;; DIFFERENT base vars may name the same object, so offsets prove
+              ;; nothing; different known type classes still do.
+              (opt-load-alias-classes-distinct?
+                type-segment-bases
+                (& sty)
+                (& ety)))]
+          ;; A var-offset key cannot prove disjointness from any store by
+          ;; address; only the typed-word rule applies.
+          ;; A field store's base var may hold the global's own address, so a
+          ;; global-keyed entry is never provably outside it by address; the
+          ;; typed-word rule is the only thing that separates them.
+          [(or (ScaledField _ _ ety _) (GlobalField _ _ ety _))
             (opt-load-alias-classes-distinct?
               type-segment-bases
               (& sty)
-              (& ety)))]
-        [(Field ebase eoff ety _)
-          (if (= ebase sbase)
-            ;; SAME object (same un-redefined base var): byte ranges only. No
-            ;; class exemption here -- a Bitcast can hand out two differently
-            ;; typed views of one object's own storage, and the range rule is
-            ;; what already covers the honest field-vs-field case.
-            (opt-load-ranges-disjoint?
-              slo
-              swidth
-              eoff
-              (opt-load-loc-type-size type-segment-bases (& ety)))
-            ;; DIFFERENT base vars may name the same object, so offsets prove
-            ;; nothing; different known type classes still do.
-            (opt-load-alias-classes-distinct?
-              type-segment-bases
-              (& sty)
-              (& ety)))]
-        ;; A var-offset key cannot prove disjointness from any store by
-        ;; address; only the typed-word rule applies.
-        ;; A field store's base var may hold the global's own address, so a
-        ;; global-keyed entry is never provably outside it by address; the
-        ;; typed-word rule is the only thing that separates them.
-        [(or (ScaledField _ _ ety _) (GlobalField _ _ ety _))
-          (opt-load-alias-classes-distinct? type-segment-bases (& sty) (& ety))])]
-    [(OptLoadStoreUnknown) false]))
+              (& ety))])]
+      [(OptLoadStoreTypedUnknown sty)
+        (opt-load-alias-classes-distinct?
+          type-segment-bases
+          (& sty)
+          (& (opt-load-key-type (& key))))]
+      [(OptLoadStoreUnknown) false])))
 
 ;; Epoch-ordering rule: freshly allocated storage is disjoint from every address
 ;; value that already existed when the allocation ran. So a store rooted at an
@@ -128613,7 +128630,7 @@
   [access : (& access OptLoadStoreClass)]
   [candidate : (& OptLoadStoreClass)]) : bool
   (match access
-    [(OptLoadStoreUnknown) false]
+    [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _)) false]
     [(OptLoadStoreElement _)
       (match candidate
         [(OptLoadStoreField _ _ _ header? _) header?]
@@ -128625,7 +128642,7 @@
           (and
             (= abase bbase)
             (opt-load-ranges-disjoint? aoff awidth boff bwidth))]
-        [(OptLoadStoreUnknown) false])]))
+        [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _)) false])]))
 
 (define (opt-dead-store-filter-store
   [pending : OptDeadStoreSet]
@@ -129530,7 +129547,7 @@
             store-root
             (& class))]
         (match class
-          [(OptLoadStoreUnknown)
+          [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _))
             ;; Unknown offset/location still preserves entries rooted at a
             ;; different exclusive checked or fresh allocation root, and entries
             ;; created before a fresh store root's allocation epoch.
@@ -129631,7 +129648,8 @@
             store-root
             (& class))]
         (match class
-          [(or (OptLoadStoreUnknown) (OptLoadStoreElement _))
+          [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _)
+               (OptLoadStoreElement _))
             (State
               facts2
               filtered
@@ -129693,8 +129711,8 @@
   [ty : ast.AstType]
   [instr : ir.CompilerIrInstr]) : OptLoadCseResult
   (match state
-    ;; A Load writes nothing, so the base map is carried (through the same
-    ;; transfer the pure arm uses -- the rewritten Mov can inherit a binding).
+    ;; The base map follows the result binding. The dispatcher separately
+    ;; invalidates memory availability if the result's local is address-taken.
     [(State facts table kinds table-cap epoch bases profile-state)
       (let
         ;; The dst redefinition drops stale entries first; the key is computed
@@ -129787,6 +129805,45 @@
                   profile-state)
                 instr))]))]))
 
+;; A definition of an address-taken local writes its storage. Invalidate after
+;; the instruction has read its operands: a Load into that local may reuse a
+;; pre-write value, but cannot leave that value available after its own write.
+;; A missing scalar destination type is an unclassified write.
+(define (opt-load-cse-local-def-result
+  [type-segment-bases : i64]
+  [result : OptLoadCseResult]) : OptLoadCseResult
+  (if (= (array-length opt-function-addr-taken.marks) 0)
+    result
+    (match result
+      [(Result state instr)
+        (if (opt-licm-writes-addr-taken? (& instr))
+          (match state
+            [(State facts table kinds table-cap epoch bases profile-state)
+              (let
+                [class : OptLoadStoreClass
+                  (match (ir.compiler-ir-instr-dst-type
+                    (compiler-opt-global-shared-view instr))
+                    [(Some ty) (OptLoadStoreTypedUnknown ty)]
+                    [(No) (OptLoadStoreUnknown)])]
+                [filtered : OptLoadTable
+                  (opt-load-table-filter-store
+                    type-segment-bases
+                    table
+                    facts
+                    (NoRoot)
+                    (& class))]
+                (Result
+                  (State
+                    facts
+                    filtered
+                    kinds
+                    table-cap
+                    epoch
+                    bases
+                    profile-state)
+                  instr))])
+          (Result state instr))])))
+
 ;; Shared per-instruction dispatcher for the block-local (gated? false) and
 ;; cross-block (gated? true) passes. StorePtr/CopyBytes are matched before the
 ;; clear-all check: they ARE memory writes, handled granularly.
@@ -129800,96 +129857,78 @@
   [cells : (& cells OptGlobalCellSummary)]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseResult
-  (match (compiler-opt-global-shared-view instr)
-    [(or (StorePtr ptr value ty) (StoreOwned ptr value ty))
-      (Result
-        (opt-load-cse-state-store
+  (opt-load-cse-local-def-result
+    type-segment-bases
+    (match (compiler-opt-global-shared-view instr)
+      [(or (StorePtr ptr value ty) (StoreOwned ptr value ty))
+        (Result
+          (opt-load-cse-state-store
+            type-segment-bases
+            canon
+            hs
+            gated?
+            sources
+            state
+            (& ptr)
+            value
+            (& ty)
+            instr)
+          instr)]
+      [(CopyBytes dst src size)
+        (Result
+          (opt-load-cse-state-copy-bytes
+            type-segment-bases
+            hs
+            gated?
+            sources
+            state
+            (& dst)
+            (& src)
+            size
+            (& instr))
+          instr)]
+      [(Load dst src ty)
+        (opt-load-cse-core-load
           type-segment-bases
           canon
           hs
           gated?
           sources
-          state
-          (& ptr)
-          value
-          (& ty)
-          instr)
-        instr)]
-    [(CopyBytes dst src size)
-      (Result
-        (opt-load-cse-state-copy-bytes
-          type-segment-bases
-          hs
-          gated?
-          sources
-          state
-          (& dst)
-          (& src)
-          size
-          (& instr))
-        instr)]
-    [(Load dst src ty)
-      (opt-load-cse-core-load
-        type-segment-bases
-        canon
-        hs
-        gated?
-        sources
-        state
-        dst
-        (& src)
-        ty
-        instr)]
-    [(Call dst name args _)
-      (Result
-        (opt-load-cse-state-direct-call
-          type-segment-bases
-          canon
-          sources
-          hs
-          call-memory
-          cells
           state
           dst
-          name
-          (& args)
-          (& instr))
-        instr)]
-    [(Store name _ _)
-      (Result
-        (opt-load-cse-state-global-store
-          type-segment-bases
-          canon
-          sources
-          hs
-          state
-          (ir.compiler-ir-symbol-id name)
-          (& instr))
-        instr)]
-    ;; GSF-1: a read of a global cell whose contents the walk knows reads
-    ;; that value; the state steps as for the read it replaces, so `dst` keeps
-    ;; its binding as a base addressing [g].
-    [(Mov dst src ty)
-      (Result
-        (opt-load-cse-state-step-other
-          type-segment-bases
-          canon
-          sources
-          hs
-          (compiler-opt-global-shared-view state)
-          (& instr))
-        (opt-load-cse-forward-cell (& state) instr))]
-    [_
-      (if (opt-alias-instr-clears-all? (& instr))
+          (& src)
+          ty
+          instr)]
+      [(Call dst name args _)
         (Result
-          (opt-load-cse-state-clear-for-memory
+          (opt-load-cse-state-direct-call
+            type-segment-bases
+            canon
+            sources
+            hs
+            call-memory
+            cells
+            state
+            dst
+            name
+            (& args)
+            (& instr))
+          instr)]
+      [(Store name _ _)
+        (Result
+          (opt-load-cse-state-global-store
             type-segment-bases
             canon
             sources
             hs
             state
+            (ir.compiler-ir-symbol-id name)
             (& instr))
-          instr)
+          instr)]
+      ;; GSF-1: a read of a global cell whose contents the walk knows reads
+      ;; that value; the state steps as for the read it replaces, so `dst` keeps
+      ;; its binding as a base addressing [g].
+      [(Mov dst src ty)
         (Result
           (opt-load-cse-state-step-other
             type-segment-bases
@@ -129898,7 +129937,27 @@
             hs
             (compiler-opt-global-shared-view state)
             (& instr))
-          (opt-load-cse-forward-cell (& state) instr)))]))
+          (opt-load-cse-forward-cell (& state) instr))]
+      [_
+        (if (opt-alias-instr-clears-all? (& instr))
+          (Result
+            (opt-load-cse-state-clear-for-memory
+              type-segment-bases
+              canon
+              sources
+              hs
+              state
+              (& instr))
+            instr)
+          (Result
+            (opt-load-cse-state-step-other
+              type-segment-bases
+              canon
+              sources
+              hs
+              (compiler-opt-global-shared-view state)
+              (& instr))
+            (opt-load-cse-forward-cell (& state) instr)))])))
 
 ;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
 ;;
@@ -131798,16 +131857,17 @@
   [hs : (& hs OptLoadHeaderSet)]
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [instr : (& ir.CompilerIrInstr)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(StorePtr ptr _ _)
+  (match instr
+    [(or (StorePtr ptr _ _) (StoreOwned ptr _ _))
       (match ptr
         [(Var pvar) (opt-load-gvn-element-base? hs blocks pvar 0)]
         [_ false])]
-    [(StoreOwned ptr value ty)
-      (opt-load-gvn-loop-safe-instr? hs blocks (& (StorePtr ptr value ty)))]
     [(or (Store _ _ _) (VectorStore _) (PredicatedStore _) (CopyBytes _ _ _))
       false]
-    [_ (not (opt-alias-instr-clears-all? instr))]))
+    [_
+      (and
+        (not (opt-alias-instr-clears-all? instr))
+        (not (opt-licm-writes-addr-taken? instr)))]))
 
 ;; Scan the loop body's blocks.
 (define (opt-load-gvn-loop-safe-blocks?
@@ -131885,7 +131945,10 @@
     [(or (StorePtr _ _ _) (StoreOwned _ _ _) (Store _ _ _) (VectorStore _)
          (PredicatedStore _) (CopyBytes _ _ _))
       false]
-    [_ (not (opt-alias-instr-clears-all? instr))]))
+    [_
+      (and
+        (not (opt-alias-instr-clears-all? instr))
+        (not (opt-licm-writes-addr-taken? instr)))]))
 
 (define (opt-load-gvn-loop-store-free-instr-seq?
   [instrs : (& ir.CompilerIrInstrSeq)]) : bool
@@ -137682,6 +137745,7 @@
             (opt-sccp-max-var-params
               params
               (opt-sccp-max-var-blocks blocks (- 0 1)))))]
+      [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
       ;; MF-3 runs BEFORE the sweep and hands it a different function: it moves
       ;; whole `gep ; load` pairs between existing blocks, so the CFG, the var
       ;; numbering, the single-source map and the header set all keep describing

@@ -422,6 +422,13 @@
   [state : opt.OptLoadCseState]
   [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
+    [own : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") (clone instrs)))]
+    [_addr-taken : unit
+      (opt.opt-function-addr-taken-install!
+        (opt-test-addr-of-bound (ir.compiler-ir-block-list-view own))
+        (& own))]
     [cells : opt.OptGlobalCellSummary (opt.opt-load-cse-no-cells-view)]
     [no-canon : (__tl_dyn-array i64) (opt.opt-load-canon-none)]
     [next-state : opt.OptLoadCseState state]
@@ -71637,6 +71644,151 @@ return 0" true)
     (compiler-optimize-load-cse-typed-store-self-test)
     42
     "an i64 element or field store keeps a differently typed handle entry alive, while same-class, byte, CopyBytes and same-object stores still drop it"))
+
+(define (opt-load-local-def-check
+  [body : String]
+  [expected : i64]
+  [gvn-expected : i64]) : unit
+  (let
+    [params
+      (irt.params "other=%9:(MutPtr i64), handle=%10:(MutPtr (MutPtr i64))")]
+    [local
+      (opt-load-cse-run-with-params (clone params) (irt.instrs (clone body)))]
+    [global
+      (opt-gvn-blocks
+        (ast.ast-node-pool-reader-type-segment-bases)
+        params
+        (irt.blocks (string.concat "entry:\n" body)))]
+    (test.assert-i64-eq
+      (opt-count-load-instr-seq local)
+      expected
+      (string.concat "fold: " body))
+    (test.assert-i64-eq
+      (opt-count-load-blocks (ir.compiler-ir-block-list-view global))
+      gvn-expected
+      (string.concat "gvn: " body))))
+
+(test
+  load-cse-address-taken-def-store
+  ;; A local write kills its word class, retaining differently typed loads.
+  (opt-load-local-def-check
+    "%0 = mov 1 : i64
+     %1 = addr_of %0
+     %2 = load %1 : i64
+     %3 = load %10 : (MutPtr i64)
+     %0 = mov 5 : i64
+     %4 = load %1 : i64
+     %5 = load %10 : (MutPtr i64)
+     return %4"
+    3
+    3)
+  (opt-load-local-def-check
+    "%0 = mov 1 : i64
+     %1 = addr_of %0
+     %2 = load %1 : i64
+     %0 = add %2, 4 : i64
+     %3 = load %1 : i64
+     return %3"
+    2
+    2)
+  ;; Fold reuses the pre-write value; GVN rejects a multiply-defined result.
+  (opt-load-local-def-check
+    "%0 = mov 1 : i64
+     %1 = addr_of %0
+     %2 = load %9 : i64
+     %3 = load %1 : i64
+     %0 = load %9 : i64
+     %4 = load %1 : i64
+     return %4"
+    3
+    4)
+  ;; Byte stores can alias every typed word.
+  (opt-load-local-def-check
+    "%0 = mov 1 : u8
+     %1 = addr_of %0
+     %2 = load %1 : u8
+     %3 = load %10 : (MutPtr i64)
+     %0 = mov 5 : u8
+     %4 = load %1 : u8
+     %5 = load %10 : (MutPtr i64)
+     return %5"
+    4
+    4)
+  ;; Instructions without a reported result type use the unknown-store rule.
+  (opt-load-local-def-check
+    "%7 = mov 1 : i64
+     %0 = addr_of %7
+     %1 = addr_of %0
+     %2 = load %1 : (MutPtr i64)
+     %3 = load %9 : i64
+     %0 = addr_of %7
+     %4 = load %1 : (MutPtr i64)
+     %5 = load %9 : i64
+     return %5"
+    4
+    4)
+  ;; Installing a function without addr_of clears the preceding function's set.
+  (opt-load-local-def-check
+    "%0 = mov 1 : i64
+     %2 = load %9 : i64
+     %0 = mov 5 : i64
+     %3 = load %9 : i64
+     return %3"
+    1
+    1))
+
+(test
+  load-gvn-address-taken-join-and-loop
+  (let
+    [params (irt.params "cond=%9:bool")]
+    [diamond
+      (opt-gvn-blocks
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (clone params)
+        (irt.blocks
+          "entry:
+             %0 = mov 1 : i64
+             %1 = addr_of %0
+             branch %9, then, else
+           then:
+             %2 = load %1 : i64
+             %0 = mov 3 : i64
+             jump join
+           else:
+             %3 = load %1 : i64
+             %0 = mov 4 : i64
+             jump join
+           join:
+             %4 = load %1 : i64
+             return %4"))]
+    [loop
+      (opt-gvn-blocks
+        (ast.ast-node-pool-reader-type-segment-bases)
+        params
+        (irt.blocks
+          "entry:
+             %0 = mov 1 : i64
+             %1 = addr_of %0
+             %2 = load %1 : i64
+             jump header
+           header:
+             %3 = load %1 : i64
+             branch %9, body, exit
+           body:
+             %0 = add %3, 1 : i64
+             jump header
+           exit:
+             return %3"))]
+    (test.assert-i64-eq
+      (opt-count-load-blocks (ir.compiler-ir-block-list-view diamond))
+      3
+      "MF-2 cannot merge values loaded before local writes")
+    (test.assert-i64-eq
+      (opt-count-load-label-blocks
+        (ir.compiler-ir-block-list-view loop)
+        (ir.compiler-ir-label "header"))
+      1
+      "loop carry treats a local definition as a store")))
 
 ;; --- T1-2: compare-of-sentinel-phi fold (phi_cmp_fold) ----------------------
 ;;

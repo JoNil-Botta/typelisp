@@ -277,14 +277,22 @@
           (set! compiler-symbols-last-error-has-span false)])]))
 
 (define (compiler-symbols-last-error-diagnostic [message : String]) : cdiag.CompilerDiagnostic
-  (if compiler-symbols-last-error-has-span
-    (cdiag.compiler-diagnostic-from-ast-span
-      (string.copy (& compiler-symbols-last-error-path))
-      compiler-symbols-last-error-span
-      message)
-    (cdiag.compiler-diagnostic-at-start
-      (string.copy (& compiler-symbols-last-error-path))
-      message)))
+  (let
+    [diag : cdiag.CompilerDiagnostic
+      (if compiler-symbols-last-error-has-span
+        (cdiag.compiler-diagnostic-from-ast-span
+          (string.copy (& compiler-symbols-last-error-path))
+          compiler-symbols-last-error-span
+          message)
+        (cdiag.compiler-diagnostic-at-start
+          (string.copy (& compiler-symbols-last-error-path))
+          message))]
+    (match (cdiag.compiler-diagnostic-code (& diag))
+      [(CompilerDiagnosticSomeString code)
+        (cdiag.compiler-diagnostic-with-category
+          (& diag)
+          (cdiag.compiler-diagnostic-code-category (& code)))]
+      [CompilerDiagnosticNoString diag])))
 
 (define (compiler-symbol-kind-value-define) : i64
   1)
@@ -845,7 +853,9 @@
   (str_cat.str-cat "symbols: duplicate type declaration " name))
 
 (define (compiler-symbols-duplicate-macro-message [name : String]) : String
-  (str_cat.str-cat "symbols: duplicate macro declaration " name))
+  (cdiag.compiler-diagnostic-macro-tagged
+    (MacroNamespace)
+    (str_cat.str-cat "symbols: duplicate macro declaration " name)))
 
 (define (compiler-registries-duplicate-variant-message [name : String]) : String
   (str_cat.str-cat "symbols: duplicate enum variant " name))

@@ -6297,6 +6297,16 @@
     (__tl-project-field-name ,instrs "slots")
     ,index))
 
+;; Moves the element out of a sequence the caller owns, leaving a placeholder
+;; jump that nothing may read: the consuming rewrites of #9013 take an
+;; instruction this way instead of copying it out of a view.
+(define (compiler-ir-instr-seq-take!
+  [instrs : (&mut instrs CompilerIrInstrSeq)]
+  [index : i64]) : CompilerIrInstr
+  (replace!
+    (array-ref instrs.slots index)
+    (CompilerIrInstr.Jump (compiler-ir-label-none))))
+
 (define (compiler-ir-instr-loop-dst-or
   [instr : (& CompilerIrInstr)]
   [fallback : i64]) : i64
@@ -6553,6 +6563,16 @@
   `(compiler-ir-array-shared-view
     (__tl-project-field-name ,blocks "slots")
     ,index))
+
+;; compiler-ir-instr-seq-take! for blocks: the placeholder is an empty block.
+(define (compiler-ir-block-seq-take!
+  [blocks : (&mut blocks CompilerIrBlockSeq)]
+  [index : i64]) : CompilerIrBlock
+  (replace!
+    (array-ref blocks.slots index)
+    (CompilerIrBlock.Block
+      (compiler-ir-label-none)
+      (compiler-ir-instr-seq-empty))))
 
 (define (compiler-ir-block-list-empty) : CompilerIrBlockList
   (Array (CompilerIrBlockSeq (__tl_make-array CompilerIrBlock 0) 0)))
@@ -9917,7 +9937,8 @@
 ;;   `__licm_false`  opt-licm-unswitch-clone-label (the unswitched false clone)
 ;;   `__u<digits>`   opt-unroll-copy-suffix (unroll trip copies; the
 ;;                   single-block versioner clones its kept checks through the
-;;                   same helper with copy 0, spelling `__u0`)
+;;                   same helper with copy 0, spelling `__u0`; unsigned-bound
+;;                   narrowing shares that spelling for its entry check)
 ;; The copy then misses the span table and the backend silently degrades
 ;; `tl_oob_abort_at` (file:line:col plus index/length) to the bare
 ;; `tl_oob_abort`. A clone's kept check traps at exactly the source check its

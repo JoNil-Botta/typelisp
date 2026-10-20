@@ -1863,13 +1863,13 @@
 
 (define (ctfe-env-layouts [env : (& env CtfeEnv)]) : CtfeLayoutInfoList
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.layouts))
 
 (define (ctfe-env-reflections [env : (& env CtfeEnv)]) : CtfeReflectInfoList
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.reflections))
 
@@ -1932,7 +1932,7 @@
 
 (define (ctfe-env-source-names [env : (& env CtfeEnv)]) : ci.InternSourceNameSessionHandle
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.source-names))
 
@@ -2091,7 +2091,7 @@
 ;; when it recorded one, otherwise the written type.
 (define (ctfe-type-literal-type [env : (& env CtfeEnv)] [id : i64]) : ast.AstType
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     [address : u64 metadata.type-literals]
     (if (= address (cast 0 : u64))
@@ -2209,7 +2209,7 @@
 
 (define (ctfe-env-lookup-id-from [env : (& env CtfeEnv)] [name-id : i64]) : CtfeMaybeValue
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
@@ -2229,7 +2229,7 @@
 
 (define (ctfe-env-lookup-type-id-from [env : (& env CtfeEnv)] [name-id : i64]) : ast.AstMaybeType
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
@@ -2960,10 +2960,28 @@
   (comptime_diagnostics.compiler-comptime-fuel-diagnostic-message))
 
 ;; Build a diagnostic anchored at the (possibly spanned) expression.
-(define (ctfe-diagnostic-at-expr [expr : (& ast.AstExpr)] [message : String]) : cdiag.CompilerDiagnostic
-  (match expr
-    [(Spanned _ span) (cdiag.compiler-diagnostic-from-ast-span "" span message)]
-    [_ (cdiag.compiler-diagnostic-at-start "" message)]))
+(define (ctfe-diagnostic-at-expr
+  [kind : cdiag.CompilerMacroKind]
+  [expr : (& ast.AstExpr)]
+  [message : String]) : cdiag.CompilerDiagnostic
+  (let
+    ;; An author's String is data, even when it happens to start with a tag.
+    ;; Other conversions preserve an already-classified nested failure.
+    [text : String
+      (if (match kind
+        [(ComptimeAuthorError) true]
+        [_ (not (cdiag.compiler-diagnostic-typecheck-tagged? (& message)))])
+        (cdiag.compiler-diagnostic-macro-tagged kind message)
+        message)]
+    [diag : cdiag.CompilerDiagnostic
+      (match expr
+        [(Spanned _ span)
+          (cdiag.compiler-diagnostic-from-ast-span "" span text)]
+        [_ (cdiag.compiler-diagnostic-at-start "" text)])]
+    (cdiag.compiler-diagnostic-with-category
+      (& diag)
+      (cdiag.compiler-diagnostic-code-category
+        (& (cdiag.compiler-diagnostic-code-or-empty (& diag)))))))
 
 ;; Human-readable tag for the unsupported-form diagnostic.
 (define (ctfe-describe-expr [expr : (& ast.AstExpr)]) : String
@@ -3080,6 +3098,7 @@
             (Err
               (box
                 (ctfe-diagnostic-at-expr
+                  (ComptimeEvaluation)
                   expr
                   (cdiag.compiler-diagnostic-typecheck-tagged
                     (TypeMismatch)
@@ -3089,13 +3108,17 @@
             (Err
               (box
                 (ctfe-diagnostic-at-expr
+                  (ComptimeEvaluation)
                   expr
                   (cdiag.compiler-diagnostic-typecheck-tagged
                     (TypeMismatch)
                     "comptime: non-finite f64 literal is not supported"))))
             (Err
               (box
-                (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))))])]
+                (ctfe-diagnostic-at-expr
+                  (ComptimeEvaluation)
+                  expr
+                  "comptime: invalid f64 literal"))))])]
     [(String string-id)
       (Ok (ctfe-source-string-value-for-session session string-id) fuel)]))
 
@@ -3114,11 +3137,20 @@
     [(Div)
       (if (= b 0)
         (Err
-          (box (ctfe-diagnostic-at-expr expr "division by zero in comptime")))
+          (box
+            (ctfe-diagnostic-at-expr
+              (ComptimeEvaluation)
+              expr
+              "division by zero in comptime")))
         (Ok (I64 (/ a b)) fuel))]
     [(Mod)
       (if (= b 0)
-        (Err (box (ctfe-diagnostic-at-expr expr "modulo by zero in comptime")))
+        (Err
+          (box
+            (ctfe-diagnostic-at-expr
+              (ComptimeEvaluation)
+              expr
+              "modulo by zero in comptime")))
         (Ok (I64 (% a b)) fuel))]
     [(Eq) (Ok (Bool (= a b)) fuel)]
     [(Ne) (Ok (Bool (!= a b)) fuel)]
@@ -3135,12 +3167,14 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "'and' in comptime requires bool operands")))]
     [(Or)
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "'or' in comptime requires bool operands")))]))
 
@@ -3150,6 +3184,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (TypeMismatch)
@@ -3163,6 +3198,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             (cdiag.compiler-diagnostic-typecheck-tagged
               (TypeMismatch)
@@ -3184,7 +3220,10 @@
       (if (= b 0.0)
         (Err
           (box
-            (ctfe-diagnostic-at-expr expr "float division by zero in comptime")))
+            (ctfe-diagnostic-at-expr
+              (ComptimeEvaluation)
+              expr
+              "float division by zero in comptime")))
         (ctfe-f64-result (/ a b) expr fuel))]
     [(Eq) (Ok (Bool (= a b)) fuel)]
     [(Ne) (Ok (Bool (!= a b)) fuel)]
@@ -3196,6 +3235,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "this operation is not supported on f64 in compile-time evaluation")))]))
 
@@ -3213,7 +3253,10 @@
       (if (= b 0.0)
         (Err
           (box
-            (ctfe-diagnostic-at-expr expr "float division by zero in comptime")))
+            (ctfe-diagnostic-at-expr
+              (ComptimeEvaluation)
+              expr
+              "float division by zero in comptime")))
         (ctfe-f32-result (/ a b) expr fuel))]
     [(Eq) (Ok (Bool (= a b)) fuel)]
     [(Ne) (Ok (Bool (!= a b)) fuel)]
@@ -3225,6 +3268,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "this operation is not supported on f32 in compile-time evaluation")))]))
 
@@ -3244,6 +3288,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "this operation is not supported on bool in compile-time evaluation")))]))
 
@@ -3268,6 +3313,7 @@
         (Err
           (box
             (ctfe-diagnostic-at-expr
+              (ComptimeEvaluation)
               expr
               "this operation is not supported on char in compile-time evaluation")))])))
 
@@ -3285,6 +3331,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "this operation is not supported on String in compile-time evaluation")))]))
 
@@ -3300,6 +3347,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "this operation is not supported on unit in compile-time evaluation")))]))
 
@@ -3317,6 +3365,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "this operation is not supported on TypeInfo in compile-time evaluation")))]))
 
@@ -3326,6 +3375,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         (str_cat.str-cat
           "this operation is not supported on "
@@ -3348,6 +3398,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 (& (ctfe-expr-shared-view expr))
                 "binary operation in comptime requires matching operand types")))])]
     [(F64 a)
@@ -3357,6 +3408,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(F32 a)
@@ -3366,6 +3418,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(Bool a)
@@ -3375,6 +3428,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(Char a)
@@ -3384,6 +3438,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(or (String a _) (Name a _))
@@ -3394,6 +3449,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(Unit)
@@ -3403,6 +3459,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(Type a)
@@ -3415,12 +3472,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "this operation is not supported on type in compile-time evaluation")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(Expr a a-ty)
@@ -3452,12 +3511,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "this operation is not supported on expr in compile-time evaluation")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(CapturedExpr _ _ _) (ctfe-eval-bin-comptime-metadata "Expr" expr)]
@@ -3472,12 +3533,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "this operation is not supported on expr-list in compile-time evaluation")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(CapturedExprList _ _) (ctfe-eval-bin-comptime-metadata "ExprList" expr)]
@@ -3491,12 +3554,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "this operation is not supported on expr-clause in compile-time evaluation")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(CapturedExprClause _ _)
@@ -3515,12 +3580,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "this operation is not supported on expr-clause-list in compile-time evaluation")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(CapturedExprClauseList _ _)
@@ -3538,12 +3605,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "this operation is not supported on expr-binding-clause in compile-time evaluation")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(ExprBindingClauseList a)
@@ -3564,12 +3633,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "this operation is not supported on expr-binding-clause-list in compile-time evaluation")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(Pattern _) (ctfe-eval-bin-comptime-metadata "Pattern" expr)]
@@ -3585,6 +3656,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(TypeInfoBox a)
@@ -3594,6 +3666,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "binary operation in comptime requires matching operand types")))])]
     [(TypeInfoList _) (ctfe-eval-bin-comptime-metadata "TypeInfoList" expr)]
@@ -3623,6 +3696,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "negation in comptime requires a numeric type")))])]
     [(Not)
@@ -3631,7 +3705,10 @@
         [_
           (Err
             (box
-              (ctfe-diagnostic-at-expr expr "'not' in comptime requires bool")))])]
+              (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
+                expr
+                "'not' in comptime requires bool")))])]
     [(BitNot)
       (match v
         [(I64 n) (Ok (I64 (bit-not n)) fuel)]
@@ -3639,6 +3716,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "bitwise not in comptime requires i64")))])]))
 
@@ -3724,7 +3802,12 @@
     [(CompilerFiniteCastResultF64 n) (ctfe-f64-result n expr fuel)]
     [(CompilerFiniteCastResultF32 n) (ctfe-f32-result n expr fuel)]
     [(CompilerFiniteCastNoResult)
-      (Err (box (ctfe-diagnostic-at-expr expr "comptime: unsupported cast")))]))
+      (Err
+        (box
+          (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
+            expr
+            "comptime: unsupported cast")))]))
 
 (define (ctfe-apply-cast
   [value : (& CompilerCtfeValue)]
@@ -3840,7 +3923,8 @@
   [fuel : i64]) : ResultCtfe
   (match built
     [(Ok value) (Ok value fuel)]
-    [(Err message) (Err (box (ctfe-diagnostic-at-expr expr message)))]))
+    [(Err message)
+      (Err (box (ctfe-diagnostic-at-expr (ComptimeEvaluation) expr message)))]))
 
 ;; Public String arguments also accept inspected Name values, which is how
 ;; reflected names flow through ordinary string helpers.
@@ -4446,6 +4530,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 (& (ctfe-expr-shared-view expr))
                 (str_cat.str-cat name " expects a type argument"))))])]))
 
@@ -4464,6 +4549,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 (& (ctfe-expr-shared-view expr))
                 (str_cat.str-cat name " expects an i64 index"))))])]))
 
@@ -4471,6 +4557,7 @@
     cdiag.CompilerDiagnostic)
   (box
     (ctfe-diagnostic-at-expr
+      (ComptimeEvaluation)
       (& (ctfe-expr-shared-view expr))
       (str_cat.str-cat name " expects a String argument"))))
 
@@ -4786,7 +4873,12 @@
   [env : (& env CtfeEnv)]
   [fuel : i64]) : ResultCtfe
   (if (<= fuel 0)
-    (Err (box (ctfe-diagnostic-at-expr expr (ctfe-fuel-diagnostic-message))))
+    (Err
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeFuel)
+          expr
+          (ctfe-fuel-diagnostic-message))))
     (ctfe-eval-node expr (ctfe-env-shared-view env) (- fuel 1))))
 
 (define (ctfe-eval-node [expr : (& ast.AstExpr)] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
@@ -4814,6 +4906,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             (& (clone (owned_view.compiler-owned-reference-shared-view expr)))
             "comptime: init is a runtime-only expression")))]
     [(Literal lit)
@@ -4891,18 +4984,21 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "unquote is only valid inside quasiquote")))]
     [(UnquoteSplicing _)
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "unquote-splicing is only valid inside quasiquote")))]
     [_
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             (& (clone (owned_view.compiler-owned-reference-shared-view expr)))
             (str_cat.str-cat
               "'"
@@ -5045,6 +5141,7 @@
                   (Err
                     (box
                       (ctfe-diagnostic-at-expr
+                        (ComptimeEvaluation)
                         expr
                         (str_cat.str-cat name " expects a known type argument"))))
                   (Ok (I64 answer) arg-fuel)))]
@@ -5052,11 +5149,13 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     (str_cat.str-cat name " expects a type argument"))))])]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects exactly one type argument"))))))
 
@@ -5103,6 +5202,7 @@
             (Err
               (box
                 (ctfe-diagnostic-at-expr
+                  (ComptimeEvaluation)
                   expr
                   (str_cat.str-cat
                     "offset-of unknown field "
@@ -5111,6 +5211,7 @@
         (Err
           (box
             (ctfe-diagnostic-at-expr
+              (ComptimeEvaluation)
               expr
               "offset-of requires struct layout type"))))]))
 
@@ -5129,7 +5230,10 @@
     [(None)
       (Err
         (box
-          (ctfe-diagnostic-at-expr expr "offset-of requires struct layout type")))]))
+          (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
+            expr
+            "offset-of requires struct layout type")))]))
 
 (define (ctfe-eval-offset-value
   [value : (& CompilerCtfeValue)]
@@ -5145,11 +5249,15 @@
         [(None)
           (Err
             (box
-              (ctfe-diagnostic-at-expr expr "offset-of expects a field name")))])]
+              (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
+                expr
+                "offset-of expects a field name")))])]
     [_
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             (cdiag.compiler-diagnostic-typecheck-tagged
               (ArityMismatch)
@@ -5171,6 +5279,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -5458,6 +5567,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects exactly one type argument"))))))
 
@@ -5522,6 +5632,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             (if payload?
               "enum-variant-payload-type expects exactly one type argument, one variant index, and one payload index"
@@ -5561,7 +5672,12 @@
           (match (ctfe-eval-string-arg (& right) expr env left-fuel name)
             [(Err d) (Err d)]
             [(Ok r _ right-fuel) (Ok (Bool (string.eq l r)) right-fuel)])]))
-    (Err (box (ctfe-diagnostic-at-expr expr "string-eq expects two strings")))))
+    (Err
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "string-eq expects two strings")))))
 
 (define (ctfe-eval-string-append-call
   [name : String]
@@ -5587,7 +5703,11 @@
                   right-id)
                 right-fuel)])]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "string-append expects two strings")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "string-append expects two strings")))))
 
 ;; `comptime.string-slice` is the bounded byte-range operation needed by
 ;; literal-parsing macros. It operates only on comptime strings, never on a
@@ -5629,6 +5749,7 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "string-slice range out of bounds")))
               (Ok
@@ -5637,6 +5758,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "string-slice expects a string, start, and length")))))
 
@@ -5653,7 +5775,11 @@
         [(Err d) (Err d)]
         [(Ok text _ arg-fuel) (Ok (I64 (string.string-length text)) arg-fuel)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "string-length expects one string")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "string-length expects one string")))))
 
 (define (ctfe-eval-string-ref-call
   [name : String]
@@ -5671,7 +5797,10 @@
           (ctfe-eval-string-ref-index (& s) (& index) expr env text-fuel name)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "string-ref expects a string and index")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "string-ref expects a string and index")))))
 
 (define (ctfe-eval-string-ref-index
   [text : (& str)]
@@ -5686,7 +5815,11 @@
       (< index-arg-value.value 0)
       (>= index-arg-value.value (string.string-length text)))
       (Err
-        (box (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
+        (box
+          (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
+            origin
+            "string-ref index out of bounds")))
       (Ok
         (Char (string.string-ref text index-arg-value.value))
         index-arg-value.fuel))))
@@ -5703,7 +5836,12 @@
       (match (ctfe-eval-string-arg (& arg) expr env fuel name)
         [(Err d) (Err d)]
         [(Ok text _ arg-fuel) (Ok (I64 (string.>int text)) arg-fuel)]))
-    (Err (box (ctfe-diagnostic-at-expr expr "string.>int expects one string")))))
+    (Err
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "string.>int expects one string")))))
 
 (define (ctfe-eval-int-to-string-call
   [args : (& ast.AstExprList)]
@@ -5719,7 +5857,11 @@
         (ctfe-generated-string-value (string.int->string arg-value.value))
         arg-value.fuel))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "string.int->string expects one i64")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "string.int->string expects one i64")))))
 
 ;; User-facing stdlib.comptime helpers. Constructors, dense sequence helpers,
 ;; and provenance-sensitive reflection helpers remain CTFE bridge calls while
@@ -5874,11 +6016,13 @@
         fuel
         "comptime-error")
         [(Ok message _ _next-fuel)
-          (Err (box (ctfe-diagnostic-at-expr expr message)))]
+          (Err
+            (box (ctfe-diagnostic-at-expr (ComptimeAuthorError) expr message)))]
         [(Err d) (Err d)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -5901,11 +6045,16 @@
                 arg-fuel)]
             [_
               (Err
-                (box (ctfe-diagnostic-at-expr expr "expr-bool expects bool")))])]
+                (box
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "expr-bool expects bool")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -5927,11 +6076,16 @@
               (Ok (CapturedExpr node ty pools) arg-fuel)]
             [_
               (Err
-                (box (ctfe-diagnostic-at-expr expr "expr-splice expects Expr")))])]
+                (box
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "expr-splice expects Expr")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -5959,11 +6113,17 @@
                   (I64))
                 arg-fuel)]
             [_
-              (Err (box (ctfe-diagnostic-at-expr expr "expr-int expects i64")))])]
+              (Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "expr-int expects i64")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -5991,11 +6151,15 @@
             [(None)
               (Err
                 (box
-                  (ctfe-diagnostic-at-expr expr "expr-string expects String")))])]
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "expr-string expects String")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -6486,12 +6650,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-binary-data expects String")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -6531,6 +6697,7 @@
                     (Err
                       (box
                         (ctfe-diagnostic-at-expr
+                          (ComptimeEvaluation)
                           expr
                           "expr-string-value expects a string literal Expr")))
                     (Ok (Bool false) arg-fuel))])]
@@ -6539,6 +6706,7 @@
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
+                      (ComptimeEvaluation)
                       expr
                       "expr-string-value expects a string literal Expr")))
                 (Ok (Bool false) arg-fuel))])]
@@ -6546,6 +6714,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -6574,11 +6743,16 @@
                 arg-fuel)]
             [(None)
               (Err
-                (box (ctfe-diagnostic-at-expr expr "expr-var expects String")))])]
+                (box
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "expr-var expects String")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -6599,6 +6773,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -6641,6 +6816,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "module-export-macro? expects exactly two args")))))
 
@@ -6729,6 +6905,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat query-name " expects exactly two args"))))))
 
@@ -6808,6 +6985,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "function-shared-borrow-returns-string? expects exactly two type arguments")))))
 
@@ -6873,7 +7051,10 @@
         [(Err d) (Err d)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "module-hook expects exactly two args")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "module-hook expects exactly two args")))))
 
 ;; `(expr-struct-get target field)` builds a struct-get Expr whose field name is
 ;; computed at macro CTFE. The expanded program typechecks the field access.
@@ -6908,6 +7089,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-struct-get field expects String")))])]
                 [(Err diag) (Err diag)])]
@@ -6915,12 +7097,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-struct-get target expects Expr")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-struct-get expects exactly two args")))))
 
@@ -6955,6 +7139,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-tuple-ref index expects i64")))])]
                 [(Err diag) (Err diag)])]
@@ -6962,12 +7147,16 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-tuple-ref target expects Expr")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-tuple-ref expects exactly two args")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-tuple-ref expects exactly two args")))))
 
 (define (ctfe-expr-lambda1-node
   [pools : ast.AstNodePoolContext]
@@ -7017,6 +7206,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-lambda1 body expects Expr")))
                       (Ok
@@ -7034,7 +7224,10 @@
         [(Err diag) (Err diag)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-lambda1 expects exactly three args")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-lambda1 expects exactly three args")))))
 
 ;; `(expr-struct-set target field value)` builds a struct field assignment whose
 ;; field name is computed at macro CTFE. The expanded program typechecks the
@@ -7076,6 +7269,7 @@
                               (Err
                                 (box
                                   (ctfe-diagnostic-at-expr
+                                    (ComptimeEvaluation)
                                     expr
                                     "expr-struct-set value expects Expr")))])]
                         [(Err diag) (Err diag)])]
@@ -7083,6 +7277,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-struct-set field expects String")))])]
                 [(Err diag) (Err diag)])]
@@ -7090,12 +7285,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-struct-set target expects Expr")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-struct-set expects exactly three args")))))
 
@@ -7130,12 +7327,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     (str_cat.str-cat builder-name " expects Expr"))))))]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat builder-name " expects exactly one arg"))))))
 
@@ -7174,18 +7373,23 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-array-ref index expects Expr")))))]
                 [(Err diag) (Err diag)])
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-array-ref target expects Expr")))))]
         [(Err diag) (Err diag)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-array-ref expects exactly two args")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-array-ref expects exactly two args")))))
 
 ;; `(expr-replace place replacement)` builds the dedicated replacement node;
 ;; ownership and place validity are checked after macro expansion.
@@ -7224,18 +7428,23 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-replace replacement expects Expr")))))]
                 [(Err diag) (Err diag)])
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-replace place expects Expr")))))]
         [(Err diag) (Err diag)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-replace expects exactly two args")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-replace expects exactly two args")))))
 
 ;; Build the ordered, persistent syntax-list values used by expression calls.
 (define (ctfe-eval-expr-list-empty-call
@@ -7244,7 +7453,12 @@
   [fuel : i64]) : ResultCtfe
   (if (= (ctfe-expr-arg-count args) 0)
     (Ok (ExprList (ast.ast-expr-list-new)) fuel)
-    (Err (box (ctfe-diagnostic-at-expr expr "expr-list-empty expects no args")))))
+    (Err
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-list-empty expects no args")))))
 
 ;; Publish `pools`' cursor to `peer` and to the owning, retained and active
 ;; contexts that share its storage, so no later append through any of them can
@@ -7330,24 +7544,30 @@
                         (Err
                           (box
                             (ctfe-diagnostic-at-expr
+                              (ComptimeEvaluation)
                               expr
                               "expr-list-cons expects head and tail from the same syntax pool"))))]
                     [_
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-list-cons tail expects ExprList")))])]
                 [(Err diag) (Err diag)])
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-list-cons head expects Expr")))))]
         [(Err diag) (Err diag)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-list-cons expects exactly two args")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-list-cons expects exactly two args")))))
 
 ;; `(expr-call callee args)` preserves the supplied argument order and builds
 ;; ordinary call syntax. Typechecking of that call happens after macro expansion.
@@ -7408,21 +7628,30 @@
                         (Err
                           (box
                             (ctfe-diagnostic-at-expr
+                              (ComptimeEvaluation)
                               expr
                               "expr-call expects callee and arguments from the same syntax pool"))))]
                     [_
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-call args expects ExprList")))])]
                 [(Err diag) (Err diag)])
               (Err
                 (box
-                  (ctfe-diagnostic-at-expr expr "expr-call callee expects Expr")))))]
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "expr-call callee expects Expr")))))]
         [(Err diag) (Err diag)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "expr-call expects exactly two args")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-call expects exactly two args")))))
 
 ;; Shared-borrow calls may lend an existing place directly. A temporary needs a
 ;; lexical owner for the duration of the call, so synthesize one inferred local
@@ -7486,6 +7715,7 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-shared-call1 callee expects Expr")))
               (match (compiler-ctfe-eval (& value-arg) env callee-fuel)
@@ -7497,6 +7727,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-shared-call1 value expects Expr")))
                       (Ok
@@ -7514,6 +7745,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-shared-call1 expects exactly two args")))))
 
@@ -7609,6 +7841,7 @@
                                           (Err
                                             (box
                                               (ctfe-diagnostic-at-expr
+                                                (ComptimeEvaluation)
                                                 expr
                                                 "expr-mut-call arguments expect Expr")))])]
                                     [(Err diag) (Err diag)]))]
@@ -7616,6 +7849,7 @@
                                 (Err
                                   (box
                                     (ctfe-diagnostic-at-expr
+                                      (ComptimeEvaluation)
                                       expr
                                       "expr-mut-call arguments expect Expr")))])]
                           [(Err diag) (Err diag)]))]
@@ -7623,6 +7857,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-mut-call place expects Expr")))])]
                 [(Err diag) (Err diag)])]
@@ -7630,10 +7865,12 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-mut-call callee expects Expr")))])]
         [(Err diag) (Err diag)]))
-    (Err (box (ctfe-diagnostic-at-expr expr arity-message)))))
+    (Err
+      (box (ctfe-diagnostic-at-expr (ComptimeEvaluation) expr arity-message)))))
 
 ;; `(expr-type e)`: the reflected type a typechecked Expr carries.
 (define (ctfe-expr-type-value
@@ -7692,11 +7929,16 @@
                   arg-fuel)]
               [_
                 (Err
-                  (box (ctfe-diagnostic-at-expr expr "expr-type expects Expr")))]))]
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      (ComptimeEvaluation)
+                      expr
+                      "expr-type expects Expr")))]))]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -7735,6 +7977,7 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     (cdiag.compiler-diagnostic-typecheck-tagged
                       (ArityMismatch)
@@ -7743,6 +7986,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -7769,12 +8013,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     (str_cat.str-cat name " expects ExprClauseList"))))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects exactly one arg"))))))
 
@@ -7801,12 +8047,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     (str_cat.str-cat name " expects ExprBindingClauseList"))))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects exactly one arg"))))))
 
@@ -7868,12 +8116,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     (str_cat.str-cat name " expects ExprBindingClause"))))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects exactly one arg"))))))
 
@@ -7903,12 +8153,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     (str_cat.str-cat name " expects a comptime sequence"))))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects exactly one arg"))))))
 
@@ -7934,6 +8186,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         (str_cat.str-cat name " index out of range")))))
 
@@ -7968,6 +8221,7 @@
                   (Err
                     (box
                       (ctfe-diagnostic-at-expr
+                        (ComptimeEvaluation)
                         expr
                         (str_cat.str-cat name " index must be i64"))))])]
             [(Err diag) (Err diag)])]
@@ -7975,6 +8229,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects a sequence and an index"))))))
 
@@ -8036,6 +8291,7 @@
                   (Err
                     (box
                       (ctfe-diagnostic-at-expr
+                        (ComptimeEvaluation)
                         expr
                         "expr-list-type-nth index must be i64")))])]
             [(Err diag) (Err diag)])]
@@ -8043,6 +8299,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-list-type-nth expects an ExprList and index")))))
 
@@ -8118,12 +8375,14 @@
                                   (Err
                                     (box
                                       (ctfe-diagnostic-at-expr
+                                        (ComptimeEvaluation)
                                         expr
                                         "expr-if branch types must match"))))]
                               [_
                                 (Err
                                   (box
                                     (ctfe-diagnostic-at-expr
+                                      (ComptimeEvaluation)
                                       expr
                                       "expr-if else branch expects Expr")))])]
                           [(Err diag) (Err diag)])]
@@ -8131,23 +8390,30 @@
                         (Err
                           (box
                             (ctfe-diagnostic-at-expr
+                              (ComptimeEvaluation)
                               expr
                               "expr-if then branch expects Expr")))])]
                   [(Err diag) (Err diag)])
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
+                      (ComptimeEvaluation)
                       expr
                       "expr-if condition must produce bool"))))]
             [_
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-if condition expects Expr")))])]
         [(Err diag) (Err diag)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "expr-if expects exactly three args")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-if expects exactly three args")))))
 
 ;; A captured variadic macro argument retains its caller pool. The iterative
 ;; core builders construct every participating Expr in that same pool, so an
@@ -8219,12 +8485,14 @@
                                   (Err
                                     (box
                                       (ctfe-diagnostic-at-expr
+                                        (ComptimeEvaluation)
                                         expr
                                         "expr-if branch types must match"))))]
                               [_
                                 (Err
                                   (box
                                     (ctfe-diagnostic-at-expr
+                                      (ComptimeEvaluation)
                                       expr
                                       "expr-if else branch expects Expr")))])]
                           [(Err diag) (Err diag)])]
@@ -8232,23 +8500,30 @@
                         (Err
                           (box
                             (ctfe-diagnostic-at-expr
+                              (ComptimeEvaluation)
                               expr
                               "expr-if then branch expects Expr")))])]
                   [(Err diag) (Err diag)])
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
+                      (ComptimeEvaluation)
                       expr
                       "expr-if condition must produce bool"))))]
             [_
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-if condition expects Expr")))])]
         [(Err diag) (Err diag)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "expr-if expects exactly three args")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-if expects exactly three args")))))
 
 (define (ctfe-eval-expr-if-call
   [args : (& ast.AstExprList)]
@@ -8276,7 +8551,10 @@
   (if (< fold.node 0)
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "compile-time evaluation limit exceeded")))
+        (ctfe-diagnostic-at-expr
+          (ComptimeFuel)
+          expr
+          (ctfe-fuel-diagnostic-message))))
     (Ok value fold.fuel)))
 
 ;; `(expr-list-fold-if items when-true when-false continue-on-true?)` folds right
@@ -8320,6 +8598,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         "expr-list-fold-if terminal branch types must match"))))
 
@@ -8365,12 +8644,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-list-fold-if terminal branches must be Expr")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "expr-list-fold-if terminal branches must be Expr")))])]
     [(CapturedExprList items pools)
@@ -8423,18 +8704,23 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-list-fold-if terminal branches must be Expr")))])]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 expr
                 "expr-list-fold-if terminal branches must be Expr")))])]
     [_
       (Err
         (box
-          (ctfe-diagnostic-at-expr expr "expr-list-fold-if expects an ExprList")))]))
+          (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
+            expr
+            "expr-list-fold-if expects an ExprList")))]))
 
 (define (ctfe-eval-expr-list-fold-if-call
   [args : (& ast.AstExprList)]
@@ -8472,6 +8758,7 @@
                           (Err
                             (box
                               (ctfe-diagnostic-at-expr
+                                (ComptimeEvaluation)
                                 expr
                                 "expr-list-fold-if continuation must be bool")))])]
                     [(Err diag) (Err diag)])]
@@ -8479,7 +8766,11 @@
             [(Err diag) (Err diag)])]
         [(Err diag) (Err diag)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "expr-list-fold-if expects four args")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-list-fold-if expects four args")))))
 
 (define (ctfe-expr-else-with-pools?
   [pools : (& pools ast.AstNodePoolContext)]
@@ -8536,6 +8827,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         "expr-clause-list-fold-if terminal values must be Expr"))))
 
@@ -8601,6 +8893,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "expr-clause-list-fold-if expects an ExprClauseList")))]))
 
@@ -8636,6 +8929,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-clause-list-fold-if expects three args")))))
 
@@ -8648,6 +8942,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "pattern-wildcard expects exactly zero args")))))
 
@@ -8671,6 +8966,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -8695,6 +8991,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "pattern-binding-typed type expects captured type syntax")))]))
 
@@ -8729,6 +9026,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "pattern-binding-typed expects exactly two args")))))
 
@@ -8770,6 +9068,7 @@
                   (Err
                     (box
                       (ctfe-diagnostic-at-expr
+                        (ComptimeEvaluation)
                         expr
                         "pattern-variant expects PatternList payloads")))])]
             [(Err diag) (Err diag)])]
@@ -8777,6 +9076,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "pattern-variant expects exactly two args")))))
 
@@ -8789,6 +9089,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "pattern-list-empty expects exactly zero args")))))
 
@@ -8819,6 +9120,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "pattern-list-cons tail expects PatternList")))])]
                 [(Err diag) (Err diag)])]
@@ -8826,12 +9128,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "pattern-list-cons head expects Pattern")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "pattern-list-cons expects exactly two args")))))
 
@@ -8888,14 +9192,16 @@
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
+                      (ComptimeEvaluation)
                       expr
                       "pattern-list-bindings count must be non-negative")))]
               [(> count count-fuel)
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
+                      (ComptimeFuel)
                       expr
-                      "compile-time evaluation limit exceeded")))]
+                      (ctfe-fuel-diagnostic-message))))]
               [else
                 (Ok
                   (PatternList
@@ -8905,6 +9211,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "pattern-list-bindings expects exactly two args")))))
 
@@ -8933,6 +9240,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "match-arm body expects Expr")))))]
                 [(Err diag) (Err diag)])]
@@ -8940,11 +9248,16 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "match-arm pattern expects Pattern")))])]
         [(Err diag) (Err diag)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "match-arm expects exactly two args")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "match-arm expects exactly two args")))))
 
 (define (ctfe-eval-match-arm-list-empty-call
   [args : (& ast.AstExprList)]
@@ -8955,6 +9268,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "match-arm-list-empty expects exactly zero args")))))
 
@@ -8983,6 +9297,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "match-arm-list-cons tail expects MatchArmList")))])]
                 [(Err diag) (Err diag)])]
@@ -8990,12 +9305,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "match-arm-list-cons head expects MatchArm")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "match-arm-list-cons expects exactly two args")))))
 
@@ -9031,17 +9348,23 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-match arms expects MatchArmList")))])]
                 [(Err diag) (Err diag)])
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-match scrutinee expects Expr")))))]
         [(Err diag) (Err diag)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "expr-match expects exactly two args")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-match expects exactly two args")))))
 
 (define (ctfe-syntax-expr-value-node
   [value : (& CompilerCtfeValue)]
@@ -9175,6 +9498,7 @@
                                   (Err
                                     (box
                                       (ctfe-diagnostic-at-expr
+                                        (ComptimeEvaluation)
                                         expr
                                         (cdiag.compiler-diagnostic-typecheck-tagged
                                           (TypeMismatch)
@@ -9197,6 +9521,7 @@
                               (Err
                                 (box
                                   (ctfe-diagnostic-at-expr
+                                    (ComptimeEvaluation)
                                     expr
                                     "expr-resource-scope move-aware expects bool")))])]
                         [(Err diag) (Err diag)])]
@@ -9207,6 +9532,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-resource-scope expects exactly five args")))))
 
@@ -9227,6 +9553,7 @@
             (Err
               (box
                 (ctfe-diagnostic-at-expr
+                  (ComptimeEvaluation)
                   expr
                   (str_cat.str-cat builder-name " expects Expr arguments"))))
             (match (ctfe-eval-syntax-expr-args
@@ -9308,6 +9635,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             (str_cat.str-cat
               builder-name
@@ -9345,6 +9673,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-let-scope init and body expect Expr")))
                       (Ok
@@ -9363,6 +9692,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-let-scope expects exactly three args")))))
 
@@ -9396,6 +9726,7 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-shared-let-scope init and body expect Expr")))
                       (Ok
@@ -9414,6 +9745,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           "expr-shared-let-scope expects exactly three args")))))
 
@@ -9451,13 +9783,17 @@
                   (Err
                     (box
                       (ctfe-diagnostic-at-expr
+                        (ComptimeEvaluation)
                         expr
                         "expr-set-var value expects Expr")))))]
             [(Err diag) (Err diag)])]
         [(Err diag) (Err diag)]))
     (Err
       (box
-        (ctfe-diagnostic-at-expr expr "expr-set-var expects exactly two args")))))
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-set-var expects exactly two args")))))
 
 (define (ctfe-expr-begin-unit-node
   [items : (& ast.AstExprList)]
@@ -9503,12 +9839,14 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-begin-unit expects ExprList")))])]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -9536,11 +9874,17 @@
                     value-node)
                   (Bool))
                 next-fuel)
-              (Err (box (ctfe-diagnostic-at-expr expr "expr-not expects Expr")))))]
+              (Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
+                    expr
+                    "expr-not expects Expr")))))]
         [(Err diag) (Err diag)]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -9579,17 +9923,23 @@
                       (Err
                         (box
                           (ctfe-diagnostic-at-expr
+                            (ComptimeEvaluation)
                             expr
                             "expr-while body expects Expr")))))]
                 [(Err diag) (Err diag)])
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "expr-while condition expects Expr")))))]
         [(Err diag) (Err diag)]))
     (Err
-      (box (ctfe-diagnostic-at-expr expr "expr-while expects exactly two args")))))
+      (box
+        (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
+          expr
+          "expr-while expects exactly two args")))))
 
 ;; `(syntax-name-fresh text)`: the generated syntax identity for a spelling.
 (define (ctfe-syntax-name-fresh [text : String]) : CompilerCtfeValue
@@ -9614,6 +9964,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (cdiag.compiler-diagnostic-typecheck-tagged
             (ArityMismatch)
@@ -9731,7 +10082,10 @@
   [expr : (& ast.AstExpr)]) : ResultCtfe
   (Err
     (box
-      (ctfe-diagnostic-at-expr expr (str_cat.str-cat name " expects " expected)))))
+      (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
+        expr
+        (str_cat.str-cat name " expects " expected)))))
 
 (define (ctfe-eval-comptime-direct-inspector-value
   [name : String]
@@ -9789,6 +10143,7 @@
     (Err
       (box
         (ctfe-diagnostic-at-expr
+          (ComptimeEvaluation)
           expr
           (str_cat.str-cat name " expects exactly one arg"))))))
 
@@ -9804,6 +10159,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         (str_cat.str-cat
           "unsupported compile-time call "
@@ -9819,6 +10175,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         "compile-time square root is not supported; use __tl_float_sqrt at runtime"))))
 
@@ -10132,6 +10489,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         (& (clone (owned_view.compiler-owned-reference-shared-view expr)))
         (str_cat.str-cat
           "'"
@@ -10171,6 +10529,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             (str_cat.str-cat
               "compile-time evaluation cannot reference runtime variable '"
@@ -10189,7 +10548,12 @@
   [fuel : i64]) : ResultCtfe
   (if (ci.intern-dotted? source-id)
     (if (<= fuel 0)
-      (Err (box (ctfe-diagnostic-at-expr expr (ctfe-fuel-diagnostic-message))))
+      (Err
+        (box
+          (ctfe-diagnostic-at-expr
+            (ComptimeFuel)
+            expr
+            (ctfe-fuel-diagnostic-message))))
       (match (ctfe-eval-dotted-var-source
         (ci.intern-dotted-prefix-id source-id)
         (& (clone (owned_view.compiler-owned-reference-shared-view expr)))
@@ -10214,6 +10578,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             expr
             "box-get in compile-time evaluation requires a TypeInfo box")))]))
 
@@ -10230,6 +10595,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         (str_cat.str-cat
           "unsupported stdlib.comptime field '"
@@ -10240,6 +10606,7 @@
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         "struct-get in compile-time evaluation requires a stdlib.comptime well-known value"))))
 
@@ -10466,12 +10833,18 @@
     [(Err diag) (Err diag)]))
 
 (define (ctfe-comptime-array-index-error [expr : (& ast.AstExpr)]) : ResultCtfe
-  (Err (box (ctfe-diagnostic-at-expr expr "array-ref index out of range"))))
+  (Err
+    (box
+      (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
+        expr
+        "array-ref index out of range"))))
 
 (define (ctfe-comptime-array-type-error [expr : (& ast.AstExpr)]) : ResultCtfe
   (Err
     (box
       (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
         expr
         "array-ref in compile-time evaluation requires stdlib.comptime sequence items"))))
 
@@ -10585,6 +10958,7 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     expr
                     "array-ref index must be i64 in compile-time evaluation")))])]
         [(Err diag) (Err diag)])]
@@ -10634,6 +11008,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 cond
                 "comptime 'if' condition must be bool")))])]
     [(Err diag) (Err diag)]))
@@ -10664,6 +11039,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 origin
                 "comptime 'while' condition must be bool")))])]
     [(Err diag) (Err diag)]))
@@ -10693,6 +11069,7 @@
         (Err
           (box
             (ctfe-diagnostic-at-expr
+              (ComptimeEvaluation)
               origin
               "comptime set! requires a local let binding"))))]
     [(Err diag) (Err diag)]))
@@ -10716,6 +11093,7 @@
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
+                      (ComptimeEvaluation)
                       origin
                       (cdiag.compiler-diagnostic-typecheck-tagged
                         (Place)
@@ -10724,6 +11102,7 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     origin
                     (cdiag.compiler-diagnostic-typecheck-tagged
                       (Place)
@@ -10733,6 +11112,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             origin
             "comptime replace! currently supports local let bindings only")))]))
 
@@ -11168,7 +11548,12 @@
             (return
               (compiler-ctfe-eval (& (ctfe-ast-get env body-box)) arm-env fuel))]
           [(No) unit])]))
-  (Err (box (ctfe-diagnostic-at-expr origin "comptime: no matching match arm"))))
+  (Err
+    (box
+      (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
+        origin
+        "comptime: no matching match arm"))))
 
 (define (ctfe-eval-match
   [scrutinee : (& ast.AstExpr)]
@@ -11282,8 +11667,19 @@
             (begin
               (ctfe-env-adopt-captured-pools! env pools)
               (Ok node ty next-fuel))
-            (Err (box (ctfe-diagnostic-at-expr origin "unquote expects Expr"))))]
-        [_ (Err (box (ctfe-diagnostic-at-expr origin "unquote expects Expr")))])]
+            (Err
+              (box
+                (ctfe-diagnostic-at-expr
+                  (ComptimeEvaluation)
+                  origin
+                  "unquote expects Expr"))))]
+        [_
+          (Err
+            (box
+              (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
+                origin
+                "unquote expects Expr")))])]
     [(Err diag) (Err diag)]))
 
 (define (ctfe-eval-unquote-splice
@@ -11303,12 +11699,14 @@
             (Err
               (box
                 (ctfe-diagnostic-at-expr
+                  (ComptimeEvaluation)
                   origin
                   "unquote-splicing expects ExprList"))))]
         [_
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 origin
                 "unquote-splicing expects ExprList")))])]
     [(Err diag) (Err diag)]))
@@ -11610,7 +12008,10 @@
 (define (ctfe-type-expr-error [origin : (& ast.AstExpr)]) : ResultCtfeQuoteType
   (Err
     (box
-      (ctfe-diagnostic-at-expr origin "type unquote expects a type expression"))))
+      (ctfe-diagnostic-at-expr
+        (ComptimeEvaluation)
+        origin
+        "type unquote expects a type expression"))))
 
 (define (ctfe-expr-list-to-type-list
   [exprs : (& ast.AstExprList)]
@@ -11906,6 +12307,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 origin
                 "type unquote expects a type expression")))]))))
 
@@ -12078,6 +12480,7 @@
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     origin
                     (cdiag.compiler-diagnostic-typecheck-tagged
                       (TypeMismatch)
@@ -12086,6 +12489,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 origin
                 "type unquote references an unbound type parameter")))]))
     (if (= (ast.ast-lifetime-list-len lifetimes) 0)
@@ -12093,6 +12497,7 @@
       (Err
         (box
           (ctfe-diagnostic-at-expr
+            (ComptimeEvaluation)
             origin
             (cdiag.compiler-diagnostic-typecheck-tagged
               (ArityMismatch)
@@ -13361,6 +13766,7 @@
                               (Err
                                 (box
                                   (ctfe-diagnostic-at-expr
+                                    (ComptimeEvaluation)
                                     (& inner)
                                     "quasiquote set! target must evaluate to a name, struct field place, or box place")))])]
                         [(Err diag) (Err diag)])]
@@ -13368,12 +13774,14 @@
                 (Err
                   (box
                     (ctfe-diagnostic-at-expr
+                      (ComptimeEvaluation)
                       (& inner)
                       "unquote set! target is only valid inside quasiquote"))))]
             [_
               (Err
                 (box
                   (ctfe-diagnostic-at-expr
+                    (ComptimeEvaluation)
                     (& inner)
                     "internal unquote set! target must be an unquote form")))])
           (match (ctfe-quote-expr inner env fuel quasiquote)
@@ -13829,6 +14237,7 @@
           (Err
             (box
               (ctfe-diagnostic-at-expr
+                (ComptimeEvaluation)
                 (& expr)
                 "unquote-splicing is only valid in a quasiquote list")))
           (match (ctfe-quote-expr inner env fuel quasiquote)
@@ -13858,7 +14267,7 @@
       (match (ctfe-env-syntax-pools-live env)
         [(Some pools)
           (ctfe-env-rebase-syntax-pools (ctfe-env-shared-view env) pools)]
-        [(None) (ctfe-env-shared-view env)])]
+        [(None) (deref env)])]
     (match (ctfe-quote-expr
       (owned_view.compiler-owned-reference-shared-view template)
       (& quote-env)

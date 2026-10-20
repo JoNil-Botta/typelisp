@@ -2728,7 +2728,7 @@
         (ast-expr-span-table-capacity pool.canonical-span-records))
         (ast-expr-node-pool-state-canonical-records-grow
           (owned_view.compiler-owned-reference-shared-view pool))
-        (owned_view.compiler-owned-reference-shared-view pool))]
+        (deref pool))]
     [index : i64 ready.canonical-span-count]
     [records : i64 ready.canonical-span-records]
     (ast-expr-canonical-record-set!

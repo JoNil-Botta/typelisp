@@ -201,4 +201,9 @@ link to their exact source line at the recorded source revision, while page
 metadata records the compiler, source, and package identities used for the
 build. The verifier rejects broken links, duplicate anchors/search identities,
 stale page/index identity pairs, missing search records, and an unexpectedly
-large index.
+large index. Guide links resolve relative to their Markdown source directory,
+including `.`/`..` segments. Registered sources link to generated pages and
+retain fragments; other repository paths link to the recorded source revision.
+Heading aliases support fragments such as `#cli` while preserving existing
+`tl-...` anchors and search identities. The verifier also rejects missing
+repository source paths and reports the owning guide.

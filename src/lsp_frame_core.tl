@@ -1,3 +1,5 @@
+(import cli_option_core as cli_option)
+
 ;; lsp_frame_core.tl - Main-free selfhost LSP stdio framing and JSON-RPC slice.
 ;;
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
@@ -101,11 +103,6 @@
 
 (defenum ResultLspTranscriptBatchEntry
   (Ok LspTranscriptBatchEntry)
-  (Err String))
-
-(defenum LspTranscriptBatchOption
-  (None)
-  (Path String)
   (Err String))
 
 (defenum LspLengthParse
@@ -898,7 +895,7 @@
       [(JsonFound target-value)
         (match target-value
           [(JsonString target-name)
-            (match (target_cfg.compiler-target-cfg-parse target-name)
+            (match (cli_option.cli-option-target target-name)
               [(Ok parsed-target) (set! target parsed-target)]
               [(Err message) (set! error (str_cat.str-cat "lsp: " message))])]
           [_ (set! error "lsp: initializationOptions.target must be a string")])])
@@ -6408,12 +6405,8 @@
           [(JsonFound position)
             (if (not
               (and
-                (lsp-json-int-field-usable?
-                  (owned_view.compiler-owned-shared-view position)
-                  "line")
-                (lsp-json-int-field-usable?
-                  (owned_view.compiler-owned-shared-view position)
-                  "character")))
+                (lsp-json-int-field-usable? (& position) "line")
+                (lsp-json-int-field-usable? (& position) "character")))
               (lsp-completion-empty-result)
               (match (lsp-completion-context-at-position
                 (owned_view.compiler-owned-shared-view doc.text)
@@ -12197,16 +12190,19 @@
       (-= index 1))
     (lsp-json-array items)))
 
-(define (lsp-json-int-field-usable? [value : json.Json] [key : String]) : bool
-  (match (json.object-get value (& key))
-    [(JsonFound field)
+(define (lsp-json-int-field-usable?
+  [value : (& value json.Json)]
+  [key : String]) : bool
+  (match (lsp-json-field-ref value (& key))
+    [(Found field)
       (match field
         [(JsonNumber text)
-          (match (json.number->i64 (& text))
-            [(OkJsonNumberI64 number) (>= number 0)]
+          (match (json.number->i64 text)
+            [(OkJsonNumberI64 number)
+              (and (>= number 0) (<= number 2147483647))]
             [(ErrJsonNumberI64 _) false])]
         [_ false])]
-    [(JsonMissing) false]))
+    [(Missing) false]))
 
 (define (lsp-handle-document-highlight
   [id : json.Json]
@@ -12221,12 +12217,8 @@
         (match (json.object-get params (& position-key))
           [(JsonFound position)
             (if (and
-              (lsp-json-int-field-usable?
-                (owned_view.compiler-owned-shared-view position)
-                "line")
-              (lsp-json-int-field-usable?
-                (owned_view.compiler-owned-shared-view position)
-                "character"))
+              (lsp-json-int-field-usable? (& position) "line")
+              (lsp-json-int-field-usable? (& position) "character"))
               (let
                 [line : i64 (lsp-json-int-field-default position "line" 0)]
                 [col : i64 (lsp-json-int-field-default position "character" 0)]
@@ -13034,10 +13026,10 @@
   [params : json.Json]
   [state : (& state lsp_vector_families.LspServerState)]) : unit
   (match (lsp-json-string-field params "name")
-    [(Missing) (lsp-write-error id -32600 "Missing name parameter")]
+    [(Missing) (lsp-write-error id -32602 "Missing name parameter")]
     [(Ok name)
       (if (= (string.string-length name) 0)
-        (lsp-write-error id -32600 "name cannot be empty")
+        (lsp-write-error id -32602 "name cannot be empty")
         (lsp-write-response
           id
           (lsp-project-search-result-json (& state.workspace) name)))]))
@@ -13107,8 +13099,8 @@
   [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspServerState
   (if (not
     (and
-      (lsp-json-int-field-usable? (lsp-global-shared-view position) "line")
-      (lsp-json-int-field-usable? (lsp-global-shared-view position) "character")))
+      (lsp-json-int-field-usable? (& position) "line")
+      (lsp-json-int-field-usable? (& position) "character")))
     (begin
       (lsp-write-response id (lsp-json-array (json.list-empty)))
       state)
@@ -13269,8 +13261,8 @@
   [doc : (& doc lsp_vector_families.LspDocument)]) : lsp_vector_families.LspServerState
   (if (not
     (and
-      (lsp-json-int-field-usable? (lsp-global-shared-view position) "line")
-      (lsp-json-int-field-usable? (lsp-global-shared-view position) "character")))
+      (lsp-json-int-field-usable? (& position) "line")
+      (lsp-json-int-field-usable? (& position) "character")))
     (begin
       (lsp-write-error id -32602 "Rename requires a valid position")
       state)
@@ -13560,6 +13552,205 @@
               Invalid)]
           [(Missing) Invalid])])))
 
+(define (lsp-params-string? [params : (& params json.Json)] [key : (& key str)]) : bool
+  (match (lsp-json-field-ref params key)
+    [(Found value)
+      (match value
+        [(JsonString _) true]
+        [_ false])]
+    [(Missing) false]))
+
+(define (lsp-params-position-error [params : (& params json.Json)]) : LspJsonText
+  (let
+    [key : String "position"]
+    (match (lsp-json-field-ref params (& key))
+      [(Missing) (Ok "Missing position parameter")]
+      [(Found position)
+        (if (and
+          (lsp-json-int-field-usable? position "line")
+          (lsp-json-int-field-usable? position "character"))
+          Missing
+          (Ok "Invalid position parameter"))])))
+
+(define (lsp-params-selector-error
+  [method : (& method str)]
+  [params : (& params json.Json)]) : LspJsonText
+  (let
+    [path-key : String "path"]
+    [name-key : String "name"]
+    (when
+      (or (string.eq method "tl/replace") (string.eq method "tl/replaceBody"))
+      (match (lsp-json-field-ref params (& path-key))
+        [(Found _)
+          (return
+            (match (lsp-json-path-field params)
+              [(Ok _) Missing]
+              [(Err message) (Ok message)]))]
+        [(Missing) unit]))
+    (match (lsp-json-field-ref params (& name-key))
+      [(Found name)
+        (match name
+          [(JsonString text)
+            (when (> (string.string-length text) 0) (return Missing))]
+          [_ (return (Ok "name must be a string"))])]
+      [(Missing) unit])
+    (lsp-params-position-error params)))
+
+;; Admission checks types and required selectors, not document contents or
+;; lookup success. A well-typed lookup miss keeps its contextual handler error.
+(define (lsp-method-params-error
+  [method : (& method str)]
+  [params : (& params json.Json)]) : LspJsonText
+  (let
+    [tool : bool (lsp-known-tool-method? method)]
+    [position : bool
+      (or
+        (string.eq method "tl/getType")
+        (string.eq method "tl/expandMacro")
+        (string.eq method "textDocument/definition")
+        (string.eq method "textDocument/hover")
+        (string.eq method "textDocument/signatureHelp")
+        (string.eq method "textDocument/completion")
+        (string.eq method "textDocument/documentHighlight")
+        (string.eq method "textDocument/prepareRename")
+        (string.eq method "textDocument/rename")
+        (string.eq method "textDocument/references"))]
+    [document : bool
+      (or
+        tool
+        position
+        (string.eq method "textDocument/documentSymbol")
+        (string.eq method "textDocument/semanticTokens/full")
+        (string.eq method "textDocument/codeAction")
+        (string.eq method "textDocument/inlayHint")
+        (string.eq method "textDocument/formatting")
+        (string.eq method "textDocument/documentLink")
+        (string.eq method "textDocument/foldingRange")
+        (string.eq method "textDocument/didOpen")
+        (string.eq method "textDocument/didChange")
+        (string.eq method "textDocument/didClose"))]
+    [workspace : bool
+      (or
+        (string.eq method "workspace/symbol")
+        (string.eq method "tl/projectSearch"))]
+    (unless (or document workspace) (return Missing))
+    (match params
+      [(JsonObject _) unit]
+      [_ (return (Ok "params must be an object"))])
+    (when
+      document
+      (let
+        [direct-uri : bool false]
+        (when
+          (string.eq method "tl/check")
+          (let
+            [key : String "uri"]
+            (match (lsp-json-field-ref params (& key))
+              [(Found _)
+                (unless
+                  (lsp-params-string? params "uri")
+                  (return (Ok "Invalid uri parameter")))
+                (set! direct-uri true)]
+              [(Missing) unit])))
+        (unless
+          direct-uri
+          (let
+            [key : String "textDocument"]
+            (match (lsp-json-field-ref params (& key))
+              [(Found text-document)
+                (unless
+                  (lsp-params-string? text-document "uri")
+                  (return
+                    (Ok "Missing or invalid uri in textDocument parameter")))]
+              [(Missing) (return (Ok "Missing uri in textDocument parameter"))])))))
+    (when
+      position
+      (match (lsp-params-position-error params)
+        [(Ok message) (return (Ok message))]
+        [(Missing) unit]))
+    (let
+      [required : String
+        (cond
+          [(string.eq method "workspace/symbol") "query"]
+          [(or
+              (string.eq method "tl/findPosition")
+              (string.eq method "tl/projectSearch"))
+            "name"]
+          [(string.eq method "textDocument/rename") "newName"]
+          [(or
+              (string.eq method "tl/replace")
+              (string.eq method "tl/appendFunction")
+              (string.eq method "tl/insertAfter"))
+            "newText"]
+          [(string.eq method "tl/replaceBody") "newBody"]
+          [(string.eq method "tl/replacePattern") "oldPattern"]
+          [(string.eq method "tl/patch") "oldText"]
+          [else ""])]
+      (when
+        (and
+          (> (string.string-length required) 0)
+          (not (lsp-params-string? params required)))
+        (return
+          (Ok
+            (if (string.eq method "workspace/symbol")
+              "workspace/symbol requires a string query"
+              (lsp-str3 "Missing or invalid " required " parameter"))))))
+    (when
+      (string.eq method "tl/replacePattern")
+      (unless
+        (lsp-params-string? params "newPattern")
+        (return (Ok "Missing or invalid newPattern parameter"))))
+    (when
+      (string.eq method "tl/patch")
+      (unless
+        (lsp-params-string? params "newText")
+        (return (Ok "Missing or invalid newText parameter"))))
+    (when
+      (string.eq method "tl/move")
+      (let
+        [key : String "destination"]
+        (match (lsp-json-field-ref params (& key))
+          [(Found _)
+            (unless
+              (lsp-params-string? params "destination")
+              (return (Ok "destination must be a string")))]
+          [(Missing)
+            (unless
+              (lsp-params-string? params "direction")
+              (return (Ok "Missing direction or destination parameter")))])))
+    (when
+      (string.eq method "tl/batch")
+      (let
+        [key : String "operations"]
+        (match (lsp-json-field-ref params (& key))
+          [(Found operations)
+            (match operations
+              [(JsonArray _) unit]
+              [_ (return (Ok "operations must be an array"))])]
+          [(Missing) (return (Ok "Missing operations parameter"))])))
+    (if (or
+      (string.eq method "tl/replace")
+      (string.eq method "tl/replaceBody")
+      (string.eq method "tl/replacePattern")
+      (string.eq method "tl/delete")
+      (string.eq method "tl/insertAfter")
+      (string.eq method "tl/move")
+      (string.eq method "tl/read"))
+      (lsp-params-selector-error method params)
+      Missing)))
+
+(define (lsp-message-params-error
+  [method : (& method str)]
+  [message : (& message json.Json)]) : LspJsonText
+  (let
+    [key : String "params"]
+    (match (lsp-json-field-ref message (& key))
+      [(Found params) (lsp-method-params-error method params)]
+      [(Missing)
+        (let
+          [absent : json.Json JsonNull]
+          (lsp-method-params-error method (& absent)))])))
+
 ;; Production state dispatch. All long-lived data crosses the loop through the
 ;; explicit aggregate; document providers never receive mutable workspace
 ;; vectors.
@@ -13581,6 +13772,21 @@
   (match (lsp-json-string-field message "method")
     [(Missing) (Continue state)]
     [(Ok method)
+      ;; Validate before document lookup or mutation dispatch can refresh or
+      ;; invalidate persistent caches. Validation temporaries live in scratch.
+      (when
+        (with-scratch
+          (match (lsp-message-params-error (& method) (& message))
+            [(Missing) false]
+            [(Ok error-message)
+              (let
+                [id-key : String "id"]
+                (match (lsp-json-field-ref (& message) (& id-key))
+                  [(Found id)
+                    (lsp-write-error (clone (deref id)) -32602 error-message)]
+                  [(Missing) unit]))
+              true]))
+        (return (Continue state)))
       (cond
         [(string.eq method "initialize")
           (lsp-handle-initialize-state message state)]
@@ -13632,7 +13838,7 @@
                   [(Continue _) (Continue state)]
                   [(Exit _) (Exit state)])]))])]))
 
-(define (lsp-known-tool-method? [method : String]) : bool
+(define (lsp-known-tool-method? [method : (& method str)]) : bool
   (or
     (string.eq method "tl/listFunctions")
     (string.eq method "tl/findPosition")
@@ -13654,16 +13860,9 @@
   [method : String]
   [message : json.Json]
   [id : json.Json]) : unit
-  (cond
-    [(string.eq method "tl/listFunctions")
-      (lsp-write-response id (lsp-json-array (json.list-empty)))
-      unit]
-    [(lsp-known-tool-method? method)
-      (lsp-write-error id -32600 "Missing params")
-      unit]
-    [else
-      (lsp-maybe-write-method-not-found message)
-      unit]))
+  (if (lsp-known-tool-method? method)
+    (lsp-write-error id -32602 "Missing params")
+    (lsp-maybe-write-method-not-found message)))
 
 (define (lsp-handle-tool-with-params!
   [method : String]
@@ -13754,29 +13953,6 @@
           (lsp-maybe-write-method-not-found message)
           unit)
         (Continue docs)])))
-
-(define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : lsp_svec.Vec
-  (let
-    [i : i64 idx]
-    [roots : lsp_svec.Vec (lsp_svec.new)]
-    (while (< i count)
-      (if (string.eq (io.arg i) "--stdlib-root")
-        (if (< (+ i 1) count)
-          (begin
-            (lsp_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
-            (+= i 2))
-          (set! i count))
-        (+= i 1)))
-    roots))
-
-(define (lsp-prefix-cache-stats-from [idx : i64] [count : i64]) : bool
-  (let
-    [enabled : bool false]
-    (for [i (iterator.range idx count)]
-      (if (string.eq (io.arg i) "--prefix-cache-stats")
-        (set! enabled true)
-        unit))
-    enabled))
 
 (define (lsp-frame-session-cache-enable!) : unit
   (compiler_load.compiler-load-session-cache-enable!))
@@ -14093,40 +14269,45 @@
           2)
         (lsp-transcript-batch-run-entries text stdlib-roots prefix-cache-stats)))))
 
-(define (lsp-transcript-batch-option-from [idx : i64] [count : i64]) : LspTranscriptBatchOption
-  (let
-    [i : i64 idx]
-    [path : String ""]
-    [error : String ""]
-    (while (and (< i count) (= (string.string-length error) 0))
-      (if (string.eq (io.arg i) "--transcript-batch")
-        (if (>= (+ i 1) count)
-          (set! error "lsp: --transcript-batch requires a manifest path")
-          (if (> (string.string-length path) 0)
-            (set! error "lsp: --transcript-batch was provided more than once")
-            (begin
-              (set! path (io.arg (+ i 1)))
-              (+= i 1))))
-        unit)
-      (+= i 1))
-    (if (> (string.string-length error) 0)
-      (Err error)
-      (if (> (string.string-length path) 0)
-        (Path path)
-        (None)))))
-
 (define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
   (let
-    [roots : lsp_svec.Vec (lsp-stdlib-roots-from idx count)]
-    [prefix-cache-stats : bool (lsp-prefix-cache-stats-from idx count)]
-    (match (lsp-transcript-batch-option-from idx count)
-      [(None) (lsp-frame-run-with-config roots prefix-cache-stats)]
-      [(Path manifest-path)
-        (lsp-transcript-batch-run manifest-path roots prefix-cache-stats)]
-      [(Err message)
-        (io.print-error message)
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "lsp"
+        "--stdlib-root <dir> --prefix-cache-stats --transcript-batch <manifest>"
+        idx
+        count)]
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
+    [prefix-cache-stats : bool false]
+    [manifest : String ""]
+    [has-manifest : bool false]
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
+        [(string.eq args.name "--prefix-cache-stats")
+          (if prefix-cache-stats
+            (cli_option.cli-option-duplicate! (&mut args))
+            (set! prefix-cache-stats true))]
+        [(string.eq args.name "--transcript-batch")
+          (if has-manifest
+            (cli_option.cli-option-duplicate! (&mut args))
+            (begin
+              (set! manifest (cli_option.cli-args-value (& args)))
+              (set! has-manifest true)))]
+        [else
+          (cli_option.cli-args-fail-arg! (&mut args) "lsp: unknown argument ")]))
+    (cond
+      [args.failed
+        (io.print-error args.error)
         (io.print-error "\n")
-        2])))
+        2]
+      [has-manifest
+        (lsp-transcript-batch-run
+          manifest
+          options.stdlib-roots
+          prefix-cache-stats)]
+      [else (lsp-frame-run-with-config options.stdlib-roots prefix-cache-stats)])))
 
 (define (lsp-replace-pattern-words
   [text : String]
@@ -14552,11 +14733,8 @@
     [(Found path text _ decls)
       (match (lsp-json-string-field params "newText")
         [(Ok new-text)
-          (if (lsp-json-has-field?
-            (owned_view.compiler-owned-shared-view params)
-            "path")
-            (match (lsp-json-path-field
-              (owned_view.compiler-owned-shared-view params))
+          (if (lsp-json-has-field? (& params) "path")
+            (match (lsp-json-path-field (& params))
               [(Ok path-items)
                 (lsp-write-structural-edit-result
                   id
@@ -14704,47 +14882,34 @@
         text
         (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))))))
 
-(define (lsp-json-has-field? [value : json.Json] [key : String]) : bool
-  (match (json.object-get value (& key))
-    [(JsonFound _) true]
-    [(JsonMissing) false]))
+(define (lsp-json-has-field? [value : (& value json.Json)] [key : String]) : bool
+  (match (lsp-json-field-ref value (& key))
+    [(Found _) true]
+    [(Missing) false]))
 
-(define (lsp-json-list-all-strings? [items : json.JsonSeq]) : bool
+(define (lsp-json-list-all-strings? [items : (& items json.JsonSeq)]) : bool
   (let
-    [n : i64 (json.list-count (owned_view.compiler-owned-shared-view items))]
-    [i : i64 0]
-    [ok : bool true]
-    (while (and ok (< i n))
-      (match (json.list-get-index
-        (owned_view.compiler-owned-shared-view items)
-        i)
-        [(JsonFound entry)
-          (match entry
-            [(JsonString _) (+= i 1)]
-            [_ (set! ok false)])]
-        [(JsonMissing) (set! ok false)]))
-    ok))
+    [n : i64 (json.list-count-ref items)]
+    (for [i (iterator.range 0 n)]
+      (match (& (array-ref items.slots i))
+        [(JsonString _) unit]
+        [_ (return false)]))
+    true))
 
-(define (lsp-json-path-field [params : json.Json]) : LspPathParam
+(define (lsp-json-path-field [params : (& params json.Json)]) : LspPathParam
   (let
     [key : String "path"]
-    (match (json.object-get params (& key))
-      [(JsonFound value)
+    (match (lsp-json-field-ref params (& key))
+      [(Found value)
         (match value
           [(JsonArray items)
-            (let
-              [path-items : json.JsonSeq (deref items)]
-              (if (=
-                (json.list-count
-                  (owned_view.compiler-owned-shared-view path-items))
-                0)
-                (Err "path must not be empty")
-                (if (lsp-json-list-all-strings?
-                  (owned_view.compiler-owned-shared-view path-items))
-                  (Ok path-items)
-                  (Err "path entries must be strings"))))]
+            (if (= (json.list-count-ref items) 0)
+              (Err "path must not be empty")
+              (if (lsp-json-list-all-strings? items)
+                (Ok (clone (deref items)))
+                (Err "path entries must be strings")))]
           [_ (Err "path must be an array")])]
-      [(JsonMissing) (Err "Missing path parameter")])))
+      [(Missing) (Err "Missing path parameter")])))
 
 (define (lsp-json-path-single-name [path : json.JsonSeq]) : String
   (if (= (json.list-count (owned_view.compiler-owned-shared-view path)) 1)
@@ -15146,11 +15311,8 @@
             (lsp-text-is-valid-forms
               (owned_view.compiler-owned-shared-view new-body)))
             (lsp-write-replace-body-validation-error id docs new-body)
-            (if (lsp-json-has-field?
-              (owned_view.compiler-owned-shared-view params)
-              "path")
-              (match (lsp-json-path-field
-                (owned_view.compiler-owned-shared-view params))
+            (if (lsp-json-has-field? (& params) "path")
+              (match (lsp-json-path-field (& params))
                 [(Ok path-items)
                   (lsp-write-structural-edit-result
                     id
@@ -15360,9 +15522,7 @@
       [(string.eq method "tl/replace")
         (match (lsp-json-string-field params "newText")
           [(Ok new-text)
-            (if (lsp-json-has-field?
-              (owned_view.compiler-owned-shared-view params)
-              "path")
+            (if (lsp-json-has-field? (& params) "path")
               (let
                 [path-items (try (lsp-json-path-field params))]
                 (lsp-replace-form-by-path-with-decls
@@ -15414,9 +15574,7 @@
       [(string.eq method "tl/replaceBody")
         (match (lsp-json-string-field params "newBody")
           [(Ok new-body)
-            (if (lsp-json-has-field?
-              (owned_view.compiler-owned-shared-view params)
-              "path")
+            (if (lsp-json-has-field? (& params) "path")
               (let
                 [path-items (try (lsp-json-path-field params))]
                 (lsp-replace-body-by-path-with-decls

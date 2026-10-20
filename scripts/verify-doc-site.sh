@@ -347,7 +347,10 @@ search_record_count=$DOC_SITE_SEARCH_RECORD_COUNT
 # doc-site-search-index-scan-guard: page-loop-begin
 # One awk pass over the pages checks the markers, links and anchors; see
 # scripts/lib-doc-site-page-checks.sh.
-link_count=$(doc_site_check_pages "$SITE" "$HTML_PAGES") ||
+SOURCE_PATHS="$WORK/.source-paths"
+git -c core.quotepath=false ls-tree -r --name-only "$TYPELISP_DOC_SOURCE_IDENTITY" > "$SOURCE_PATHS" \
+    || fail "cannot list repository sources at $TYPELISP_DOC_SOURCE_IDENTITY"
+link_count=$(doc_site_check_pages "$SITE" "$HTML_PAGES" "$SOURCE_PATHS" "$TYPELISP_DOC_SOURCE_IDENTITY") ||
     fail "docs-site page and link checks failed"
 # doc-site-search-index-scan-guard: page-loop-end
 
@@ -367,5 +370,9 @@ grep -q 'href="spec.html"' "$SITE/readme.html" \
     || fail "readme.html did not rewrite SPEC.md links to spec.html"
 grep -q "href=\"https://github.com/JoNil-Botta/typelisp/blob/$TYPELISP_DOC_SOURCE_IDENTITY/CONTRIBUTING.md\"" "$SITE/readme.html" \
     || fail "readme.html did not rewrite repository source links to GitHub"
+grep -q "href=\"https://github.com/JoNil-Botta/typelisp/blob/$TYPELISP_DOC_SOURCE_IDENTITY/docs/compiler-x64-executable-templates.md\"" "$SITE/compiler-architecture.html" \
+    || fail "compiler-architecture.html lost its guide-relative template link"
+grep -q 'href="compiler-invariants.html#cli"' "$SITE/compiler-architecture.html" \
+    || fail "compiler-architecture.html did not preserve its mapped CLI fragment"
 
 echo "doc-site verification passed: $stdlib_pages module page(s), $link_count local link(s), $search_record_count search record(s), $search_index_bytes index byte(s) checked"

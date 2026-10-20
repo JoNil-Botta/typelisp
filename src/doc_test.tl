@@ -1719,11 +1719,15 @@
   [path : String]
   [stdlib-roots : doc_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : DocTestRunReport
-  (doc-test-typecheck-source-with-roots-and-cfg
-    (owned_view.compiler-owned-shared-view path)
-    (byte_buf.to-string (io.read-file path))
-    stdlib-roots
-    cfgs))
+  ;; Preflight leaves unreadable-file diagnostics to the owning command.
+  (match (io.try-read-file (& path))
+    [(ErrIoBytes _) (Report 0 (doc-test-run-failure-list-empty))]
+    [(OkIoBytes contents)
+      (doc-test-typecheck-source-with-roots-and-cfg
+        path
+        (byte_buf.to-string contents)
+        stdlib-roots
+        cfgs)]))
 
 (define (doc-test-path-under-root? [path : (& path str)] [root : (& root str)]) : bool
   (let
@@ -1902,14 +1906,11 @@
 (define (doc-test-typecheck-file-status
   [path : String]
   [stdlib-roots : doc_svec.Vec]) : i64
-  (match (io.try-read-file (& path))
-    [(ErrIoBytes _) 0]
-    [(OkIoBytes contents)
-      (doc-test-report-status
-        (doc-test-typecheck-source-with-roots
-          path
-          (byte_buf.to-string contents)
-          stdlib-roots))]))
+  (doc-test-report-status
+    (doc-test-typecheck-file-with-roots-and-cfg
+      path
+      stdlib-roots
+      (compiler_check_core.compiler-check-language-cfgs))))
 
 (define (doc-test-run-report-status [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)

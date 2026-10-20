@@ -11,6 +11,7 @@
 ;; Reuses the doc HTML/anchor rendering helpers through doc_site_doc_bridge.tl.
 (import doc_site_doc_bridge as doc_bridge)
 (import stdlib.string)
+(import stdlib.byte_buf)
 (import stdlib.vector)
 (import stdlib.str_cat_runtime as str_cat)
 (import (vector.vector String) as svec)
@@ -936,15 +937,80 @@
     [(Table header rows) (md-render-table header rows)]
     [(Blank) ""]))
 
-(define (md-render-blocks-from [blocks : md_blocks.Vec] [index : i64]) : String
-  (if (>= index (md-block-list-count blocks))
-    ""
-    (str_cat.str-cat
-      (md-render-block (md_blocks.get (& blocks) index MdBlock.Blank))
-      (md-render-blocks-from blocks (+ index 1)))))
+;; Markdown fragments use lowercase heading words, while the existing API-style
+;; ids remain the authority for search records. Add aliases without replacing
+;; those ids; reserve every original id before assigning unique alias suffixes.
+(define (md-heading-fragment [text : (& text str)]) : String
+  (let
+    [out : byte_buf.ByteBuf (byte_buf.new)]
+    [i : i64 0]
+    (while (< i (string.string-length text))
+      (let
+        [code : i64 (cast (string.string-ref text i) : i64)]
+        (cond
+          [(and (>= code 65) (<= code 90))
+            (set! out (byte_buf.push out (cast (+ code 32) : u8)))]
+          [(or (= code 32) (= code 9)) (set! out (byte_buf.push out 45))]
+          [(or
+              (and (>= code 97) (<= code 122))
+              (and (>= code 48) (<= code 57))
+              (= code 45)
+              (= code 95)
+              (>= code 128))
+            (set! out (byte_buf.push out (cast code : u8)))]
+          [else unit])
+        (set! i (+ i 1))))
+    (byte_buf.to-string out)))
 
 (define (md-render-blocks [blocks : md_blocks.Vec]) : String
-  (md-render-blocks-from blocks 0))
+  (let
+    [seen : svec.Vec (svec.new)]
+    [out : String ""]
+    [i : i64 0]
+    (while (< i (md-block-list-count blocks))
+      (match (md_blocks.get (& blocks) i MdBlock.Blank)
+        [(Heading _ text)
+          (svec.push-ref!
+            (&mut seen)
+            (doc_bridge.bridge-doc-render-anchor text))]
+        [_ unit])
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i (md-block-list-count blocks))
+      (let
+        [block : MdBlock (md_blocks.get (& blocks) i MdBlock.Blank)]
+        (match block
+          [(Heading _ text)
+            (let
+              [fragment : String (md-heading-fragment (& text))]
+              [alias : String (string.copy (& fragment))]
+              [suffix : i64 0]
+              (unless
+                (= (string.string-length fragment) 0)
+                (while (svec.contains? (& seen) (string.copy (& alias)))
+                  (set! suffix (+ suffix 1))
+                  (set!
+                    alias
+                    (str_cat.str-cat
+                      (string.copy (& fragment))
+                      "-"
+                      (string.int->string suffix))))
+                (svec.push-ref! (&mut seen) (string.copy (& alias)))
+                (set!
+                  out
+                  (str_cat.str-cat
+                    out
+                    "<a id=\""
+                    (doc_bridge.bridge-doc-html-escape alias)
+                    "\"></a>\n"))))]
+          [_ unit])
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            (md-render-block (md_blocks.get (& blocks) i MdBlock.Blank))))
+        (set! i (+ i 1))))
+    out))
 
 (define (md-render-html [src : String]) : String
   (md-render-blocks (md-scan-blocks src)))

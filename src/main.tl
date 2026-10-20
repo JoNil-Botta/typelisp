@@ -108,7 +108,7 @@ Common Command Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
     --opt-level <0|1|2>            Select optimizer level
     --debug, -g                    Emit source line and unwind debug information
-    --backtrace                    Emit fatal-backtrace metadata (implies --debug)
+    --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
     --cfg <name>                   Enable a compile-time cfg predicate name
 
 Environment:
@@ -121,8 +121,8 @@ Run `typelisp <command> --help` for command-specific usage.
 
 (define (cli-build-help-text) : String
   "Usage:
-    typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...]
-    typelisp build [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...]
+    typelisp build <file.tl> [-o <exe>] [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...]
+    typelisp build [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
 
 Summary:
     Build a source file or package artifact.
@@ -136,12 +136,13 @@ Options:
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Override package optimizer level (release 2, dev 0)
     --debug, -g                    Emit line tables and linker debug information
-    --backtrace                    Emit fatal-backtrace metadata (implies --debug)
+    --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
     --locked                       Require matching typelisp.lock; do not rewrite
     --update-lock                  Refresh remote pins and rewrite typelisp.lock
     --link-lib <name>              Link a named native library for source builds
     --link-search <dir>            Add a native linker library search directory
     --link-arg <arg>               Pass a raw native linker argument
+    --cfg <name>                   Enable a repeatable compile-time cfg predicate name
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
@@ -162,7 +163,7 @@ Options:
 (define (cli-run-help-text) : String
   "Usage:
     typelisp run <file.tl> [--debug|-g|--backtrace] [--target <target>] [--backend-mode <mode>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
-    typelisp run [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [-- args...]
+    typelisp run [--manifest-path <typelisp.pkg>] [--debug|-g|--backtrace] [--profile dev|release] [--release] [--locked|--update-lock] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [-- args...]
 
 Summary:
     Compile, link, and run a source file or package binary.
@@ -177,9 +178,9 @@ Options:
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level
     --debug, -g                    Emit line tables and linker debug information
-    --backtrace                    Emit fatal-backtrace metadata (implies --debug)
+    --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
     --stdlib-root <dir>            Search root for stdlib/... imports
-    --cfg <name>                   Enable a compile-time cfg predicate name for source runs
+    --cfg <name>                   Enable a repeatable compile-time cfg predicate name
     --link-lib <name>              Link a named native library for source runs
     --link-search <dir>            Add a native linker library search directory for source runs
     --link-arg <arg>               Pass a raw native linker argument for source runs
@@ -196,6 +197,9 @@ Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
+    --backend-mode <mode>          Validate scalar, avx2, or avx512; no code is emitted
+    --opt-level <0|1|2>            Validate optimizer selection; no code is emitted
+    --debug, -g, --backtrace        Accept debug selection; no code is emitted
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
@@ -209,9 +213,9 @@ Summary:
 Options:
     --check                        Report files that would change without writing them
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
-    --target <target>              linux-x86_64 or windows-x86_64
+    --target <target>              Validate target; formatting retains all target branches
     --cfg <name>                   Accept cfg selection; every CST branch remains formatted
-    --stdlib-root <dir>            Search root for stdlib/... imports
+    --stdlib-root <dir>            Accepted but unused; formatting does not load imports
 ")
 
 (define (cli-lint-help-text) : String
@@ -232,6 +236,9 @@ Options:
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
+    --backend-mode <mode>          Validate scalar, avx2, or avx512; no code is emitted
+    --opt-level <0|1|2>            Validate optimizer selection; no code is emitted
+    --debug, -g, --backtrace        Accept debug selection; no code is emitted
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
@@ -260,6 +267,8 @@ Options:
     --cfg <name>                   Enable a repeatable compile-time cfg predicate name
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select selfhost test harness optimization
+    --debug, -g                    Emit harness debug and fatal-backtrace metadata
+    --backtrace                    Alias for --debug
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 
@@ -315,7 +324,7 @@ Options:
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level
     --debug, -g                    Emit source line and unwind debug information
-    --backtrace                    Emit fatal-backtrace metadata (implies --debug)
+    --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
     --profile-allocations          Report compiler arena ownership by phase
     --stdlib-root <dir>            Search root for stdlib/... imports
     --cfg <name>                   Enable a compile-time cfg predicate name
@@ -339,6 +348,9 @@ Options:
     --max-bytes <n>                Truncate the rendered expansion (default 65536)
     --target <target>              linux-x86_64 or windows-x86_64
     --cfg <name>                   Enable a compile-time cfg predicate name
+    --backend-mode <mode>          Validate scalar, avx2, or avx512; no code is emitted
+    --opt-level <0|1|2>            Validate optimizer selection; no code is emitted
+    --debug, -g, --backtrace        Accept debug selection; no code is emitted
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")
 

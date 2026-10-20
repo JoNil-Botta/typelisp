@@ -54,7 +54,8 @@
                           (Scalar)
                           (owned_view.compiler-owned-box-shared-view decls-box)
                           (ast.ast-decl-path-list-new)
-                          (cfg_core.compiler-cfg-empty))]
+                          (cfg_core.compiler-cfg-empty)
+                          level)]
                       (match (if direct-object
                         (match target
                           [(Windows)

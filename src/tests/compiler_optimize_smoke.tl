@@ -3741,6 +3741,20 @@
     "a multi-path advance loop drops its header check for one unsigned test against min(bound, length), and the rewrite is idempotent"))
 
 (test
+  ubound-self-loop
+  (test.assert-i64-eq
+    (ot.compiler-optimize-ubound-self-loop-self-test)
+    42
+    "a self-loop drops its first check, remaps every phi, rewrites its latch and exit edges, and is idempotent"))
+
+(test
+  ubound-self-loop-refusals
+  (test.assert-i64-eq
+    (ot.compiler-optimize-ubound-self-loop-refusal-self-test)
+    42
+    "self-loops retain entry-guard, length, first-check, compare-use and seed refusals"))
+
+(test
   ubound-refusals
   (test.assert-i64-eq
     (ot.compiler-optimize-ubound-refusal-self-test)

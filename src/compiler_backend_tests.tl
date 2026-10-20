@@ -288,6 +288,7 @@
           (&mut body)
           type-segment-bases
           target
+          (Platform)
           assignments
           value
           arg-ty
@@ -8223,6 +8224,7 @@
       (backend.compiler-backend-call-stack-arg-count
         bases
         backend.CompilerBackendTarget.Linux
+        (Platform)
         (One (Var 0))
         types
         false
@@ -8236,6 +8238,7 @@
       (backend.compiler-backend-emit-call-args
         bases
         backend.CompilerBackendTarget.Linux
+        (Platform)
         assignments
         (One (Var 0))
         types
@@ -8257,6 +8260,7 @@
       (backend.compiler-backend-call-stack-arg-count
         bases
         backend.CompilerBackendTarget.Linux
+        (Platform)
         (One (Var 0))
         types9
         false
@@ -8270,6 +8274,7 @@
       (backend.compiler-backend-emit-call-args
         bases
         backend.CompilerBackendTarget.Linux
+        (Platform)
         assignments
         (One (Var 0))
         types9
@@ -8291,6 +8296,7 @@
       (backend.compiler-backend-call-stack-arg-count
         bases
         backend.CompilerBackendTarget.Linux
+        (Platform)
         (One (Var 0))
         types11
         false
@@ -8304,6 +8310,7 @@
       (backend.compiler-backend-emit-call-args
         bases
         backend.CompilerBackendTarget.Linux
+        (Platform)
         assignments
         (One (Var 0))
         types11
@@ -8716,6 +8723,7 @@
       (backend.compiler-backend-emit-call-args
         type-segment-bases
         target
+        (Platform)
         assignments
         args
         types
@@ -14857,6 +14865,7 @@ f:
         (backend.compiler-backend-emit-call-args
           type-segment-bases
           target
+          (Platform)
           assignments
           args
           types
@@ -14891,6 +14900,7 @@ f:
         (backend.compiler-backend-emit-call-args
           type-segment-bases
           target
+          (Platform)
           assignments
           args
           types
@@ -14944,6 +14954,7 @@ f:
     (backend.compiler-backend-emit-direct-tail-call-args-parallel
       (ast.ast-node-pool-reader-type-segment-bases)
       (backend.CompilerBackendTarget.Linux)
+      (Platform)
       (reg-homes "%0=%xmm1 %1=%xmm0 %2=%rsi %3=%rdi")
       (& (compiler-backend-var-call-args 4))
       (& (compiler-backend-type-list-of "ffii"))
@@ -14965,6 +14976,7 @@ f:
   (match (backend.compiler-backend-emit-direct-tail-call-args-parallel
     (ast.ast-node-pool-reader-type-segment-bases)
     (backend.CompilerBackendTarget.Windows)
+    (Platform)
     (reg-homes "%4=%xmm0")
     (& (compiler-backend-var-call-args 5))
     (& (compiler-backend-type-list-of "ffiif"))
@@ -14996,6 +15008,7 @@ f:
         (backend.compiler-backend-emit-call-args
           type-segment-bases
           target
+          (Platform)
           assignments
           args
           types
@@ -15037,29 +15050,35 @@ f:
     (compiler-backend-reg-is?
       (backend.compiler-backend-target-arg-reg
         (backend.CompilerBackendTarget.Linux)
+        (Platform)
         0)
       "%rdi")
     (compiler-backend-reg-is?
       (backend.compiler-backend-target-arg-reg
         (backend.CompilerBackendTarget.Windows)
+        (Platform)
         0)
       "%rcx")
     (compiler-backend-reg-is?
       (backend.compiler-backend-target-arg-reg
         (backend.CompilerBackendTarget.Windows)
+        (Platform)
         3)
       "%r9")
     (compiler-backend-reg-err?
       (backend.compiler-backend-target-arg-reg
         (backend.CompilerBackendTarget.Windows)
+        (Platform)
         4))
     (=
       (backend.compiler-backend-outgoing-shadow-space
-        (backend.CompilerBackendTarget.Linux))
+        (backend.CompilerBackendTarget.Linux)
+        (Platform))
       0)
     (=
       (backend.compiler-backend-outgoing-shadow-space
-        (backend.CompilerBackendTarget.Windows))
+        (backend.CompilerBackendTarget.Windows)
+        (Platform))
       32)
     (let
       [text
@@ -30366,6 +30385,7 @@ f:
       (backend.compiler-backend-emit-call-args
         type-segment-bases
         target
+        (Platform)
         assignments
         args
         types
@@ -30411,6 +30431,7 @@ f:
     (asm-ok?
       (backend.compiler-backend-emit-group-stack-arg
         (backend.CompilerBackendTarget.Linux)
+        (Platform)
         assignments
         (Var 0)
         0
@@ -30618,6 +30639,7 @@ f:
       (backend.compiler-backend-emit-call-args
         bases
         target
+        (Platform)
         pressure-call-assignments
         (owned_view.compiler-owned-shared-view pressure-args)
         (owned_view.compiler-owned-shared-view pressure-types)
@@ -30693,6 +30715,7 @@ f:
       (backend.compiler-backend-emit-call-args
         bases
         target
+        (Platform)
         mixed-assignments
         (owned_view.compiler-owned-shared-view mixed-args)
         (owned_view.compiler-owned-shared-view mixed-types)
@@ -30748,6 +30771,7 @@ f:
       (backend.compiler-backend-emit-call-args
         bases
         target
+        (Platform)
         exhausted-assignments
         (owned_view.compiler-owned-shared-view exhausted-args)
         (owned_view.compiler-owned-shared-view exhausted-types)
@@ -30789,6 +30813,7 @@ f:
         (backend.compiler-backend-linux-group-register-banks-fit?
           bases
           target
+          (Platform)
           index
           int-group
           5
@@ -30797,6 +30822,7 @@ f:
       (backend.compiler-backend-linux-group-register-banks-fit?
         bases
         target
+        (Platform)
         index
         (owned_view.compiler-owned-shared-view mixed-group)
         0
@@ -30806,6 +30832,7 @@ f:
         (backend.compiler-backend-linux-group-register-banks-fit?
           bases
           target
+          (Platform)
           index
           (owned_view.compiler-owned-shared-view mixed-group)
           6
@@ -30815,6 +30842,7 @@ f:
         (backend.compiler-backend-linux-group-register-banks-fit?
           bases
           target
+          (Platform)
           index
           mixed-group
           0
@@ -30824,6 +30852,7 @@ f:
         (backend.compiler-backend-call-stack-arg-count
           bases
           target
+          (Platform)
           pressure-args
           pressure-types
           false
@@ -30838,6 +30867,7 @@ f:
         (backend.compiler-backend-type-list-stack-arg-count
           bases
           target
+          (Platform)
           pressure-types
           0
           0
@@ -30894,6 +30924,7 @@ f:
         (backend.compiler-backend-call-stack-arg-count
           bases
           target
+          (Platform)
           mixed-args
           mixed-types
           false
@@ -30911,6 +30942,7 @@ f:
         (backend.compiler-backend-call-stack-arg-count
           bases
           target
+          (Platform)
           exhausted-args
           exhausted-types
           false
@@ -30925,6 +30957,7 @@ f:
         (backend.compiler-backend-type-list-stack-arg-count
           bases
           target
+          (Platform)
           exhausted-types
           6
           0
@@ -31191,6 +31224,7 @@ f:
   (match (backend.compiler-backend-emit-direct-tail-call-args
     (ast.ast-node-pool-reader-type-segment-bases)
     target
+    (Platform)
     (regalloc.compiler-reg-assignment-table-empty)
     (compiler-backend-i64-immediate-call-args8)
     (compiler-backend-i64-type-list8)
@@ -31610,7 +31644,10 @@ f:
           [needle
             (str_cat.str-cat
               "    movq 8(%r10), "
-              (match (backend.compiler-backend-target-arg-reg target 0)
+              (match (backend.compiler-backend-target-arg-reg
+                target
+                (Platform)
+                0)
                 [(Ok reg) reg]
                 [(Err _) ""])
               "\n")]
@@ -31863,7 +31900,7 @@ f:
 
 (define (compiler-backend-known-function-call-env-zero
   [target : backend.CompilerBackendTarget]) : String
-  (match (backend.compiler-backend-target-arg-reg target 0)
+  (match (backend.compiler-backend-target-arg-reg target (Platform) 0)
     [(Ok reg) (backend.compiler-backend-emit-load-i64-immediate 0 reg)]
     [(Err _) ""]))
 
@@ -31953,7 +31990,10 @@ f:
           [needle
             (str_cat.str-cat
               "    movq 8(%r10), "
-              (match (backend.compiler-backend-target-arg-reg target 0)
+              (match (backend.compiler-backend-target-arg-reg
+                target
+                (Platform)
+                0)
                 [(Ok reg) reg]
                 [(Err _) ""])
               "\n")]
@@ -31964,7 +32004,7 @@ f:
 
 (define (compiler-backend-overlapping-indirect-call-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-target-arg-reg target 1)
+  (match (backend.compiler-backend-target-arg-reg target (Platform) 1)
     [(Ok arg-reg)
       (let
         [functions : ir.CompilerIrFunctionSeq
@@ -32039,7 +32079,7 @@ f:
 
 (define (compiler-backend-spilled-indirect-call-target-ok?
   [target : backend.CompilerBackendTarget]) : bool
-  (match (backend.compiler-backend-target-arg-reg target 1)
+  (match (backend.compiler-backend-target-arg-reg target (Platform) 1)
     [(Ok arg-reg)
       (let
         [functions : ir.CompilerIrFunctionSeq
@@ -34121,6 +34161,7 @@ f:
     (=
       (backend.compiler-backend-call-args-gp-register-prefix
         (backend.CompilerBackendTarget.Linux)
+        (Platform)
         9
         0
         0)
@@ -34128,6 +34169,7 @@ f:
     (=
       (backend.compiler-backend-call-args-gp-register-prefix
         (backend.CompilerBackendTarget.Linux)
+        (Platform)
         9
         1
         1)
@@ -34135,6 +34177,7 @@ f:
     (=
       (backend.compiler-backend-call-args-gp-register-prefix
         (backend.CompilerBackendTarget.Linux)
+        (Platform)
         4
         0
         0)
@@ -34142,6 +34185,7 @@ f:
     (=
       (backend.compiler-backend-call-args-gp-register-prefix
         (backend.CompilerBackendTarget.Windows)
+        (Platform)
         9
         0
         0)
@@ -34149,16 +34193,19 @@ f:
     (=
       (backend.compiler-backend-outgoing-stack-arg-offset
         (backend.CompilerBackendTarget.Linux)
+        (Platform)
         0)
       0)
     (=
       (backend.compiler-backend-outgoing-stack-arg-offset
         (backend.CompilerBackendTarget.Linux)
+        (Platform)
         2)
       16)
     (=
       (backend.compiler-backend-outgoing-stack-arg-offset
         (backend.CompilerBackendTarget.Windows)
+        (Platform)
         0)
       32)
     ;; A store-marked owner key compares equal to the plain one it was made
@@ -38239,10 +38286,96 @@ b_keep:
       (= (array-ref bounds 8) 0))))
 
 (test
+  backend-extern-data-object-symbols
+  (for [mode (iterator.range 0 6)]
+    (let
+      [target : backend.CompilerBackendTarget
+        (if (< mode 3)
+          (Linux)
+          (Windows))]
+      [source : String
+        "(extern foreign-data (:symbol \"foreign-exact\") : i64)
+(extern plain : i64)
+(extern (touch) : i64)
+(define saved : (MutPtr i64) (unsafe (ptr-addr-of foreign-data)))
+(define local : i64 7)
+(define (main) : i64
+  (begin
+    (set! foreign-data 40)
+    (set! plain 2)
+    (set! local 9)
+    (touch)
+    (+ (unsafe (ptr-read saved)) (+ foreign-data (+ plain local)))))"]
+      [emitted : backend.ResultCompilerBackendObject
+        (match (backend.compiler-backend-lower-source-for-target source target)
+          [(Err diag) (Err diag)]
+          [(Ok program spans lower-owner)
+            (let
+              [result : backend.ResultCompilerBackendObject
+                (match (opt.optimize-program-with-spans-and-level
+                  (& program)
+                  spans
+                  (% mode 3))
+                  [(Program optimized optimized-spans)
+                    (backend.compiler-backend-emit-program-object-image-target
+                      optimized
+                      target
+                      optimized-spans
+                      true)])]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas lower-owner))
+              result)])]
+      (match emitted
+        [(Ok image)
+          (test.assert-true
+            (and
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipValue)
+                "foreign_exact")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "foreign_exact")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipValue)
+                "plain")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "plain")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "_tl_local"))
+            "direct object reads, stores and addresses share external symbols")
+          (test.assert-true
+            (match target
+              [(Linux)
+                (match (elf.compiler-object-elf-render image)
+                  [(Ok _) true]
+                  [(Err _) false])]
+              [(Windows)
+                (match (coff.compiler-object-coff-render image)
+                  [(Ok _) true]
+                  [(Err _) false])])
+            "both object formats resolve all external data relocations")
+          (match (object_asm.compiler-object-asm-render image)
+            [(Ok text)
+              (test.assert-true
+                (asm-lacks? text "_tl_foreign_data" "_tl_plain")
+                "direct object emission must not invent internal extern symbols")]
+            [(Err _)
+              (test.assert-true false "object assembly rendering failed")])]
+        [(Err _)
+          (test.assert-true false "external data object emission failed")]))))
+
+(test
   backend-global-symbol-emission-owner
   (let
     [name : i64 (ci.intern "shared-data")]
-    [alpha : i64 (ci.intern "foreign_alpha")]
+    [alpha : i64 (ci.intern "foreign-alpha?")]
     [beta : i64 (ci.intern "foreign_beta")]
     [state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
@@ -38257,9 +38390,9 @@ b_keep:
       (let
         [link : String
           (if (= mode 0)
-            "foreign_alpha"
+            "foreign_alpha_question"
             "foreign_beta")]
-        [_index : backend.CompilerBackendProgramIndex
+        [index : backend.CompilerBackendProgramIndex
           (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
             state
             bases
@@ -38284,6 +38417,51 @@ b_keep:
           (if (= mode 2)
             "_tl_shared_data(%rip)"
             (str_cat.str-cat (clone link) "(%rip)"))]
+        (test.assert-true
+          (asm-ok?
+            (backend.compiler-backend-emit-load-value
+              (regalloc.compiler-reg-assignment-table-empty)
+              (& (ir.CompilerIrValue.GlobalAddr name))
+              "%rax"
+              state)
+            (has expected))
+          "untyped address emission uses the current program's link symbol")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-function-or-global-addr-symbol index name)
+          (if (= mode 2)
+            "_tl_shared_data"
+            (clone link))
+          "typed address emission shares the same symbol authority")
+        (test.assert-true
+          (asm-ok?
+            (backend.compiler-backend-global-value-asm
+              bases
+              ast.AstType.I64
+              (ir.CompilerIrValue.GlobalAddr name)
+              index)
+            (has
+              (if (= mode 2)
+                "_tl_shared_data"
+                (clone link))))
+          "static address initializers resolve external data")
+        (let
+          [parts : object_target.CompilerBackendObjectTargetParts
+            (backend.compiler-backend-object-global-value
+              (object_target.compiler-backend-object-parts-empty)
+              "saved"
+              (& (ast.AstType.I64))
+              (& (ir.CompilerIrValue.GlobalAddr name))
+              index)]
+          [relocs : cobj.CompilerObjectRelocationList
+            (cobj.compiler-object-relocation-builder-finish parts.relocations)]
+          (test.assert-true
+            (cobj.compiler-object-relocation-list-contains?
+              relocs
+              (Abs64)
+              (if (= mode 2)
+                "_tl_shared_data"
+                (clone link)))
+            "static object address relocations use the current link symbol"))
         (test.assert-owned-string-eq
           (backend.compiler-backend-value-global-memory-operand
             state
@@ -38914,7 +39092,9 @@ b_keep:
       assignments
       vars
       0
-      (- (cabi.compiler-abi-callee-saved-xmm-register-count (Windows)) 1)
+      (-
+        (cabi.compiler-abi-callee-saved-xmm-register-count (Windows) (Platform))
+        1)
       -1
       false
       backend-state)
@@ -42334,3 +42514,496 @@ user_fn:
             (= abi 1)
             evidence)
           "package aggregate admission lost a missing/conflicting rejection or a valid ABI")))))
+
+(test
+  backend-call-conventions
+  (regalloc.compiler-reg-clear-c-memory-call-names!)
+  ;; The shared call-family fixture includes ordinary, closure, C indirect,
+  ;; both C store-result forms, private SPMD and both tail-call forms.
+  (for [kind (iterator.range 0 8)]
+    (test.assert-true
+      (=
+        (match (regalloc.compiler-reg-call-instr-convention
+          (& (reg_tests.compiler-reg-call-family-sample kind)))
+          [(Platform) true]
+          [(Internal) false])
+        (and (>= kind 2) (<= kind 4)))
+      "call form selected the wrong calling convention"))
+  ;; Exercise production indexing, including distinct logical, source and link
+  ;; identities. An eight-argument signature crosses Win64's register boundary.
+  (for [kind (iterator.range 0 7)]
+    (let
+      [logical : i64 (ci.intern "convention_logical")]
+      [source : i64 (ci.intern "convention_source")]
+      [link : i64 (ci.intern "convention_link")]
+      [signature : ast.AstType
+        (ast.ast-ty-func (compiler-backend-i64-type-list8) (& (I64)))]
+      [externs : ir.CompilerIrExternBuilder
+        (ir.compiler-ir-extern-builder-with-capacity 1)]
+      (ir.compiler-ir-extern-builder-push!
+        (&mut externs)
+        (Extern
+          logical
+          (if (>= kind 5)
+            logical
+            source)
+          "convention_logical"
+          signature
+          (cond
+            [(= kind 0) (C)]
+            [(= kind 1) (CVarargsOpen)]
+            [(= kind 2) (CVarargsTyped (F64))]
+            [(or (= kind 3) (= kind 6)) (TypeLisp)]
+            [else (C)])
+          link
+          (ast.ast-extern-link-input-list-new)
+          (>= kind 5)))
+      (let
+        [index : backend.CompilerBackendProgramIndex
+          (compiler-backend-program-index-build
+            (ast.ast-node-pool-reader-type-segment-bases)
+            ;; Rows 4-6 cover function precedence and both export protocols.
+            (if (>= kind 4)
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (Function
+                    (if (= kind 4)
+                      link
+                      logical)
+                    (irt.params
+                      "a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64")
+                    (I64)
+                    8
+                    (irt.blocks "entry:\nreturn %0")
+                    Ordinary))
+                (& (ir.compiler-ir-function-seq-empty)))
+              (ir.compiler-ir-function-seq-empty))
+            (ir.compiler-ir-extern-builder-snapshot-seq (& externs)))]
+        (for [alias (iterator.range 0 3)]
+          (let
+            [name : i64
+              (if (= alias 0)
+                logical
+                (if (= alias 1)
+                  (if (>= kind 5)
+                    logical
+                    source)
+                  link))]
+            [platform? : bool
+              (or
+                (< kind 3)
+                (and (= kind 4) (< alias 2))
+                (and (= kind 5) (= alias 2)))]
+            [call : ir.CompilerIrInstr
+              (Call 0 name (compiler-backend-i64-immediate-call-args8) (I64))]
+            [tail : ir.CompilerIrInstr
+              (TailCall name (compiler-backend-i64-immediate-call-args8) (I64))]
+            (test.assert-true
+              (and
+                (=
+                  (match (regalloc.compiler-reg-call-instr-convention (& call))
+                    [(Platform) true]
+                    [(Internal) false])
+                  platform?)
+                (=
+                  (match (regalloc.compiler-reg-call-instr-convention (& tail))
+                    [(Platform) true]
+                    [(Internal) false])
+                  platform?)
+                (not (regalloc.compiler-reg-c-memory-call-name? name)))
+              "call convention ignored function precedence or memory-transport independence")))
+        (backend.compiler-backend-state-release-final-arenas!
+          index.backend-state))))
+  ;; Private by-value copies use memory transport and the Internal convention.
+  (let
+    [name : i64 (ci.intern "convention_private")]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (Function
+            name
+            (ir.compiler-ir-param-seq-prepend
+              (ir.CompilerIrParam.Param
+                "value"
+                (Struct
+                  (ir.compiler-ir-symbol
+                    "__tl_internal_abi_mem_s24__convention"))
+                0)
+              (ir.compiler-ir-param-seq-empty))
+            (I64)
+            1
+            (irt.blocks "entry:\nreturn 0")
+            Ordinary))
+        (& (ir.compiler-ir-function-seq-empty)))]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        functions
+        (ir.compiler-ir-extern-seq-empty))]
+    (test.assert-true
+      (and
+        (regalloc.compiler-reg-c-memory-call-name? name)
+        (match (regalloc.compiler-reg-direct-call-convention name)
+          [(Internal) true]
+          [(Platform) false]))
+      "private by-value copy selected the platform convention")
+    (regalloc.compiler-reg-add-platform-call-name! name)
+    (test.assert-true
+      (regalloc.compiler-reg-c-memory-call-name? name)
+      "adding a convention lost the independent memory bit")
+    (regalloc.compiler-reg-suppress-program-maps! true)
+    (test.assert-false
+      (regalloc.compiler-reg-c-memory-call-name? name)
+      "suppressed program leaked a call fact")
+    (regalloc.compiler-reg-suppress-program-maps! false)
+    (backend.compiler-backend-state-release-final-arenas! index.backend-state))
+  (regalloc.compiler-reg-clear-c-memory-call-names!))
+
+(test
+  backend-call-convention-facts-parity
+  (for [target (iterator.range 0 2)]
+    (let
+      [abi : cabi.CompilerRegTargetAbi
+        (if (= target 0)
+          (Linux)
+          (Windows))]
+      (test.assert-true
+        (and
+          (=
+            (cabi.compiler-abi-gp-arg-register-count abi (Internal))
+            (cabi.compiler-abi-gp-arg-register-count abi (Platform)))
+          (=
+            (cabi.compiler-abi-float-arg-register-count abi (Internal))
+            (cabi.compiler-abi-float-arg-register-count abi (Platform)))
+          (=
+            (cabi.compiler-abi-arg-banks-independent? abi (Internal))
+            (cabi.compiler-abi-arg-banks-independent? abi (Platform)))
+          (=
+            (cabi.compiler-abi-outgoing-shadow-space abi (Internal))
+            (cabi.compiler-abi-outgoing-shadow-space abi (Platform)))
+          (=
+            (cabi.compiler-abi-aggregate-eightbyte-classes? abi (Internal))
+            (cabi.compiler-abi-aggregate-eightbyte-classes? abi (Platform)))
+          (=
+            (cabi.compiler-abi-varargs-vector-count-in-al? abi (Internal))
+            (cabi.compiler-abi-varargs-vector-count-in-al? abi (Platform)))
+          (=
+            (cabi.compiler-abi-caller-saved-gp-register-count abi (Internal))
+            (cabi.compiler-abi-caller-saved-gp-register-count abi (Platform)))
+          (=
+            (cabi.compiler-abi-callee-saved-gp-register-count abi (Internal))
+            (cabi.compiler-abi-callee-saved-gp-register-count abi (Platform)))
+          (=
+            (cabi.compiler-abi-caller-saved-xmm-register-count abi (Internal))
+            (cabi.compiler-abi-caller-saved-xmm-register-count abi (Platform)))
+          (=
+            (cabi.compiler-abi-callee-saved-xmm-register-count abi (Internal))
+            (cabi.compiler-abi-callee-saved-xmm-register-count abi (Platform))))
+        "internal and platform ABI counts or policies differ")
+      ;; Include negative, boundary and past-the-end register indices.
+      (for [index (iterator.range -1 50)]
+        (test.assert-true
+          (and
+            (=
+              (cabi.compiler-abi-gp-arg-register-id abi (Internal) index)
+              (cabi.compiler-abi-gp-arg-register-id abi (Platform) index))
+            (string.eq
+              (cabi.compiler-abi-gp-arg-register abi (Internal) index)
+              (cabi.compiler-abi-gp-arg-register abi (Platform) index))
+            (=
+              (cabi.compiler-abi-float-arg-register-id abi (Internal) index)
+              (cabi.compiler-abi-float-arg-register-id abi (Platform) index))
+            (string.eq
+              (cabi.compiler-abi-float-arg-register abi (Internal) index)
+              (cabi.compiler-abi-float-arg-register abi (Platform) index))
+            (=
+              (cabi.compiler-abi-caller-saved-gp-register? abi (Internal) index)
+              (cabi.compiler-abi-caller-saved-gp-register? abi (Platform) index))
+            (=
+              (cabi.compiler-abi-caller-saved-gp-register-id
+                abi
+                (Internal)
+                index)
+              (cabi.compiler-abi-caller-saved-gp-register-id
+                abi
+                (Platform)
+                index))
+            (=
+              (cabi.compiler-abi-callee-saved-gp-register-id
+                abi
+                (Internal)
+                index)
+              (cabi.compiler-abi-callee-saved-gp-register-id
+                abi
+                (Platform)
+                index))
+            (=
+              (cabi.compiler-abi-caller-saved-xmm-register-id
+                abi
+                (Internal)
+                index)
+              (cabi.compiler-abi-caller-saved-xmm-register-id
+                abi
+                (Platform)
+                index))
+            (=
+              (cabi.compiler-abi-callee-saved-xmm-register-id
+                abi
+                (Internal)
+                index)
+              (cabi.compiler-abi-callee-saved-xmm-register-id
+                abi
+                (Platform)
+                index)))
+          "internal and platform register facts differ"))
+      (for [ints (iterator.range 0 10)]
+        (for [floats (iterator.range 0 10)]
+          (for [position (iterator.range 0 10)]
+            (for [bank (iterator.range 0 2)]
+              (test.assert-true
+                (=
+                  (cabi.compiler-abi-stack-call-arg-for-banks?
+                    abi
+                    (Internal)
+                    (= bank 1)
+                    ints
+                    floats
+                    position)
+                  (cabi.compiler-abi-stack-call-arg-for-banks?
+                    abi
+                    (Platform)
+                    (= bank 1)
+                    ints
+                    floats
+                    position))
+                "internal and platform stack placement differs"))))))))
+
+;; Six-argument calls of each kind for `backend-call-convention-emission-sites`.
+;; Runtime helper and TLS rows use their builtin ids with a synthetic arity:
+;; only a fifth and sixth argument separate the two conventions' placement.
+(define (compiler-backend-convention-site-extern
+  [name : String]
+  [params : (& params str)]
+  [abi : ast.AstExternAbi]) : ir.CompilerIrExtern
+  (let
+    [id : i64 (compiler-backend-test-symbol (string.copy name))]
+    (Extern
+      id
+      id
+      name
+      (ast.ast-ty-func (compiler-backend-type-list-of params) (& (I64)))
+      abi
+      id
+      (ast.ast-extern-link-input-list-new)
+      false)))
+
+(define (compiler-backend-convention-site-builtin-call
+  [symbol : String]
+  [callee : i64]
+  [ty : ast.AstType]) : ir.CompilerIrFunction
+  (let
+    [values : ir.CompilerIrValueSeq (ir.compiler-ir-value-seq-empty)]
+    (for [value (iterator.range 0 5)]
+      (set!
+        values
+        (ir.compiler-ir-value-seq-prepend (& (I64 (- 15 value))) (& values))))
+    (Function
+      (compiler-backend-test-symbol symbol)
+      (irt.params "x=%0:i64")
+      (I64)
+      2
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-backend-test-instr-seq-prepend
+            (Call
+              1
+              callee
+              (ir.compiler-ir-call-args-from-seq
+                (& (ir.compiler-ir-value-seq-prepend (& (Var 0)) (& values))))
+              ty)
+            (ir.compiler-ir-instr-seq1 (Return (Some (I64 0)))))))
+      Ordinary)))
+
+(define (compiler-backend-convention-site-program) : ir.CompilerIrProgram
+  (let
+    [externs : ir.CompilerIrExternBuilder
+      (ir.compiler-ir-extern-builder-with-capacity 2)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (compiler-backend-convention-site-builtin-call
+            "conv_rt"
+            cbi.compiler-builtin-id-tl-arena-make
+            (I64)))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (&
+              (compiler-backend-convention-site-builtin-call
+                "conv_tls"
+                cbi.compiler-builtin-id-tl-tls-current-arena-store
+                (Unit)))
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [texts : (__tl_dyn-array String)
+      (__tl_make-array
+        "function @conv_tl_six(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> i64 vars 6 {
+         entry:
+           return %5
+         }"
+        "function @conv_tl(x=%0:i64) -> i64 vars 2 {
+         entry:
+           %1 = call conv_tl_six(%0, 11, 12, 13, 14, 15) : i64
+           return %1
+         }"
+        "function @conv_c(x=%0:i64) -> i64 vars 2 {
+         entry:
+           %1 = call conv_c_six(%0, 11, 12, 13, 14, 15) : i64
+           return %1
+         }"
+        "function @conv_cfp(fp=%0:i64, x=%1:i64) -> i64 vars 3 {
+         entry:
+           %2 = call_c* %0(%1, 11, 12, 13, 14, 15) : i64
+           return %2
+         }"
+        "function @conv_va(x=%0:i64) -> i64 vars 2 {
+         entry:
+           %1 = call conv_c_va(%0, 11, 12, 13, 14, 15) : i64
+           return %1
+         }"
+        "function @conv_sink(a=%0:i64, b=%1:i64) -> i64 vars 2 {
+         entry:
+           return %0
+         }")]
+    (ir.compiler-ir-extern-builder-push!
+      (&mut externs)
+      (compiler-backend-convention-site-extern "conv_c_six" "iiiiii" (C)))
+    (ir.compiler-ir-extern-builder-push!
+      (&mut externs)
+      (compiler-backend-convention-site-extern "conv_c_va" "i" (CVarargsOpen)))
+    (for [text (& texts)]
+      (set!
+        functions
+        (ir.compiler-ir-function-seq-prepend
+          (& (irt.func (string.copy text)))
+          (& functions))))
+    ;; Both function values get closure entry adapters: one forwards to C and
+    ;; one to TypeLisp.
+    (Program
+      (ir.compiler-ir-global-seq-empty)
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (Function
+            cbi.compiler-builtin-id-fix-main
+            (ir.compiler-ir-param-seq-empty)
+            (I64)
+            1
+            (irt.blocks
+              "entry:
+               %0 = call conv_sink(fn@conv_c_six, fn@conv_tl_six) : i64
+               return %0")
+            Ordinary))
+        (& functions))
+      (ir.compiler-ir-extern-builder-snapshot-seq (& externs)))))
+
+;; The text from `label` through the end of its function's first `ret`.
+(define (compiler-backend-convention-site-body
+  [asm : (& asm str)]
+  [label : (& label str)]) : String
+  (let
+    [start : i64
+      (backend.compiler-backend-string-find-from
+        asm
+        (str_cat.str-cat label ":\n")
+        0)]
+    [end : i64
+      (if (< start 0)
+        -1
+        (backend.compiler-backend-string-find-from asm "    ret\n" start))]
+    (if (< end 0)
+      ""
+      (string.substring asm start (- end start)))))
+
+;; With the test-only Windows Internal registers, a Platform call passes its
+;; fifth and sixth arguments at 32/40(%rsp) and an Internal call passes them in
+;; RSI/RDI. Adapters forward register values; the other rows pass 14 and 15.
+(define (compiler-backend-convention-site-ok?
+  [asm : (& asm str)]
+  [label : (& label str)]
+  [platform? : bool]) : bool
+  (let
+    [body : String (compiler-backend-convention-site-body asm label)]
+    [adapter? : bool (string.is-string-prefix-at label ".L_tl_fn_entry_" 0)]
+    (and
+      (> (string.string-length body) 0)
+      (if adapter?
+        (if platform?
+          (asm-has? body ", 32(%rsp)\n" ", 40(%rsp)\n")
+          (and
+            (asm-has? body ", %rsi\n" ", %rdi\n")
+            (asm-lacks? body ", 32(%rsp)\n" ", 40(%rsp)\n")))
+        (if platform?
+          (and
+            (asm-has? body "$14, 32(%rsp)\n" "$15, 40(%rsp)\n")
+            (asm-lacks? body "$14, %esi\n" "$15, %edi\n"))
+          (and
+            (asm-has? body "$14, %esi\n" "$15, %edi\n")
+            (asm-lacks? body "$14, 32(%rsp)\n" "$15, 40(%rsp)\n")))))))
+
+(test
+  backend-call-convention-emission-sites
+  (cbi.compiler-builtin-initialize-for-parse!)
+  ;; Program indexing makes backend-emitted runtime helpers Platform without an
+  ;; extern alias; stdlib TypeLisp helpers stay Internal.
+  (let
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    (for [kind (iterator.range 0 5)]
+      (test.assert-true
+        (=
+          (match (regalloc.compiler-reg-direct-call-convention
+            (cond
+              [(= kind 0) cbi.compiler-builtin-id-tl-arena-make]
+              [(= kind 1) cbi.compiler-builtin-id-tl-arena-destroy]
+              [(= kind 2) cbi.compiler-builtin-id-tl-profile-alloc-total]
+              [(= kind 3) cbi.compiler-builtin-id-tl-mem-copy8-fwd]
+              [else cbi.compiler-builtin-id-tl-string-concat]))
+            [(Platform) true]
+            [(Internal) false])
+          (< kind 4))
+        "runtime helper selected the wrong calling convention"))
+    (backend.compiler-backend-state-release-final-arenas! index.backend-state))
+  (cabi.compiler-abi-test-windows-internal-six-gp-args! true)
+  (let
+    [emitted : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-program-for-target
+        (compiler-backend-convention-site-program)
+        (backend.CompilerBackendTarget.Windows))]
+    (cabi.compiler-abi-test-windows-internal-six-gp-args! false)
+    (match emitted
+      [(Ok asm)
+        (for [kind (iterator.range 0 8)]
+          (let
+            [label : String
+              (cond
+                [(= kind 0) "_tl_conv_tl"]
+                [(= kind 1) "_tl_conv_c"]
+                [(= kind 2) "_tl_conv_cfp"]
+                [(= kind 3) ".L_tl_fn_entry_conv_c_six"]
+                [(= kind 4) ".L_tl_fn_entry_conv_tl_six"]
+                [(= kind 5) "_tl_conv_rt"]
+                [(= kind 6) "_tl_conv_tls"]
+                [else "_tl_conv_va"])]
+            ;; The TLS intrinsic follows the allocator's classification of its
+            ;; `Call`, which names no C callee.
+            [platform? : bool (not (or (= kind 0) (= kind 4) (= kind 6)))]
+            (test.assert-true
+              (compiler-backend-convention-site-ok? (& asm) (& label) platform?)
+              (str_cat.str-cat
+                label
+                " marshals its call with the wrong convention"
+                ""))))]
+      [(Err _)
+        (test.assert-true false "convention emission-site program failed")])))

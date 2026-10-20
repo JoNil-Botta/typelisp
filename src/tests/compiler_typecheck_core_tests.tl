@@ -1971,7 +1971,7 @@
             (match (parser.parse-ast-expr-with-pools
               (parser.compiler-parse-dispatch-env)
               pools
-              (tc_core.tc-global-shared-view first))
+              first)
               [(Err _) false]
               [(Ok second-id)
                 (let
@@ -1992,10 +1992,10 @@
                     [(Ok second)
                       (and
                         (macro-output-sexpr-head?
-                          (tc_core.tc-global-shared-view first)
+                          first
                           (macro-output-form-head probe))
                         (macro-output-sexpr-eq?
-                          (tc_core.tc-global-shared-view first)
+                          first
                           (macro-output-source-sexpr (macro-output-form probe)))
                         (macro-output-sexpr-eq? first second)
                         (string.eq
@@ -2125,7 +2125,7 @@
                     (match (tc_core.macro-expr-to-spanned-sexpr
                       (& owner)
                       (tc_core.tc-global-shared-view move-aware)
-                      (tc_core.tc-global-shared-view move-aware))
+                      move-aware)
                       [(Err _) true]
                       [(Ok _) false])))])]
           [_ false])))))
@@ -2883,7 +2883,7 @@
 
 (define (tc-source-dotted-alias-key-cache-get [module-id : i64] [name-id : i64]) : i64
   (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-    (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state))
+    (& (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state)))
     (ci.intern-active-table-id)
     (ci.intern-generation)
     module-id
@@ -2893,7 +2893,7 @@
   [module-id : i64]
   [name-id : i64]) : i64
   (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
-    (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state))
+    (& (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state)))
     (ci.intern-active-table-id)
     (ci.intern-generation)
     module-id
@@ -2904,7 +2904,7 @@
   [module-id : i64]
   [name-id : i64]) : i64
   (tc_core.tc-source-qualified-variant-key-cache-get-for-state
-    (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state))
+    (& (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state)))
     (ci.intern-active-table-id)
     (ci.intern-generation)
     registry-id
@@ -2916,7 +2916,7 @@
   [name-id : i64]
   [value : i64]) : unit
   (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
-    (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state))
+    (& (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state)))
     (ci.intern-active-table-id)
     (ci.intern-generation)
     module-id
@@ -2928,7 +2928,7 @@
   [name-id : i64]
   [value : i64]) : unit
   (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
-    (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state))
+    (& (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state)))
     (ci.intern-active-table-id)
     (ci.intern-generation)
     module-id
@@ -2942,7 +2942,7 @@
   [value : i64]
   [handle : i64]) : unit
   (tc_core.tc-source-qualified-variant-key-cache-put-for-state!
-    (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state))
+    (& (tc_core.tc-job-state-source-key-cache (tc_core.tc-serial-job-state)))
     (ci.intern-active-table-id)
     (ci.intern-generation)
     registry-id
@@ -8830,9 +8830,7 @@
     (tc_core.macro-expand-scratch-begin! macro-state)
     (tc_core.macro-segmented-program-begin!
       state
-      (tc_core.macro-decl-list-reverse-into
-        (tc_core.tc-global-shared-view prefix)
-        (ast.ast-decl-list-new))
+      (tc_core.macro-decl-list-reverse-into prefix (ast.ast-decl-list-new))
       (tc_core.macro-decl-path-list-reverse-into
         (tc_core.macro-paths-for-decls macro-state prefix "prefix")
         (ast.ast-decl-path-list-new))

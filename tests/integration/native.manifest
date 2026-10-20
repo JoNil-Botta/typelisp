@@ -21,7 +21,22 @@
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
+packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+ubound_self_call_inbounds|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|6\n|3 3 2 1 1|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_first_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|0 1 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=0 length=0\n
+ubound_self_call_mid_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 3 2 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=2 length=2\n
+ubound_self_call_negative_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 2 2 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=-1 length=2\n
+ubound_self_call_zero|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|0\n|0 0 2 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_negative_bound|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|0\n|0 -1 2 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_division|all|0,1,2|tests/integration/ubound_self_loop_call.tl|135|-|3 2 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:8: integer division or remainder error: dividend=2 divisor=0\n
+ubound_entry_inbounds|all|0,1,2|tests/integration/ubound_entry_location.tl|42|2\n|3 3 1 1|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_first_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|0 1 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=0 length=0\n
+ubound_entry_mid_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|2 3 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=2 length=2\n
+ubound_entry_negative_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|2 2 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=-2 length=2\n
+ubound_entry_zero|all|0,1,2|tests/integration/ubound_entry_location.tl|42|0\n|0 0 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_negative_bound|all|0,1,2|tests/integration/ubound_entry_location.tl|42|0\n|0 -1 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_division|all|0,1,2|tests/integration/ubound_entry_location.tl|135|-|3 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:31: integer division or remainder error: dividend=0 divisor=0\n
 spmd_uniform_index_write|all|0,1,2|tests/integration/spmd_uniform_index_write.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
@@ -53,7 +68,7 @@ inline_aggregate_global_escape_opt2|linux|2|tests/integration/inline_aggregate_g
 # level by check-global-call-borrow-legacy-matrix in public-check.cases.
 inline_aggregate_global_three_field|all|-|tests/integration/inline_aggregate_global_three_field.tl|42|327\n669\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_nested|all|-|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl|-
-cli_common_option|all|-|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl|-
+cli_common_option|all|-|src/tests/cli_common_option_smoke.tl|42|-|-|cli_option_core.tl compiler_builtin_ids.tl compiler_cfg_core.tl compiler_intern.tl compiler_owned_view.tl compiler_profile_counters.tl compiler_target_cfg_core.tl sym_i64_env.tl stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_global_len_eq_pair|all|-|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_specialize_global|all|-|tests/integration/arg_specialize_global.tl|42|36\n2\n64\n108\n80\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 main_private_stack|all|-|tests/integration/main_private_stack.tl|42|-|-|-|-
@@ -389,11 +404,18 @@ synth_wrapped_probe|all|-|tests/integration/synth_wrapped_probe.tl|42|-|-|-|-
 synth_wrapped_probe_abort|all|-,2|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n
 synth_tail_wrapper|all|-|tests/integration/synth_tail_wrapper.tl|42|-|-|-|-
 tail_borrow_param|all|-,0,2|tests/integration/tail_borrow_param.tl|42|-|-|-|-
+tail_reborrow_param|all|-,0,2|tests/integration/tail_reborrow_param.tl|42|-|-|-|-
 tail_stack_arg_permute|all|-,0,1,2|tests/integration/tail_stack_arg_permute.tl|42|-|-|-|-
 tail_call_parallel_gp_cycles|all|0,1,2|tests/integration/tail_call_parallel_gp_cycles.tl|42|-|-|-|-
 tail_call_parallel_gp_overflow|all|0,1,2|tests/integration/tail_call_parallel_gp_overflow.tl|42|-|-|-|-
 tail_call_parallel_mixed_overflow|all|0,1,2|tests/integration/tail_call_parallel_mixed_overflow.tl|42|-|-|-|-
 tail_call_parallel_mixed_regs|all|0,1,2|tests/integration/tail_call_parallel_mixed_regs.tl|42|-|-|-|-
+tail_param_group_swap|all|0,1,2|tests/integration/tail_param_group_swap.tl|42|-|-|-|-
+tail_param_group_overflow|all|0,1,2|tests/integration/tail_param_group_overflow.tl|42|-|-|-|-
+tail_param_indirect_mixed_swap|all|0,1,2|tests/integration/tail_param_indirect_mixed_swap.tl|42|-|-|-|-
+tail_param_memory_swap|all|0,1,2|tests/integration/tail_param_memory_swap.tl|42|-|-|-|-
+tail_param_indirect_overflow|all|0,1,2|tests/integration/tail_param_indirect_overflow.tl|42|-|-|-|-
+tail_param_indirect_group_swap|all|0,1,2|tests/integration/tail_param_indirect_group_swap.tl|42|-|-|-|-
 tail_call_parallel_xmm_cycle|all|0,1,2|tests/integration/tail_call_parallel_xmm_cycle.tl|42|-|-|-|-
 tail_call_parallel_xmm_overflow|all|0,1,2|tests/integration/tail_call_parallel_xmm_overflow.tl|42|-|-|-|-
 synth_tail_wrapper_abort|all|-,2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n
@@ -1078,6 +1100,8 @@ global_aggregate_storage_threads|all|0,1,2|tests/integration/global_aggregate_st
 global_aggregate_storage_boundary|all|0,1,2|tests/integration/global_aggregate_storage_boundary.tl|42|-|-|stdlib/profile.tl|-
 indirect_callee_never|all|0,1,2|tests/integration/indirect_callee_never.tl|42|-|-|benchmarks/indirect_callee_never/baseline.c|stage-stdlib
 extern_data_memory|all|0,1,2|tests/integration/extern_data_memory.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
+extern_data_places|all|0,1,2|tests/integration/extern_data_places.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
+extern_data_places_direct|all|0,1,2|tests/integration/extern_data_places_direct.tl|42|-|-|benchmarks/extern_data_memory/baseline.c|stage-stdlib
 indirect_callee_snapshot|all|0,1,2|tests/integration/indirect_callee_snapshot.tl|42|-|-|benchmarks/indirect_callee_snapshot/baseline.c|stage-stdlib
 
 store_operand_exits|all|0,1,2|tests/integration/store_operand_exits.tl|42|-|-|stdlib/test.tl|-
@@ -1088,3 +1112,5 @@ reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|
 replace_place_paths|all|0,1,2|tests/integration/replace_place_paths.tl|42|-|-|-|-
 view_mut_write|all|0,1,2|tests/integration/view_mut_write.tl|42|-|-|-|-
 view_match_binder_write|all|0,1,2|tests/integration/view_match_binder_write.tl|42|-|-|-|-
+
+linker_elf_object_reader|all|0,1,2|src/tests/linker_elf_object_reader_smoke.tl|42|-|-|linker_elf_object_reader.tl linker_elf_object_reader_tests.tl linker_elf_object_reader_test_dump.tl tests/fixtures/elf-object/clang-O0-g-common.expected tests/fixtures/elf-object/clang-O0-g-common.in tests/fixtures/elf-object/clang-O0-g-no-common.expected tests/fixtures/elf-object/clang-O0-g-no-common.in tests/fixtures/elf-object/clang-O0-gz-common.expected tests/fixtures/elf-object/clang-O0-gz-common.in tests/fixtures/elf-object/clang-O0-gz-no-common.expected tests/fixtures/elf-object/clang-O0-gz-no-common.in tests/fixtures/elf-object/clang-O0-tlsdesc.expected tests/fixtures/elf-object/clang-O0-tlsdesc.in tests/fixtures/elf-object/clang-O2-g-common.expected tests/fixtures/elf-object/clang-O2-g-common.in tests/fixtures/elf-object/clang-O2-g-no-common.expected tests/fixtures/elf-object/clang-O2-g-no-common.in tests/fixtures/elf-object/clang-O2-gz-common.expected tests/fixtures/elf-object/clang-O2-gz-common.in tests/fixtures/elf-object/clang-O2-gz-no-common.expected tests/fixtures/elf-object/clang-O2-gz-no-common.in tests/fixtures/elf-object/clang-O2-tlsdesc.expected tests/fixtures/elf-object/clang-O2-tlsdesc.in tests/fixtures/elf-object/gcc-O0-g-common.expected tests/fixtures/elf-object/gcc-O0-g-common.in tests/fixtures/elf-object/gcc-O0-g-no-common.expected tests/fixtures/elf-object/gcc-O0-g-no-common.in tests/fixtures/elf-object/gcc-O0-gz-common.expected tests/fixtures/elf-object/gcc-O0-gz-common.in tests/fixtures/elf-object/gcc-O0-gz-no-common.expected tests/fixtures/elf-object/gcc-O0-gz-no-common.in tests/fixtures/elf-object/gcc-O0-sframe.expected tests/fixtures/elf-object/gcc-O0-sframe.in tests/fixtures/elf-object/gcc-O0-tlsdesc.expected tests/fixtures/elf-object/gcc-O0-tlsdesc.in tests/fixtures/elf-object/gcc-O2-g-common.expected tests/fixtures/elf-object/gcc-O2-g-common.in tests/fixtures/elf-object/gcc-O2-g-no-common.expected tests/fixtures/elf-object/gcc-O2-g-no-common.in tests/fixtures/elf-object/gcc-O2-gz-common.expected tests/fixtures/elf-object/gcc-O2-gz-common.in tests/fixtures/elf-object/gcc-O2-gz-no-common.expected tests/fixtures/elf-object/gcc-O2-gz-no-common.in tests/fixtures/elf-object/gcc-O2-sframe.expected tests/fixtures/elf-object/gcc-O2-sframe.in tests/fixtures/elf-object/gcc-O2-tlsdesc.expected tests/fixtures/elf-object/gcc-O2-tlsdesc.in tests/fixtures/elf-object/gnu-as-groups.expected tests/fixtures/elf-object/gnu-as-groups.in tests/fixtures/elf-object/typelisp-direct.expected tests/fixtures/elf-object/typelisp-direct.in|-

@@ -991,7 +991,7 @@ validate_manifest() {
     _catalog="$WORKDIR/repository-files.txt"
     : > "$_known"
 
-    find benchmarks examples src stdlib tests/integration tests/safety -type f -print |
+    find benchmarks examples src stdlib tests/fixtures tests/integration tests/safety -type f -print |
         sed 's#^\./##' > "$_catalog"
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
@@ -2459,7 +2459,7 @@ EOF
         exit 1
     fi
     assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-bad-target-stdout
-    assert_contains "$_driver_stderr" "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64" \
+    assert_contains "$_driver_stderr" "invalid --target 'plan9-x86_64'; expected linux-x86_64 or windows-x86_64" \
         windows-selfhost-compile-driver-bad-target
     if [ -e "$_bad_target_asm" ]; then
         echo "FAIL: invalid target wrote assembly: $_bad_target_asm" >&2

@@ -1211,7 +1211,7 @@
                                   24)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
-                                    (tc_core.tc-global-shared-view packet))
+                                    packet)
                                   8)
                                 (=
                                   (core_tests.tc-inline-layout-field-offset
@@ -1234,7 +1234,7 @@
                                   16)
                                 (=
                                   (tc_core.tc-inline-aggregate-layout-align
-                                    (tc_core.tc-global-shared-view outer))
+                                    outer)
                                   4)
                                 (=
                                   (core_tests.tc-inline-layout-field-offset
@@ -1306,10 +1306,7 @@
                   [(Ok layout)
                     (and
                       (= (tc_core.tc-inline-aggregate-layout-size layout) 16)
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-align
-                          (tc_core.tc-global-shared-view layout))
-                        8)
+                      (= (tc_core.tc-inline-aggregate-layout-align layout) 8)
                       (=
                         (core_tests.tc-inline-layout-field-offset
                           (tc_core.tc-global-shared-view layout)
@@ -1392,10 +1389,7 @@
                   [(Ok layout)
                     (and
                       (= (tc_core.tc-inline-aggregate-layout-size layout) 48)
-                      (=
-                        (tc_core.tc-inline-aggregate-layout-align
-                          (tc_core.tc-global-shared-view layout))
-                        8)
+                      (= (tc_core.tc-inline-aggregate-layout-align layout) 8)
                       (=
                         (core_tests.tc-inline-layout-field-offset
                           (tc_core.tc-global-shared-view layout)
@@ -1449,10 +1443,7 @@
   [field : String]
   [want-offset : i64]) : bool
   (let
-    [name-id : i64
-      (compiler-typecheck-fixture-nominal-id
-        program
-        (tc_core.tc-global-shared-view name))]
+    [name-id : i64 (compiler-typecheck-fixture-nominal-id program name)]
     (compiler-typecheck-aligned-pair-id-ok?
       ctx
       name-id
@@ -1472,10 +1463,7 @@
     [(Ok layout)
       (and
         (= (tc_core.tc-inline-aggregate-layout-size layout) want-size)
-        (=
-          (tc_core.tc-inline-aggregate-layout-align
-            (tc_core.tc-global-shared-view layout))
-          want-align)
+        (= (tc_core.tc-inline-aggregate-layout-align layout) want-align)
         (= (core_tests.tc-inline-layout-field-offset layout field) want-offset))]
     [(Err _) false]))
 
@@ -1526,7 +1514,7 @@
                     56)
                   (compiler-typecheck-aligned-pair-ok?
                     ctx
-                    (ast.ast-global-shared-view program)
+                    program
                     "Holder"
                     64
                     8
@@ -1996,8 +1984,7 @@
                         unit
                         (set! ok false))
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-align
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-align layout)
                         8)
                         unit
                         (set! ok false))
@@ -2061,8 +2048,7 @@
                         unit
                         (set! ok false))
                       (if (=
-                        (tc_core.tc-inline-aggregate-layout-align
-                          (tc_core.tc-global-shared-view layout))
+                        (tc_core.tc-inline-aggregate-layout-align layout)
                         8)
                         unit
                         (set! ok false))

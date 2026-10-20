@@ -15054,7 +15054,7 @@
   [form : reader.SpannedSexpr]
   [manifest : (& CompilerPkgManifest)]) : ResultCompilerPkgManifestDiagnostic
   (let
-    [raw-form : reader.SpannedSexpr (ast.ast-place-shared-view form)]
+    [raw-form : reader.SpannedSexpr form]
     (if (compiler-load-manifest-needs-kind-inference? raw-form)
       (match (compiler-load-manifest-infer-kind-from-files
         (& (string.copy path)))

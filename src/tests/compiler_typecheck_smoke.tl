@@ -3964,28 +3964,28 @@
     [module-id : i64 17]
     [name-id : i64 23]
     (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
-      (tc_core.tc-global-shared-view state-a)
+      state-a
       table-a
       generation-a
       module-id
       name-id
       41)
     (tc_core.tc-source-dotted-alias-key-cache-put-for-state!
-      (tc_core.tc-global-shared-view state-b)
+      state-b
       table-b
       generation-b
       module-id
       name-id
       42)
     (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
-      (tc_core.tc-global-shared-view state-b)
+      state-b
       table-b
       generation-b
       module-id
       name-id
       43)
     (tc_core.tc-source-qualified-variant-key-cache-put-for-state!
-      (tc_core.tc-global-shared-view state-b)
+      state-b
       table-b
       generation-b
       registry-b
@@ -3998,7 +3998,7 @@
         (and
           (=
             (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-              (tc_core.tc-global-shared-view state-a)
+              state-a
               table-a
               generation-a
               module-id
@@ -4006,7 +4006,7 @@
             41)
           (=
             (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-              (tc_core.tc-global-shared-view state-b)
+              state-b
               table-b
               generation-b
               module-id
@@ -4026,7 +4026,7 @@
               -2)
             (=
               (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-                (tc_core.tc-global-shared-view state-b)
+                state-b
                 table-b
                 generation-b
                 module-id
@@ -4034,7 +4034,7 @@
               42)
             (=
               (tc_core.tc-source-dotted-full-path-key-cache-get-for-state
-                (tc_core.tc-global-shared-view state-b)
+                state-b
                 table-b
                 generation-b
                 module-id
@@ -4042,7 +4042,7 @@
               43)
             (=
               (tc_core.tc-source-qualified-variant-key-cache-get-for-state
-                (tc_core.tc-global-shared-view state-b)
+                state-b
                 table-b
                 generation-b
                 registry-b
@@ -4051,7 +4051,7 @@
               44)
             (=
               (tc_core.tc-source-qualified-variant-handle-cache-get-for-state
-                (tc_core.tc-global-shared-view state-b)
+                state-b
                 table-b
                 generation-b
                 registry-b
@@ -4061,14 +4061,14 @@
         [wrong-owner-miss : bool
           (=
             (tc_core.tc-source-dotted-alias-key-cache-get-for-state
-              (tc_core.tc-global-shared-view state-b)
+              state-b
               table-a
               generation-b
               module-id
               name-id)
             -2)]
         (tc_core.tc-source-dotted-full-path-key-cache-put-for-state!
-          (tc_core.tc-global-shared-view state-b)
+          state-b
           table-b
           generation-b
           module-id

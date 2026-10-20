@@ -612,6 +612,56 @@
 (define (compiler-diagnostic-typecheck-tag-length) : i64
   19)
 
+;; These causes belong to macro expansion and evaluation, independently of
+;; the wording chosen by a transformer or the source/native execution route.
+(defenum CompilerMacroKind
+  (MacroNamespace)
+  (MacroUse)
+  (MacroOutput)
+  (MacroDepth)
+  (ComptimeAuthorError)
+  (ComptimeEvaluation)
+  (ComptimeFuel))
+
+(define (compiler-diagnostic-code-for-macro-kind [kind : CompilerMacroKind]) : String
+  (match kind
+    [(MacroNamespace) "E0501"]
+    [(MacroUse) "E0502"]
+    [(MacroOutput) "E0503"]
+    [(MacroDepth) "E0504"]
+    [(ComptimeAuthorError) "E0505"]
+    [(ComptimeEvaluation) "E0506"]
+    [(ComptimeFuel) "E0507"]))
+
+(define (compiler-diagnostic-macro-tagged
+  [kind : CompilerMacroKind]
+  [message : String]) : String
+  (str_cat.str-cat
+    (compiler-diagnostic-typecheck-tag-prefix)
+    (compiler-diagnostic-code-for-macro-kind kind)
+    ":"
+    message))
+
+;; A forwarded diagnostic keeps its producing subsystem even when it crosses
+;; the typechecker's String transports during macro expansion.
+(define (compiler-diagnostic-code-category [code : (& str)]) : String
+  (cond
+    [(compiler-diagnostic-parse-code? code) "parse"]
+    [(string.is-string-prefix-at code "E02" 0) "typecheck"]
+    [(string.is-string-prefix-at code "E03" 0) "load"]
+    [(or
+        (string.eq code "E0501")
+        (string.eq code "E0502")
+        (string.eq code "E0503")
+        (string.eq code "E0504"))
+      "macro"]
+    [(or
+        (string.eq code "E0505")
+        (string.eq code "E0506")
+        (string.eq code "E0507"))
+      "comptime"]
+    [else "typecheck"]))
+
 ;; `message` tagged with `kind`.
 ;; The tag for `kind`, as a literal: tagging a message is then one
 ;; concatenation, and a raise site that builds its message with `str-cat`
@@ -701,16 +751,13 @@
       code
       (string.substring message start 5))))
 
-;; The message of `diag` as typecheck error text, tagged with its code when
-;; that is a typecheck code, so the kind survives a trip back through a
-;; `ResultTcType.Err` string.
+;; The message of `diag` as typecheck error text. Parse, load and macro codes
+;; also survive a trip back through a `ResultTcType.Err` string.
 (define (compiler-diagnostic-typecheck-error-text
   [diag : (& diag CompilerDiagnostic)]) : String
   (match (compiler-diagnostic-code diag)
     [(CompilerDiagnosticSomeString code)
-      (if (and
-        (= (string.string-length (& code)) 5)
-        (string.eq (string.substring (& code) 0 3) "E02"))
+      (if (= (string.string-length (& code)) 5)
         (str_cat.str-cat
           (compiler-diagnostic-typecheck-tag-prefix)
           code
@@ -737,7 +784,7 @@
 ;; detailed explanation. `owner` identifies the subsystem responsible for
 ;; keeping the classification and explanation current.
 (define (compiler-diagnostic-code-registry-count) : i64
-  34)
+  41)
 
 (define (compiler-diagnostic-code-registry-code [index : i64]) : String
   (cond
@@ -775,6 +822,15 @@
     [(= index 31) (compiler-diagnostic-code-load-selected-item)]
     [(= index 32) (compiler-diagnostic-code-load-ambiguous-import)]
     [(= index 33) (compiler-diagnostic-code-load-duplicate-module)]
+    [(= index 34) (compiler-diagnostic-code-for-macro-kind (MacroNamespace))]
+    [(= index 35) (compiler-diagnostic-code-for-macro-kind (MacroUse))]
+    [(= index 36) (compiler-diagnostic-code-for-macro-kind (MacroOutput))]
+    [(= index 37) (compiler-diagnostic-code-for-macro-kind (MacroDepth))]
+    [(= index 38)
+      (compiler-diagnostic-code-for-macro-kind (ComptimeAuthorError))]
+    [(= index 39)
+      (compiler-diagnostic-code-for-macro-kind (ComptimeEvaluation))]
+    [(= index 40) (compiler-diagnostic-code-for-macro-kind (ComptimeFuel))]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-title [index : i64]) : String
@@ -813,6 +869,13 @@
     [(= index 31) "missing selected import item"]
     [(= index 32) "ambiguous import binding"]
     [(= index 33) "duplicate module declaration"]
+    [(= index 34) "macro namespace error"]
+    [(= index 35) "invalid macro use"]
+    [(= index 36) "invalid macro output"]
+    [(= index 37) "macro expansion depth exceeded"]
+    [(= index 38) "explicit compile-time error"]
+    [(= index 39) "compile-time evaluation failed"]
+    [(= index 40) "compile-time evaluation limit exceeded"]
     [else ""]))
 
 (define (compiler-diagnostic-code-or-empty [diag : (& diag CompilerDiagnostic)]) : String

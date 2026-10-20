@@ -81,6 +81,8 @@
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
   (let
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (Linux) 1)]
     [args : cli_option.CliArgs
       (begin
         (selfhost-lint-language-config-reset!)
@@ -89,14 +91,12 @@
           "--check --deprecated-string-concat --redundant-function-name
            --redundant-begin
            --prefer-dotted-field --name-case --format <rich|flat> --cfg <name>
-           --target <target> --stdlib-root <dir> --manifest-path <file>"
+           --target <target> --debug|-g|--backtrace --backend-mode <mode> --opt-level <0|1|2> --stdlib-root <dir> --manifest-path <file>"
           start
           count))]
     [input-paths : lint_svec.Vec (lint_svec.new)]
     [manifest-path : String ""]
     [has-manifest : bool false]
-    [has-target : bool false]
-    [stdlib-roots : lint_svec.Vec (lint_svec.new)]
     [enforcing : bool false]
     [deprecated-string-concat : bool false]
     [redundant-function-name : bool false]
@@ -105,6 +105,7 @@
     [name-case : bool false]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--check") (set! enforcing true)]
         [(string.eq args.name "--deprecated-string-concat")
           (set! deprecated-string-concat true)]
@@ -127,28 +128,6 @@
                     "selfhost-lint: unsupported --format "
                     format
                     " (expected rich or flat)"))]))]
-        [(string.eq args.name "--cfg")
-          (lint_svec.push-ref!
-            (&mut selfhost-lint-language-cfg-names)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--target")
-          (if has-target
-            (cli_option.cli-args-fail!
-              (&mut args)
-              "selfhost-lint: --target was provided more than once")
-            (match (target_cfg.compiler-target-cfg-parse
-              (cli_option.cli-args-value (& args)))
-              [(Ok parsed-target)
-                (set! selfhost-lint-language-target parsed-target)
-                (set! has-target true)]
-              [(Err message)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (str_cat.str-cat "selfhost-lint: " message))]))]
-        [(string.eq args.name "--stdlib-root")
-          (lint_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
         [(string.eq args.name "--manifest-path")
           (if has-manifest
             (cli_option.cli-args-fail!
@@ -163,6 +142,8 @@
             "selfhost-lint: unknown flag ")]
         [else
           (lint_svec.push-ref! (&mut input-paths) (string.copy (& args.arg)))]))
+    (set! selfhost-lint-language-target options.target)
+    (set! selfhost-lint-language-cfg-names options.cfgs)
     (cond
       [args.failed (Err args.error)]
       [(lint_svec.is-empty? (& input-paths))
@@ -170,7 +151,7 @@
           (Package
             manifest-path
             has-manifest
-            stdlib-roots
+            options.stdlib-roots
             enforcing
             deprecated-string-concat
             redundant-function-name
@@ -183,7 +164,7 @@
         (Ok
           (File
             input-paths
-            stdlib-roots
+            options.stdlib-roots
             enforcing
             deprecated-string-concat
             redundant-function-name

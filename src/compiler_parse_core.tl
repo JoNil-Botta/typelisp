@@ -7091,7 +7091,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [entry : reader.SpannedSexpr]) : ResultAstPattern
-  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view entry))
+  (match (reader.spanned-sexpr-view entry)
     [(reader.SpannedSexprView.Sym _ _)
       (let
         [name-id : i64 (parse-ast-fields-pattern-field-name dispatch entry)]

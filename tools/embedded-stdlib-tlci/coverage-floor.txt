@@ -22,11 +22,7 @@
 #
 # Every checked-in entry is fully native, so every fallback dimension is pinned
 # to zero rather than allowing a future catalog addition to hide one.
-# 164 since #8449: `stdlib.string/string-bytes-copy!` was removed with its
-# only expansions, `str-copy-owned-bytes-into` and `str-copy-borrowed-bytes-into`,
-# safe functions that wrote through a caller's raw `MutPtr` (an unchecked
-# write from a safe signature); no other source expands it.
-native-entries-min 164
+native-entries-min 165
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

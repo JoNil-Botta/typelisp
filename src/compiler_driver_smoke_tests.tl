@@ -1049,7 +1049,7 @@
                             (lower.compiler-lower-arena-state-ensure-ir!
                               arenas-b))
                           (compiler_ir_types.compiler-ir-clone-function-seq
-                            (owned_view.compiler-owned-shared-view pools-b)
+                            pools-b
                             (& functions)))
                         externs)])]
                 [spans-b : compiler_ir_types.CompilerSourceSpans

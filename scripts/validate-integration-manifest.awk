@@ -48,7 +48,7 @@ function file_contains(path, needle, line) {
 }
 
 function dependency_source(dep, source_dir, candidate) {
-    if (dep ~ /^stdlib\// || dep ~ /^benchmarks\//) {
+    if (dep ~ /^stdlib\// || dep ~ /^benchmarks\// || dep ~ /^tests\/fixtures\//) {
         return files[dep] ? dep : ""
     }
     if (dep == "sym_i64_env_core.tl") {

@@ -355,7 +355,7 @@
       (set! index (+ index 1)))))
 
 (define (compiler-sframe-v3-rule-control [rule : (& rule CompilerSframeV3Rule)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(Implicit deref? _)
       (if deref?
         2
@@ -371,14 +371,14 @@
     [_ 0]))
 
 (define (compiler-sframe-v3-rule-offset [rule : (& rule CompilerSframeV3Rule)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(or (Implicit _ offset) (Register _ _ offset) (Fixed offset)) offset]
     [_ 0]))
 
 (define (compiler-sframe-v3-rule-omitted-valid?
   [rule : (& rule CompilerSframeV3Rule)]
   [fixed : i64]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(Unavailable) (= fixed 0)]
     [(Fixed value) (and (!= fixed 0) (= value fixed))]
     [_ false]))
@@ -993,7 +993,7 @@
 
 (define (compiler-sframe-v3-rule-data-width
   [rule : (& rule CompilerSframeV3Rule)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(Implicit _ offset)
       (compiler-sframe-v3-max
         (compiler-sframe-v3-unsigned-word-width
@@ -1010,13 +1010,13 @@
 
 (define (compiler-sframe-v3-rule-has-row-data?
   [rule : (& rule CompilerSframeV3Rule)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(or (Implicit _ _) (Register _ _ _)) true]
     [_ false]))
 
 (define (compiler-sframe-v3-flex-data-rule-valid?
   [rule : (& rule CompilerSframeV3Rule)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     ;; Control zero is reserved for an omitted/padding word, so CFA-relative
     ;; rules carried as a control/offset pair must set the dereference bit.
     [(Implicit deref? _) deref?]

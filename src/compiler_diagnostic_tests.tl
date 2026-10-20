@@ -957,9 +957,18 @@
 (define (compiler-diagnostic-code-registry-category [index : i64]) : String
   (let
     [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
-    (if (string.eq code "")
-      ""
-      (cdiag.compiler-diagnostic-code-category (& code)))))
+    (cond
+      [(cdiag.compiler-diagnostic-parse-code? (& code)) "parse"]
+      [(string.is-string-prefix-at (& code) "E02" 0) "typecheck"]
+      [(string.is-string-prefix-at (& code) "E03" 0) "load"]
+      [(string.eq code "E0501") "macro"]
+      [(string.eq code "E0502") "macro"]
+      [(string.eq code "E0503") "macro"]
+      [(string.eq code "E0504") "macro"]
+      [(string.eq code "E0505") "comptime"]
+      [(string.eq code "E0506") "comptime"]
+      [(string.eq code "E0507") "comptime"]
+      [else ""])))
 
 (define (compiler-diagnostic-code-registry-owner [index : i64]) : String
   (let

@@ -90,6 +90,10 @@
           "E0103"
           "parse")
         (MacroDiagnosticCase
+          "(defmacro (gen) : Module `(begin (module generated.si) (import stdlib.string (no-such-item)) (define (v) : i64 1)))\n(import (gen))\n(define (main) : i64 0)"
+          "E0103"
+          "parse")
+        (MacroDiagnosticCase
           "(defmacro (bad) : Expr `(+ true 1))\n(define (main) : i64 (bad))"
           "E0206"
           "typecheck")

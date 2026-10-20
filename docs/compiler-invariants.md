@@ -978,8 +978,13 @@ indices; both new exit predecessors replace the old latch in exit phis.
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original
-allocation arena, source-pool owner and destination pools in the driver's
-retained surface arena. Generation or macro compaction may retire the source
+allocation arena, source-pool owner, destination pools and whether the entry
+routed frontend allocations in the driver's retained surface arena.
+Lowering can retire an internal macro frontend even when the entry installed
+no frontend-return owner. That release alone must not select the pending
+return handle: zero is also a valid caller handle when routing did occur.
+An entry without routing restores its live entry or committed checked owner.
+Generation or macro compaction may retire the source
 arena before lowering returns, so bookkeeping must not live there. Finishing
 copies failure diagnostics to retained storage, adopts committed pools or
 destroys unused destinations, restores a live allocation arena and clears the

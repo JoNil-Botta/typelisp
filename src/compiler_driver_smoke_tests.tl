@@ -1144,10 +1144,120 @@
       (compiler-driver-generated-cfg-job-ok? state-b Windows true)]
     (and a-enabled b-disabled a-unchanged a-reused a-disabled b-enabled)))
 
+(define (compiler-driver-caller-owner-job-ok?
+  [source : String]
+  [target : compiler_backend.CompilerBackendTarget]
+  [level : i64]
+  [expect-success : bool]
+  [null-caller : bool]) : bool
+  (let
+    [state : driver.CompilerDriverState
+      (driver.compiler-driver-state-new-for-compile)]
+    [home : i64 (arena.tl_arena_current)]
+    [caller : i64 (arena.tl_arena_make)]
+    [roots : svec.Vec (compiler-driver-pic-smoke-roots)]
+    [cfgs : sym_i64_env.SymI64Env (compiler_cfg_core.compiler-cfg-empty)]
+    (compiler-driver-reader-context-smoke-prepare-state!
+      (owned_view.compiler-owned-shared-view state))
+    (unsafe
+      (arena.tl_arena_set
+        (if null-caller
+          0
+          caller)))
+    (let
+      [succeeded : bool
+        (match (driver.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+          (owned_view.compiler-owned-shared-view state)
+          source
+          target
+          true
+          roots
+          level
+          Scalar
+          cfgs
+          true)
+          [(Ok _ _) true]
+          [(Err _ _) false])]
+      [preserved : bool
+        (if null-caller
+          ;; Zero is a valid routed caller, distinct from no routed frontend.
+          ;; Its first subsequent allocation must use live storage.
+          (let
+            [address : i64 (compiler-driver-smoke-runtime-alloc 8)]
+            [cell : (MutPtr i64)
+              (unsafe
+                (int->ptr (cast address : u64) : (MutPtr i64)))]
+            (unsafe
+              (ptr-write! cell 73))
+            (=
+              (unsafe
+                (ptr-read cell))
+              73))
+          (= (arena.tl_arena_current) caller))]
+      (unsafe
+        (arena.tl_arena_set home))
+      ;; Retire compiler caches before their caller scratch, as the batch
+      ;; driver does; the state's wrapper cells belong to the outer home.
+      (driver.compiler-driver-state-release-file-state!
+        (owned_view.compiler-owned-shared-view state))
+      (unsafe
+        (arena.tl_arena_set home)
+        (arena.tl_arena_destroy caller))
+      (and
+        (= succeeded expect-success)
+        preserved
+        (> (driver.compiler-driver-state-owned-pool-arena (& state)) 0)))))
+
+(define (compiler-driver-caller-owner-smoke-ok? [level : i64]) : bool
+  (let
+    [source : String
+      (compiler-driver-smoke-write-text-fixture
+        "target/compiler_driver_caller_owner.tl"
+        "compiler_driver_caller_owner.tl"
+        "(define (square [value : i64]) : i64 (* value value))\n(define (main) : i64 (+ (square 6) 6))")]
+    [invalid : String
+      (compiler-driver-smoke-write-text-fixture
+        "target/compiler_driver_caller_owner_invalid.tl"
+        "compiler_driver_caller_owner_invalid.tl"
+        "(define (main) : i64 \"wrong\")")]
+    [index : i64 0]
+    [ok : bool true]
+    (while (< index 2)
+      (let
+        [target : compiler_backend.CompilerBackendTarget
+          (if (= index 0)
+            (Linux)
+            (Windows))]
+        [success : bool
+          (compiler-driver-caller-owner-job-ok?
+            (clone source)
+            target
+            level
+            true
+            false)]
+        [error : bool
+          (compiler-driver-caller-owner-job-ok?
+            (clone invalid)
+            target
+            level
+            false
+            false)]
+        [zero : bool
+          (compiler-driver-caller-owner-job-ok?
+            (clone source)
+            target
+            level
+            true
+            true)]
+        (set! ok (and success error zero ok)))
+      (set! index (+ index 1)))
+    ok))
+
 (define (compiler-driver-reader-context-smoke-main [level : i64]) : i64
   (cbi.compiler-builtin-reset!)
   (cbi.compiler-builtin-initialize-for-parse!)
   (unless (compiler-driver-construction-arena-scope-ok?) (return 2))
+  (unless (compiler-driver-caller-owner-smoke-ok? level) (return 3))
   (unless
     (compiler-driver-reader-context-smoke-ok? level)
     (io.panic "compiler-driver: reader context isolation failed"))

@@ -735,6 +735,10 @@ The reader-context smoke optimizes both jobs at opt0/1/2 with explicit
 retirement authority and an unrelated empty reader pool installed. Opt2 must
 clear A's lower-IR cell while B's source remains live, then clear B's cell;
 post-opt cleanup is idempotent and both backends still emit identical assembly.
+The same smoke checks caller-arena restoration for successful and rejected
+inputs on both targets at every level, with persistent state outside the
+caller scratch. A zero caller must still permit a live allocation after
+frontend retirement. Keep setup allocations outside that zero-caller extent.
 The optimizer's `optimizer-input-retirement-*` tests cover absent authority,
 empty functions, all levels, and nested Func/Tuple/Array/Box/reference/lifetime
 payloads beyond a pool segment with empty and conflicting ambient pools.

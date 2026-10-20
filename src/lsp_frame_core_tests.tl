@@ -5,12 +5,14 @@
 (import stdlib.io)
 (import stdlib.json)
 (import stdlib.iterator)
+(import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
 (import compiler_semantic_index as sem)
 (cfg test (import compiler_semantic_index_tests as sem_tests))
 (import compiler_diagnostic as cdiag)
 (import compiler_load)
+(import compiler_typecheck_core as tc)
 (import lsp_vector_families as lvf)
 (import (vector.vector lvf.LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector lvf.LspDocument core) as lsp_document_vec)
@@ -2521,3 +2523,261 @@
           (tuple-ref (array-ref cases index) 1)
           (tuple-ref (array-ref cases index) 2))
         (io.panic (string.copy (tuple-ref (array-ref cases index) 0)))))))
+
+(define (lsp-params-case-ok?
+  [method : (& method str)]
+  [source : (& source str)]
+  [expected-error : (& expected-error str)]) : bool
+  (match (json.parse source)
+    [(OkJson params)
+      (match (lsp.lsp-method-params-error method (& params))
+        [(Missing) (= (string.string-length expected-error) 0)]
+        [(Ok message)
+          (and
+            (> (string.string-length expected-error) 0)
+            (string.contains (& message) expected-error))])]
+    [(ErrJson _) false]))
+
+(test
+  lsp-required-parameter-admission
+  (let
+    [cases : (Array (Tuple String String String) 52)
+      (array
+        (tuple "tl/getType" "null" "params must be an object")
+        (tuple "tl/getType" "{}" "Missing uri")
+        (tuple "tl/getType" "{\"textDocument\":42}" "invalid uri")
+        (tuple "tl/getType" "{\"textDocument\":{\"uri\":false}}" "invalid uri")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"}}"
+          "Missing position")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{}}"
+          "Invalid position")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":null}"
+          "Invalid position")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":\"0\",\"character\":0}}"
+          "Invalid position")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":-1,\"character\":0}}"
+          "Invalid position")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":1.5,\"character\":0}}"
+          "Invalid position")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":2147483648,\"character\":0}}"
+          "Invalid position")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":2147483647,\"character\":2147483647}}"
+          "")
+        (tuple
+          "tl/getType"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":0,\"character\":0}}"
+          "")
+        (tuple
+          "tl/expandMacro"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":[]}"
+          "Invalid position")
+        (tuple
+          "tl/findPosition"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"}}"
+          "name")
+        (tuple
+          "tl/findPosition"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":42}"
+          "name")
+        (tuple
+          "tl/findPosition"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":\"missing\"}"
+          "")
+        (tuple
+          "tl/read"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":0,\"character\":0},\"name\":false}"
+          "name must be a string")
+        (tuple
+          "tl/read"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":\"\"}"
+          "Missing position")
+        (tuple
+          "tl/read"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":0,\"character\":0},\"name\":\"\"}"
+          "")
+        (tuple
+          "tl/read"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":\"main\",\"position\":null}"
+          "")
+        (tuple
+          "tl/replace"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"newText\":\"1\",\"path\":[\"main\"]}"
+          "")
+        (tuple
+          "tl/replace"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"newText\":\"1\",\"path\":[]}"
+          "path must not be empty")
+        (tuple
+          "tl/replace"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"newText\":\"1\",\"path\":[\"main\",0]}"
+          "path entries must be strings")
+        (tuple
+          "tl/replace"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"newText\":\"1\",\"path\":null}"
+          "path must be an array")
+        (tuple
+          "tl/replaceBody"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"newBody\":\"(\",\"path\":[\"main\"]}"
+          "")
+        (tuple
+          "tl/replacePattern"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":\"main\",\"oldPattern\":\"x\"}"
+          "newPattern")
+        (tuple
+          "tl/patch"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"oldText\":42,\"newText\":\"\"}"
+          "oldText")
+        (tuple
+          "tl/patch"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"oldText\":\"x\"}"
+          "newText")
+        (tuple
+          "tl/appendFunction"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"}}"
+          "newText")
+        (tuple
+          "tl/insertAfter"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"newText\":\"1\"}"
+          "Missing position")
+        (tuple
+          "tl/delete"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":0,\"character\":0}}"
+          "")
+        (tuple
+          "tl/move"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":\"main\"}"
+          "direction or destination")
+        (tuple
+          "tl/move"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":\"main\",\"destination\":42,\"direction\":\"up\"}"
+          "destination must be a string")
+        (tuple
+          "tl/move"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"name\":\"main\",\"direction\":\"unsupported\"}"
+          "")
+        (tuple
+          "tl/batch"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"operations\":[]}"
+          "")
+        (tuple
+          "tl/batch"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"operations\":{}}"
+          "operations must be an array")
+        (tuple
+          "textDocument/hover"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"}}"
+          "Missing position")
+        (tuple
+          "textDocument/references"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":0,\"character\":0}}"
+          "")
+        (tuple
+          "textDocument/rename"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"},\"position\":{\"line\":0,\"character\":0}}"
+          "newName")
+        (tuple "textDocument/documentSymbol" "{}" "Missing uri")
+        (tuple
+          "textDocument/semanticTokens/full"
+          "{\"textDocument\":{\"uri\":\"file:///test.tl\"}}"
+          "")
+        (tuple
+          "textDocument/didClose"
+          "{\"textDocument\":{\"uri\":42}}"
+          "invalid uri")
+        (tuple "tl/check" "{\"uri\":\"file:///test.tl\"}" "")
+        (tuple "tl/check" "{\"textDocument\":{\"uri\":\"file:///test.tl\"}}" "")
+        (tuple
+          "tl/check"
+          "{\"uri\":42,\"textDocument\":{\"uri\":\"file:///test.tl\"}}"
+          "uri")
+        (tuple
+          "tl/check"
+          "{\"uri\":\"file:///test.tl\",\"textDocument\":42}"
+          "")
+        (tuple "workspace/symbol" "{}" "query")
+        (tuple "workspace/symbol" "{\"query\":\"\"}" "")
+        (tuple "tl/projectSearch" "{\"name\":42}" "name")
+        (tuple "unknown/method" "null" "")
+        (tuple "shutdown" "null" ""))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (unless
+        (lsp-params-case-ok?
+          (tuple-ref (array-ref cases index) 0)
+          (tuple-ref (array-ref cases index) 1)
+          (tuple-ref (array-ref cases index) 2))
+        (io.panic (string.copy (tuple-ref (array-ref cases index) 1)))))))
+
+(define (lsp-invalid-params-preserve-state?
+  [source : (& source str)]
+  [response : bool]) : bool
+  (let
+    [state : lvf.LspServerState (lsp.lsp-server-state-new)]
+    [owner : i64 state.owner-arena]
+    (set! state.semantic-cache.source-checks 17)
+    (lsp.lsp-frame-memory-install! "" (arena.tl_arena_current))
+    (let
+      [ok : bool
+        (match (json.parse source)
+          [(ErrJson _)
+            (lsp.lsp-server-state-destroy! state)
+            false]
+          [(OkJson message)
+            (match (lsp.lsp-handle-message
+              message
+              state
+              (lsp_svec.new)
+              (tc.tc-job-state-new))
+              [(Exit next)
+                (lsp.lsp-server-state-destroy! next)
+                false]
+              [(Continue next)
+                (let
+                  [transport : lsp.LspFrameMemoryState
+                    (clone lsp.lsp-frame-memory-state)]
+                  [unchanged : bool
+                    (and
+                      (= next.owner-arena owner)
+                      (= next.semantic-cache.source-checks 17)
+                      (= next.semantic-cache.len 0))]
+                  (lsp.lsp-server-state-destroy! next)
+                  (and
+                    unchanged
+                    (if response
+                      (string.contains (& transport.stdout) "\"code\":-32602")
+                      (string.eq transport.stdout ""))))])])]
+      (lsp.lsp-frame-memory-reset!)
+      ok)))
+
+(test
+  lsp-invalid-params-preserve-state-and-notification-suppression
+  (unless
+    (and
+      (lsp-invalid-params-preserve-state?
+        "{\"jsonrpc\":\"2.0\",\"id\":\"bad\",\"method\":\"tl/replace\",\"params\":{\"textDocument\":{\"uri\":\"file:///missing.tl\"}}}"
+        true)
+      (lsp-invalid-params-preserve-state?
+        "{\"jsonrpc\":\"2.0\",\"method\":\"tl/replace\",\"params\":{\"textDocument\":{\"uri\":\"file:///missing.tl\"}}}"
+        false)
+      (lsp-invalid-params-preserve-state?
+        "{\"jsonrpc\":\"2.0\",\"id\":\"uri\",\"method\":\"tl/check\",\"params\":{\"uri\":42,\"textDocument\":{\"uri\":\"file:///missing.tl\"}}}"
+        true)
+      (lsp-invalid-params-preserve-state?
+        "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":42}}}"
+        false))
+    (io.panic "invalid parameter dispatch changed state or notification output")))

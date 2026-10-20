@@ -129719,7 +129719,7 @@
   [ty : ast.AstType]
   [instr : ir.CompilerIrInstr]) : OptLoadCseResult
   (match state
-    ;; The base map follows the result binding. The dispatcher separately
+    ;; The base map follows the result binding. Constructing the result
     ;; invalidates memory availability if the result's local is address-taken.
     [(State facts table kinds table-cap epoch bases profile-state)
       (let
@@ -129749,7 +129749,8 @@
             (let
               [new-instr : ir.CompilerIrInstr (Mov dst earlier ty)]
               [next-epoch : i64 (opt-load-cse-epoch-step epoch (& new-instr))]
-              (Result
+              (opt-load-cse-result
+                type-segment-bases
                 (State
                   (opt-load-alias-update-facts
                     type-segment-bases
@@ -129780,7 +129781,8 @@
               [record? : bool
                 (and eligible? (not (opt-load-key-uses-var? key dst)))]
               [next-epoch : i64 (opt-load-cse-epoch-step epoch (& instr))]
-              (Result
+              (opt-load-cse-result
+                type-segment-bases
                 (State
                   (opt-load-alias-update-facts
                     type-segment-bases
@@ -129817,47 +129819,37 @@
 ;; the instruction has read its operands: a Load into that local may reuse a
 ;; pre-write value, but cannot leave that value available after its own write.
 ;; A missing scalar destination type is an unclassified write.
-(define (opt-load-cse-local-def-result
+(define (opt-load-cse-result
   [type-segment-bases : i64]
-  [result : OptLoadCseResult]) : OptLoadCseResult
-  (if (= (array-length opt-function-addr-taken.marks) 0)
-    result
-    (match result
-      [(Result state instr)
-        (if (opt-licm-writes-addr-taken? (& instr))
-          (match state
-            [(State facts table kinds table-cap epoch bases profile-state)
-              (let
-                [class : OptLoadStoreClass
-                  (match (ir.compiler-ir-instr-dst-type
-                    (compiler-opt-global-shared-view instr))
-                    [(Some ty) (OptLoadStoreLocal ty)]
-                    [(No) (OptLoadStoreUnknown)])]
-                [filtered : OptLoadTable
-                  (opt-load-table-filter-store
-                    type-segment-bases
-                    table
-                    facts
-                    ;; Alloc creates the local's storage at the new epoch.
-                    ;; Its root excludes every previously available load.
-                    ;; Other definitions write the existing frame cell: a
-                    ;; pointer result's root describes its pointee, not that
-                    ;; cell, and cannot prove the write disjoint.
-                    (match (& instr)
-                      [(Alloc dst _) (opt-alias-root-of-var (& facts) dst)]
-                      [_ (NoRoot)])
-                    (& class))]
-                (Result
-                  (State
-                    facts
-                    filtered
-                    kinds
-                    table-cap
-                    epoch
-                    bases
-                    profile-state)
-                  instr))])
-          (Result state instr))])))
+  [state : OptLoadCseState]
+  [instr : ir.CompilerIrInstr]) : OptLoadCseResult
+  (Result
+    (if (opt-licm-writes-addr-taken? (& instr))
+      (match state
+        [(State facts table kinds table-cap epoch bases profile-state)
+          (let
+            [class : OptLoadStoreClass
+              (match (ir.compiler-ir-instr-dst-type
+                (compiler-opt-global-shared-view instr))
+                [(Some ty) (OptLoadStoreLocal ty)]
+                [(No) (OptLoadStoreUnknown)])]
+            [filtered : OptLoadTable
+              (opt-load-table-filter-store
+                type-segment-bases
+                table
+                facts
+                ;; Alloc creates the local's storage at the new epoch.
+                ;; Its root excludes every previously available load.
+                ;; Other definitions write the existing frame cell: a
+                ;; pointer result's root describes its pointee, not that
+                ;; cell, and cannot prove the write disjoint.
+                (match (& instr)
+                  [(Alloc dst _) (opt-alias-root-of-var (& facts) dst)]
+                  [_ (NoRoot)])
+                (& class))]
+            (State facts filtered kinds table-cap epoch bases profile-state))])
+      state)
+    instr))
 
 ;; Shared per-instruction dispatcher for the block-local (gated? false) and
 ;; cross-block (gated? true) passes. StorePtr/CopyBytes are matched before the
@@ -129872,79 +129864,104 @@
   [cells : (& cells OptGlobalCellSummary)]
   [state : OptLoadCseState]
   [instr : ir.CompilerIrInstr]) : OptLoadCseResult
-  (opt-load-cse-local-def-result
-    type-segment-bases
-    (match (compiler-opt-global-shared-view instr)
-      [(or (StorePtr ptr value ty) (StoreOwned ptr value ty))
-        (Result
-          (opt-load-cse-state-store
-            type-segment-bases
-            canon
-            hs
-            gated?
-            sources
-            state
-            (& ptr)
-            value
-            (& ty)
-            instr)
-          instr)]
-      [(CopyBytes dst src size)
-        (Result
-          (opt-load-cse-state-copy-bytes
-            type-segment-bases
-            hs
-            gated?
-            sources
-            state
-            (& dst)
-            (& src)
-            size
-            (& instr))
-          instr)]
-      [(Load dst src ty)
-        (opt-load-cse-core-load
+  (match (compiler-opt-global-shared-view instr)
+    [(or (StorePtr ptr value ty) (StoreOwned ptr value ty))
+      (opt-load-cse-result
+        type-segment-bases
+        (opt-load-cse-state-store
           type-segment-bases
           canon
           hs
           gated?
           sources
           state
-          dst
+          (& ptr)
+          value
+          (& ty)
+          instr)
+        instr)]
+    [(CopyBytes dst src size)
+      (opt-load-cse-result
+        type-segment-bases
+        (opt-load-cse-state-copy-bytes
+          type-segment-bases
+          hs
+          gated?
+          sources
+          state
+          (& dst)
           (& src)
-          ty
-          instr)]
-      [(Call dst name args _)
-        (Result
-          (opt-load-cse-state-direct-call
+          size
+          (& instr))
+        instr)]
+    [(Load dst src ty)
+      (opt-load-cse-core-load
+        type-segment-bases
+        canon
+        hs
+        gated?
+        sources
+        state
+        dst
+        (& src)
+        ty
+        instr)]
+    [(Call dst name args _)
+      (opt-load-cse-result
+        type-segment-bases
+        (opt-load-cse-state-direct-call
+          type-segment-bases
+          canon
+          sources
+          hs
+          call-memory
+          cells
+          state
+          dst
+          name
+          (& args)
+          (& instr))
+        instr)]
+    [(Store name _ _)
+      (opt-load-cse-result
+        type-segment-bases
+        (opt-load-cse-state-global-store
+          type-segment-bases
+          canon
+          sources
+          hs
+          state
+          (ir.compiler-ir-symbol-id name)
+          (& instr))
+        instr)]
+    ;; GSF-1: a read of a global cell whose contents the walk knows reads
+    ;; that value; the state steps as for the read it replaces, so `dst` keeps
+    ;; its binding as a base addressing [g].
+    [(Mov dst src ty)
+      (opt-load-cse-result
+        type-segment-bases
+        (opt-load-cse-state-step-other
+          type-segment-bases
+          canon
+          sources
+          hs
+          (compiler-opt-global-shared-view state)
+          (& instr))
+        (opt-load-cse-forward-cell (& state) instr))]
+    [_
+      (if (opt-alias-instr-clears-all? (& instr))
+        (opt-load-cse-result
+          type-segment-bases
+          (opt-load-cse-state-clear-for-memory
             type-segment-bases
             canon
             sources
             hs
-            call-memory
-            cells
             state
-            dst
-            name
-            (& args)
             (& instr))
-          instr)]
-      [(Store name _ _)
-        (Result
-          (opt-load-cse-state-global-store
-            type-segment-bases
-            canon
-            sources
-            hs
-            state
-            (ir.compiler-ir-symbol-id name)
-            (& instr))
-          instr)]
-      ;; GSF-1: a read of a global cell whose contents the walk knows reads
-      ;; that value; the state steps as for the read it replaces, so `dst` keeps
-      ;; its binding as a base addressing [g].
-      [(Mov dst src ty)
-        (Result
+          instr)
+        (opt-load-cse-result
+          type-segment-bases
           (opt-load-cse-state-step-other
             type-segment-bases
             canon
@@ -129952,27 +129969,7 @@
             hs
             (compiler-opt-global-shared-view state)
             (& instr))
-          (opt-load-cse-forward-cell (& state) instr))]
-      [_
-        (if (opt-alias-instr-clears-all? (& instr))
-          (Result
-            (opt-load-cse-state-clear-for-memory
-              type-segment-bases
-              canon
-              sources
-              hs
-              state
-              (& instr))
-            instr)
-          (Result
-            (opt-load-cse-state-step-other
-              type-segment-bases
-              canon
-              sources
-              hs
-              (compiler-opt-global-shared-view state)
-              (& instr))
-            (opt-load-cse-forward-cell (& state) instr)))])))
+          (opt-load-cse-forward-cell (& state) instr)))]))
 
 ;; --- pure direct-call dedupe (CSE-CALL) ---------------------------------------
 ;;

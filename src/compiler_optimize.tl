@@ -17418,11 +17418,10 @@
 ;;
 ;; LICM and induction only operate on loops with a dedicated outside predecessor
 ;; whose only successor is the loop header. This pass creates that block for
-;; conservative natural loops and falls back to the original function if the
-;; verifier rejects the result.
-(defenum OptLoopPreheadersPhiRewriteResult
-  (Result ir.CompilerIrPhiInputSeq bool))
-
+;; conservative natural loops. It decides which loops get one before it touches
+;; anything, and in the loop cluster it consumes its function when it does
+;; synthesize (#9013); a rewrite of a verified input that the verifier rejects
+;; is an internal error.
 ;; --- preheader synthesis tracing ---------------------------------------------
 ;;
 ;; BCE-3. Without this tracer a loop that reached the versioner without a
@@ -17441,7 +17440,7 @@
 ;; that set -- an existing preheader, and the two verifier fallbacks, which are
 ;; function-level and not loop-level decisions.
 ;;
-;; WHAT COUNTS AS EXAMINED. `opt-loop-preheaders-synthesize-loops` walks the
+;; WHAT COUNTS AS EXAMINED. `opt-loop-preheaders-first-plan-from` walks the
 ;; natural-loop list and stops at the first loop it rewrites, because the CFG
 ;; (and the context) is stale afterwards; the surrounding round loop then walks
 ;; the list again. So a loop refused in one round reports again in the next with
@@ -17748,62 +17747,37 @@
     [(Some _) true]
     [(No) false]))
 
-(define (opt-loop-preheaders-rewrite-phi-inputs-acc
-  [inputs : ir.CompilerIrPhiInputSeq]
-  [outside : OptLabelSet]
-  [preheader : i64]
-  [emitted : bool]
-  [acc : (& ir.CompilerIrPhiInputSeq)]) : OptLoopPreheadersPhiRewriteResult
-  (let
-    [phi-inputs-at-19579-3 : ir.CompilerIrPhiInputSeq inputs]
-    (if (<= phi-inputs-at-19579-3.len 0)
-      (Result
-        (ir.compiler-ir-phi-input-seq-reverse-onto
-          acc
-          (& (ir.compiler-ir-phi-input-seq-empty)))
-        emitted)
-      (let
-        [phi-input-at-19579-3
-          (ir.compiler-ir-phi-input-seq-ref phi-inputs-at-19579-3 0)]
-        [value : ir.CompilerIrValue phi-input-at-19579-3.value]
-        [label : i64 phi-input-at-19579-3.label]
-        [rest : ir.CompilerIrPhiInputSeq
-          (ir.CompilerIrPhiInputSeq
-            phi-inputs-at-19579-3.slots
-            (+ phi-inputs-at-19579-3.start 1)
-            (- phi-inputs-at-19579-3.len 1))]
-        (if (opt-label-contains outside label)
-          (if emitted
-            (opt-loop-preheaders-rewrite-phi-inputs-acc
-              rest
-              outside
-              preheader
-              true
-              acc)
-            (opt-loop-preheaders-rewrite-phi-inputs-acc
-              rest
-              outside
-              preheader
-              true
-              (& (ir.compiler-ir-phi-input-seq-prepend value preheader acc))))
-          (opt-loop-preheaders-rewrite-phi-inputs-acc
-            rest
-            outside
-            preheader
-            emitted
-            (& (ir.compiler-ir-phi-input-seq-prepend value label acc))))))))
-
+;; A header phi's inputs with every edge from outside the loop folded into one
+;; edge from the new preheader, carrying the first such input's value
+;; (synthesis admits a header only when they agree). The input array may be
+;; shared with a shallow clone of the phi, so the values are copied, never
+;; moved, on this rare synthesis path (#9013).
 (define (opt-loop-preheaders-rewrite-phi-inputs
-  [inputs : (& ir.CompilerIrPhiInputSeq)]
+  [inputs : (& inputs ir.CompilerIrPhiInputSeq)]
   [outside : OptLabelSet]
   [preheader : i64]) : ir.CompilerIrPhiInputSeq
-  (match (opt-loop-preheaders-rewrite-phi-inputs-acc
-    (owned_view.compiler-owned-reference-shared-view inputs)
-    outside
-    preheader
-    false
-    (& (ir.compiler-ir-phi-input-seq-empty)))
-    [(Result rewritten _) rewritten]))
+  (let
+    [builder : ir.CompilerIrPhiInputBuilder
+      (ir.compiler-ir-phi-input-builder-with-capacity inputs.len)]
+    [emitted : bool false]
+    (for [index (iterator.range 0 inputs.len)]
+      (let
+        [input (ir.compiler-ir-phi-input-seq-borrow inputs index)]
+        (if (opt-label-contains outside input.label)
+          (unless
+            emitted
+            (ir.compiler-ir-phi-input-builder-push!
+              (&mut builder)
+              (ir.CompilerIrPhiInput
+                (ir.compiler-ir-clone-value (& input.value))
+                preheader))
+            (set! emitted true))
+          (ir.compiler-ir-phi-input-builder-push!
+            (&mut builder)
+            (ir.CompilerIrPhiInput
+              (ir.compiler-ir-clone-value (& input.value))
+              input.label)))))
+    (ir.compiler-ir-phi-input-builder-to-seq builder)))
 
 (define (opt-loop-preheaders-rewrite-header-instr
   [outside : OptLabelSet]
@@ -17817,10 +17791,12 @@
         ty)]
     [_ instr]))
 
+;; The header block's instructions, each moved out of the consumed input: the
+;; phis are rebuilt with their preheader edge, everything else moves through.
 (define (opt-loop-preheaders-rewrite-header-instrs
   [outside : OptLabelSet]
   [preheader : i64]
-  [instrs : (& ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
+  [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
@@ -17831,7 +17807,7 @@
         (opt-loop-preheaders-rewrite-header-instr
           outside
           preheader
-          (ir.compiler-ir-instr-seq-ref instrs index))))
+          (ir.compiler-ir-instr-seq-take! (&mut instrs) index))))
     (ir.CompilerIrInstrSeq slots count)))
 
 (define (opt-loop-preheaders-retarget-label
@@ -17894,34 +17870,34 @@
         trap-label)]
     [_ instr]))
 
+;; An outside predecessor's instructions, each moved out of the consumed input
+;; and retargeted from the header to the preheader. `jump?` appends the jump a
+;; block that fell through to the header needs once the preheader sits between
+;; them.
 (define (opt-loop-preheaders-retarget-instrs
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [instrs : ir.CompilerIrInstrSeq]
   [header : i64]
-  [preheader : i64]) : ir.CompilerIrInstrSeq
+  [preheader : i64]
+  [jump? : bool]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [total : i64
+      (if jump?
+        (+ count 1)
+        count)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr count)]
+      (__tl_make-array ir.CompilerIrInstr total)]
     (for [index (iterator.range 0 count)]
       (set!
         (array-ref slots index)
         (opt-loop-preheaders-retarget-instr
-          (ir.compiler-ir-instr-seq-ref instrs index)
+          (ir.compiler-ir-instr-seq-take! (&mut instrs) index)
           header
           preheader)))
-    (ir.CompilerIrInstrSeq slots count)))
-
-(define (opt-loop-preheaders-append-jump
-  [instrs : (& ir.CompilerIrInstrSeq)]
-  [target : i64]) : ir.CompilerIrInstrSeq
-  (let
-    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [slots : (__tl_dyn-array ir.CompilerIrInstr)
-      (__tl_make-array ir.CompilerIrInstr (+ count 1))]
-    (for [index (iterator.range 0 count)]
-      (set! (array-ref slots index) (ir.compiler-ir-instr-seq-ref instrs index)))
-    (set! (array-ref slots count) (ir.CompilerIrInstr.Jump target))
-    (ir.CompilerIrInstrSeq slots (+ count 1))))
+    (when
+      jump?
+      (set! (array-ref slots count) (ir.CompilerIrInstr.Jump preheader)))
+    (ir.CompilerIrInstrSeq slots total)))
 
 (define (opt-loop-preheaders-rewrite-block
   [block : ir.CompilerIrBlock]
@@ -17929,78 +17905,148 @@
   [header : i64]
   [outside : OptLabelSet]
   [preheader : i64]) : ir.CompilerIrBlock
-  (match (compiler-opt-global-shared-view block)
+  (match block
     [(Block label instrs)
       (if (= label header)
         (Block
           label
-          (opt-loop-preheaders-rewrite-header-instrs
-            outside
-            preheader
-            (& instrs)))
+          (opt-loop-preheaders-rewrite-header-instrs outside preheader instrs))
         (if (opt-label-contains outside label)
           (let
-            [retargeted : ir.CompilerIrInstrSeq
-              (opt-loop-preheaders-retarget-instrs instrs header preheader)]
+            [jump? : bool
+              (and
+                (= next-label header)
+                (opt-cfg-instr-seq-can-fallthrough? (& instrs)))]
             (Block
               label
-              (if (and
-                (= next-label header)
-                (opt-cfg-instr-seq-can-fallthrough? instrs))
-                (opt-loop-preheaders-append-jump (& retargeted) preheader)
-                retargeted)))
-          block))]))
-
-(define (opt-loop-preheaders-rewrite-blocks!
-  [out : (&mut out ir.CompilerIrBlockBuilder)]
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [header : i64]
-  [outside : OptLabelSet]
-  [preheader : i64]) : unit
-  (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (ir.compiler-ir-block-builder-push!
-        out
-        (opt-loop-preheaders-rewrite-block
-          (owned_view.compiler-owned-reference-shared-view block)
-          (opt-cfg-slice-entry-label rest)
-          header
-          outside
-          preheader))
-      (opt-loop-preheaders-rewrite-blocks! out rest header outside preheader)]))
+              (opt-loop-preheaders-retarget-instrs
+                instrs
+                header
+                preheader
+                jump?)))
+          (Block label instrs)))]))
 
 (define (opt-loop-preheaders-new-block [preheader : i64] [header : i64]) : ir.CompilerIrBlock
   (Block preheader (ir.compiler-ir-instr-seq1 (Jump header))))
 
-(define (opt-loop-preheaders-insert-before-header!
-  [out : (&mut out ir.CompilerIrBlockBuilder)]
-  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+;; Under `cfg test`, a block whose instructions are about to move out must not
+;; share its instruction array with another block of the list, or the move
+;; would rewrite that block too. The pipeline probe behind #9013 found no
+;; shared arrays at the loop-cluster head.
+(cfg
+  test
+  (define (opt-loop-preheaders-assert-exclusive!
+    [seq : (& seq ir.CompilerIrBlockSeq)]
+    [header : i64]
+    [outside : OptLabelSet]) : unit
+    (for [index (iterator.range 0 seq.len)]
+      (match (ir.compiler-ir-block-seq-borrow seq index)
+        [(Block label instrs)
+          (when
+            (and
+              (> instrs.len 0)
+              (or (= label header) (opt-label-contains outside label)))
+            (for [other (iterator.range 0 seq.len)]
+              (when
+                (!= other index)
+                (match (ir.compiler-ir-block-seq-borrow seq other)
+                  [(Block _ shared)
+                    (when
+                      (unsafe
+                        (=
+                          (ptr->int
+                            (ptr-cast (__tl_array-data instrs.slots) : (Ptr u8)))
+                          (ptr->int
+                            (ptr-cast (__tl_array-data shared.slots) : (Ptr u8)))))
+                      (opt-rewrite-ice!
+                        "optimizer: internal error: pass `preheaders` would move instructions out of an array another block shares"))]))))]))))
+
+;; Synthesis by ownership (#9013). The consumed input's blocks move into the
+;; rewritten list, the preheader goes in right before the header, and only the
+;; header and the retargeted outside predecessors are rebuilt, their
+;; instructions moved out one at a time. Nothing is copied but the header
+;; phis' input values.
+(define (opt-loop-preheaders-apply
+  [blocks : ir.CompilerIrBlockList]
   [header : i64]
-  [preheader : i64]) : unit
+  [outside : OptLabelSet]
+  [preheader : i64]) : ir.CompilerIrBlockList
   (match blocks
-    [(slice) unit]
-    [(slice block & rest)
-      (match block
-        [(Block label _)
-          (if (= label header)
-            (begin
+    [(Array seq)
+      (let
+        [count : i64 (ir.compiler-ir-block-seq-count seq)]
+        [_exclusive : unit
+          (cfg
+            test
+            (opt-loop-preheaders-assert-exclusive! (& seq) header outside)
+            unit)]
+        [out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity (+ count 1))]
+        (for [index (iterator.range 0 count)]
+          (let
+            [next-label : i64
+              (if (< (+ index 1) count)
+                (match (ir.compiler-ir-block-seq-borrow seq (+ index 1))
+                  [(Block label _) label])
+                (ir.compiler-ir-label-none))]
+            [block : ir.CompilerIrBlock
+              (ir.compiler-ir-block-seq-take! (&mut seq) index)]
+            [header? : bool
+              (match (& block)
+                [(Block label _) (= label header)])]
+            (when
+              header?
               (ir.compiler-ir-block-builder-push!
-                out
-                (opt-loop-preheaders-new-block preheader header))
-              (ir.compiler-ir-block-builder-push!
-                out
-                (owned_view.compiler-owned-reference-shared-view block))
-              (ir.compiler-ir-block-builder-append-slice! out rest))
-            (begin
-              (ir.compiler-ir-block-builder-push!
-                out
-                (owned_view.compiler-owned-reference-shared-view block))
-              (opt-loop-preheaders-insert-before-header!
-                out
-                rest
+                (&mut out)
+                (opt-loop-preheaders-new-block preheader header)))
+            (ir.compiler-ir-block-builder-push!
+              (&mut out)
+              (opt-loop-preheaders-rewrite-block
+                block
+                next-label
                 header
-                preheader)))])]))
+                outside
+                preheader))))
+        (ir.compiler-ir-block-builder-to-list out))]))
+
+;; A copy of `blocks` that `opt-loop-preheaders-apply` may consume, for the
+;; callers that hold their function only by reference: a fresh block list and
+;; fresh instruction arrays for the blocks synthesis rebuilds. The other
+;; blocks are not rebuilt, so their instructions stay shared.
+(define (opt-loop-preheaders-owned-copy
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [header : i64]
+  [outside : OptLabelSet]) : ir.CompilerIrBlockList
+  (match blocks
+    [(Array seq)
+      (let
+        [out : ir.CompilerIrBlockBuilder
+          (ir.compiler-ir-block-builder-with-capacity seq.len)]
+        (for [index (iterator.range 0 seq.len)]
+          (let
+            [block : ir.CompilerIrBlock
+              (ir.compiler-ir-block-seq-ref seq index)]
+            [rebuilt? : bool
+              (match (& block)
+                [(Block label _)
+                  (or (= label header) (opt-label-contains outside label))])]
+            (ir.compiler-ir-block-builder-push!
+              (&mut out)
+              (if rebuilt?
+                (match block
+                  [(Block label instrs)
+                    (Block
+                      label
+                      (let
+                        [slots : (__tl_dyn-array ir.CompilerIrInstr)
+                          (__tl_make-array ir.CompilerIrInstr instrs.len)]
+                        (for [at (iterator.range 0 instrs.len)]
+                          (set!
+                            (array-ref slots at)
+                            (ir.compiler-ir-instr-seq-ref instrs at)))
+                        (ir.CompilerIrInstrSeq slots instrs.len)))])
+                block))))
+        (ir.compiler-ir-block-builder-to-list out))]))
 
 ;; The synthesis admission, as the clause code that decided it. The clauses run
 ;; in order: an empty outside set, then this pass's own existing-safe scan,
@@ -18016,10 +18062,16 @@
       (opt-preheader-reason-existing-safe)]
     [else (opt-loop-preheaders-header-reason blocks header outside)]))
 
-(define (opt-loop-preheaders-synthesize-loop
-  [blocks : ir.CompilerIrBlockList]
+;; What synthesis does to one loop, decided before anything moves: the header,
+;; the outside predecessors retargeted to the preheader, and its fresh label.
+(defenum OptLoopPreheadersPlan
+  (No)
+  (Synthesize i64 OptLabelSet i64))
+
+(define (opt-loop-preheaders-loop-plan
+  [blocks : (& blocks ir.CompilerIrBlockList)]
   [context : OptCfgContext]
-  [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
+  [loop : (& loop OptNaturalLoop)]) : OptLoopPreheadersPlan
   (match (opt-natural-loop-preheader loop)
     [(Some _)
       ;; The loop already owns a safe preheader. The outside set is never
@@ -18029,7 +18081,7 @@
         (opt-preheader-verdict-existing)
         (opt-preheader-reason-existing)
         (- 0 1))
-      (Result blocks false)]
+      (No)]
     [(No)
       (let
         [header : i64 (opt-natural-loop-header loop)]
@@ -18044,181 +18096,201 @@
         [outside-count : i64 (opt-label-count outside)]
         [reason : i64
           (opt-loop-preheaders-refusal-reason
-            (& blocks)
+            blocks
             context.pred-map
             header
             outside)]
         (if (= reason (opt-preheader-reason-ok))
           (let
             [preheader : i64 (opt-loop-preheaders-fresh-label blocks header 0)]
-            [rewritten : ir.CompilerIrBlockList
-              (opt-blocks-build
-                blocks
-                opt-loop-preheaders-rewrite-blocks!
-                header
-                outside
-                preheader)]
-            [_last : unit (opt-preheader-trace-last-header! header)]
-            [_trace : unit
-              (opt-preheader-trace!
-                header
-                (opt-preheader-verdict-synthesized)
-                (opt-preheader-reason-ok)
-                outside-count)]
-            (Result
-              (opt-blocks-build
-                rewritten
-                opt-loop-preheaders-insert-before-header!
-                header
-                preheader)
-              true))
+            (opt-preheader-trace-last-header! header)
+            (opt-preheader-trace!
+              header
+              (opt-preheader-verdict-synthesized)
+              (opt-preheader-reason-ok)
+              outside-count)
+            (Synthesize header outside preheader))
           (begin
             (opt-preheader-trace!
               header
               (opt-preheader-verdict-refused)
               reason
               outside-count)
-            (Result blocks false))))]))
+            (No))))]))
 
-(define (opt-loop-preheaders-synthesize-loops
-  [blocks : ir.CompilerIrBlockList]
-  [context : (& OptCfgContext)]
-  [loops : (& loops (Slice OptNaturalLoop))]) : OptBlockListPassResult
+;; The first loop, in natural-loop order, that synthesis takes.
+(define (opt-loop-preheaders-first-plan-from
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [context : (& context OptCfgContext)]
+  [loops : (& loops (Slice OptNaturalLoop))]) : OptLoopPreheadersPlan
   (match loops
-    [(slice) (Result blocks false)]
+    [(slice) (No)]
     [(slice loop & rest)
-      (match (opt-loop-preheaders-synthesize-loop
-        (compiler-opt-global-shared-view blocks)
+      (match (opt-loop-preheaders-loop-plan
+        blocks
         (owned_view.compiler-owned-reference-shared-view context)
         loop)
-        [(Result next changed)
-          (if changed
-            (Result next true)
-            (opt-loop-preheaders-synthesize-loops blocks context rest))])]))
+        [(Synthesize header outside preheader)
+          (Synthesize header outside preheader)]
+        [(No) (opt-loop-preheaders-first-plan-from blocks context rest)])]))
 
-(define (opt-loop-preheaders-blocks-once [blocks : (& ir.CompilerIrBlockList)]) : OptBlockListPassResult
-  (let
-    [context : OptCfgContext
-      (opt-cfg-context-build
-        (owned_view.compiler-owned-reference-shared-view blocks))]
-    [natural-loops
-      (opt-cfg-natural-loops-with-context
-        (owned_view.compiler-owned-reference-shared-view blocks)
-        context)]
-    (opt-loop-preheaders-synthesize-loops
-      (owned_view.compiler-owned-reference-shared-view blocks)
-      (& context)
-      (opt_natural_loop_vec.view natural-loops))))
-
-(define (opt-loop-preheaders-blocks-once-with-context
-  [context : (& OptCfgContext)]
-  [blocks : (& ir.CompilerIrBlockList)]) : OptBlockListPassResult
-  ;; `context` must be valid for `blocks` (the caller's pipeline context).
+(define (opt-loop-preheaders-first-plan
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [context : (& context OptCfgContext)]) : OptLoopPreheadersPlan
+  ;; `context` must be valid for `blocks`.
   (let
     [natural-loops
       (opt-cfg-natural-loops-with-context
         (owned_view.compiler-owned-reference-shared-view blocks)
         context)]
-    (opt-loop-preheaders-synthesize-loops
-      (owned_view.compiler-owned-reference-shared-view blocks)
+    (opt-loop-preheaders-first-plan-from
+      blocks
       context
       (opt_natural_loop_vec.view natural-loops))))
 
-(define (opt-loop-preheaders-blocks-fixed-result
+;; One preheader for a loop that has none, for the passes that hold their
+;; blocks only by reference (gep_offset, bounds_group): they get synthesis on a
+;; copy of the blocks it rebuilds.
+(define (opt-loop-preheaders-synthesize-loop
   [blocks : ir.CompilerIrBlockList]
-  [context : (& OptCfgContext)]
+  [context : OptCfgContext]
+  [loop : (& loop OptNaturalLoop)]) : OptBlockListPassResult
+  (match (opt-loop-preheaders-loop-plan (& blocks) context loop)
+    [(No) (Result blocks false)]
+    [(Synthesize header outside preheader)
+      (Result
+        (opt-loop-preheaders-apply
+          (opt-loop-preheaders-owned-copy (& blocks) header outside)
+          header
+          outside
+          preheader)
+        true)]))
+
+;; The rounds after the first: each runs on the previous round's output with a
+;; fresh context, which is not read once the round's own plan is made. Each
+;; round consumes its input when the pass owns it (`owned?`), and otherwise
+;; synthesizes on a copy.
+(define (opt-loop-preheaders-rounds
+  [blocks : ir.CompilerIrBlockList]
   [remaining : i64]
-  [any-changed : bool]
-  [first-round? : bool]) : OptBlockListPassResult
-  ;; The first round reuses the pipeline's CFG context (valid for `blocks`);
-  ;; only rounds after an actual synthesis (which rewrote the CFG) pay for a
-  ;; fresh context build.
+  [owned? : bool]) : ir.CompilerIrBlockList
   (if (<= remaining 0)
-    (Result blocks any-changed)
-    (match (if first-round?
-      (opt-loop-preheaders-blocks-once-with-context context (& blocks))
-      (opt-loop-preheaders-blocks-once (& blocks)))
-      [(Result next changed)
-        (if changed
-          (opt-loop-preheaders-blocks-fixed-result
-            next
-            context
+    blocks
+    (let
+      [context : OptCfgContext
+        (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+      (match (opt-loop-preheaders-first-plan (& blocks) (& context))
+        [(No) blocks]
+        [(Synthesize header outside preheader)
+          (opt-loop-preheaders-rounds
+            (opt-loop-preheaders-apply
+              (if owned?
+                blocks
+                (opt-loop-preheaders-owned-copy (& blocks) header outside))
+              header
+              outside
+              preheader)
             (- remaining 1)
-            true
-            false)
-          (Result next any-changed))])))
+            owned?)]))))
 
 (define (opt-loop-preheaders-blocks [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
-  (match (opt-loop-preheaders-blocks-fixed-result
+  (opt-loop-preheaders-rounds
     (owned_view.compiler-owned-reference-shared-view blocks)
-    (&
-      (opt-cfg-context-build
-        (owned_view.compiler-owned-reference-shared-view blocks)))
     (+ 1 (ir.compiler-ir-block-list-count blocks))
-    false
-    true)
-    [(Result next _) next]))
+    false))
+
+;; The cluster's preheaders stage. The first round reuses the pipeline's
+;; context; if no loop takes a preheader the input comes back untouched, with
+;; that context. Otherwise the function is consumed (`owned?`): its blocks and
+;; the instructions of the blocks synthesis rebuilds move into the result
+;; instead of being copied (#9013), which is sound because the cluster owns its
+;; function and synthesis rebuilds the context. Callers that hold the function
+;; only by reference pass `owned?` false and synthesis runs on a copy.
+(define (opt-loop-preheaders-run
+  [context : OptCfgContext]
+  [verified? : bool]
+  [owned? : bool]
+  [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
+  ;; The function name is published to the tracer before the entry verify, so
+  ;; the entry-verify refusal is attributed to the function it turned down.
+  (let
+    [_trace-function : unit
+      (opt-preheader-trace-function! (opt-function-name (& func)))]
+    (match (opt-verify-gate
+      verified?
+      (compiler-opt-global-shared-view func)
+      (compiler-opt-global-shared-view context))
+      [(Ok)
+        (match (match (& func)
+          [(Function _ _ _ _ blocks _)
+            (opt-loop-preheaders-first-plan blocks (& context))])
+          ;; No preheader was synthesized: the input context still describes
+          ;; the unchanged CFG, so skip the context rebuild and the post-pass
+          ;; verify entirely.
+          [(No) (Result func context)]
+          [(Synthesize header outside preheader)
+            (match (if owned?
+              func
+              (compiler-opt-global-shared-view func))
+              [(Function name params ret-ty frame blocks function-abi)
+                (let
+                  [remaining : i64 (ir.compiler-ir-block-list-count (& blocks))]
+                  [next-blocks : ir.CompilerIrBlockList
+                    (opt-loop-preheaders-rounds
+                      (opt-loop-preheaders-apply
+                        (if owned?
+                          blocks
+                          (opt-loop-preheaders-owned-copy
+                            (& blocks)
+                            header
+                            outside))
+                        header
+                        outside
+                        preheader)
+                      remaining
+                      owned?)]
+                  [next : ir.CompilerIrFunction
+                    (Function
+                      name
+                      params
+                      ret-ty
+                      frame
+                      (compiler-opt-global-shared-view next-blocks)
+                      function-abi)]
+                  ;; Preheader synthesis may have inserted blocks, so build one
+                  ;; fresh context for the rewritten CFG, reuse it for the
+                  ;; post-pass verify, and hand it back for the next pass.
+                  [next-context : OptCfgContext
+                    (opt-cfg-context-build next-blocks)]
+                  ;; Past the gate the input verifies, so a rejection here is an
+                  ;; internal error (#9013). The consumed input no longer
+                  ;; exists, so under the `cfg test` capture the rejected
+                  ;; rewrite is what comes back; the message names only the
+                  ;; function.
+                  (match (opt-verify-function-with-context next next-context)
+                    [(Ok) (Result next next-context)]
+                    [(Err reason)
+                      (opt-preheader-trace-verify-rejected!)
+                      (opt-rewrite-ice!
+                        (opt-rewrite-ice-message "preheaders" (& next) reason))
+                      (Result next next-context)]))])])]
+      [(Err _)
+        (opt-preheader-trace-entry-verify! context)
+        (Result func context)])))
 
 (define (opt-loop-preheaders-function-with-context-result
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  ;; The function name is published to the tracer before the entry verify, so
-  ;; the entry-verify refusal is attributed to the function it turned down.
-  (match (compiler-opt-global-shared-view func)
-    [(Function name params ret-ty frame blocks function-abi)
-      (let
-        [_trace-function : unit (opt-preheader-trace-function! name)]
-        (match (opt-verify-gate
-          verified?
-          (compiler-opt-global-shared-view func)
-          (compiler-opt-global-shared-view context))
-          [(Ok)
-            (match (opt-loop-preheaders-blocks-fixed-result
-              (compiler-opt-global-shared-view blocks)
-              (& context)
-              (+ 1 (ir.compiler-ir-block-list-count blocks))
-              false
-              true)
-              [(Result next-blocks preheaders-changed?)
-                (if (not preheaders-changed?)
-                  ;; No preheader was synthesized: the input context still
-                  ;; describes the unchanged CFG, so skip the context rebuild
-                  ;; and the post-pass verify entirely.
-                  (Result func context)
-                  (let
-                    [next : ir.CompilerIrFunction
-                      (Function
-                        name
-                        params
-                        ret-ty
-                        frame
-                        (compiler-opt-global-shared-view next-blocks)
-                        function-abi)]
-                    ;; Preheader synthesis may have inserted blocks, so build one
-                    ;; fresh context for the rewritten CFG, reuse it for the
-                    ;; post-pass verify, and hand it back for the next pass.
-                    [next-context : OptCfgContext
-                      (opt-cfg-context-build next-blocks)]
-                    ;; Past the gate the input verifies, so a rejection here is
-                    ;; an internal error (#9013).
-                    (match (opt-verify-function-with-context next next-context)
-                      [(Ok) (Result next next-context)]
-                      [(Err reason)
-                        (opt-preheader-trace-verify-rejected!)
-                        (opt-rewrite-ice!
-                          (opt-rewrite-ice-message "preheaders" (& func) reason))
-                        (Result func context)])))])]
-          [(Err _)
-            (opt-preheader-trace-entry-verify! context)
-            (Result func context)]))]))
+  (opt-loop-preheaders-run context verified? true func))
 
 (define (opt-loop-preheaders-function [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ _ blocks _)
-      (match (opt-loop-preheaders-function-with-context-result
+      (match (opt-loop-preheaders-run
         (opt-cfg-context-build blocks)
+        false
         false
         (owned_view.compiler-owned-reference-shared-view func))
         [(Result next _) next])]))
@@ -86634,7 +86706,7 @@
               def-block))])]))
 
 ;; One synthesis per round: the CFG (and therefore `context`) is stale straight
-;; afterwards, exactly as `opt-loop-preheaders-blocks-fixed-result` handles it.
+;; afterwards, exactly as `opt-loop-preheaders-rounds` handles it.
 ;; Rounds end when a whole pass over the loop list synthesizes nothing, not at
 ;; the first loop that refuses one.
 (define (opt-gep-offset-prepare-preheaders
@@ -97082,7 +97154,7 @@
         [(Some _) (opt-bg-loops-need-preheader? rest)])]))
 
 ;; One synthesis per round: the CFG (and therefore `context`) is stale straight
-;; afterwards, exactly as `opt-loop-preheaders-blocks-fixed-result` handles it.
+;; afterwards, exactly as `opt-loop-preheaders-rounds` handles it.
 ;; The rounds are skipped outright when every loop already has a preheader,
 ;; which is the ordinary case and the one where building the recognition tables
 ;; here would be pure compile-time cost.

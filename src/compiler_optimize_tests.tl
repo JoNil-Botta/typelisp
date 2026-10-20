@@ -78043,9 +78043,71 @@ return 0" true)
           "pass `preheaders` rewrote verified function `preheaders_ice`")
         (string.contains (& trusted-ice) "duplicate var definition"))
       "a rejected preheaders rewrite is an internal error naming the pass, the function and the verdict")
+    ;; Synthesis consumed the input (#9013), so under the capture the rejected
+    ;; rewrite comes back: it carries the preheader the input never had.
     (test.assert-true
-      (opt.opt-function-eq bases trusted-out broken)
-      "the rejected rewrite rolls back to the input")))
+      (not (opt.opt-function-eq bases trusted-out broken))
+      "a rejected preheaders rewrite returns the rewrite, never the consumed input")))
+
+;; The unchanged path returns its input object itself, so a move out of it
+;; (synthesis leaves a placeholder behind) would show up in the result.
+(test
+  preheaders-unchanged-path-returns-the-input-untouched
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run
+        true
+        (opt-preheaders-ice-function (opt-preheader-safe-blocks)))]
+    [expected : ir.CompilerIrFunction
+      (opt-preheaders-ice-function (opt-preheader-safe-blocks))]
+    (test.assert-true
+      (opt.opt-function-eq bases out expected)
+      "a loop that already owns a safe preheader leaves the function as it came in")))
+
+;; The checked-configuration guard on a consuming synthesis: the header's
+;; instructions must not share their storage with another block, or moving
+;; them out would rewrite that block too. The fixture builds that sharing
+;; deliberately (the view below), with `exit` holding the header's array.
+(test
+  preheaders-synthesis-refuses-shared-instruction-storage
+  (let
+    [loop : i64 (ir.compiler-ir-label "loop")]
+    [header-instrs : ir.CompilerIrInstrSeq
+      (ir.compiler-ir-instr-seq1
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 3)]
+    [_pre : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "pre")
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump loop))))]
+    [_exit : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "exit")
+          (opt.compiler-opt-global-shared-view header-instrs)))]
+    [_loop : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block loop header-instrs))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [_out : ir.CompilerIrBlockList
+      (opt.opt-loop-preheaders-apply
+        (ir.compiler-ir-block-builder-to-list builder)
+        loop
+        (opt.opt-label-add (Nil) (ir.compiler-ir-label "pre"))
+        (ir.compiler-ir-label "loop__preheader"))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (string.contains
+        (& ice)
+        "pass `preheaders` would move instructions out of an array another block shares")
+      "a consuming synthesis refuses a header whose instructions another block shares")))
 
 (define (opt-thread-branch-context-test [verified? : bool]) : unit
   (let

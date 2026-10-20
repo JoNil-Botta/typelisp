@@ -37,6 +37,16 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`compiler_tlci_native_producer_tests.tl` interleaves independent parsed macro
+captures with colliding expression/type and intern IDs under an installed decoy.
+It compares complete generated source and unsupported-body reasons with each
+owner's serial result, resets one source owner, and keeps its peer and the decoy
+unchanged. Result-kind tests distinguish equal IDs in different interners and
+missing sentinels. `compiler_tlci_native_source_owners.tl` runs the same assertions
+through the native corpus at opt0/1/2 on both hosts. Keep full-catalog source
+parity, all native macro entries and existing backend/image gates when changing
+the source-owner boundary.
+
 `backend-call-conventions` checks every IR call form, C and TypeLisp extern
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
 `backend-call-convention-facts-parity` compares all convention-dependent ABI

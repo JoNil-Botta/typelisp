@@ -37717,6 +37717,74 @@ b_keep:
       (= (array-ref bounds 8) 0))))
 
 (test
+  backend-extern-data-object-symbols
+  (for [mode (iterator.range 0 2)]
+    (let
+      [target : backend.CompilerBackendTarget
+        (if (= mode 0)
+          (Linux)
+          (Windows))]
+      [source : String
+        "(extern foreign-data (:symbol \"foreign_exact\") : i64)
+(extern plain : i64)
+(define saved : (MutPtr i64) (unsafe (ptr-addr-of foreign-data)))
+(define local : i64 7)
+(define (main) : i64
+  (begin
+    (set! foreign-data 40)
+    (set! plain 2)
+    (set! local 9)
+    (+ (unsafe (ptr-read saved)) (+ foreign-data (+ plain local)))))"]
+      (match (backend.compiler-backend-emit-source-object-image-for-target
+        source
+        target)
+        [(Ok image)
+          (test.assert-true
+            (and
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipValue)
+                "foreign_exact")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "foreign_exact")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipValue)
+                "plain")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "plain")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "_tl_local"))
+            "direct object reads, stores and addresses share external symbols")
+          (match (object_asm.compiler-object-asm-render
+            (owned_view.compiler-owned-shared-view image))
+            [(Ok text)
+              (test.assert-true
+                (asm-lacks? text "_tl_foreign_data" "_tl_plain")
+                "direct object emission must not invent internal extern symbols")]
+            [(Err _)
+              (test.assert-true false "object assembly rendering failed")])
+          (test.assert-true
+            (match target
+              [(Linux)
+                (match (elf.compiler-object-elf-render image)
+                  [(Ok _) true]
+                  [(Err _) false])]
+              [(Windows)
+                (match (coff.compiler-object-coff-render image)
+                  [(Ok _) true]
+                  [(Err _) false])])
+            "both object formats resolve all external data relocations")]
+        [(Err _)
+          (test.assert-true false "external data object emission failed")]))))
+
+(test
   backend-global-symbol-emission-owner
   (let
     [name : i64 (ci.intern "shared-data")]
@@ -37737,7 +37805,7 @@ b_keep:
           (if (= mode 0)
             "foreign_alpha"
             "foreign_beta")]
-        [_index : backend.CompilerBackendProgramIndex
+        [index : backend.CompilerBackendProgramIndex
           (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
             state
             bases
@@ -37761,6 +37829,51 @@ b_keep:
           (if (= mode 2)
             "_tl_shared_data(%rip)"
             (str_cat.str-cat (clone link) "(%rip)"))]
+        (test.assert-true
+          (asm-ok?
+            (backend.compiler-backend-emit-load-value
+              (regalloc.compiler-reg-assignment-table-empty)
+              (& (ir.CompilerIrValue.GlobalAddr name))
+              "%rax"
+              state)
+            (has expected))
+          "untyped address emission uses the current program's link symbol")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-function-or-global-addr-symbol index name)
+          (if (= mode 2)
+            "_tl_shared_data"
+            (clone link))
+          "typed address emission shares the same symbol authority")
+        (test.assert-true
+          (asm-ok?
+            (backend.compiler-backend-global-value-asm
+              bases
+              ast.AstType.I64
+              (ir.CompilerIrValue.GlobalAddr name)
+              index)
+            (has
+              (if (= mode 2)
+                "_tl_shared_data"
+                (clone link))))
+          "static address initializers resolve external data")
+        (let
+          [parts : object_target.CompilerBackendObjectTargetParts
+            (backend.compiler-backend-object-global-value
+              (object_target.compiler-backend-object-parts-empty)
+              "saved"
+              (& (ast.AstType.I64))
+              (& (ir.CompilerIrValue.GlobalAddr name))
+              index)]
+          [relocs : cobj.CompilerObjectRelocationList
+            (cobj.compiler-object-relocation-builder-finish parts.relocations)]
+          (test.assert-true
+            (cobj.compiler-object-relocation-list-contains?
+              relocs
+              (Abs64)
+              (if (= mode 2)
+                "_tl_shared_data"
+                (clone link)))
+            "static object address relocations use the current link symbol"))
         (test.assert-owned-string-eq
           (backend.compiler-backend-value-global-memory-operand
             state

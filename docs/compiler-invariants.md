@@ -180,10 +180,11 @@ arguments only when an argument can write the storage it was read from: a local
 by the argument operand snapshot rule, a global cell unless every argument only
 reads. Function names and values the callee expression computed are not
 copied, so their direct-call facts survive.
-Scalar global reads, including folds and rematerialized reads, use
-the prepared program's symbol index. That index resolves extern metadata and
-ordinary module symbols identically to unfolded loads, and is replaced at
-each emission boundary and unpublished before the backend owner retires.
+Global reads, stores and address references, including folds, rematerialized
+reads and direct-object relocations, use the prepared program's symbol index.
+That index resolves extern metadata and ordinary module symbols identically
+across these operations, and is replaced at each emission boundary and
+unpublished before the backend owner retires.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.

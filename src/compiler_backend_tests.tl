@@ -23280,6 +23280,222 @@ f:
       (has "    leaq -16(%rbp), %rax\n")
       (lacks "    movq -24(%rbp), %rax\n"))))
 
+(test
+  backend-forwarded-address-coalesced-copies
+  (for [abi (iterator.range 0 2)]
+    (let
+      [target : backend.CompilerBackendTarget
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      (test.assert-true
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target
+            (irt.instrs
+              "%2 = addr_of %1
+                         %3 = mov %2 : (MutPtr i64)
+                         %4 = load %3 : i64
+                         store_ptr %3, 7 : i64")
+            (reg-homes "%2=%r12 %3=%r12")
+            5
+            target)
+          (has "leaq -16(%rbp), %r12"))
+        "a coalesced Mov materializes its forwarded address")
+      (test.assert-true
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target
+            (irt.instrs
+              "%2 = addr_of %1
+                         %3 = cast %2 : (MutPtr i64) to (MutPtr i64)
+                         %4 = load %3 : i64
+                         store_ptr %3, 7 : i64")
+            (reg-homes "%2=%r12 %3=%r12")
+            5
+            target)
+          (has "leaq -16(%rbp), %r12"))
+        "a same-type cast materializes its forwarded address")
+      (test.assert-true
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target
+            (irt.instrs "%3 = mov %2 : i64")
+            (reg-homes "%2=%r12 %3=%r12")
+            4
+            target)
+          (lacks "mov" "lea"))
+        "an initialized same-home copy remains empty"))))
+
+(test
+  backend-forwarded-address-phi-resources
+  (let
+    [program-index
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [state program-index.backend-state]
+    [blocks
+      (irt.blocks
+        "entry:
+                     %2 = addr_of %1
+                     jump join
+                   join:
+                     %3 = phi [%2, entry] : (MutPtr i64)
+                     %4 = phi [%5, entry] : (MutPtr i64)")]
+    [assignments (reg-homes "%2=%rax %3=%rbx %4=%rax %5=%rbx")]
+    [_forward : unit
+      (backend.compiler-backend-addr-of-forwarding-enable!
+        state
+        6
+        (clone blocks)
+        (backend.compiler-backend-function-use-counts 6 (clone blocks)))]
+    [copies
+      (match (backend.compiler-backend-leading-phi-copies-seq
+        state
+        (clone assignments)
+        (irt.instrs
+          "%3 = phi [%2, entry] : (MutPtr i64)
+                     %4 = phi [%5, entry] : (MutPtr i64)")
+        (ir.compiler-ir-label "entry"))
+        [(Ok copies) copies]
+        [(Err _) (backend.compiler-backend-phi-copy-seq-with-capacity 0)])]
+    (test.assert-true
+      (match (backend.compiler-backend-phi-copy-list-decision
+        state
+        (clone assignments)
+        (clone copies))
+        [(CompilerParallelMoveUnblocked dst) (= dst 4)]
+        [_ false])
+      "materialization has no source register, so this is not a swap cycle")
+    (test.assert-true
+      (match (backend.compiler-backend-phi-source-replace-home
+        state
+        (clone assignments)
+        (Value (Var 2))
+        4
+        cabi.compiler-reg-id-r10)
+        [(Value (Var id)) (= id 2)]
+        [_ false])
+      "saving the nominal home must not replace an address with its contents")
+    (test.assert-i64-eq
+      (backend.compiler-backend-phi-copy-list-drop-same-home
+        state
+        (reg-homes "%2=%rax %3=%rax %4=%rcx %5=%rbx")
+        (clone copies)).len
+      2
+      "same-home filtering retains the address materialization")
+    (test.assert-true
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (clone assignments)
+          blocks
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "entry")
+          program-index
+          6)
+        (has "movq %rbx, %rax" "leaq -16(%rbp), %rbx")
+        (lacks "push" "pop"))
+      "emit the real dependency before materializing the address")
+    (backend.compiler-backend-addr-of-forwarding-disable! state)
+    (test.assert-true
+      (match (backend.compiler-backend-phi-copy-list-decision
+        state
+        assignments
+        copies)
+        [(CompilerParallelMoveCycle _) true]
+        [_ false])
+      "initialized homes still form an ordinary swap cycle")))
+
+;; This is final optimizer IR: both branch loads produce 1 and the two phis
+;; add them. The separate source-level stale-load issue does not affect its
+;; expected value of 2.
+(define (compiler-backend-forwarded-address-join-program) : ir.CompilerIrProgram
+  (irt.program
+    "function @join(flag=%0:bool) -> i64 vars 15 {
+     entry:
+       %2 = mov 1 : i64
+       %3 = addr_of %2
+       %4 = mov %3 : (MutPtr i64)
+       branch %0, then, else
+     then:
+       %5 = load %4 : i64
+       %6 = mov %5 : i64
+       %2 = mov 3 : i64
+       jump merge
+     else:
+       %8 = load %4 : i64
+       %9 = mov %8 : i64
+       %2 = mov 3 : i64
+       jump merge
+     merge:
+       %10 = phi [%5, then], [%8, else] : i64
+       %11 = phi [%6, then], [%9, else] : i64
+       %14 = add %11, %10 : i64
+       return %14
+     }
+     function @loop() -> i64 vars 9 {
+     entry:
+       %0 = mov 41 : i64
+       %1 = mov 1 : i64
+       %2 = addr_of %1
+       jump header
+     header:
+       %3 = phi [%2, entry], [%4, body] : (MutPtr i64)
+       %6 = phi [0, entry], [%7, body] : i64
+       %8 = load %3 : i64
+       %5 = lt %6, 1 : i64
+       branch %5, body, exit
+     body:
+       %4 = addr_of %0
+       %7 = add %6, 1 : i64
+       jump header
+     exit:
+       return %8
+     }
+     function @main() -> i64 vars 6 {
+     entry:
+       %0 = call join(false) : i64
+       %1 = call join(true) : i64
+       %2 = eq %0, 2 : i64
+       branch %2, check, fail
+     check:
+       %3 = eq %1, 2 : i64
+       branch %3, loop_check, fail
+     loop_check:
+       %4 = call loop() : i64
+       %5 = eq %4, 41 : i64
+       branch %5, pass, fail
+     pass:
+       return 2
+     fail:
+       return 1
+     }"))
+
+(test
+  backend-forwarded-address-join-storage
+  (for [abi (iterator.range 0 2)]
+    (let
+      [state
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
+      [program (compiler-backend-forwarded-address-join-program)]
+      [spans (ir.compiler-source-spans-empty)]
+      [target : backend.CompilerBackendTarget
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      (backend.compiler-backend-state-set-scalar-registers-enabled! state true)
+      (test.assert-true
+        (asm-ok?
+          (compiler-backend-test-emit-program-with-state
+            state
+            target
+            (& program)
+            (& spans)
+            false)
+          (has "leaq" "movq $1,"))
+        "coalesced branch addresses retain initialized backing storage"))))
+
 (define (compiler-backend-addr-of-register-home-shape-ok?) : bool
   (let
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%2=%r12")]

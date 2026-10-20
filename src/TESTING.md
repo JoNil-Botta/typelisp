@@ -7,7 +7,10 @@ paths. Reset-all/destroy must retire a matching cached root and preserve an
 unrelated one. The minimal fixture also links without requesting `tl_alloc`.
 The compiler arena debug matrix repeats both fixtures with debug registration
 and combined profiling/backtrace instrumentation; poison is enabled by the
-fixture before its reset/recreate checks. The runtime leaf tests retain exact
+fixture before its reset/recreate checks. The fixtures call the guard operation
+on a queried root to select the debug runtime and verify registration; a cfg
+alone does not select its backend leaf. The minimal case also retires that
+protected root. The runtime leaf tests retain exact
 payload pins and verify builtin capture/install without classifying an owner
 address as an allocation size. The safety corpus rejects a safe call to the
 raw extern.

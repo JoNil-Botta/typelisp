@@ -6,6 +6,9 @@
 (extern (tl_alloc [size : u64]) : u64)
 (extern (tl_alloc_aligned [size : u64] [alignment : u64]) : u64)
 (extern (tl_arena_poison_enable) : unit)
+(cfg
+  compiler-arena-debug
+  (extern (tl_arena_debug_protect_never_reset [root : i64]) : unit))
 (cfg windows (extern (growth-get-last-error) : u32 (:symbol "GetLastError")))
 (cfg
   windows
@@ -78,6 +81,8 @@
       (arena.tl_arena_set 0))
     (tl_alloc_aligned (cast 8 : u64) (cast 64 : u64))
     (unless (= (arena.tl_arena_current) home) (return 7))
+    ;; The guard also proves lazy growth registered this root in debug mode.
+    (cfg compiler-arena-debug (tl_arena_debug_protect_never_reset home))
     0))
 
 ;; Exercise root creation through both allocator entry points, then teardown.
@@ -112,6 +117,9 @@
         (unless (!= after-destroy 0) (return 15))
         (tl_alloc_aligned (cast 8 : u64) (cast 64 : u64))
         (unless (= (arena.tl_arena_current) after-destroy) (return 16))
+        (cfg
+          compiler-arena-debug
+          (tl_arena_debug_protect_never_reset after-destroy))
         0))))
 
 (define (run-worker [entry : (-> i64 i64)] [argument : i64]) : i64

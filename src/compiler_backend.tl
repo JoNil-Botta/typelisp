@@ -19245,7 +19245,7 @@
       (compiler-backend-asm-append5
         out
         "    leaq "
-        (compiler-backend-state-user-symbol-id backend-state name)
+        (compiler-backend-state-global-symbol-id backend-state name)
         "(%rip), "
         reg
         "\n")
@@ -22135,13 +22135,14 @@
   [name : i64]) : String
   (if (compiler-backend-index-function-defines? program-index name)
     (compiler-backend-function-symbol-index program-index name)
-    (compiler-backend-state-user-symbol-id program-index.backend-state name)))
+    (compiler-backend-global-symbol-index program-index name)))
 
 (define (compiler-backend-global-symbol-index
   [program-index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (if (compiler-backend-index-extern-references? program-index name)
-    (compiler-backend-index-extern-link-symbol program-index name)
+    (compiler-backend-asm-safe-symbol
+      (compiler-backend-index-extern-link-symbol program-index name))
     (compiler-backend-state-user-symbol-id program-index.backend-state name)))
 
 (define (compiler-backend-unsigned-rel-ty?
@@ -49922,7 +49923,7 @@
       [(Store name value ty)
         (let
           [symbol : String
-            (compiler-backend-state-user-symbol-id ctx.backend-state name)]
+            (compiler-backend-global-symbol-index ctx.program-index name)]
           [addr : String (str_cat.str-cat symbol "(%rip)" "")]
           [inline-size : i64
             (compiler-backend-inline-aggregate-global-size
@@ -49959,20 +49960,7 @@
                     ctx.program-index
                     (compiler-backend-global-shared-view ty)
                     1)]
-                [sym0 : String
-                  (str_cat.str-cat
-                    (compiler-backend-state-user-symbol-id
-                      ctx.backend-state
-                      name)
-                    "(%rip)"
-                    "")]
-                [sym1 : String
-                  (str_cat.str-cat
-                    (compiler-backend-state-user-symbol-id
-                      ctx.backend-state
-                      name)
-                    "+8(%rip)"
-                    "")]
+                [sym1 : String (str_cat.str-cat symbol "+8(%rip)" "")]
                 (match (compiler-backend-emit-group-load
                   ctx.type-segment-bases
                   ctx.assignments
@@ -49989,7 +49977,7 @@
                         load
                         (compiler-backend-emit-group-word-move
                           reg0
-                          sym0
+                          addr
                           (compiler-backend-group-word-sse?
                             ctx.type-segment-bases
                             ctx.program-index
@@ -75390,9 +75378,7 @@
       (Ok
         (str_cat.str-cat
           "    .quad "
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)
+          (compiler-backend-function-or-global-addr-symbol program-index name)
           "\n"))]
     [(Function name)
       (Ok
@@ -78208,9 +78194,7 @@ tl_shared_object_init:
     [(Global name)
       (let
         [symbol : String
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)]
+          (compiler-backend-global-symbol-index program-index name)]
         ;; IAG-1: an inline aggregate global's value is its own address.
         [inline? : bool
           (compiler-backend-inline-aggregate-global?
@@ -78230,9 +78214,7 @@ tl_shared_object_init:
     [(GlobalAddr name)
       (let
         [symbol : String
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)]
+          (compiler-backend-function-or-global-addr-symbol program-index name)]
         (object_target.compiler-backend-object-add-text
           (object_target.compiler-backend-object-add-text-relocation
             parts
@@ -80094,9 +80076,7 @@ tl_shared_object_init:
     [(Store name value ty)
       (let
         [symbol : String
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)]
+          (compiler-backend-global-symbol-index program-index name)]
         [inline-size : i64
           (compiler-backend-inline-aggregate-global-size
             program-index.backend-state
@@ -80806,9 +80786,7 @@ tl_shared_object_init:
     [(or (Global name) (GlobalAddr name))
       (let
         [symbol : String
-          (compiler-backend-state-user-symbol-id
-            program-index.backend-state
-            name)]
+          (compiler-backend-function-or-global-addr-symbol program-index name)]
         (object_target.compiler-backend-object-add-data
           (object_target.compiler-backend-object-add-data-relocation
             parts

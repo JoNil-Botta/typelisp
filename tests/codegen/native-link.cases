@@ -384,6 +384,18 @@ test -x "{{dir}}/string-record-extent"
 exec "{{dir}}/string-record-extent"
 exit 42
 
+case direct-object-extern-data
+opt 0 1 2
+sh cc -c -ffreestanding -fno-pie "{{root}}/benchmarks/extern_data_memory/baseline.c" -o "{{dir}}/foreign.o"
+sh chmod +x "{{work}}/no-assembler-bin/as"
+exec env PATH="{{work}}/no-assembler-bin:$PATH" TYPELISP_LINUX_DIRECT_OBJECT=1 "{{compiler}}" build --direct "{{root}}/tests/integration/extern_data_places_direct.tl" --target linux-x86_64 --backend-mode scalar --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" --link-arg "{{dir}}/foreign.o" -o "{{dir}}/main"
+stderr empty
+stdout contains Built {{dir}}/main
+exec "{{dir}}/main"
+exit 42
+stdout empty
+stderr empty
+
 case direct-object-fallback
 file ordinary-call-abi.tl
 (define (seventh

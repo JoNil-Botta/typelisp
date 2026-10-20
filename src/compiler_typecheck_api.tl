@@ -155,6 +155,10 @@
 (define (typecheck-compiler-request-checked [request : TypecheckRequest]) : tc_core.ResultCompilerTypecheckChecked
   (let
     [observer-job : tc_core.TcJobState request.job-state]
+    [_parser-owner : unit
+      (tc_core.tc-job-state-set-parser-control!
+        observer-job
+        (parser.compiler-parse-control-from-cfg request.cfgs))]
     [previous-observer : tc_core.TcSemanticObserver
       (tc_core.tc-job-state-semantic-observer observer-job)]
     [_observer-installed : unit
@@ -324,6 +328,10 @@
                   [(Err diag)
                     (Err (cdiag.compiler-diagnostic-list-box-single diag))]))))])]
     (tc_core.tc-job-state-set-semantic-observer! observer-job previous-observer)
+    ;; Only query-local views refer to the positional index. Later lowering
+    ;; queries rebuild it from their retained program in the same job.
+    (tc_core.tc-module-decl-index-release!
+      (tc_core.tc-job-state-macro-state observer-job))
     checked-result))
 
 (define (typecheck-compiler-program-with-paths-checked-cache

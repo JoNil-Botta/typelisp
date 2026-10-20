@@ -3197,6 +3197,13 @@ ordinary TypeLisp functions and closure descriptors use a different runtime
 representation. Direct extern functions still use their function-head syntax;
 their code-pointer results must name `CFunc` explicitly.
 
+External data is a writable storage place: `(set! name value)` stores a value
+of the declared type, and `(unsafe (ptr-addr-of name))` returns a `(MutPtr T)`
+to its storage for declared type `T`. Reads, writes and addresses all refer to
+the same external linker symbol, including any `:symbol` override. The native
+declaration must provide storage with the declared layout and permit any writes
+performed by the program; TypeLisp does not infer C `const` qualification.
+
 An explicit C function-pointer type is `(CFunc mode (-> argument-types... result-type))`.
 Modes are `nullable`, `non-null`, `unsafe-nullable`, and `unsafe-non-null`.
 These values are one-word C code addresses, distinct from ordinary function
@@ -7607,6 +7614,7 @@ input slice's lifetime. The `ffi.c-string-*` compatibility wrappers borrow their
   read: dereferencing the resulting raw pointer to copy a non-Copy handle is an
   explicit unsafe ownership/aliasing operation whose validity is entirely the
   caller's responsibility.
+- An external data storage slot, under the `extern` storage contract above.
 - A struct field path rooted in addressable local, parameter, or ordinary
   global storage, written with dotted projection such as `place.field`.
 - A fixed-array element path rooted in addressable storage, written as
@@ -7616,8 +7624,8 @@ input slice's lifetime. The `ffi.c-string-*` compatibility wrappers borrow their
   bounds policy as fixed-array element access before the pointer is returned.
 
 The operation's result type is `(MutPtr T)` for the selected local, parameter,
-or ordinary global storage slot of type `T`. V1 does not define projections
-through a reference root: if a slot `r` has type `(& r T)` or `(&mut r T)`,
+ordinary global, or external data storage slot of type `T`. V1 does not define
+projections through a reference root: if a slot `r` has type `(& r T)` or `(&mut r T)`,
 `(ptr-addr-of r)` addresses the reference value and is valid, while
 `(ptr-addr-of r.field)` and `(ptr-addr-of (array-ref r i))` are rejected.
 
@@ -9755,7 +9763,7 @@ Common Command Options:
   --stdlib-root <dir>            Search root for stdlib/... imports
   --opt-level <0|1|2>            Select optimizer level
   --debug, -g                    Emit source line and unwind debug information
-  --backtrace                    Emit fatal-backtrace metadata (implies --debug)
+  --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
   --cfg <name>                   Enable a compile-time cfg predicate name
 
 Environment:
@@ -9767,10 +9775,10 @@ Selected Command Forms:
   typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic | --no-entry]
   typelisp compile --batch <input-output-list> [--no-entry]
   typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64
-  typelisp build <file.tl> [-o <exe>]
-  typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
+  typelisp build <file.tl> [-o <exe>] [--cfg <name>...]
+  typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [--cfg <name>...]
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
-  typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
+  typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [--cfg <name>...] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
   typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case]
   typelisp test [<file.tl>] [--check]
@@ -9779,6 +9787,15 @@ Selected Command Forms:
 
 `typelisp <command> --help` is the source of truth for command-specific usage
 forms. `--version` prints the compiler build git hash and date.
+
+Shared compile options use the same value validation and diagnostic wording
+wherever a command accepts them. `--target`, `--backend-mode`, `--opt-level`
+and debug selection are singletons; `--debug`, `-g` and `--backtrace` select
+the same option, so combining them is a duplicate. `--cfg` and `--stdlib-root`
+are repeatable and require nonempty values. Source `build` and package
+`build`/`run` carry cfg names through preflight, dependency workers and compilation.
+`fmt` validates target/cfg/root arguments but retains every CST branch and
+does not load imports. `lsp` rejects unrecognized command-line arguments.
 
 `compile -o <file>` writes assembly or IR to the given path, `--emit-ir`
 emits the lowered and optimized IR instead of assembly, `--pic` emits

@@ -37764,10 +37764,96 @@ b_keep:
       (= (array-ref bounds 8) 0))))
 
 (test
+  backend-extern-data-object-symbols
+  (for [mode (iterator.range 0 6)]
+    (let
+      [target : backend.CompilerBackendTarget
+        (if (< mode 3)
+          (Linux)
+          (Windows))]
+      [source : String
+        "(extern foreign-data (:symbol \"foreign-exact\") : i64)
+(extern plain : i64)
+(extern (touch) : i64)
+(define saved : (MutPtr i64) (unsafe (ptr-addr-of foreign-data)))
+(define local : i64 7)
+(define (main) : i64
+  (begin
+    (set! foreign-data 40)
+    (set! plain 2)
+    (set! local 9)
+    (touch)
+    (+ (unsafe (ptr-read saved)) (+ foreign-data (+ plain local)))))"]
+      [emitted : backend.ResultCompilerBackendObject
+        (match (backend.compiler-backend-lower-source-for-target source target)
+          [(Err diag) (Err diag)]
+          [(Ok program spans lower-owner)
+            (let
+              [result : backend.ResultCompilerBackendObject
+                (match (opt.optimize-program-with-spans-and-level
+                  (& program)
+                  spans
+                  (% mode 3))
+                  [(Program optimized optimized-spans)
+                    (backend.compiler-backend-emit-program-object-image-target
+                      optimized
+                      target
+                      optimized-spans
+                      true)])]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas lower-owner))
+              result)])]
+      (match emitted
+        [(Ok image)
+          (test.assert-true
+            (and
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipValue)
+                "foreign_exact")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "foreign_exact")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipValue)
+                "plain")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "plain")
+              (cobj.compiler-object-relocation-list-contains?
+                image.relocations
+                (RipAddress)
+                "_tl_local"))
+            "direct object reads, stores and addresses share external symbols")
+          (test.assert-true
+            (match target
+              [(Linux)
+                (match (elf.compiler-object-elf-render image)
+                  [(Ok _) true]
+                  [(Err _) false])]
+              [(Windows)
+                (match (coff.compiler-object-coff-render image)
+                  [(Ok _) true]
+                  [(Err _) false])])
+            "both object formats resolve all external data relocations")
+          (match (object_asm.compiler-object-asm-render image)
+            [(Ok text)
+              (test.assert-true
+                (asm-lacks? text "_tl_foreign_data" "_tl_plain")
+                "direct object emission must not invent internal extern symbols")]
+            [(Err _)
+              (test.assert-true false "object assembly rendering failed")])]
+        [(Err _)
+          (test.assert-true false "external data object emission failed")]))))
+
+(test
   backend-global-symbol-emission-owner
   (let
     [name : i64 (ci.intern "shared-data")]
-    [alpha : i64 (ci.intern "foreign_alpha")]
+    [alpha : i64 (ci.intern "foreign-alpha?")]
     [beta : i64 (ci.intern "foreign_beta")]
     [state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
@@ -37782,9 +37868,9 @@ b_keep:
       (let
         [link : String
           (if (= mode 0)
-            "foreign_alpha"
+            "foreign_alpha_question"
             "foreign_beta")]
-        [_index : backend.CompilerBackendProgramIndex
+        [index : backend.CompilerBackendProgramIndex
           (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
             state
             bases
@@ -37808,6 +37894,51 @@ b_keep:
           (if (= mode 2)
             "_tl_shared_data(%rip)"
             (str_cat.str-cat (clone link) "(%rip)"))]
+        (test.assert-true
+          (asm-ok?
+            (backend.compiler-backend-emit-load-value
+              (regalloc.compiler-reg-assignment-table-empty)
+              (& (ir.CompilerIrValue.GlobalAddr name))
+              "%rax"
+              state)
+            (has expected))
+          "untyped address emission uses the current program's link symbol")
+        (test.assert-owned-string-eq
+          (backend.compiler-backend-function-or-global-addr-symbol index name)
+          (if (= mode 2)
+            "_tl_shared_data"
+            (clone link))
+          "typed address emission shares the same symbol authority")
+        (test.assert-true
+          (asm-ok?
+            (backend.compiler-backend-global-value-asm
+              bases
+              ast.AstType.I64
+              (ir.CompilerIrValue.GlobalAddr name)
+              index)
+            (has
+              (if (= mode 2)
+                "_tl_shared_data"
+                (clone link))))
+          "static address initializers resolve external data")
+        (let
+          [parts : object_target.CompilerBackendObjectTargetParts
+            (backend.compiler-backend-object-global-value
+              (object_target.compiler-backend-object-parts-empty)
+              "saved"
+              (& (ast.AstType.I64))
+              (& (ir.CompilerIrValue.GlobalAddr name))
+              index)]
+          [relocs : cobj.CompilerObjectRelocationList
+            (cobj.compiler-object-relocation-builder-finish parts.relocations)]
+          (test.assert-true
+            (cobj.compiler-object-relocation-list-contains?
+              relocs
+              (Abs64)
+              (if (= mode 2)
+                "_tl_shared_data"
+                (clone link)))
+            "static object address relocations use the current link symbol"))
         (test.assert-owned-string-eq
           (backend.compiler-backend-value-global-memory-operand
             state

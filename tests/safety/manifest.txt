@@ -1498,6 +1498,8 @@ function_set_same_type_reject|check-fail|tests/safety/function_set_same_type_rej
 function_set_mismatch_reject|check-fail|tests/safety/function_set_mismatch_reject.tl|-|typecheck: cannot assign to function
 function_set_rhs_missing_reject|check-fail|tests/safety/function_set_rhs_missing_reject.tl|-|typecheck: cannot assign to function
 function_set_extern_reject|check-fail|tests/safety/function_set_extern_reject.tl|-|typecheck: cannot assign to function
+extern_data_address_safe_reject|check-fail|tests/safety/extern_data_address_safe_reject.tl|-|ptr-addr-of requires unsafe context
+extern_data_store_type_reject|check-fail|tests/safety/extern_data_store_type_reject.tl|-|type mismatch
 function_set_unsafe_reject|check-fail|tests/safety/function_set_unsafe_reject.tl|-|typecheck: cannot assign to function
 function_set_alias_reject|check-fail|tests/safety/function_set_alias_reject.tl|-|typecheck: cannot assign to function
 function_set_canonical_reject|check-fail|tests/safety/function_set_canonical_reject.tl|-|typecheck: cannot assign to function

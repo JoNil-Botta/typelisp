@@ -206,21 +206,30 @@
           (compiler_backend.compiler-backend-state-set-advisory-sink!
             backend-state
             advisory-sink))
-        (CompilerDriverState
-          expr-cell
-          type-cell
-          (owned_view.compiler-owned-shared-view intern-cell)
-          (compiler_parse_core.compiler-parse-state-new-with-intern-state
-            (owned_view.compiler-owned-array-element-shared-view intern-cell 0))
-          builtin-cell
-          lower-cell
-          load-session
-          typecheck-state
-          backend-state
-          (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
-          pool-arena-cell
-          surface-arena
-          profile-state)])))
+        (let
+          [parser-state : compiler_parse_core.CompilerParseState
+            (compiler_parse_core.compiler-parse-state-new-with-intern-state
+              (owned_view.compiler-owned-array-element-shared-view
+                intern-cell
+                0))]
+          (compiler_typecheck_core.tc-job-state-set-parser-control!
+            typecheck-state
+            (compiler_parse_core.compiler-parse-state-control-addr
+              (& parser-state)))
+          (CompilerDriverState
+            expr-cell
+            type-cell
+            (owned_view.compiler-owned-shared-view intern-cell)
+            parser-state
+            builtin-cell
+            lower-cell
+            load-session
+            typecheck-state
+            backend-state
+            (compiler_typecheck_core.tc-prefix-snapshot-cache-state-new)
+            pool-arena-cell
+            surface-arena
+            profile-state))])))
 
 ;; State-owned pools allocate fixed-size segments on demand. One expression
 ;; segment covers tiny programs while self-host-sized compiles append segments
@@ -499,6 +508,21 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "semantic-origin-storage"
+        (let
+          [control : i64
+            (if (= typecheck-state.address 0)
+              0
+              (compiler_typecheck_core.tc-job-state-parser-control
+                typecheck-state))]
+          (if (= control 0)
+            0
+            (compiler_parse_core.compiler-parse-origin-word
+              (compiler_parse_core.compiler-parse-origin-storage control)
+              0))))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "typecheck-aggregate-layout-cache"
         (compiler_typecheck_core.tc-agg-layout-cache-storage-arena-handle-value-for-job
           typecheck-state))
@@ -518,6 +542,39 @@
           0
           (compiler_lower.compiler-lower-arena-state-ir-arena
             (& (compiler_lower.compiler-lower-state-arenas lower-state)))))
+      ;; A chunked lowered owner's bodies live in its live chunks, listed in
+      ;; its chunk directory's own arena (#9059).
+      (unless
+        (= lower-state.address 0)
+        (let
+          [arenas : compiler_lower.CompilerLowerArenaState
+            (compiler_lower.compiler-lower-state-arenas lower-state)]
+          [directory-arena : i64
+            (compiler_lower.compiler-lower-ir-chunk-directory-arena (& arenas))]
+          [count : i64
+            (compiler_lower.compiler-lower-ir-chunk-count (& arenas))]
+          [chunk : i64 0]
+          [_directory-row : i64
+            (if (= directory-arena 0)
+              0
+              (allocation_profile.compiler-allocation-profile-control!
+                2
+                phase
+                "lower-ir-chunks"
+                directory-arena))]
+          (while (< chunk count)
+            (let
+              [handle : i64
+                (compiler_lower.compiler-lower-ir-chunk-handle (& arenas) chunk)]
+              [_chunk-row : i64
+                (if (= handle 0)
+                  0
+                  (allocation_profile.compiler-allocation-profile-control!
+                    2
+                    phase
+                    "lower-ir-chunk"
+                    handle))]
+              (set! chunk (+ chunk 1))))))
       unit)))
 
 ;; Command start/complete have no selected lower job. Job phase snapshots
@@ -796,8 +853,12 @@
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
     unit
-    (ci.intern-compat-state-persistent-arena-reset!
-      (&mut (array-ref state.intern-state 0)))))
+    (begin
+      (compiler_parse_core.compiler-parse-origin-reset!
+        (compiler_parse_core.compiler-parse-array-data-addr
+          state.parser-state.semantic-origins))
+      (ci.intern-compat-state-persistent-arena-reset!
+        (&mut (array-ref state.intern-state 0))))))
 
 ;; The state's owned builtin/CTFE id snapshot.
 (define (compiler-driver-state-owned-builtins [state : CompilerDriverState]) : cbi.CompilerBuiltinIdsState
@@ -1356,10 +1417,22 @@
 
 (cfg
   compile-profile
+  (define (compiler-driver-profile-origin-bytes [control : i64]) : i64
+    (+
+      (compiler-driver-profile-arena-bytes
+        (compiler_load.compiler-load-reader-node-pool-arena-handle))
+      (compiler-driver-profile-arena-bytes
+        (compiler_parse_core.compiler-parse-origin-word
+          (compiler_parse_core.compiler-parse-origin-storage control)
+          0)))))
+
+(cfg
+  compile-profile
   (define (compiler-driver-profile-start-load-lifetime!
     [state : profile_state.CompilerProfileState]
     [pools : compiler_ast_types.AstNodePoolContext]
-    [surface-arena : i64]) : unit
+    [surface-arena : i64]
+    [parser-control : i64]) : unit
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-input-bytes-metric
@@ -1384,8 +1457,7 @@
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-origin-start-metric
-      (compiler-driver-profile-arena-bytes
-        (compiler_load.compiler-load-reader-node-pool-arena-handle)))
+      (compiler-driver-profile-origin-bytes parser-control))
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-pool-base-start-metric
@@ -1424,7 +1496,8 @@
     [state : profile_state.CompilerProfileState]
     [pools : compiler_ast_types.AstNodePoolContext]
     [surface-arena : i64]
-    [boundary : String]) : unit
+    [boundary : String]
+    [parser-control : i64]) : unit
     (let
       [cumulative-alloc : i64
         (-
@@ -1457,11 +1530,12 @@
             state
             compiler-driver-load-profile-token-start-metric))]
       [origins : i64
-        (compiler-driver-profile-owner-delta
-          (compiler_load.compiler-load-reader-node-pool-arena-handle)
-          (compiler-driver-profile-value
-            state
-            compiler-driver-load-profile-origin-start-metric))]
+        (compiler-driver-profile-nonnegative
+          (-
+            (compiler-driver-profile-origin-bytes parser-control)
+            (compiler-driver-profile-value
+              state
+              compiler-driver-load-profile-origin-start-metric)))]
       [pool-base : i64
         (compiler-driver-profile-owner-delta
           (compiler_ast_types.ast-node-pool-context-base-arena pools)
@@ -2085,6 +2159,64 @@
     2
     (compiler_lower.compiler-lower-state-from-address owner-address)))
 
+;; The level-2 inline walk has placed every original of lowered-IR chunk CHUNK
+;; of this exact owner; release that chunk (#9059).
+(define (compiler-driver-release-lowered-input-chunk!
+  [owner-address : i64]
+  [chunk : i64]) : unit
+  (compiler_lower.compiler-lower-ir-chunk-release!
+    (&
+      (compiler_lower.compiler-lower-state-arenas
+        (compiler_lower.compiler-lower-state-from-address owner-address)))
+    chunk))
+
+;; The lowered-IR chunk byte budget of a progressive level-2 lowering.
+(define compiler-driver-lowered-ir-chunk-bytes : i64
+  4194304)
+
+;; The lowering request's chunk policy, set on the owner before each lowering:
+;; only level 2 retires lowered IR progressively, so only it escapes bodies
+;; into chunks; every other level keeps the whole-owner arena.
+(define (compiler-driver-lower-state-configure-input!
+  [lower-state : compiler_lower.CompilerLowerState]
+  [opt-level : i64]) : unit
+  (compiler_lower.compiler-lower-arena-state-set-ir-chunk-budget!
+    (& (compiler_lower.compiler-lower-state-arenas lower-state))
+    (if (= opt-level 2)
+      compiler-driver-lowered-ir-chunk-bytes
+      0)))
+
+;; The optimizer's authority over this exact lowered owner: whole retirement
+;; after the walk and per-chunk release during it.
+(define (compiler-driver-lowered-input-retirement
+  [lower-state : compiler_lower.CompilerLowerState]) : compiler_optimize.OptInputRetirement
+  (compiler_optimize.OptInputRetirement.Retire
+    lower-state.address
+    compiler-driver-retire-lowered-input!
+    compiler-driver-release-lowered-input-chunk!))
+
+;: The lowered owner's chunk bounds as plain lower-sequence positions, one more
+;; than the chunk count; empty on the whole-owner path.
+(define (compiler-driver-lowered-input-chunk-bounds
+  [lower-state : compiler_lower.CompilerLowerState]) : (__tl_dyn-array i64)
+  (let
+    [arenas : compiler_lower.CompilerLowerArenaState
+      (compiler_lower.compiler-lower-state-arenas lower-state)]
+    [count : i64 (compiler_lower.compiler-lower-ir-chunk-count (& arenas))]
+    [bounds : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (= count 0)
+          0
+          (+ count 1)))]
+    [chunk : i64 0]
+    (while (and (> count 0) (<= chunk count))
+      (set!
+        (array-ref bounds chunk)
+        (compiler_lower.compiler-lower-ir-chunk-start (& arenas) chunk))
+      (set! chunk (+ chunk 1)))
+    bounds))
+
 ;; Once lowering has produced IR, optimizer/backend no longer consult the full
 ;; typecheck/macro CTFE caches. Drop them before the backend's large assembly
 ;; buffers are allocated, but retain the compact definition-site alias table:
@@ -2173,9 +2305,8 @@
           profile-state
           true
           representations
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler-driver-retire-lowered-input!)))
+          (compiler-driver-lowered-input-retirement lower-state)
+          (compiler-driver-lowered-input-chunk-bounds lower-state)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2279,9 +2410,8 @@
           profile-state
           true
           representations
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler-driver-retire-lowered-input!)))
+          (compiler-driver-lowered-input-retirement lower-state)
+          (compiler-driver-lowered-input-chunk-bounds lower-state)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2401,9 +2531,8 @@
           profile-state
           true
           representations
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler-driver-retire-lowered-input!)))
+          (compiler-driver-lowered-input-retirement lower-state)
+          (compiler-driver-lowered-input-chunk-bounds lower-state)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2568,9 +2697,8 @@
           profile-state
           true
           representations
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler-driver-retire-lowered-input!)))
+          (compiler-driver-lowered-input-retirement lower-state)
+          (compiler-driver-lowered-input-chunk-bounds lower-state)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2778,9 +2906,8 @@
           profile-state
           true
           representations
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler-driver-retire-lowered-input!)))
+          (compiler-driver-lowered-input-retirement lower-state)
+          (compiler-driver-lowered-input-chunk-bounds lower-state)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -4246,8 +4373,13 @@
   [stdlib-roots : svec.Vec]
   [mode : compiler_backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
-  [retire-after-lower? : bool]) : ResultCompilerDriverLowered
+  [retire-after-lower? : bool]
+  [opt-level : i64]) : ResultCompilerDriverLowered
   (let
+    [_configure-input : unit
+      (compiler-driver-lower-state-configure-input!
+        (compiler-driver-state-owned-lower-state state)
+        opt-level)]
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler-driver-state-pool-context state)]
     [release-source-pools? : bool
@@ -4273,7 +4405,9 @@
         (compiler-driver-profile-start-load-lifetime!
           (compiler-driver-state-profile state)
           pools
-          (compiler-driver-state-surface-arena state))
+          (compiler-driver-state-surface-arena state)
+          (compiler_parse_core.compiler-parse-state-control-addr
+            (& state.parser-state)))
         unit)]
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
@@ -4295,7 +4429,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4332,7 +4468,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.handoff"))
+              "load.handoff"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase
@@ -4482,7 +4620,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4501,8 +4641,13 @@
   [stdlib-roots : svec.Vec]
   [mode : compiler_backend.CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]
-  [retire-after-lower? : bool]) : ResultCompilerDriverLowered
+  [retire-after-lower? : bool]
+  [opt-level : i64]) : ResultCompilerDriverLowered
   (let
+    [_configure-input : unit
+      (compiler-driver-lower-state-configure-input!
+        (compiler-driver-state-owned-lower-state state)
+        opt-level)]
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler-driver-state-pool-context state)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
@@ -4512,7 +4657,9 @@
         (compiler-driver-profile-start-load-lifetime!
           (compiler-driver-state-profile state)
           pools
-          (compiler-driver-state-surface-arena state))
+          (compiler-driver-state-surface-arena state)
+          (compiler_parse_core.compiler-parse-state-control-addr
+            (& state.parser-state)))
         unit)]
     [parser-state : compiler_parse_core.CompilerParseState
       (owned_view.compiler-owned-shared-view state.parser-state)]
@@ -4532,7 +4679,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4559,7 +4708,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.handoff"))
+              "load.handoff"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-start-phase
@@ -4673,7 +4824,9 @@
               (compiler-driver-state-profile state)
               pools
               (compiler-driver-state-surface-arena state)
-              "load.complete"))
+              "load.complete"
+              (compiler_parse_core.compiler-parse-state-control-addr
+                (& state.parser-state))))
           (cfg
             compile-profile
             (compiler-driver-profile-finish-phase
@@ -4687,7 +4840,8 @@
   [target : compiler_backend.CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
   [mode : compiler_backend.CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]) : ResultCompilerDriverLowered
   (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
     state
     input-path
@@ -4695,7 +4849,8 @@
     stdlib-roots
     mode
     cfgs
-    false))
+    false
+    opt-level))
 
 (define (compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
@@ -4784,7 +4939,8 @@
           stdlib-roots
           mode
           (compiler-driver-state-target-cfgs state target cfgs)
-          (>= opt-level 1))]
+          (>= opt-level 1)
+          opt-level)]
       ;; No builtin reinstall here: this state's parse already derived the
       ;; installed table, and nothing between parse and emission invalidates
       ;; it. Builtin id values are spelling-derived and identical across
@@ -4821,7 +4977,8 @@
           stdlib-roots
           mode
           (compiler-driver-state-target-cfgs state target cfgs)
-          (>= opt-level 1))]
+          (>= opt-level 1)
+          opt-level)]
       ;; No builtin reinstall here; see the normal emit wrapper above.
       (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
         input-path
@@ -5006,10 +5163,15 @@
   [mode : compiler_backend.CompilerBackendMode]
   [decls : compiler_ast_types.AstDeclList]
   [paths : compiler_ast_types.AstDeclPathList]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]
+  [opt-level : i64]) : ResultCompilerDriverLowered
   (let
     [state : CompilerDriverState
       (owned_view.compiler-owned-shared-view scope.state)]
+    [_configure-input : unit
+      (compiler-driver-lower-state-configure-input!
+        (compiler-driver-state-owned-lower-state state)
+        opt-level)]
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler_ast_types.ast-node-pool-context-capture-active)]
     [_capture : unit
@@ -5143,6 +5305,7 @@
 (define (compiler-driver-load-package-paths-with-runtime
   [input-path : String]
   [target : compiler_backend.CompilerBackendTarget]
+  [cfg-names : (& cfg-names svec.Vec)]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : compiler_load.CompilerPkgDeps]
@@ -5180,13 +5343,15 @@
           (compiler_typecheck_core.compiler-typecheck-reset-intern-owned-state!)]
         [_reset-analysis : unit (compiler-driver-reset-analysis-state!)]
         [result : ResultCompilerDriverPackagePaths
-          (match (compiler-driver-load-package-file-with-runtime
+          (match (compiler-driver-load-package-file-with-runtime-cfg
             input-path
-            target
             stdlib-roots
             manifest-dir
             deps
-            emit-entry)
+            emit-entry
+            (compiler-driver-target-cfgs
+              target
+              (target_cfg.compiler-target-user-cfgs cfg-names)))
             [(Ok _ paths _ _)
               (in-arena
                 home
@@ -5377,9 +5542,8 @@
           profile-state
           false
           (compiler_ir_types.compiler-ir-representation-index-empty)
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler-driver-retire-lowered-input!)))
+          (compiler-driver-lowered-input-retirement lower-state)
+          (compiler-driver-lowered-input-chunk-bounds lower-state)))
         [(Program optimized _)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
@@ -5472,7 +5636,8 @@
       target
       stdlib-roots
       mode
-      (compiler-driver-state-target-cfgs state target cfgs))
+      (compiler-driver-state-target-cfgs state target cfgs)
+      opt-level)
     opt-level))
 
 (define (compiler-driver-ir-text-result
@@ -5537,9 +5702,8 @@
           profile-state
           false
           (compiler_ir_types.compiler-ir-representation-index-empty)
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler-driver-retire-lowered-input!)))
+          (compiler-driver-lowered-input-retirement lower-state)
+          (compiler-driver-lowered-input-chunk-bounds lower-state)))
         [(Program optimized _)
           (compiler-driver-release-lowered-ir! opt-level lower-state)
           (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
@@ -5623,7 +5787,8 @@
       target
       stdlib-roots
       mode
-      (compiler-driver-state-target-cfgs state target cfgs))
+      (compiler-driver-state-target-cfgs state target cfgs)
+      opt-level)
     opt-level
     dump-pass))
 

@@ -10,7 +10,6 @@
 (import stdlib.vector)
 (import (vector.vector String) as fmt_svec)
 (import cli_option_core as cli_option)
-(import compiler_target_cfg_core as target_cfg)
 (import format_tokens as tokens)
 (import format_rules)
 (import unified_diff_core as unified_diff)
@@ -61,6 +60,8 @@
 
 (define (fmt-config-from [start : i64] [count : i64]) : ResultFmtConfig
   (let
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (Linux) 1)]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "fmt"
@@ -71,27 +72,10 @@
     [paths : fmt_svec.Vec (fmt_svec.new)]
     [manifest-path : String ""]
     [has-manifest : bool false]
-    [has-target : bool false]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--target")
-          (if has-target
-            (cli_option.cli-args-fail!
-              (&mut args)
-              "fmt: --target was provided more than once")
-            (match (target_cfg.compiler-target-cfg-parse
-              (cli_option.cli-args-value (& args)))
-              [(Ok _) (set! has-target true)]
-              [(Err message)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (str_cat.str-cat "fmt: " message))]))]
-        ;; Formatting is CST-based and intentionally retains every cfg
-        ;; branch; these options are accepted for source-tool CLI parity.
-        [(or
-            (string.eq args.name "--stdlib-root")
-            (string.eq args.name "--cfg"))
-          unit]
+        ;; Formatting retains every CST branch and does not load imports.
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--check") (set! check true)]
         [(string.eq args.name "--manifest-path")
           (if has-manifest

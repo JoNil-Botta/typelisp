@@ -325,7 +325,13 @@
       (lsp-transcript-run "Content-Length: 5\r\n\r\n{}")]
     [malformed : lsp.LspTranscriptResult
       (lsp-transcript-run (lsp-transcript-frame "{]"))]
+    [scalar : lsp.LspTranscriptResult
+      (lsp-transcript-run (lsp-transcript-frame "42"))]
+    [array : lsp.LspTranscriptResult
+      (lsp-transcript-run (lsp-transcript-frame "[]"))]
     [parse-code : String "\"code\":-32700"]
+    [request-code : String "\"code\":-32600"]
+    [null-id : String "\"id\":null"]
     (and
       (= clean.status 0)
       (string.eq clean.stdout "")
@@ -344,7 +350,15 @@
       (lsp-transcript-result-contains? truncated parse-code)
       (= malformed.status 0)
       (string.eq malformed.stderr "")
-      (lsp-transcript-result-contains? malformed parse-code))))
+      (lsp-transcript-result-contains? malformed parse-code)
+      (= scalar.status 0)
+      (string.eq scalar.stderr "")
+      (lsp-transcript-result-contains? scalar request-code)
+      (lsp-transcript-result-contains? scalar null-id)
+      (= array.status 0)
+      (string.eq array.stderr "")
+      (lsp-transcript-result-contains? array request-code)
+      (lsp-transcript-result-contains? array null-id))))
 
 (define (lsp-transcript-order-and-id-smoke-ok?) : bool
   (let
@@ -1754,7 +1768,8 @@
     [capability : String "\"semanticTokensProvider\""]
     [found : String "\"id\":83,\"result\":{\"data\":["]
     [missing : String "\"id\":85,\"result\":null"]
-    [malformed : String "\"id\":84,\"result\":null"]
+    [malformed : String
+      "\"id\":84,\"error\":{\"code\":-32602,\"message\":\"params must be an object\"}"]
     (and
       (= result.status 0)
       (lsp-transcript-result-contains? result capability)

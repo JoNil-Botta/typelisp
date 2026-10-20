@@ -1,0 +1,6 @@
+fixture	producer	sha256
+gnu.in	GNU ar + ranlib 2.47; LLVM ar 23.1.3 identical	59f456c8c497c3f62acd173d43b9c80013677792293447ed75ffa0d79e1de4c0
+llvm-gnu64.in	LLVM ar 23.1.3; SYM64_THRESHOLD=0	b16d514ac43b0437b72ae4beb5b3aad5b9d41894d1491766e452fd3a6903a78d
+llvm-bsd.in	LLVM ar + ranlib 23.1.3	16fd6428fd07b71c054391f086156ba5704a5810a38563f6aab15dc5a1854f70
+no-index.in	LLVM ar 23.1.3; S modifier	c4fa3f6430cf96719d00d166a934d005c9393a729afc81e02ba3431d0ad2fd64
+bsd-sorted.in	derived from llvm-bsd.in; sorted index and padded extended name	df63e34c193b2dd5a8c6486830a8982e4348086545ca0164ebee025ae9ff6448

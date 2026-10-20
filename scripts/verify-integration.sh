@@ -2459,7 +2459,7 @@ EOF
         exit 1
     fi
     assert_empty_file "$_driver_stdout" windows-selfhost-compile-driver-bad-target-stdout
-    assert_contains "$_driver_stderr" "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64" \
+    assert_contains "$_driver_stderr" "invalid --target 'plan9-x86_64'; expected linux-x86_64 or windows-x86_64" \
         windows-selfhost-compile-driver-bad-target
     if [ -e "$_bad_target_asm" ]; then
         echo "FAIL: invalid target wrote assembly: $_bad_target_asm" >&2

@@ -95166,7 +95166,9 @@
           (opt-ubound-fresh-label blocks site.latch "__ubound_exit" 0)]
         [trap-label : i64
           (opt-ubound-fresh-label blocks site.latch "__ubound_trap" 0)]
-        [seed-ok : i64 (opt-ubound-fresh-label blocks site.pre "__ubound_ok" 0)]
+        ;; The entry copy shares the source check's recognized copy-0 spelling,
+        ;; preserving its location without constructing a constant suffix.
+        [seed-ok : i64 (opt-ubound-fresh-label blocks site.ok "__u0" 0)]
         (opt-function-pass-commit
           (owned_view.compiler-owned-reference-shared-view func)
           (&

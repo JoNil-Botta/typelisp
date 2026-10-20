@@ -21,6 +21,13 @@
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+ubound_entry_inbounds|all|0,1,2|tests/integration/ubound_entry_location.tl|42|2\n|3 3 1 1|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_first_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|0 1 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=0 length=0\n
+ubound_entry_mid_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|2 3 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=2 length=2\n
+ubound_entry_negative_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|2 2 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=-2 length=2\n
+ubound_entry_zero|all|0,1,2|tests/integration/ubound_entry_location.tl|42|0\n|0 0 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_negative_bound|all|0,1,2|tests/integration/ubound_entry_location.tl|42|0\n|0 -1 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_entry_division|all|0,1,2|tests/integration/ubound_entry_location.tl|135|-|3 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:31: integer division or remainder error: dividend=0 divisor=0\n
 spmd_uniform_index_write|all|0,1,2|tests/integration/spmd_uniform_index_write.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
@@ -52,7 +59,7 @@ inline_aggregate_global_escape_opt2|linux|2|tests/integration/inline_aggregate_g
 # level by check-global-call-borrow-legacy-matrix in public-check.cases.
 inline_aggregate_global_three_field|all|-|tests/integration/inline_aggregate_global_three_field.tl|42|327\n669\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_nested|all|-|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl|-
-cli_common_option|all|-|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl|-
+cli_common_option|all|-|src/tests/cli_common_option_smoke.tl|42|-|-|cli_option_core.tl compiler_builtin_ids.tl compiler_cfg_core.tl compiler_intern.tl compiler_owned_view.tl compiler_profile_counters.tl compiler_target_cfg_core.tl sym_i64_env.tl stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_global_len_eq_pair|all|-|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_specialize_global|all|-|tests/integration/arg_specialize_global.tl|42|36\n2\n64\n108\n80\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 main_private_stack|all|-|tests/integration/main_private_stack.tl|42|-|-|-|-

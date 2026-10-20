@@ -1,9 +1,38 @@
 # Selfhost compiler testing
 
+`linker_ar_dialect_reader_tests.tl` compares GNU `ar`/`ranlib`, LLVM GNU/64-bit
+and BSD archives against recorded `ar tO` and `nm --print-armap` oracles.
+The internal test runs no external tools. It checks duplicate/empty/byte names,
+ordered duplicate symbol hints, BSD sorted and extended index names, both BSD
+byte orders, odd payloads and internal alignment padding. Every byte offset of
+the GNU fixture is tried as an index target; only ordinary member headers pass.
+Every incomplete structure in six small 32-/64-bit index layouts is rejected,
+including repacked payload truncations with otherwise valid target offsets;
+the signature-only empty archive remains valid.
+Keep the exact-limit/one-below cases for all `ArchiveLimits` resources, unsigned
+overflow diagnostics, malformed names/tables, special ordering and stable
+input/revision identities. Run the suite with a fresh compiler at opt0/1/2;
+the complete inline suite runs the same cases on Linux and Windows.
+
 This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
+
+`tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
+with colliding numeric names while a decoy interner remains installed. It keeps
+an earlier job's payload readable through peer invalidation, shape rebuilds and
+retirement, and covers wrapped imports, empty/offset views, payload growth and
+owner-generation changes. The runnable typechecker smoke includes the same
+probe; driver cleanup coverage verifies post-lowering release uses its supplied
+job and preserves the other index.
+
+`compiler-lower-function-env-scratch` lowers several functions against one
+persistent module environment, including binding-store growth and a rejected
+function. It checks parent bindings and cache metadata after each scratch
+rewind, retirement of address-keyed memos, and readable escaped IR and errors.
+Run the lowering suite at opt0/1/2; poisoned full self-compiles also exercise
+post-rewind consumers across functions, closures and generated helpers.
 
 `array_field_store_growth.tl` exercises field stores after dynamic-array
 growth for register and memory-class elements, nested struct/tuple projections,
@@ -88,9 +117,45 @@ and compare selected payload bits. Shape rows retain ordered packed GT/GE
 on both target ABIs; backend IR-text cases cover register and spill operands
 and unchanged AVX-512 signed/unsigned integer predicates.
 
+`spmd_uniform_index_write.tl` preserves unmasked uniform receiver/index/value
+writes across empty and tail domains in scalar, AVX2 and AVX-512 modes. The
+paired safety cases reject a uniform destination when the value is varying,
+including local-class merges, conditionals, bool slices and rank-2 domains.
+Masked branches retain their canonical-index requirement even for uniform
+values; serialized `foreach-active` keeps its existing collision semantics.
+The positive fixture also pins ordered scan writes, including through a
+helper and into an array element's field, and skipped empty-range bounds
+checks. Compaction, a `foreach` following a scan and a `foreach` inside a
+helper called from a scan reject colliding varying stores, so the ordered scan
+context cannot authorize parallel writes. Field and tuple-element places
+through a uniform array index, and fields of a struct declared outside the
+`foreach`, reject varying values. `spmd_private_storage_write.tl` keeps
+varying writes into body-local and helper-local arrays and structs accepted;
+the paired private-store rejects show that values read back from that storage
+stay varying.
+
 The aggregate-global backend escape fixture rejects the safe-reference shape
 with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
 The indirect-call shape remains independently covered.
+
+`package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
+runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
+covers 8/16/24-byte integer structures, signed boundaries, floating and mixed
+register classes, stack pressure, hidden result pointers, references and
+borrowed strings. Saved values cross another call before use, including a
+tuple whose physical group appears only in the dependency signature. The
+lowering and IR smoke tests keep layout-only group facts, malformed transport
+types and conflicting group observations covered. The package runtime lifetime
+test compares ordinary and Windows package assembly at all three levels for
+constructor-free nominal groups with all four integer/SSE word masks. It runs
+on either host and checks the retained output after scope cleanup. Native Slice
+extern rejection remains in the safety corpus. The backend admission fixture
+exercises missing indices and entries, conflicting widths and register classes,
+and valid one-word/all four two-word layouts in parameter and result positions.
+Both assembly and object emitters on both targets must reject unresolved
+TypeLisp extern layouts while retaining native C extern behavior. Rebuilding the
+index must preserve missing facts even when native or pointer declarations of
+the same nominal type appear first.
 
 `gep_global_capture.tl` retains a raw pointer's selected global base and offset
 across rebinding and checks the old pointee alongside the new global value at
@@ -113,6 +178,14 @@ The arena-debug gate repeats all three fixtures with debug, profile, and backtra
 instrumentation together, using a test-enabled emitter and checking that each
 runtime feature is present. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
+
+The parser origin-column tests exercise all thirteen kinds, compact-span
+boundaries and exact overflow after i64-to-i32 conversion, full-width name IDs
+and alias keys/slots, segment and directory growth, retained handles, suffix
+rollback, detached directory transfer, alias precedence and the 64-step depth
+bound. They also check independent jobs, failed/inactive nested modules and
+ordinary reader builder growth/reset. The load and semantic-index smokes cover
+cached file reuse and source-arena retirement on the production paths.
 
 ## Loader diagnostic codes
 
@@ -142,6 +215,35 @@ The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
 fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
 sub-word integer and floating fields, and move-only boxed field values.
 
+## Store and constructor exits
+
+`store_operand_exits.tl` and `store_constructor_exits.tl` run at opt0/1/2 on
+both hosts. They cover scalar, aggregate, field, tuple, box, reference, raw
+pointer, global and array stores; return, break and continue; skipped bounds
+checks and later constructor arguments; zero-sized values; and conditional
+fallthrough. `compiler-lower-store-exits` inspects unoptimized blocks for any
+instruction after a terminator, including annotation, replacement, constructor,
+direct/indirect call, C ABI and syscall paths. The paired safety cases retain
+canonical rejection of immutable receivers, wrong return types and invalid
+unreachable tails.
+
+`literal_constructor_exits.tl` runs at opt0/1/2 on both hosts. It checks Box and
+tuple return/break/continue, nested and zero-sized elements, skipped later
+effects and conditional fallthrough. `compiler-lower-literal-constructor-exits`
+also rejects unoptimized instructions after a terminator. The paired safety
+fixtures keep invalid returns and unreachable tuple elements type-checked.
+
+`exit_operand_consumers.tl` runs at opt0/1/2 on both hosts. Exiting
+constructors, annotations and scalar operands feed let and `with` bindings,
+match scrutinees, field/tuple/array projections, `deref`, casts, unary and
+binary operators, `if` conditions and owned `for` sources in tail and value
+position, and inside loops whose opt2 form must keep no code after a
+`continue`. It also checks evaluation order and exactly-once cleanup.
+`compiler-lower-operand-consumer-exits` rejects unoptimized instructions after
+a terminator for the same consumers; `let_exit_unreachable_type_reject.tl`
+and `cast_exit_unsupported_reject.tl` keep bindings and conversions after an
+exit type-checked.
+
 ## Runtime byte search
 
 `tests/integration/runtime_memchr.tl` compares the runtime byte search with a
@@ -152,6 +254,8 @@ pages before and after the range. The native manifest runs it at opt0/1/2 on
 both hosts; its inline test runs the same checks. The focused runtime leaf test
 also compares the complete Linux/Windows search bodies after ABI substitution.
 
+## Reference and place reads
+
 `clone_reference_referent.tl` checks non-Copy struct, enum and array clones
 through shared/mutable references, projected and compound results, macro
 expansion, receiver evaluation count, independent storage and Box cleanup at
@@ -159,6 +263,20 @@ opt0/1/2 on both targets. The paired `clone_reference_*_reject.tl` safety cases
 preserve ordinary prefix/initializer moves, source use-after-move, callable
 shadowing and the unsupported direct-reference clone boundary. Keep these
 alongside the existing move-out-of-reference and clone capability controls.
+
+Reference-place regressions (#8696) extend the typechecker move-test table with
+valid mutable dereference replacements, reborrows and nested Copy box reads,
+plus exact shared-mutation, aliasing and move rejections. The
+`reference_place_read` native matrix checks transferred old values, retained
+storage, index evaluation and replacement order at opt0/1/2; the
+`replace_place_*_reject` safety rows preserve the consuming boundaries.
+`compiler-typecheck-place-through-shared-ok?` and the
+`replace_place_through_*` and `reborrow_through_inner_shared_array` rows
+reject a `replace!` place or `&mut` reborrow that reaches a `&mut` through a
+shared reference: directly, in a tuple, array, struct field or Box payload, as
+a Copy field, through two copies of one shared reference, and with a shared
+reference between two mutable ones. Each must report the `&mut` borrow
+diagnostic (E0207), not an incidental move error.
 
 ## Linux thread storage
 
@@ -367,6 +485,24 @@ checks with the existing literal-length and native equality coverage.
 
 ## Move joins and diverging arms
 
+The `fixed-array-reference-value-and-place-access` virtual-source matrix rejects
+non-Copy transfers through shared and mutable array and Slice references,
+including `slice-view` results, across bindings, arguments, results, branches,
+containers and stores, including matching signature lifetimes and
+reference-valued receivers. A `string-data` operand is a place read whose
+control-flow inputs keep their transfers. Copy aggregates and fields,
+borrowed elements, deep clones and observing primitives stay accepted. Clone
+result flows through control structures keep condition, initializer, scrutinee,
+prefix and index transfers checked; ordinary projection receivers keep value
+semantics for their control-flow inputs. Reborrow and replacement controls
+distinguish reading a place from transferring its element. The public
+`fixed-array-reference-*` cases pin E0208 and source locations through check and
+compile for both targets at every optimization level. `array_reference_reads.tl`
+runs the corresponding positive paths, Slice borrows, clones and replacement,
+and owned moves in the native matrix. The `array_shared_element_move_reject` and
+`slice_shared_element_move_reject` safety rows return a borrowed element under
+the reference's own lifetime.
+
 The public-check `check-invalidated-parameter-*` cases retain read locations,
 invalidation secondary labels, ownership help and decoded E0208 diagnostics
 for multi-expression functions, lambdas and nested lets. Both direct safe
@@ -456,6 +592,21 @@ report the author's message. The package fixture's `package-first` pair repeats
 the operand-count guard and puts rejecting arms before and after the selected
 arms on the dependency route, which `verify-package-native-tlci.sh` runs
 natively and through forced-source CTFE.
+
+## Logical SPMD gang geometry
+
+`compiler_spmd_logical_gang_tests.tl` covers every admitted numeric lane,
+backend and logical width with ordered coverage and lane-by-lane mask oracles.
+It checks empty/full sets, every singleton and prefix boundary, alternating
+patterns and non-prefix edges, including bit 63 and unoccupied physical lanes.
+Coordinate/conversion cases pin eight i64 pieces and narrowing into a partial
+physical vector. Malformed descriptors and extreme signed integers exercise
+validation before division, multiplication or shifts; diagnostics are exact.
+The closed backend enum excludes unsupported modes at type checking.
+Run the companion at opt0/1/2 with a freshly built compiler and both stdlib/src
+roots. `compiler-lower-native-lane-table` checks all nine lowerer modes against
+the previous numeric width table, including non-numeric rejection. The existing
+SPMD differential and shape gates retain end-to-end lowering coverage.
 
 ## SPMD decision provenance
 
@@ -754,7 +905,8 @@ member to remain an executable `src/tests/*_smoke.tl`, be named by the suite
 source, and not also appear as a standalone manifest source.
 
 `compiler-lower-nominal-init-pool` measures the checked expression pool around
-nominal default lowering and requires no temporary operand nodes to remain.
+nominal default lowering, including imported field types, and requires no
+temporary operand nodes to remain.
 The native lower smoke repeats that assertion. `nominal_init_fields` exercises
 ordinary and destination initialization, register and memory layouts, imported
 field types, nested fields, zero-length arrays, and independent allocating
@@ -1566,6 +1718,12 @@ should be removed.
 
 ### Native integration tests
 
+`ubound_entry_location.tl` exercises the existing multi-block unsigned-bound
+rewrite at opt0/1/2 on both hosts. Its manifest rows pin first-trip and mid-loop
+bounds diagnostics, a negative cursor, skipped loops, and check-before-division
+trap ordering. The optimizer span tests also exercise the actual entry-copy
+producer, collision suffixes and function ownership.
+
 `scripts/verify-integration.sh` contains the heavier native checks that build
 and run TypeLisp programs as native executables. Linux uses the explicit
 `compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses
@@ -1623,7 +1781,13 @@ generated binding is used. Run affected fixtures at opt0/1/2; an unused missing
 import that compiles successfully is not evidence of valid expansion.
 
 Source selected imports of generated exports are the mirror case. The
-`source_selected_generated_export` native row selects values, a function, a
+public-check `loader-selected-*` cases pin E0304 and the selected import's own
+span for both import orders, used and unused missing selections, source and
+package checking, and compilation. A cross-file case keeps pending generator
+exports valid while reporting a different missing item. Valid source, package
+and embedded-stdlib selections remain accepted, and the lazy loader smoke
+requires a selected item to materialize a provider after a summary-only import.
+The `source_selected_generated_export` native row selects values, a function, a
 struct, an enum and its constructors that exist only after the provider's
 module-scope generators have run, through a direct generator, an imported
 declaration macro with operands, nested generation, a target-conditional
@@ -1908,6 +2072,16 @@ that require native `as`/`ld` either no-op by design or should be run through a
 Linux environment.
 
 ## Checklist for new coverage
+
+The required `stage2-core-ir-dependency-boundary` gate runs
+[`verify-core-ir-dependencies.sh`](../scripts/verify-core-ir-dependencies.sh)
+with the converged compiler. It compiles the canonical frontend inspector with
+`compiler-dependency-audit`, runs source and fact-stream fixtures, then checks
+the complete shared IR closure across the supported target/cfg space. See the
+[boundary decision](../docs/compiler-core-ir-dependencies.md) for authority,
+scope, policy maintenance and diagnostic-cfg retirement. Extend its table-driven
+fixtures for new dependency forms; retain the bounded resource report and
+measure full gate cost when changing discovery or orchestration.
 
 New behavior gets TypeLisp-owned coverage (see the implementation-language rule
 in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):

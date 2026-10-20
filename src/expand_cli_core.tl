@@ -9,8 +9,6 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.byte_buf)
-(import stdlib.vector)
-(import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
 (import compiler_driver_core)
@@ -22,9 +20,7 @@
   (line i64)
   (col i64)
   (max-bytes i64)
-  (stdlib-roots cli_svec.Vec)
-  (target target_cfg.CompilerTargetCfg)
-  (cfg-names cli_svec.Vec))
+  (options cli_option.CliCompileOptions))
 
 (defenum ResultSelfhostExpandConfig
   (Ok SelfhostExpandConfig)
@@ -79,7 +75,7 @@
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "expand"
-        "--at <line:column> --max-bytes <n> --stdlib-root <dir> --cfg <name> --target <target>"
+        "--at <line:column> --max-bytes <n> --stdlib-root <dir> --cfg <name> --target <target> --backend-mode <mode> --opt-level <0|1|2> --debug|-g|--backtrace"
         start
         count)]
     [input-path : String ""]
@@ -88,13 +84,11 @@
     [has-position : bool false]
     [max-bytes : i64 expand.compiler-expand-default-max-bytes]
     [has-max-bytes : bool false]
-    [stdlib-roots : cli_svec.Vec (cli_svec.new)]
-    [target : target_cfg.CompilerTargetCfg
-      (target_cfg.compiler-target-cfg-default)]
-    [has-target : bool false]
-    [cfg-names : cli_svec.Vec (cli_svec.new)]
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (Linux) 1)]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--at")
           (cond
             [has-position
@@ -128,28 +122,6 @@
                 (cli_option.cli-args-fail!
                   (&mut args)
                   "expand: --max-bytes expects a positive byte count"))])]
-        [(string.eq args.name "--stdlib-root")
-          (cli_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--cfg")
-          (cli_svec.push-ref!
-            (&mut cfg-names)
-            (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--target")
-          (if has-target
-            (cli_option.cli-args-fail!
-              (&mut args)
-              "expand: --target was provided more than once")
-            (match (target_cfg.compiler-target-cfg-parse
-              (cli_option.cli-args-value (& args)))
-              [(Ok parsed-target)
-                (set! target parsed-target)
-                (set! has-target true)]
-              [(Err message)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (str_cat.str-cat "expand: " message))]))]
         [(cli_option.cli-flag? args.arg)
           (cli_option.cli-args-fail-arg! (&mut args) "expand: unknown flag ")]
         [has-input
@@ -170,9 +142,7 @@
             (/ position 4294967296)
             (% position 4294967296)
             max-bytes
-            stdlib-roots
-            target
-            cfg-names))])))
+            options))])))
 
 (define (selfhost-expand-span-text
   [path : String]
@@ -277,10 +247,10 @@
       (match (expand.compiler-expand-source-at
         (owned_view.compiler-owned-shared-view config.input-path)
         (byte_buf.to-string contents)
-        (owned_view.compiler-owned-shared-view config.stdlib-roots)
+        (owned_view.compiler-owned-shared-view config.options.stdlib-roots)
         (target_cfg.compiler-target-cfgs-with-names
-          config.target
-          (owned_view.compiler-owned-shared-view config.cfg-names))
+          config.options.target
+          (owned_view.compiler-owned-shared-view config.options.cfgs))
         config.line
         config.col
         config.max-bytes)

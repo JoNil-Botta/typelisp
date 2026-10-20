@@ -485,7 +485,10 @@
   [decl : ast.AstDecl]) : unit
   (let
     [run : parser.CompilerParseMaybeSemanticOriginRun
-      (parser.compiler-parse-semantic-origin-run-key-slot storage slot)]
+      (parser.compiler-parse-semantic-origin-run-key-slot-in-state
+        (tc.tc-job-state-parser-control ctx.job-state)
+        storage
+        slot)]
     [_declaration-origin : unit
       (compiler-semantic-fact-declaration-origins!
         recorder

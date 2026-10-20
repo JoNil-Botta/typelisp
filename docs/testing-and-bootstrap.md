@@ -152,6 +152,14 @@ scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe #
 `build-stage0.sh` compiles `src/main.tl` with the seed and links through the
 host toolchain, so a stage0 never depends on its own `build` command.
 
+The shell and PowerShell fetchers recover when `stage0-latest` returns 404,
+including when GitHub hides it as a draft. They select the newest published
+`stage0-YYYYMMDD-HHMMSS-r<run>` release with the host asset and `SHA256SUMS`,
+verify the actual tag commit is on `main`, and require its checksum before
+installing. The selected fallback tag is reported. Explicit tags retain their
+original behavior; a checksum mismatch does not select a different release.
+The shell fallback needs `jq`. The editor uses the same selection contract.
+
 The minimum supported seed is a stage0 published on or after 2026-08-30. There
 are no compatibility bridges: the seed compiles the current sources directly,
 with the same flags as every later stage. A compiler change that the current

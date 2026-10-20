@@ -436,7 +436,13 @@
         (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
           input-path))
       (compiler_driver_core.compiler-driver-advisories-for-job typecheck-state))
-    (begin
+    (let
+      [representations : compiler_ir_types.CompilerIrRepresentationIndex
+        (compiler_driver_core.compiler-driver-representation-index-for-backend
+          pools
+          (& program)
+          backend-state
+          typecheck-state)]
       (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state
         lower-state)
@@ -451,11 +457,12 @@
           pools
           opt-level
           profile-state
-          false
-          (compiler_ir_types.compiler-ir-representation-index-empty)
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler_driver_core.compiler-driver-retire-lowered-input!)))
+          true
+          representations
+          (compiler_driver_core.compiler-driver-lowered-input-retirement
+            lower-state)
+          (compiler_driver_core.compiler-driver-lowered-input-chunk-bounds
+            lower-state)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -584,7 +591,8 @@
             state
             target
             cfgs)
-          (>= opt-level 1))]
+          (>= opt-level 1)
+          opt-level)]
       ;; No builtin reinstall here; this state's parse-derived table is still
       ;; installed and id values are spelling-derived and state-independent.
       (compiler-windows-batch-emit-lowered-result

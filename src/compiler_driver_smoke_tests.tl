@@ -712,12 +712,14 @@
       request-a.input-retirement
       (compiler_optimize.OptInputRetirement.Retire
         lower-a.address
-        driver.compiler-driver-retire-lowered-input!))
+        driver.compiler-driver-retire-lowered-input!
+        driver.compiler-driver-release-lowered-input-chunk!))
     (set!
       request-b.input-retirement
       (compiler_optimize.OptInputRetirement.Retire
         lower-b.address
-        driver.compiler-driver-retire-lowered-input!))
+        driver.compiler-driver-retire-lowered-input!
+        driver.compiler-driver-release-lowered-input-chunk!))
     (match (compiler_optimize.optimize-program program-a spans-a request-a)
       [(Program optimized-a optimized-spans-a)
         (if (not
@@ -1014,7 +1016,8 @@
                 state-a
                 target
                 (compiler_cfg_core.compiler-cfg-empty))
-              true)]
+              true
+              1)]
           ;; The frontend still has separately tracked state-isolation work
           ;; (#4723, #4960-#4962). Fork the completed lower result into a second
           ;; state-owned reader context here, then interleave the phases covered
@@ -1234,17 +1237,30 @@
         (driver.compiler-driver-state-owned-lower-state state-b))]
     [macro-a : tc.TcMacroState (tc.tc-job-state-macro-state job-a)]
     [macro-b : tc.TcMacroState (tc.tc-job-state-macro-state job-b)]
+    [decls-a : ast.AstDeclList (ast.ast-decl-list-new)]
+    [decls-b : ast.AstDeclList (ast.ast-decl-list-new)]
     (driver.compiler-driver-state-install-pools! state-a)
     (driver.compiler-driver-state-install-interns! state-a)
     (driver.compiler-driver-state-reset-file-state! state-a)
     (tc.tc-lazy-import-stub-record-for-job! job-a 11 12 13 true)
     (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-a)
+    (ast.ast-decl-list-push (&mut decls-a) (Module 11))
+    (ast.ast-decl-list-push (&mut decls-a) (IncludeStr 12 "owner-a"))
+    (tc.tc-module-decl-index-ensure! macro-a (& decls-a))
     (driver.compiler-driver-state-install-pools! state-b)
     (driver.compiler-driver-state-install-interns! state-b)
     (driver.compiler-driver-state-reset-file-state! state-b)
     (tc.tc-lazy-import-stub-record-for-job! job-b 11 12 14 false)
     (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-b)
+    (ast.ast-decl-list-push (&mut decls-b) (Module 11))
+    (ast.ast-decl-list-push (&mut decls-b) (IncludeStr 13 "owner-b"))
+    (ast.ast-decl-list-push (&mut decls-b) (IncludeStr 14 "peer"))
+    (tc.tc-module-decl-index-ensure! macro-b (& decls-b))
     (let
+      [b-index-arena : i64 (tc.tc-module-decl-index-arena-for-state macro-b)]
+      [b-index-positions : (__tl_dyn-array i64)
+        (unsafe
+          (deref (tc.tc-module-decl-index-state-ptr macro-b)).positions)]
       [a-scratch : i64
         (lower.compiler-lower-arena-state-ensure-scratch! arenas-a)]
       [a-ir : i64 (lower.compiler-lower-arena-state-ensure-ir! arenas-a)]
@@ -1263,6 +1279,9 @@
       (let
         [ok : bool
           (and
+            (= (tc.tc-module-decl-index-arena-for-state macro-a) 0)
+            (= (tc.tc-module-decl-index-arena-for-state macro-b) b-index-arena)
+            (= (array-ref b-index-positions 1) 2)
             (> a-scratch 0)
             (> a-ir 0)
             (> b-scratch 0)
@@ -1291,6 +1310,7 @@
             (match (tc.tc-lazy-import-stub-target-id-for-state macro-b 11 12)
               [(Some target) (= target 14)]
               [(No) false]))]
+        (tc.tc-module-decl-index-release! macro-b)
         (lower.compiler-lower-arena-state-release! arenas-a)
         (lower.compiler-lower-arena-state-release! arenas-b)
         ok))))
@@ -2339,3 +2359,97 @@
         (driver.compiler-driver-render-source-diagnostic a-first)
         "returning to a, an earlier line renders as a one-shot render does")
       (test.assert-i64-eq sources.count 2 "each file is read once"))))
+
+;; Escape one stand-in body of BYTES into OWNER's next chunk, the way the escape
+;; sites deep-clone a function body.
+(cfg
+  test
+  (define (compiler-driver-smoke-escape-into-chunk!
+    [owner : (& owner lower.CompilerLowerArenaState)]
+    [words : i64]) : unit
+    (let
+      [chunk : i64 (lower.compiler-lower-ir-chunk-for-next-function! owner)]
+      [body : (__tl_dyn-array i64)
+        (in-arena (arena.Arena chunk) (__tl_make-array i64 words))]
+      (set! (array-ref body 0) words)
+      (lower.compiler-lower-ir-chunk-note-escaped! owner))))
+
+;; The lowered-IR chunk directory (#9059): no chunk on the whole-owner path, one
+;; chunk under a large budget, a chunk per body under a one-byte budget (each
+;; oversized body stays whole) with the directory growing past its first
+;; capacity, exact-owner idempotent release while another owner's chunk is the
+;; current arena, and whole release of both owners.
+(cfg
+  test
+  (test
+    compiler-driver-lowered-ir-chunk-directory
+    (let
+      [a : lower.CompilerLowerArenaState (lower.compiler-lower-arena-state-new)]
+      [b : lower.CompilerLowerArenaState (lower.compiler-lower-arena-state-new)]
+      [home : i64 (arena.tl_arena_current)]
+      (test.assert-i64-eq
+        (lower.compiler-lower-ir-chunk-count (& a))
+        0
+        "the whole-owner path keeps no chunk directory")
+      (lower.compiler-lower-arena-state-set-ir-chunk-budget! (& a) 1)
+      (lower.compiler-lower-arena-state-set-ir-chunk-budget! (& b) 1048576)
+      (let
+        [i : i64 0]
+        (while (< i 70)
+          (compiler-driver-smoke-escape-into-chunk! (& a) 4)
+          (set! i (+ i 1))))
+      (compiler-driver-smoke-escape-into-chunk! (& b) 4)
+      (compiler-driver-smoke-escape-into-chunk! (& b) 4)
+      (compiler-driver-smoke-escape-into-chunk! (& b) 4)
+      (test.assert-i64-eq
+        (lower.compiler-lower-ir-chunk-count (& a))
+        70
+        "a one-byte budget starts a chunk per complete body")
+      (test.assert-i64-eq
+        (lower.compiler-lower-ir-chunk-start (& a) 69)
+        69
+        "chunk starts are lower-sequence positions")
+      (test.assert-i64-eq
+        (lower.compiler-lower-ir-chunk-start (& a) 70)
+        70
+        "the last bound is the escaped count")
+      (test.assert-i64-eq
+        (lower.compiler-lower-ir-chunk-count (& b))
+        1
+        "a large budget keeps one chunk")
+      (test.assert-i64-eq
+        (lower.compiler-lower-ir-chunk-start (& b) 1)
+        3
+        "one chunk holds all three bodies")
+      (let
+        [b-chunk : i64 (lower.compiler-lower-ir-chunk-handle (& b) 0)]
+        (unsafe
+          (arena.tl_arena_set b-chunk))
+        (lower.compiler-lower-ir-chunk-release! (& a) 5)
+        (lower.compiler-lower-ir-chunk-release! (& a) 5)
+        (lower.compiler-lower-ir-chunk-release! (& a) -1)
+        (lower.compiler-lower-ir-chunk-release! (& a) 100)
+        (unsafe
+          (arena.tl_arena_set home))
+        (test.assert-i64-eq
+          (lower.compiler-lower-ir-chunk-handle (& a) 5)
+          0
+          "the supplied chunk of the supplied owner is released")
+        (test.assert-true
+          (!= (lower.compiler-lower-ir-chunk-handle (& a) 4) 0)
+          "its neighbours are kept")
+        (test.assert-i64-eq
+          (lower.compiler-lower-ir-chunk-handle (& b) 0)
+          b-chunk
+          "another owner's chunk is never selected"))
+      (lower.compiler-lower-arena-state-release-ir! (& a))
+      (lower.compiler-lower-arena-state-release-ir! (& a))
+      (test.assert-i64-eq
+        (lower.compiler-lower-ir-chunk-count (& a))
+        0
+        "whole release clears the directory, idempotently")
+      (test.assert-i64-eq
+        (lower.compiler-lower-arena-state-ir-chunk-budget (& a))
+        1
+        "whole release keeps the owner's policy until it is reconfigured")
+      (lower.compiler-lower-arena-state-release-ir! (& b)))))

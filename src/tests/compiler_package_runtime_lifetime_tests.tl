@@ -13,6 +13,8 @@
 (import compiler_parse_core as parser)
 (import compiler_backend as backend)
 (import compiler_owned_view as owned_view)
+(import compiler_windows_coff_core as coff)
+(import stdlib.text_buf)
 
 (define (runtime-owner-smoke-for-route-and-entry
   [source : String]
@@ -51,23 +53,54 @@
                           (Scalar)
                           (owned_view.compiler-owned-box-shared-view decls-box)
                           (ast.ast-decl-path-list-new)
-                          (cfg_core.compiler-cfg-empty))]
+                          (cfg_core.compiler-cfg-empty)
+                          level)]
                       (match (if direct-object
-                        (match (driver.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
-                          ""
-                          lowered
-                          target
-                          (Scalar)
-                          level
-                          emit-entry
-                          false)
-                          [(Object _ asm advisories)
-                            (driver.ResultCompilerDriver.Ok asm advisories)]
-                          [(Assembly _ _ _)
-                            (io.panic
-                              "lifetime fixture requires direct object emission")]
-                          [(Err diag advisories)
-                            (driver.ResultCompilerDriver.Err diag advisories)])
+                        (match target
+                          [(Windows)
+                            (match (coff.compiler-windows-batch-emit-lowered-result
+                              ""
+                              lowered
+                              (Scalar)
+                              level
+                              emit-entry
+                              false
+                              true)
+                              [(CoffObject _ side advisories)
+                                (match side
+                                  [(Some asm)
+                                    (driver.ResultCompilerDriver.Ok
+                                      asm
+                                      advisories)]
+                                  [(None)
+                                    (io.panic
+                                      "COFF fixture requires side assembly")])]
+                              [(Assembly asm _ advisories)
+                                (driver.ResultCompilerDriver.Ok
+                                  (text_buf.render asm)
+                                  advisories)]
+                              [(Err diag advisories)
+                                (driver.ResultCompilerDriver.Err
+                                  diag
+                                  advisories)])]
+                          [(Linux)
+                            (match (driver.compiler-driver-emit-lowered-result-package-runtime-with-level-mode-entry-and-crt
+                              ""
+                              lowered
+                              target
+                              (Scalar)
+                              level
+                              emit-entry
+                              false)
+                              [(Object _ asm advisories)
+                                (driver.ResultCompilerDriver.Ok asm advisories)]
+                              [(Assembly _ _ _)
+                                (io.panic
+                                  "lifetime fixture requires direct object emission")]
+                              [(Err diag advisories)
+                                (driver.ResultCompilerDriver.Err
+                                  diag
+                                  advisories)])])
                         (driver.compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
                           ""
                           lowered
@@ -289,6 +322,42 @@
     (unless
       (< (- (profile.alloc-live) before) 1048576)
       (io.panic "direct object jobs retained private side-backend arenas"))))
+
+(test
+  package-runtime-windows-retains-layout-only-groups
+  (let
+    [source : String
+      "(defstruct Pair (x i64) (y i64))
+(defstruct Floats (x f64) (y f64))
+(defstruct Mixed (x i64) (y f64))
+(defstruct Reverse (x f64) (y i64))
+(define (pair [value : Pair]) : Pair value)
+(define (floats [value : Floats]) : Floats value)
+(define (mixed [value : Mixed]) : Mixed value)
+(define (reverse [value : Reverse]) : Reverse value)"]
+    [level : i64 0]
+    (while (< level 3)
+      (let
+        [ordinary : String
+          (runtime-owner-smoke-for-route-and-entry
+            (string.copy source)
+            (Windows)
+            level
+            false
+            false)]
+        [side : String
+          (runtime-owner-smoke-for-route-and-entry
+            (string.copy source)
+            (Windows)
+            level
+            true
+            false)]
+        ;; No constructor contributes a Pack: both routes need the retained
+        ;; layouts after frontend retirement, including each return bank.
+        (unless
+          (and (string.contains ordinary "pair:") (string.eq ordinary side))
+          (io.panic "Windows package emission lost retained aggregate layouts")))
+      (set! level (+ level 1)))))
 
 (test
   package-runtime-spmd-callable-ir-survives-frontend-retirement

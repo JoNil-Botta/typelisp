@@ -706,7 +706,8 @@
           (Release)
           (Scalar)
           (Default)
-          (cli_svec.new))
+          (cli_svec.new)
+          (& (cli_svec.new)))
           [(Err _) false]
           [(Ok pass)
             (and

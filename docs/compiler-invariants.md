@@ -912,6 +912,12 @@ crossing function ownership. The unsigned-bound entry check uses the same
 copy-0 suffix as unrolling and single-block versioning; its exit check retains
 the original label, so both abort sites remain distinct and located.
 
+When the unsigned-bound header is also its latch, phi incoming edges are mapped
+and the first post-phi check is removed before the latch tail is replaced.
+Body calls retain their order, and the entry copy checks before the first
+call. The exit re-test and trap retain the backedge operands, including negative
+indices; both new exit predecessors replace the old latch in exit phis.
+
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original

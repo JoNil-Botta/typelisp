@@ -70594,6 +70594,7 @@ return 0" true)
   (Normal)
   (TwoPhis)
   (Minimal)
+  (CallBody)
   (NoGuard)
   (OpaqueLength)
   (PriorEffect)
@@ -70636,6 +70637,7 @@ return 0" true)
           [_ ""])
         (match kind
           [(Minimal) ""]
+          [(CallBody) "%9 = call ubound_clean(%5) : i64\n"]
           [_ "%9 = add %5, 1 : i64\n"])
         "%10 = lt %9, %0 : i64\nbranch %10, head, exit\nexit:\n"
         (match kind
@@ -70644,13 +70646,14 @@ return 0" true)
         "%12 = phi [0, entry], [%9, head] : i64\nreturn %12\n}"))))
 
 (define (compiler-optimize-ubound-self-loop-self-test) : i64
-  (for [case-id (iterator.range 0 3)]
+  (for [case-id (iterator.range 0 4)]
     (let
       [kind : OptUboundSelfLoopCase
         (match case-id
           [0 (Normal)]
           [1 (TwoPhis)]
-          [_ (Minimal)])]
+          [2 (Minimal)]
+          [_ (CallBody)])]
       [before : ir.CompilerIrFunction (opt-ubound-self-loop-function kind)]
       (unless
         (opt.opt-verify-ok? (& (opt.opt-verify-function (& before))))
@@ -70689,6 +70692,16 @@ return 0" true)
                           (opt-ubound-label "pre"))))
                     (return 6))]
                 [_ unit]))
+            (when
+              (match kind
+                [(CallBody)
+                  (not
+                    (match (opt-block-instr-at block phi-count)
+                      [(Call 9 name (One (Var 5)) (I64))
+                        (= name (opt-test-symbol "ubound_clean"))]
+                      [_ false]))]
+                [_ false])
+              (return 10))
             (unless
               (and
                 (>= count (+ phi-count 2))

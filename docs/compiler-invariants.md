@@ -1744,6 +1744,14 @@ constant fact naming such a var, as destination or source.
   LICM once it has found a loop, and `optimize-block-list-for-function-pass`
   before its block walk. `fold` keeps it out of its constant environments and
   its copy environment (#7973).
+- Load-CSE in `fold` and dominator load GVN treat every definition of an
+  address-taken local as a store of its destination type through an unknown
+  pointer. The shared dispatcher invalidates availability after reading the
+  defining instruction's operands. Distinct known alias classes survive;
+  byte or unclassified writes invalidate every possibly aliasing load.
+  GVN installs the set before its function walk, so predecessor-exit tables,
+  MF-2 join phis and MF-3 PRE obey the same availability boundary. Its loop
+  carry summaries also count these definitions as writes (#8514).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
 

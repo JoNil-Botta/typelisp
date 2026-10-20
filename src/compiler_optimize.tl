@@ -127926,6 +127926,9 @@
 ;; merges, since redirected callers can become equal in turn.
 ;;
 ;; Only a function nothing can tell apart from its twin is merged:
+;; - the program is closed: it defines `main`, as pruning requires
+;;   (`opt-prune-unreachable-program`). In a library every function is reached
+;;   by name from another compilation unit, so none is dropped;
 ;; - it is reached only through `Call`/`TailCall` and runtime-global
 ;;   initializers: no `Function` value takes its address (so no comparison or
 ;;   table observes its identity), no named C-ABI or SPMD call names it, no
@@ -128212,7 +128215,9 @@
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]
   [externs : (& externs ir.CompilerIrExternSeq)]) : OptMergedProgram
-  (if (ir.compiler-debug-info-enabled?)
+  (if (or
+    (ir.compiler-debug-info-enabled?)
+    (not (opt-function-seq-defines? (& functions) "main")))
     (Merged globals functions)
     (let
       [observed : opt_i64_i64_map.Map

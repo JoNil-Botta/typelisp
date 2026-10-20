@@ -498,10 +498,10 @@
           (= (hash.string-key (& linux-ordinary-alloc)) 1132590768)
           (= (string.string-length (& linux-profile-ordinary-alloc)) 15150)
           (= (hash.string-key (& linux-profile-ordinary-alloc)) 364122657)
-          (= (string.string-length (& windows-ordinary-alloc)) 14460)
-          (= (hash.string-key (& windows-ordinary-alloc)) 1218029846)
-          (= (string.string-length (& windows-profile-ordinary-alloc)) 21133)
-          (= (hash.string-key (& windows-profile-ordinary-alloc)) 276955845))
+          (= (string.string-length (& windows-ordinary-alloc)) 13984)
+          (= (hash.string-key (& windows-ordinary-alloc)) 279446062)
+          (= (string.string-length (& windows-profile-ordinary-alloc)) 20657)
+          (= (hash.string-key (& windows-profile-ordinary-alloc)) 164182050))
         "ordinary tl_alloc assembly matches the reviewed base/profile payloads")
       (test.assert-true
         (and

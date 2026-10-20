@@ -42,9 +42,9 @@ count_matches 46 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_ru
 count_matches 8 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 20 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 29 '\.globl' src/compiler_backend_runtime_windows.tl
-count_matches 41 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 99 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 43 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 42 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 111 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 41 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 
 # All target-owned executable byte helpers carry closed IDs.  Windows has two
 # additional bytes-from-hex sites: the data-only UNWIND_INFO and resource tree.

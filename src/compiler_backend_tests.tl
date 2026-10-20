@@ -1353,10 +1353,7 @@
 
 (define (compiler-backend-runtime-tls-windows-wrapper-asm-ok? [asm : String]) : bool
   (and
-    (asm-has?
-      asm
-      "    movq %gs:0x28, %rax\n    movq 0(%rax), %rax\n"
-      "    movq %gs:0x28, %r11\n    movq %rcx, 0(%r11)\n")
+    (asm-has? asm "    movq %gs:0x28, %rax\n" "    movq %rcx, %gs:0x28\n")
     (asm-lacks?
       asm
       "    call tl_tls_current_arena_load\n"
@@ -22892,7 +22889,7 @@ f:
       (and
         ;; tl_array_zero reads the current arena once for its virgin-arena
         ;; zero-fill skip; the remaining reads are the allocator/region paths.
-        (= (backend.compiler-backend-string-count asm "%gs:0x28") 31)
+        (= (backend.compiler-backend-string-count asm "%gs:0x28") 25)
         (=
           (backend.compiler-backend-string-count
             asm
@@ -22990,12 +22987,12 @@ f:
             (backend.compiler-backend-string-count
               asm
               "    call VirtualAlloc\n")
-            14)
+            13)
           (=
             (backend.compiler-backend-string-count
               asm
               "    call GetLastError\n")
-            13))
+            15))
         (and
           (=
             (backend.compiler-backend-string-count asm "    call VirtualFree\n")
@@ -23009,7 +23006,7 @@ f:
         (and
           (=
             (backend.compiler-backend-string-count asm "    call WriteFile\n")
-            2)
+            3)
           (asm-lacks? asm "    ud2\n")))
       (asm-has?
         asm
@@ -23109,16 +23106,15 @@ f:
         "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    movq %r9, %fs:tl_current_arena@tpoff\n    jmp .L_tl_alloc_root_ready\n"
         "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n")
-      (and
-        (=
-          (backend.compiler-backend-string-count
-            asm
-            "    movq %r8, %fs:tl_current_arena@tpoff\n")
-          2)
-        (asm-has?
+      (=
+        (backend.compiler-backend-string-count
           asm
-          ".L_tl_alloc_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n"
-          ".L_tl_alloc_aligned_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_aligned_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n"))
+          "    movq %r8, %fs:tl_current_arena@tpoff\n")
+        2)
+      (asm-has?
+        asm
+        ".L_tl_alloc_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n"
+        ".L_tl_alloc_aligned_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_aligned_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n")
       (asm-has?
         asm
         "    movq 56(%r10), %r8\n    testq %r8, %r8\n    jnz .L_tl_region_reset_all_head_ready\n    movq %r10, %r8\n.L_tl_region_reset_all_head_ready:\n.L_tl_region_reset_all_retired_ready:\n    movq 32(%r10), %rbx\n"))))
@@ -23131,7 +23127,7 @@ f:
     (and
       (asm-has?
         asm
-        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %gs:0x28, %r10\n    movq %r8, 0(%r10)\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n"
+        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %r8, %gs:0x28\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n"
         "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %r12, 16(%r13)\n    movq %r13, 56(%r11)\n")
       (asm-lacks? asm "    movq %r13, %gs:0x28\n")

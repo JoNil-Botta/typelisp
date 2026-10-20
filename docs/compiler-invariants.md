@@ -130,8 +130,11 @@ Normal and aligned allocation from the sentinel reuse that root. A cache must
 never retain an unmapped root: reset-all and destroy clear a matching default
 root before unmapping it, while preserving an unrelated cached root. Callers
 of unsafe destruction still must restore a live current arena themselves.
-Windows' per-thread state cell has thread lifetime, independent of arena
-reclamation, matching the lifetime of Linux's TLS mapping.
+Windows' root slot has thread lifetime, independent of arena reclamation,
+matching the lifetime of Linux's TLS mapping. Its process-wide index is
+allocated successfully before any user initializer and remains valid for the
+process lifetime; a zero TlsGetValue result therefore denotes an empty slot.
+Root selection and cache retirement preserve the caller's Windows LastError.
 
 `arena_growth_target` and `arena_growth_target_minimal` exercise the public
 extern at opt0/1/2 on both hosts. They cover fresh workers, foreign atomic and

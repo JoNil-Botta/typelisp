@@ -93,11 +93,16 @@ As an assembly runtime hook it uses the platform calling convention, including
 when called from code using the internal TypeLisp convention.
 
 Linux stores the default root in `tl_root_arena` TLS alongside
-`tl_current_arena`. Windows GS:0x28 points to a private per-thread cell: current
-arena at offset 0 and default root at offset 8. Main and native worker entry
-initialize this cell before allocation. Restoring the null-arena sentinel
-allows the next allocation to resume the cached default root. Reset-all and
-destruction clear that cache only when they unmap its root; reclaiming another
+`tl_current_arena`. Windows keeps the current arena directly in GS:0x28 and
+the default root in an opaque OS TLS slot. Startup allocates one process-wide
+index before user initializers or workers; [TlsAlloc](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsalloc)
+initializes each thread's slot to zero. Root selection and retirement preserve
+LastError across [TlsGetValue](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsgetvalue)
+and TlsSetValue. Normal and aligned allocation from the sentinel select a root
+through the same constructor as an explicit growth-target query. Restoring the
+null-arena sentinel allows the next allocation to resume the cached default
+root. Reset-all and destruction clear that cache only when they unmap its
+root; reclaiming another
 arena preserves it. See the [thread and lifetime invariant](compiler-invariants.md#arena-growth-targets).
 
 ## Evolving the design

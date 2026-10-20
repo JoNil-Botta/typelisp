@@ -76395,8 +76395,8 @@
 ;; the region runtime, and the first-class arena builtins. Physical growth heads
 ;; are reached through root+56 and never replace this public identity. It is a
 ;; per-thread active-arena slot: Linux uses local-exec ELF TLS; Windows stores
-;; a private current/default-root cell through the TEB slot GS:0x28. Like the arena
-;; primitives, the runtime lives in exactly ONE object per executable (the entry
+;; the current arena directly in TEB slot GS:0x28. Like the arena primitives,
+;; the runtime lives in exactly ONE object per executable (the entry
 ;; object, `emit-entry=true`); library/dependency objects (`emit-entry=false`)
 ;; emit none of the runtime and reference the Linux TLS slot as an extern.
 ;; Runtime planning and indexing stay in this module. Emission consumes one

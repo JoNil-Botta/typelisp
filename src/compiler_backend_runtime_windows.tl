@@ -5,18 +5,10 @@
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
-  (str_cat.str-cat
-    "    movq %gs:0x28, "
-    (clone dst)
-    "\n    movq 0("
-    (clone dst)
-    "), "
-    dst
-    "\n"))
+  (str_cat.str-cat "    movq %gs:0x28, " dst "\n"))
 
 (define (compiler-backend-current-arena-store [src : String]) : String
-  ;; The call/intrinsic and global-allocation clients leave r11 volatile.
-  (str_cat.str-cat "    movq %gs:0x28, %r11\n    movq " src ", 0(%r11)\n"))
+  (str_cat.str-cat "    movq " src ", %gs:0x28\n"))
 
 ;; Offset in an arena segment header of the bound an inline bump allocation
 ;; must stay below: the end of the committed part of the segment.
@@ -47,7 +39,15 @@
         (runtime_common.compiler-backend-runtime-arena-debug-text?
           features.arena-debug)))
     (runtime_common.compiler-backend-runtime-null-arena-data)
-    "    .section .rodata
+    "    .data
+    .balign 4
+.L_tl_root_arena_tls_index:
+    .long -1
+
+    .section .rodata
+.L_tl_arena_thread_tls_msg:
+    .ascii \"typelisp runtime: arena TLS allocation failed\\n\"
+    .set .L_tl_arena_thread_tls_msg_len, . - .L_tl_arena_thread_tls_msg
 .L_tl_main_stack_reservation_msg:
     .ascii \"typelisp runtime: 1 GiB main-stack reservation failed\\n\"
     .set .L_tl_main_stack_reservation_msg_len, . - .L_tl_main_stack_reservation_msg
@@ -199,6 +199,8 @@ _tl_start:
 "
       "")
     "    call tl_setup_argv
+    leaq .L_tl_null_arena(%rip), %rax
+    movq %rax, %gs:0x28
     call tl_arena_thread_init
     leaq .L_tl_stack_overflow_filter(%rip), %rcx
     call SetUnhandledExceptionFilter
@@ -345,24 +347,29 @@ tl_boot_pool:
 (define (compiler-backend-runtime-windows-arena-functions-base
   [profile : bool]
   [arena-debug : bool]) : String
+  ;; One opaque OS TLS index is allocated before user initializers or workers.
+  ;; Its per-thread slots start at zero. Current-arena access stays a direct
+  ;; TEB load; only root selection/reclamation needs the TLS API. Successful
+  ;; helpers preserve LastError because TlsGetValue clears it even on success.
   (str_cat.str-cat
     "    .globl tl_arena_thread_init
 tl_arena_thread_init:
-    subq $40, %rsp
-    xorq %rcx, %rcx
-    movq $4096, %rdx
-    movq $0x3000, %r8
-    movq $4, %r9
-    call VirtualAlloc
-    testq %rax, %rax
-    jz .L_tl_arena_thread_init_fail
-    leaq .L_tl_null_arena(%rip), %rcx
-    movq %rcx, 0(%rax)
-    movq $0, 8(%rax)
-    movq %rax, %gs:0x28
-    addq $40, %rsp
+    subq $56, %rsp
+    call TlsAlloc
+    cmpl $-1, %eax
+    je .L_tl_arena_thread_tls_fail
+    movl %eax, .L_tl_root_arena_tls_index(%rip)
+    addq $56, %rsp
     ret
-.L_tl_arena_thread_init_fail:
+.L_tl_arena_thread_tls_fail:
+    movl $-12, %ecx
+    call GetStdHandle
+    movq %rax, %rcx
+    leaq .L_tl_arena_thread_tls_msg(%rip), %rdx
+    movl $.L_tl_arena_thread_tls_msg_len, %r8d
+    leaq 48(%rsp), %r9
+    movq $0, 32(%rsp)
+    call WriteFile
     movl $134, %ecx
     call ExitProcess
 
@@ -399,19 +406,50 @@ tl_arena_growth_target:
     cmpq %rax, 72(%rcx)
     je .L_tl_arena_growth_owner
 .L_tl_arena_growth_thread_root:
-    movq %gs:0x28, %r10
-    movq 8(%r10), %rax
+    subq $56, %rsp
+    call GetLastError
+    movl %eax, 40(%rsp)
+    movl .L_tl_root_arena_tls_index(%rip), %ecx
+    call TlsGetValue
     testq %rax, %rax
     jnz .L_tl_arena_growth_done
-    subq $40, %rsp
     call tl_arena_make
-    movq %gs:0x28, %r10
-    movq %rax, 8(%r10)
-    addq $40, %rsp
+    movq %rax, 32(%rsp)
+    movl .L_tl_root_arena_tls_index(%rip), %ecx
+    movq %rax, %rdx
+    call TlsSetValue
+    testl %eax, %eax
+    jz .L_tl_arena_thread_tls_fail
+    movq 32(%rsp), %rax
 .L_tl_arena_growth_done:
+    movq %rax, 32(%rsp)
+    movl 40(%rsp), %ecx
+    call SetLastError
+    movq 32(%rsp), %rax
+    addq $56, %rsp
     ret
 .L_tl_arena_growth_owner:
     movq %rcx, %rax
+    ret
+
+.L_tl_arena_clear_thread_root:
+    subq $56, %rsp
+    movq %rcx, 32(%rsp)
+    call GetLastError
+    movl %eax, 40(%rsp)
+    movl .L_tl_root_arena_tls_index(%rip), %ecx
+    call TlsGetValue
+    cmpq 32(%rsp), %rax
+    jne .L_tl_arena_clear_thread_root_done
+    movl .L_tl_root_arena_tls_index(%rip), %ecx
+    xorq %rdx, %rdx
+    call TlsSetValue
+    testl %eax, %eax
+    jz .L_tl_arena_thread_tls_fail
+.L_tl_arena_clear_thread_root_done:
+    movl 40(%rsp), %ecx
+    call SetLastError
+    addq $56, %rsp
     ret
 
     .globl tl_arena_poison_enable
@@ -601,11 +639,8 @@ tl_arena_destroy:
     movq 40(%rsi), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_win_loop
-    movq %gs:0x28, %r10
-    cmpq %r12, 8(%r10)
-    jne .L_tl_arena_destroy_win_root_kept
-    movq $0, 8(%r10)
-.L_tl_arena_destroy_win_root_kept:
+    movq %r12, %rcx
+    call .L_tl_arena_clear_thread_root
 "
     (if arena-debug
       "    testq $8, 48(%r12)
@@ -675,7 +710,7 @@ tl_arena_destroy:
 
 (define (compiler-backend-runtime-windows-alloc-functions-base
   [profile : bool]
-  [arena-debug : bool]) : String
+  [_arena-debug : bool]) : String
   (let
     [fast-profile : String
       (runtime_common.compiler-backend-runtime-profile-alloc-account
@@ -773,7 +808,6 @@ tl_alloc:
     andq $-8, %rcx
     movq %rcx, %r11
     movq %gs:0x28, %r8
-    movq 0(%r8), %r8
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_win_atomic
@@ -810,12 +844,14 @@ tl_alloc:
       atomic-fast-profile
       "    ret
 .L_tl_alloc_win_thread_root:
-    movq %gs:0x28, %r8
-    movq 8(%r8), %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_new_arena_entry
-    movq %gs:0x28, %r9
-    movq %r8, 0(%r9)
+    subq $40, %rsp
+    movq %r11, 32(%rsp)
+    xorq %rcx, %rcx
+    call tl_arena_growth_target
+    movq 32(%rsp), %r11
+    addq $40, %rsp
+    movq %rax, %r8
+    movq %r8, %gs:0x28
     movq 56(%r8), %r9
     jmp .L_tl_alloc_win_ordinary_retry
 .L_tl_alloc_commit_arena_entry:
@@ -1041,7 +1077,6 @@ tl_alloc:
     addq %rdx, %rcx
     jc .L_tl_alloc_abort
     movq %gs:0x28, %r8
-    movq 0(%r8), %r8
     movq %r8, -48(%rbp)
     leaq 80(%rax), %r8
     movq %r8, 8(%rax)
@@ -1049,26 +1084,12 @@ tl_alloc:
     movq %rcx, 24(%rax)
     movq $0, 32(%rax)
     movq -48(%rbp), %r8
-    testb $16, 48(%r8)
-    jnz .L_tl_alloc_win_root_self
     movq 56(%r8), %r10
-    jmp .L_tl_alloc_win_root_ready
-.L_tl_alloc_win_root_self:
-    movq %gs:0x30, %r10
-    movq %r10, 72(%rax)
-    movq %gs:0x28, %r10
-    movq %rax, 8(%r10)
-"
-      (compiler-backend-runtime-windows-register-root-hook arena-debug)
-      "    xorq %r10, %r10
-    movq %rax, %r8
-.L_tl_alloc_win_root_ready:
     movq %r10, 0(%rax)
     movq %r8, 40(%rax)
     movq $0, 48(%rax)
     movq %rax, 56(%r8)
-    movq %gs:0x28, %r10
-    movq %r8, 0(%r10)
+    movq %r8, %gs:0x28
     movq -40(%rbp), %rdx
     addq %rax, %rdx
     movq %rdx, 64(%rax)
@@ -1120,7 +1141,7 @@ tl_alloc:
 
 (define (compiler-backend-runtime-windows-aligned-alloc-functions-base
   [profile : bool]
-  [arena-debug : bool]) : String
+  [_arena-debug : bool]) : String
   (let
     [ordinary-profile : String
       (runtime_common.compiler-backend-runtime-profile-aligned-alloc-account
@@ -1183,7 +1204,6 @@ tl_alloc_aligned:
     jnz .L_tl_alloc_aligned_win_abort
     movq %r11, -16(%rbp)
     movq %gs:0x28, %r8
-    movq 0(%r8), %r8
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_aligned_win_atomic
@@ -1213,12 +1233,10 @@ tl_alloc_aligned:
     popq %rbp
     ret
 .L_tl_alloc_aligned_win_thread_root:
-    movq %gs:0x28, %r8
-    movq 8(%r8), %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_aligned_win_new_arena
-    movq %gs:0x28, %r9
-    movq %r8, 0(%r9)
+    xorq %rcx, %rcx
+    call tl_arena_growth_target
+    movq %rax, %r8
+    movq %r8, %gs:0x28
     movq 56(%r8), %r9
     jmp .L_tl_alloc_aligned_win_ordinary_retry
 .L_tl_alloc_aligned_win_commit:
@@ -1477,21 +1495,7 @@ tl_alloc_aligned:
     jc .L_tl_alloc_aligned_win_abort
     movq %r11, -64(%rbp)
     movq %gs:0x28, %r8
-    movq 0(%r8), %r8
-    testb $16, 48(%r8)
-    jnz .L_tl_alloc_aligned_win_root_self
     movq 56(%r8), %r9
-    jmp .L_tl_alloc_aligned_win_root_ready
-.L_tl_alloc_aligned_win_root_self:
-    movq %gs:0x30, %r9
-    movq %r9, 72(%rax)
-    movq %gs:0x28, %r9
-    movq %rax, 8(%r9)
-"
-          (compiler-backend-runtime-windows-register-root-hook arena-debug)
-          "    xorq %r9, %r9
-    movq %rax, %r8
-.L_tl_alloc_aligned_win_root_ready:
     movq %r9, 0(%rax)
     movq %r8, 40(%rax)
     movq $0, 48(%rax)
@@ -1515,8 +1519,7 @@ tl_alloc_aligned:
     addq -8(%rbp), %r10
     jc .L_tl_alloc_aligned_win_abort
     movq %r10, 16(%rax)
-    movq %gs:0x28, %r9
-    movq %r8, 0(%r9)
+    movq %r8, %gs:0x28
     subq %rcx, %r10
     movq -8(%rbp), %rdx
 "
@@ -1585,7 +1588,6 @@ tl_region_reset:
     testq %r12, %r12
     jz .L_tl_region_reset_win_all
     movq %gs:0x28, %r13
-    movq 0(%r13), %r13
     testb $16, 48(%r13)
     jnz .L_tl_region_reset_win_invalid
 "
@@ -1687,7 +1689,6 @@ tl_region_reset:
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
     movq %gs:0x28, %r14
-    movq 0(%r14), %r14
     testb $16, 48(%r14)
     cmovnzq .L_tl_null_arena(%rip), %r14
 "
@@ -1709,13 +1710,12 @@ tl_region_reset:
 .L_tl_region_reset_win_all_debug_unregister_done:
 "
       "")
-    "    movq %gs:0x28, %r10
-    cmpq %r14, 8(%r10)
-    jne .L_tl_region_reset_win_thread_root_kept
-    movq $0, 8(%r10)
-.L_tl_region_reset_win_thread_root_kept:
+    "    movq %r14, %rcx
+    subq $32, %rsp
+    call .L_tl_arena_clear_thread_root
+    addq $32, %rsp
     leaq .L_tl_null_arena(%rip), %r12
-    movq %r12, 0(%r10)
+    movq %r12, %gs:0x28
     xorq %r12, %r12
     testq %r14, %r14
     jz .L_tl_region_reset_win_done
@@ -1782,9 +1782,8 @@ tl_thread_entry_ptr:
     pushq %r12
     pushq %r13
     subq $40, %rsp
-    movq %rcx, 32(%rsp)
-    call tl_arena_thread_init
-    movq 32(%rsp), %rcx
+    leaq .L_tl_null_arena(%rip), %rax
+    movq %rax, %gs:0x28
     movq (%rcx), %r11
     movq 8(%rcx), %rdx
     movq 16(%rcx), %r12
@@ -2056,7 +2055,6 @@ tl_array_zero:
     cmpq $64, %rdx
     jb .Ltl_array_zero_fill
     movq %gs:0x28, %r8
-    movq 0(%r8), %r8
     testq %r8, %r8
     jz .Ltl_array_zero_fill
     movq 56(%r8), %r8
@@ -2232,7 +2230,11 @@ tl_tlci_call_macro_entry:
   (str_cat.str-cat
     "    .extern VirtualAlloc
     .extern VirtualFree
+    .extern TlsAlloc
+    .extern TlsGetValue
+    .extern TlsSetValue
     .extern GetLastError
+    .extern SetLastError
     .extern ExitProcess
     .extern ConvertThreadToFiber
     .extern CreateFiberEx

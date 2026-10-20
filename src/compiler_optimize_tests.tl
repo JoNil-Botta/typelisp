@@ -47817,6 +47817,33 @@
         13]
       [else 42])))
 
+(test
+  licm-guard-address-recipe
+  (test.assert-i64-eq
+    (opt-licm-guard-case
+      ""
+      "  bounds_check %2, %5 message \"arm_ok\"\n  %14 = gep %7, %2 : i64\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  jump latch")
+    101
+    "the guarded block copies a pure invariant address recipe")
+  (test.assert-i64-eq
+    (opt-licm-guard-case
+      ""
+      "  bounds_check %2, %9 message \"arm_ok\"\n  %14 = gep %7, %2 : i64\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  jump latch")
+    11
+    "an unrelated array length does not bound the recipe")
+  (test.assert-i64-eq
+    (opt-licm-guard-case
+      ""
+      "  bounds_check %2, %5 message \"arm_ok\"\n  %14 = gep %7, %2 : i64\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  bounds_check %12, %5 message \"store_ok\"\n  %20 = gep %7, %12 : i64\n  store_ptr %20, 0 : i64\n  jump latch")
+    12
+    "an address recipe does not establish disjoint memory")
+  (test.assert-i64-eq
+    (opt-licm-guard-case
+      ""
+      "  bounds_check %2, %5 message \"arm_ok\"\n  %14 = gep %7, %2 : u8\n  %15 = load %14 : i64\n  %18 = add %13, %15 : i64\n  jump latch")
+    11
+    "a byte stride does not bound a full word read"))
+
 ;; --- readable storage for moved reads (#8085) ---------------------------------
 ;;
 ;; One loop whose arm, taken while `%0` holds, reads through an address the case

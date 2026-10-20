@@ -23691,6 +23691,7 @@
   (at i64)
   (header i64)
   (guard? bool)
+  (nested-entries OptLabelSet)
   (plans (__tl_dyn-array opt_licm_guard_plan_vec.Vec)))
 
 ;; The two passes of the fact scan share one walk. With `fill?` false a row is
@@ -25135,9 +25136,30 @@
   (header i64)
   (dst i64)
   (src ir.CompilerIrValue)
+  (address OptMaybeInstr)
   (ty ast.AstType)
   (index ir.CompilerIrValue)
   (len ir.CompilerIrValue))
+
+;; An address recipe is pure and uses only values available outside the loop.
+;; It is copied into the guarded block, so its old definition need not move.
+(define (opt-licm-guard-address
+  [loop-defs : (& opt_i64_i64_map.Map)]
+  [facts : (& facts OptLicmDerefFacts)]
+  [src : (& ir.CompilerIrValue)]) : OptMaybeInstr
+  (match src
+    [(Var var)
+      (if (not (opt-used-contains loop-defs var))
+        (No)
+        (match (opt-licm-deref-def facts.defs facts.sources var)
+          [(Some (Gep dst base offset ty) _)
+            (if (and
+              (opt-licm-unswitch-operand-invariant? loop-defs (& base))
+              (opt-licm-unswitch-operand-invariant? loop-defs (& offset)))
+              (Some (Gep dst base offset ty))
+              (No))]
+          [_ (No)]))]
+    [_ (No)]))
 
 (import (vector.vector OptLicmGuardPlan core) as opt_licm_guard_plan_vec)
 
@@ -25245,7 +25267,13 @@
             (opt-licm-guard-planned?
               (opt_licm_guard_plan_vec.view (& (array-ref site.plans 0)))
               dst)
-            (opt-licm-guard-sparse? site block))
+            (and
+              (not
+                (opt-label-contains
+                  (owned_view.compiler-owned-reference-shared-view
+                    (& site.nested-entries))
+                  (opt-cfg-index-label site.doms.index block)))
+              (opt-licm-guard-sparse? site block)))
             unit
             (match (opt-licm-deref-address
               type-segment-bases
@@ -25295,7 +25323,8 @@
                               (opt-cfg-index-label site.doms.index site.at)
                               (opt-cfg-index-label site.doms.index site.header)
                               dst
-                              src
+                              (compiler-opt-global-shared-view src)
+                              (opt-licm-guard-address loop-defs facts (& src))
                               ty
                               index
                               len))
@@ -25385,7 +25414,16 @@
       (let
         [ok : i64 (array-ref frame-cell 0)]
         [loaded : i64 (+ ok 1)]
-        [_frame : unit (set! (array-ref frame-cell 0) (+ ok 2))]
+        [address : i64 (+ ok 2)]
+        [_frame : unit
+          (set!
+            (array-ref frame-cell 0)
+            (+
+              ok
+              (match (owned_view.compiler-owned-reference-shared-view
+                (& plan.address))
+                [(Some _) 3]
+                [(No) 2])))]
         [guard-label : i64
           (ir.compiler-ir-label
             (&
@@ -25443,14 +25481,26 @@
                       (&mut out)
                       (ir.CompilerIrBlock.Block
                         guard-label
-                        (ir.compiler-ir-instr-seq2
-                          (Load
-                            loaded
-                            (owned_view.compiler-owned-reference-shared-view
-                              (& plan.src))
-                            (owned_view.compiler-owned-reference-shared-view
-                              (& plan.ty)))
-                          (Jump join-label))))
+                        (match (owned_view.compiler-owned-reference-shared-view
+                          (& plan.address))
+                          [(Some (Gep _ base offset ty))
+                            (ir.compiler-ir-instr-seq3
+                              (Gep address base offset ty)
+                              (Load
+                                loaded
+                                (Var address)
+                                (owned_view.compiler-owned-reference-shared-view
+                                  (& plan.ty)))
+                              (Jump join-label))]
+                          [_
+                            (ir.compiler-ir-instr-seq2
+                              (Load
+                                loaded
+                                (owned_view.compiler-owned-reference-shared-view
+                                  (& plan.src))
+                                (owned_view.compiler-owned-reference-shared-view
+                                  (& plan.ty)))
+                              (Jump join-label))])))
                     (ir.compiler-ir-block-builder-push!
                       (&mut out)
                       (ir.CompilerIrBlock.Block
@@ -25867,6 +25917,21 @@
           (match (compiler-opt-global-shared-view instr)
             [(Load _ _ _) true]
             [_ false])]
+        [_address : unit
+          (when
+            (and opt-licm-guard-on deref-site.guard? load?)
+            (match (compiler-opt-global-shared-view instr)
+              [(Load _ src _)
+                (match (opt-licm-guard-address
+                  loop-defs
+                  deref-site.facts
+                  (& src))
+                  [(Some address)
+                    (set!
+                      next-hoisted
+                      (opt-licm-add-hoisted-def next-hoisted (& address)))]
+                  [(No) unit])]
+              [_ unit]))]
         [addr-taken-write? : bool (opt-licm-writes-addr-taken? (& instr))]
         ;; The final run asks only about reads it may guard.
         [ordinary? : bool
@@ -28162,6 +28227,9 @@
             ;; opt-licm-apply-loops passes the final run only the loops
             ;; that may take guards (opt-licm-guard-loop?).
             (and opt-licm-guard-on late?)
+            (if opt-licm-guard-on
+              (opt-licm-guard-nested-entries context all-loops loop)
+              (Nil))
             (owned_view.compiler-owned-reference-shared-view guard-plans))]
         [filtered-out : ir.CompilerIrBlockBuilder
           (ir.compiler-ir-block-builder-with-capacity
@@ -28291,6 +28359,68 @@
 ;; loop that chases a value (`a = idom[a]`) takes a trip or two, and a read
 ;; such loops bypass or reach once does not repay the guard. And only a body
 ;; holding the shape a guard reads (opt-licm-guard-shape?).
+;; Include the preheader and its single-predecessor jump-only approach. A
+;; read there runs at a nested loop entry rather than on a sparse inner arm.
+(define (opt-licm-guard-entry-path
+  [context : (& context OptCfgContext)]
+  [body : OptLabelSet]
+  [label : i64]
+  [entries : OptLabelSet]
+  [fuel : i64]) : OptLabelSet
+  (if (or (<= fuel 0) (not (opt-label-contains body label)))
+    entries
+    (let
+      [next : OptLabelSet (opt-label-add entries label)]
+      [preds : OptLabelSet (opt-cfg-index-predecessors context.index label)]
+      (match (opt-cfg-index-id context.index label)
+        [(None) next]
+        [(Some id)
+          (match (opt-cfg-index-block context.index id)
+            [(Some (Block _ instrs))
+              (if (and
+                (= (opt-label-count preds) 1)
+                (= (ir.compiler-ir-instr-seq-count instrs) 1)
+                (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+                  [(Jump _) true]
+                  [_ false]))
+                (opt-licm-guard-entry-path
+                  context
+                  body
+                  (opt-label-ref preds 0)
+                  next
+                  (- fuel 1))
+                next)]
+            [_ next])]))))
+
+(define (opt-licm-guard-nested-entries
+  [context : (& OptCfgContext)]
+  [loops : (& loops opt_natural_loop_vec.Vec)]
+  [outer : (& outer OptNaturalLoop)]) : OptLabelSet
+  (let
+    [body : OptLabelSet (opt-natural-loop-body outer)]
+    [nested : opt_natural_loop_vec.Vec
+      (opt-licm-nested-loops
+        (opt_natural_loop_vec.view loops)
+        (opt-natural-loop-header outer)
+        body)]
+    [view (opt_natural_loop_vec.view (& nested))]
+    [entries : OptLabelSet (Nil)]
+    (for [index (iterator.range 0 (array-length view))]
+      (let
+        [loop (& (array-ref view index))]
+        (match (opt-natural-loop-preheader loop)
+          [(Some preheader)
+            (set!
+              entries
+              (opt-licm-guard-entry-path
+                context
+                body
+                preheader
+                entries
+                (opt-licm-unswitch-chain-fuel)))]
+          [(No) unit])))
+    entries))
+
 (define (opt-licm-guard-loop?
   [type-segment-bases : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -28353,8 +28483,15 @@
                 [(Load _ (Var src) _)
                   (if (and
                     (>= checked 0)
-                    (not (opt-used-contains loop-defs src))
-                    (not (opt-licm-guard-defined? (& instrs) checked index src)))
+                    (or
+                      (and
+                        (not (opt-used-contains loop-defs src))
+                        (not
+                          (opt-licm-guard-defined? (& instrs) checked index src)))
+                      (match (opt-find-def-in-seq (& instrs) src)
+                        [(Some (Gep _ base offset _))
+                          (opt-licm-seed-values? loop-defs (& base) (& offset))]
+                        [_ false])))
                     (set! found? true)
                     unit)]
                 [_ unit])

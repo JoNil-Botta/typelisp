@@ -95475,7 +95475,7 @@
 ;; the context rebuild entirely); an incompatible payload errors exactly like
 ;; gen-register-generated-decl. Same lifecycle as the module memo: reset per
 ;; program, self-clears on intern-generation change. Admission is scoped by
-;; the consuming module as well as the expansion identity.
+;; the owning module and output segment as well as the expansion identity.
 (defstruct TcMacroGeneratedDeclsStateData
   (capacity i64)
   (keys (__tl_dyn-array i64))
@@ -95579,26 +95579,41 @@
         (deref (tc-macro-generated-decls-state-view state)).capacity)
       1)))
 
-;; Decls output is installed in the consuming module. Equal expansions may
-;; suppress a repeat only within that scope; imports in another module still
-;; need their local alias rows. The key belongs to this job's structural owner.
+;; Decls output is installed in the module that owns it: the consuming module,
+;; or the module named by the latest `(module ...)` marker. Admission is per
+;; marker-delimited output segment, scoped by that owner and the segment's
+;; index. Segment 0 precedes the first marker and is also the scope of
+;; marker-free output. A replay in the same consuming module reproduces every
+;; scope, so it deduplicates and an incompatible payload still diagnoses. A
+;; consuming module that is also an explicit target keeps its local segment
+;; apart from the target segment, and imports in another module still get
+;; their local alias rows. Keys belong to this job's structural owner.
+(define (macro-decls-segment-scope
+  [state : TcMacroState]
+  [owner : i64]
+  [segment : i64]) : i64
+  (cis.intern-structural-key-raw
+    (cis.intern-structural-session-composite-pair-key
+      (tc-macro-state-structural-session state)
+      owner
+      segment)))
+
 (define (macro-generated-decls-identity-id
   [state : TcMacroState]
-  [module-id : i64]
+  [scope : i64]
   [identity : (& str)]) : i64
   (cis.intern-structural-key-raw
     (cis.intern-structural-session-composite-pair-key
       (tc-macro-state-structural-session state)
-      module-id
+      scope
       (macro-generated-identity-id state identity))))
 
 (define (macro-generated-decls-memo-get
   [state : TcMacroState]
-  [module-id : i64]
+  [scope : i64]
   [identity : (& str)]) : MacroMaybeSpliceDecls
   (let
-    [identity-id : i64
-      (macro-generated-decls-identity-id state module-id identity)]
+    [identity-id : i64 (macro-generated-decls-identity-id state scope identity)]
     [_ensure : unit (macro-generated-decls-memo-ensure! state)]
     [memo : (Ptr TcMacroGeneratedDeclsStateData)
       (tc-macro-generated-decls-state-view state)]
@@ -95631,12 +95646,11 @@
 
 (define (macro-generated-decls-memo-put!
   [state : TcMacroState]
-  [module-id : i64]
+  [scope : i64]
   [identity : (& str)]
   [decls : ast.AstDeclList]) : unit
   (let
-    [identity-id : i64
-      (macro-generated-decls-identity-id state module-id identity)]
+    [identity-id : i64 (macro-generated-decls-identity-id state scope identity)]
     ;; R3-P2b: see macro-generated-module-memo-put!.
     [_escape : unit
       (macro-decl-generation-escape-note! state 2 (+ identity-id 1))]
@@ -95925,15 +95939,15 @@
 (define (macro-decls-splice-admit
   [expr-bases : i64]
   [state : TcMacroState]
-  [module-id : i64]
+  [scope : i64]
   [identity : (& str)]
   [wrapped : (& wrapped ast.AstDeclList)]
   [call-expr : (& call ast.AstExpr)]) : MacroDeclsSpliceAdmission
-  (match (macro-generated-decls-memo-get state module-id identity)
+  (match (macro-generated-decls-memo-get state scope identity)
     [(No)
       (macro-generated-decls-memo-put!
         state
-        module-id
+        scope
         identity
         (owned_view.compiler-owned-reference-shared-view wrapped))
       (SpliceAdmission true)]
@@ -95959,14 +95973,17 @@
                 (cdiag.compiler-diagnostic-primary-span located))))))]))
 
 (defstruct MacroDeclsSpliceGroup
-  (module-id i64)
+  (owner i64)
+  (segment i64)
   (decls ast.AstDeclList)
   (emit bool))
 
 ;; Flattened output may switch to an explicit module and later return to a
-;; previous one. Compare all declarations for each owner together, then retain
-;; their original interleaving. Module markers remain even for an empty replay:
-;; they also determine the owner of declarations following the splice.
+;; previous one. Admit each nonempty segment between markers in its own scope,
+;; then retain the original interleaving. Groups are created in segment order,
+;; and both passes number segments by counting markers from 0. Module markers
+;; remain even for an empty replay: they also determine the owner of
+;; declarations following the splice.
 (define (macro-decls-splice-scoped-modules
   [expr-bases : i64]
   [state : TcMacroState]
@@ -95979,26 +95996,31 @@
     [count : i64 (ast.ast-decl-list-len (& wrapped))]
     [groups : (__tl_dyn-array MacroDeclsSpliceGroup)
       (__tl_make-array MacroDeclsSpliceGroup count)]
-    [by-module : tc_i64_i64_map.Map (tc_i64_i64_map.new)]
     [group-count : i64 0]
     [current : i64 module-id]
+    [segment : i64 0]
     (for [i (iterator.range 0 count)]
       (let
         [next : i64 (ast.ast-decl-list-module-id-at (& wrapped) i -2)]
         (if (!= next -2)
-          (set! current next)
-          (let
-            [index : i64 (tc_i64_i64_map.get-value-or (& by-module) current -1)]
+          (begin
+            (set! current next)
+            (+= segment 1))
+          (begin
             (when
-              (< index 0)
-              (set! index group-count)
-              (tc_i64_i64_map.insert-ref! (&mut by-module) current index)
+              (or
+                (= group-count 0)
+                (!= (array-ref groups (- group-count 1)).segment segment))
               (set!
-                (array-ref groups index)
-                (MacroDeclsSpliceGroup current (ast.ast-decl-list-new) false))
+                (array-ref groups group-count)
+                (MacroDeclsSpliceGroup
+                  current
+                  segment
+                  (ast.ast-decl-list-new)
+                  false))
               (+= group-count 1))
             (ast.ast-decl-list-push-from
-              (&mut (array-ref groups index).decls)
+              (&mut (array-ref groups (- group-count 1)).decls)
               (& wrapped.slots)
               (+ wrapped.offset i))))))
     (for [i (iterator.range 0 group-count)]
@@ -96007,7 +96029,7 @@
         (match (macro-decls-splice-admit
           expr-bases
           state
-          group.module-id
+          (macro-decls-segment-scope state group.owner group.segment)
           (& identity)
           (& group.decls)
           (& call-expr))
@@ -96015,26 +96037,26 @@
           [(SpliceAdmission admitted) (set! (array-ref groups i).emit admitted)])))
     (let
       [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
-      (set! current module-id)
+      [index : i64 -1]
+      (set! segment 0)
       (for [i (iterator.range 0 count)]
-        (let
-          [next : i64 (ast.ast-decl-list-module-id-at (& wrapped) i -2)]
-          (if (!= next -2)
-            (begin
-              (set! current next)
+        (if (!= (ast.ast-decl-list-module-id-at (& wrapped) i -2) -2)
+          (begin
+            (+= segment 1)
+            (ast.ast-decl-list-push-from
+              (&mut out)
+              (& wrapped.slots)
+              (+ wrapped.offset i)))
+          (begin
+            (when
+              (or (< index 0) (!= (array-ref groups index).segment segment))
+              (+= index 1))
+            (when
+              (array-ref groups index).emit
               (ast.ast-decl-list-push-from
                 (&mut out)
                 (& wrapped.slots)
-                (+ wrapped.offset i)))
-            (let
-              [index : i64
-                (tc_i64_i64_map.get-value-or (& by-module) current -1)]
-              (when
-                (array-ref groups index).emit
-                (ast.ast-decl-list-push-from
-                  (&mut out)
-                  (& wrapped.slots)
-                  (+ wrapped.offset i)))))))
+                (+ wrapped.offset i))))))
       (let
         [paths : ast.AstDeclPathList
           (macro-paths-for-decls state (& out) decl-path)]
@@ -96063,7 +96085,7 @@
   (match (macro-decls-splice-admit
     expr-bases
     state
-    module-id
+    (macro-decls-segment-scope state module-id 0)
     (& identity)
     (& wrapped)
     (& call-expr))

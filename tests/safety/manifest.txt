@@ -1606,3 +1606,4 @@ macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.t
 # Same canonical Decls identity in one module must retain collision checks.
 decls_same_scope_incompatible|check-fail|tests/safety/decls_same_scope_incompatible.tl|-|has incompatible payload
 decls_explicit_module_tail_conflict|check-fail|tests/safety/decls_explicit_module_tail_conflict.tl|-|duplicate value declaration generated.decls_explicit_global/value
+decls_explicit_target_incompatible|check-fail|tests/safety/decls_explicit_target_incompatible.tl|-|duplicate generated key for answer has incompatible payload

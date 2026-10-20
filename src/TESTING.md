@@ -2158,6 +2158,10 @@ incompatible-output diagnostic for one module/canonical expansion identity.
 `decls_explicit_module_scopes` combines local declarations with shared explicit
 modules; `decls_explicit_module_tail_conflict` checks that replayed markers
 still assign subsequent declarations to their explicit owner.
+`decls_self_target_scopes` expands bare and bodied module switches in a module
+that is also their target, in both import orders and with a same-module replay;
+`decls_explicit_target_incompatible` keeps the shared target segment's
+incompatible-output diagnostic across consuming modules.
 The typechecker memo scope test complements its existing owner-isolation,
 collision-probing, scratch-persistence and re-arm allocation checks.
 

@@ -12440,6 +12440,28 @@
           [_ -1])
         2
         "second scope retains its own output")
+      (test.assert-true
+        (!=
+          (tc_core.macro-decls-segment-scope state module-a 0)
+          (tc_core.macro-decls-segment-scope state module-a 1))
+        "output segment participates in memo scope")
+      (test.assert-i64-eq
+        (tc_core.macro-decls-segment-scope state module-a 1)
+        (tc_core.macro-decls-segment-scope state module-a 1)
+        "same segment scope is stable")
+      (tc_core.macro-generated-decls-memo-put!
+        state
+        (tc_core.macro-decls-segment-scope state module-a 0)
+        "segment-expansion"
+        (memo-test-decls 1))
+      (test.assert-true
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          (tc_core.macro-decls-segment-scope state module-a 1)
+          "segment-expansion")
+          [(No) true]
+          [_ false])
+        "another segment of the same owner has no admitted output")
       (tc_core.macro-generated-decls-memo-reset! state)
       (test.assert-true
         (match (tc_core.macro-generated-decls-memo-get

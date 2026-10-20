@@ -18,7 +18,7 @@ batch and LSP services orchestrate these stages.
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
-Declaration-macro splice deduplication also includes the consuming module;
+Declaration-macro splice deduplication also includes the owning module;
 its scope and regression witnesses are recorded in the
 [detailed macro invariants](compiler-invariants.md#architecture).
 

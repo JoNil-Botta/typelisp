@@ -44920,8 +44920,8 @@
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     [bound-ids : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [bound-vars : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    [check-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
-    [check-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
+    [check-env : sym_i64_env.SymI64Env env]
+    [check-type-env : tc_core.TcTypeEnv type-env]
     [s : LowerState state]
     [inner-check-label : i64 (ir.compiler-ir-label-none)]
     [checks-label : i64 (ir.compiler-ir-label-none)]
@@ -62350,8 +62350,8 @@
     [row-start : i64
       (cis.intern-lower-private-identity-raw
         (lower-private-identity state SpmdRowStart))]
-    [native-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
-    [native-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
+    [native-env : sym_i64_env.SymI64Env env]
+    [native-type-env : tc_core.TcTypeEnv type-env]
     (match (lower-row-origin-hold s start-value (I64))
       [(Alloc next var)
         (set! s next)
@@ -65526,7 +65526,7 @@
           ctx
           state
           (lower-global-shared-view scrut-ty)
-          (lower-global-shared-view scrutinee)
+          scrutinee
           (& alternatives)
           (& name-ids)
           false)]
@@ -65546,7 +65546,7 @@
                   ctx
                   body-label-state
                   (lower-global-shared-view scrut-ty)
-                  (lower-global-shared-view scrutinee)
+                  scrutinee
                   (ast.ast-pattern-list-get
                     (& alternatives)
                     (- alternatives.len 1)
@@ -65599,7 +65599,7 @@
                         fail-state
                         scrut-var
                         (lower-global-shared-view scrut-ty)
-                        (lower-global-shared-view scrutinee)
+                        scrutinee
                         (ast.ast-pattern-list-get
                           (& alternatives)
                           index
@@ -65623,7 +65623,7 @@
                         type-env
                         scrut-var
                         (lower-global-shared-view scrut-ty)
-                        (lower-global-shared-view scrutinee)
+                        scrutinee
                         (ast.ast-pattern-list-get
                           (& alternatives)
                           index
@@ -65681,7 +65681,7 @@
                     type-env
                     scrut-var
                     (lower-global-shared-view scrut-ty)
-                    (lower-global-shared-view scrutinee)
+                    scrutinee
                     (ast.ast-pattern-list-get
                       (& alternatives)
                       group
@@ -65823,7 +65823,7 @@
           ctx
           state
           (lower-global-shared-view scrut-ty)
-          (lower-global-shared-view scrutinee)
+          scrutinee
           (ast.ast-pattern-list-get
             alternatives
             index

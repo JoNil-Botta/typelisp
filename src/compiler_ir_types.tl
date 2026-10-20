@@ -8613,7 +8613,8 @@
 ;;   `__licm_false`  opt-licm-unswitch-clone-label (the unswitched false clone)
 ;;   `__u<digits>`   opt-unroll-copy-suffix (unroll trip copies; the
 ;;                   single-block versioner clones its kept checks through the
-;;                   same helper with copy 0, spelling `__u0`)
+;;                   same helper with copy 0, spelling `__u0`; unsigned-bound
+;;                   narrowing shares that spelling for its entry check)
 ;; The copy then misses the span table and the backend silently degrades
 ;; `tl_oob_abort_at` (file:line:col plus index/length) to the bare
 ;; `tl_oob_abort`. A clone's kept check traps at exactly the source check its

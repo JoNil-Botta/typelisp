@@ -571,21 +571,6 @@
           (owned_view.compiler-owned-shared-view report))))
     (doc_test.doc-test-run-report-status report)))
 
-(define (doc-stdlib-roots [idx : i64]) : doc_svec.Vec
-  (let
-    [i : i64 idx]
-    [n : i64 (io.arg-count)]
-    [roots : doc_svec.Vec (doc_svec.new)]
-    (while (< i n)
-      (if (string.eq (io.arg i) "--stdlib-root")
-        (if (< (+ i 1) n)
-          (begin
-            (doc_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
-            (set! i (+ i 2)))
-          (set! i n))
-        (set! i (+ i 1))))
-    roots))
-
 (define (doc-modules-from-input-paths-before-last
   [paths : (& paths doc_svec.Vec)]
   [index : i64]
@@ -674,6 +659,8 @@
 
 (define (doc-test-config-from [base : i64] [count : i64]) : ResultDocTestCliConfig
   (let
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (Linux) 1)]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "doc"
@@ -683,15 +670,11 @@
     [input-paths : doc_svec.Vec (doc_svec.new)]
     [manifest-path : String ""]
     [has-manifest : bool false]
-    [stdlib-roots : doc_svec.Vec (doc_svec.new)]
     [batch-list : DocMaybeString (No)]
     (set! doc-test-prefix-cache-stats false)
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--stdlib-root")
-          (doc_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--manifest-path")
           (if has-manifest
             (cli_option.cli-args-fail!
@@ -717,7 +700,7 @@
         input-paths
         manifest-path
         has-manifest
-        stdlib-roots
+        options.stdlib-roots
         batch-list))))
 
 (define (doc-test-files-from
@@ -834,6 +817,8 @@
 
 (define (doc-default-config-from [base : i64] [count : i64]) : ResultDocDefaultCliConfig
   (let
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (Linux) 1)]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "doc"
@@ -845,13 +830,9 @@
     [manifest-path : String ""]
     [open? : bool false]
     [no-deps? : bool false]
-    [stdlib-roots : doc_svec.Vec (doc_svec.new)]
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--stdlib-root")
-          (doc_svec.push-ref!
-            (&mut stdlib-roots)
-            (cli_option.cli-args-value (& args)))]
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "-o")
           (match output-path
             [(Some _)
@@ -887,7 +868,7 @@
         (not (string.eq manifest-path ""))
         open?
         no-deps?
-        stdlib-roots))))
+        options.stdlib-roots))))
 
 (define (doc-invalid-args) : i64
   (io.print-error "doc: expected input and output paths")
@@ -978,12 +959,29 @@
       (doc-invalid-html-args))))
 
 (define (doc-main-load [base : i64]) : i64
-  (if (>= (io.arg-count) (+ base 3))
-    (doc-generate-loaded-file
-      (io.arg (+ base 1))
-      (io.arg (+ base 2))
-      (doc-stdlib-roots (+ base 3)))
-    (doc-invalid-load-args)))
+  (if (< (io.arg-count) (+ base 3))
+    (doc-invalid-load-args)
+    (let
+      [args : cli_option.CliArgs
+        (cli_option.cli-args
+          "doc"
+          "--stdlib-root <dir>"
+          (+ base 3)
+          (io.arg-count))]
+      [options : cli_option.CliCompileOptions
+        (cli_option.cli-compile-options (Linux) 1)]
+      (while (cli_option.cli-args-next! (&mut args))
+        (unless
+          (cli_option.cli-compile-option! (&mut options) (&mut args))
+          (cli_option.cli-args-fail-arg! (&mut args) "doc: unknown argument ")))
+      (if args.failed
+        (begin
+          (io.print-error args.error)
+          1)
+        (doc-generate-loaded-file
+          (io.arg (+ base 1))
+          (io.arg (+ base 2))
+          options.stdlib-roots)))))
 
 (define (doc-main-default [base : i64]) : i64
   (match (doc-default-config-from base (io.arg-count))

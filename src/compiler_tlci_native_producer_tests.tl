@@ -7,7 +7,6 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
-(import compiler_owned_view as owned_view)
 (import compiler_parse_core as parser)
 (import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
@@ -60,7 +59,7 @@
       (parser.compiler-parse-state-cfgs
         (& parse-state)
         (parser.compiler-cfg-empty))
-      (owned_view.compiler-owned-shared-view pools))
+      pools)
       [(Err message) (io.panic message)]
       [(Ok program)
         (match program
@@ -68,7 +67,7 @@
             (let
               [context : producer.TlciNativeSourceContext
                 (producer.tlci-native-source-context-new
-                  pools
+                  (ast.ast-node-pool-context-capture-active)
                   (parser.compiler-parse-state-owner
                     (parser.compiler-parse-state-control-addr (& parse-state))))]
               [names : (__tl_dyn-array String) (__tl_make-array String 3)]
@@ -107,7 +106,7 @@
                 [generated : String
                   (producer.embedded-native-source
                     (& context)
-                    (owned_view.compiler-owned-shared-view names)
+                    (& names)
                     (& captures))]
                 (test.assert-i64-eq
                   (array-ref
@@ -125,7 +124,7 @@
 (define (producer-owner-source [fixture : (& fixture ProducerOwnerFixture)]) : String
   (producer.embedded-native-source
     (& fixture.context)
-    (owned_view.compiler-owned-reference-shared-view (& fixture.names))
+    (& fixture.names)
     (& fixture.captures)))
 
 (define (producer-owner-annotation [fixture : (& fixture ProducerOwnerFixture)]) : i64
@@ -143,6 +142,8 @@
 (define (producer-owner-isolation!) : unit
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
+    [home-full-report : bool
+      producer.embedded-native-full-blocker-report-enabled]
     [home-interns : ci.InternCompatState
       (ci.intern-compat-state-capture-active)]
     [home-pools : ast.AstNodePoolContext
@@ -211,6 +212,7 @@
     (test.assert-true
       (not (string.eq a.serial-source b.serial-source))
       "the fixtures produce distinct source")
+    (producer.embedded-native-full-blocker-report-set! true)
     (while (< round 3)
       (test.assert-owned-string-eq
         (producer-owner-source (& a))
@@ -228,14 +230,21 @@
         (producer-owner-reasons)
         b.serial-reasons
         "B's unsupported-body diagnostic is stable")
+      (test.assert-true
+        (>
+          (occurrences
+            (&
+              (array-ref
+                producer.embedded-stdlib-tlci-native-report-full-reasons
+                0))
+            "owner/unsupported\tblocked\t")
+          0)
+        "full diagnostics retain the borrowed catalog identity")
       (set! round (+ round 1)))
     ;; Reset only the retired input owner. Its peer remains a valid source
     ;; snapshot, and no producer call is allowed to resurrect A's old IDs.
-    (ast.ast-node-pool-context-reset-to!
-      (owned_view.compiler-owned-shared-view a.context.pools)
-      0
-      0)
     (ci.intern-compat-state-reset! (&mut a.context.intern-state))
+    (ast.ast-node-pool-context-reset-to! a.context.pools 0 0)
     (test.assert-owned-string-eq
       (producer-owner-source (& b))
       b.serial-source
@@ -264,6 +273,7 @@
       (producer-owner-source (& decoy))
       decoy.serial-source
       "the decoy's own source remains intact")
+    (producer.embedded-native-full-blocker-report-set! home-full-report)
     (ci.intern-compat-state-install! home-interns)
     (ast.ast-node-pool-context-install! home-pools)
     (cbi.state-install! (& home-builtins))))
@@ -276,19 +286,17 @@
     [b : ci.InternCompatState (ci.intern-compat-state-new)]
     [module-a : i64 (ci.intern-compat-state-intern (&mut a) "Module")]
     [decls-b : i64 (ci.intern-compat-state-intern (&mut b) "Decls")]
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 1 1)]
     [context-a : producer.TlciNativeSourceContext
       (producer.tlci-native-source-context-new
-        (owned_view.compiler-owned-shared-view pools)
+        (ast.ast-node-pool-context-new-with-capacities 1 1)
         a)]
     [context-b : producer.TlciNativeSourceContext
       (producer.tlci-native-source-context-new
-        (owned_view.compiler-owned-shared-view pools)
+        (ast.ast-node-pool-context-new-with-capacities 1 1)
         b)]
     [empty : producer.TlciNativeSourceContext
       (producer.tlci-native-source-context-new
-        pools
+        (ast.ast-node-pool-context-new-with-capacities 1 1)
         (ci.intern-compat-state-new))]
     (test.assert-i64-eq
       module-a

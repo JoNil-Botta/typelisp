@@ -967,7 +967,7 @@
                   [_source : String
                     (compiler_tlci_native_producer.embedded-native-source
                       (& (build-package-test-source-context))
-                      (owned_view.compiler-owned-shared-view catalog)
+                      (& catalog)
                       (& collector.captures))]
                   (and
                     (= (array-length catalog) 2)

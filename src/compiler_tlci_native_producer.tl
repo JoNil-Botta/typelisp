@@ -590,7 +590,7 @@
 
 (define (tlci-native-macro-capture-slot
   [captures : (& captures TlciNativeMacroCaptures)]
-  [identity : String]) : i64
+  [identity : (& identity str)]) : i64
   (let
     [count : i64 captures.len]
     [index : i64 0]
@@ -9122,7 +9122,7 @@
 ;; entries; their temporary strings share the capture scratch lifetime.
 (define (embedded-native-source
   [context : (& context TlciNativeSourceContext)]
-  [names : (__tl_dyn-array String)]
+  [names : (& names (__tl_dyn-array String))]
   [captures : (& captures TlciNativeMacroCaptures)]) : String
   (let
     [out : source_buf.ByteBufBuilder (source_buf.byte-buf-builder-new)]
@@ -9144,9 +9144,7 @@
     (while (< index count)
       (let
         [slot : i64
-          (tlci-native-macro-capture-slot
-            captures
-            (owned_view.compiler-owned-array-element-shared-view names index))]
+          (tlci-native-macro-capture-slot captures (& (array-ref names index)))]
         [body-text : String
           (if (>= slot 0)
             (begin
@@ -9175,9 +9173,7 @@
               (str_cat.str-cat
                 (string.copy
                   (& (array-ref embedded-stdlib-tlci-native-report-reasons 0)))
-                (owned_view.compiler-owned-array-element-shared-view
-                  names
-                  index)
+                (string.copy (& (array-ref names index)))
                 "\t"
                 (if (=
                   (string.string-length
@@ -9201,9 +9197,7 @@
                     body))
                 (embedded-native-full-blocker-reset!))
               (embedded-native-full-blocker-render!
-                (owned_view.compiler-owned-array-element-shared-view
-                  names
-                  index)))
+                (string.copy (& (array-ref names index)))))
             (source_buf.byte-buf-builder-append-string
               (&mut out)
               (str_cat.str-cat

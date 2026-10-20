@@ -83808,7 +83808,7 @@ tl_shared_object_init:
   (not (= (bit-and line.flags compiler-backend-peephole-desc-flag-owned) 0)))
 
 (define (compiler-backend-peephole-desc-movq?
-  [line : CompilerBackendPeepholeLine]) : bool
+  [line : (& CompilerBackendPeepholeLine)]) : bool
   (not (= (bit-and line.flags compiler-backend-peephole-desc-flag-movq) 0)))
 
 (define (compiler-backend-peephole-desc-label?
@@ -83930,7 +83930,7 @@ tl_shared_object_init:
     1))
 
 (define (compiler-backend-peephole-desc-last-reg
-  [line : CompilerBackendPeepholeLine]) : i64
+  [line : (& CompilerBackendPeepholeLine)]) : i64
   (-
     (bit-and
       (shr line.regs compiler-backend-peephole-desc-reg-last-shift)
@@ -83940,7 +83940,7 @@ tl_shared_object_init:
 ;; The zext pair rule reads the widening move's destination register; it is the
 ;; last-operand register of a `movzb{q,l}` line and "none" everywhere else.
 (define (compiler-backend-peephole-desc-zext-dst
-  [line : CompilerBackendPeepholeLine]) : i64
+  [line : (& CompilerBackendPeepholeLine)]) : i64
   (if (= (bit-and line.flags compiler-backend-peephole-desc-flag-zext) 0)
     -1
     (-
@@ -84506,7 +84506,7 @@ tl_shared_object_init:
     ;; untracked register stays on the byte-audit path because it may be rsp.
     (when
       (compiler-backend-peephole-desc-movq?
-        (compiler-backend-global-shared-view line))
+        line)
       (let
         [src-flags : i64 (compiler-backend-peephole-desc-op-src-flags line)]
         [dst-flags : i64 (compiler-backend-peephole-desc-op-dst-flags line)]
@@ -84665,7 +84665,7 @@ tl_shared_object_init:
         ;; control kind needs no re-derivation from the bytes.
         [mnemonic-kind : i64
           (if (compiler-backend-peephole-desc-movq?
-            (compiler-backend-global-shared-view line))
+            line)
             compiler-backend-control-mnemonic-movq
             (compiler-backend-control-mnemonic-kind data ms mlen))]
         [pop? : bool (= mnemonic-kind compiler-backend-control-mnemonic-pop)]
@@ -84701,7 +84701,7 @@ tl_shared_object_init:
             ;; one-space form), and let it scan everywhere else.
             (if (and
               (compiler-backend-peephole-desc-movq?
-                (compiler-backend-global-shared-view line))
+                line)
               (= (compiler-backend-peephole-desc-op-src-start line) (+ te 1)))
               (compiler-backend-peephole-desc-op-src-end line)
               -1)
@@ -85439,10 +85439,10 @@ tl_shared_object_init:
     [else (compiler-backend-peephole-owners-empty)]))
 
 (define (compiler-backend-peephole-line-self-move-desc?
-  [line : CompilerBackendPeepholeLine]) : bool
+  [line : (& CompilerBackendPeepholeLine)]) : bool
   (and
     (compiler-backend-peephole-desc-movq?
-      (compiler-backend-global-shared-view line))
+      line)
     (not (= (bit-and (compiler-backend-peephole-desc-op-src-flags line) 3) 0))
     (compiler-backend-peephole-ranges-eq?
       line.data
@@ -85453,7 +85453,7 @@ tl_shared_object_init:
       (compiler-backend-peephole-desc-op-dst-end line))))
 
 (define (compiler-backend-peephole-redundant-zext-next-desc?
-  [next : CompilerBackendPeepholeLine]
+  [next : (& CompilerBackendPeepholeLine)]
   [reg : i64]) : bool
   (if (or
     (not (compiler-backend-peephole-desc-has-operands? next))
@@ -85482,8 +85482,8 @@ tl_shared_object_init:
               (= (compiler-backend-peephole-desc-last-reg next) reg))))))))
 
 (define (compiler-backend-peephole-redundant-zext-pair-desc?
-  [pending : CompilerBackendPeepholeLine]
-  [next : CompilerBackendPeepholeLine]) : bool
+  [pending : (& CompilerBackendPeepholeLine)]
+  [next : (& CompilerBackendPeepholeLine)]) : bool
   (let
     [dst : i64 (compiler-backend-peephole-desc-zext-dst pending)]
     (if (< dst 0)
@@ -85654,7 +85654,7 @@ tl_shared_object_init:
             [clean-writes-r10 : bool
               (and
                 (compiler-backend-peephole-desc-movq?
-                  (compiler-backend-global-shared-view line))
+                  line)
                 (= (compiler-backend-peephole-desc-op-dst-reg line) 8)
                 (not
                   (compiler-backend-peephole-range-mentions-r10-data?
@@ -85687,13 +85687,13 @@ tl_shared_object_init:
   [walk : (& walk CompilerBackendPeepholeWalkState)]
   [chunks : (& chunks CompilerBackendPeepholeChunkArray)]
   [chunk : i64]
-  [pending : CompilerBackendPeepholeLine]
-  [next : CompilerBackendPeepholeLine]) : i64
+  [pending : (& CompilerBackendPeepholeLine)]
+  [next : (& CompilerBackendPeepholeLine)]) : i64
   ;; lint-allow: nested-if-ladder
   (if (or
     (compiler-backend-peephole-redundant-zext-pair-desc?
-      (compiler-backend-global-shared-view pending)
-      (compiler-backend-global-shared-view next))
+      pending
+      next)
     (compiler-backend-peephole-dead-test-after-and-desc? pending next))
     2
     (if (compiler-backend-peephole-flags-branch-desc?
@@ -85702,12 +85702,12 @@ tl_shared_object_init:
       next)
       5
       (if (compiler-backend-peephole-desc-movq?
-        (compiler-backend-global-shared-view pending))
+        pending)
         (if (compiler-backend-peephole-line-self-move-desc?
-          (compiler-backend-global-shared-view pending))
+          pending)
           1
           (if (compiler-backend-peephole-desc-movq?
-            (compiler-backend-global-shared-view next))
+            next)
             (let
               [pd : (Ptr u8) pending.data]
               [nd : (Ptr u8) next.data]
@@ -85854,9 +85854,9 @@ tl_shared_object_init:
   [next : CompilerBackendPeepholeLine]) : String
   (if (and
     (compiler-backend-peephole-desc-movq?
-      (compiler-backend-global-shared-view pending))
+      pending)
     (compiler-backend-peephole-desc-movq?
-      (compiler-backend-global-shared-view next)))
+      next))
     (str_cat.str-cat
       "    movq "
       (compiler-backend-peephole-line-op-src-text pending)
@@ -85869,9 +85869,9 @@ tl_shared_object_init:
   [next : CompilerBackendPeepholeLine]) : String
   (if (and
     (compiler-backend-peephole-desc-movq?
-      (compiler-backend-global-shared-view pending))
+      pending)
     (compiler-backend-peephole-desc-movq?
-      (compiler-backend-global-shared-view next)))
+      next))
     (str_cat.str-cat
       "    movq "
       (compiler-backend-peephole-r10-base-rewrite
@@ -85961,7 +85961,7 @@ tl_shared_object_init:
   [line : Expr]
   [owners : Expr]
   [prev-abort : Expr]) : Expr
-  `(if (compiler-backend-peephole-desc-movq? ,line)
+  `(if (compiler-backend-peephole-desc-movq? (& ,line))
     (compiler-backend-peephole-emit-movq-line-desc-record
       (&mut ,walk)
       ,line
@@ -91347,8 +91347,8 @@ tl_shared_object_init:
                       (& walk)
                       chunks
                       c
-                      (compiler-backend-global-shared-view pending)
-                      (compiler-backend-global-shared-view line))]
+                      pending
+                      line)]
                   (cond
                     [(= action 1)
                       (set! pending line)
@@ -91524,7 +91524,7 @@ tl_shared_object_init:
       has-pending
       (not
         (compiler-backend-peephole-line-self-move-desc?
-          (compiler-backend-global-shared-view pending))))
+          pending)))
       (set!
         owners
         (compiler-backend-peephole-emit-line-desc-record

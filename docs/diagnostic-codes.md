@@ -43,9 +43,52 @@ duplicate rows.
 | E0304 | load | missing selected import item | loader | selected-item validation below | detailed |
 | E0305 | load | ambiguous import binding | loader | alias and unqualified collision conversion | detailed |
 | E0307 | load | duplicate module declaration | loader | module declaration validation below | detailed |
+| E0501 | macro | macro namespace error | macro expander | `MacroNamespace` sites below | detailed |
+| E0502 | macro | invalid macro use | macro expander | `MacroUse` sites below | detailed |
+| E0503 | macro | invalid macro output | macro expander | `MacroOutput` sites below | detailed |
+| E0504 | macro | macro expansion depth exceeded | macro expander | `MacroDepth` sites below | detailed |
+| E0505 | comptime | explicit compile-time error | compile-time evaluator | `ComptimeAuthorError` sites below | detailed |
+| E0506 | comptime | compile-time evaluation failed | compile-time evaluator | `ComptimeEvaluation` sites below | detailed |
+| E0507 | comptime | compile-time evaluation limit exceeded | compile-time evaluator | `ComptimeFuel` sites below | detailed |
 
 Rows are in registry order, which is append order. `E01..` codes are parse
-codes, `E02..` codes are typecheck codes, and `E03..` codes are loader codes.
+codes, `E02..` codes are typecheck codes, `E03..` codes are loader codes, and
+`E05..` codes belong to macro expansion and compile-time evaluation.
+
+## Macro expansion and compile-time evaluation
+
+Every `ctfe-diagnostic-at-expr` call supplies a `CompilerMacroKind` at its
+raise/conversion site. Existing tagged errors retain their original code;
+an author's `comptime-error` String is data and always receives E0505, even
+when its text resembles an internal tag. No classification examines natural
+language prefixes. Native callbacks preserve codes when converting diagnostic
+values into the session's String slot, and the native status boundary selects
+fuel exhaustion from the status value.
+
+| Code | Public raise/conversion families |
+| --- | --- |
+| E0501 | `compiler-symbols-duplicate-macro-message`; qualified/source/hygiene macro lookup; `macro-call-not-macro-diag`, including missing generated declarations and unfinished imported macro namespaces |
+| E0502 | identity-key and signature operand validation; type/module/clause/binding-clause strategies; variadic parameter capture and binding; macro call position and compatibility checks |
+| E0503 | `macro-output-syntax-diag` for non-parser output failures; expression result validation; `macro-module-incompatible-output-diag`; `macro-expand-module-generated-decls` module count/order validation |
+| E0504 | `macro-expand-produced-node`, `macro-expand-node-with-fire-decision`, `macro-expand-expr` depth guards |
+| E0505 | `ctfe-eval-comptime-error-call` after its String argument succeeds; native `compiler-comptime-host-callback-diagnostic-from-value` |
+| E0506 | CTFE literal, variable, call, unary/binary, cast, local mutation, aggregate/array/string indexing, syntax construction/quotation, reflection and unsupported expression failures; native request/result/status failures other than fuel exhaustion |
+| E0507 | `compiler-ctfe-eval`, `ctfe-eval-dotted-var-source`, `ctfe-fold-result` and `ctfe-eval-pattern-list-bindings-call` fuel guards; native `macro-try-stdlib-tlci-native-resolved` fuel-exhausted status |
+
+The existing E0218 compile-time value/constraint rules and E0202 arity rules
+are unchanged. A genuine parse/typecheck/load error encountered while
+expanding a macro retains its code and producing category through located,
+rich and nested expansion-frame transports. Generated declaration parsing
+uses the parser's tagged result before its legacy text-only adapter strips
+the tag. Loader failures reached through generated imports retain loader
+codes; ordinary load-once cycles remain valid. Missing ordinary expression
+names remain E0201 when no macro position or signature establishes a macro
+lookup.
+
+Canonicalization changes code/category metadata only. Primary and secondary
+paths/spans, help, generated-identity notes and declaration/invocation labels
+remain owned by the escaped diagnostic across later compiler jobs. JSON and
+LSP payload schemas are unchanged.
 
 ## Loader and import error families
 
@@ -78,9 +121,8 @@ Package-qualified includes with unknown dependency aliases also use E0303;
 E0302 covers failure to read a successfully resolved include path.
 
 Package manifest, lock/cache and dependency-artifact failures are separate
-conversion boundaries, tracked by #8982. Macro namespace, expansion, generated
-output and CTFE codes are tracked by #8983. Both retain the full #7136 scope;
-these loader codes do not classify their forwarded failures.
+conversion boundaries, tracked by #8982. The loader codes do not classify
+forwarded macro/CTFE failures. The remaining siblings retain the #7136 scope.
 
 ## Parse error families
 
@@ -106,12 +148,13 @@ file.
 | REPL input | `expected REPL input`, `trailing tokens after REPL input` | E0100 | parser | detailed (E0100) |
 | Compiler-internal shapes | `malformed internal resolved type ...`, `malformed internal binary data` | E0100 | parser | detailed (E0100) |
 
-A parser error handed to other code as text (`parse-ast-source`,
-`parse-ast-expr`, `parse-ast-decl-maybe`) has no tag, so a syntax error in
-macro output stays a typecheck diagnostic.
+A parser error handed to other code through legacy text adapters
+(`parse-ast-source`, `parse-ast-expr`, `parse-ast-decl-maybe`) has no tag.
+Generated declarations use the tagged parser result directly, preserving
+syntax errors in macro output as parse diagnostics.
 
-Parser, typechecker and loader canonicalization are production sites for
-stable public codes. Package, macro, lowering, backend, linker,
+Parser, typechecker, loader and macro/CTFE canonicalization are production
+sites for stable public codes. Package, lowering, backend, linker,
 formatter, lint, documentation, and test diagnostics still contain uncoded
 public paths. Add category-specific codes at their canonical conversion points
 before claiming those strings as stable API. Test-only uses of

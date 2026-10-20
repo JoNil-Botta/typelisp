@@ -5570,8 +5570,8 @@
         [CompilerDiagnosticNoString
           (cdiag.compiler-diagnostic-code-for-typecheck-kind (Unclassified))])]
     (cdiag.compiler-diagnostic-with-category
-      (& (cdiag.compiler-diagnostic-with-code (& diag) code))
-      "typecheck")))
+      (& (cdiag.compiler-diagnostic-with-code (& diag) (string.copy (& code))))
+      (cdiag.compiler-diagnostic-code-category (& code)))))
 
 ;; The text of a typecheck error message without its kind tag, for code that
 ;; inspects the wording.
@@ -92417,7 +92417,7 @@
     (ast.ast-source-span-end-col span)))
 
 (define (macro-output-syntax-diag [origin : (& ast.AstExpr)] [message : String]) : cdiag.CompilerDiagnostic
-  (ctfe_support.ctfe-diagnostic-at-expr (& origin) message))
+  (ctfe_support.ctfe-diagnostic-at-expr (MacroOutput) (& origin) message))
 
 (define (macro-expansion-site-span [ctx : TcContext] [call-expr : ast.AstExpr]) : TcMaybeAstSourceSpan
   (match (tc-global-shared-view call-expr)
@@ -94286,6 +94286,7 @@
           (Err
             (box
               (ctfe_support.ctfe-diagnostic-at-expr
+                (MacroUse)
                 (& expr)
                 "typecheck: Module macro identity key expression must evaluate to String or i64")))])]
     [(Err diag) (Err diag)]))
@@ -94584,6 +94585,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroUse)
               (&
                 (tc-context-expr-get
                   ctx
@@ -94602,12 +94604,14 @@
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: type macro operand cannot be variadic")))]
                 [(tc-macro-module-param-kind? (tc-global-shared-view ty))
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: Module macro operand cannot be variadic")))]
                 [(macro-identity-syntax-param-type?
@@ -94678,12 +94682,14 @@
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
+                      (MacroUse)
                       (& call-expr)
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
             (if (>= arg-index args.len)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroUse)
                     (& call-expr)
                     "macro call has too few arguments")))
               (let
@@ -98445,12 +98451,17 @@
   [dispatch : sym_i64_env.SymI64Env]
   [form : reader.SpannedSexpr]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
-  (match (parser.parse-ast-decl-maybe dispatch form)
-    [(SomeDecl decl)
-      (Ok (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new))))]
-    [(Decls decls) (Ok decls)]
-    [(NoDecl) (Ok (ast.ast-decl-list-new))]
-    [(Err message) (Err (box (macro-output-syntax-diag origin message)))]))
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [result : parser.ResultAstMaybeDecl
+      (parser.parse-ast-decl-maybe-with-pools dispatch pools form)]
+    (ast.ast-node-pool-context-install! pools)
+    (match result
+      [(SomeDecl decl)
+        (Ok (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new))))]
+      [(Decls decls) (Ok decls)]
+      [(NoDecl) (Ok (ast.ast-decl-list-new))]
+      [(Err message) (Err (box (macro-output-syntax-diag origin message)))])))
 
 (define (macro-parse-decls-from-one-expr
   [owner : (& owner MacroSexprOwner)]
@@ -103955,6 +103966,7 @@
           (Err
             (box
               (ctfe_support.ctfe-diagnostic-at-expr
+                (MacroNamespace)
                 (& call-expr)
                 (macro-missing-macro-message name))))])
       (match (macro-surface-call-decl-in-module
@@ -103975,6 +103987,7 @@
             (Err
               (box
                 (ctfe_support.ctfe-diagnostic-at-expr
+                  (MacroNamespace)
                   (& call-expr)
                   (macro-missing-macro-message name)))))]))))
 
@@ -104019,6 +104032,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroNamespace)
             (& call-expr)
             (str_cat.str-cat
               "typecheck: qualified macro has no source id: "
@@ -104468,7 +104482,11 @@
             call-expr)]
         [(Err message)
           (Err
-            (box (ctfe_support.ctfe-diagnostic-at-expr (& call-expr) message)))]))))
+            (box
+              (ctfe_support.ctfe-diagnostic-at-expr
+                (MacroNamespace)
+                (& call-expr)
+                message)))]))))
 
 (define (macro-call-decl-from-hygiene-name
   [ctx : TcContext]
@@ -104482,6 +104500,7 @@
     (Err
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
+          (MacroNamespace)
           (& call-expr)
           (str_cat.str-cat
             "typecheck: macro hygiene source id unavailable: "
@@ -104856,7 +104875,9 @@
       (match (macro-type-arg-source-policy-ok ctx (tc-global-shared-view ty))
         [(Ok) (Ok (macro-type-arg-resolve ctx decls ty))]
         [(Err message)
-          (Err (box (ctfe_support.ctfe-diagnostic-at-expr (& arg) message)))])]
+          (Err
+            (box
+              (ctfe_support.ctfe-diagnostic-at-expr (MacroUse) (& arg) message)))])]
     [(Err diag) (Err diag)]))
 
 (define (macro-type-arg-with-fallback
@@ -104946,6 +104967,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroUse)
               (& arg-expr)
               (macro-type-kind-constraint-message
                 macro-name
@@ -104978,6 +105000,7 @@
           (Err
             (box
               (ctfe_support.ctfe-diagnostic-at-expr
+                (MacroUse)
                 (& arg)
                 (tc-source-slash-qualified-message name))))
           (let
@@ -105001,12 +105024,14 @@
                       (Err
                         (box
                           (ctfe_support.ctfe-diagnostic-at-expr
+                            (MacroUse)
                             (& arg)
                             (macro-module-strategy-unknown-message name)))))])]))))]
     [_
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& arg)
             "typecheck: Module macro operand expects a module name")))]))
 
@@ -105030,6 +105055,7 @@
   (Err
     (box
       (ctfe_support.ctfe-diagnostic-at-expr
+        (MacroUse)
         (& arg)
         (macro-clause-shape-message)))))
 
@@ -105070,6 +105096,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& arg)
             "typecheck: ExprClause macro operand expects bracket syntax")))]))
 
@@ -105117,6 +105144,7 @@
   (Err
     (box
       (ctfe_support.ctfe-diagnostic-at-expr
+        (MacroUse)
         (& arg)
         (macro-binding-clause-shape-message)))))
 
@@ -105182,6 +105210,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& arg)
             "typecheck: ExprBindingClause macro operand expects bracket syntax")))]))
 
@@ -105395,6 +105424,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& arg)
             (macro-clause-operand-mismatch-message resolved-expected))))]
     [else (macro-check-ordinary-operand ctx env resolved-expected arg)]))
@@ -105934,12 +105964,14 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& (Var name))
             "typecheck: type macro operand cannot be variadic")))]
     [(tc-macro-module-param-kind? (tc-global-shared-view ty))
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& (Var name))
             "typecheck: Module macro operand cannot be variadic")))]
     [(macro-param-expr-clause?
@@ -106338,6 +106370,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroUse)
               (& call-expr)
               "macro call has too many arguments"))))]
     [else
@@ -106410,12 +106443,14 @@
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
+                      (MacroUse)
                       (& call-expr)
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
             (if (>= arg-index args.len)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroUse)
                     (& call-expr)
                     "macro call has too few arguments")))
               (let
@@ -106519,6 +106554,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroUse)
               (& call-expr)
               "macro call has too many arguments"))))]
     [else
@@ -106612,12 +106648,14 @@
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
+                      (MacroUse)
                       (& call-expr)
                       "typecheck: only ExprBindingClause macro operands may be variadic before a later operand")))))
             (if (>= arg-index args.len)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroUse)
                     (& call-expr)
                     "macro call has too few arguments")))
               (let
@@ -106970,10 +107008,15 @@
     [message : String]) : String
     (match catalog
       [(Dependency capability)
-        (cload.compiler-load-dependency-catalog-capability-error
-          (& capability)
-          identity
-          message)]
+        (let
+          [text : String
+            (cload.compiler-load-dependency-catalog-capability-error
+              (& capability)
+              identity
+              (tc-message-text (& message)))]
+          (if (cdiag.compiler-diagnostic-typecheck-tagged? (& message))
+            (tc-message-with-tag-of (& message) text)
+            text))]
       [(Embedded _) message])))
 
 (cfg
@@ -107477,6 +107520,7 @@
                       (embedded_tlci.compiler-comptime-host-session-close!)
                       (Err
                         (ctfe_support.ctfe-diagnostic-at-expr
+                          (ComptimeEvaluation)
                           (& call-expr)
                           message)))]
                   [(Ok dispatch)
@@ -107627,6 +107671,7 @@
                                 (embedded_tlci.compiler-comptime-host-session-close!)
                                 (Err
                                   (ctfe_support.ctfe-diagnostic-at-expr
+                                    (ComptimeEvaluation)
                                     (& call-expr)
                                     message)))])]
                         ;; A transformer that called `comptime-error` left
@@ -107675,6 +107720,11 @@
                               (embedded_tlci.compiler-comptime-host-session-close!)
                               (Err
                                 (ctfe_support.ctfe-diagnostic-at-expr
+                                  (if (=
+                                    status
+                                    tlci.tlci-host-callback-status-fuel-exhausted)
+                                    (ComptimeFuel)
+                                    (ComptimeEvaluation))
                                   (& call-expr)
                                   message))))]))])))))))))
 
@@ -108458,6 +108508,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& expr)
             "typecheck: expected binding clause")))]))
 
@@ -109146,6 +109197,7 @@
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroDepth)
                     (& expr)
                     "macro expansion exceeded depth limit"))))
             (macro-expand-expr-fire ctx env decls depth expr)))))))
@@ -109169,12 +109221,14 @@
     (Err
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
+          (MacroUse)
           (& call-expr)
           "typecheck: Module macro can only be used in import position")))
     (if (tc-macro-result-decls? ret)
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroUse)
             (& call-expr)
             "typecheck: Decls macro can only be used at module scope")))
       (let
@@ -109237,6 +109291,7 @@
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroOutput)
                     (& call-expr)
                     "typecheck: macro expansion produced type does not match declaration"))))]
           [(CapturedExpr expanded produced pools)
@@ -109288,12 +109343,14 @@
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroOutput)
                     (& call-expr)
                     "typecheck: macro expansion produced type does not match declaration"))))]
           [_
             (Err
               (box
                 (ctfe_support.ctfe-diagnostic-at-expr
+                  (MacroOutput)
                   (& call-expr)
                   "macro transformer did not produce an Expr")))])))))
 
@@ -109401,6 +109458,7 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroDepth)
             (& expr)
             "macro expansion exceeded depth limit"))))
     (macro-expand-expr-fire ctx env decls depth expr)))
@@ -109711,6 +109769,7 @@
     (Err
       (box
         (ctfe_support.ctfe-diagnostic-at-expr
+          (MacroUse)
           (& call-expr)
           (macro-compat-guard-message name))))
     (macro-expand-compat-guard-body
@@ -109775,6 +109834,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroDepth)
               (& expr)
               "macro expansion exceeded depth limit"))))
       (macro-expand-expr-fire ctx env decls depth expr))))
@@ -110582,48 +110642,56 @@
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: Module macro expansion is not implemented yet")))]
                 [(and import-position (tc-macro-result-decls? ret))
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: Decls macro cannot be used in import position")))]
                 [import-position
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: expression macro cannot be used as module import")))]
                 [(tc-macro-result-decls? ret)
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: Decls macro expansion is not implemented yet")))]
                 [(tc-macro-result-module? ret)
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: Module macro can only be used in import position")))]
                 [else
                   (Err
                     (box
                       (ctfe_support.ctfe-diagnostic-at-expr
+                        (MacroUse)
                         (& call-expr)
                         "typecheck: expression macro cannot be used at module scope")))])]
             [(No)
               (Err
                 (box
                   (ctfe_support.ctfe-diagnostic-at-expr
+                    (MacroNamespace)
                     (& call-expr)
                     "typecheck: module-scope macro call must resolve to defmacro")))]))]
       [_
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroUse)
               (& call-expr)
               "typecheck: module-scope macro placeholder must be a call")))])))
 
@@ -111178,6 +111246,7 @@
   [module-id : i64]
   [call-expr : ast.AstExpr]) : cdiag.CompilerDiagnostic
   (ctfe_support.ctfe-diagnostic-at-expr
+    (MacroNamespace)
     (& call-expr)
     (match (ast.ast-expr-unspan-with-segment-bases
       (tc-context-expr-bases ctx)
@@ -111195,6 +111264,7 @@
   [call-expr : ast.AstExpr]
   [identity : String]) : cdiag.CompilerDiagnostic
   (ctfe_support.ctfe-diagnostic-at-expr
+    (MacroOutput)
     (& call-expr)
     (str_cat.str-cat
       "typecheck: Module macro output for generated identity "
@@ -111428,12 +111498,14 @@
       (Err
         (box
           (ctfe_support.ctfe-diagnostic-at-expr
+            (MacroOutput)
             (& call-expr)
             "typecheck: Module macro output must include a module declaration")))
       (if (> module-count 1)
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroOutput)
               (& call-expr)
               "typecheck: Module macro output must include exactly one module declaration")))
         (match (ast.ast-decl-list-step generated)
@@ -111494,6 +111566,7 @@
                     (Err
                       (box
                         (ctfe_support.ctfe-diagnostic-at-expr
+                          (MacroOutput)
                           (& call-expr)
                           "typecheck: Module macro output must include exactly one module declaration")))])]
               [(Module target-module-id)
@@ -111549,12 +111622,14 @@
                 (Err
                   (box
                     (ctfe_support.ctfe-diagnostic-at-expr
+                      (MacroOutput)
                       (& call-expr)
                       "typecheck: Module macro output must start with a module declaration")))])]
           [(Nil)
             (Err
               (box
                 (ctfe_support.ctfe-diagnostic-at-expr
+                  (MacroOutput)
                   (& call-expr)
                   "typecheck: Module macro output must include a module declaration")))])))))
 
@@ -111736,11 +111811,13 @@
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
+                                (MacroUse)
                                 (& call-expr)
                                 "typecheck: Module macro can only be used in import position")))
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
+                                (MacroUse)
                                 (& call-expr)
                                 "typecheck: expression macro cannot be used at module scope"))))))]
                   [(No)
@@ -111756,6 +111833,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroUse)
               (& call-expr)
               "typecheck: module-scope macro placeholder must be a call")))])))
 
@@ -111985,11 +112063,13 @@
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
+                                (MacroUse)
                                 (& call-expr)
                                 "typecheck: Decls macro cannot be used in import position")))
                           (Err
                             (box
                               (ctfe_support.ctfe-diagnostic-at-expr
+                                (MacroUse)
                                 (& call-expr)
                                 "typecheck: expression macro cannot be used as module import"))))))]
                   [(No)
@@ -112005,6 +112085,7 @@
         (Err
           (box
             (ctfe_support.ctfe-diagnostic-at-expr
+              (MacroUse)
               (& call-expr)
               "typecheck: import macro placeholder must contain a call")))])))
 

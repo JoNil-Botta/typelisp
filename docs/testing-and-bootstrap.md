@@ -155,10 +155,9 @@ host toolchain, so a stage0 never depends on its own `build` command.
 The serialized publisher uploads a complete private candidate before replacing
 the convenience release. It moves `stage0-latest` to the new commit without
 deleting that tag: delayed GitHub tag-deletion events can make a replacement
-release draft. The verifier checks the published release and all four stable
-asset URLs immediately, then re-reads the same release by ID after three
-minutes and repeats the public checks. A late draft transition fails the job
-with the release ID for diagnosis; permanent releases remain available.
+release draft. Publication logs identify each successful tag move or creation.
+The existing verifier checks the published payload and stable compiler URLs;
+permanent releases remain available during the short release replacement.
 
 The shell and PowerShell fetchers recover when `stage0-latest` returns 404,
 including when GitHub hides it as a draft. They select the newest published

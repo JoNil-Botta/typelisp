@@ -1,5 +1,14 @@
 # Selfhost compiler testing
 
+The `tc-read-value-*` tests retain unchanged expression IDs and cover every
+result-path wrapper, empty sequences, conditional/match arms and non-result
+children. The owner test crosses an expression segment boundary with colliding
+IDs in a current peer, then destroys both that peer's node storage and base
+arena before reading the new payloads. Keep the shared `BoxTake` occurrence
+test: its prefix stays owning while its result becomes `BoxGet`. Run these at
+opt0/1/2; restoring allocation for unchanged nodes, suppressing the real read
+rewrite or allocating payloads in the current peer must fail the regressions.
+
 `linker_coff_import_reader_tests.tl` shares its assertion body with the native
 opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
 kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,

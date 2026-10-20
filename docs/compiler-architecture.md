@@ -51,6 +51,8 @@ and reusable facts. Job-state isolation remains an ongoing migration in
 [#5754](https://github.com/JoNil-Botta/typelisp/issues/5754) and
 [#5756](https://github.com/JoNil-Botta/typelisp/issues/5756). Serial compatibility
 adapters do not make an ambient owner safe for a value from another job.
+Borrow-conflict read forms retain unchanged source IDs and build changed
+payloads in that same owner, under the linked expression/fact contract.
 
 [Native TLCI source generation](../src/compiler_tlci_native_producer.tl) reads
 captured nodes and names through `TlciNativeSourceContext`. Its source owners

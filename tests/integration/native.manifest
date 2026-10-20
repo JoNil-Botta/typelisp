@@ -323,7 +323,7 @@ licm_owned_globals_empty_abort|all|0,1,2|tests/integration/licm_owned_globals_bo
 licm_owned_globals_first_trap|all|0,1,2|tests/integration/licm_owned_globals_bounds.tl|135|-|10 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|stage-stdlib+expected-stderr:tl: $SRC:33:34: integer division or remainder error: dividend=1 divisor=0\n
 licm_owned_global_distinct|all|0,1,2|tests/integration/licm_owned_global_alias.tl|42|sum=8\n|-|compiler_owned_view.tl stdlib/io.tl stdlib/vector.tl|stage-stdlib
 licm_owned_global_alias|all|0,1,2|tests/integration/licm_owned_global_alias.tl|42|sum=68\n|alias|compiler_owned_view.tl stdlib/io.tl stdlib/vector.tl|stage-stdlib
-licm_owned_external_alias|all|0,1,2|tests/integration/licm_owned_external_alias.tl|42|sum=47\n|-|licm_owned_external_alias.c stdlib/io.tl stdlib/vector.tl|stage-stdlib
+licm_owned_external_alias|all|0,1,2|tests/integration/licm_owned_external_alias.tl|42|sum=47\n|-|licm_owned_external_alias.c licm_owned_external_alias_globals.tl stdlib/io.tl stdlib/vector.tl|stage-stdlib
 licm_raw_deref|all|-|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|-
 licm_raw_deref|all|0,1,2|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
 licm_payload_other|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 0|stdlib/io.tl stdlib/string.tl|stage-stdlib

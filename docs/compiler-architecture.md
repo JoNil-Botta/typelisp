@@ -29,6 +29,8 @@ its scope and regression witnesses are recorded in the
 | Checked expressions and ownership | [typechecker](../src/compiler_typecheck_core.tl), [public entry points](../src/compiler_typecheck_api.tl) | Use context-owned facts; invalidate them when their semantic inputs or owners change. |
 | Shared IR and operands | [IR model](../src/compiler_ir_types.tl) | Extend `compiler-ir-instr-visit-uses`, `compiler-ir-instr-map` and related operand helpers instead of copying full-variant walkers. |
 | Target predicates | [target cfg builder](../src/compiler_target_cfg_core.tl) | Use the shared target presets and [target dispatch guard](../scripts/check-codegen-target-dispatch.sh). |
+| ELF relocatable input syntax | [ELF reader](../src/linker_elf_object_reader.tl) | Preserve the input/content owner, physical IDs and borrowed spans under the [input contract](compiler-invariants.md#elf-relocatable-object-input); #7101 owns admission and linking policy. |
+| AMD64 short import syntax | [COFF import reader](../src/linker_coff_import_reader.tl) | Preserve physical archive member IDs, original spellings and literal IAT symbols under the [import contract](compiler-invariants.md#coff-short-import-input); #7102 owns selection and #7175 owns PE import layout. |
 
 Optimizer, backend, driver/CLI and LSP implementations consume shared IR; its
 supporting import closure must not depend back on them. AST, intern/identity

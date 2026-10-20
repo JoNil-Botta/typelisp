@@ -111354,7 +111354,10 @@
   [module-id : i64]
   [name-id : i64]) : String
   (let
-    [name : String (ci.intern-str name-id)]
+    [name : String
+      (tc-env-key-name-text-for-session
+        (tc-context-structural-session ctx)
+        name-id)]
     [default-message : String
       (str_cat.str-cat
         "typecheck: module-scope macro call does not name a macro: "

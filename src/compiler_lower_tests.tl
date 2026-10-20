@@ -2563,6 +2563,64 @@
       (lower-compiler-program-with-decl-paths "" (ast.ast-program decls) paths)]
     [(Err diag) (Err diag)]))
 
+(test
+  compiler-lower-missing-declaration-macro-diagnostic
+  (let
+    [sources : (Array String 3)
+      (array
+        "
+  (unknown-macro)"
+        "(defmacro (emit-missing) : Decls
+  `(missing-generated))
+(emit-missing)"
+        "(define (ordinary-function) : i64 42)
+(ordinary-function)")]
+    [names : (Array String 3)
+      (array "unknown-macro" "missing-generated" "ordinary-function")]
+    [lines : (Array i64 3) (array 2 2 2)]
+    [columns : (Array i64 3) (array 3 4 1)]
+    [modes : (Array lower.CompilerLowerMode 2)
+      (array
+        (lower.CompilerLowerMode.LinuxScalar)
+        (lower.CompilerLowerMode.WindowsScalar))]
+    (for [mode (iterator.range 0 2)]
+      (test.assert-true
+        (compiler-lower-mode-diagnostic-ok?
+          "(defstruct Wide (a i64) (b i64) (c i64) (d i64))
+(define (cloned [p : Wide]) : Wide (clone p))"
+          (array-ref modes mode)
+          "typecheck: module-scope macro call does not name a macro: synthesize-helpers"
+          1
+          1)
+        "missing clone prelude returns a diagnostic for its tagged helper name")
+      (for [index (iterator.range 0 3)]
+        (match (lower.lower-compiler-source-with-mode
+          (clone (array-ref sources index))
+          (array-ref modes mode))
+          [(Err diagnostic)
+            (test.assert-true
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-code-or-empty
+                    (& (deref diagnostic)))
+                  "E0501")
+                (string.eq
+                  (cdiag.compiler-diagnostic-message (& (deref diagnostic)))
+                  (str_cat.str-cat
+                    "typecheck: module-scope macro call does not name a macro: "
+                    (clone (array-ref names index))))
+                (=
+                  (cdiag.compiler-diagnostic-line (& (deref diagnostic)))
+                  (array-ref lines index))
+                (=
+                  (cdiag.compiler-diagnostic-col (& (deref diagnostic)))
+                  (array-ref columns index)))
+              "missing declaration macros retain source spelling, code and location")]
+          [(Ok _ _ owner)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            (test.assert-true false "a non-macro declaration call must fail")])))))
+
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
 (define (compiler-lower-tuple-shape-ok?) : bool
@@ -6386,6 +6444,30 @@
 (define (main) : i64
   (step (Big 1 2 3) 39))")
 
+(define (compiler-lower-tail-reborrow-param-source) : String
+  "(defstruct Lst (slots (__tl_dyn-array i64)) (len i64))
+(define (inner [l : (& Lst)] [k : i64]) : i64
+  (if (>= k l.len) k (inner l (+ k 1))))
+(define (bump [l : (&mut Lst)] [k : i64]) : i64
+  (if (>= k l.len) k (begin (set! l.len (- l.len 1)) (bump l (+ k 1)))))
+(define (reborrow [l : (& Lst)]) : i64
+  (inner (& l) 0))
+(define (shared-of-mut [l : (&mut Lst)]) : i64
+  (inner (& l) 0))
+(define (mut-reborrow [l : (&mut Lst)]) : i64
+  (bump (&mut l) 0))
+(define (local [n : i64]) : i64
+  (let [xs : Lst (Lst (__tl_make-array i64 2) n)]
+    (inner (& xs) 0)))
+(define (local-ref [n : i64]) : i64
+  (let [xs : Lst (Lst (__tl_make-array i64 2) n)]
+    (let [r : (& xs Lst) (& xs)]
+      (inner (& r) 0))))
+(define (main) : i64
+  (let [xs : Lst (Lst (__tl_make-array i64 2) 2)]
+    (+ (+ (reborrow (& xs)) (shared-of-mut (&mut xs)))
+       (+ (mut-reborrow (&mut xs)) (+ (local 1) (local-ref 1))))))")
+
 (define (compiler-lower-tail-indirect-source) : String
   "(define (finish [x : i64]) : i64 x)
 (define (step [f : (-> i64 i64)] [x : i64]) : i64
@@ -6503,6 +6585,41 @@
         (= (lower-test-function-tail-call-count functions "step" "finish") 0)
         (> (lower-test-function-call-count functions "step" "finish") 0))]
     [_ false]))
+
+(define (compiler-lower-tail-reborrow-param-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-tail-reborrow-param-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-function-tail-call-count functions "reborrow" "inner") 1)
+        (= (lower-test-function-call-count functions "reborrow" "inner") 0)
+        (=
+          (lower-test-function-tail-call-count
+            functions
+            "shared-of-mut"
+            "inner")
+          1)
+        (= (lower-test-function-call-count functions "shared-of-mut" "inner") 0)
+        (=
+          (lower-test-function-tail-call-count functions "mut-reborrow" "bump")
+          1)
+        (= (lower-test-function-call-count functions "mut-reborrow" "bump") 0)
+        (= (lower-test-function-tail-call-count functions "local" "inner") 0)
+        (> (lower-test-function-call-count functions "local" "inner") 0)
+        (=
+          (lower-test-function-tail-call-count functions "local-ref" "inner")
+          0)
+        (> (lower-test-function-call-count functions "local-ref" "inner") 0))]
+    [_ false]))
+
+;; A tail call whose argument re-borrows a reference parameter passes that same
+;; reference, so it stays a tail call; a borrow of a frame local, directly or
+;; through a local reference, keeps the call (#9137).
+(test
+  compiler-lower-tail-reborrow-param
+  (test.assert-true
+    (compiler-lower-tail-reborrow-param-shape-ok?)
+    "a re-borrowed reference parameter keeps its tail call"))
 
 (define (compiler-lower-tail-indirect-shape-ok?) : bool
   (match (lower-test-functions
@@ -14124,31 +14241,31 @@
 ;; lowering the same source again reaches the identical shape.
 (define (compiler-lower-bounds-operand-idempotent-ok?) : bool
   (and
-    (lower.lower-bounds-operand-width-64? (U64))
+    (lower.lower-bounds-operand-width-64? (& (U64)))
     (compiler-lower-bounds-operand-shape-ok?)))
 
 (define (compiler-lower-bounds-operand-width-predicate-ok?) : bool
   (let
     [ok : bool true]
-    (if (lower.lower-bounds-operand-width-64? (I64))
+    (if (lower.lower-bounds-operand-width-64? (& (I64)))
       unit
       (set! ok false))
-    (if (lower.lower-bounds-operand-width-64? (U64))
+    (if (lower.lower-bounds-operand-width-64? (& (U64)))
       unit
       (set! ok false))
-    (if (lower.lower-bounds-operand-width-64? (I32))
+    (if (lower.lower-bounds-operand-width-64? (& (I32)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (U32))
+    (if (lower.lower-bounds-operand-width-64? (& (U32)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (U8))
+    (if (lower.lower-bounds-operand-width-64? (& (U8)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (F64))
+    (if (lower.lower-bounds-operand-width-64? (& (F64)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (Bool))
+    (if (lower.lower-bounds-operand-width-64? (& (Bool)))
       (set! ok false)
       unit)
     ok))
@@ -15092,7 +15209,7 @@
               (ci.intern-compat-state-str
                 intern-state
                 (lower.lower-spmd-package-structural-identity
-                  (owned_view.compiler-owned-shared-view intern-state)
+                  intern-state
                   first)))
             0)
           (=
@@ -15107,12 +15224,8 @@
       (and
         lazy-before
         (=
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            first)
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            repeat))
+          (lower.lower-spmd-package-structural-identity intern-state first)
+          (lower.lower-spmd-package-structural-identity intern-state repeat))
         (=
           (lower.lower-spmd-package-structural-linker-symbol intern-state first)
           (lower.lower-spmd-package-structural-linker-symbol

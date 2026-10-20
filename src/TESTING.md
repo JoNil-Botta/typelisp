@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`linker_coff_import_reader_tests.tl` shares its assertion body with the native
+opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
+kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,
+every truncated prefix, malformed strings/headers, bigobj classification,
+resource boundaries and stable normalized/diagnostic dumps. Normal tests run
+neither producer tool. Preserve physical member IDs, original spellings and
+timestamps separately from normalized identity when adding cases.
+
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
 and E0218, and carries rich nested frames through a later compiler job. Run it
@@ -28,6 +36,19 @@ This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
+
+`backend-call-conventions` checks every IR call form, C and TypeLisp extern
+aliases, variadic signatures, private by-value copies and call-fact lifetime.
+`backend-call-convention-facts-parity` compares all convention-dependent ABI
+facts on both targets, including invalid register indices and mixed-bank stack
+boundaries. `backend-call-convention-emission-sites` turns on a `cfg test` hook
+that gives Windows `Internal` calls RSI/RDI as fifth and sixth argument
+registers, then checks where a TypeLisp call, C extern call, C function pointer
+call, closure adapter forwarding to C or TypeLisp, backend runtime helper call,
+TLS-arena intrinsic and variadic call place those arguments. Run these at
+opt0/1/2; a convention-only refactor also needs exact before/after Linux and
+Windows assembly for the integration corpus and compiler, plus the bootstrap
+fixpoints.
 
 `tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
 with colliding numeric names while a decoy interner remains installed. It keeps
@@ -677,6 +698,13 @@ bodies, quasiquote splicing and reuse of an operand list after a call at
 opt0/1/2.
 
 ## Late clone helper syntax
+
+`compiler-lower-missing-declaration-macro-diagnostic` checks nominal clone
+lowering without the clone prelude, a generated missing macro, an ordinary
+unknown macro and a function used as a declaration macro in Linux and Windows
+modes. All retain source spelling and available location; ordinary declaration
+macro expansion also retains E0501.
+Keep the valid `compiler-lower-clone-source-with-prelude` cases alongside it.
 
 `compiler-clone-late-tail-template` evaluates the stdlib producer's actual
 self-tail template with both boxing choices and requires ordinary syntax.
@@ -2132,3 +2160,31 @@ modules; `decls_explicit_module_tail_conflict` checks that replayed markers
 still assign subsequent declarations to their explicit owner.
 The typechecker memo scope test complements its existing owner-isolation,
 collision-probing, scratch-persistence and re-arm allocation checks.
+
+### ELF64 relocatable input reader
+
+`linker_elf_object_reader_tests.tl` and
+`tests/linker_elf_object_reader_smoke.tl` share `self-test` assertions. Inline
+and native opt0/1/2 tests embed all 24 GCC16/Clang22/GNU-as/TypeLisp object
+snapshots and independent LLVM numeric projections; they launch no host tools.
+The test-only `linker_elf_object_reader_test_dump.tl` renders stable physical
+IDs, offsets, raw scalars, hex names, groups and note spans. It is not a linker
+or public object-format CLI.
+
+The corpus covers header/structured-prefix truncation, bad ranges/overlap,
+strings/links/local boundaries, groups, SHNDX, notes/compression, all caller
+limits, all relocation widths/unknown numbers, signed addends, real indexes
+above 65535, raw byte names, opaque types, pointer-array priorities, interleaved
+identities and bounded mutations. With `--cfg compile-profile`, allocation
+assertions compare tiny/large payloads and retained-budget refusal; a consumed
+allocation fixture verifies the counters are active.
+
+`stage2-elf-object-reader-oracle` is a separate required Linux gate. Its
+`scripts/verify-elf-object-reader-oracle.sh` compares every snapshot and recorded
+projection with live `readelf -W -S -s -r -g -n`, plus LLVM's full numeric JSON
+projection when `llvm-readobj` is installed. It preserves the whole corpus and
+reports LLVM availability. Generation is oracle-only; follow
+[`tests/fixtures/elf-object/README.md`](../tests/fixtures/elf-object/README.md)
+for versions/options. Repository-rooted `tests/fixtures/...` manifest
+dependencies preserve their relative location when smoke sources and companions
+are staged; absolute/parent-traversal dependencies remain invalid.

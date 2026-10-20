@@ -3034,10 +3034,7 @@
           (owned_view.compiler-owned-shared-view package-name)
           module)
         (ci.intern-str name))]
-    [signature : String
-      (lower.lower-spmd-source-signature
-        params
-        (owned_view.compiler-owned-shared-view ret))]
+    [signature : String (lower.lower-spmd-source-signature params ret)]
     [spmd-backend : ir.CompilerIrSpmdBackend (build-package-tlci-backend mode)]
     [count : i64 (ast.ast-spmd-specialization-list-len (& specializations))]
     (tlci.tlci-make-spmd-callable

@@ -12,7 +12,7 @@ dep_source_path() {
     _source_dir=$2
 
     case "$_dep" in
-        stdlib/* | benchmarks/*)
+        stdlib/* | benchmarks/* | tests/fixtures/*)
             DEP_SOURCE_PATH="$ROOT/$_dep"
             return
             ;;
@@ -63,7 +63,7 @@ copy_dep() {
     # from the repository root while staged integration copies keep the same
     # relative layout.
     case "$_dep" in
-        stdlib/*)
+        stdlib/* | tests/fixtures/*)
             case "$_source_dir" in
                 "$ROOT/src")
                     _dst="$_case_parent/$_dep"

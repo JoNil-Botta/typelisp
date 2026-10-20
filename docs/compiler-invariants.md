@@ -70,6 +70,39 @@ Shared emission reads those facts and never tests the target itself.
 enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
 Codegen Parity*) describes its rules.
 
+`CompilerCallConvention` is independent of the target: every register, bank,
+clobber, stack-placement, shadow-space and aggregate-classification query
+receives `Internal` or `Platform`. Both currently return the same facts. IR
+function bodies, closure descriptors and private SPMD calls use `Internal`; C
+externs (including varargs), C function pointers and C store-result calls use
+`Platform`. TypeLisp package externs retain `Internal`. Helpers the backend
+emits in assembly (the allocator/arena/TLS core, profile shims and bulk memory
+helpers, `compiler-builtin-backend-runtime-platform-id?`) and C-entered
+trampolines retain their platform contract.
+
+`compiler-reg-call-instr-convention` owns call-form classification. Program
+indexing seeds its direct-name facts from extern ABI metadata for logical,
+source and link identities, and by builtin id for every backend-emitted helper,
+with or without an extern alias; function definitions take precedence over
+both. These facts share the existing reset and suppression lifetime with
+memory-transport facts. These are independent bits: a private by-value
+TypeLisp parameter needs memory transport without selecting the platform ABI.
+C exports retain `Platform` for their raw link entry, while their IR function
+name uses `Internal`; TypeLisp exports use `Internal` for both names. Inlined
+atomic, volatile and TLS-arena operations read the same convention as their
+argument setup. A closure entry adapter is entered with `Internal` and forwards
+with its target's convention, so a C extern used as a function value receives
+a `Platform` call. The allocator and both backend emission paths carry the
+selected convention through argument preferences, marshalling, aggregate
+classification and outgoing frame sizing. Incoming parameter and saved-register
+facts use the function's `Internal` contract; caller-clobber allocation remains
+conservative across the call family. `backend-call-conventions` pins
+classification and fact lifetime, `backend-call-convention-facts-parity` checks
+both targets, register boundaries and mixed argument banks, and
+`backend-call-convention-emission-sites` pins each emission site's convention.
+Full before/after assembly and bootstrap comparisons guard the no-output-change
+invariant.
+
 The freestanding Linux runtime installs a zeroed TLS mapping before global
 initializers and at each native worker entry. FS:0 holds the mapping's thread
 pointer; named TPOFF relocations locate the arena pointer, optional backtrace
@@ -418,10 +451,11 @@ Passes that rebuild a body push into one `CompilerIrBlockBuilder` sized from
 their input. Appending a list copies it, so a walk must not append each block's
 rewrite onto an already-built rest.
 
-Every `CompilerIrFunction` states its calling convention as a
+Every `CompilerIrFunction` also records its parameter protocol as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
 same-program SPMD helper (scalar, AVX2, AVX-512, and package producer helpers
-alike). The private descriptor, `CompilerIrSpmdPrivateAbi`, is immutable facts
+alike). Both variants use `Internal`. The private descriptor,
+`CompilerIrSpmdPrivateAbi`, is immutable facts
 under its own schema (`spmd-private-v1`, distinct from the imported catalog's
 `spmd-call-v1` row): callee, backend, lanes, every physical parameter in
 signature order with its ordinal, role (active mask; source parameter with its
@@ -1692,6 +1726,12 @@ storage-origin check does not establish the callee's return convention or the
 output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
 those proofs and their enforcement before stack coloring, including mutable IR.
 
+Inline-storage coloring tracks addresses through its known alias forms. A
+`Pack` can retain such an address in a register group after the original pointer
+dies; its operands therefore participate in the shared escape visitor. Without
+a complete lifetime proof for the packed result, the backing range stays private.
+Packing only values without tracked storage roots does not invalidate a range.
+
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it
 without naming it. No pass that forwards values by definition records a copy or
@@ -2156,6 +2196,49 @@ The encoder does not select exports from package declarations or publish an
 archive. Its inline oracle test compares all seven payloads in a maintained
 LLVM AMD64 fixture, including the empty-export support objects.
 
+### COFF short import input
+
+`src/linker_coff_import_reader.tl` reads one immutable member payload and a
+caller-supplied `ArchiveMemberId`. It does not traverse archives, select or
+coalesce members, choose symbol winners, search DLLs, or assign PE addresses.
+#7102 consumes its checked records for resolution; #7175 consumes live imports
+for PE import tables and thunks; #7127 can reuse the parser for round trips.
+
+Short imports require version 0, AMD64, known code/data/const type, zero
+reserved bits, and one of ordinal/exact/no-prefix/undecorate. `EXPORTAS` fails
+explicitly. The declared string extent must equal the entire remaining input
+and contain exactly two nonempty NUL-terminated strings, with no trailing data.
+Portable names use printable ASCII without path separators. DLL basenames also
+reject Windows path/wildcard characters and leading/trailing dots. Non-ASCII,
+including otherwise valid UTF-8, is outside this profile; no host code page or
+Unicode case conversion participates in identity.
+
+The reader reuses the encoder's name policy and transformation. No-prefix
+drops exactly one leading `?`, `@` or `_`; undecorate then stops at the first
+`@`. Empty transformed names fail. Literal public spellings are preserved,
+including an existing `__imp_` prefix; the IAT spelling always prepends another
+literal `__imp_`. DLL identity folds only ASCII case and retains the written
+basename separately. Ordinal mode requires 1..65535 and produces no hint/name;
+named mode preserves any 16-bit hint and produces no ordinal. Timestamp and
+hint are provenance rather than identity/order inputs. Code/data/const stay
+distinct; conflicting public/IAT identities are left for the resolver.
+
+The shared short-import/bigobj signature is classified from version, complete
+header, AMD64 machine, bigobj UUID and checked section/symbol/string-table
+extents. Other-object results are header classifications; full ordinary COFF
+and bigobj section/symbol semantics belong to their object reader. Unused
+bigobj words do not acquire import-header meanings.
+
+Caller limits bound input bytes, every name including the derived IAT symbol,
+owned output-string content, and work. Output reserves `6 + 3*public + 2*dll`
+bytes before allocating names; fixed record storage and bounded temporary
+buffers are separate. Work reserves `64 + 16*input` before field access and
+string scans. There are exactly two strings and at most one result/diagnostic.
+Division and subtraction checks precede table-count multiplication, and
+`SizeOfData` is compared with the remaining span without adding an untrusted
+size to an offset. Errors retain the physical member, static field and
+member-relative byte. Returned names are owned snapshots of validated input.
+
 Embedded link policy is read by `src/linker_coff_directive_reader.tl`. The
 object reader passes a section header summary (object identity, section
 number, name, characteristics, relocation and line-number counts) and the
@@ -2225,6 +2308,68 @@ the successful-image boundary before compiler arenas retire, then returned as
 bounded owned data alongside bytes. This preserves the route contract while
 the backend migrates to shared machine records; it does not broaden object
 eligibility or introduce public strict-mode options (#7452, #7395, #7032).
+
+### ELF relocatable object input
+
+`src/linker_elf_object_reader.tl` is the pure ELF64/LSB/x86-64 `ET_REL`
+reader for #8206. `read-object` takes one immutable borrowed byte array and an
+`ElfReadRequest` containing caller-assigned input/content tokens and limits.
+It returns either an owned syntax directory retaining that single input borrow
+or one fixed-size `ElfError` with kind, input/content identity, physical section
+and entry ordinals, and exact offending field/byte offset. Header errors have
+section/entry -1. At least one diagnostic slot is required. Unsupported class,
+encoding, version, OSABI, object type, machine, program headers, `SHT_REL` and
+compressed structural metadata have distinct rejection kinds.
+
+Header/section/symbol/rela IDs combine the caller's identity, physical index
+and source byte offset. A caller must not reuse a content token for changed
+bytes or mutate a returned directory while consumers retain its records. Public
+constructors are provenance records, not capability-security boundaries. Names
+are bounded raw byte spans, including non-UTF8 bytes; no name or payload is
+copied, interned, decompressed or interpreted as instructions. `SHT_NOBITS`
+retains its unsigned offset/size but has no file bytes. Inactive `SHT_NULL`
+headers also have no file range. All other nonempty ranges must be disjoint
+from each other, the ELF header and the section table.
+
+Extended section/name-table counts and parallel `SHT_SYMTAB_SHNDX` words are
+validated before index conversion. A symbol retains its local/global boundary,
+binding/type, raw `st_other`, low-two-bit SYSV/GNU visibility, special/defined
+section index and exact source of an extended index. Common `st_value` is an
+alignment, not an address. Relocations retain target/symbol identities, unsigned
+field offset, typed number, signed addend and ABI width. Width zero is a known
+marker/no fixed field; width -1 is an explicit unknown type. Width checks use a
+compressed target's declared uncompressed size; no relocation equation runs.
+
+Groups retain flags/signature/member IDs and require each `SHF_GROUP` section
+to occur in exactly one group. Link-order/info links, merge/string entry sizes,
+TLS flags, pointer-array suffix priorities, GNU-stack flags and bounded note
+owner/descriptor spans remain syntax. `Elf64_Chdr` retains type, uncompressed
+size/alignment and compressed bytes. Compressed symbol/string/rela/group/note/
+SHNDX tables fail with `UnsupportedCompressedMetadata`: validating their
+structural relationships requires a separately owned decompression stage.
+Other compressed sections remain opaque, including unknown compression kinds.
+Unknown nonallocatable/allocatable section types have distinct class markers;
+unknown live sections/relocations must be rejected by the later #7101 admission
+layer. This API supplies no winners, symbol resolution, liveness, image layout,
+archive/DSO/script access, or EH/DWARF/SFrame/note/TLS semantics. Its next
+consumers remain #7038, #7101, #7388, #7471, #7599 and #8185.
+
+Limits cover input/section/symbol/rela/group/note/string counts, retained bytes,
+diagnostics and work. Subtraction-based range/count checks precede every
+hostile offset addition, cast and variable allocation. A preflight counts
+records and checks the entire retained metadata budget before creating arrays;
+the bound includes record `sizeof` values, group owners, two sorting ranges per
+section and fixed overhead. No retained allocation scales with payload size.
+Work conservatively charges byte visits, string/priority scans, note passes,
+record visits and sort comparisons/moves before the corresponding operation;
+it is not a time limit. A fixed mutation corpus, every structured-file prefix,
+all limits at/under their bounds, real high extended indexes, compressed target
+bounds and allocation-counter controls exercise this contract. Test-only dumps
+use physical order, decimal scalars and hex byte names (empty names use `-`), never addresses or
+ambient worker state. Native opt0/1/2 and inline tests share `self-test` bodies;
+normal tests embed the recorded bytes and LLVM projections. The separate
+`stage2-elf-object-reader-oracle` Linux gate rechecks all producer records with
+GNU readelf and LLVM JSON where available. See the [fixture provenance](../tests/fixtures/elf-object/README.md).
 
 ## Performance gates
 

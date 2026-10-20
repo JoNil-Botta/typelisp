@@ -172,13 +172,13 @@
 (define (sframe-v3-test-rule-fixed?
   [rule : (& rule sframe.CompilerSframeV3Rule)]
   [expected : i64]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(Fixed value) (= value expected)]
     [_ false]))
 
 (define (sframe-v3-test-rule-unavailable?
   [rule : (& rule sframe.CompilerSframeV3Rule)]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(Unavailable) true]
     [_ false]))
 
@@ -186,7 +186,7 @@
   [rule : (& rule sframe.CompilerSframeV3Rule)]
   [deref? : bool]
   [expected : i64]) : bool
-  (match (owned_view.compiler-owned-reference-shared-view rule)
+  (match (deref rule)
     [(Implicit actual-deref? value)
       (and (= actual-deref? deref?) (= value expected))]
     [_ false]))

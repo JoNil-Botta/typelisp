@@ -1145,7 +1145,7 @@
     expanded))
 
 (define (clone-helper-decl-count-in-module
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
   [root-key-id : i64]
   [helper-name-id : i64]
   [module-id : i64]) : i64
@@ -1185,7 +1185,7 @@
             module-id)])]))
 
 (define (clone-helper-decl-count
-  [decls : ast.AstDeclList]
+  [decls : (& ast.AstDeclList)]
   [root-key-id : i64]
   [helper-name-id : i64]) : i64
   (clone-helper-decl-count-in-module

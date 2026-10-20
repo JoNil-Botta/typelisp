@@ -2731,6 +2731,24 @@
       compiler-builtin-id-tl-int-to-string
       -1)))
 
+;; Helpers the backend emits in assembly under the platform calling convention:
+;; the allocator/arena/TLS core, the profile shims and the bulk memory helpers.
+;; Stdlib TypeLisp helpers are compiled TypeLisp code.
+(define (compiler-builtin-backend-runtime-platform-id? [name-id : i64]) : bool
+  (or
+    (compiler-builtin-backend-runtime-core-id? name-id)
+    (compiler-builtin-backend-runtime-stdlib-ffi-id? name-id)
+    (compiler-builtin-id-any3?
+      name-id
+      compiler-builtin-id-tl-memcpy
+      compiler-builtin-id-tl-memcpy-fresh
+      compiler-builtin-id-tl-array-zero)
+    (compiler-builtin-id-any3?
+      name-id
+      compiler-builtin-id-tl-mem-fill8
+      compiler-builtin-id-tl-mem-copy-fwd
+      compiler-builtin-id-tl-mem-copy8-fwd)))
+
 (define (compiler-builtin-backend-runtime-concat-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)
   (compiler-builtin-id-any4?

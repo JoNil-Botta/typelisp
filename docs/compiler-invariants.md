@@ -1652,6 +1652,15 @@ cannot inherit a parameter pin through a phi or copy. Tail calls have no
 live-after survival constraint, but their argument marshalling must still read
 each source before an argument-register write can destroy it.
 
+Move harvesting carries one `CompilerRegMoveBuilder` through casts,
+destructive ties, copies and phi inputs. Its full-width ordered-pair index
+identifies sequence slots without changing insertion order. Undirected lookup
+selects the newer of both orientations; a strict duplicate upgrades that same
+newest undirected slot even when admission was directed. Self moves never enter
+the sequence or index. The builder is consumed by each insertion and lives in
+the function scratch arena; coalescing receives only its dense sequence.
+Retained sequence views do not own or consult the mutable builder index.
+
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
 analysis temporaries after copying their small result. The budget selects only

@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`regalloc-move-index-direction-and-strictness` pins directed admission,
+undirected duplicate suppression and newest-first strict upgrades.
+`regalloc-move-index-growth-and-reference` compares every slot with the former
+list-scan semantics through mixed insertion modes, full-width signed IDs,
+table growth and interleaved builders. Run both at opt0/1/2, retain the dense
+sequence contract tests, and compare fixed-source compiler, benchmark and CFG
+scaling assembly when changing move indexing.
+
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
 and E0218, and carries rich nested frames through a later compiler job. Run it

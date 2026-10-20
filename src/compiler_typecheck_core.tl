@@ -4745,12 +4745,13 @@
             (tc-selected-contextual-result
               ctx
               env
-              expected
+              (clone expected)
               (tc-infer-selected-array-ref
                 ctx
                 env
                 receiver
                 index
+                expected
                 syntax
                 source
                 sink))]))]
@@ -5995,8 +5996,16 @@
                       ctx
                       env
                       value-id
-                      (ast.AstMaybeType.Some
-                        (tc-resolve-type ctx (tc-global-shared-view elem)))
+                      ;; An element read through a reference is written as it
+                      ;; is read, bitwise, as on main: relocation loops move an
+                      ;; array's elements through its backing this way.
+                      (match (ast.ast-expr-unspan-with-segment-bases
+                        (tc-context-expr-segment-bases ctx)
+                        (& (tc-context-expr-get ctx value-id)))
+                        [(ast.AstExpr.ArrayRef _ _) ast.AstMaybeType.No]
+                        [_
+                          (ast.AstMaybeType.Some
+                            (tc-resolve-type ctx (tc-global-shared-view elem)))])
                       (tc-global-shared-view source)
                       represented?
                       next)
@@ -21047,11 +21056,15 @@
                   source
                   (TcSelectedSink.Capture store lease bindings)))])])]))
 
+;; An element read: an element view used as the owned value it views (an
+;; argument or field of its plain type, a result) takes that value, as a field
+;; read does (`tc-selected-place-acquire`).
 (define (tc-infer-selected-array-ref
   [ctx : TcContext]
   [env : TcTypeEnv]
   [receiver : i64]
   [index : i64]
+  [expected : ast.AstMaybeType]
   [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
@@ -21068,14 +21081,7 @@
         index
         (tc-global-shared-view source)
         sink)]
-    (tc-selected-place-acquire
-      ctx
-      env
-      false
-      ast.AstMaybeType.No
-      syntax
-      source
-      place)))
+    (tc-selected-place-acquire ctx env false expected syntax source place)))
 
 ;; Core Slice subview calls are recognized as a small call-local operation,
 ;; rather than an additional AST node.  Keeping the classifier in one place
@@ -85378,6 +85384,7 @@
           env
           array-box
           index-box
+          ast.AstMaybeType.No
           typed.TypedSyntax.Generated
           (ownership.OwnershipSource "" 0 0 "")
           TcSelectedSink.Query))]

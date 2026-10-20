@@ -445,7 +445,16 @@ formal. A `&mut` element or field passed where a `&mut` is expected is
 reborrowed (`&mut *p[i]`, `&mut *h.r`, Rust's reborrow coercion), not moved
 (`mut_element_reborrow_argument_ok`, `mut_field_reborrow_argument_ok`). A view the graph cannot
 take (a call's `(in p T)` result) that flows into an owned slot is a region
-escape (E0205), as on main.
+escape (E0205), as on main. An element read through a reference is taken on
+the same terms as a field (`tc-infer-selected-array-ref` hands its expected
+type to `tc-selected-place-acquire`): returned or passed where its owned `T`
+is expected it was the region escape E0205 instead of main's E0208
+(`move_out_view_element_return_reject`, `move_out_view_element_argument_reject`;
+public CLI case `check-type-errors-memory`). The value operand of
+`ptr-write!` keeps reading an element as it is (a bitwise write, as on main):
+relocation loops move an array's elements through its backing so (the frozen
+source of the cost measurement has two). A field read through a reference is
+taken there since the move-out rule (#8449); Rust rejects both (E0507).
 Computed Copy temporaries and unique Copy declaration writes use ordinary
 Assign in the core, allowing repeated execution without inventing a resource
 acquisition. Reads still require initialization on first entry and on every

@@ -1343,6 +1343,10 @@ move_out_of_reference_tuple_element_reject|check-fail|tests/safety/move_out_of_r
 move_out_of_reference_mut_reject|check-fail|tests/safety/move_out_of_reference_mut_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a mutable reference; `Pt` is not Copy
 move_out_of_reference_branch_reject|check-fail|tests/safety/move_out_of_reference_branch_reject.tl|-|help: borrow it with `(& ...)` instead, or use an owned clone
 move_out_of_reference_borrow_ok|run-exit|tests/safety/move_out_of_reference_borrow_ok.tl|42|-
+# An element read through a reference is a place the graph takes wherever its
+# owned value is used: returned, passed or constructed.
+move_out_view_element_return_reject|check-fail|tests/safety/move_out_view_element_return_reject.tl|tests/safety/move_out_view_element_return_reject.tl:12:3|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_view_element_argument_reject|check-fail|tests/safety/move_out_view_element_argument_reject.tl|tests/safety/move_out_view_element_argument_reject.tl:16:9|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
 deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|tests/safety/deref_raw_pointer_reject.tl:2:3|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
 # A raw-pointer deref is an unsafe place only as a struct-field projection
 # receiver; a (Ptr T) pointee is read-only.

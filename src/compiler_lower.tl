@@ -27655,7 +27655,6 @@
       (match (__tl-box-place lambda-box)
         [(Lambda params maybe-ret body-box)
           (let
-            [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
             [fn-ty : ast.AstType
               (try
                 (tc_core.tc-lambda-expr-allow-ref-captures
@@ -27663,7 +27662,7 @@
                   type-env
                   params
                   maybe-ret
-                  body))]
+                  body-box))]
             (match fn-ty
               [(Func _ ret)
                 (Ok
@@ -37459,7 +37458,7 @@
               type-env
               (lower-global-shared-view params)
               (lower-global-shared-view maybe-ret)
-              (lower-global-shared-view body))
+              body-box)
               [(Ok fn-ty)
                 (let
                   [first-var : i64 (lower-state-next-var state)]
@@ -42693,7 +42692,7 @@
                     type-env
                     (lower-global-shared-view params)
                     (lower-global-shared-view lambda-ret)
-                    (lower-global-shared-view body))
+                    body-box)
                     [(Ok lambda-ty)
                       (lower-lambda
                         ctx

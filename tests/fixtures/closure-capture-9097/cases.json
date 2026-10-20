@@ -1,0 +1,66 @@
+{
+  "scope": "Retained dependency witnesses for the blocked #9097 prototype. Invalid cases are check-only; these fixtures are not full implementation or CI acceptance.",
+  "mutable_alias_contract": "SPEC 3.10.4 and the existing lambda_mut_capture_alias_reject safety row reject this mutable/reusable alias. The original #9090 research called its dotted spelling a positive based on the missing capture; the canonical form already rejects. The Copy shared-reference alias is the supported positive control.",
+  "cases": [
+    {
+      "file": "returned-box-dotted.tl",
+      "expectedCheck": "reject",
+      "owner": 9097,
+      "safeNativeExit": null
+    },
+    {
+      "file": "returned-box-canonical.tl",
+      "expectedCheck": "reject",
+      "owner": 9097,
+      "safeNativeExit": null
+    },
+    {
+      "file": "nested-short-dotted.tl",
+      "expectedCheck": "reject",
+      "owner": 9098,
+      "safeNativeExit": null
+    },
+    {
+      "file": "nested-short-canonical.tl",
+      "expectedCheck": "reject",
+      "owner": 9098,
+      "safeNativeExit": null
+    },
+    {
+      "file": "mutable-alias-dotted.tl",
+      "expectedCheck": "reject",
+      "owner": 9097,
+      "safeNativeExit": null
+    },
+    {
+      "file": "mutable-alias-canonical.tl",
+      "expectedCheck": "reject",
+      "owner": 9097,
+      "safeNativeExit": null
+    },
+    {
+      "file": "fixed-incoming-native.tl",
+      "expectedCheck": "accept",
+      "owner": 9097,
+      "safeNativeExit": 42
+    },
+    {
+      "file": "named-independent-dotted-native.tl",
+      "expectedCheck": "accept",
+      "owner": 9098,
+      "safeNativeExit": 42
+    },
+    {
+      "file": "named-independent-canonical.tl",
+      "expectedCheck": "accept",
+      "owner": 9098,
+      "safeNativeExit": null
+    },
+    {
+      "file": "copy-alias-native.tl",
+      "expectedCheck": "accept",
+      "owner": 9097,
+      "safeNativeExit": 42
+    }
+  ]
+}

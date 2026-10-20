@@ -32570,7 +32570,7 @@
               env
               params
               maybe-ret
-              (tc-context-expr-get ctx body-box)
+              body-box
               false))])]
     [_ (tc-expr-with-expected-or-actual-call-arg ctx env expr expected)]))
 
@@ -38474,7 +38474,7 @@
             env
             params
             maybe-ret
-            (tc-context-expr-get ctx body-box))
+            body-box)
             [(Ok fn-ty) (Ok fn-ty)]
             [(Err message) (Err message)])])]
     [_ (No)]))
@@ -41089,12 +41089,7 @@
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params maybe-ret body-box)
-          (tc-lambda-expr-allow-ref-captures
-            ctx
-            env
-            params
-            maybe-ret
-            (tc-context-expr-get ctx body-box))])]
+          (tc-lambda-expr-allow-ref-captures ctx env params maybe-ret body-box)])]
     [_
       (match maybe-ty
         [(Some want) (tc-expr-with-expected-or-actual ctx env init want)]
@@ -42093,128 +42088,68 @@
     (let
       [expr-bases : i64 (tc-context-expr-bases ctx)]
       [init : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases init-id)]
-      [ref-capturing-lambda : bool
-        (tc-ref-capturing-lambda-init?
-          expr-bases
-          env
-          (tc-global-shared-view init))]
-      [copyable-ref-capturing-lambda : bool
-        (and
-          ref-capturing-lambda
-          (not
-            (tc-move-only-capturing-lambda-init?
-              ctx
-              env
-              (tc-global-shared-view init))))]
-      [move-only-capturing-lambda : bool
-        (tc-move-only-capturing-lambda-init?
-          ctx
-          env
-          (tc-global-shared-view init))]
-      [consuming-capturing-lambda : bool
-        (tc-consuming-capturing-lambda-init?
-          ctx
-          env
-          (tc-global-shared-view init))]
-      [capability-capturing-lambda : bool
-        (or
-          ref-capturing-lambda
-          move-only-capturing-lambda
-          consuming-capturing-lambda)]
-      (match maybe-ty
-        [(Some want)
+      ;; A direct local lambda is typed once before its captures choose the
+      ;; scope proof. Its type cannot enter the binding until that proof passes.
+      (match (tc-direct-lambda-check ctx env (tc-global-shared-view init))
+        [(Err message) (Err message)]
+        [(Ok init-ty)
           (let
-            [resolved-want : ast.AstType (tc-resolve-type ctx want)]
-            (if capability-capturing-lambda
-              (let
-                [_
-                  (try
-                    (cond
-                      [ref-capturing-lambda
-                        (tc-let-binding-ref-closure-scope-ok-at
-                          expr-bases
-                          bindings
-                          index
-                          body
-                          name
-                          copyable-ref-capturing-lambda)]
-                      [consuming-capturing-lambda
-                        (tc-let-binding-capability-closure-scope-ok-at
-                          expr-bases
-                          bindings
-                          index
-                          body
-                          name)]
-                      [else
-                        (tc-let-binding-move-closure-scope-ok-at
-                          expr-bases
-                          bindings
-                          index
-                          body
-                          name)]))]
-                (match (ast.ast-expr-unspan-with-segment-bases
-                  expr-bases
-                  (& init))
-                  [(Lambda lambda-box)
-                    (match (__tl-box-place lambda-box)
-                      [(Lambda params maybe-ret lambda-body-box)
-                        (let
-                          [lambda-body : ast.AstExpr
-                            (tc-context-expr-get ctx lambda-body-box)]
-                          (tc-lambda-expr-allow-ref-captures
-                            ctx
-                            env
-                            params
-                            maybe-ret
-                            lambda-body))])]
-                  [_
-                    (tc-let-init-contextual-type ctx env init-id resolved-want)]))
-              (tc-let-init-contextual-type ctx env init-id resolved-want)))]
-        [(No)
-          (if capability-capturing-lambda
-            (let
-              [_
-                (try
-                  (cond
-                    [ref-capturing-lambda
-                      (tc-let-binding-ref-closure-scope-ok-at
-                        expr-bases
-                        bindings
-                        index
-                        body
-                        name
-                        copyable-ref-capturing-lambda)]
-                    [consuming-capturing-lambda
-                      (tc-let-binding-capability-closure-scope-ok-at
-                        expr-bases
-                        bindings
-                        index
-                        body
-                        name)]
-                    [else
-                      (tc-let-binding-move-closure-scope-ok-at
-                        expr-bases
-                        bindings
-                        index
-                        body
-                        name)]))]
-              (match (ast.ast-expr-unspan-with-segment-bases
+            [init : ast.AstExpr (tc-context-expr-get ctx init-id)]
+            [ref-capturing-lambda : bool
+              (tc-ref-capturing-lambda-init?
                 expr-bases
-                (& init))
-                [(Lambda lambda-box)
-                  (match (__tl-box-place lambda-box)
-                    [(Lambda params maybe-ret lambda-body-box)
-                      (let
-                        [lambda-body : ast.AstExpr
-                          (tc-context-expr-get ctx lambda-body-box)]
-                        (tc-lambda-expr-allow-ref-captures
-                          ctx
-                          env
-                          params
-                          maybe-ret
-                          lambda-body))])]
-                [_ (tc-expr-id ctx env init-id)]))
-            (tc-expr-id ctx env init-id))]))))
+                env
+                (tc-global-shared-view init))]
+            [move-only-capturing-lambda : bool
+              (tc-move-only-capturing-lambda-init?
+                ctx
+                env
+                (tc-global-shared-view init))]
+            [consuming-capturing-lambda : bool
+              (tc-consuming-capturing-lambda-init?
+                ctx
+                env
+                (tc-global-shared-view init))]
+            [_
+              (try
+                (cond
+                  [ref-capturing-lambda
+                    (tc-let-binding-ref-closure-scope-ok-at
+                      expr-bases
+                      bindings
+                      index
+                      body
+                      name
+                      (not move-only-capturing-lambda))]
+                  [consuming-capturing-lambda
+                    (tc-let-binding-capability-closure-scope-ok-at
+                      expr-bases
+                      bindings
+                      index
+                      body
+                      name)]
+                  [move-only-capturing-lambda
+                    (tc-let-binding-move-closure-scope-ok-at
+                      expr-bases
+                      bindings
+                      index
+                      body
+                      name)]
+                  [else ResultTcUnit.Ok]))]
+            (tc-body-let-init-type-record!
+              (tc-context-body-state ctx)
+              init-id
+              (tc-global-shared-view init-ty))
+            (Ok init-ty))]
+        [(No)
+          (match maybe-ty
+            [(Some want)
+              (tc-let-init-contextual-type
+                ctx
+                env
+                init-id
+                (tc-resolve-type ctx want))]
+            [(No) (tc-expr-id ctx env init-id)])]))))
 
 (define (tc-let-bindings-for-body
   [ctx : TcContext]
@@ -59850,22 +59785,14 @@
   [env : TcTypeEnv]
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
-  [body : ast.AstExpr]
+  [body-id : i64]
   [allow-immutable-reference-captures : bool]) : ResultTcType
   (let
-    [_
-      (try
-        (if allow-immutable-reference-captures
-          (tc-check-lambda-region-captures-allow-refs
-            (tc-context-expr-bases ctx)
-            env
-            (tc-global-shared-view params)
-            (tc-global-shared-view body))
-          (tc-check-lambda-region-captures
-            (tc-context-expr-bases ctx)
-            env
-            (tc-global-shared-view params)
-            (tc-global-shared-view body))))]
+    ;; Keep the construction bindings before the lambda parameters enter the
+    ;; scoped environment. Capture queries run only after semantic typing has
+    ;; normalized local dotted places in the owning node pool.
+    [captures : TcTypeEnvScopedCarrier
+      (tc-type-env-scoped-carrier-from-marker-visible-env env)]
     [lambda-env : TcTypeEnv
       (match (tc-global-shared-view maybe-ret)
         [(Some ret)
@@ -59886,12 +59813,20 @@
       (try
         (match (tc-global-shared-view maybe-ret)
           [(Some ret)
-            (tc-expr-with-expected-or-actual
+            (tc-expr-with-expected-or-actual-id
               ctx
               lambda-env
-              body
+              body-id
               (tc-resolve-type ctx ret))]
-          [(No) (tc-expr ctx lambda-env body)]))]
+          [(No) (tc-expr-id ctx lambda-env body-id)]))]
+    [_
+      (try
+        (tc-type-env-scoped-carrier-check-lambda-region-captures
+          (tc-context-expr-bases ctx)
+          captures
+          (tc-param-bound-names (tc-global-shared-view params))
+          (tc-context-expr-get ctx body-id)
+          allow-immutable-reference-captures))]
     (if (and
       (tc-type-contains-any-region (tc-global-shared-view body-ty))
       (not
@@ -59930,7 +59865,7 @@
   [env : TcTypeEnv]
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
-  [body : ast.AstExpr]
+  [body-id : i64]
   [allow-immutable-reference-captures : bool]) : ResultTcType
   (let
     [observer : TcSemanticObserver (tc-context-semantic-observer ctx)]
@@ -59943,9 +59878,9 @@
           env
           (FunctionEnter
             -1
-            (match (tc-global-shared-view body)
+            (match (tc-context-expr-get ctx body-id)
               [(Spanned inner _) inner]
-              [_ -1])
+              [_ body-id])
             (tc-global-shared-view params)
             (tc-global-shared-view maybe-ret))))]
     [result : ResultTcType
@@ -59959,7 +59894,7 @@
               env
               params
               maybe-ret
-              body
+              body-id
               allow-immutable-reference-captures)]
           (tc-type-env-scoped-runtime-restore! saved)
           result)
@@ -59968,7 +59903,7 @@
           env
           params
           maybe-ret
-          body
+          body-id
           allow-immutable-reference-captures))]
     (when
       (!= observer.address 0)
@@ -59984,7 +59919,7 @@
   [env : TcTypeEnv]
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
-  [body : ast.AstExpr]
+  [body-id : i64]
   [allow-immutable-reference-captures : bool]) : ResultTcType
   (match maybe-ret
     [(Some ret)
@@ -59997,7 +59932,7 @@
           env
           signature.params
           (Some signature.ret)
-          body
+          body-id
           allow-immutable-reference-captures))]
     [(No)
       (let
@@ -60014,7 +59949,7 @@
           env
           inputs.params
           (No)
-          body
+          body-id
           allow-immutable-reference-captures))]))
 
 (define (tc-lambda-expr
@@ -60022,8 +59957,7 @@
   [env : TcTypeEnv]
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
-  [body-id : i64]
-  [body : ast.AstExpr]) : ResultTcType
+  [body-id : i64]) : ResultTcType
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     [fn-ty
@@ -60033,8 +59967,9 @@
           env
           (tc-global-shared-view params)
           maybe-ret
-          (tc-global-shared-view body)
+          body-id
           false))]
+    [body : ast.AstExpr (tc-context-expr-get ctx body-id)]
     (if (and
       (unsafe
         (deref (tc-body-state-view body-state)).type-facts-recording)
@@ -60055,8 +59990,8 @@
   [env : TcTypeEnv]
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
-  [body : ast.AstExpr]) : ResultTcType
-  (tc-lambda-expr-with-capture-check ctx env params maybe-ret body true))
+  [body-id : i64]) : ResultTcType
+  (tc-lambda-expr-with-capture-check ctx env params maybe-ret body-id true))
 
 (define (tc-array-readable-receiver
   [ctx : TcContext]
@@ -61061,9 +60996,7 @@
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params maybe-ret body-box)
-          (let
-            [body : ast.AstExpr (tc-context-expr-get ctx body-box)]
-            (tc-lambda-expr ctx env params maybe-ret body-box body))])]
+          (tc-lambda-expr ctx env params maybe-ret body-box)])]
     [(Tuple exprs)
       (let
         [_ (try (tc-ensure-cleanup-resource-not-stored-list ctx env exprs))]
@@ -76899,7 +76832,11 @@
       (tc-moved-empty)
       body-id)
       [(Ok body-moved)
-        (match (tc-expr-id ctx lambda-env body-id)
+        (match (tc-body-type-fact-expr-id
+          "lambda capability body"
+          ctx
+          lambda-env
+          body-id)
           [(Ok body-ty)
             (match (tc-move-check-result-expr
               ctx

@@ -1498,6 +1498,8 @@ function_set_same_type_reject|check-fail|tests/safety/function_set_same_type_rej
 function_set_mismatch_reject|check-fail|tests/safety/function_set_mismatch_reject.tl|-|typecheck: cannot assign to function
 function_set_rhs_missing_reject|check-fail|tests/safety/function_set_rhs_missing_reject.tl|-|typecheck: cannot assign to function
 function_set_extern_reject|check-fail|tests/safety/function_set_extern_reject.tl|-|typecheck: cannot assign to function
+extern_data_address_safe_reject|check-fail|tests/safety/extern_data_address_safe_reject.tl|-|ptr-addr-of requires unsafe context
+extern_data_store_type_reject|check-fail|tests/safety/extern_data_store_type_reject.tl|-|type mismatch
 function_set_unsafe_reject|check-fail|tests/safety/function_set_unsafe_reject.tl|-|typecheck: cannot assign to function
 function_set_alias_reject|check-fail|tests/safety/function_set_alias_reject.tl|-|typecheck: cannot assign to function
 function_set_canonical_reject|check-fail|tests/safety/function_set_canonical_reject.tl|-|typecheck: cannot assign to function
@@ -1588,3 +1590,15 @@ replace_place_through_shared_copy_field_reject|check-fail|tests/safety/replace_p
 replace_place_through_shared_alias_reject|check-fail|tests/safety/replace_place_through_shared_alias_reject.tl|-|mutable borrow through a shared reference
 replace_place_through_inner_shared_reject|check-fail|tests/safety/replace_place_through_inner_shared_reject.tl|-|mutable borrow through a shared reference
 reborrow_through_inner_shared_array_reject|check-fail|tests/safety/reborrow_through_inner_shared_array_reject.tl|-|mutable borrow through a shared reference
+
+
+# Macro and compile-time failure codes through the public check command.
+macro_diagnostic_duplicate|check-fail|tests/safety/macro_diagnostic_duplicate.tl|-|error[E0501]:
+macro_diagnostic_clause|check-fail|tests/safety/macro_diagnostic_clause.tl|-|error[E0502]:
+macro_diagnostic_module|check-fail|tests/safety/macro_diagnostic_module.tl|-|error[E0503]:
+macro_diagnostic_depth|check-fail|tests/safety/macro_diagnostic_depth.tl|-|error[E0504]:
+macro_diagnostic_author|check-fail|tests/safety/macro_diagnostic_author.tl|-|error[E0505]:
+macro_diagnostic_division|check-fail|tests/safety/macro_diagnostic_division.tl|-|error[E0506]:
+macro_diagnostic_fuel|check-fail|tests/safety/macro_diagnostic_fuel.tl|-|error[E0507]:
+macro_table_cycle_reject|check-fail|tests/safety/macro_table_cycle/main.tl|-|error[E0501]: typecheck: missing macro
+macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.tl|-|-

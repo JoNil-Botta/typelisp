@@ -101,6 +101,7 @@ for fetcher in $fetchers; do
         mkdir "$out"
         case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) output=typelisp.exe ;; *) output=typelisp ;; esac
         printf 'previous compiler\n' > "$out/$output"
+        chmod +x "$out/$output"
         cp "$out/$output" "$work/previous"
         : > "$work/calls"
         page=$(printf '%s' "$release" | jq --arg bad "$bad" '[. + {tag_name:$bad,published_at:"2026-10-19T12:00:00Z"}, .]')
@@ -176,7 +177,7 @@ for fetcher in $fetchers; do
                 esac
                 ;;
             *)
-                if [ "$status" -eq 0 ] || ! cmp -s "$work/previous" "$out/$output"; then
+                if [ "$status" -eq 0 ] || ! cmp -s "$work/previous" "$out/$output" || [ ! -x "$out/$output" ]; then
                     cat "$work/result.log" >&2
                     echo "stage0 fetch $fetcher/$scenario accepted invalid release or replaced the destination" >&2
                     exit 1
@@ -196,3 +197,78 @@ for fetcher in $fetchers; do
         echo "stage0 fetch $fetcher/$scenario passed"
     done
 done
+
+case "$(uname -s)" in
+    Linux*)
+        out="$work/concurrent output"
+        mkdir "$out"
+        : > "$work/calls"
+        : > "$work/publication-observations"
+        jq -n --arg base "$base" '{
+            ($base+"/stage0-latest/typelisp-stage0-linux"):{status:200,file:"payload"},
+            ($base+"/stage0-latest/SHA256SUMS"):{status:200,file:"SHA256SUMS"}
+        }' > "$work/responses.json"
+        real_mv=$(command -v mv)
+        cat > "$work/bin/mv" <<'OBSERVE_PUBLICATION'
+#!/usr/bin/env sh
+set -eu
+"$FETCH_REAL_MV" "$@"
+for destination do :; done
+if [ "$destination" = "$FETCH_PUBLICATION_DEST" ]; then
+    # Observe the published file before the installer can change it again.
+    if [ -s "$destination" ] && [ -x "$destination" ] && cmp -s "$FETCH_FIXTURE/payload" "$destination"; then
+        printf 'ready\n' >> "$FETCH_FIXTURE/publication-observations"
+    else
+        printf 'not-ready\n' >> "$FETCH_FIXTURE/publication-observations"
+    fi
+fi
+OBSERVE_PUBLICATION
+        chmod +x "$work/bin/mv"
+        concurrent_fetch() {
+            PATH="$work/bin:$PATH" FETCH_FIXTURE="$work" FETCH_REAL_JQ="$real_jq" FETCH_CRLF=0 \
+                FETCH_REAL_MV="$real_mv" FETCH_PUBLICATION_DEST="$out/typelisp" \
+                TYPELISP_STAGE0_REPO="$repo" TYPELISP_STAGE0_FETCH_ATTEMPTS=1 TYPELISP_STAGE0_FETCH_RETRY_DELAY=0 \
+                sh "$ROOT/scripts/fetch-stage0.sh" stage0-latest "$out"
+        }
+        concurrent_fetch > "$work/first.log" 2>&1 & first=$!
+        concurrent_fetch > "$work/second.log" 2>&1 & second=$!
+        first_status=0
+        wait "$first" || first_status=$?
+        second_status=0
+        wait "$second" || second_status=$?
+        printf 'ready\nready\n' > "$work/expected-publications"
+        if [ "$first_status" -ne 0 ] || [ "$second_status" -ne 0 ] || \
+            ! cmp -s "$work/expected-publications" "$work/publication-observations"; then
+            cat "$work/first.log" "$work/second.log" "$work/publication-observations" >&2
+            echo "stage0 fetch sh/concurrent-publication exposed an unusable compiler" >&2
+            exit 1
+        fi
+        cmp "$work/payload" "$out/typelisp"
+        [ -x "$out/typelisp" ]
+        for temp in "$out"/.stage0-download.*; do
+            [ ! -e "$temp" ] || { echo "stage0 fetch left temporary state: $temp" >&2; exit 1; }
+        done
+        echo "stage0 fetch sh/concurrent-publication passed"
+
+        out="$work/permission failure"
+        mkdir "$out"
+        cp "$work/previous" "$out/typelisp"
+        chmod +x "$out/typelisp"
+        cat > "$work/bin/chmod" <<'DENY_PERMISSION'
+#!/usr/bin/env sh
+exit 73
+DENY_PERMISSION
+        chmod +x "$work/bin/chmod"
+        status=0
+        concurrent_fetch > "$work/permission.log" 2>&1 || status=$?
+        if [ "$status" -eq 0 ] || ! cmp -s "$work/previous" "$out/typelisp" || [ ! -x "$out/typelisp" ]; then
+            cat "$work/permission.log" >&2
+            echo "stage0 fetch sh/permission-failure replaced the usable compiler" >&2
+            exit 1
+        fi
+        for temp in "$out"/.stage0-download.*; do
+            [ ! -e "$temp" ] || { echo "stage0 fetch left temporary state: $temp" >&2; exit 1; }
+        done
+        echo "stage0 fetch sh/permission-failure passed"
+        ;;
+esac

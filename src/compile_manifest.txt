@@ -233,3 +233,6 @@ end
 
 case|selfhost_linker_ar_dialect_reader|src/linker_ar_dialect_reader.tl|assembly|none|direct
 end
+
+case|selfhost_linker_elf_object_reader|src/linker_elf_object_reader.tl|assembly|none|direct
+end

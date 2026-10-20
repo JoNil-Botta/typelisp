@@ -1432,3 +1432,18 @@ in fn _tl_extern_data_memory_fraction
 contains tl_data_float(%rip)
 in fn _tl_extern_data_memory_byte
 contains tl_data_byte(%rip)
+
+case extern-data-place-symbols
+source tests/integration/extern_data_places.tl
+target linux-x86_64 windows-x86_64
+not-contains _tl_foreign_word
+not-contains _tl_foreign_float
+not-contains _tl_foreign_byte
+not-contains _tl_plain
+in fn _tl_extern_data_places_store
+match ^[[:space:]]+movq %r[a-z0-9]+, tl_data_word\(%rip\)$
+match ^[[:space:]]+movss %xmm[0-9]+, tl_data_float\(%rip\)$
+contains tl_data_byte(%rip)
+contains plain(%rip)
+in fn _tl_extern_data_places_address
+match ^[[:space:]]+leaq tl_data_word\(%rip\), %r

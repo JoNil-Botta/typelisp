@@ -1,5 +1,15 @@
 # Selfhost compiler testing
 
+`compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
+author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
+and E0218, and carries rich nested frames through a later compiler job. Run it
+at opt0/1/2. The safety corpus observes every new code through `check` and pairs
+an unfinished generated-macro table cycle with an accepted ordinary import
+cycle. The dependency TLCI surface gate checks E0505/E0507 on both native and
+forced-source routes, retaining its exact route and cross-file attribution
+checks on Linux and Windows. The registry and parser smoke cover parse-code
+round trips and complete `explain` entries.
+
 `linker_ar_dialect_reader_tests.tl` compares GNU `ar`/`ranlib`, LLVM GNU/64-bit
 and BSD archives against recorded `ar tO` and `nm --print-armap` oracles.
 The internal test runs no external tools. It checks duplicate/empty/byte names,
@@ -1716,6 +1726,10 @@ bounds diagnostics, a negative cursor, skipped loops, and check-before-division
 trap ordering. The optimizer span tests also exercise the actual entry-copy
 producer, collision suffixes and function ownership.
 
+`ubound_self_loop_call.tl` keeps a clean scalar callee out of line with tail
+conversion, so its rotated body is both header and latch. Its manifest rows
+exercise opt0/1/2 trap parity, negative backedges and check-before-call ordering.
+
 `scripts/verify-integration.sh` contains the heavier native checks that build
 and run TypeLisp programs as native executables. Linux uses the explicit
 `compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses
@@ -2106,3 +2120,31 @@ expression segment boundaries, including more than two full segments. Run it at
 opt0, opt1 and opt2 alongside the native smoke's row-rewrite, truncation/reuse
 and equal-ID/different-pool cases. Wrapper removal consumes each row before
 reading the next and copies out the leaf without recursive stack growth.
+
+### ELF64 relocatable input reader
+
+`linker_elf_object_reader_tests.tl` and
+`tests/linker_elf_object_reader_smoke.tl` share `self-test` assertions. Inline
+and native opt0/1/2 tests embed all 24 GCC16/Clang22/GNU-as/TypeLisp object
+snapshots and independent LLVM numeric projections; they launch no host tools.
+The test-only `linker_elf_object_reader_test_dump.tl` renders stable physical
+IDs, offsets, raw scalars, hex names, groups and note spans. It is not a linker
+or public object-format CLI.
+
+The corpus covers header/structured-prefix truncation, bad ranges/overlap,
+strings/links/local boundaries, groups, SHNDX, notes/compression, all caller
+limits, all relocation widths/unknown numbers, signed addends, real indexes
+above 65535, raw byte names, opaque types, pointer-array priorities, interleaved
+identities and bounded mutations. With `--cfg compile-profile`, allocation
+assertions compare tiny/large payloads and retained-budget refusal; a consumed
+allocation fixture verifies the counters are active.
+
+`stage2-elf-object-reader-oracle` is a separate required Linux gate. Its
+`scripts/verify-elf-object-reader-oracle.sh` compares every snapshot and recorded
+projection with live `readelf -W -S -s -r -g -n`, plus LLVM's full numeric JSON
+projection when `llvm-readobj` is installed. It preserves the whole corpus and
+reports LLVM availability. Generation is oracle-only; follow
+[`tests/fixtures/elf-object/README.md`](../tests/fixtures/elf-object/README.md)
+for versions/options. Repository-rooted `tests/fixtures/...` manifest
+dependencies preserve their relative location when smoke sources and companions
+are staged; absolute/parent-traversal dependencies remain invalid.

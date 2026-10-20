@@ -11407,13 +11407,94 @@
             (& (reg.compiler-reg-assignment-lookup assignments 1))
             cabi.compiler-reg-id-rsi)))]))
 
+(define (compiler-reg-coalesced-tail-args-function [args : String]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @coalesced_tail_args(a=%0:i64, b=%1:i64, k=%2:i64) -> i64 vars 6 {
+       entry:
+         %5 = eq %2, 0 : i64
+         branch %5, left, right
+       left:
+         jump tail
+       right:
+         jump tail
+       tail:
+         %3 = phi [%0, left], [%0, right] : i64
+         %4 = phi [%1, left], [%1, right] : i64
+         tailcall leaf("
+      args
+      ") : i64
+       }")))
+
+(define (compiler-reg-call-arg-stack-home?
+  [home : reg.CompilerRegMaybeLocation]) : bool
+  (match home
+    [(No) true]
+    [(Some location)
+      (match location
+        [(Spill _) true]
+        [_ false])]))
+
+(define (compiler-reg-coalesced-tail-args-pins-ok?
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [first : i64]
+  [second : i64]) : bool
+  (match (reg.compiler-reg-plan-function-scalar-for-abi
+    target-abi
+    (& (compiler-reg-coalesced-tail-args-function "%4, %3, 0, 1, 2, 3, 4")))
+    [(Plan blocked _ _ _ _)
+      (match (reg.compiler-reg-plan-function-scalar-for-abi
+        target-abi
+        (& (compiler-reg-coalesced-tail-args-function "%4, %3")))
+        [(Plan parallel _ _ _ _)
+          (and
+            ;; The aliases inherit call-argument exclusions, and the roots'
+            ;; preassigned parameter homes must respect those exclusions too.
+            (compiler-reg-call-arg-stack-home?
+              (reg.compiler-reg-assignment-lookup blocked 0))
+            (compiler-reg-call-arg-stack-home?
+              (reg.compiler-reg-assignment-lookup blocked 1))
+            (compiler-reg-call-arg-stack-home?
+              (reg.compiler-reg-assignment-lookup blocked 3))
+            (compiler-reg-call-arg-stack-home?
+              (reg.compiler-reg-assignment-lookup blocked 4))
+            ;; The unrelated selector retains its existing ABI-specific home.
+            (match (reg.compiler-reg-assignment-lookup blocked 2)
+              [(Some left)
+                (match (reg.compiler-reg-assignment-lookup parallel 2)
+                  [(Some right)
+                    (reg.compiler-reg-location-eq? (& left) (& right))]
+                  [(No) false])]
+              [(No) false])
+            ;; A supported parallel shuffle retains its incoming-register pins.
+            (reg.compiler-reg-location-register?
+              (& (reg.compiler-reg-assignment-lookup parallel 0))
+              first)
+            (reg.compiler-reg-location-register?
+              (& (reg.compiler-reg-assignment-lookup parallel 1))
+              second))])]))
+
 (define (compiler-reg-tail-call-clobber-ok?) : bool
   (and
     (compiler-reg-tail-call-kind-points-ok?)
     (compiler-reg-segment-span-clobber-ok?)
     (compiler-reg-tail-dispatch-pins-ok?)
     (compiler-reg-tail-dispatch-real-call-pins-ok?)
-    (compiler-reg-tail-dispatch-mixed-pins-ok?)))
+    (compiler-reg-tail-dispatch-mixed-pins-ok?)
+    (compiler-reg-coalesced-tail-args-pins-ok?
+      (Linux)
+      cabi.compiler-reg-id-rdi
+      cabi.compiler-reg-id-rsi)
+    (compiler-reg-coalesced-tail-args-pins-ok?
+      (Windows)
+      cabi.compiler-reg-id-rcx
+      cabi.compiler-reg-id-rdx)))
+
+(test
+  regalloc-coalesced-call-argument-pins
+  (test.assert-true
+    (compiler-reg-tail-call-clobber-ok?)
+    "coalesced call-argument blockers revoke ABI pins on both targets without disabling parallel shuffles"))
 
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))

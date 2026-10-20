@@ -15,6 +15,7 @@
 (import stdlib.comptime)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe_support)
+(import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
@@ -1031,7 +1032,8 @@
           [(Err diag)
             (set!
               (array-ref compiler-comptime-host-diagnostic 0)
-              (__tl-project-field (__tl-box-place diag) message))
+              (cdiag.compiler-diagnostic-typecheck-error-text
+                (& (__tl-box-place diag))))
             tlci.tlci-host-callback-status-diagnostic])))))
 
 ;; Pop the second then the first operand expression and push the two-operand
@@ -1130,7 +1132,8 @@
           [(Err diag)
             (set!
               (array-ref compiler-comptime-host-diagnostic 0)
-              (__tl-project-field (__tl-box-place diag) message))
+              (cdiag.compiler-diagnostic-typecheck-error-text
+                (& (__tl-box-place diag))))
             tlci.tlci-host-callback-status-diagnostic])))))
 
 ;; The session-owned structural session renders reflected names.
@@ -2868,7 +2871,8 @@
       [(Err diag)
         (set!
           (array-ref compiler-comptime-host-diagnostic 0)
-          (__tl-project-field (__tl-box-place diag) message))
+          (cdiag.compiler-diagnostic-typecheck-error-text
+            (& (__tl-box-place diag))))
         tlci.tlci-host-callback-status-diagnostic])))
 
 (define (compiler-comptime-host-callback-pattern-binding-typed
@@ -3179,7 +3183,9 @@
       tlci.tlci-host-callback-status-bad-request
       (match (compiler-comptime-host-stack-value 1)
         [(String text _)
-          (set! (array-ref compiler-comptime-host-diagnostic 0) text)
+          (set!
+            (array-ref compiler-comptime-host-diagnostic 0)
+            (cdiag.compiler-diagnostic-macro-tagged (ComptimeAuthorError) text))
           (compiler-comptime-host-drop! 1)
           tlci.tlci-host-callback-status-diagnostic]
         [_ tlci.tlci-host-callback-status-bad-request]))))
@@ -5037,7 +5043,8 @@
               [(Err diag)
                 (set!
                   (array-ref compiler-comptime-host-diagnostic 0)
-                  (__tl-project-field (__tl-box-place diag) message))
+                  (cdiag.compiler-diagnostic-typecheck-error-text
+                    (& (__tl-box-place diag))))
                 tlci.tlci-host-callback-status-diagnostic])))))))
 
 ;; type-kind: pop a type value and push its kind string, the same mapping

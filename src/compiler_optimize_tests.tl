@@ -3920,6 +3920,71 @@
     (opt.opt-inline-input-chunks-disarm!)
     (opt-test-retire-input-chunks! address)))
 
+;; The callee-cost memo can hold a view of a body that still lives in its source
+;; chunk, such as a same-SCC callee priced from its unplaced original. Releasing
+;; that chunk must clear the memo first. Here the memo prices `input_leaf` from
+;; its body in chunk 1. While `input_dead` keeps chunk 1 pending, the entry
+;; stays. Placing `input_dead` releases the chunk: the release callback requires
+;; an empty memo before it destroys the chunk, and a later lookup of an
+;; identical live body must miss without reading the destroyed one.
+(test
+  optimizer-input-chunk-release-clears-callee-cost-memo
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [type-segment-bases : i64
+      (ast.ast-node-pool-context-type-segment-bases pools)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [bounds : (__tl_dyn-array i64) (__tl_make-array 0 2 4)]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new 2)]
+    [address : i64
+      (unsafe
+        (cast (ptr->int (ptr-addr-of state)) : i64))]
+    [input : ir.CompilerIrFunctionSeq
+      (opt-test-chunked-input pools (& state) (& functions) (& bounds))]
+    [indexed : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-clone-function-seq pools (& functions))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build indexed)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
+    [probe : ir.CompilerIrFunction
+      (ir.compiler-ir-clone-function pools (& (array-ref functions.slots 2)))]
+    (for [i (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots i))
+        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+    (opt.opt-inline-callee-cost-reset!)
+    (opt.opt-inline-callee-cost-record! (& (array-ref input.slots 2)) 0 37)
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      37
+      "the memo prices the leaf from its body in chunk 1")
+    (opt.opt-inline-input-chunks-arm!
+      (opt.OptInputRetirement.Retire
+        address
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!)
+      bounds)
+    (test.assert-true
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "well-formed bounds arm release")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 2)
+      0
+      "chunk 1 still has an unplaced original")
+    (test.assert-i64-eq
+      opt.opt-inline-callee-cost-count
+      1
+      "the memo keeps its entry while its chunk is held")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      1
+      "the last original releases chunk 1")
+    (test.assert-i64-eq (array-ref state.released 1) 1 "chunk 1 released once")
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      -1
+      "no memo entry views the released chunk")
+    (opt.opt-inline-input-chunks-disarm!)
+    (opt-test-retire-input-chunks! address)))
+
 (define (opt-test-input-retirement-pools) : unit
   (let
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
@@ -30835,6 +30900,55 @@
       (ir.compiler-ir-block-list-view blocks)
       (opt.opt-cfg-index-build (& blocks))
       0)))
+
+;; The borrowed lookups read the function's own list, which the index numbers in
+;; walk order: a label the index knows finds that label's block, and an unknown
+;; one finds nothing (#9013).
+(test
+  cfg-index-borrowed-lookups-read-the-function-list
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-cfg-switch-blocks)]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+    (test.assert-true
+      (match (opt.opt-cfg-index-find-block-in
+        (& blocks)
+        (& index)
+        (ir.compiler-ir-label "two"))
+        [(Some block)
+          (match block
+            [(Block label _) (= label (ir.compiler-ir-label "two"))])]
+        [(No) false])
+      "a label the index knows finds its own block in the function's list")
+    (test.assert-true
+      (match (opt.opt-cfg-index-find-block-in
+        (& blocks)
+        (& index)
+        (ir.compiler-ir-label "missing"))
+        [(Some _) false]
+        [(No) true])
+      "a label the index does not know finds nothing")))
+
+;; A lookup through a list the index does not number is an internal error under
+;; `cfg test`: the id would name some other block.
+(test
+  cfg-index-lookup-through-another-list-is-internal-error
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-cfg-switch-blocks)]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+    [other : ir.CompilerIrBlockList (opt-ssa-diamond-blocks)]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [read : i64
+      (match (opt.opt-cfg-index-block-at (& other) (& index) 1)
+        [(Block label _) label])]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (and
+        (= read (ir.compiler-ir-label "then"))
+        (string.contains
+          (& ice)
+          "a CFG index lookup read a block list the index does not number"))
+      "a lookup through another list is caught")))
 
 (define (opt-cfg-switch-successors-ok?) : bool
   (let
@@ -70590,6 +70704,178 @@ return 0" true)
     (return 2))
   42)
 
+(defenum OptUboundSelfLoopCase
+  (Normal)
+  (TwoPhis)
+  (Minimal)
+  (CallBody)
+  (NoGuard)
+  (OpaqueLength)
+  (PriorEffect)
+  (SharedCompare)
+  (NegativeSeed))
+
+;; Minimal has no body instruction between its check and compare: retaining
+;; the old prefix while replacing the latch would accidentally keep the check.
+(define (opt-ubound-self-loop-function [kind : OptUboundSelfLoopCase]) : ir.CompilerIrFunction
+  (let
+    [seed : String
+      (match kind
+        [(NegativeSeed) "-1"]
+        [_ "0"])]
+    (irt.func
+      (str_cat.str-cat
+        "function @ubound_self(n=%0:i64, buf=%1:i64) -> i64 vars 13 {\nentry:\n"
+        (match kind
+          [(NoGuard) "%2 = eq %0, 7 : i64\n"]
+          [_ (str_cat.str-cat "%2 = lt " (string.copy (& seed)) ", %0 : i64\n")])
+        "branch %2, pre, exit\npre:\n"
+        (match kind
+          [(OpaqueLength) "%4 = mov %1 : i64\n"]
+          [_ "%3 = gep %1, 1 : i64\n%4 = load %3 : i64\n"])
+        (match kind
+          [(Minimal) "%9 = mov %0 : i64\n"]
+          [_ ""])
+        "jump head\nhead:\n%5 = phi ["
+        seed
+        ", pre], [%9, head] : i64\n"
+        (match kind
+          [(TwoPhis) "%6 = phi [10, pre], [%11, head] : i64\n"]
+          [_ ""])
+        (match kind
+          [(PriorEffect) "%11 = mov 0 : i64\n"]
+          [_ ""])
+        "bounds_check %5, %4 message \"self_ok\"\n"
+        (match kind
+          [(TwoPhis) "%11 = add %6, %5 : i64\n"]
+          [_ ""])
+        (match kind
+          [(Minimal) ""]
+          [(CallBody) "%9 = call ubound_clean(%5) : i64\n"]
+          [_ "%9 = add %5, 1 : i64\n"])
+        "%10 = lt %9, %0 : i64\nbranch %10, head, exit\nexit:\n"
+        (match kind
+          [(SharedCompare) "%11 = phi [false, entry], [%10, head] : bool\n"]
+          [_ ""])
+        "%12 = phi [0, entry], [%9, head] : i64\nreturn %12\n}"))))
+
+(define (compiler-optimize-ubound-self-loop-self-test) : i64
+  (for [case-id (iterator.range 0 4)]
+    (let
+      [kind : OptUboundSelfLoopCase
+        (match case-id
+          [0 (Normal)]
+          [1 (TwoPhis)]
+          [2 (Minimal)]
+          [_ (CallBody)])]
+      [before : ir.CompilerIrFunction (opt-ubound-self-loop-function kind)]
+      (unless
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& before))))
+        (return 1))
+      (match (opt.opt-ubound-function-pass 0 before)
+        [(Result result changed)
+          (unless changed (return 2))
+          (unless (= (opt.opt-function-frame result) 16) (return 3))
+          (unless
+            (opt.opt-verify-ok? (& (opt.opt-verify-function (& result))))
+            (return 4))
+          (let
+            [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+            [head : i64 (opt-ubound-label "head")]
+            [join : i64 (opt-ubound-label "pre__ubound_join")]
+            [chk : i64 (opt-ubound-label "head__ubound_exit")]
+            [trap : i64 (opt-ubound-label "head__ubound_trap")]
+            [block : ir.CompilerIrBlock (opt-ubound-block-of blocks head)]
+            [trap-block : ir.CompilerIrBlock (opt-ubound-block-of blocks trap)]
+            [count : i64 (opt-block-instr-count block)]
+            [phi-count : i64
+              (match kind
+                [(TwoPhis) 2]
+                [_ 1])]
+            (for [pos (iterator.range 0 count)]
+              (match (opt-block-instr-at block pos)
+                [(BoundsCheck _ _ _) (return 5)]
+                [(Phi _ inputs _)
+                  (unless
+                    (and
+                      (opt.opt-bool-branch-phi-input-has-label? inputs join)
+                      (opt.opt-bool-branch-phi-input-has-label? inputs head)
+                      (not
+                        (opt.opt-bool-branch-phi-input-has-label?
+                          inputs
+                          (opt-ubound-label "pre"))))
+                    (return 6))]
+                [_ unit]))
+            (when
+              (match kind
+                [(CallBody)
+                  (not
+                    (match (opt-block-instr-at block phi-count)
+                      [(Call 9 name (One (Var 5)) (I64))
+                        (= name (opt-test-symbol "ubound_clean"))]
+                      [_ false]))]
+                [_ false])
+              (return 10))
+            (unless
+              (and
+                (>= count (+ phi-count 2))
+                (match (opt-block-instr-at block (- count 2))
+                  [(BinOp dst (Lt) (Var back) (Var bound) (U64))
+                    (and (= dst 10) (= back 9) (= bound 14))]
+                  [_ false])
+                (match (opt-block-instr-at block (- count 1))
+                  [(Branch (Var cmp) yes no)
+                    (and (= cmp 10) (= yes head) (= no chk))]
+                  [_ false]))
+              (return 7))
+            (unless
+              (and
+                (opt-ubound-has-check? blocks join 1)
+                (opt-ubound-has-check? blocks trap 0)
+                (match (opt-block-instr-at trap-block 0)
+                  [(BoundsCheck (Var back) (Var len) ok)
+                    (and
+                      (= back 9)
+                      (= len 4)
+                      (= ok (opt-ubound-label "self_ok")))]
+                  [_ false])
+                (opt-ubound-phi-has-label? blocks (opt-ubound-label "exit") chk)
+                (opt-ubound-phi-has-label?
+                  blocks
+                  (opt-ubound-label "exit")
+                  trap)
+                (not
+                  (opt-ubound-phi-has-label?
+                    blocks
+                    (opt-ubound-label "exit")
+                    head)))
+              (return 8))
+            (when
+              (match (opt.opt-ubound-function-pass 0 result)
+                [(Result _ again) again])
+              (return 9)))])))
+  42)
+
+(define (compiler-optimize-ubound-self-loop-refusal-self-test) : i64
+  (for [case-id (iterator.range 0 5)]
+    (let
+      [kind : OptUboundSelfLoopCase
+        (match case-id
+          [0 (NoGuard)]
+          [1 (OpaqueLength)]
+          [2 (PriorEffect)]
+          [3 (SharedCompare)]
+          [_ (NegativeSeed)])]
+      [function : ir.CompilerIrFunction (opt-ubound-self-loop-function kind)]
+      (unless
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& function))))
+        (return (+ 10 case-id)))
+      (when
+        (match (opt.opt-ubound-function-pass 0 function)
+          [(Result _ changed) changed])
+        (return (+ 1 case-id)))))
+  42)
+
 ;; --- bounds-check group coalescing (bounds_group) ---------------------------
 ;;
 ;; The fixture is one self-looping body over two arrays:
@@ -78043,9 +78329,71 @@ return 0" true)
           "pass `preheaders` rewrote verified function `preheaders_ice`")
         (string.contains (& trusted-ice) "duplicate var definition"))
       "a rejected preheaders rewrite is an internal error naming the pass, the function and the verdict")
+    ;; Synthesis consumed the input (#9013), so under the capture the rejected
+    ;; rewrite comes back: it carries the preheader the input never had.
     (test.assert-true
-      (opt.opt-function-eq bases trusted-out broken)
-      "the rejected rewrite rolls back to the input")))
+      (not (opt.opt-function-eq bases trusted-out broken))
+      "a rejected preheaders rewrite returns the rewrite, never the consumed input")))
+
+;; The unchanged path returns its input object itself, so a move out of it
+;; (synthesis leaves a placeholder behind) would show up in the result.
+(test
+  preheaders-unchanged-path-returns-the-input-untouched
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run
+        true
+        (opt-preheaders-ice-function (opt-preheader-safe-blocks)))]
+    [expected : ir.CompilerIrFunction
+      (opt-preheaders-ice-function (opt-preheader-safe-blocks))]
+    (test.assert-true
+      (opt.opt-function-eq bases out expected)
+      "a loop that already owns a safe preheader leaves the function as it came in")))
+
+;; The checked-configuration guard on a consuming synthesis: the header's
+;; instructions must not share their storage with another block, or moving
+;; them out would rewrite that block too. The fixture builds that sharing
+;; deliberately (the view below), with `exit` holding the header's array.
+(test
+  preheaders-synthesis-refuses-shared-instruction-storage
+  (let
+    [loop : i64 (ir.compiler-ir-label "loop")]
+    [header-instrs : ir.CompilerIrInstrSeq
+      (ir.compiler-ir-instr-seq1
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 3)]
+    [_pre : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "pre")
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump loop))))]
+    [_exit : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "exit")
+          (opt.compiler-opt-global-shared-view header-instrs)))]
+    [_loop : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block loop header-instrs))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [_out : ir.CompilerIrBlockList
+      (opt.opt-loop-preheaders-apply
+        (ir.compiler-ir-block-builder-to-list builder)
+        loop
+        (opt.opt-label-add (Nil) (ir.compiler-ir-label "pre"))
+        (ir.compiler-ir-label "loop__preheader"))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (string.contains
+        (& ice)
+        "pass `preheaders` would move instructions out of an array another block shares")
+      "a consuming synthesis refuses a header whose instructions another block shares")))
 
 (define (opt-thread-branch-context-test [verified? : bool]) : unit
   (let

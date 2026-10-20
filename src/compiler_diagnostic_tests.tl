@@ -573,8 +573,8 @@
 
 ;; A parse tag rides the typecheck tag transport: the diagnostic built from a
 ;; tagged message takes the kind's code whatever the wording says, and the tag
-;; never reaches the text. Turning the diagnostic back into error text drops a
-;; parse code, and untagging the raw message gives the text back.
+;; never reaches the text. Turning the diagnostic back into error text keeps
+;; its parse code, and untagging the raw message gives the text back.
 (define (compiler-diagnostic-parse-kind-transport-ok?) : bool
   (let
     [decoy : String "parse: expected pattern; unterminated list; malformed let"]
@@ -604,7 +604,7 @@
       (string.eq (compiler-diagnostic-built-code (string.copy (& decoy))) "")
       (string.eq
         (cdiag.compiler-diagnostic-typecheck-error-text (& diag))
-        decoy)
+        tagged)
       (string.eq
         (cdiag.compiler-diagnostic-untagged-message (string.copy (& tagged)))
         decoy))))
@@ -653,8 +653,7 @@
 ;; The wording of a tagged message never changes its code: text full of other
 ;; families' words keeps the kind it was raised with, and a reworded message
 ;; keeps its code. The tag never reaches the rendered text, an explicit code
-;; wins over it, and it survives a round trip through error text only for a
-;; typecheck code.
+;; wins over it, and nested codes survive a round trip through error text.
 (define (compiler-diagnostic-typecheck-kind-transport-ok?) : bool
   (let
     [decoy : String
@@ -715,7 +714,7 @@
         tagged)
       (string.eq
         (cdiag.compiler-diagnostic-typecheck-error-text (& explicit))
-        decoy)
+        (str_cat.str-cat "__tl_tc_kind:E0100:" (string.copy (& decoy))))
       (string.eq
         (cdiag.compiler-diagnostic-untagged-message (string.copy (& decoy)))
         decoy))))
@@ -724,7 +723,7 @@
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 34)]
+    [ok : bool (= count 41)]
     (while (and ok (< index count))
       (let
         [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
@@ -962,6 +961,13 @@
       [(cdiag.compiler-diagnostic-parse-code? (& code)) "parse"]
       [(string.is-string-prefix-at (& code) "E02" 0) "typecheck"]
       [(string.is-string-prefix-at (& code) "E03" 0) "load"]
+      [(string.eq code "E0501") "macro"]
+      [(string.eq code "E0502") "macro"]
+      [(string.eq code "E0503") "macro"]
+      [(string.eq code "E0504") "macro"]
+      [(string.eq code "E0505") "comptime"]
+      [(string.eq code "E0506") "comptime"]
+      [(string.eq code "E0507") "comptime"]
       [else ""])))
 
 (define (compiler-diagnostic-code-registry-owner [index : i64]) : String
@@ -971,4 +977,6 @@
       [(string.eq category "parse") "parser"]
       [(string.eq category "typecheck") "typechecker"]
       [(string.eq category "load") "loader"]
+      [(string.eq category "macro") "macro expander"]
+      [(string.eq category "comptime") "compile-time evaluator"]
       [else ""])))

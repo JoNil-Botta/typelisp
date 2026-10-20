@@ -25768,14 +25768,17 @@
 ;; member hull could contain a clobber point). Re-run the per-register clobber
 ;; test on the ROOT's eff-index hull; a failing pin -- or a pin on a var some
 ;; smaller-id root absorbed (its assignment would be discarded at expansion
-;; anyway) -- is UNASSIGNED. The demoted param was never inserted into
-;; `blocked` (GAP3c walk), so its root competes in the greedy as an ordinary
-;; callee-saved candidate, exactly the M-A contract.
+;; anyway) -- is UNASSIGNED. A clobber-demoted param with no blocked class
+;; member competes in the greedy as an ordinary callee-saved candidate.
+;; A class containing a blocked call argument must also lose its pin: ordered
+;; marshalling can overwrite an incoming register before another argument reads
+;; it, including at a tail call where nothing is live afterwards.
 (define (compiler-reg-param-pins-demote-walk!
   [params : (& ir.CompilerIrParamSeq)]
   [assignments : CompilerRegAssignmentTable]
   [parents : (& parents (__tl_dyn-array i64))]
   [eff-index : (& CompilerRegIntervalIndex)]
+  [blocked : (& blocked live.CompilerLiveI64Set)]
   [call-points : (& call-points live.CompilerLiveI64Set)]
   [div-points : (& div-points live.CompilerLiveI64Set)]
   [shift-points : (& shift-points live.CompilerLiveI64Set)]) : unit
@@ -25795,6 +25798,7 @@
                         var-id)]
                     (if (and
                       (= root var-id)
+                      (not (live.compiler-live-set-contains? blocked root))
                       (compiler-reg-param-pin-clobber-free?
                         eff-index
                         call-points
@@ -25817,6 +25821,7 @@
   [assignments : CompilerRegAssignmentTable]
   [coalesce : (& coalesce CompilerRegCoalesceMap)]
   [eff-index : (& CompilerRegIntervalIndex)]
+  [blocked : (& blocked live.CompilerLiveI64Set)]
   [call-points : (& call-points live.CompilerLiveI64Set)]
   [div-points : (& div-points live.CompilerLiveI64Set)]
   [shift-points : (& shift-points live.CompilerLiveI64Set)]) : unit
@@ -25827,6 +25832,7 @@
         assignments
         coalesce.parents
         eff-index
+        blocked
         call-points
         div-points
         shift-points)]))
@@ -26522,6 +26528,14 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-merged-root-index coalesce (& alloc-index))
         (owned_view.compiler-owned-reference-shared-view interval-index))]
+    ;; Every register home, including an existing parameter pin, must respect
+    ;; exclusions inherited from any member of its coalesced class.
+    [eff-blocked : live.CompilerLiveI64Set
+      (if allow-caller-saved-zero-call
+        (compiler-reg-coalesce-root-set-from-vars
+          coalesce
+          (owned_view.compiler-owned-reference-shared-view blocked))
+        (owned_view.compiler-owned-reference-shared-view blocked))]
     ;; `div-points` / `shift-points` (kinds 1 and 2) are the sets bound above;
     ;; the GAP3c pin demotion below and the greedy share that one computation.
     ;; GAP3c: validate every ABI pin against its coalesce-class hull now that
@@ -26536,6 +26550,7 @@
           assignment-table
           coalesce
           (& eff-index)
+          (& eff-blocked)
           clobber-points
           div-points
           shift-points)
@@ -26607,18 +26622,6 @@
         type-info
         coalesce
         (array-length interval-index.starts))]
-    ;; The effective scalar allocation pass sees only coalesced
-    ;; roots, so original-var exclusions must block the root. Otherwise a root
-    ;; may get a register even though one merged member is a call argument or
-    ;; parameter that must stay stack/ABI-homed; on Windows that let a stack
-    ;; CreateFileA argument inherit %r9 after the same call clobbered %r9 for the
-    ;; fourth ABI argument.
-    [eff-blocked : live.CompilerLiveI64Set
-      (if allow-caller-saved-zero-call
-        (compiler-reg-coalesce-root-set-from-vars
-          coalesce
-          (owned_view.compiler-owned-reference-shared-view blocked))
-        (owned_view.compiler-owned-reference-shared-view blocked))]
     ;; M-A (RC1): param var ids mapped to their coalesce ROOTS -- each greedy
     ;; allocates class roots. Under R3S-1 a class containing a param is not
     ;; restricted to callee-saved homes; this set marks the classes

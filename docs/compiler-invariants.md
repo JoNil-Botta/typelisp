@@ -1655,7 +1655,7 @@ each source before an argument-register write can destroy it.
 Move harvesting mutably borrows one `CompilerRegMoveBuilder` through casts,
 destructive ties, copies and phi inputs, preserving their existing add order.
 Lists of at most 32 moves use a bounded newest-first scan. The next unique move
-promotes the entire prefix once: its integer map indexes structural hashes into
+promotes the entire prefix once: its integer map indexes pair hashes into
 chains of move slots, and each subsequent insertion updates that index.
 Lookups compare both full-width endpoints. Each collision link points to an
 older slot or -1, so lookup terminates while preserving newest-first order.

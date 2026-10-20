@@ -5,7 +5,7 @@ undirected duplicate suppression and newest-first strict upgrades.
 `regalloc-move-index-growth-and-reference` compares every slot with the former
 list-scan semantics through mixed insertion modes, full-width signed IDs,
 table growth and interleaved builders. `regalloc-move-index-hash-collisions`
-checks real structural-hash collisions, an absent pair at the chain tail and
+checks real pair-hash collisions, an absent pair at the chain tail and
 strict upgrades through colliding entries. `regalloc-move-index-prefix-promotion`
 pins the exact small-list boundary, one-time promotion, duplicate/self moves
 that must not promote, and strict upgrades across promotion. Run these at

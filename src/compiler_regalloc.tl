@@ -1520,7 +1520,7 @@
   (= moves.len 0))
 
 (define (compiler-reg-move-pair-hash [src : i64] [dst : i64]) : i64
-  (hash.hash-once (tuple src dst)))
+  (hash.combine-normalized (hash.i64 src) (hash.i64 dst)))
 
 (define (compiler-reg-move-builder-directed-slot
   [builder : (& CompilerRegMoveBuilder)]

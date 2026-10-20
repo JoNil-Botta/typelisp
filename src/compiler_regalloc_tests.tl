@@ -16446,7 +16446,7 @@
     (let
       [builder : reg.CompilerRegMoveBuilder
         (reg.compiler-reg-move-builder-empty)]
-      [key : i64 (reg.compiler-reg-move-pair-hash 1 17162)]
+      [key : i64 (reg.compiler-reg-move-pair-hash 1 132)]
       (let
         [i : i64 0]
         (while (< i (reg.compiler-reg-move-builder-small-limit))
@@ -16460,20 +16460,20 @@
       (test.assert-i64-eq
         key
         (reg.compiler-reg-move-pair-hash 2 1)
-        "distinct pairs share a structural hash")
+        "distinct pairs share a pair hash")
       (test.assert-i64-eq
         key
-        (reg.compiler-reg-move-pair-hash 3 -17160)
+        (reg.compiler-reg-move-pair-hash 3 -130)
         "negative endpoint shares the bucket")
-      (reg.compiler-reg-move-list-add! (&mut builder) 1 17162 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 1 132 false false)
       (reg.compiler-reg-move-list-add! (&mut builder) 2 1 false false)
-      (reg.compiler-reg-move-list-add! (&mut builder) 3 -17160 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 3 -130 false false)
       (test.assert-i64-eq
         builder.moves.len
         (+ (reg.compiler-reg-move-builder-small-limit) 3)
         "hash collisions do not suppress distinct moves")
       (test.assert-i64-eq
-        (reg.compiler-reg-move-builder-slot (& builder) 1 17162 false)
+        (reg.compiler-reg-move-builder-slot (& builder) 1 132 false)
         (reg.compiler-reg-move-builder-small-limit)
         "oldest collision slot")
       (test.assert-i64-eq
@@ -16481,19 +16481,19 @@
         (+ (reg.compiler-reg-move-builder-small-limit) 1)
         "middle collision slot")
       (test.assert-i64-eq
-        (reg.compiler-reg-move-builder-slot (& builder) 3 -17160 false)
+        (reg.compiler-reg-move-builder-slot (& builder) 3 -130 false)
         (+ (reg.compiler-reg-move-builder-small-limit) 2)
         "newest collision slot")
       (test.assert-i64-eq
         key
-        (reg.compiler-reg-move-pair-hash 4 -34321)
+        (reg.compiler-reg-move-pair-hash 4 -261)
         "missing pair reaches the same collision bucket")
       (test.assert-i64-eq
-        (reg.compiler-reg-move-builder-slot (& builder) 4 -34321 false)
+        (reg.compiler-reg-move-builder-slot (& builder) 4 -261 false)
         -1
         "absent collision walks through the final link")
-      (reg.compiler-reg-move-list-add! (&mut builder) 1 17162 false false)
-      (reg.compiler-reg-move-list-add! (&mut builder) 17162 1 true true)
+      (reg.compiler-reg-move-list-add! (&mut builder) 1 132 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 132 1 true true)
       (test.assert-i64-eq
         builder.moves.len
         (+ (reg.compiler-reg-move-builder-small-limit) 3)

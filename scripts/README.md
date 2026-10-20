@@ -58,6 +58,12 @@ still report unavailable execution explicitly. CLI transcript `if-isa` checks
 and runtime-dispatch selection continue to test the actual native host,
 including the CLI's unsupported-host diagnostics.
 
+On native AVX-512 CI hosts, the workflow additionally executes the SPMD,
+lane/broadcast and package corpus under SDE and checks the cross-mode oracle
+against those observations. Hosts without native support already use SDE in
+the canonical gates. Thus both operating systems exercise the fallback on
+every required run, while native dispatch and execution coverage is retained.
+
 To validate the emulator route even on an AVX-512 host, run the existing corpus:
 
 ```sh

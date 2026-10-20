@@ -51660,10 +51660,9 @@
       Ordinary)))
 
 (define (opt-rotate-ssa-compound-types-ok?
-  [func : (& func ir.CompilerIrFunction)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
   [ty : (& ty str)]) : bool
   (let
-    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks func)]
     [ok? : bool true]
     (for [k (iterator.range 0 6)]
       (let
@@ -51677,7 +51676,7 @@
             header
             (ir.compiler-ir-label
               (& (str_cat.str-cat "rr-b" (string.int->string k)))))]
-        (match (opt.opt-cfg-find-block (& blocks) label)
+        (match (opt.opt-cfg-find-block blocks label)
           [(No) (set! ok? false)]
           [(Some block)
             (match block
@@ -51715,21 +51714,23 @@
             [ty (& (array-ref types kind))]
             [fuel (array-ref fuels fuel-index)]
             [func (opt-rotate-ssa-compound-siblings ty (= orientation 1))]
+            [original-blocks (opt.opt-function-blocks func)]
             [context (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
             (unless
               (opt.opt-verify-ok?
                 (& (opt.opt-verify-function-with-context func context)))
               (return 1))
-            (match (opt.opt-rotate-ssa-rounds
-              (opt.compiler-opt-global-shared-view func)
-              context
-              fuel)
+            (match (opt.opt-rotate-ssa-rounds func context fuel)
               [(Result result kept-context)
                 (opt-round-regions-test-clobber!)
                 (unless (= (arena.tl_arena_current) outer) (return 2))
-                (unless (opt-rotate-ssa-compound-types-ok? func ty) (return 3))
                 (unless
-                  (opt-rotate-ssa-compound-types-ok? result ty)
+                  (opt-rotate-ssa-compound-types-ok? original-blocks ty)
+                  (return 3))
+                (unless
+                  (opt-rotate-ssa-compound-types-ok?
+                    (& (opt.opt-function-blocks result))
+                    ty)
                   (return (+ 10 (* kind 10) fuel)))
                 (unless
                   (=

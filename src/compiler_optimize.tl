@@ -18908,17 +18908,13 @@
     (match (opt-rotate-ssa-phi-recs-from phis preheader latch (+ index 1))
       [(No) (No)]
       [(Some recs)
-        (match (ir.compiler-ir-instr-seq-borrow phis index)
+        (match (ir.compiler-ir-instr-seq-ref phis index)
           [(Phi dst inputs ty)
             (match (opt-phi-edge-values (& inputs) preheader latch)
               [(Some pre-value latch-value)
                 (Some
                   (opt-rotate-ssa-phi-recs-cons
-                    (Rec
-                      dst
-                      pre-value
-                      latch-value
-                      (owned_view.compiler-owned-reference-shared-view ty))
+                    (Rec dst pre-value latch-value ty)
                     recs))]
               [(No) (No)])]
           [_ (No)])])))

@@ -4,7 +4,8 @@
 Linux/Windows golden bytes, a bounded independent decoder, framing/byte mutations,
 exact/one-below resource limits, every origin class, profile/capability/hardening
 admission and canonical field sensitivity. The native integration fixture runs
-both target profiles at opt0/1/2 without external tools or discovery. Run focused
+both target profiles and every nonzero opaque-argv byte at opt0/1/2 without
+external tools or discovery. Run focused
 files with a fresh compiler and `--stdlib-root stdlib --stdlib-root src`; helpers
 use the `tests.*` namespace, matching the full inline runner's roots. Keep every
 ordered event and profile-input schedule, the six independent goldens and the

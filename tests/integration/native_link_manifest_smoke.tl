@@ -6,10 +6,22 @@
 (import native_link_manifest as manifest)
 (import stdlib.iterator)
 (import stdlib.string)
+(import stdlib.byte_buf_core as buf)
+
+(define (argument-bytes) : String
+  (let
+    [bytes : buf.ByteBufBuilder (buf.byte-buf-builder-with-capacity 300)]
+    (buf.byte-buf-builder-append-string
+      (&mut bytes)
+      " @literal ; $HOME -Wl,a,b ")
+    (for [byte (iterator.range 1 256)]
+      (buf.byte-buf-builder-push (&mut bytes) (cast byte : u8)))
+    (buf.byte-buf-builder-to-string (& bytes))))
 
 (define (main) : i64
   (let
     [limits : core.NativeLinkLimits (core.default-limits)]
+    [argument : String (argument-bytes)]
     (for [target (iterator.range 0 2)]
       (let
         [profile : n.NativeToolchainProfile
@@ -29,8 +41,7 @@
             (builder.append!
               (&mut events)
               (n.CommandLineOrigin (cast 4 : u64))
-              (n.ExternalArgument
-                (n.ExternalCompatibilityArg " @literal ; $HOME -Wl,a,b \r\n")))
+              (n.ExternalArgument (n.ExternalCompatibilityArg (clone argument))))
             (match (builder.finish
               events
               (& profile)
@@ -57,9 +68,7 @@
                             (not
                               (match (array-ref decoded.manifest.events 16).payload
                                 [(n.ExternalArgument arg)
-                                  (string.eq
-                                    (& arg.argv-element)
-                                    " @literal ; $HOME -Wl,a,b \r\n")]
+                                  (string.eq (& arg.argv-element) (& argument))]
                                 [_ false]))
                             (return 3))
                           (match (manifest.encode (& decoded) (& limits))

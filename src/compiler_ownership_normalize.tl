@@ -528,7 +528,7 @@
           (set! (array-ref fields index) (array-ref items.items index).index)
           (set! index (+ index 1)))
         fields)]
-    [_ (__tl_make-array i64 0)]))
+    [_ (normalize-no-i64s)]))
 
 ;; A product place is expanded lazily: its field places (one per field, in
 ;; ordinal order, each named by its source field) are created together the
@@ -690,6 +690,41 @@
 
 (define (normalize-no-bools) : (__tl_dyn-array bool)
   (__tl_make-array bool 0))
+
+(define (normalize-no-sources) : (__tl_dyn-array own.OwnershipSource)
+  (__tl_make-array own.OwnershipSource 0))
+
+(define (normalize-no-instructions) : (__tl_dyn-array own.OwnershipInstruction)
+  (__tl_make-array own.OwnershipInstruction 0))
+
+(define (normalize-no-place-ids) : (__tl_dyn-array own.OwnershipPlaceId)
+  (__tl_make-array own.OwnershipPlaceId 0))
+
+(define (normalize-no-deferred-receivers) : (__tl_dyn-array
+    NormalizeDeferredReceiver)
+  (__tl_make-array NormalizeDeferredReceiver 0))
+
+;; Pushes too rare to keep spare capacity for, one copy loop per element
+;; type (`__tl_array-push!` expands to an allocation and a copy loop).
+(define (normalize-push-i64!
+  [items : (&mut items (__tl_dyn-array i64))]
+  [item : i64]) : unit
+  (__tl_array-push! items item))
+
+(define (normalize-push-bool!
+  [items : (&mut items (__tl_dyn-array bool))]
+  [item : bool]) : unit
+  (__tl_array-push! items item))
+
+(define (normalize-push-source!
+  [items : (&mut items (__tl_dyn-array own.OwnershipSource))]
+  [item : own.OwnershipSource]) : unit
+  (__tl_array-push! items item))
+
+(define (normalize-push-place-id!
+  [items : (&mut items (__tl_dyn-array own.OwnershipPlaceId))]
+  [item : own.OwnershipPlaceId]) : unit
+  (__tl_array-push! items item))
 
 (define (normalize-i64s) : NormalizeI64s
   (NormalizeI64s (__tl_make-array i64 0) 0))
@@ -911,25 +946,96 @@
     (< ,count (array-length ,cells))
     (set! ,cells (normalize-trimmed ,cells ,count ,item-ty))))
 
+;; `normalize-trimmed` of an i64 or bool array, out of line: one copy loop for
+;; the many columns `normalize-trim!` cuts (each is taken out with `replace!`
+;; and its trimmed copy stored back).
+(define (normalize-trimmed-i64s [cells : (__tl_dyn-array i64)] [count : i64]) : (__tl_dyn-array
+    i64)
+  (normalize-trimmed cells count i64))
+
+(define (normalize-trimmed-bools [cells : (__tl_dyn-array bool)] [count : i64]) : (__tl_dyn-array
+    bool)
+  (normalize-trimmed cells count bool))
+
 ;; Cuts every growing array but the blocks' instructions to its live length.
 (define (normalize-trim! [state : (&mut state NormalizeState)]) : unit
   (normalize-cut! state.body.types state.type-count own.OwnershipType)
   (normalize-cut! state.body.places state.place-count own.OwnershipPlace)
-  (normalize-cut! state.field-names state.place-count i64)
+  (when
+    (< state.place-count (array-length state.field-names))
+    (set!
+      state.field-names
+      (normalize-trimmed-i64s
+        (replace! state.field-names (normalize-no-i64s))
+        state.place-count)))
   (normalize-cut! state.body.locals state.local-count own.OwnershipLocal)
   (normalize-cut! state.body.blocks state.block-count own.OwnershipBlock)
   (normalize-cut! state.body.loans state.loan-count own.OwnershipLoan)
   (normalize-cut! state.nodes state.node-count NormalizeNode)
   (normalize-cut! state.binders state.binder-count NormalizeBinder)
-  (normalize-cut! state.use-blocks state.use-count i64)
-  (normalize-cut! state.use-indices state.use-count i64)
-  (normalize-cut! state.use-places state.use-count i64)
-  (normalize-cut! state.flow-from state.flow-count i64)
-  (normalize-cut! state.flow-to state.flow-count i64)
-  (normalize-cut! state.flow-outlives state.flow-count bool)
-  (normalize-cut! state.flow-contents state.flow-count bool)
-  (normalize-cut! state.origin-places state.origin-count i64)
-  (normalize-cut! state.origin-loans state.origin-count i64))
+  (when
+    (< state.use-count (array-length state.use-blocks))
+    (set!
+      state.use-blocks
+      (normalize-trimmed-i64s
+        (replace! state.use-blocks (normalize-no-i64s))
+        state.use-count)))
+  (when
+    (< state.use-count (array-length state.use-indices))
+    (set!
+      state.use-indices
+      (normalize-trimmed-i64s
+        (replace! state.use-indices (normalize-no-i64s))
+        state.use-count)))
+  (when
+    (< state.use-count (array-length state.use-places))
+    (set!
+      state.use-places
+      (normalize-trimmed-i64s
+        (replace! state.use-places (normalize-no-i64s))
+        state.use-count)))
+  (when
+    (< state.flow-count (array-length state.flow-from))
+    (set!
+      state.flow-from
+      (normalize-trimmed-i64s
+        (replace! state.flow-from (normalize-no-i64s))
+        state.flow-count)))
+  (when
+    (< state.flow-count (array-length state.flow-to))
+    (set!
+      state.flow-to
+      (normalize-trimmed-i64s
+        (replace! state.flow-to (normalize-no-i64s))
+        state.flow-count)))
+  (when
+    (< state.flow-count (array-length state.flow-outlives))
+    (set!
+      state.flow-outlives
+      (normalize-trimmed-bools
+        (replace! state.flow-outlives (normalize-no-bools))
+        state.flow-count)))
+  (when
+    (< state.flow-count (array-length state.flow-contents))
+    (set!
+      state.flow-contents
+      (normalize-trimmed-bools
+        (replace! state.flow-contents (normalize-no-bools))
+        state.flow-count)))
+  (when
+    (< state.origin-count (array-length state.origin-places))
+    (set!
+      state.origin-places
+      (normalize-trimmed-i64s
+        (replace! state.origin-places (normalize-no-i64s))
+        state.origin-count)))
+  (when
+    (< state.origin-count (array-length state.origin-loans))
+    (set!
+      state.origin-loans
+      (normalize-trimmed-i64s
+        (replace! state.origin-loans (normalize-no-i64s))
+        state.origin-count))))
 
 ;; Cuts every block's instructions to their live length, once
 ;; `normalize-insert-loan-uses!` has rebuilt the blocks it adds uses to.
@@ -2037,7 +2143,7 @@
           header.operation
           children
           -1
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
           header.type.handle.index
           header.expression)))))
 
@@ -2105,7 +2211,7 @@
     (set!
       (array-ref state.body.blocks index)
       (own.OwnershipBlock
-        (__tl_make-array own.OwnershipInstruction 0)
+        (normalize-no-instructions)
         own.OwnershipTerminator.Abort
         copy))
     (set! (array-ref state.instruction-counts index) 0)
@@ -2743,7 +2849,7 @@
     (OwnershipNormalizeFailure.MoveOut
       (OwnershipMoveOutDiagnostic
         (normalize-binder-name (& state) (normalize-place-root (& state) place))
-        (__tl_make-array i64 0)
+        (normalize-no-i64s)
         3
         (try (normalize-source-copy! state source))
         NormalizeMaybeType.No
@@ -3316,7 +3422,7 @@
             (try (normalize-source-copy! state source))]
           (normalize-push! state.obligation-values dest)
           (normalize-push! state.obligation-names name)
-          (__tl_array-push! state.obligation-sources moved))
+          (normalize-push-source! (&mut state.obligation-sources) moved))
         (NormalizeUnit.Ok unit)))))
 
 (define (normalize-obligation-index
@@ -3675,7 +3781,7 @@
               (&mut work)
               limit)
               [(own.OwnershipResult.Ok) unit]
-              [(own.OwnershipResult.Err _) (return (__tl_make-array i64 0))])
+              [(own.OwnershipResult.Err _) (return (normalize-no-i64s))])
             (set! cell (+ cell 1)))
           (set!
             (array-ref exits block)
@@ -4324,8 +4430,7 @@
   ;; A generated return propagating a `try` failure.
   [propagates? : bool]) : NormalizeValueResult
   (let
-    [operands : (__tl_dyn-array own.OwnershipPlaceId)
-      (__tl_make-array own.OwnershipPlaceId 0)]
+    [operands : (__tl_dyn-array own.OwnershipPlaceId) (normalize-no-place-ids)]
     [active : i64 block]
     (unless
       (= node.type 13)
@@ -4361,8 +4466,8 @@
                 true
                 (& node.source)))
             (normalize-i64s-push! (&mut state.return-places) value.place)
-            (__tl_array-push!
-              operands
+            (normalize-push-place-id!
+              (&mut operands)
               (normalize-place-id (& state) value.place))))))
     (when
       (>= active 0)
@@ -4811,7 +4916,7 @@
       (normalize-push! state.reserved-loans loan)
       (normalize-push! state.reserved-places place)
       (normalize-push! state.reserved-results result)
-      (__tl_array-push! state.reserved-sources source)
+      (normalize-push-source! (&mut state.reserved-sources) source)
       (normalize-push! state.reserved-children child)
       (normalize-push! state.reserved-parents parent)))
   (set! state.reserved-count (+ state.reserved-count 1)))
@@ -5449,7 +5554,7 @@
 (define (normalize-mutable-views [state : (& state NormalizeState)]) : (__tl_dyn-array
     i64)
   (let
-    [views : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [views : (__tl_dyn-array i64) (normalize-no-i64s)]
     [index : i64 0]
     (while (< index (array-length state.view-site-loans))
       (when
@@ -6799,7 +6904,7 @@
             store
             lease
             (normalize-child-id node (- count 1)))))]
-    [values : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [values : (__tl_dyn-array i64) (normalize-no-i64s)]
     [active : i64 block]
     [index : i64 0]
     [exited? : bool false]
@@ -6876,7 +6981,7 @@
         [_ NormalizeOperation.Sequence])
       children
       -1
-      (__tl_make-array i64 0)
+      (normalize-no-i64s)
       node.typed
       node.expression)))
 
@@ -7208,7 +7313,7 @@
                 [saved : (__tl_dyn-array NormalizeDeferredReceiver)
                   (replace!
                     state.receiver-targets
-                    (__tl_make-array NormalizeDeferredReceiver 0))]
+                    (normalize-no-deferred-receivers))]
                 [_open : unit
                   (set! state.receiver-depth (+ state.receiver-depth 1))]
                 [selected : NormalizeValue
@@ -7546,7 +7651,7 @@
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]) : NormalizeUnit
   (let
-    [records : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [records : (__tl_dyn-array i64) (normalize-no-i64s)]
     [index : i64 0]
     (normalize-append-unique! (&mut records) (& state.global-writes.binders))
     (normalize-append-unique!
@@ -7762,7 +7867,7 @@
         (normalize-push! state.probe-targets place)
         (normalize-push! state.probe-callees callee)
         (normalize-push! state.probe-globals global)
-        (__tl_array-push! state.probe-sources copy))
+        (normalize-push-source! (&mut state.probe-sources) copy))
       (begin
         (try
           (normalize-emit!
@@ -7771,7 +7876,7 @@
             (own.OwnershipOperation.Assign (normalize-place-id (& state) place))
             source))
         (normalize-push! state.effect-places place)
-        (__tl_array-push! state.effect-sources copy)
+        (normalize-push-source! (&mut state.effect-sources) copy)
         (normalize-push! state.effect-callees callee)
         (normalize-push! state.effect-globals global)))
     (NormalizeUnit.Ok unit)))
@@ -7781,7 +7886,7 @@
 (define (normalize-borrowed-globals [state : (& state NormalizeState)]) : (__tl_dyn-array
     i64)
   (let
-    [out : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [out : (__tl_dyn-array i64) (normalize-no-i64s)]
     [index : i64 0]
     (while (< index state.binder-count)
       (let
@@ -7851,11 +7956,11 @@
   (let
     [out : OwnershipNormalizeDeferred
       (OwnershipNormalizeDeferred
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
-        (__tl_make-array own.OwnershipSource 0)
-        (__tl_make-array own.OwnershipSource 0))]
+        (normalize-no-i64s)
+        (normalize-no-i64s)
+        (normalize-no-i64s)
+        (normalize-no-sources)
+        (normalize-no-sources))]
     ;; Without loans no global is borrowed (the liveness table is then empty).
     (when
       (or
@@ -8003,12 +8108,12 @@
                     (normalize-binder-name
                       state
                       (array-ref state.probe-targets index)))
-                  (__tl_array-push!
-                    out.calls
+                  (normalize-push-source!
+                    (&mut out.calls)
                     (own.ownership-source-copy
                       (& (array-ref state.probe-sources index))))
-                  (__tl_array-push!
-                    out.borrows
+                  (normalize-push-source!
+                    (&mut out.borrows)
                     (own.ownership-source-copy
                       (& (array-ref state.body.loans found).source))))))
             (set! index (+ index 1)))
@@ -8918,10 +9023,10 @@
     [blocks : i64 (array-length state.body.blocks)]
     [places : i64 (array-length state.body.places)]
     ;; Definitions: (place, block, index, value) in block order.
-    [def-place : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [def-block : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [def-index : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [def-value : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [def-place : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [def-block : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [def-index : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [def-value : (__tl_dyn-array i64) (normalize-no-i64s)]
     [def-total : (__tl_dyn-array i64) (__tl_make-array i64 places)]
     [flow-total : (__tl_dyn-array i64) (__tl_make-array i64 places)]
     [opaque : (__tl_dyn-array bool) (__tl_make-array bool places)]
@@ -9083,7 +9188,7 @@
   (let
     [blocks : i64 (array-length state.body.blocks)]
     ;; This place's definitions, as indices into the def arrays.
-    [defs : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [defs : (__tl_dyn-array i64) (normalize-no-i64s)]
     [at : i64 0]
     (while (< at (array-length def-place))
       (when (= (array-ref def-place at) place) (normalize-push! defs at))
@@ -9225,8 +9330,8 @@
                 (set! (array-ref alt-start use) (array-length alt-places))
                 (set! (array-ref alt-count use) (array-length reaching))
                 (while (< r (array-length reaching))
-                  (__tl_array-push!
-                    alt-places
+                  (normalize-push-i64!
+                    (&mut alt-places)
                     (array-ref
                       def-value
                       (array-ref defs (array-ref reaching r))))
@@ -9245,7 +9350,7 @@
   [block : i64]
   [index : i64]) : (__tl_dyn-array i64)
   (let
-    [out : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [out : (__tl_dyn-array i64) (normalize-no-i64s)]
     [local : i64 -1]
     [d : i64 0]
     (while (< d count)
@@ -9502,9 +9607,9 @@
   [name : i64]
   [inv? : bool]
   [outer : i64]) : unit
-  (__tl_array-push! out.names name)
-  (__tl_array-push! out.vars inv?)
-  (__tl_array-push! out.outers outer))
+  (normalize-push-i64! (&mut out.names) name)
+  (normalize-push-bool! (&mut out.vars) inv?)
+  (normalize-push-i64! (&mut out.outers) outer))
 
 (define (normalize-shape-walk
   [variances : (& variances OwnershipNormalizeVariances)]
@@ -9725,9 +9830,9 @@
     [id : i64 shapes.starts.len]
     [out : NormalizeShapeOut
       (NormalizeShapeOut
-        (__tl_make-array i64 0)
-        (__tl_make-array bool 0)
-        (__tl_make-array i64 0))]
+        (normalize-no-i64s)
+        (normalize-no-bools)
+        (normalize-no-i64s))]
     [index : i64 0]
     [view? : bool
       (match (& ty)
@@ -9821,7 +9926,7 @@
     (while (< index (array-length items))
       (unless
         (normalize-i64-member? out (array-ref items index))
-        (__tl_array-push! out (array-ref items index)))
+        (normalize-push-i64! (&mut out) (array-ref items index)))
       (set! index (+ index 1)))))
 
 ;; The reserved `program` lifetime (`tc-program-lifetime-id?`).
@@ -9869,7 +9974,7 @@
         (normalize-i64s)
         (normalize-i64s)
         -1
-        (__tl_make-array i64 0)
+        (normalize-no-i64s)
         (__tl_make-array i64 (normalize-shape-cache-size state))
         (__tl_make-array i64 (normalize-shape-cache-size state))
         -1)]
@@ -9985,7 +10090,7 @@
               false)
               [(NormalizeInt.Ok id)
                 (let
-                  [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+                  [names : (__tl_dyn-array i64) (normalize-no-i64s)]
                   (normalize-shape-names-into! (& shapes) id (&mut names))
                   (normalize-append-unique! (&mut shapes.universal) (& names)))]
               [(NormalizeInt.Err failure)
@@ -10003,7 +10108,7 @@
         [(NormalizeInt.Ok id)
           (set! shapes.return-shape id)
           (let
-            [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+            [names : (__tl_dyn-array i64) (normalize-no-i64s)]
             (normalize-shape-names-into! (& shapes) id (&mut names))
             (normalize-append-unique! (&mut shapes.universal) (& names)))]
         [(NormalizeInt.Err failure)
@@ -10133,7 +10238,7 @@
             (when
               (> (array-ref shapes.lens.items shape) 0)
               (let
-                [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+                [names : (__tl_dyn-array i64) (normalize-no-i64s)]
                 [at : i64 0]
                 (normalize-shape-names-into! shapes shape (&mut names))
                 (while (< at (array-length names))
@@ -10155,7 +10260,7 @@
     (set! index 0)
     (while (< index state.call-sigs.len)
       (let
-        [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [names : (__tl_dyn-array i64) (normalize-no-i64s)]
         [operand : i64 0]
         [at : i64 0]
         (while (< operand (array-ref state.call-counts.items index))
@@ -10226,12 +10331,14 @@
     (cond
       [(>= key 0)
         (while (< index (array-ref nodes.place-count key))
-          (__tl_array-push! out (+ (array-ref nodes.place-first key) index))
+          (normalize-push-i64!
+            (&mut out)
+            (+ (array-ref nodes.place-first key) index))
           (set! index (+ index 1)))]
       [(<= key -2)
         (while (< index (array-ref nodes.call-count (- -2 key)))
-          (__tl_array-push!
-            out
+          (normalize-push-i64!
+            (&mut out)
             (+ (array-ref nodes.call-first (- -2 key)) index))
           (set! index (+ index 1)))]
       [else unit])
@@ -10254,7 +10361,7 @@
                 (+ (array-ref shapes.starts.items shape) index)))]
           (when
             (and (>= node 0) (not (normalize-i64-member? out node)))
-            (__tl_array-push! out node)))
+            (normalize-push-i64! (&mut out) node)))
         (set! index (+ index 1))))))
 
 ;; An indirect call's callee value (root `root`, shape `shape`): its regions,
@@ -10269,8 +10376,8 @@
   [shape : i64]
   [key : i64]) : unit
   (let
-    [callee : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [call : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [callee : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [call : (__tl_dyn-array i64) (normalize-no-i64s)]
     [outer : i64
       (if (and
         (>= shape 0)
@@ -10313,8 +10420,8 @@
   [to-key : i64]
   [to-shape : i64]) : unit
   (let
-    [left : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [right : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [left : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [right : (__tl_dyn-array i64) (normalize-no-i64s)]
     [i : i64 0]
     (normalize-key-nodes-into! nodes shapes from-key from-shape (&mut left))
     (normalize-key-nodes-into! nodes shapes to-key to-shape (&mut right))
@@ -10447,8 +10554,8 @@
       1
       true)
     (let
-      [place : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-      [reference : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [place : (__tl_dyn-array i64) (normalize-no-i64s)]
+      [reference : (__tl_dyn-array i64) (normalize-no-i64s)]
       [outer : i64
         (if (and (>= to-shape 0) (> (array-ref shapes.lens.items to-shape) 0))
           (normalize-node-of
@@ -10508,7 +10615,7 @@
     (let
       [start : i64 (array-ref shapes.starts.items to-shape)]
       [index : i64 0]
-      [others : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [others : (__tl_dyn-array i64) (normalize-no-i64s)]
       (normalize-key-nodes-into!
         nodes
         shapes
@@ -10916,7 +11023,7 @@
         (__tl_make-array i64 (array-length state.use-places))]
       [alt-count : (__tl_dyn-array i64)
         (__tl_make-array i64 (array-length state.use-places))]
-      [alt-places : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [alt-places : (__tl_dyn-array i64) (normalize-no-i64s)]
       (try
         (normalize-split-reassigned!
           state
@@ -11277,7 +11384,7 @@
   [nodes : (& nodes NormalizeNodes)]
   [place : i64]) : (__tl_dyn-array i64)
   (let
-    [out : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [out : (__tl_dyn-array i64) (normalize-no-i64s)]
     [root : i64 (normalize-region-root state place)]
     [shape : i64 (array-ref shapes.place-shapes place)]
     (if (or (< shape 0) (= (array-ref shapes.lens.items shape) 0))
@@ -11290,7 +11397,7 @@
             root
             (array-ref shapes.names.items (array-ref shapes.starts.items shape)))]
         (if (>= node 0)
-          (__tl_array-push! out node)
+          (normalize-push-i64! (&mut out) node)
           (normalize-key-nodes-into! nodes shapes root shape (&mut out)))))
     out))
 
@@ -11400,7 +11507,7 @@
     [rebound : (__tl_dyn-array bool)
       (if (> (array-length state.reborrow-loans) 0)
         (normalize-rebound-roots (& state))
-        (__tl_make-array bool 0))]
+        (normalize-no-bools))]
     (while (< index (array-length state.reborrow-loans))
       (let
         [child : i64 (array-ref state.reborrow-loans index)]
@@ -11610,7 +11717,7 @@
             [old : (__tl_dyn-array own.OwnershipInstruction)
               (replace!
                 (array-ref state.body.blocks block).instructions
-                (__tl_make-array own.OwnershipInstruction 0))]
+                (normalize-no-instructions))]
             ;; The live instructions (`old` keeps spare capacity).
             [held : i64 (array-ref state.instruction-counts block)]
             [cursor : i64 first]
@@ -11767,8 +11874,8 @@
   [state : (& state NormalizeState)]
   [place : i64]) : (__tl_dyn-array i64)
   (let
-    [reversed : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [fields : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [reversed : (__tl_dyn-array i64) (normalize-no-i64s)]
+    [fields : (__tl_dyn-array i64) (normalize-no-i64s)]
     [current : i64 place]
     (while (>=
       (own.ownership-parent (& (array-ref state.body.places current)))
@@ -11906,7 +12013,7 @@
   (let
     [blocks : i64 (array-length body.blocks)]
     [entered : (__tl_dyn-array bool) (__tl_make-array bool blocks)]
-    [pending : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [pending : (__tl_dyn-array i64) (normalize-no-i64s)]
     [found : bool false]
     [head : i64 0]
     [first : i64
@@ -12683,7 +12790,7 @@
       (normalize-binder-handle-table (& output.binders))]
     [all : bool false]
     [index : i64 0]
-    [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [names : (__tl_dyn-array i64) (normalize-no-i64s)]
     (while (< index locals)
       (set! (array-ref classes index) index)
       (set! index (+ index 1)))
@@ -13037,14 +13144,14 @@
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
-          (__tl_make-array own.OwnershipSource 0)
+          (normalize-no-sources)
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
-          (__tl_make-array own.OwnershipSource 0)
+          (normalize-no-sources)
           (normalize-no-bools)
           keys
           (normalize-no-i64s)
@@ -13062,7 +13169,7 @@
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
-          (__tl_make-array own.OwnershipSource 0)
+          (normalize-no-sources)
           (normalize-no-i64s)
           (normalize-no-i64s)
           0
@@ -13121,19 +13228,19 @@
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
-          (__tl_make-array own.OwnershipSource 0)
+          (normalize-no-sources)
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
           (normalize-no-i64s)
-          (__tl_make-array NormalizeDeferredReceiver 0)
+          (normalize-no-deferred-receivers)
           0
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
+          (normalize-no-i64s)
           (NormalizeTable (normalize-no-i64s))
           (NormalizeTable (normalize-no-i64s))
           (NormalizeTable (normalize-no-i64s))
@@ -13175,7 +13282,7 @@
         (>= value.block 0)
         (let
           [operands : (__tl_dyn-array own.OwnershipPlaceId)
-            (__tl_make-array own.OwnershipPlaceId 0)]
+            (normalize-no-place-ids)]
           ;; The function's own obligations (`:invalidate` brands)
           ;; end with its body, and so does the storage of its parameters
           ;; and temporaries.
@@ -13197,7 +13304,9 @@
           (try (normalize-retire-function! (&mut state) value.block))
           (try (normalize-charge! (&mut state) 2 2 0))
           (normalize-i64s-push! (&mut state.return-places) value.place)
-          (__tl_array-push! operands (normalize-place-id (& state) value.place))
+          (normalize-push-place-id!
+            (&mut operands)
+            (normalize-place-id (& state) value.place))
           (try
             (normalize-terminate!
               (&mut state)

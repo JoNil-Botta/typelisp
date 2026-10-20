@@ -3437,9 +3437,65 @@
     0
     (__tl_make-array TcSelectedForeignGlobal 0)
     ""
-    (__tl_make-array i64 0)
-    (__tl_make-array bool 0)
-    (__tl_make-array i64 0)))
+    (tc-selected-no-i64s)
+    (tc-selected-no-bools)
+    (tc-selected-no-i64s)))
+
+;; Fresh empty arrays and pushes for the selected producer. `__tl_make-array`
+;; and `__tl_array-push!` expand to an allocation (and, for a push, a copy
+;; loop) wherever they are written; a call to one of these keeps that code
+;; once.
+(define (tc-selected-no-i64s) : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
+(define (tc-selected-no-bools) : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
+
+(define (tc-selected-no-occurrences) : (__tl_dyn-array typed.TypedOccurrenceId)
+  (__tl_make-array typed.TypedOccurrenceId 0))
+
+(define (tc-selected-no-binders) : (__tl_dyn-array typed.TypedBinderId)
+  (__tl_make-array typed.TypedBinderId 0))
+
+(define (tc-selected-no-types) : (__tl_dyn-array ast.AstType)
+  (__tl_make-array ast.AstType 0))
+
+(define (tc-selected-no-type-classes) : (__tl_dyn-array
+    ownership_normalize.OwnershipNormalizeTypeClass)
+  (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0))
+
+(define (tc-selected-i64s-push!
+  [items : (&mut items (__tl_dyn-array i64))]
+  [item : i64]) : unit
+  (__tl_array-push! items item))
+
+(define (tc-selected-bools-push!
+  [items : (&mut items (__tl_dyn-array bool))]
+  [item : bool]) : unit
+  (__tl_array-push! items item))
+
+(define (tc-selected-occurrences-push!
+  [items : (&mut items (__tl_dyn-array typed.TypedOccurrenceId))]
+  [item : typed.TypedOccurrenceId]) : unit
+  (__tl_array-push! items item))
+
+(define (tc-selected-binders-push!
+  [items : (&mut items (__tl_dyn-array typed.TypedBinderId))]
+  [item : typed.TypedBinderId]) : unit
+  (__tl_array-push! items item))
+
+(define (tc-selected-types-push!
+  [items : (&mut items (__tl_dyn-array ast.AstType))]
+  [item : ast.AstType]) : unit
+  (__tl_array-push! items item))
+
+(define (tc-selected-products-push!
+  [items
+    : (&mut
+      items
+      (__tl_dyn-array ownership_normalize.OwnershipNormalizeProduct))]
+  [item : ownership_normalize.OwnershipNormalizeProduct]) : unit
+  (__tl_array-push! items item))
 
 ;; A selected inference capability is linear: every result, including an error,
 ;; returns it to the caller. Query clients cannot publish executable records.
@@ -3500,6 +3556,14 @@
 (defenum TcSelectedOccurrence
   (Unrepresented)
   (Selected typed.TypedOccurrenceId))
+
+(define (tc-selected-no-selected) : (__tl_dyn-array TcSelectedOccurrence)
+  (__tl_make-array TcSelectedOccurrence 0))
+
+(define (tc-selected-selected-push!
+  [items : (&mut items (__tl_dyn-array TcSelectedOccurrence))]
+  [item : TcSelectedOccurrence]) : unit
+  (__tl_array-push! items item))
 
 (defenum TcSelectedPlace
   (Unrepresented)
@@ -4473,7 +4537,7 @@
         syntax
         source
         (typed.TypedOperation.Literal literal)
-        (__tl_make-array typed.TypedOccurrenceId 0)
+        (tc-selected-no-occurrences)
         sink)]
     [(ast.AstExpr.Var name)
       ;; A dotted local place becomes its `StructGet` chain (the canonical
@@ -5007,22 +5071,22 @@
         env
         expr
         (tc-selected-form-code-fresh-data)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
         sink)]
     [(ast.AstExpr.Quasiquote template)
       (let
-        [operands : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-        [modes : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [operands : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+        [modes : (__tl_dyn-array i64) (tc-selected-no-i64s)]
         (tc-selected-quasiquote-operands!
           ctx
           (tc-context-expr-get ctx template)
           (&mut operands))
         (while (< (array-length modes) (array-length operands))
-          (__tl_array-push! modes 2))
+          (tc-selected-i64s-push! (&mut modes) 2))
         (tc-infer-selected-form
           ctx
           env
@@ -5040,8 +5104,8 @@
         env
         expr
         (tc-selected-form-code-fresh-data)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -5052,8 +5116,8 @@
         env
         expr
         (tc-selected-form-code-fresh-data)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -5064,8 +5128,8 @@
         env
         expr
         (tc-selected-form-code-program-argc)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -5076,8 +5140,8 @@
         env
         expr
         (tc-selected-form-code-program-argv)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -5344,8 +5408,8 @@
         env
         expr
         (tc-selected-form-code-init)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -5356,8 +5420,8 @@
         env
         expr
         (tc-selected-form-code-program-index)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -5368,8 +5432,8 @@
         env
         expr
         (tc-selected-form-code-program-count)
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0)
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s)
         syntax
         expected
         source
@@ -5429,7 +5493,7 @@
           syntax
           source
           typed.TypedOperation.Break
-          (__tl_make-array typed.TypedOccurrenceId 0)
+          (tc-selected-no-occurrences)
           sink))]
     [(ast.AstExpr.Continue)
       (tc-selected-contextual-result
@@ -5441,7 +5505,7 @@
           syntax
           source
           typed.TypedOperation.Continue
-          (__tl_make-array typed.TypedOccurrenceId 0)
+          (tc-selected-no-occurrences)
           sink))]
     [(ast.AstExpr.Call func-id args)
       (tc-infer-selected-call
@@ -5788,7 +5852,7 @@
   (No))
 
 (define (tc-selected-children0) : TcSelectedChildren
-  (TcSelectedChildren.Some (__tl_make-array typed.TypedOccurrenceId 0)))
+  (TcSelectedChildren.Some (tc-selected-no-occurrences)))
 
 (define (tc-selected-children1 [first : TcSelectedOccurrence]) : TcSelectedChildren
   (match first
@@ -6218,7 +6282,7 @@
       (tc-selected-address-indices ctx (tc-context-expr-get ctx receiver) out)]
     [(ast.AstExpr.ArrayRef receiver index)
       (tc-selected-address-indices ctx (tc-context-expr-get ctx receiver) out)
-      (__tl_array-push! out index)]
+      (tc-selected-i64s-push! (&mut out) index)]
     [(ast.AstExpr.MacroExpansion expanded _ _)
       (tc-selected-address-indices ctx (tc-context-expr-get ctx expanded) out)]
     [_ unit]))
@@ -6241,7 +6305,7 @@
         [place : ast.AstExpr (tc-context-expr-get ctx place-id)]
         [result : ResultTcType
           (tc-ptr-addr-of-expr ctx env (tc-global-shared-view place))]
-        [indices : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+        [indices : (__tl_dyn-array i64) (tc-selected-no-i64s)]
         (if (not
           (tc-selected-addressable-place? ctx (tc-global-shared-view place)))
           (tc-selected-publish-primitive
@@ -6298,7 +6362,7 @@
         source
         (& indices)
         0
-        (__tl_make-array typed.TypedOccurrenceId 0)
+        (tc-selected-no-occurrences)
         sink)]))
 
 ;; The indices from `index` on, then the address, in one sequence.
@@ -6330,7 +6394,7 @@
           [(TcSelectedOccurrence.Unrepresented)
             (tc-selected-unrepresented (ResultTcType.Ok ty) next)]
           [(TcSelectedOccurrence.Selected id)
-            (__tl_array-push! children id)
+            (tc-selected-occurrences-push! (&mut children) id)
             (tc-selected-address-of-element-at
               ctx
               env
@@ -6346,7 +6410,7 @@
       typed.TypedSyntax.Generated
       (ownership.ownership-source-copy (& source))
       (typed.TypedOperation.Primitive typed.TypedPrimitive.PtrAddrOf)
-      (__tl_make-array typed.TypedOccurrenceId 0)
+      (tc-selected-no-occurrences)
       sink)
       [(TcSelectedResult.Err message after)
         (TcSelectedResult.Err message after)]
@@ -6355,7 +6419,7 @@
           [(TcSelectedOccurrence.Unrepresented)
             (tc-selected-unrepresented (ResultTcType.Ok ty) after)]
           [(TcSelectedOccurrence.Selected address-id)
-            (__tl_array-push! children address-id)
+            (tc-selected-occurrences-push! (&mut children) address-id)
             (match (tc-selected-publish
               (ResultTcType.Ok (tc-global-shared-view ty))
               syntax
@@ -6883,7 +6947,7 @@
   [source : (& source ownership.OwnershipSource)]) : TcSelectedPatternChildren
   (let
     [children : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
+      (tc-selected-no-occurrences)]
     (match position
       [(TcSelectedMaybePlace.No) (TcSelectedPatternChildren.Ok children)]
       [(TcSelectedMaybePlace.Some place)
@@ -6909,7 +6973,7 @@
                 (return
                   (TcSelectedPatternChildren.Err (tc-selected-error error)))])]
           [empty : (__tl_dyn-array typed.TypedOccurrenceId)
-            (__tl_make-array typed.TypedOccurrenceId 0)]
+            (tc-selected-no-occurrences)]
           (match (typed.typed-occurrence-add!
             store
             lease
@@ -6920,7 +6984,7 @@
               (typed.TypedPlaceId (typed.typed-handle-copy (& place.handle))))
             (& empty))
             [(typed.TypedOccurrenceResult.Ok id)
-              (__tl_array-push! children id)
+              (tc-selected-occurrences-push! (&mut children) id)
               (TcSelectedPatternChildren.Ok children)]
             [(typed.TypedOccurrenceResult.Err error)
               (TcSelectedPatternChildren.Err (tc-selected-error error))]))])))
@@ -7182,7 +7246,7 @@
               bindings
               source)
               [(TcSelectedPatternResult.Ok child)
-                (__tl_array-push! elements child)
+                (tc-selected-occurrences-push! (&mut elements) child)
                 (set! index (+ index 1))]
               [(TcSelectedPatternResult.Unsupported)
                 (return TcSelectedPatternResult.Unsupported)]
@@ -7440,7 +7504,7 @@
                 bindings
                 source)
                 [(TcSelectedPatternResult.Ok child)
-                  (__tl_array-push! children child)
+                  (tc-selected-occurrences-push! (&mut children) child)
                   (set! index (+ index 1))]
                 [(TcSelectedPatternResult.Unsupported)
                   (return TcSelectedPatternResult.Unsupported)]
@@ -7460,7 +7524,7 @@
               [declared : ast.AstTypeList
                 (ast.ast-type-list-box-shared-view elements)]
               [element-types : (__tl_dyn-array ast.AstType)
-                (__tl_make-array ast.AstType 0)]
+                (tc-selected-no-types)]
               [index : i64 0]
               (while (< index (ast.ast-type-list-len (& declared)))
                 (begin
@@ -7468,7 +7532,7 @@
                     (tc-global-shared-view ty)
                     index)
                     [(ResultTcType.Ok element)
-                      (__tl_array-push! element-types element)]
+                      (tc-selected-types-push! (&mut element-types) element)]
                     [(ResultTcType.Err _)
                       (return TcSelectedPatternResult.Unsupported)])
                   (set! index (+ index 1))))
@@ -7497,7 +7561,7 @@
                 TcSelectedPatternResult.Unsupported
                 (let
                   [element-types : (__tl_dyn-array ast.AstType)
-                    (__tl_make-array ast.AstType 0)]
+                    (tc-selected-no-types)]
                   [index : i64 0]
                   (while (< index size)
                     (let
@@ -7505,7 +7569,7 @@
                         (tc-project-from-region-container
                           (tc-global-shared-view ty)
                           (ast.ty-node-get element))]
-                      (__tl_array-push! element-types element-ty)
+                      (tc-selected-types-push! (&mut element-types) element-ty)
                       (set! index (+ index 1))))
                   (tc-selected-element-patterns!
                     ctx
@@ -7578,7 +7642,7 @@
           bindings
           source)
           [(TcSelectedPatternResult.Ok child)
-            (__tl_array-push! children child)
+            (tc-selected-occurrences-push! (&mut children) child)
             (set! index (+ index 1))]
           [(TcSelectedPatternResult.Unsupported)
             (return TcSelectedPatternResult.Unsupported)]
@@ -7687,7 +7751,7 @@
           bindings
           source)
           [(TcSelectedPatternResult.Ok child)
-            (__tl_array-push! children child)
+            (tc-selected-occurrences-push! (&mut children) child)
             (set! index (+ index 1))]
           [(TcSelectedPatternResult.Unsupported)
             (return TcSelectedPatternResult.Unsupported)]
@@ -7742,7 +7806,7 @@
       bindings
       source)
       [(TcSelectedPatternResult.Ok child)
-        (__tl_array-push! children child)
+        (tc-selected-occurrences-push! (&mut children) child)
         (tc-selected-pattern-node!
           store
           lease
@@ -8029,7 +8093,8 @@
           lease
           bindings
           source)
-          [(TcSelectedPatternResult.Ok id) (__tl_array-push! items id)]
+          [(TcSelectedPatternResult.Ok id)
+            (tc-selected-occurrences-push! (&mut items) id)]
           [(TcSelectedPatternResult.Unsupported)
             (return TcSelectedPatternResult.Unsupported)]
           [(TcSelectedPatternResult.Err message)
@@ -9847,12 +9912,14 @@
                       (if diverges
                         (let
                           [children : (__tl_dyn-array typed.TypedOccurrenceId)
-                            (__tl_make-array typed.TypedOccurrenceId 0)]
+                            (tc-selected-no-occurrences)]
                           (match scratch
                             [(TcSelectedOccurrence.Selected scratch-child)
                               (when
                                 (>= scratch-id 0)
-                                (__tl_array-push! children scratch-child))]
+                                (tc-selected-occurrences-push!
+                                  (&mut children)
+                                  scratch-child))]
                             [(TcSelectedOccurrence.Unrepresented) unit])
                           (if (and
                             (>= scratch-id 0)
@@ -9861,7 +9928,9 @@
                               (ResultTcType.Ok ty)
                               after)
                             (begin
-                              (__tl_array-push! children body-child)
+                              (tc-selected-occurrences-push!
+                                (&mut children)
+                                body-child)
                               (tc-selected-publish-flow
                                 (ResultTcType.Ok ast.AstType.Never)
                                 syntax
@@ -10201,13 +10270,12 @@
           [unit? : bool
             (tc-type-eq (tc-global-shared-view result-ty) ast.AstType.Unit)]
           [children : (__tl_dyn-array typed.TypedOccurrenceId)
-            (__tl_make-array typed.TypedOccurrenceId 0)]
+            (tc-selected-no-occurrences)]
           [ended : (__tl_dyn-array typed.TypedOccurrenceId)
-            (__tl_make-array typed.TypedOccurrenceId 0)]
+            (tc-selected-no-occurrences)]
           [index : i64 0]
           [temporary : i64 -1]
-          [held : (__tl_dyn-array typed.TypedBinderId)
-            (__tl_make-array typed.TypedBinderId 0)]
+          [held : (__tl_dyn-array typed.TypedBinderId) (tc-selected-no-binders)]
           (unless
             (and
               (= carrier.sidecar.stack.state-address bindings.scoped-state)
@@ -10220,7 +10288,7 @@
                 (TcSelectedSink.Capture store lease bindings))))
           ;; The call first: whole, or held in a temporary.
           (if unit?
-            (__tl_array-push! children call)
+            (tc-selected-occurrences-push! (&mut children) call)
             (match (tc-selected-synthetic-binder!
               store
               lease
@@ -10242,8 +10310,8 @@
                   (__tl_make-array call)
                   (& source))
                   [(TcSelectedPatternResult.Ok id)
-                    (__tl_array-push! children id)
-                    (__tl_array-push! held binder)
+                    (tc-selected-occurrences-push! (&mut children) id)
+                    (tc-selected-binders-push! (&mut held) binder)
                     (set! temporary 0)]
                   [(TcSelectedPatternResult.Unsupported)
                     (return
@@ -10294,7 +10362,7 @@
                                   (typed.typed-handle-copy (& binder.handle)))
                                 arena-binder
                                 rewind?)
-                              (__tl_make-array typed.TypedOccurrenceId 0)
+                              (tc-selected-no-occurrences)
                               ;; Located at the arena or phase argument, as
                               ;; main reports it, else at the call.
                               (&
@@ -10312,7 +10380,9 @@
                                   [(No)
                                     (ownership.ownership-source-copy (& source))])))
                               [(TcSelectedPatternResult.Ok id)
-                                (__tl_array-push! children id)]
+                                (tc-selected-occurrences-push!
+                                  (&mut children)
+                                  id)]
                               [(TcSelectedPatternResult.Unsupported) unit]
                               [(TcSelectedPatternResult.Err message)
                                 (return
@@ -10385,10 +10455,10 @@
                         (typed.TypedOperation.Invalidate
                           (typed.TypedBinderId
                             (typed.typed-handle-copy (& binder.handle))))
-                        (__tl_make-array typed.TypedOccurrenceId 0)
+                        (tc-selected-no-occurrences)
                         (& source))
                         [(TcSelectedPatternResult.Ok id)
-                          (__tl_array-push! children id)]
+                          (tc-selected-occurrences-push! (&mut children) id)]
                         [(TcSelectedPatternResult.Unsupported) unit]
                         [(TcSelectedPatternResult.Err message)
                           (return
@@ -10403,10 +10473,10 @@
                         lease
                         ast.AstType.Unit
                         (typed.TypedOperation.EndBrand binder)
-                        (__tl_make-array typed.TypedOccurrenceId 0)
+                        (tc-selected-no-occurrences)
                         (& source))
                         [(TcSelectedPatternResult.Ok id)
-                          (__tl_array-push! ended id)]
+                          (tc-selected-occurrences-push! (&mut ended) id)]
                         [(TcSelectedPatternResult.Unsupported) unit]
                         [(TcSelectedPatternResult.Err message)
                           (return
@@ -10417,8 +10487,8 @@
           (set! index 0)
           (while (< index (array-length ended))
             (begin
-              (__tl_array-push!
-                children
+              (tc-selected-occurrences-push!
+                (&mut children)
                 (typed.TypedOccurrenceId
                   (typed.typed-handle-copy (& (array-ref ended index).handle))))
               (set! index (+ index 1))))
@@ -10432,7 +10502,8 @@
               (typed.TypedBinderId
                 (typed.typed-handle-copy (& (array-ref held 0).handle)))
               (& source))
-              [(TcSelectedPatternResult.Ok id) (__tl_array-push! children id)]
+              [(TcSelectedPatternResult.Ok id)
+                (tc-selected-occurrences-push! (&mut children) id)]
               [(TcSelectedPatternResult.Unsupported)
                 (return
                   (tc-selected-unrepresented
@@ -10565,7 +10636,7 @@
           [(TcSelectedSink.Capture store lease bindings)
             (let
               [marks : (__tl_dyn-array typed.TypedOccurrenceId)
-                (__tl_make-array typed.TypedOccurrenceId 0)]
+                (tc-selected-no-occurrences)]
               [cursor : TcNameIdList owners]
               (while (not (tc-name-id-list-empty? cursor))
                 (begin
@@ -10585,10 +10656,10 @@
                         lease
                         ast.AstType.Unit
                         (typed.TypedOperation.ThreadUsers owner)
-                        (__tl_make-array typed.TypedOccurrenceId 0)
+                        (tc-selected-no-occurrences)
                         (& source))
                         [(TcSelectedPatternResult.Ok id)
-                          (__tl_array-push! marks id)]
+                          (tc-selected-occurrences-push! (&mut marks) id)]
                         [(TcSelectedPatternResult.Unsupported)
                           (return
                             (TcSelectedResult.Ok
@@ -10632,7 +10703,7 @@
         [(TcSelectedSink.Capture store lease bindings)
           (let
             [checks : (__tl_dyn-array typed.TypedOccurrenceId)
-              (__tl_make-array typed.TypedOccurrenceId 0)]
+              (tc-selected-no-occurrences)]
             [cursor : TcNameIdList owners]
             (while (not (tc-name-id-list-empty? cursor))
               (begin
@@ -10649,8 +10720,8 @@
                       [index : i64 0]
                       (while (< index (array-length found))
                         (begin
-                          (__tl_array-push!
-                            checks
+                          (tc-selected-occurrences-push!
+                            (&mut checks)
                             (typed.TypedOccurrenceId
                               (typed.typed-handle-copy
                                 (& (array-ref found index).handle))))
@@ -10764,7 +10835,7 @@
                     fn-ty
                     syntax
                     source
-                    (__tl_make-array typed.TypedOccurrenceId 0)
+                    (tc-selected-no-occurrences)
                     true
                     sink)
                   (tc-selected-unrepresented (ResultTcType.Ok ty) sink))]
@@ -10893,7 +10964,7 @@
   [source : (& source ownership.OwnershipSource)]) : TcSelectedReleaseChecks
   (let
     [checks : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
+      (tc-selected-no-occurrences)]
     (if (or (< owner 0) (not (tc-atomic-arena-owner-active-id? env owner)))
       (TcSelectedReleaseChecks.Ok checks)
       (match (match (tc-selected-named-binder env bindings owner)
@@ -10923,9 +10994,10 @@
                   (typed.typed-handle-copy (& owner-binder.handle)))
                 (typed.TypedBinderId
                   (typed.typed-handle-copy (& owner-binder.handle))))
-              (__tl_make-array typed.TypedOccurrenceId 0)
+              (tc-selected-no-occurrences)
               source)
-              [(TcSelectedPatternResult.Ok id) (__tl_array-push! checks id)]
+              [(TcSelectedPatternResult.Ok id)
+                (tc-selected-occurrences-push! (&mut checks) id)]
               [(TcSelectedPatternResult.Unsupported)
                 (return TcSelectedReleaseChecks.Unrepresented)]
               [(TcSelectedPatternResult.Err message)
@@ -10960,10 +11032,10 @@
                           user
                           (typed.TypedBinderId
                             (typed.typed-handle-copy (& owner-binder.handle))))
-                        (__tl_make-array typed.TypedOccurrenceId 0)
+                        (tc-selected-no-occurrences)
                         source)
                         [(TcSelectedPatternResult.Ok id)
-                          (__tl_array-push! checks id)]
+                          (tc-selected-occurrences-push! (&mut checks) id)]
                         [(TcSelectedPatternResult.Unsupported)
                           (return TcSelectedReleaseChecks.Unrepresented)]
                         [(TcSelectedPatternResult.Err message)
@@ -11040,7 +11112,7 @@
           [(TcSelectedOccurrence.Unrepresented)
             (TcSelectedResult.Ok ty TcSelectedOccurrence.Unrepresented next)]
           [(TcSelectedOccurrence.Selected last)
-            (__tl_array-push! checks last)
+            (tc-selected-occurrences-push! (&mut checks) last)
             (match (tc-selected-publish
               (ResultTcType.Ok (tc-global-shared-view ty))
               syntax
@@ -11565,7 +11637,7 @@
                   (TcSelectedResult.Err
                     message
                     (TcSelectedSink.Capture store lease bindings)))])
-            (__tl_make-array typed.TypedOccurrenceId 0))]
+            (tc-selected-no-occurrences))]
         [signature : ast.AstType
           (if result?
             (let
@@ -11702,7 +11774,7 @@
         [(typed.TypedOriginResult.Err error)
           (return (TcSelectedPatternResult.Err (tc-selected-error error)))])]
     [empty : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
+      (tc-selected-no-occurrences)]
     (match (typed.typed-occurrence-add!
       store
       lease
@@ -11735,7 +11807,7 @@
         [(typed.TypedOriginResult.Err error)
           (return (TcSelectedPatternResult.Err (tc-selected-error error)))])]
     [empty : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
+      (tc-selected-no-occurrences)]
     (match (typed.typed-occurrence-add!
       store
       lease
@@ -11804,7 +11876,8 @@
           (typed.TypedPattern.Bind binder)
           sub-children
           source)
-          [(TcSelectedPatternResult.Ok bound) (__tl_array-push! children bound)]
+          [(TcSelectedPatternResult.Ok bound)
+            (tc-selected-occurrences-push! (&mut children) bound)]
           [(TcSelectedPatternResult.Unsupported)
             (return TcSelectedPatternResult.Unsupported)]
           [(TcSelectedPatternResult.Err message)
@@ -12271,8 +12344,7 @@
               (TcSelectedLambdaBody.Err (tc-selected-error error))))])]
     [bindings : TcSelectedBindings (tc-selected-bindings-new lease)]
     [outer : TcTypeEnvScopedCarrier (tc-type-env-scoped-runtime-current env)]
-    [noted : (__tl_dyn-array typed.TypedBinderId)
-      (__tl_make-array typed.TypedBinderId 0)]
+    [noted : (__tl_dyn-array typed.TypedBinderId) (tc-selected-no-binders)]
     [index : i64 0]
     ;; Each capture is a binder of its enclosing slot, in the environment.
     (while (< index (array-length captures))
@@ -12289,7 +12361,8 @@
           (& source))
           [(TcSelectedBinderLookup.Ok found)
             (match found
-              [(TcSelectedBinder.Found binder) (__tl_array-push! noted binder)]
+              [(TcSelectedBinder.Found binder)
+                (tc-selected-binders-push! (&mut noted) binder)]
               [(TcSelectedBinder.Unrepresented)
                 (return
                   (TcSelectedLambdaInferred.Done
@@ -12357,7 +12430,7 @@
   [capture-types : (& capture-types (__tl_dyn-array ast.AstType))]) : i64
   (let
     [body : (& output ownership.OwnershipBody) (& output.body)]
-    [places : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [places : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [index : i64 0]
     [once? : bool false]
     [mutable? : bool false]
@@ -12370,7 +12443,7 @@
           (while (< capture (array-length captures))
             (when
               (= binder.handle.index (array-ref captures capture).handle.index)
-              (__tl_array-push! places binder.place))
+              (tc-selected-i64s-push! (&mut places) binder.place))
             (set! capture (+ capture 1))))
         (set! index (+ index 1))))
     (set! index 0)
@@ -12495,12 +12568,12 @@
               [(TcSelectedCaptures.Ok captures)
                 (let
                   [capture-types : (__tl_dyn-array ast.AstType)
-                    (__tl_make-array ast.AstType 0)]
+                    (tc-selected-no-types)]
                   [index : i64 0]
                   (while (< index (array-length captures))
                     (begin
-                      (__tl_array-push!
-                        capture-types
+                      (tc-selected-types-push!
+                        (&mut capture-types)
                         (tc-selected-binder-type!
                           store
                           lease
@@ -12695,7 +12768,7 @@
         [(typed.TypedOriginResult.Err error)
           (return (TcSelectedPatternResult.Err (tc-selected-error error)))])]
     [no-children : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
+      (tc-selected-no-occurrences)]
     ;; Formed at the place's own type.
     [formed : typed.TypedOccurrenceId
       (match (typed.typed-occurrence-add!
@@ -12743,15 +12816,15 @@
   [capture-types : (& capture-types (__tl_dyn-array ast.AstType))]
   [kept : (& kept (__tl_dyn-array bool))]) : (__tl_dyn-array ast.AstType)
   (let
-    [out : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType 0)]
+    [out : (__tl_dyn-array ast.AstType) (tc-selected-no-types)]
     [index : i64 0]
     (while (< index (array-length capture-types))
       (let
         [capture-type : ast.AstType
           (owned_view.compiler-owned-reference-shared-view
             (& (array-ref capture-types index)))]
-        (__tl_array-push!
-          out
+        (tc-selected-types-push!
+          (&mut out)
           (if (array-ref kept index)
             (ast.ast-ty-ref
               (array-ref captures index).name
@@ -12780,7 +12853,7 @@
     [(TcSelectedSink.Capture store lease bindings)
       (let
         [children : (__tl_dyn-array typed.TypedOccurrenceId)
-          (__tl_make-array typed.TypedOccurrenceId 0)]
+          (tc-selected-no-occurrences)]
         ;; A kept atomic owner is held as a shared reference to its binder:
         ;; the closure is one of the owner's users (SPEC 5.16), so it keeps
         ;; the owner borrowed while it lives (its destroy waits for the
@@ -12814,9 +12887,10 @@
                   (typed.TypedBinderId
                     (typed.typed-handle-copy
                       (& (array-ref captures index).binder.handle))))
-                (__tl_make-array typed.TypedOccurrenceId 0)
+                (tc-selected-no-occurrences)
                 (& source)))
-              [(TcSelectedPatternResult.Ok id) (__tl_array-push! children id)]
+              [(TcSelectedPatternResult.Ok id)
+                (tc-selected-occurrences-push! (&mut children) id)]
               [(TcSelectedPatternResult.Unsupported)
                 (return
                   (tc-selected-unrepresented
@@ -12947,7 +13021,7 @@
                       lease
                       (tc-global-shared-view closure-ty)
                       (typed.TypedOperation.Read id)
-                      (__tl_make-array typed.TypedOccurrenceId 0)
+                      (tc-selected-no-occurrences)
                       (& source))
                       [(TcSelectedPatternResult.Ok read)
                         (TcSelectedResult.Ok
@@ -13565,8 +13639,8 @@
       [root : i64 (tc-selected-place-root-name ctx id)]
       [outer? : bool
         (and (>= root 0) (not (tc-name-id-list-contains bound root)))]
-      (__tl_array-push! ids id)
-      (__tl_array-push! places outer?)
+      (tc-selected-i64s-push! (&mut ids) id)
+      (tc-selected-bools-push! (&mut places) outer?)
       true)
     (match (tc-context-expr-get ctx id)
       [(ast.AstExpr.Spanned inner _)
@@ -13646,8 +13720,8 @@
       [(ast.AstExpr.Break) true]
       [(ast.AstExpr.Continue) true]
       [_
-        (__tl_array-push! ids id)
-        (__tl_array-push! places false)
+        (tc-selected-i64s-push! (&mut ids) id)
+        (tc-selected-bools-push! (&mut places) false)
         true])))
 
 ;; The tail of a body list: its last form.
@@ -13672,8 +13746,8 @@
 ;; represented.
 (define (tc-selected-receiver-mode [ctx : TcContext] [id : i64]) : i64
   (let
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [places : (__tl_dyn-array bool) (__tl_make-array bool 0)]
+    [ids : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [places : (__tl_dyn-array bool) (tc-selected-no-bools)]
     [index : i64 0]
     [selects? : bool false]
     (if (not
@@ -13756,8 +13830,8 @@
                           1))
                       (let
                         [children : (__tl_dyn-array typed.TypedOccurrenceId)
-                          (__tl_make-array typed.TypedOccurrenceId 0)]
-                        (__tl_array-push! children value)
+                          (tc-selected-no-occurrences)]
+                        (tc-selected-occurrences-push! (&mut children) value)
                         children)
                       popped)
                     (tc-selected-unrepresented (ResultTcType.Ok ty) popped))]
@@ -13879,7 +13953,7 @@
               [(TcSelectedResult.Ok _ literal limited)
                 (match literal
                   [(TcSelectedOccurrence.Selected literal-id)
-                    (__tl_array-push! children literal-id)
+                    (tc-selected-occurrences-push! (&mut children) literal-id)
                     (tc-selected-publish
                       (ResultTcType.Ok ty)
                       syntax
@@ -13906,7 +13980,7 @@
   (let
     [items : ast.AstExprList (tc-selected-literal-items ctx receiver)]
     [ids : (__tl_dyn-array i64) (tc-selected-list-ids (& items))]
-    (__tl_array-push! ids index)
+    (tc-selected-i64s-push! (&mut ids) index)
     ids))
 
 (define (tc-selected-literal-select-modes [ctx : TcContext] [receiver : i64]) : (__tl_dyn-array
@@ -13915,7 +13989,7 @@
     [items : ast.AstExprList (tc-selected-literal-items ctx receiver)]
     [modes : (__tl_dyn-array i64)
       (tc-selected-modes (ast.ast-expr-list-len (& items)) 2)]
-    (__tl_array-push! modes 3)
+    (tc-selected-i64s-push! (&mut modes) 3)
     modes))
 
 ;; A runtime quasiquote over its unquoted operands (fresh `Expr` result).
@@ -13933,8 +14007,9 @@
       (tc-selected-quasiquote-operands! ctx (tc-context-expr-get ctx inner) out)]
     [(ast.AstExpr.MacroExpansion inner _ _)
       (tc-selected-quasiquote-operands! ctx (tc-context-expr-get ctx inner) out)]
-    [(ast.AstExpr.Unquote inner) (__tl_array-push! out inner)]
-    [(ast.AstExpr.UnquoteSplicing inner) (__tl_array-push! out inner)]
+    [(ast.AstExpr.Unquote inner) (tc-selected-i64s-push! (&mut out) inner)]
+    [(ast.AstExpr.UnquoteSplicing inner)
+      (tc-selected-i64s-push! (&mut out) inner)]
     [(ast.AstExpr.Binary _ left right)
       (tc-selected-quasiquote-operands! ctx (tc-context-expr-get ctx left) out)
       (tc-selected-quasiquote-operands! ctx (tc-context-expr-get ctx right) out)]
@@ -14135,8 +14210,8 @@
                             1))
                         (let
                           [children : (__tl_dyn-array typed.TypedOccurrenceId)
-                            (__tl_make-array typed.TypedOccurrenceId 0)]
-                          (__tl_array-push! children borrow)
+                            (tc-selected-no-occurrences)]
+                          (tc-selected-occurrences-push! (&mut children) borrow)
                           children)
                         after)]
                     [(TcSelectedOccurrence.Unrepresented)
@@ -14185,8 +14260,8 @@
 
 (define (tc-selected-ids1 [a : i64]) : (__tl_dyn-array i64)
   (let
-    [ids : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    (__tl_array-push! ids a)
+    [ids : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    (tc-selected-i64s-push! (&mut ids) a)
     ids))
 
 (define (tc-selected-ids2 [a : i64] [b : i64]) : (__tl_dyn-array i64)
@@ -14199,7 +14274,7 @@
 (define (tc-selected-ids3 [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array i64)
   (let
     [ids : (__tl_dyn-array i64) (tc-selected-ids2 a b)]
-    (__tl_array-push! ids c)
+    (tc-selected-i64s-push! (&mut ids) c)
     ids))
 
 ;; --- Ordinary direct calls (#8449) -----------------------------------------
@@ -14602,7 +14677,7 @@
   [ctx : TcContext]
   [params : (& params ast.AstTypeList)]) : (__tl_dyn-array i64)
   (let
-    [regions : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [regions : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [index : i64 0]
     (while (< index (ast.ast-type-list-len params))
       (match (tc-arena-target
@@ -14613,7 +14688,7 @@
             (ast.ty-node-get
               (ast.ast-type-list-get params index (ast.ast-type-id-fallback))))))
         [(TcArenaTarget.Target _ _ (TcMaybeNameId.Some region))
-          (__tl_array-push! regions region)]
+          (tc-selected-i64s-push! (&mut regions) region)]
         [_ unit])
       (set! index (+ index 1)))
     regions))
@@ -14950,7 +15025,7 @@
     (ast.ast-ty-func (ast.ast-type-list-new) ty)
     syntax
     source
-    (__tl_make-array typed.TypedOccurrenceId 0)
+    (tc-selected-no-occurrences)
     true
     sink))
 
@@ -15013,7 +15088,7 @@
               source
               (typed.TypedOperation.Primitive
                 (typed.TypedPrimitive.Builtin (tc-selected-form-code-global) 0))
-              (__tl_make-array typed.TypedOccurrenceId 0)
+              (tc-selected-no-occurrences)
               sink)]
           ;; A move-only module value (of this module or another) is its static
           ;; place, as an unqualified one is (`tc-infer-selected-var`): taking it
@@ -15778,7 +15853,7 @@
   (match sink
     [(TcSelectedSink.Query) TcSelectedSink.Query]
     [(TcSelectedSink.Capture store lease bindings)
-      (__tl_array-push! bindings.read-spines id)
+      (tc-selected-i64s-push! (&mut bindings.read-spines) id)
       (TcSelectedSink.Capture store lease bindings)]))
 
 ;; Retire the forms registered from `mark`.
@@ -15789,7 +15864,7 @@
     [(TcSelectedSink.Query) TcSelectedSink.Query]
     [(TcSelectedSink.Capture store lease bindings)
       (if (= mark 0)
-        (set! bindings.read-spines (__tl_make-array i64 0))
+        (set! bindings.read-spines (tc-selected-no-i64s))
         (let
           [index : i64 mark]
           (while (< index (array-length bindings.read-spines))
@@ -16109,8 +16184,8 @@
   [id : i64]
   [base : i64]) : bool
   (let
-    [roots : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [indices : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [roots : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [indices : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [budget : i64 4096]
     [written? : bool false]
     [index : i64 0]
@@ -16186,7 +16261,7 @@
       (tc-selected-read-roots! ctx receiver roots)]
     [(ast.AstExpr.ArrayRef receiver _)
       (tc-selected-read-roots! ctx receiver roots)]
-    [(ast.AstExpr.Var name) (__tl_array-push! roots name)]
+    [(ast.AstExpr.Var name) (tc-selected-i64s-push! (&mut roots) name)]
     [_ unit]))
 
 ;; The indices of projection chain `id` above its receiver `base`, which are
@@ -16212,7 +16287,7 @@
       [(ast.AstExpr.BoxTake receiver)
         (tc-selected-chain-indices! ctx receiver base indices)]
       [(ast.AstExpr.ArrayRef receiver index)
-        (__tl_array-push! indices index)
+        (tc-selected-i64s-push! (&mut indices) index)
         (tc-selected-chain-indices! ctx receiver base indices)]
       [_ unit])))
 
@@ -18258,7 +18333,7 @@
                                   (typed.TypedPrimitive.Builtin
                                     (tc-selected-form-code-global)
                                     0))
-                                (__tl_make-array typed.TypedOccurrenceId 0)
+                                (tc-selected-no-occurrences)
                                 (TcSelectedSink.Capture store lease bindings))]
                             ;; A move-only module value read whole is taken out
                             ;; of its static place, which the checker rejects.
@@ -18309,7 +18384,7 @@
                             syntax
                             source
                             (typed.TypedOperation.Read binder)
-                            (__tl_make-array typed.TypedOccurrenceId 0)
+                            (tc-selected-no-occurrences)
                             (TcSelectedSink.Capture store lease bindings))
                             [(TcSelectedResult.Err message next)
                               (TcSelectedResult.Err message next)]
@@ -18663,9 +18738,7 @@
               [(typed.TypedPlaceResult.Ok id)
                 (TcSelectedPlaceResult.Ok
                   type
-                  (TcSelectedPlace.Selected
-                    id
-                    (__tl_make-array typed.TypedOccurrenceId 0))
+                  (TcSelectedPlace.Selected id (tc-selected-no-occurrences))
                   (TcSelectedSink.Capture store lease bindings))])]))]))
 
 (define (tc-selected-place-root
@@ -18714,7 +18787,7 @@
                         type
                         (TcSelectedPlace.Selected
                           id
-                          (__tl_make-array typed.TypedOccurrenceId 0))
+                          (tc-selected-no-occurrences))
                         (TcSelectedSink.Capture store lease bindings))])])])])]))
 
 (define (tc-tuple-ref-result-type [type : ast.AstType] [index : i64]) : ResultTcType
@@ -19139,7 +19212,7 @@
         [(TcSelectedOccurrence.Selected id)
           (let
             [items : (__tl_dyn-array typed.TypedOccurrenceId) children]
-            (__tl_array-push! items id)
+            (tc-selected-occurrences-push! (&mut items) id)
             (TcSelectedArgsResult.Ok items represented? next))]
         [(TcSelectedOccurrence.Unrepresented)
           (TcSelectedArgsResult.Ok children false next)])]))
@@ -19167,7 +19240,7 @@
         ctx
         env
         receiver-id
-        (__tl_make-array typed.TypedOccurrenceId 0)
+        (tc-selected-no-occurrences)
         true
         (tc-global-shared-view source)
         sink)
@@ -19219,7 +19292,7 @@
         ctx
         env
         id
-        (__tl_make-array typed.TypedOccurrenceId 0)
+        (tc-selected-no-occurrences)
         true
         (tc-global-shared-view source)
         sink)
@@ -19282,7 +19355,7 @@
     ctx
     env
     id
-    (__tl_make-array typed.TypedOccurrenceId 0)
+    (tc-selected-no-occurrences)
     true
     (tc-global-shared-view source)
     sink)
@@ -29546,7 +29619,7 @@
 ;; append-only and is extended only where a layer is created, so nothing has to
 ;; be invalidated.
 (define tc-chain-empty-i64-array : (__tl_dyn-array i64)
-  (__tl_make-array i64 0))
+  (tc-selected-no-i64s))
 
 ;; A reference packs the layer node address (8-byte aligned, so the low three
 ;; bits are free) above an 18-bit slot. Layers wider than the slot field, or
@@ -31763,16 +31836,20 @@
                                   (let
                                     [items : (__tl_dyn-array
                                       TcSelectedOccurrence)
-                                      (__tl_make-array TcSelectedOccurrence 0)]
-                                    (__tl_array-push!
-                                      items
+                                      (tc-selected-no-selected)]
+                                    (tc-selected-selected-push!
+                                      (&mut items)
                                       (TcSelectedOccurrence.Selected index-init))
-                                    (__tl_array-push! items value)
-                                    (__tl_array-push!
-                                      items
+                                    (tc-selected-selected-push!
+                                      (&mut items)
+                                      value)
+                                    (tc-selected-selected-push!
+                                      (&mut items)
                                       (TcSelectedOccurrence.Selected
                                         prefix-init))
-                                    (__tl_array-push! items body)
+                                    (tc-selected-selected-push!
+                                      (&mut items)
+                                      body)
                                     items)
                                   last)])])])])]))])]))
 
@@ -31903,9 +31980,9 @@
         typed.TypedOperation.Sequence
         (let
           [items : (__tl_dyn-array typed.TypedOccurrenceId)
-            (__tl_make-array typed.TypedOccurrenceId 0)]
-          (__tl_array-push! items slot-init)
-          (__tl_array-push! items body-id)
+            (tc-selected-no-occurrences)]
+          (tc-selected-occurrences-push! (&mut items) slot-init)
+          (tc-selected-occurrences-push! (&mut items) body-id)
           items)
         sink)
         [(TcSelectedResult.Err message next)
@@ -31916,7 +31993,7 @@
             typed.TypedSyntax.Generated
             (ownership.ownership-source-copy (& source))
             (typed.TypedOperation.Literal ast.AstLiteral.Unit)
-            (__tl_make-array typed.TypedOccurrenceId 0)
+            (tc-selected-no-occurrences)
             next)
             [(TcSelectedResult.Err message after)
               (TcSelectedResult.Err message after)]
@@ -31974,7 +32051,7 @@
                 -1
                 syntax
                 source
-                (__tl_make-array TcSelectedOccurrence 0)
+                (tc-selected-no-selected)
                 (tc-selected-occurrences2
                   (TcSelectedOccurrence.Selected init)
                   body)
@@ -32035,10 +32112,10 @@
             [(TcSelectedResult.Ok _ init after-init)
               (let
                 [items : (__tl_dyn-array TcSelectedOccurrence)
-                  (__tl_make-array TcSelectedOccurrence 0)]
-                (__tl_array-push! items start)
-                (__tl_array-push! items end)
-                (__tl_array-push! items init)
+                  (tc-selected-no-selected)]
+                (tc-selected-selected-push! (&mut items) start)
+                (tc-selected-selected-push! (&mut items) end)
+                (tc-selected-selected-push! (&mut items) init)
                 (TcSelectedSpmdHeads.Ok items after-init))])])]))
 
 (define (tc-infer-selected-foreach
@@ -32169,7 +32246,7 @@
                             -1
                             typed.TypedSyntax.Generated
                             (ownership.ownership-source-copy (& source))
-                            (__tl_make-array TcSelectedOccurrence 0)
+                            (tc-selected-no-selected)
                             (tc-selected-occurrences2
                               (TcSelectedOccurrence.Selected inner-init)
                               body)
@@ -32214,7 +32291,7 @@
       env
       (& bounds)
       0
-      (__tl_make-array TcSelectedOccurrence 0)
+      (tc-selected-no-selected)
       source
       sink)))
 
@@ -32242,7 +32319,7 @@
       [(TcSelectedResult.Err message next)
         (TcSelectedSpmdHeads.Done (TcSelectedResult.Err message next))]
       [(TcSelectedResult.Ok _ head next)
-        (__tl_array-push! heads head)
+        (tc-selected-selected-push! (&mut heads) head)
         (tc-infer-selected-bound-heads
           ctx
           env
@@ -32256,10 +32333,9 @@
   [a : TcSelectedOccurrence]
   [b : TcSelectedOccurrence]) : (__tl_dyn-array TcSelectedOccurrence)
   (let
-    [items : (__tl_dyn-array TcSelectedOccurrence)
-      (__tl_make-array TcSelectedOccurrence 0)]
-    (__tl_array-push! items a)
-    (__tl_array-push! items b)
+    [items : (__tl_dyn-array TcSelectedOccurrence) (tc-selected-no-selected)]
+    (tc-selected-selected-push! (&mut items) a)
+    (tc-selected-selected-push! (&mut items) b)
     items))
 
 ;; The foreach index bound in the body's scope: its binder, initialized from
@@ -32322,7 +32398,7 @@
                     (typed.TypedPrimitive.Builtin
                       (tc-selected-form-code-foreach-index)
                       0))
-                  (__tl_make-array typed.TypedOccurrenceId 0)
+                  (tc-selected-no-occurrences)
                   (& source))
                   [(TcSelectedPatternResult.Ok lane)
                     (match (tc-selected-op!
@@ -32376,16 +32452,16 @@
     bind)
   (let
     [head-ids : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
+      (tc-selected-no-occurrences)]
     [iteration-ids : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
+      (tc-selected-no-occurrences)]
     [index : i64 0]
     (while (< index (array-length heads))
       (begin
         (match (& (array-ref heads index))
           [(TcSelectedOccurrence.Selected id)
-            (__tl_array-push!
-              head-ids
+            (tc-selected-occurrences-push!
+              (&mut head-ids)
               (typed.TypedOccurrenceId (typed.typed-handle-copy (& id.handle))))]
           [(TcSelectedOccurrence.Unrepresented)
             (return (tc-selected-unrepresented (ResultTcType.Ok ty) sink))])
@@ -32395,8 +32471,8 @@
       (begin
         (match (& (array-ref iteration index))
           [(TcSelectedOccurrence.Selected id)
-            (__tl_array-push!
-              iteration-ids
+            (tc-selected-occurrences-push!
+              (&mut iteration-ids)
               (typed.TypedOccurrenceId (typed.typed-handle-copy (& id.handle))))]
           [(TcSelectedOccurrence.Unrepresented)
             (return (tc-selected-unrepresented (ResultTcType.Ok ty) sink))])
@@ -32415,7 +32491,7 @@
                 (typed.TypedPrimitive.Builtin
                   (tc-selected-form-code-foreach-next)
                   0))
-              (__tl_make-array typed.TypedOccurrenceId 0)
+              (tc-selected-no-occurrences)
               (& source))
               [(TcSelectedPatternResult.Ok id) id]
               [(TcSelectedPatternResult.Unsupported)
@@ -32435,10 +32511,10 @@
               lease
               ast.AstType.Unit
               (typed.TypedOperation.Literal ast.AstLiteral.Unit)
-              (__tl_make-array typed.TypedOccurrenceId 0)
+              (tc-selected-no-occurrences)
               (& source))
               [(TcSelectedPatternResult.Ok id)
-                (__tl_array-push! iteration-ids id)]
+                (tc-selected-occurrences-push! (&mut iteration-ids) id)]
               [(TcSelectedPatternResult.Unsupported)
                 (return
                   (tc-selected-unrepresented
@@ -32472,7 +32548,7 @@
                     [(TcSelectedOccurrence.Unrepresented)
                       (tc-selected-unrepresented (ResultTcType.Ok ty) done)]
                     [(TcSelectedOccurrence.Selected loop-id)
-                      (__tl_array-push! head-ids loop-id)
+                      (tc-selected-occurrences-push! (&mut head-ids) loop-id)
                       (match (if (< result-code 0)
                         (TcSelectedResult.Ok
                           ast.AstType.Unit
@@ -32484,14 +32560,16 @@
                           (ownership.ownership-source-copy (& source))
                           (typed.TypedOperation.Primitive
                             (typed.TypedPrimitive.Builtin result-code 0))
-                          (__tl_make-array typed.TypedOccurrenceId 0)
+                          (tc-selected-no-occurrences)
                           done))
                         [(TcSelectedResult.Err message last)
                           (TcSelectedResult.Err message last)]
                         [(TcSelectedResult.Ok _ result last)
                           (match result
                             [(TcSelectedOccurrence.Selected result-id)
-                              (__tl_array-push! head-ids result-id)]
+                              (tc-selected-occurrences-push!
+                                (&mut head-ids)
+                                result-id)]
                             [(TcSelectedOccurrence.Unrepresented) unit])
                           (match (tc-selected-publish
                             (ResultTcType.Ok (tc-global-shared-view ty))
@@ -46456,10 +46534,10 @@
             (= (array-ref table.keys at) key)
             (return (tc-variance-of-code (array-ref table.codes at))))
           (set! at (+ at 1)))
-        (__tl_array-push! table.keys key)
-        (__tl_array-push! table.handles handle)
-        (__tl_array-push! table.indices index)
-        (__tl_array-push! table.codes 0)
+        (tc-selected-i64s-push! (&mut table.keys) key)
+        (tc-selected-i64s-push! (&mut table.handles) handle)
+        (tc-selected-i64s-push! (&mut table.indices) index)
+        (tc-selected-i64s-push! (&mut table.codes) 0)
         (TcVarianceBivariant)))))
 
 ;; Parameter `index`'s variance in the declaration of nominal `handle`, in its
@@ -51757,7 +51835,7 @@
         syntax
         source
         (typed.TypedOperation.Literal literal)
-        (__tl_make-array typed.TypedOccurrenceId 0)
+        (tc-selected-no-occurrences)
         sink)]))
 
 (define (tc-selected-probe-begin
@@ -53012,7 +53090,7 @@
         syntax
         expected
         source
-        (__tl_make-array typed.TypedOccurrenceId 0)
+        (tc-selected-no-occurrences)
         false
         -1
         unit-each?
@@ -62813,7 +62891,7 @@
                 [(TcSelectedCaptures.Ok captures)
                   (let
                     [capture-types : (__tl_dyn-array ast.AstType)
-                      (__tl_make-array ast.AstType 0)]
+                      (tc-selected-no-types)]
                     [index : i64 0]
                     [ret : ast.AstType
                       (match (tc-resolve-type ctx (tc-global-shared-view ty))
@@ -62821,8 +62899,8 @@
                         [_ ast.AstType.Never])]
                     (while (< index (array-length captures))
                       (begin
-                        (__tl_array-push!
-                          capture-types
+                        (tc-selected-types-push!
+                          (&mut capture-types)
                           (tc-selected-binder-type!
                             store
                             lease
@@ -64464,7 +64542,7 @@
           syntax
           expected
           source
-          (__tl_make-array typed.TypedOccurrenceId 0)
+          (tc-selected-no-occurrences)
           false
           -1
           TcSelectedSink.Query)]
@@ -65039,15 +65117,15 @@
     typed.TypedSyntax.Generated
     source
     (typed.TypedOperation.Literal literal)
-    (__tl_make-array typed.TypedOccurrenceId 0)
+    (tc-selected-no-occurrences)
     sink))
 
 (define (tc-selected-ids-of1 [first : typed.TypedOccurrenceId]) : (__tl_dyn-array
     typed.TypedOccurrenceId)
   (let
     [out : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
-    (__tl_array-push! out first)
+      (tc-selected-no-occurrences)]
+    (tc-selected-occurrences-push! (&mut out) first)
     out))
 
 (define (tc-selected-ids-of2
@@ -65055,9 +65133,9 @@
   [second : typed.TypedOccurrenceId]) : (__tl_dyn-array typed.TypedOccurrenceId)
   (let
     [out : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
-    (__tl_array-push! out first)
-    (__tl_array-push! out second)
+      (tc-selected-no-occurrences)]
+    (tc-selected-occurrences-push! (&mut out) first)
+    (tc-selected-occurrences-push! (&mut out) second)
     out))
 
 (define (tc-selected-ids-of3
@@ -65066,10 +65144,10 @@
   [third : typed.TypedOccurrenceId]) : (__tl_dyn-array typed.TypedOccurrenceId)
   (let
     [out : (__tl_dyn-array typed.TypedOccurrenceId)
-      (__tl_make-array typed.TypedOccurrenceId 0)]
-    (__tl_array-push! out first)
-    (__tl_array-push! out second)
-    (__tl_array-push! out third)
+      (tc-selected-no-occurrences)]
+    (tc-selected-occurrences-push! (&mut out) first)
+    (tc-selected-occurrences-push! (&mut out) second)
+    (tc-selected-occurrences-push! (&mut out) third)
     out))
 
 ;; `__tl_for-owned-state` (the `for` macro iterating a fixed array by value;
@@ -79419,7 +79497,7 @@
 (define tc-bare-variant-index-entries : csym.CompilerSymbolMap
   (csym.compiler-symbol-map-with-capacity 16))
 (define tc-bare-variant-index-names : (__tl_dyn-array bool)
-  (__tl_make-array bool 0))
+  (tc-selected-no-bools))
 
 ;; A parsed, unqualified, non-hygienic source name such as `Ok`.
 (define (tc-bare-variant-name-id? [name-id : i64]) : bool
@@ -119239,7 +119317,7 @@
     ;; Syntax values hold no references.
     true
     (let
-      [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+      [none : (__tl_dyn-array i64) (tc-selected-no-i64s)]
       [erased : ast.AstType (tc-selected-arena-erase ctx (& none) resolved)]
       (and
         (match (& erased)
@@ -119966,10 +120044,14 @@
   ;; The body's recorded arena regions (`typed.typed-arena-region-note!`).
   (arena-regions (__tl_dyn-array i64))
   (classes (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass))
+  ;; The first `representative-count` cells of these three lanes hold the
+  ;; distinct types seen so far, their classes and their typed indices; the
+  ;; lanes double when full (`tc-selected-representatives-reserve!`).
   (representatives (__tl_dyn-array ast.AstType))
   (representative-classes
     (__tl_dyn-array ownership_normalize.OwnershipNormalizeTypeClass))
   (representative-indices (__tl_dyn-array i64))
+  (representative-count i64)
   (products (__tl_dyn-array ownership_normalize.OwnershipNormalizeProduct))
   (variances ownership_normalize.OwnershipNormalizeVariances)
   ;; Where the representative scan may start for a type already looked up
@@ -119982,18 +120064,18 @@
 
 (define (tc-selected-type-table-new [regions : (__tl_dyn-array i64)]) : TcSelectedTypeTable
   (let
-    [representatives : (__tl_dyn-array ast.AstType)
-      (__tl_make-array ast.AstType 0)]
+    [representatives : (__tl_dyn-array ast.AstType) (tc-selected-no-types)]
     ;; The note lanes start empty and are replaced before their first write
     ;; (`tc-selected-representative-memo-grow!`), so they share empty arrays.
     [memo-types : (__tl_dyn-array ast.AstType)
       (tc-global-shared-view representatives)]
     (TcSelectedTypeTable
       regions
-      (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+      (tc-selected-no-type-classes)
       representatives
-      (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
-      (__tl_make-array i64 0)
+      (tc-selected-no-type-classes)
+      (tc-selected-no-i64s)
+      0
       (__tl_make-array ownership_normalize.OwnershipNormalizeProduct 0)
       (ownership_normalize.ownership-normalize-variances-empty)
       memo-types
@@ -120007,7 +120089,7 @@
 ;; through a reference is a plain copy, not a view keeping a loan.
 (define (tc-selected-canonical-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
   (let
-    [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [none : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     (tc-selected-canonical-type-in ctx (& none) ty)))
 
 ;; `tc-selected-canonical-type` knowing the body's recorded arena `regions`.
@@ -120667,7 +120749,7 @@
     [end : i64
       (if (>= found 0)
         found
-        (array-length table.representatives))]
+        table.representative-count)]
     (if (= entry 0)
       (let
         [index : i64 table.memo-count]
@@ -120689,7 +120771,7 @@
   (let
     [found : i64 -1]
     [rep : i64 start]
-    (while (and (< found 0) (< rep (array-length table.representatives)))
+    (while (and (< found 0) (< rep table.representative-count))
       (when
         (tc-selected-same-type?
           (tc-global-array-element-shared-view table.representatives rep)
@@ -120757,6 +120839,47 @@
     (set! table.memo-slots slots)
     (set! table.memo-types types)
     (set! table.memo-starts starts)))
+
+;; Room for one more representative: the three lanes double when full (a
+;; private dynamic array copies its whole backing on every push).
+(define (tc-selected-representatives-reserve!
+  [table : (&mut table TcSelectedTypeTable)]) : unit
+  (let
+    [count : i64 table.representative-count]
+    (when
+      (>= count (array-length table.representatives))
+      (let
+        [capacity : i64 (+ 8 (* 2 count))]
+        [types : (__tl_dyn-array ast.AstType)
+          (__tl_make-array ast.AstType capacity)]
+        [classes : (__tl_dyn-array
+          ownership_normalize.OwnershipNormalizeTypeClass)
+          (__tl_make-array
+            ownership_normalize.OwnershipNormalizeTypeClass
+            capacity)]
+        [indices : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+        [index : i64 0]
+        (while (< index count)
+          (set!
+            (array-ref types index)
+            (replace!
+              (array-ref table.representatives index)
+              ast.AstType.Never))
+          (set!
+            (array-ref classes index)
+            (ownership_normalize.OwnershipNormalizeTypeClass
+              (array-ref table.representative-classes index).key
+              (array-ref table.representative-classes index).copy?
+              (array-ref table.representative-classes index).reference
+              (array-ref table.representative-classes index).referent
+              (array-ref table.representative-classes index).cleanup?))
+          (set!
+            (array-ref indices index)
+            (array-ref table.representative-indices index))
+          (set! index (+ index 1)))
+        (set! table.representatives types)
+        (set! table.representative-classes classes)
+        (set! table.representative-indices indices)))))
 
 ;; The typed index of a type equal to `ty`; the store gains a record (to be
 ;; classified) only when the body has none. -1 when the store refuses it.
@@ -120862,7 +120985,7 @@
                 (tc-selected-type-class
                   ctx
                   (tc-global-shared-view resolved)
-                  (array-length table.representatives)))]
+                  table.representative-count))]
             ;; A reference's or view's referent; an owned box's contents.
             [referent : i64
               (cond
@@ -120890,17 +121013,19 @@
             (when
               (>= referent 0)
               (set! total (tc-selected-type-record-count store lease)))
-            (set! found (array-length table.representatives))
-            (__tl_array-push!
-              table.representative-classes
+            (set! found table.representative-count)
+            (tc-selected-representatives-reserve! table)
+            (set!
+              (array-ref table.representative-classes found)
               (ownership_normalize.OwnershipNormalizeTypeClass
                 fresh.key
                 fresh.copy?
                 fresh.reference
                 referent
                 fresh.cleanup?))
-            (__tl_array-push! table.representative-indices index)
-            (__tl_array-push! table.representatives resolved)))
+            (set! (array-ref table.representative-indices found) index)
+            (set! (array-ref table.representatives found) resolved)
+            (set! table.representative-count (+ found 1))))
         (when
           (>= count (array-length cells))
           (let
@@ -120969,12 +121094,12 @@
   [lifetimes : ast.AstLifetimeList]
   [declaration : i64]) : ownership_normalize.OwnershipNormalizeProduct
   (let
-    [fields : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [fields : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [names : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [empty : ownership_normalize.OwnershipNormalizeProduct
       (ownership_normalize.OwnershipNormalizeProduct
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0))]
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s))]
     [defs : ast.AstFieldDefList
       (match (csym.compiler-symbols-decl-at-index
         (tc-context-symbols ctx)
@@ -121030,8 +121155,8 @@
                 -1)]
             [(TcFieldIdentity.Intrinsic) -1])]
         (when (< index 0) (return empty))
-        (__tl_array-push! fields index)
-        (__tl_array-push! names field-id)
+        (tc-selected-i64s-push! (&mut fields) index)
+        (tc-selected-i64s-push! (&mut names) field-id)
         (set! ordinal (+ ordinal 1))))
     (ownership_normalize.OwnershipNormalizeProduct fields names)))
 
@@ -121046,12 +121171,12 @@
   [lifetimes : ast.AstLifetimeList]
   [declaration : i64]) : ownership_normalize.OwnershipNormalizeProduct
   (let
-    [fields : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [fields : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [names : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [empty : ownership_normalize.OwnershipNormalizeProduct
       (ownership_normalize.OwnershipNormalizeProduct
-        (__tl_make-array i64 0)
-        (__tl_make-array i64 0))]
+        (tc-selected-no-i64s)
+        (tc-selected-no-i64s))]
     [variants : ast.AstVariantDefList
       (match (csym.compiler-symbols-decl-at-index
         (tc-context-symbols ctx)
@@ -121095,8 +121220,8 @@
                     index
                     (ast.ast-type-id-fallback))))]
             (when (< field 0) (return empty))
-            (__tl_array-push! names (- -1 (array-length fields)))
-            (__tl_array-push! fields field)
+            (tc-selected-i64s-push! (&mut names) (- -1 (array-length fields)))
+            (tc-selected-i64s-push! (&mut fields) field)
             (set! index (+ index 1))))
         (set! variant (+ variant 1))))
     (ownership_normalize.OwnershipNormalizeProduct fields names)))
@@ -121108,8 +121233,8 @@
   [table : (& table TcSelectedTypeTable)]
   [elements : ast.AstTypeList]) : ownership_normalize.OwnershipNormalizeProduct
   (let
-    [fields : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [fields : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [names : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [ordinal : i64 0]
     (while (< ordinal (ast.ast-type-list-len (& elements)))
       (let
@@ -121128,10 +121253,10 @@
           (< index 0)
           (return
             (ownership_normalize.OwnershipNormalizeProduct
-              (__tl_make-array i64 0)
-              (__tl_make-array i64 0))))
-        (__tl_array-push! fields index)
-        (__tl_array-push! names (- -1 ordinal))
+              (tc-selected-no-i64s)
+              (tc-selected-no-i64s))))
+        (tc-selected-i64s-push! (&mut fields) index)
+        (tc-selected-i64s-push! (&mut names) (- -1 ordinal))
         (set! ordinal (+ ordinal 1))))
     (ownership_normalize.OwnershipNormalizeProduct fields names)))
 
@@ -121145,17 +121270,17 @@
   [element : ast.AstType]
   [size : i64]) : ownership_normalize.OwnershipNormalizeProduct
   (let
-    [fields : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [names : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [fields : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [names : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [index : i64 (tc-selected-type-index! ctx store lease table element)]
     [ordinal : i64 0]
     (when
       (>= index 0)
       (while (< ordinal size)
         (begin
-          (__tl_array-push! fields index)
+          (tc-selected-i64s-push! (&mut fields) index)
           ;; An element is named `[ordinal]` (`tc-selected-path-text`).
-          (__tl_array-push! names (- -1000000 ordinal))
+          (tc-selected-i64s-push! (&mut names) (- -1000000 ordinal))
           (set! ordinal (+ ordinal 1)))))
     (ownership_normalize.OwnershipNormalizeProduct fields names)))
 
@@ -121231,8 +121356,8 @@
           declaration)]
       [_
         (ownership_normalize.OwnershipNormalizeProduct
-          (__tl_make-array i64 0)
-          (__tl_make-array i64 0))])))
+          (tc-selected-no-i64s)
+          (tc-selected-no-i64s))])))
 
 ;; Records the nominal types `ty` names, to the normalizer's depth bound (a
 ;; deeper type's shape fails closed there).
@@ -121312,12 +121437,12 @@
     (while (< at (array-length out.names))
       (when (= (array-ref out.names at) name-id) (return unit))
       (set! at (+ at 1)))
-    (__tl_array-push! out.names name-id)
-    (__tl_array-push! out.starts (array-length out.covariant))
-    (__tl_array-push! out.counts count)
+    (tc-selected-i64s-push! (&mut out.names) name-id)
+    (tc-selected-i64s-push! (&mut out.starts) (array-length out.covariant))
+    (tc-selected-i64s-push! (&mut out.counts) count)
     (while (< index count)
-      (__tl_array-push!
-        out.covariant
+      (tc-selected-bools-push!
+        (&mut out.covariant)
         (and
           (not (and (tc-arena-nominal-name-id? name-id) (= index 0)))
           (match (tc-nominal-lifetime-variance-at
@@ -121462,11 +121587,15 @@
               0)]
           (when
             (or known? growing?)
-            (__tl_array-push! out.calls key)
-            (__tl_array-push! out.binders (array-ref binders global))
-            (__tl_array-push! out.callees callee)
-            (__tl_array-push! out.globals (array-ref globals global))
-            (__tl_array-push! out.pending? (not known?))))
+            (tc-selected-i64s-push! (&mut out.calls) key)
+            (tc-selected-i64s-push!
+              (&mut out.binders)
+              (array-ref binders global))
+            (tc-selected-i64s-push! (&mut out.callees) callee)
+            (tc-selected-i64s-push!
+              (&mut out.globals)
+              (array-ref globals global))
+            (tc-selected-bools-push! (&mut out.pending?) (not known?))))
         (set! global (+ global 1))))))
 
 ;; The effect-graph node of the safe spawn at occurrence `index` (-1 when the
@@ -121528,11 +121657,11 @@
   (let
     [out : ownership_normalize.OwnershipNormalizeGlobalWrites
       (ownership_normalize.ownership-normalize-global-writes-empty)]
-    [binders : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [globals : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [binders : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [globals : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     ;; `with` owners and their cleanup function expressions.
-    [owners : (__tl_dyn-array i64) (__tl_make-array i64 0)]
-    [owner-exprs : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [owners : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+    [owner-exprs : (__tl_dyn-array i64) (tc-selected-no-i64s)]
     [binder-count : i64
       (match (typed.typed-binder-count! store lease)
         [(typed.TypedCountResult.Ok value) value]
@@ -121555,14 +121684,14 @@
                 [(typed.TypedBinderKind.Global global)
                   (when
                     (or every? (tc-i64-array-contains? borrowed index))
-                    (__tl_array-push! binders index)
-                    (__tl_array-push! globals global.index))]
+                    (tc-selected-i64s-push! (&mut binders) index)
+                    (tc-selected-i64s-push! (&mut globals) global.index))]
                 [(or (typed.TypedBinderKind.WithOwner cleanup)
                      (typed.TypedBinderKind.MoveAwareOwner cleanup))
                   (when
                     (!= cleanup -1)
-                    (__tl_array-push! owners index)
-                    (__tl_array-push! owner-exprs cleanup))]
+                    (tc-selected-i64s-push! (&mut owners) index)
+                    (tc-selected-i64s-push! (&mut owner-exprs) cleanup))]
                 [_ unit])]
             [(typed.TypedBinderView.Err _) unit])]
         [(typed.TypedBinderResult.Err _) unit])
@@ -121628,7 +121757,7 @@
             (& globals)))
         (set! index (+ index 1)))
       (set! index 0)
-      (while (< index (array-length table.representatives))
+      (while (< index table.representative-count)
         (let
           [key : i64 (array-ref table.representative-classes index).key]
           [handle : i64
@@ -121660,15 +121789,17 @@
                       0)]
                   (when
                     (or known? growing?)
-                    (__tl_array-push! out.cleanup-keys key)
-                    (__tl_array-push!
-                      out.cleanup-binders
+                    (tc-selected-i64s-push! (&mut out.cleanup-keys) key)
+                    (tc-selected-i64s-push!
+                      (&mut out.cleanup-binders)
                       (array-ref binders global))
-                    (__tl_array-push! out.cleanup-callees cleanup)
-                    (__tl_array-push!
-                      out.cleanup-globals
+                    (tc-selected-i64s-push! (&mut out.cleanup-callees) cleanup)
+                    (tc-selected-i64s-push!
+                      (&mut out.cleanup-globals)
                       (array-ref globals global))
-                    (__tl_array-push! out.cleanup-pending? (not known?))))
+                    (tc-selected-bools-push!
+                      (&mut out.cleanup-pending?)
+                      (not known?))))
                 (set! global (+ global 1))))))
         (set! index (+ index 1)))
       (set! index 0)
@@ -121698,15 +121829,19 @@
                       0)]
                   (when
                     (or known? growing?)
-                    (__tl_array-push! out.owners (array-ref owners index))
-                    (__tl_array-push!
-                      out.owner-binders
+                    (tc-selected-i64s-push!
+                      (&mut out.owners)
+                      (array-ref owners index))
+                    (tc-selected-i64s-push!
+                      (&mut out.owner-binders)
                       (array-ref binders global))
-                    (__tl_array-push! out.owner-callees cleanup)
-                    (__tl_array-push!
-                      out.owner-globals
+                    (tc-selected-i64s-push! (&mut out.owner-callees) cleanup)
+                    (tc-selected-i64s-push!
+                      (&mut out.owner-globals)
                       (array-ref globals global))
-                    (__tl_array-push! out.owner-pending? (not known?))))
+                    (tc-selected-bools-push!
+                      (&mut out.owner-pending?)
+                      (not known?))))
                 (set! global (+ global 1))))))
         (set! index (+ index 1)))
       out)))
@@ -121790,11 +121925,11 @@
               [index : i64 0]
               (while (< index (array-length output.mutable-views))
                 (begin
-                  (__tl_array-push!
-                    data.mutable-view-modules
+                  (tc-selected-i64s-push!
+                    (&mut data.mutable-view-modules)
                     (tc-context-module-id ctx))
-                  (__tl_array-push!
-                    data.mutable-view-exprs
+                  (tc-selected-i64s-push!
+                    (&mut data.mutable-view-exprs)
                     (array-ref output.mutable-views index))
                   (set! index (+ index 1))))
               (tc-body-state-data-set! (tc-context-body-state ctx) data))))]
@@ -121877,7 +122012,7 @@
           (let
             [again : TcSelectedTypeTable
               (tc-selected-type-shapes! ctx store lease)]
-            [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+            [none : (__tl_dyn-array i64) (tc-selected-no-i64s)]
             [writes : ownership_normalize.OwnershipNormalizeGlobalWrites
               (tc-selected-global-call-writes!
                 ctx
@@ -121987,11 +122122,11 @@
             (when
               (>= key 0)
               (while (<= (array-length table.products) key)
-                (__tl_array-push!
-                  table.products
+                (tc-selected-products-push!
+                  (&mut table.products)
                   (ownership_normalize.OwnershipNormalizeProduct
-                    (__tl_make-array i64 0)
-                    (__tl_make-array i64 0))))
+                    (tc-selected-no-i64s)
+                    (tc-selected-no-i64s))))
               (when
                 (= (array-length (array-ref table.products key).fields) 0)
                 (let
@@ -122018,11 +122153,11 @@
                 (when
                   (>= referent-key 0)
                   (while (<= (array-length table.products) referent-key)
-                    (__tl_array-push!
-                      table.products
+                    (tc-selected-products-push!
+                      (&mut table.products)
                       (ownership_normalize.OwnershipNormalizeProduct
-                        (__tl_make-array i64 0)
-                        (__tl_make-array i64 0))))
+                        (tc-selected-no-i64s)
+                        (tc-selected-no-i64s))))
                   (when
                     (=
                       (array-length
@@ -124127,7 +124262,7 @@
 (cfg
   compile-profile
   (define (tc-poison-name-list-new) : TcPoisonNameList
-    (TcPoisonNameList (__tl_make-array i64 0) 0)))
+    (TcPoisonNameList (tc-selected-no-i64s) 0)))
 
 (cfg
   compile-profile

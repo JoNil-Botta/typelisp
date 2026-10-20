@@ -70655,6 +70655,178 @@ return 0" true)
     (return 2))
   42)
 
+(defenum OptUboundSelfLoopCase
+  (Normal)
+  (TwoPhis)
+  (Minimal)
+  (CallBody)
+  (NoGuard)
+  (OpaqueLength)
+  (PriorEffect)
+  (SharedCompare)
+  (NegativeSeed))
+
+;; Minimal has no body instruction between its check and compare: retaining
+;; the old prefix while replacing the latch would accidentally keep the check.
+(define (opt-ubound-self-loop-function [kind : OptUboundSelfLoopCase]) : ir.CompilerIrFunction
+  (let
+    [seed : String
+      (match kind
+        [(NegativeSeed) "-1"]
+        [_ "0"])]
+    (irt.func
+      (str_cat.str-cat
+        "function @ubound_self(n=%0:i64, buf=%1:i64) -> i64 vars 13 {\nentry:\n"
+        (match kind
+          [(NoGuard) "%2 = eq %0, 7 : i64\n"]
+          [_ (str_cat.str-cat "%2 = lt " (string.copy (& seed)) ", %0 : i64\n")])
+        "branch %2, pre, exit\npre:\n"
+        (match kind
+          [(OpaqueLength) "%4 = mov %1 : i64\n"]
+          [_ "%3 = gep %1, 1 : i64\n%4 = load %3 : i64\n"])
+        (match kind
+          [(Minimal) "%9 = mov %0 : i64\n"]
+          [_ ""])
+        "jump head\nhead:\n%5 = phi ["
+        seed
+        ", pre], [%9, head] : i64\n"
+        (match kind
+          [(TwoPhis) "%6 = phi [10, pre], [%11, head] : i64\n"]
+          [_ ""])
+        (match kind
+          [(PriorEffect) "%11 = mov 0 : i64\n"]
+          [_ ""])
+        "bounds_check %5, %4 message \"self_ok\"\n"
+        (match kind
+          [(TwoPhis) "%11 = add %6, %5 : i64\n"]
+          [_ ""])
+        (match kind
+          [(Minimal) ""]
+          [(CallBody) "%9 = call ubound_clean(%5) : i64\n"]
+          [_ "%9 = add %5, 1 : i64\n"])
+        "%10 = lt %9, %0 : i64\nbranch %10, head, exit\nexit:\n"
+        (match kind
+          [(SharedCompare) "%11 = phi [false, entry], [%10, head] : bool\n"]
+          [_ ""])
+        "%12 = phi [0, entry], [%9, head] : i64\nreturn %12\n}"))))
+
+(define (compiler-optimize-ubound-self-loop-self-test) : i64
+  (for [case-id (iterator.range 0 4)]
+    (let
+      [kind : OptUboundSelfLoopCase
+        (match case-id
+          [0 (Normal)]
+          [1 (TwoPhis)]
+          [2 (Minimal)]
+          [_ (CallBody)])]
+      [before : ir.CompilerIrFunction (opt-ubound-self-loop-function kind)]
+      (unless
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& before))))
+        (return 1))
+      (match (opt.opt-ubound-function-pass 0 before)
+        [(Result result changed)
+          (unless changed (return 2))
+          (unless (= (opt.opt-function-frame result) 16) (return 3))
+          (unless
+            (opt.opt-verify-ok? (& (opt.opt-verify-function (& result))))
+            (return 4))
+          (let
+            [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+            [head : i64 (opt-ubound-label "head")]
+            [join : i64 (opt-ubound-label "pre__ubound_join")]
+            [chk : i64 (opt-ubound-label "head__ubound_exit")]
+            [trap : i64 (opt-ubound-label "head__ubound_trap")]
+            [block : ir.CompilerIrBlock (opt-ubound-block-of blocks head)]
+            [trap-block : ir.CompilerIrBlock (opt-ubound-block-of blocks trap)]
+            [count : i64 (opt-block-instr-count block)]
+            [phi-count : i64
+              (match kind
+                [(TwoPhis) 2]
+                [_ 1])]
+            (for [pos (iterator.range 0 count)]
+              (match (opt-block-instr-at block pos)
+                [(BoundsCheck _ _ _) (return 5)]
+                [(Phi _ inputs _)
+                  (unless
+                    (and
+                      (opt.opt-bool-branch-phi-input-has-label? inputs join)
+                      (opt.opt-bool-branch-phi-input-has-label? inputs head)
+                      (not
+                        (opt.opt-bool-branch-phi-input-has-label?
+                          inputs
+                          (opt-ubound-label "pre"))))
+                    (return 6))]
+                [_ unit]))
+            (when
+              (match kind
+                [(CallBody)
+                  (not
+                    (match (opt-block-instr-at block phi-count)
+                      [(Call 9 name (One (Var 5)) (I64))
+                        (= name (opt-test-symbol "ubound_clean"))]
+                      [_ false]))]
+                [_ false])
+              (return 10))
+            (unless
+              (and
+                (>= count (+ phi-count 2))
+                (match (opt-block-instr-at block (- count 2))
+                  [(BinOp dst (Lt) (Var back) (Var bound) (U64))
+                    (and (= dst 10) (= back 9) (= bound 14))]
+                  [_ false])
+                (match (opt-block-instr-at block (- count 1))
+                  [(Branch (Var cmp) yes no)
+                    (and (= cmp 10) (= yes head) (= no chk))]
+                  [_ false]))
+              (return 7))
+            (unless
+              (and
+                (opt-ubound-has-check? blocks join 1)
+                (opt-ubound-has-check? blocks trap 0)
+                (match (opt-block-instr-at trap-block 0)
+                  [(BoundsCheck (Var back) (Var len) ok)
+                    (and
+                      (= back 9)
+                      (= len 4)
+                      (= ok (opt-ubound-label "self_ok")))]
+                  [_ false])
+                (opt-ubound-phi-has-label? blocks (opt-ubound-label "exit") chk)
+                (opt-ubound-phi-has-label?
+                  blocks
+                  (opt-ubound-label "exit")
+                  trap)
+                (not
+                  (opt-ubound-phi-has-label?
+                    blocks
+                    (opt-ubound-label "exit")
+                    head)))
+              (return 8))
+            (when
+              (match (opt.opt-ubound-function-pass 0 result)
+                [(Result _ again) again])
+              (return 9)))])))
+  42)
+
+(define (compiler-optimize-ubound-self-loop-refusal-self-test) : i64
+  (for [case-id (iterator.range 0 5)]
+    (let
+      [kind : OptUboundSelfLoopCase
+        (match case-id
+          [0 (NoGuard)]
+          [1 (OpaqueLength)]
+          [2 (PriorEffect)]
+          [3 (SharedCompare)]
+          [_ (NegativeSeed)])]
+      [function : ir.CompilerIrFunction (opt-ubound-self-loop-function kind)]
+      (unless
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& function))))
+        (return (+ 10 case-id)))
+      (when
+        (match (opt.opt-ubound-function-pass 0 function)
+          [(Result _ changed) changed])
+        (return (+ 1 case-id)))))
+  42)
+
 ;; --- bounds-check group coalescing (bounds_group) ---------------------------
 ;;
 ;; The fixture is one self-looping body over two arrays:

@@ -3546,6 +3546,11 @@
     (unsafe
       (arena.tl_arena_destroy source))))
 
+;; Whole-owner retirement test: no chunk bounds are supplied, so no chunk is
+;; ever released.
+(define (opt-test-release-no-chunk! [_address : i64] [_chunk : i64]) : unit
+  (test.assert-true false "no chunk is released without chunk bounds"))
+
 (define (opt-test-input-retirement
   [pools : ast.AstNodePoolContext]
   [functions : ir.CompilerIrFunctionSeq]
@@ -3578,7 +3583,8 @@
         (opt.OptInputRetirement.Retire
           (unsafe
             (cast (ptr->int (ptr-addr-of state)) : i64))
-          opt-test-retire-input!)))
+          opt-test-retire-input!
+          opt-test-release-no-chunk!)))
     (match (with-test-inline-mode
       (opt.optimize-program
         (Program
@@ -3634,6 +3640,285 @@
         (ir.compiler-ir-function-seq-empty)
         level
         (= authority 1)))))
+
+;; Progressive level-2 retirement (#9059). The source keeps its bodies in chunk
+;; arenas and its shells in a separate carrier, as a chunked lowered owner does;
+;; the request's bounds are lower-sequence positions.
+(defstruct OptInputChunkTestState
+  (chunks (__tl_dyn-array i64))
+  (carrier (__tl_dyn-array i64))
+  (released (__tl_dyn-array i64))
+  (whole (__tl_dyn-array i64)))
+
+(define (opt-test-input-chunk-state [address : i64]) : OptInputChunkTestState
+  (unsafe
+    (ptr-read (int->ptr address : (Ptr OptInputChunkTestState)))))
+
+;; A chunk is released at most once, in range, and only after the cost memo was
+;; cleared; its arena is destroyed, so a later read of its bodies faults under
+;; the retired-arena guard.
+(define (opt-test-release-input-chunk! [address : i64] [chunk : i64]) : unit
+  (let
+    [state : OptInputChunkTestState (opt-test-input-chunk-state address)]
+    (test.assert-true
+      (and (>= chunk 0) (< chunk (array-length state.chunks)))
+      "a released chunk is in range")
+    (test.assert-i64-eq
+      (array-ref state.released chunk)
+      0
+      "each chunk is released once")
+    (test.assert-i64-eq
+      opt.opt-inline-callee-cost-count
+      0
+      "the callee-cost memo is cleared before a chunk is released")
+    (+= (array-ref state.released chunk) 1)
+    (let
+      [handle : i64 (array-ref state.chunks chunk)]
+      (set! (array-ref state.chunks chunk) 0)
+      (unsafe
+        (arena.tl_arena_destroy handle)))))
+
+;; Whole retirement releases whatever chunk is left and then the carrier.
+(define (opt-test-retire-input-chunks! [address : i64]) : unit
+  (let
+    [state : OptInputChunkTestState (opt-test-input-chunk-state address)]
+    (+= (array-ref state.whole 0) 1)
+    (for [chunk (iterator.range 0 (array-length state.chunks))]
+      (let
+        [handle : i64 (array-ref state.chunks chunk)]
+        (unless
+          (= handle 0)
+          (set! (array-ref state.chunks chunk) 0)
+          (unsafe
+            (arena.tl_arena_destroy handle)))))
+    (let
+      [carrier : i64 (array-ref state.carrier 0)]
+      (unless
+        (= carrier 0)
+        (set! (array-ref state.carrier 0) 0)
+        (unsafe
+          (arena.tl_arena_destroy carrier))))))
+
+(define (opt-test-input-chunk-state-new [chunks : i64]) : OptInputChunkTestState
+  (let
+    [state : OptInputChunkTestState
+      (OptInputChunkTestState
+        (__tl_make-array i64 chunks)
+        (__tl_make-array i64 1)
+        (__tl_make-array i64 chunks)
+        (__tl_make-array i64 1))]
+    (for [chunk (iterator.range 0 chunks)]
+      (set! (array-ref state.chunks chunk) (arena.tl_arena_make)))
+    (set! (array-ref state.carrier 0) (arena.tl_arena_make))
+    state))
+
+;; The chunk lower-sequence position POSITION falls in under BOUNDS.
+(define (opt-test-chunk-of
+  [bounds : (& bounds (__tl_dyn-array i64))]
+  [position : i64]) : i64
+  (let
+    [chunk : i64 0]
+    (while (>= position (array-ref bounds (+ chunk 1)))
+      (set! chunk (+ chunk 1)))
+    chunk))
+
+;; Clone FUNCTIONS the way a chunked lowered owner escapes them: each body into
+;; the chunk its position falls in under BOUNDS, the shells into the carrier.
+(define (opt-test-chunked-input
+  [pools : ast.AstNodePoolContext]
+  [state : (& state OptInputChunkTestState)]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [bounds : (& bounds (__tl_dyn-array i64))]) : ir.CompilerIrFunctionSeq
+  (let
+    [carrier : i64 (array-ref state.carrier 0)]
+    [builder : ir.CompilerIrFunctionBuilder
+      (in-arena
+        (arena.Arena carrier)
+        (ir.compiler-ir-function-builder-with-capacity functions.len))]
+    (for [i (iterator.range 0 functions.len)]
+      (let
+        [body : ir.CompilerIrFunction
+          (in-arena
+            (arena.Arena (array-ref state.chunks (opt-test-chunk-of bounds i)))
+            (ir.compiler-ir-clone-function
+              pools
+              (& (array-ref functions.slots i))))]
+        (in-arena
+          (arena.Arena carrier)
+          (ir.compiler-ir-function-builder-push! (&mut builder) body))))
+    (in-arena
+      (arena.Arena carrier)
+      (ir.compiler-ir-function-builder-to-seq builder))))
+
+;; Optimize FUNCTIONS at level 2 from chunk arenas split at BOUNDS, with chunk
+;; authority, and compare with an unchunked control. Every chunk is released
+;; once during the walk and the whole retirement still runs after it.
+(define (opt-test-chunk-release-matches-control
+  [functions : ir.CompilerIrFunctionSeq]
+  [bounds : (__tl_dyn-array i64)]) : unit
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [chunks : i64 (- (array-length bounds) 1)]
+    [control : ir.CompilerIrProgram
+      (match (with-test-inline-mode
+        (opt.optimize-program
+          (Program
+            (ir.compiler-ir-global-seq-empty)
+            (ir.compiler-ir-clone-function-seq pools (& functions))
+            (ir.compiler-ir-extern-seq-empty))
+          (ir.compiler-source-spans-empty)
+          (opt.optimize-request pools 2)))
+        [(Program result _) result])]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new chunks)]
+    [input : ir.CompilerIrFunctionSeq
+      (opt-test-chunked-input pools (& state) (& functions) (& bounds))]
+    [request : opt.OptimizeRequest (opt.optimize-request pools 2)]
+    (set!
+      request.input-retirement
+      (opt.OptInputRetirement.Retire
+        (unsafe
+          (cast (ptr->int (ptr-addr-of state)) : i64))
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!))
+    (set! request.input-chunk-bounds bounds)
+    (match (with-test-inline-mode
+      (opt.optimize-program
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          input
+          (ir.compiler-ir-extern-seq-empty))
+        (ir.compiler-source-spans-empty)
+        request))
+      [(Program result _)
+        (for [chunk (iterator.range 0 chunks)]
+          (test.assert-i64-eq
+            (array-ref state.released chunk)
+            1
+            "every chunk is released once during the walk"))
+        (test.assert-i64-eq (array-ref state.whole 0) 1 "whole retirement ran")
+        (test.assert-true
+          (opt-test-program-eq
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            control
+            result)
+          "progressive release preserves the optimized program")])))
+
+;; Chunk 0 holds `main` and `input_loop`, which tailrec rewrites before the
+;; walk; chunk 1 holds `input_leaf` and `input_dead`.
+(test
+  optimizer-input-chunk-release
+  (opt-test-chunk-release-matches-control
+    (opt-input-arena-functions)
+    (__tl_make-array 0 2 4)))
+
+;; `cyc_f` and `cyc_g` call each other, and each sits alone in its chunk. The
+;; walk releases the first-placed member's chunk while the other member is
+;; still unplaced; that member's rewrite then reads the placed clone.
+(test
+  optimizer-input-chunk-release-cyclic-scc
+  (opt-test-chunk-release-matches-control
+    (match (irt.program
+      "function @cyc_f(n=%0:i64) -> i64 vars 3 {
+       entry:
+         %1 = call cyc_leaf(%0) : i64
+         %2 = call cyc_g(%1) : i64
+         return %2
+       }
+       function @cyc_g(n=%0:i64) -> i64 vars 2 {
+       entry:
+         %1 = call cyc_f(%0) : i64
+         return %1
+       }
+       function @main() -> i64 vars 1 {
+       entry:
+         %0 = call cyc_f(3) : i64
+         return %0
+       }
+       function @cyc_leaf(n=%0:i64) -> i64 vars 1 {
+       entry:
+         return 7
+       }")
+      [(Program _ functions _) functions])
+    (__tl_make-array 0 1 2 4)))
+
+;; The stage validates bounds against its actual input before any release, and
+;; consumes each slot's tag once; anything malformed fails closed.
+(test
+  optimizer-input-chunk-validation
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [indexed : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-clone-function-seq pools (& functions))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build indexed)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new 3)]
+    [address : i64
+      (unsafe
+        (cast (ptr->int (ptr-addr-of state)) : i64))]
+    [retire : opt.OptInputRetirement
+      (opt.OptInputRetirement.Retire
+        address
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!)]
+    (for [i (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots i))
+        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+    (opt.opt-inline-input-chunks-arm!
+      (opt.OptInputRetirement.Retain)
+      (__tl_make-array 0 2 4))
+    (test.assert-false
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "no release without an authority")
+    (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 2 5))
+    (test.assert-false
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "bounds must cover exactly the input")
+    (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 0 4))
+    (test.assert-false
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "bounds must rise strictly")
+    (let
+      [saved : i64 (array-ref names 1)]
+      (set! (array-ref names 1) (array-ref names 2))
+      (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 2 4))
+      (test.assert-false
+        (opt.opt-inline-input-chunks-begin! (& names) (& index))
+        "every slot keeps its input name")
+      (set! (array-ref names 1) saved))
+    (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 3 4))
+    (test.assert-true
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "well-formed bounds arm release")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      1
+      "a one-function chunk is released at its placement")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      -1
+      "a second placement of a slot is refused")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 7)
+      -1
+      "a placement outside the input is refused")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 0)
+      0
+      "an unplaced original keeps its chunk")
+    (test.assert-i64-eq (array-ref state.released 0) 0 "chunk 0 is still held")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 1)
+      0
+      "chunk 0 still has an unplaced original")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 2)
+      1
+      "the last original releases its chunk")
+    (test.assert-i64-eq (array-ref state.released 0) 1 "chunk 0 released once")
+    (test.assert-i64-eq (array-ref state.released 1) 1 "chunk 1 released once")
+    (opt.opt-inline-input-chunks-disarm!)
+    (opt-test-retire-input-chunks! address)))
 
 (define (opt-test-input-retirement-pools) : unit
   (let

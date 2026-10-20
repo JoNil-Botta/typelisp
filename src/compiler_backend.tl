@@ -42028,7 +42028,11 @@
   [src : compiler_ir_types.CompilerIrValue]) : bool
   (match src
     [(Var src-var)
-      (compiler-backend-vars-same-home? backend-state assignments dst src-var)]
+      ;; A forwarded address is recomputed at its use; its nominal allocator
+      ;; home was never initialized by the suppressed AddrOf definition.
+      (and
+        (< (compiler-backend-forwarded-addr-of-src backend-state src-var) 0)
+        (compiler-backend-vars-same-home? backend-state assignments dst src-var))]
     [_ false]))
 
 (define (compiler-backend-phi-same-home?
@@ -42047,7 +42051,11 @@
     [(Value value)
       (match value
         [(Var found)
-          (compiler-backend-vars-same-home? backend-state assignments found dst)]
+          (compiler-backend-value-same-home?
+            backend-state
+            assignments
+            dst
+            (Var found))]
         [_ false])]
     [(Temp _) false]))
 
@@ -42097,10 +42105,15 @@
     [(Value value)
       (match value
         [(Var found)
-          (compiler-backend-var-parallel-resource0
-            backend-state
-            assignments
-            found)]
+          ;; Materializing an address reads no contents of its nominal home.
+          (if (>=
+            (compiler-backend-forwarded-addr-of-src backend-state found)
+            0)
+            0
+            (compiler-backend-var-parallel-resource0
+              backend-state
+              assignments
+              found))]
         [_ 0])]
     [(Temp _) 0]))
 
@@ -42112,10 +42125,14 @@
     [(Value value)
       (match value
         [(Var found)
-          (compiler-backend-var-parallel-resource1
-            backend-state
-            assignments
-            found)]
+          (if (>=
+            (compiler-backend-forwarded-addr-of-src backend-state found)
+            0)
+            0
+            (compiler-backend-var-parallel-resource1
+              backend-state
+              assignments
+              found))]
         [_ 0])]
     [(Temp _) 0]))
 
@@ -42221,11 +42238,11 @@
     [(Value value)
       (match value
         [(Var found)
-          (if (compiler-backend-vars-same-home?
+          (if (compiler-backend-value-same-home?
             backend-state
             assignments
-            found
-            dst)
+            dst
+            (Var found))
             (Temp loc)
             source)]
         [_ source])]

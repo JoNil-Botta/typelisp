@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`backend-forwarded-address-*` tests coalesced copies and same-type casts on
+both targets, phi filtering and cycle scheduling, and final-IR branch loads
+whose address setup must survive. Initialized same-home copies and real swap
+cycles remain controls. `forwarded_addr_loop_argument.tl` and
+`forwarded_addr_loop_callee.tl` exercise both edges of a loop-carried address
+phi at opt0/1/2 on both hosts; explicit source snapshots isolate these cases
+from the separate lowering and stale-load bugs.
+
 `linker_coff_import_reader_tests.tl` shares its assertion body with the native
 opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
 kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,

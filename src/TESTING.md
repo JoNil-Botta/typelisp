@@ -699,6 +699,13 @@ opt0/1/2.
 
 ## Late clone helper syntax
 
+`compiler-lower-missing-declaration-macro-diagnostic` checks nominal clone
+lowering without the clone prelude, a generated missing macro, an ordinary
+unknown macro and a function used as a declaration macro in Linux and Windows
+modes. All retain source spelling and available location; ordinary declaration
+macro expansion also retains E0501.
+Keep the valid `compiler-lower-clone-source-with-prelude` cases alongside it.
+
 `compiler-clone-late-tail-template` evaluates the stdlib producer's actual
 self-tail template with both boxing choices and requires ordinary syntax.
 Synthesized clone helpers are installed after macro expansion, so a macro call

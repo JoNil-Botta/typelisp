@@ -60,6 +60,7 @@ src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-temps-s
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-enum-aggregate-shape-ok?	test	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?	test	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 nested scalar aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?	test	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 small float aggregate shape.
+src/compiler_lower_tests.tl	compiler-lower-clone-source-with-prelude	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	2	Following inline missing-macro diagnostic test exercises Linux and Windows scalar lowering.
 src/compiler_lower_tests.tl	compiler-lower-defdispatch-structural-shape-ok?	test	test-only	CompilerLowerMode[.]LinuxScalar	1	Inline lowerer structural-shape test selects the Linux scalar lower mode.
 src/compiler_lower_tests.tl	compiler-lower-extern-value-fnptr-shape-ok?	test	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test uses Linux C ABI mode for extern function pointer shape.
 src/compiler_lower_tests.tl	compiler-lower-global-reference-initializer-shape-ok?	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	2	Inline lowerer global-reference initializer test checks target-independent global initializer lowering on Linux and Windows scalar modes.

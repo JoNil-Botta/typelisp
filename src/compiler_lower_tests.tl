@@ -2563,6 +2563,64 @@
       (lower-compiler-program-with-decl-paths "" (ast.ast-program decls) paths)]
     [(Err diag) (Err diag)]))
 
+(test
+  compiler-lower-missing-declaration-macro-diagnostic
+  (let
+    [sources : (Array String 3)
+      (array
+        "
+  (unknown-macro)"
+        "(defmacro (emit-missing) : Decls
+  `(missing-generated))
+(emit-missing)"
+        "(define (ordinary-function) : i64 42)
+(ordinary-function)")]
+    [names : (Array String 3)
+      (array "unknown-macro" "missing-generated" "ordinary-function")]
+    [lines : (Array i64 3) (array 2 2 2)]
+    [columns : (Array i64 3) (array 3 4 1)]
+    [modes : (Array lower.CompilerLowerMode 2)
+      (array
+        (lower.CompilerLowerMode.LinuxScalar)
+        (lower.CompilerLowerMode.WindowsScalar))]
+    (for [mode (iterator.range 0 2)]
+      (test.assert-true
+        (compiler-lower-mode-diagnostic-ok?
+          "(defstruct Wide (a i64) (b i64) (c i64) (d i64))
+(define (cloned [p : Wide]) : Wide (clone p))"
+          (array-ref modes mode)
+          "typecheck: module-scope macro call does not name a macro: synthesize-helpers"
+          1
+          1)
+        "missing clone prelude returns a diagnostic for its tagged helper name")
+      (for [index (iterator.range 0 3)]
+        (match (lower.lower-compiler-source-with-mode
+          (clone (array-ref sources index))
+          (array-ref modes mode))
+          [(Err diagnostic)
+            (test.assert-true
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-code-or-empty
+                    (& (deref diagnostic)))
+                  "E0501")
+                (string.eq
+                  (cdiag.compiler-diagnostic-message (& (deref diagnostic)))
+                  (str_cat.str-cat
+                    "typecheck: module-scope macro call does not name a macro: "
+                    (clone (array-ref names index))))
+                (=
+                  (cdiag.compiler-diagnostic-line (& (deref diagnostic)))
+                  (array-ref lines index))
+                (=
+                  (cdiag.compiler-diagnostic-col (& (deref diagnostic)))
+                  (array-ref columns index)))
+              "missing declaration macros retain source spelling, code and location")]
+          [(Ok _ _ owner)
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))
+            (test.assert-true false "a non-macro declaration call must fail")])))))
+
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
 (define (compiler-lower-tuple-shape-ok?) : bool

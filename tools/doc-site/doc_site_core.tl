@@ -409,20 +409,26 @@
 (define (doc-site-href-external? [target : (& target str)]) : bool
   (or
     (doc_bridge.bridge-doc-string-contains? target "://")
+    (doc-site-string-prefix? target "//")
     (doc-site-string-prefix? target "mailto:")))
 
 (define (doc-site-href-file-like? [target : (& target str)]) : bool
   (doc_bridge.bridge-doc-string-contains? target "."))
 
 (define (doc-site-repo-source-url [target : String]) : String
-  (str_cat.str-cat
-    (if (doc-site-href-file-like? target)
-      (doc-site-repo-blob-root)
-      (doc-site-repo-tree-root))
-    (doc-site-source-identity)
-    "/"
-    target
-    ""))
+  (let
+    [path : String
+      (if (string.eq target ".")
+        ""
+        target)]
+    (str_cat.str-cat
+      (if (doc-site-href-file-like? path)
+        (doc-site-repo-blob-root)
+        (doc-site-repo-tree-root))
+      (doc-site-source-identity)
+      "/"
+      path
+      "")))
 
 (define (doc-site-guide-output-for-source
   [target : (& target str)]
@@ -484,24 +490,33 @@
 
 (define (doc-site-rewrite-language-link-target
   [sections : (& sections doc_site_sections.Vec)]
+  [source : (& source str)]
   [target : String]) : String
-  (if (doc-site-href-anchor? target)
+  (if (or (= (string.string-length target) 0) (doc-site-href-anchor? target))
     target
     (if (doc-site-href-external? target)
       target
       (let
-        [normalized-target : String
-          (if (doc-site-string-prefix? target "../")
-            (string.substring target 3 (- (string.string-length target) 3))
-            target)]
+        [hash : i64 (doc_md.md-find-char target 0 '#')]
+        [path : String (string.substring target 0 hash)]
+        [fragment : String
+          (string.substring target hash (- (string.string-length target) hash))]
+        [directory : String (fs.dirname source)]
+        [relative : String (fs.path-join (& directory) (& path))]
+        ;; Resolve before page lookup: fragments do not participate in source
+        ;; identity, and every relative path belongs to its Markdown guide.
+        [normalized-target : String (fs.path-normalize (& relative))]
         [site-target : String
           (doc-site-sections-output-for-source normalized-target sections)]
-        (if (> (string.string-length site-target) 0)
-          site-target
-          (doc-site-repo-source-url normalized-target))))))
+        (str_cat.str-cat
+          (if (> (string.string-length site-target) 0)
+            site-target
+            (doc-site-repo-source-url normalized-target))
+          fragment)))))
 
 (define (doc-site-rewrite-language-links
   [sections : (& sections doc_site_sections.Vec)]
+  [source : (& source str)]
   [html : String]) : String
   (let
     [cursor : i64 0]
@@ -527,7 +542,10 @@
                     out
                     (string.substring html cursor (- href-start cursor))
                     "href=\""
-                    (doc-site-rewrite-language-link-target sections target)
+                    (doc-site-rewrite-language-link-target
+                      sections
+                      source
+                      target)
                     "\""))
                 (set! cursor (+ target-end 1)))
               (begin
@@ -1146,9 +1164,12 @@ pre {
     sections
     (doc-site-guide-output guide)
     (str_cat.str-cat
-      "<article class=\"tl-doc-language\">\n"
+      "<article class=\"tl-doc-language\" data-doc-source=\""
+      (doc_bridge.bridge-doc-html-escape (doc-site-guide-source guide))
+      "\">\n"
       (doc-site-rewrite-language-links
         sections
+        (doc-site-guide-source guide)
         (doc_md.md-render-html markdown))
       "</article>\n")))
 
@@ -1590,13 +1611,17 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
       "doc-site: language guide inventory mismatch")
     (doc-site-require
       (string.eq
-        (doc-site-rewrite-language-link-target sections "../SPEC.md")
+        (doc-site-rewrite-language-link-target
+          sections
+          "docs/guide.md"
+          "../SPEC.md")
         "spec.html")
       "doc-site: parent guide link rewrite missing")
     (doc-site-require
       (string.eq
         (doc-site-rewrite-language-link-target
           sections
+          "docs/guide.md"
           "../tools/doc-site/doc_site.tl")
         (doc-site-repo-source-url "tools/doc-site/doc_site.tl"))
       "doc-site: parent repository link rewrite missing")

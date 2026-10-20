@@ -13908,7 +13908,7 @@
       (match (ctfe-quote-maybe-type
         (&
           (ast.ast-maybe-type-from-id-with-pools
-            (ctfe-env-pools env)
+            (& (ctfe-env-pools env))
             maybe-ty-id))
         env
         (& expr)

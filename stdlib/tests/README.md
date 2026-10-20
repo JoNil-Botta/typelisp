@@ -65,6 +65,15 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   end detection, sticky truncation (cursor and first failure kept, later reads
   and failures ignored), the work limit and its charging rule, negative counts,
   and caller-defined failures.
+- `base64_api.tl` covers strict RFC 4648 standard-alphabet encoding and
+  canonical padded decoding: every published RFC vector, independent fixtures,
+  every byte value at every position through twelve source bytes, both padding
+  counts, all 64 pad-bit values, every invalid alphabet byte at every position,
+  truncated/trailing/padded quanta, checked length overflow, destination
+  capacity, unchanged-on-failure, and source/destination overlap rejection.
+  All 65,536 two-byte inputs also check an independent literal-alphabet oracle.
+  Every API checks negative, zero, short, exact, and oversized output limits;
+  rejected limits preserve every physical destination byte and its live length.
 - `http_head_codec.tl` covers strict byte-oriented HTTP/1.1 request-head
   serialization and incremental response-head parsing: every split boundary,
   exact consumption with one-byte and 32 KiB coalesced body suffixes, bounded

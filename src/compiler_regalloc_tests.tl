@@ -12774,6 +12774,71 @@
             (= (array-ref remap 4) 1))]
         [(None) false])]))
 
+(define (compiler-reg-packed-storage-color-case
+  [words : String]
+  [escapes? : bool]) : bool
+  (let
+    [func : ir.CompilerIrFunction
+      (irt.func
+        (str_cat.str-cat
+          "function @packed_storage() -> u64 vars 10 {
+           entry:
+             %0 = alloc PackedStorage
+             %1 = alloc PackedStorage
+             %2 = addr_of %1
+             %3 = gep %2, 0 : u8
+             %4 = mov %3 : u64
+             %5 = pack "
+          words
+          " : Pair
+             %6 = alloc PackedStorage
+             %7 = alloc PackedStorage
+             %8 = addr_of %7
+             store_ptr %8, 99 : i64
+             %9 = word %5, 0 : u64
+             return %9
+           }"))]
+    [intervals : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-stack-only-block-intervals (& func))]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (for [index (iterator.range 0 10)]
+      (set! (array-ref slots index) -1)
+      (set! (array-ref remap index) -1))
+    (match func
+      [(Function _ _ _ vars blocks _)
+        (reg.compiler-reg-color-inline-storage
+          (& blocks)
+          (& intervals)
+          (&mut slots)
+          (&mut remap)
+          vars
+          0)])
+    (if escapes?
+      ;; Unmapped storage receives private slots after the coloring walk.
+      (and
+        (= (array-ref remap 0) -1)
+        (= (array-ref remap 1) -1)
+        (>= (array-ref remap 6) 0))
+      (and
+        (>= (array-ref remap 0) 0)
+        (= (array-ref remap 0) (array-ref remap 6))
+        (= (array-ref remap 1) (array-ref remap 7))))))
+
+(test
+  regalloc-packed-storage-escape
+  (let
+    [words : (Array String 6)
+      (array "[%4, 17]" "[17, %4]" "[%4, %4]" "[%2, 0]" "[0, %3]" "[11, 12]")]
+    (for [index (iterator.range 0 6)]
+      (test.assert-true
+        (compiler-reg-packed-storage-color-case
+          (clone (array-ref words index))
+          (< index 5))
+        (str_cat.str-cat
+          "packed storage escape case "
+          (string.int->string index))))))
+
 ;; The hidden output pointer is borrowed only across the call. Its result is
 ;; another alias of the same two-word range; an ordinary pointer call must
 ;; still invalidate the range even when it has the same physical ABI.

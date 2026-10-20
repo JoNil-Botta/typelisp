@@ -2833,10 +2833,10 @@
 (define (compiler-ir-instr-with-dst [instr : CompilerIrInstr] [dst : i64]) : CompilerIrInstr
   (compiler-ir-instr-map instr _ compiler-ir-dst-replace _ _ dst))
 
-;: The control-flow successor labels of a terminator: a Jump target, a branch's
-;: true then false label, a switch's default label, then a present
-;: TotalEnumSwitch trap label, then the case labels in order. Labels are not
-;: deduplicated. A BoundsCheck success label is not an edge.
+;: Control-flow successor labels of a terminator, not deduplicated: a Jump
+;: target, a branch's true then false label, a switch's default label, a
+;: TotalEnumSwitch trap label unless -1 (label-none, literal for in-module use),
+;: then the case labels in order. A BoundsCheck success label is not an edge.
 (defmacro (compiler-ir-instr-visit-successors
   [instr : Expr]
   [visitor : Expr]
@@ -2911,7 +2911,7 @@
       default-label
       trap-label)
       (,visitor ,@contexts default-label)
-      (if (= trap-label (compiler_ir_types.compiler-ir-label-none))
+      (if (= trap-label -1)
         unit
         (,visitor ,@contexts trap-label))
       (compiler-ir-switch-cases-visit cases ,visitor ,@contexts)]))

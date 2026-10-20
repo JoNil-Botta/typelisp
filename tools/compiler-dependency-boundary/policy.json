@@ -1,5 +1,10 @@
 [
   [
+    "src/compiler_abort.tl",
+    "support",
+    "Dependency-free out-of-line fatal diagnostic for compiler invariants (one extern, no imports)."
+  ],
+  [
     "src/compiler_ast_types.tl",
     "support",
     "Canonical source types and pooled node representation used by IR."

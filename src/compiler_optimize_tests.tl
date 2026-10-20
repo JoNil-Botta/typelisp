@@ -3920,6 +3920,71 @@
     (opt.opt-inline-input-chunks-disarm!)
     (opt-test-retire-input-chunks! address)))
 
+;; The callee-cost memo can hold a view of a body that still lives in its source
+;; chunk, such as a same-SCC callee priced from its unplaced original. Releasing
+;; that chunk must clear the memo first. Here the memo prices `input_leaf` from
+;; its body in chunk 1. While `input_dead` keeps chunk 1 pending, the entry
+;; stays. Placing `input_dead` releases the chunk: the release callback requires
+;; an empty memo before it destroys the chunk, and a later lookup of an
+;; identical live body must miss without reading the destroyed one.
+(test
+  optimizer-input-chunk-release-clears-callee-cost-memo
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [type-segment-bases : i64
+      (ast.ast-node-pool-context-type-segment-bases pools)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [bounds : (__tl_dyn-array i64) (__tl_make-array 0 2 4)]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new 2)]
+    [address : i64
+      (unsafe
+        (cast (ptr->int (ptr-addr-of state)) : i64))]
+    [input : ir.CompilerIrFunctionSeq
+      (opt-test-chunked-input pools (& state) (& functions) (& bounds))]
+    [indexed : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-clone-function-seq pools (& functions))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build indexed)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
+    [probe : ir.CompilerIrFunction
+      (ir.compiler-ir-clone-function pools (& (array-ref functions.slots 2)))]
+    (for [i (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots i))
+        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+    (opt.opt-inline-callee-cost-reset!)
+    (opt.opt-inline-callee-cost-record! (& (array-ref input.slots 2)) 0 37)
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      37
+      "the memo prices the leaf from its body in chunk 1")
+    (opt.opt-inline-input-chunks-arm!
+      (opt.OptInputRetirement.Retire
+        address
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!)
+      bounds)
+    (test.assert-true
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "well-formed bounds arm release")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 2)
+      0
+      "chunk 1 still has an unplaced original")
+    (test.assert-i64-eq
+      opt.opt-inline-callee-cost-count
+      1
+      "the memo keeps its entry while its chunk is held")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      1
+      "the last original releases chunk 1")
+    (test.assert-i64-eq (array-ref state.released 1) 1 "chunk 1 released once")
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      -1
+      "no memo entry views the released chunk")
+    (opt.opt-inline-input-chunks-disarm!)
+    (opt-test-retire-input-chunks! address)))
+
 (define (opt-test-input-retirement-pools) : unit
   (let
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]

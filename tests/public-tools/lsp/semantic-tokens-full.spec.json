@@ -7,7 +7,7 @@
     {"jsonpath_id": 3, "json_contains": "\"result\":{\"data\":[0,0,13,10,0,1,0,15,10,0]}"},
     {"jsonpath_id": 4, "raw_contains": "\"result\":{\"data\":[", "raw_not_contains": "\"result\":null"},
     {"jsonpath_id": 5, "json_contains": "\"result\":null", "jsonpath_result": null},
-    {"jsonpath_id": 6, "json_contains": "\"result\":null", "jsonpath_result": null},
+    {"jsonpath_id": 6, "raw_contains": "\"code\":-32602", "raw_contains": "params must be an object"},
     {"jsonpath_id": 7, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]
 }

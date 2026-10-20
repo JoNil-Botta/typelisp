@@ -5096,7 +5096,8 @@
           request.mode
           request.decls
           request.paths
-          request.cfgs)]
+          request.cfgs
+          request.opt-level)]
       [prepared : ResultBuildPackagePreparedRuntime
         (build-package-emit-preflighted-runtime
           request.entry-path

@@ -616,7 +616,8 @@
       roots
       Scalar
       (cfg_core.compiler-cfg-empty)
-      true)
+      true
+      1)
       [(Err error _)
         (let
           [message : diagnostic.CompilerDiagnostic (deref error)]

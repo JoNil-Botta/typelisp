@@ -25,6 +25,7 @@
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_profile_state as profile_state)
+(import compiler_allocation_profile as allocation_profile)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 (import compiler_spmd_numeric_policy as spmd_numeric)
 (import compiler_spmd_logical_gang as spmd_gang)
@@ -414,7 +415,21 @@
 ;; substate so one owner covers traversal/index state and lowerer arenas.
 (defstruct CompilerLowerArenaState
   (scratch-arena (__tl_dyn-array i64))
-  (ir-arena (__tl_dyn-array i64)))
+  (ir-arena (__tl_dyn-array i64))
+  ;; The lowered-IR chunk policy and directory; see `lower-ir-chunk-cells`.
+  (ir-chunk-cells (__tl_dyn-array i64)))
+
+;; With the opt2 chunk policy set (#9059), `ir-arena` holds only the shells and
+;; control storage of the escaped sequences (their slot arrays), and every
+;; function body is deep-cloned into a chunk arena; a chunk owns no other
+;; chunk's shells, metadata or bodies. The directory lives in its own arena and
+;; records each chunk's arena (0 once released) and the lower-sequence position
+;; of its first function; the next chunk's start ends a chunk's range.
+(defstruct LowerIrChunkDirectory
+  (handles (__tl_dyn-array i64))
+  (starts (__tl_dyn-array i64))
+  (count i64)
+  (escaped i64))
 
 ;; The cache is one owner-private dense cell. Its 15 scalar entries replace the
 ;; former process globals without copying a wide aggregate on every call query.
@@ -3284,14 +3299,23 @@
   (define (compiler-lower-profile-ir-arena
     [lower-state : CompilerLowerState]
     [point : String]) : unit
-    (compiler-lower-profile-counter
-      (str_cat.str-cat "ir_arena." point ".active")
-      (if (=
-        (compiler-lower-arena-state-ir-arena
-          (& (compiler-lower-state-arenas lower-state)))
-        0)
-        0
-        1))))
+    (let
+      [arenas : CompilerLowerArenaState
+        (compiler-lower-state-arenas lower-state)]
+      [live-chunks : i64 0]
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ir_arena." (string.copy (& point)) ".active")
+        (if (= (compiler-lower-arena-state-ir-arena (& arenas)) 0)
+          0
+          1))
+      ;; A chunked owner's bodies live in its body chunks (#9059).
+      (for [chunk (iterator.range 0 (compiler-lower-ir-chunk-count (& arenas)))]
+        (unless
+          (= (compiler-lower-ir-chunk-handle (& arenas) chunk) 0)
+          (set! live-chunks (+ live-chunks 1))))
+      (compiler-lower-profile-counter
+        (str_cat.str-cat "ir_arena." point ".chunks")
+        live-chunks))))
 
 (define (lower-expr-id-span
   [pools : (& pools ast.AstNodePoolContext)]
@@ -69342,9 +69366,86 @@
   (let
     [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [ir : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [chunk-cells : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (set! (array-ref scratch 0) 0)
     (set! (array-ref ir 0) 0)
-    (CompilerLowerArenaState scratch ir)))
+    (for [cell (iterator.range 0 4)]
+      (set! (array-ref chunk-cells cell) 0))
+    (CompilerLowerArenaState scratch ir chunk-cells)))
+
+;; `ir-chunk-cells` words: the chunk byte budget (0 keeps the whole-owner
+;; path), the directory's arena (0 until the first chunk), the directory box's
+;; address, and the chunk being filled (0 when none).
+(define lower-ir-chunk-budget-cell : i64
+  0)
+(define lower-ir-chunk-directory-arena-cell : i64
+  1)
+(define lower-ir-chunk-directory-cell : i64
+  2)
+(define lower-ir-chunk-current-cell : i64
+  3)
+
+;; The lowering request's chunk policy for this owner, set by the driver before
+;; each lowering: a positive byte budget makes the escape sites deep-clone
+;; bodies into chunk arenas for progressive level-2 retirement; 0 keeps the
+;; single whole-owner arena. Whole release keeps the policy, so a reused owner
+;; is reconfigured explicitly rather than inheriting another job's choice.
+(define (compiler-lower-arena-state-set-ir-chunk-budget!
+  [state : (& state CompilerLowerArenaState)]
+  [bytes : i64]) : unit
+  (set! (array-ref state.ir-chunk-cells lower-ir-chunk-budget-cell) bytes))
+
+(define (compiler-lower-arena-state-ir-chunk-budget
+  [state : (& state CompilerLowerArenaState)]) : i64
+  (array-ref state.ir-chunk-cells lower-ir-chunk-budget-cell))
+
+;; The directory box; only valid while the directory arena cell is nonzero.
+(define (compiler-lower-ir-chunk-directory
+  [state : (& state CompilerLowerArenaState)]) : (Box LowerIrChunkDirectory)
+  (let
+    [address : i64
+      (array-ref state.ir-chunk-cells lower-ir-chunk-directory-cell)]
+    (unsafe
+      (ptr-read
+        (ptr-cast (ptr-addr-of address) : (Ptr (Box LowerIrChunkDirectory)))))))
+
+;: Chunks escaped so far; 0 on the whole-owner path.
+(define (compiler-lower-ir-chunk-count
+  [state : (& state CompilerLowerArenaState)]) : i64
+  (if (= (array-ref state.ir-chunk-cells lower-ir-chunk-directory-arena-cell) 0)
+    0
+    (let
+      [directory : (Box LowerIrChunkDirectory)
+        (compiler-lower-ir-chunk-directory state)]
+      (__tl-box-place directory).count)))
+
+;: Lower-sequence position of chunk CHUNK's first function; the function
+;; count escaped so far for CHUNK = the chunk count, ending the last range.
+(define (compiler-lower-ir-chunk-start
+  [state : (& state CompilerLowerArenaState)]
+  [chunk : i64]) : i64
+  (let
+    [directory-box : (Box LowerIrChunkDirectory)
+      (compiler-lower-ir-chunk-directory state)]
+    [directory : (& directory-box LowerIrChunkDirectory)
+      (& (__tl-box-place directory-box))]
+    (if (< chunk directory.count)
+      (array-ref directory.starts chunk)
+      directory.escaped)))
+
+;: The chunk directory's own arena, or 0 before the first chunk.
+(define (compiler-lower-ir-chunk-directory-arena
+  [state : (& state CompilerLowerArenaState)]) : i64
+  (array-ref state.ir-chunk-cells lower-ir-chunk-directory-arena-cell))
+
+;: Chunk CHUNK's arena, or 0 once released.
+(define (compiler-lower-ir-chunk-handle
+  [state : (& state CompilerLowerArenaState)]
+  [chunk : i64]) : i64
+  (let
+    [directory-box : (Box LowerIrChunkDirectory)
+      (compiler-lower-ir-chunk-directory state)]
+    (array-ref (__tl-box-place directory-box).handles chunk)))
 
 (define (compiler-lower-arena-state-scratch-arena
   [state : (& state CompilerLowerArenaState)]) : i64
@@ -69393,12 +69494,132 @@
 (define (compiler-lower-arena-state-release-ir!
   [state : (& state CompilerLowerArenaState)]) : unit
   (let
-    [ir : i64 (compiler-lower-arena-state-ir-arena state)]
+    [directory-arena : i64
+      (array-ref state.ir-chunk-cells lower-ir-chunk-directory-arena-cell)]
     (unless
-      (= ir 0)
-      (set! (array-ref state.ir-arena 0) 0)
+      (= directory-arena 0)
+      (for [chunk (iterator.range 0 (compiler-lower-ir-chunk-count state))]
+        (compiler-lower-ir-chunk-release! state chunk))
+      (set!
+        (array-ref state.ir-chunk-cells lower-ir-chunk-directory-arena-cell)
+        0)
+      (set! (array-ref state.ir-chunk-cells lower-ir-chunk-directory-cell) 0)
+      (set! (array-ref state.ir-chunk-cells lower-ir-chunk-current-cell) 0)
       (unsafe
-        (arena.tl_arena_destroy ir)))))
+        (arena.tl_arena_destroy directory-arena)))
+    (let
+      [ir : i64 (compiler-lower-arena-state-ir-arena state)]
+      (unless
+        (= ir 0)
+        (set! (array-ref state.ir-arena 0) 0)
+        (unsafe
+          (arena.tl_arena_destroy ir))))))
+
+;; Destroy chunk CHUNK of this exact owner unless it is gone already, clearing
+;; its directory cell first. Idempotent; an index outside the directory does
+;; nothing.
+(define (compiler-lower-ir-chunk-release!
+  [state : (& state CompilerLowerArenaState)]
+  [chunk : i64]) : unit
+  (unless
+    (or (< chunk 0) (>= chunk (compiler-lower-ir-chunk-count state)))
+    (let
+      [directory-box : (Box LowerIrChunkDirectory)
+        (compiler-lower-ir-chunk-directory state)]
+      [directory : (&mut directory-box LowerIrChunkDirectory)
+        (&mut (__tl-box-place directory-box))]
+      [handle : i64 (array-ref directory.handles chunk)]
+      (unless
+        (= handle 0)
+        (set! (array-ref directory.handles chunk) 0)
+        (when
+          (=
+            (array-ref state.ir-chunk-cells lower-ir-chunk-current-cell)
+            handle)
+          (set! (array-ref state.ir-chunk-cells lower-ir-chunk-current-cell) 0))
+        (unsafe
+          (arena.tl_arena_destroy handle))))))
+
+;; The chunk the next escaped function body goes into. A new chunk starts when
+;; there is none yet or the current one has reached the byte budget; the check
+;; runs between complete function clones, so one oversized function can exceed
+;; the budget. The first chunk also creates the directory.
+(define (compiler-lower-ir-chunk-for-next-function!
+  [state : (& state CompilerLowerArenaState)]) : i64
+  (let
+    [current : i64 (array-ref state.ir-chunk-cells lower-ir-chunk-current-cell)]
+    (if (and
+      (!= current 0)
+      (<
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+          current)
+        (compiler-lower-arena-state-ir-chunk-budget state)))
+      current
+      (begin
+        (when
+          (=
+            (array-ref state.ir-chunk-cells lower-ir-chunk-directory-arena-cell)
+            0)
+          (let
+            [directory-arena : i64 (arena.tl_arena_make_small)]
+            [created : (Box LowerIrChunkDirectory)
+              (in-arena
+                (arena.Arena directory-arena)
+                (box
+                  (LowerIrChunkDirectory
+                    (__tl_make-array i64 64)
+                    (__tl_make-array i64 64)
+                    0
+                    0)))]
+            (set!
+              (array-ref
+                state.ir-chunk-cells
+                lower-ir-chunk-directory-arena-cell)
+              directory-arena)
+            (set!
+              (array-ref state.ir-chunk-cells lower-ir-chunk-directory-cell)
+              (unsafe
+                (ptr-read (ptr-cast (ptr-addr-of created) : (Ptr i64)))))))
+        (let
+          [directory-box : (Box LowerIrChunkDirectory)
+            (compiler-lower-ir-chunk-directory state)]
+          [directory : (&mut directory-box LowerIrChunkDirectory)
+            (&mut (__tl-box-place directory-box))]
+          [chunk : i64 directory.count]
+          [created : i64 (arena.tl_arena_make_small)]
+          (when
+            (>= chunk (array-length directory.handles))
+            (in-arena
+              (arena.Arena
+                (array-ref
+                  state.ir-chunk-cells
+                  lower-ir-chunk-directory-arena-cell))
+              (let
+                [size : i64 (* 2 (array-length directory.handles))]
+                [handles : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+                [starts : (__tl_dyn-array i64) (__tl_make-array i64 size)]
+                (for [i (iterator.range 0 chunk)]
+                  (set! (array-ref handles i) (array-ref directory.handles i))
+                  (set! (array-ref starts i) (array-ref directory.starts i)))
+                (set! directory.handles handles)
+                (set! directory.starts starts))))
+          (set! (array-ref directory.handles chunk) created)
+          (set! (array-ref directory.starts chunk) directory.escaped)
+          (set! directory.count (+ chunk 1))
+          (set!
+            (array-ref state.ir-chunk-cells lower-ir-chunk-current-cell)
+            created)
+          created)))))
+
+;; Count one more function escaped in lower-sequence order.
+(define (compiler-lower-ir-chunk-note-escaped!
+  [state : (& state CompilerLowerArenaState)]) : unit
+  (let
+    [directory-box : (Box LowerIrChunkDirectory)
+      (compiler-lower-ir-chunk-directory state)]
+    [directory : (&mut directory-box LowerIrChunkDirectory)
+      (&mut (__tl-box-place directory-box))]
+    (set! directory.escaped (+ directory.escaped 1))))
 
 (define (compiler-lower-arena-state-release! [state : CompilerLowerArenaState]) : unit
   (compiler-lower-arena-state-release-scratch! state)
@@ -69407,13 +69628,39 @@
 (define (lower-function-seq-escape-to-ir-arena
   [lower-state : CompilerLowerState]
   [functions : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (in-arena
-    (arena.Arena
-      (compiler-lower-arena-state-ensure-ir!
-        (& (compiler-lower-state-arenas lower-state))))
-    (ir.compiler-ir-clone-function-seq
-      (ast.ast-node-pool-reader-context-current)
-      (& functions))))
+  (let
+    [arenas : CompilerLowerArenaState (compiler-lower-state-arenas lower-state)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [carrier : i64 (compiler-lower-arena-state-ensure-ir! (& arenas))]
+    (if (= (compiler-lower-arena-state-ir-chunk-budget (& arenas)) 0)
+      (in-arena
+        (arena.Arena carrier)
+        (ir.compiler-ir-clone-function-seq pools (& functions)))
+      ;; Chunked: the sequence's slot array stays in the carrier, and each
+      ;; body is deep-cloned into the chunk its lower-sequence position falls
+      ;; in, so a released chunk takes no shell or other chunk's body with it.
+      (let
+        [builder : ir.CompilerIrFunctionBuilder
+          (in-arena
+            (arena.Arena carrier)
+            (ir.compiler-ir-function-builder-with-capacity functions.len))]
+        (for [i (iterator.range 0 functions.len)]
+          (let
+            [chunk : i64
+              (compiler-lower-ir-chunk-for-next-function! (& arenas))]
+            [body : ir.CompilerIrFunction
+              (in-arena
+                (arena.Arena chunk)
+                (ir.compiler-ir-clone-function
+                  pools
+                  (& (array-ref functions.slots i))))]
+            (in-arena
+              (arena.Arena carrier)
+              (ir.compiler-ir-function-builder-push! (&mut builder) body))
+            (compiler-lower-ir-chunk-note-escaped! (& arenas))))
+        (in-arena
+          (arena.Arena carrier)
+          (ir.compiler-ir-function-builder-to-seq builder))))))
 
 (define (lower-function-escaping
   [ctx : tc_core.TcContext]

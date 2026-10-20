@@ -16,6 +16,7 @@
 ;; Block labels are interned ids, so their maps are integer-keyed.
 (import (hashmap.hashmap i64 i64) as reg_label_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
+(import (hashmap.hashmap (Tuple i64 i64) i64) as reg_move_index)
 (import stdlib.vector)
 (import (vector.vector i64 core) as reg_ids)
 (import compiler_ast_types as ast)
@@ -596,6 +597,23 @@
 (defstruct CompilerRegMoveSeq
   (slots (__tl_dyn-array CompilerRegMove))
   (len i64))
+
+;; The index belongs to this single-consumer builder, not to retained sequence
+;; views. It maps full-width ordered pairs to their newest slot; querying both
+;; orientations preserves newest-first undirected strict upgrades. Both fields
+;; live in the function's scratch arena and only the sequence escapes building.
+(defstruct CompilerRegMoveBuilder
+  (moves CompilerRegMoveSeq)
+  (index reg_move_index.Map))
+
+(define (compiler-reg-move-builder-empty) : CompilerRegMoveBuilder
+  (let
+    [index : reg_move_index.Map (init)]
+    (CompilerRegMoveBuilder (compiler-reg-move-seq-empty) index)))
+
+(define (compiler-reg-move-builder-finish [builder : CompilerRegMoveBuilder]) : CompilerRegMoveSeq
+  (match builder
+    [(CompilerRegMoveBuilder moves _) moves]))
 
 ;; Deterministic move-copy classes used by scalar home coalescing. Roots are the
 ;; lowest var id in each class; allocation then reuses any assigned class home.
@@ -1494,94 +1512,55 @@
       (& func)
       (& (ir.compiler-ir-representation-index-empty)))))
 
-(define (compiler-reg-move-list-contains?
-  [moves : (& moves CompilerRegMoveSeq)]
-  [src : i64]
-  [dst : i64]) : bool
-  (let
-    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
-    [index : i64 (- moves.len 1)]
-    [found : bool false]
-    (while (and (>= index 0) (not found))
-      (let
-        [item : CompilerRegMove (array-ref slots index)]
-        [found-src : i64 item.src]
-        [found-dst : i64 item.dst]
-        (if (and (= found-src src) (= found-dst dst))
-          (set! found true)
-          unit))
-      (set! index (- index 1)))
-    found))
-
-(define (compiler-reg-move-list-contains-undirected?
-  [moves : (& moves CompilerRegMoveSeq)]
-  [src : i64]
-  [dst : i64]) : bool
-  (let
-    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
-    [index : i64 (- moves.len 1)]
-    [found : bool false]
-    (while (and (>= index 0) (not found))
-      (let
-        [item : CompilerRegMove (array-ref slots index)]
-        [found-src : i64 item.src]
-        [found-dst : i64 item.dst]
-        (if (or
-          (and (= found-src src) (= found-dst dst))
-          (and (= found-src dst) (= found-dst src)))
-          (set! found true)
-          unit))
-      (set! index (- index 1)))
-    found))
-
 (define (compiler-reg-move-list-empty? [moves : (& moves CompilerRegMoveSeq)]) : bool
   (= moves.len 0))
 
-;; Marks the NEWEST undirected match strict.
-(define (compiler-reg-move-list-mark-strict
-  [moves : CompilerRegMoveSeq]
+(define (compiler-reg-move-builder-slot
+  [builder : (& CompilerRegMoveBuilder)]
   [src : i64]
-  [dst : i64]) : CompilerRegMoveSeq
+  [dst : i64]
+  [undirected : bool]) : i64
   (let
-    [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
-    [index : i64 (- moves.len 1)]
-    (while (>= index 0)
-      (let
-        [item : CompilerRegMove (array-ref slots index)]
-        [found-src : i64 item.src]
-        [found-dst : i64 item.dst]
-        (if (or
-          (and (= found-src src) (= found-dst dst))
-          (and (= found-src dst) (= found-dst src)))
-          (begin
-            (set!
-              (array-ref slots index)
-              (CompilerRegMove found-src found-dst true))
-            (set! index (- 0 1)))
-          (set! index (- index 1)))))
-    moves))
+    [forward : i64
+      (reg_move_index.get-value-or (& builder.index) (tuple src dst) -1)]
+    (if undirected
+      (compiler-reg-max
+        forward
+        (reg_move_index.get-value-or (& builder.index) (tuple dst src) -1))
+      forward)))
 
 (define (compiler-reg-move-list-add
-  [moves : CompilerRegMoveSeq]
+  [builder : CompilerRegMoveBuilder]
   [src : i64]
   [dst : i64]
   [strict : bool]
-  [undirected : bool]) : CompilerRegMoveSeq
-  (if (= src dst)
-    moves
-    (if (if undirected
-      (compiler-reg-move-list-contains-undirected? moves src dst)
-      (compiler-reg-move-list-contains? moves src dst))
-      (if strict
-        (compiler-reg-move-list-mark-strict moves src dst)
-        moves)
-      (compiler-reg-move-seq-push moves (CompilerRegMove src dst strict)))))
+  [undirected : bool]) : CompilerRegMoveBuilder
+  (when
+    (!= src dst)
+    (if (>= (compiler-reg-move-builder-slot (& builder) src dst undirected) 0)
+      (when
+        strict
+        ;; Even a directed duplicate upgrades the newest *undirected* match.
+        (let
+          [slot : i64 (compiler-reg-move-builder-slot (& builder) src dst true)]
+          (set! (array-ref builder.moves.slots slot).strict true)))
+      (begin
+        (reg_move_index.insert-ref!
+          (&mut builder.index)
+          (tuple src dst)
+          builder.moves.len)
+        (set!
+          builder.moves
+          (compiler-reg-move-seq-push
+            builder.moves
+            (CompilerRegMove src dst strict))))))
+  builder)
 
 (define (compiler-reg-phi-input-moves
   [dst : i64]
   [inputs : ir.CompilerIrPhiInputSeq]
-  [moves : CompilerRegMoveSeq]
-  [strict-pairs : bool]) : CompilerRegMoveSeq
+  [moves : CompilerRegMoveBuilder]
+  [strict-pairs : bool]) : CompilerRegMoveBuilder
   (let
     [phi-inputs-at-2104-3 : ir.CompilerIrPhiInputSeq inputs]
     (if (<= phi-inputs-at-2104-3.len 0)
@@ -1595,7 +1574,7 @@
             phi-inputs-at-2104-3.slots
             (+ phi-inputs-at-2104-3.start 1)
             (- phi-inputs-at-2104-3.len 1))]
-        [tail : CompilerRegMoveSeq
+        [tail : CompilerRegMoveBuilder
           (compiler-reg-phi-input-moves dst rest moves strict-pairs)]
         (match value
           [(Var src)
@@ -1604,8 +1583,8 @@
 
 (define (compiler-reg-instr-moves
   [instr : (& ir.CompilerIrInstr)]
-  [moves : CompilerRegMoveSeq]
-  [strict-pairs : bool]) : CompilerRegMoveSeq
+  [moves : CompilerRegMoveBuilder]
+  [strict-pairs : bool]) : CompilerRegMoveBuilder
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(Mov dst src _)
       (match src
@@ -1618,13 +1597,13 @@
 
 (define (compiler-reg-instr-seq-moves
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [moves : CompilerRegMoveSeq]
-  [strict-pairs : bool]) : CompilerRegMoveSeq
+  [moves : CompilerRegMoveBuilder]
+  [strict-pairs : bool]) : CompilerRegMoveBuilder
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
     [index : i64 (- instrs.len 1)]
-    [out : CompilerRegMoveSeq moves]
+    [out : CompilerRegMoveBuilder moves]
     (while (>= index 0)
       (set!
         out
@@ -1634,14 +1613,14 @@
 
 (define (compiler-reg-block-list-moves
   [blocks : (& ir.CompilerIrBlockList)]
-  [moves : CompilerRegMoveSeq]
-  [strict-pairs : bool]) : CompilerRegMoveSeq
+  [moves : CompilerRegMoveBuilder]
+  [strict-pairs : bool]) : CompilerRegMoveBuilder
   (match blocks
     [(Array seq)
       (let
         [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [out : CompilerRegMoveSeq moves]
+        [out : CompilerRegMoveBuilder moves]
         (while (< i count)
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block _ instrs)
@@ -1656,10 +1635,11 @@
   [strict-pairs : bool]) : CompilerRegMoveSeq
   (match func
     [(Function _ _ _ _ blocks _)
-      (compiler-reg-block-list-moves
-        (& blocks)
-        (compiler-reg-move-seq-empty)
-        strict-pairs)]))
+      (compiler-reg-move-builder-finish
+        (compiler-reg-block-list-moves
+          (& blocks)
+          (compiler-reg-move-builder-empty)
+          strict-pairs))]))
 
 ;; M-C (part 1): a 64-bit-width integer cast (i64 <-> u64) is a pure register
 ;; copy -- the optimizer deliberately KEEPS same-width sign-reinterpreting casts
@@ -1960,7 +1940,7 @@
 ;; priority).
 (define (compiler-reg-cast-move-instr
   [instr : (& ir.CompilerIrInstr)]
-  [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
+  [moves : CompilerRegMoveBuilder]) : CompilerRegMoveBuilder
   (match instr
     [(Cast dst src from-ty to-ty)
       (match src
@@ -1973,12 +1953,12 @@
 
 (define (compiler-reg-cast-moves-seq
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
+  [moves : CompilerRegMoveBuilder]) : CompilerRegMoveBuilder
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
     [index : i64 (- instrs.len 1)]
-    [out : CompilerRegMoveSeq moves]
+    [out : CompilerRegMoveBuilder moves]
     (while (>= index 0)
       (set! out (compiler-reg-cast-move-instr (& (array-ref slots index)) out))
       (set! index (- index 1)))
@@ -1986,13 +1966,13 @@
 
 (define (compiler-reg-cast-moves-blocks
   [blocks : (& ir.CompilerIrBlockList)]
-  [moves : CompilerRegMoveSeq]) : CompilerRegMoveSeq
+  [moves : CompilerRegMoveBuilder]) : CompilerRegMoveBuilder
   (match blocks
     [(Array seq)
       (let
         [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [out : CompilerRegMoveSeq moves]
+        [out : CompilerRegMoveBuilder moves]
         (while (< i count)
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block _ instrs)
@@ -2111,11 +2091,11 @@
 (define (compiler-reg-destructive-add-value-tie
   [value : (& ir.CompilerIrValue)]
   [dst : i64]
-  [moves : CompilerRegMoveSeq]
+  [moves : CompilerRegMoveBuilder]
   [anchors : (& anchors (__tl_dyn-array i64))]
   [defs : (& defs (__tl_dyn-array i64))]
   [uses : (& uses (__tl_dyn-array i64))]
-  [eligible : (& eligible (__tl_dyn-array i64))]) : CompilerRegMoveSeq
+  [eligible : (& eligible (__tl_dyn-array i64))]) : CompilerRegMoveBuilder
   (match value
     [(Var src)
       (if (compiler-reg-destructive-candidate?
@@ -2143,12 +2123,12 @@
 
 (define (compiler-reg-destructive-tie-instr
   [instr : (& ir.CompilerIrInstr)]
-  [moves : CompilerRegMoveSeq]
+  [moves : CompilerRegMoveBuilder]
   [anchors : (& anchors (__tl_dyn-array i64))]
   [defs : (& defs (__tl_dyn-array i64))]
   [uses : (& uses (__tl_dyn-array i64))]
   [eligible : (& eligible (__tl_dyn-array i64))]
-  [prefer-rhs : (& prefer-rhs (__tl_dyn-array i64))]) : CompilerRegMoveSeq
+  [prefer-rhs : (& prefer-rhs (__tl_dyn-array i64))]) : CompilerRegMoveBuilder
   (match instr
     [(BinOp dst op lhs rhs _)
       (if (compiler-reg-binop-destructive-tie? (& op))
@@ -2192,11 +2172,11 @@
   [op : (& ir.CompilerIrBinOp)]
   [lhs : (& ir.CompilerIrValue)]
   [rhs : (& ir.CompilerIrValue)]
-  [moves : CompilerRegMoveSeq]
+  [moves : CompilerRegMoveBuilder]
   [anchors : (& anchors (__tl_dyn-array i64))]
   [defs : (& defs (__tl_dyn-array i64))]
   [uses : (& uses (__tl_dyn-array i64))]
-  [eligible : (& eligible (__tl_dyn-array i64))]) : CompilerRegMoveSeq
+  [eligible : (& eligible (__tl_dyn-array i64))]) : CompilerRegMoveBuilder
   ;; Select exactly one destructive home. Prefer lhs whenever it is an
   ;; eligible chain candidate; for commutative operations, rhs is the
   ;; deterministic fallback when lhs cannot participate. Adding both
@@ -2249,17 +2229,17 @@
 
 (define (compiler-reg-destructive-tie-moves-seq
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [moves : CompilerRegMoveSeq]
+  [moves : CompilerRegMoveBuilder]
   [anchors : (& anchors (__tl_dyn-array i64))]
   [defs : (& defs (__tl_dyn-array i64))]
   [uses : (& uses (__tl_dyn-array i64))]
   [eligible : (& eligible (__tl_dyn-array i64))]
-  [prefer-rhs : (& prefer-rhs (__tl_dyn-array i64))]) : CompilerRegMoveSeq
+  [prefer-rhs : (& prefer-rhs (__tl_dyn-array i64))]) : CompilerRegMoveBuilder
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
     [index : i64 (- instrs.len 1)]
-    [out : CompilerRegMoveSeq moves]
+    [out : CompilerRegMoveBuilder moves]
     (while (>= index 0)
       (set!
         out
@@ -2276,18 +2256,18 @@
 
 (define (compiler-reg-destructive-tie-moves-blocks
   [blocks : (& ir.CompilerIrBlockList)]
-  [moves : CompilerRegMoveSeq]
+  [moves : CompilerRegMoveBuilder]
   [anchors : (& (__tl_dyn-array i64))]
   [defs : (& (__tl_dyn-array i64))]
   [uses : (& (__tl_dyn-array i64))]
   [eligible : (& (__tl_dyn-array i64))]
-  [prefer-rhs : (& (__tl_dyn-array i64))]) : CompilerRegMoveSeq
+  [prefer-rhs : (& (__tl_dyn-array i64))]) : CompilerRegMoveBuilder
   (match blocks
     [(Array seq)
       (let
         [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [out : CompilerRegMoveSeq moves]
+        [out : CompilerRegMoveBuilder moves]
         (while (< i count)
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block _ instrs)
@@ -2306,9 +2286,9 @@
 
 (define (compiler-reg-function-destructive-tie-moves
   [func : (& ir.CompilerIrFunction)]
-  [moves : CompilerRegMoveSeq]
+  [moves : CompilerRegMoveBuilder]
   [eligible : (& (__tl_dyn-array i64))]
-  [prefer-rhs : (& (__tl_dyn-array i64))]) : CompilerRegMoveSeq
+  [prefer-rhs : (& (__tl_dyn-array i64))]) : CompilerRegMoveBuilder
   (match func
     [(Function _ _ _ vars blocks _)
       (let
@@ -2342,16 +2322,17 @@
   [prefer-rhs : (& (__tl_dyn-array i64))]) : CompilerRegMoveSeq
   (match func
     [(Function _ _ _ _ blocks _)
-      (compiler-reg-block-list-moves
-        (& blocks)
-        (compiler-reg-function-destructive-tie-moves
-          func
-          (compiler-reg-cast-moves-blocks
-            (& blocks)
-            (compiler-reg-move-seq-empty))
-          eligible
-          prefer-rhs)
-        strict-pairs)]))
+      (compiler-reg-move-builder-finish
+        (compiler-reg-block-list-moves
+          (& blocks)
+          (compiler-reg-function-destructive-tie-moves
+            func
+            (compiler-reg-cast-moves-blocks
+              (& blocks)
+              (compiler-reg-move-builder-empty))
+            eligible
+            prefer-rhs)
+          strict-pairs))]))
 
 (define (compiler-reg-move-list-filter-storage-identity
   [moves : (& CompilerRegMoveSeq)]

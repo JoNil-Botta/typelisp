@@ -848,24 +848,23 @@
 
 ;; Cuts every growing array but the blocks' instructions to its live length.
 (define (normalize-trim! [state : (&mut state NormalizeState)]) : unit
-  (begin
-    (normalize-cut! state.body.types state.type-count own.OwnershipType)
-    (normalize-cut! state.body.places state.place-count own.OwnershipPlace)
-    (normalize-cut! state.field-names state.place-count i64)
-    (normalize-cut! state.body.locals state.local-count own.OwnershipLocal)
-    (normalize-cut! state.body.blocks state.block-count own.OwnershipBlock)
-    (normalize-cut! state.body.loans state.loan-count own.OwnershipLoan)
-    (normalize-cut! state.nodes state.node-count NormalizeNode)
-    (normalize-cut! state.binders state.binder-count NormalizeBinder)
-    (normalize-cut! state.use-blocks state.use-count i64)
-    (normalize-cut! state.use-indices state.use-count i64)
-    (normalize-cut! state.use-places state.use-count i64)
-    (normalize-cut! state.flow-from state.flow-count i64)
-    (normalize-cut! state.flow-to state.flow-count i64)
-    (normalize-cut! state.flow-outlives state.flow-count bool)
-    (normalize-cut! state.flow-contents state.flow-count bool)
-    (normalize-cut! state.origin-places state.origin-count i64)
-    (normalize-cut! state.origin-loans state.origin-count i64)))
+  (normalize-cut! state.body.types state.type-count own.OwnershipType)
+  (normalize-cut! state.body.places state.place-count own.OwnershipPlace)
+  (normalize-cut! state.field-names state.place-count i64)
+  (normalize-cut! state.body.locals state.local-count own.OwnershipLocal)
+  (normalize-cut! state.body.blocks state.block-count own.OwnershipBlock)
+  (normalize-cut! state.body.loans state.loan-count own.OwnershipLoan)
+  (normalize-cut! state.nodes state.node-count NormalizeNode)
+  (normalize-cut! state.binders state.binder-count NormalizeBinder)
+  (normalize-cut! state.use-blocks state.use-count i64)
+  (normalize-cut! state.use-indices state.use-count i64)
+  (normalize-cut! state.use-places state.use-count i64)
+  (normalize-cut! state.flow-from state.flow-count i64)
+  (normalize-cut! state.flow-to state.flow-count i64)
+  (normalize-cut! state.flow-outlives state.flow-count bool)
+  (normalize-cut! state.flow-contents state.flow-count bool)
+  (normalize-cut! state.origin-places state.origin-count i64)
+  (normalize-cut! state.origin-loans state.origin-count i64))
 
 ;; Cuts every block's instructions to their live length, once
 ;; `normalize-insert-loan-uses!` has rebuilt the blocks it adds uses to.

@@ -8,7 +8,8 @@ set -eu
 # leave a successfully verified release draft again after the command returns.
 # Build the complete candidate under a private temporary tag instead. Only
 # after every asset is uploaded and the candidate is rechecked do we remove the
-# old alias and publish the prepared release with one explicit REST PATCH.
+# old release and publish the prepared release with one explicit REST PATCH.
+# Publishers must be serialized (the workflow uses stage0-bootstrap concurrency).
 #
 # The alias only moves forward along main. A candidate is promoted
 # while its commit is still on main and strictly newer than the commit the
@@ -242,8 +243,26 @@ delete_tag_if_exists() {
     fail "cannot inspect existing tag $tag_name"
 }
 
-delete_final_tag() {
-    delete_tag_if_exists "$FINAL_TAG"
+move_final_tag() {
+    # Never delete the stable tag: GitHub can process its deletion after the
+    # replacement is public and draft whichever release now holds that tag.
+    tag_error=${TMPDIR:-/tmp}/stage0-tag-move.$$
+    if gh api "repos/$REPO/git/ref/tags/$FINAL_TAG" --silent \
+        2>"$tag_error"; then
+        rm -f "$tag_error"
+        gh api --method PATCH "repos/$REPO/git/refs/tags/$FINAL_TAG" \
+            -f sha="$EXPECTED_SHA" -F force=true --silent
+        return $?
+    fi
+    if grep -F "HTTP 404" "$tag_error" >/dev/null 2>&1; then
+        rm -f "$tag_error"
+        gh api --method POST "repos/$REPO/git/refs" \
+            -f ref="refs/tags/$FINAL_TAG" -f sha="$EXPECTED_SHA" --silent
+        return $?
+    fi
+    cat "$tag_error" >&2 || true
+    rm -f "$tag_error"
+    fail "cannot move $FINAL_TAG to $EXPECTED_SHA; previous release retained"
 }
 
 delete_candidate_tag() {
@@ -312,7 +331,7 @@ candidate_newer_than_latest() {
 
 publish_latest() {
     # Validate every operator-controlled setting before creating a candidate,
-    # and especially before deleting the stable release/tag. A configuration
+    # and especially before replacing the stable release. A configuration
     # error must be a no-mutation failure rather than opening a cutover gap.
     attempts=${TYPELISP_STAGE0_PROMOTE_ATTEMPTS:-4}
     delay=${TYPELISP_STAGE0_PROMOTE_DELAY:-2}
@@ -423,13 +442,14 @@ EOF
         return 3
     fi
 
+    # Move the existing ref before removing the old release; release deletion
+    # leaves its tag intact. A failed move must retain the public predecessor.
+    move_final_tag || return 1
     CUTOVER_STARTED=1
     if [ -n "$existing_id" ]; then
         echo "[stage0-publish] removing previous $FINAL_TAG release $existing_id"
         delete_release "$existing_id"
     fi
-    delete_final_tag
-
     promote_error=${TMPDIR:-/tmp}/stage0-promote.$$
     promoted=false
     attempt=1
@@ -487,6 +507,41 @@ self_test() {
     mock_existing_ids=90
     mock_promote_drafts=false
     mock_promote_published=2026-08-09T00:00:00Z
+    mock_tag_state=present
+
+    # Exercise the real tag adapter, including its exact endpoint and payload.
+    gh() {
+        case "$*" in
+            "api repos/$REPO/git/ref/tags/$FINAL_TAG --silent")
+                printf 'inspect-tag:%s\n' "$FINAL_TAG" >> "$action_log"
+                case "$mock_tag_state" in
+                    absent | create-denied)
+                        echo 'gh: Not Found (HTTP 404)' >&2
+                        return 1
+                        ;;
+                esac
+                if [ "$mock_tag_state" = inspect-denied ]; then
+                    echo 'gh: Forbidden (HTTP 403)' >&2
+                    return 1
+                fi
+                ;;
+            "api --method PATCH repos/$REPO/git/refs/tags/$FINAL_TAG -f sha=$EXPECTED_SHA -F force=true --silent")
+                if [ "$mock_tag_state" = denied ]; then
+                    echo 'gh: Forbidden (HTTP 403)' >&2
+                    return 1
+                fi
+                printf 'move-tag:%s:%s\n' "$FINAL_TAG" "$EXPECTED_SHA" >> "$action_log"
+                ;;
+            "api --method POST repos/$REPO/git/refs -f ref=refs/tags/$FINAL_TAG -f sha=$EXPECTED_SHA --silent")
+                if [ "$mock_tag_state" = create-denied ]; then
+                    echo 'gh: Forbidden (HTTP 403)' >&2
+                    return 1
+                fi
+                printf 'create-tag:%s:%s\n' "$FINAL_TAG" "$EXPECTED_SHA" >> "$action_log"
+                ;;
+            *) self_test_fail "unexpected GitHub request: $*" ;;
+        esac
+    }
 
     current_main_sha() {
         count=$(cat "$main_counter")
@@ -529,9 +584,6 @@ self_test() {
     }
     delete_release() {
         printf 'delete-release:%s\n' "$1" >> "$action_log"
-    }
-    delete_final_tag() {
-        printf 'delete-tag:%s\n' "$FINAL_TAG" >> "$action_log"
     }
     delete_candidate_tag() {
         printf 'delete-candidate-tag:%s\n' "$CANDIDATE_TAG" >> "$action_log"
@@ -579,7 +631,7 @@ self_test() {
         [ "$case_status" -eq "$expected_status" ] ||
             self_test_fail "$case_name exited $case_status, expected $expected_status" || return 1
         if [ "$expected_status" -ne 0 ] &&
-            grep -E 'delete-release:90|delete-tag|promote:' "$action_log" >/dev/null 2>&1; then
+            grep -E 'delete-release:90|delete-tag|move-tag:|create-tag:|promote:' "$action_log" >/dev/null 2>&1; then
             self_test_fail "$case_name reached the stable cutover" || return 1
         fi
     }
@@ -612,8 +664,9 @@ list-existing
 main
 latest-target
 compare:$older_sha:$expected_sha
+inspect-tag:stage0-latest
+move-tag:stage0-latest:$expected_sha
 delete-release:90
-delete-tag:stage0-latest
 promote:100
 main"
     [ "$(cat "$action_log")" = "$expected_actions" ] ||
@@ -636,6 +689,30 @@ $expected_sha
 $expected_sha" "none
 none" ""
     run_case no-alias 0 || return 1
+    mock_tag_state=absent
+    reset_case "$expected_sha
+$expected_sha
+$expected_sha" "none
+none" ""
+    run_case missing-tag 0 || return 1
+    grep -F "create-tag:$FINAL_TAG:$expected_sha" "$action_log" >/dev/null 2>&1 ||
+        self_test_fail "missing tag was not created" || return 1
+    mock_tag_state=denied
+    reset_case "$expected_sha
+$expected_sha" "$older_sha
+$older_sha" "$advance"
+    run_case tag-update-denied 1 || return 1
+    mock_tag_state=inspect-denied
+    reset_case "$expected_sha
+$expected_sha" "$older_sha
+$older_sha" "$advance"
+    run_case tag-inspection-denied 1 || return 1
+    mock_tag_state=create-denied
+    reset_case "$expected_sha
+$expected_sha" "$older_sha
+$older_sha" "$advance"
+    run_case tag-create-denied 1 || return 1
+    mock_tag_state=present
     reset_case "$expected_sha
 $expected_sha
 $expected_sha" "$older_sha

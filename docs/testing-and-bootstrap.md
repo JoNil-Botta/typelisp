@@ -152,6 +152,14 @@ scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe #
 `build-stage0.sh` compiles `src/main.tl` with the seed and links through the
 host toolchain, so a stage0 never depends on its own `build` command.
 
+The serialized publisher uploads a complete private candidate before replacing
+the convenience release. It moves `stage0-latest` to the new commit without
+deleting that tag: delayed GitHub tag-deletion events can make a replacement
+release draft. The verifier checks the published release and all four stable
+asset URLs immediately, then re-reads the same release by ID after three
+minutes and repeats the public checks. A late draft transition fails the job
+with the release ID for diagnosis; permanent releases remain available.
+
 The shell and PowerShell fetchers recover when `stage0-latest` returns 404,
 including when GitHub hides it as a draft. They select the newest published
 `stage0-YYYYMMDD-HHMMSS-r<run>` release with the host asset and `SHA256SUMS`,

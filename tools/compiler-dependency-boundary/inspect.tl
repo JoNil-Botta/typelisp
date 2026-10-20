@@ -12,6 +12,7 @@
 (import compiler_owned_view as owned)
 (import sym_i64_env)
 (import compiler_target_cfg_core as target_cfg)
+(import cli_option_core as cli_option)
 (import stdlib.vector)
 (import (vector.vector String) as strings)
 (import stdlib.io)
@@ -74,7 +75,7 @@
       (while (< index (io.arg-count))
         (set! cfgs (parser.compiler-cfg-enable cfgs (io.arg index)))
         (set! index (+ index 1)))
-      (match (target_cfg.compiler-target-cfg-parse (io.arg 2))
+      (match (cli_option.cli-option-target (io.arg 2))
         [(target_cfg.ResultCompilerTargetCfg.Ok target)
           (inspect (io.arg 1) (target_cfg.compiler-target-cfgs target cfgs))]
         [(target_cfg.ResultCompilerTargetCfg.Err message)

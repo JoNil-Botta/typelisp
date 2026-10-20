@@ -8,6 +8,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
+(import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
 (import compiler_backend as backend)
 (import compiler_driver_core as driver)
@@ -36,12 +37,6 @@
 (defenum ResultRunCliConfig
   (Ok RunCliConfig)
   (Err String))
-
-(define (run-cli-unknown-target [value : String]) : String
-  (str_cat.str-cat "run: unknown target " value ""))
-
-(define (run-cli-unknown-opt-level [value : String]) : String
-  (str_cat.str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
 
 (define (run-cli-rewrite-build-error [message : String]) : String
   (let
@@ -87,7 +82,8 @@
               release
               opt-level
               lock-policy
-              stdlib-roots)
+              stdlib-roots
+              cfg-names)
             (Ok
               (Package
                 (build_cli_core.BuildConfig.Package
@@ -100,7 +96,8 @@
                   release
                   opt-level
                   lock-policy
-                  stdlib-roots)
+                  stdlib-roots
+                  cfg-names)
                 runtime-args))]
           [(Source)
             (Err
@@ -119,51 +116,16 @@
            --link-search <dir> --link-arg <arg>"
           (+ idx 1)
           count)]
-      [target : backend.CompilerBackendTarget
-        (build_run_core.source-tool-default-target)]
-      [mode : backend.CompilerBackendMode (Scalar)]
-      [stdlib-roots : cli_svec.Vec (cli_svec.new)]
-      [cfgs : cli_svec.Vec (cli_svec.new)]
       [runtime-args : process.ProcessStringList (process.args-empty)]
-      [opt-level : i64 (opt.compiler-optimize-default-level)]
       [link-inputs : build_run_core.SourceToolLinkInputs
         (build_run_core.source-tool-link-inputs-empty)]
+      [options : cli_option.CliCompileOptions
+        (cli_option.cli-compile-options
+          (target_cfg.compiler-target-cfg-host)
+          (opt.compiler-optimize-default-level))]
       (while (cli_option.cli-args-next! (&mut args))
         (cond
-          [(string.eq args.name "--stdlib-root")
-            (cli_svec.push-ref!
-              (&mut stdlib-roots)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "--cfg")
-            (cli_svec.push-ref!
-              (&mut cfgs)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "--target")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (match (build_run_core.source-tool-target (string.copy (& value)))
-                [(Ok parsed-target) (set! target parsed-target)]
-                [(Err _)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (run-cli-unknown-target value))]))]
-          [(string.eq args.name "--opt-level")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              [level : i64 (cli_option.cli-option-opt-level (& value))]
-              (if (< level 0)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (run-cli-unknown-opt-level value))
-                (set! opt-level level)))]
-          [(string.eq args.name "--debug")
-            (ir.compiler-debug-info-set-enabled! true)]
-          [(string.eq args.name "--backend-mode")
-            (match (build_run_core.source-tool-backend-mode
-              "run"
-              (cli_option.cli-args-value (& args)))
-              [(Ok parsed-mode) (set! mode parsed-mode)]
-              [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
+          [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
           [(string.eq args.name "--link-lib")
             (set!
               link-inputs
@@ -194,17 +156,18 @@
                 count
                 runtime-args))
             (cli_option.cli-args-stop! (&mut args))]))
+      (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
       (if args.failed
         (Err args.error)
         (Ok
           (Config
             source
-            target
-            mode
-            stdlib-roots
-            cfgs
+            (build_run_core.source-tool-backend-target options.target)
+            (build_run_core.source-tool-backend-mode options.backend-mode)
+            options.stdlib-roots
+            options.cfgs
             runtime-args
-            opt-level
+            options.opt-level
             link-inputs))))))
 
 (define (run-cli-run-source-with-doctests
@@ -229,8 +192,7 @@
             (cli_svec.from-slice (cli_svec.view (& stdlib-roots)))
             (driver.compiler-driver-target-cfgs
               target
-              (build_run_core.source-tool-cfg-names-to-env
-                (cli_svec.from-slice (cli_svec.view (& cfgs)))))
+              (target_cfg.compiler-target-user-cfgs (& cfgs)))
             "typecheck-prefix-inline-run")]
         (if (= inline-test-status 0)
           (begin
@@ -298,9 +260,10 @@
   [opt-level : i64]
   [lock-policy : build_cli_core.BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : (& cfg-names cli_svec.Vec)]
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
-  (match (build_cli_core.build-parse-target (string.copy (& target-text)))
+  (match (build_run_core.source-tool-parse-target (string.copy (& target-text)))
     [(Err message)
       (io.print-error (run-cli-rewrite-build-error message))
       1]
@@ -327,6 +290,7 @@
                   profile
                   lock-policy
                   stdlib-roots
+                  (& cfg-names)
                   (string.copy (& producer-identity))
                   false)]
               (if (= build-status 0)
@@ -355,7 +319,8 @@
         _
         opt-level
         lock-policy
-        stdlib-roots)
+        stdlib-roots
+        cfg-names)
       (let
         [resolved-manifest : load.CompilerLoadMaybePath
           (if has-manifest
@@ -376,6 +341,7 @@
               opt-level
               lock-policy
               stdlib-roots
+              (& cfg-names)
               producer-identity
               runtime-args)]))]
     [_ 1]))

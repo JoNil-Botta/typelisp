@@ -3546,6 +3546,11 @@
     (unsafe
       (arena.tl_arena_destroy source))))
 
+;; Whole-owner retirement test: no chunk bounds are supplied, so no chunk is
+;; ever released.
+(define (opt-test-release-no-chunk! [_address : i64] [_chunk : i64]) : unit
+  (test.assert-true false "no chunk is released without chunk bounds"))
+
 (define (opt-test-input-retirement
   [pools : ast.AstNodePoolContext]
   [functions : ir.CompilerIrFunctionSeq]
@@ -3578,7 +3583,8 @@
         (opt.OptInputRetirement.Retire
           (unsafe
             (cast (ptr->int (ptr-addr-of state)) : i64))
-          opt-test-retire-input!)))
+          opt-test-retire-input!
+          opt-test-release-no-chunk!)))
     (match (with-test-inline-mode
       (opt.optimize-program
         (Program
@@ -3634,6 +3640,350 @@
         (ir.compiler-ir-function-seq-empty)
         level
         (= authority 1)))))
+
+;; Progressive level-2 retirement (#9059). The source keeps its bodies in chunk
+;; arenas and its shells in a separate carrier, as a chunked lowered owner does;
+;; the request's bounds are lower-sequence positions.
+(defstruct OptInputChunkTestState
+  (chunks (__tl_dyn-array i64))
+  (carrier (__tl_dyn-array i64))
+  (released (__tl_dyn-array i64))
+  (whole (__tl_dyn-array i64)))
+
+(define (opt-test-input-chunk-state [address : i64]) : OptInputChunkTestState
+  (unsafe
+    (ptr-read (int->ptr address : (Ptr OptInputChunkTestState)))))
+
+;; A chunk is released at most once, in range, and only after the cost memo was
+;; cleared; its arena is destroyed, so a later read of its bodies faults under
+;; the retired-arena guard.
+(define (opt-test-release-input-chunk! [address : i64] [chunk : i64]) : unit
+  (let
+    [state : OptInputChunkTestState (opt-test-input-chunk-state address)]
+    (test.assert-true
+      (and (>= chunk 0) (< chunk (array-length state.chunks)))
+      "a released chunk is in range")
+    (test.assert-i64-eq
+      (array-ref state.released chunk)
+      0
+      "each chunk is released once")
+    (test.assert-i64-eq
+      opt.opt-inline-callee-cost-count
+      0
+      "the callee-cost memo is cleared before a chunk is released")
+    (+= (array-ref state.released chunk) 1)
+    (let
+      [handle : i64 (array-ref state.chunks chunk)]
+      (set! (array-ref state.chunks chunk) 0)
+      (unsafe
+        (arena.tl_arena_destroy handle)))))
+
+;; Whole retirement releases whatever chunk is left and then the carrier.
+(define (opt-test-retire-input-chunks! [address : i64]) : unit
+  (let
+    [state : OptInputChunkTestState (opt-test-input-chunk-state address)]
+    (+= (array-ref state.whole 0) 1)
+    (for [chunk (iterator.range 0 (array-length state.chunks))]
+      (let
+        [handle : i64 (array-ref state.chunks chunk)]
+        (unless
+          (= handle 0)
+          (set! (array-ref state.chunks chunk) 0)
+          (unsafe
+            (arena.tl_arena_destroy handle)))))
+    (let
+      [carrier : i64 (array-ref state.carrier 0)]
+      (unless
+        (= carrier 0)
+        (set! (array-ref state.carrier 0) 0)
+        (unsafe
+          (arena.tl_arena_destroy carrier))))))
+
+(define (opt-test-input-chunk-state-new [chunks : i64]) : OptInputChunkTestState
+  (let
+    [state : OptInputChunkTestState
+      (OptInputChunkTestState
+        (__tl_make-array i64 chunks)
+        (__tl_make-array i64 1)
+        (__tl_make-array i64 chunks)
+        (__tl_make-array i64 1))]
+    (for [chunk (iterator.range 0 chunks)]
+      (set! (array-ref state.chunks chunk) (arena.tl_arena_make)))
+    (set! (array-ref state.carrier 0) (arena.tl_arena_make))
+    state))
+
+;; The chunk lower-sequence position POSITION falls in under BOUNDS.
+(define (opt-test-chunk-of
+  [bounds : (& bounds (__tl_dyn-array i64))]
+  [position : i64]) : i64
+  (let
+    [chunk : i64 0]
+    (while (>= position (array-ref bounds (+ chunk 1)))
+      (set! chunk (+ chunk 1)))
+    chunk))
+
+;; Clone FUNCTIONS the way a chunked lowered owner escapes them: each body into
+;; the chunk its position falls in under BOUNDS, the shells into the carrier.
+(define (opt-test-chunked-input
+  [pools : ast.AstNodePoolContext]
+  [state : (& state OptInputChunkTestState)]
+  [functions : (& functions ir.CompilerIrFunctionSeq)]
+  [bounds : (& bounds (__tl_dyn-array i64))]) : ir.CompilerIrFunctionSeq
+  (let
+    [carrier : i64 (array-ref state.carrier 0)]
+    [builder : ir.CompilerIrFunctionBuilder
+      (in-arena
+        (arena.Arena carrier)
+        (ir.compiler-ir-function-builder-with-capacity functions.len))]
+    (for [i (iterator.range 0 functions.len)]
+      (let
+        [body : ir.CompilerIrFunction
+          (in-arena
+            (arena.Arena (array-ref state.chunks (opt-test-chunk-of bounds i)))
+            (ir.compiler-ir-clone-function
+              pools
+              (& (array-ref functions.slots i))))]
+        (in-arena
+          (arena.Arena carrier)
+          (ir.compiler-ir-function-builder-push! (&mut builder) body))))
+    (in-arena
+      (arena.Arena carrier)
+      (ir.compiler-ir-function-builder-to-seq builder))))
+
+;; Optimize FUNCTIONS at level 2 from chunk arenas split at BOUNDS, with chunk
+;; authority, and compare with an unchunked control. Every chunk is released
+;; once during the walk and the whole retirement still runs after it.
+(define (opt-test-chunk-release-matches-control
+  [functions : ir.CompilerIrFunctionSeq]
+  [bounds : (__tl_dyn-array i64)]) : unit
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [chunks : i64 (- (array-length bounds) 1)]
+    [control : ir.CompilerIrProgram
+      (match (with-test-inline-mode
+        (opt.optimize-program
+          (Program
+            (ir.compiler-ir-global-seq-empty)
+            (ir.compiler-ir-clone-function-seq pools (& functions))
+            (ir.compiler-ir-extern-seq-empty))
+          (ir.compiler-source-spans-empty)
+          (opt.optimize-request pools 2)))
+        [(Program result _) result])]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new chunks)]
+    [input : ir.CompilerIrFunctionSeq
+      (opt-test-chunked-input pools (& state) (& functions) (& bounds))]
+    [request : opt.OptimizeRequest (opt.optimize-request pools 2)]
+    (set!
+      request.input-retirement
+      (opt.OptInputRetirement.Retire
+        (unsafe
+          (cast (ptr->int (ptr-addr-of state)) : i64))
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!))
+    (set! request.input-chunk-bounds bounds)
+    (match (with-test-inline-mode
+      (opt.optimize-program
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          input
+          (ir.compiler-ir-extern-seq-empty))
+        (ir.compiler-source-spans-empty)
+        request))
+      [(Program result _)
+        (for [chunk (iterator.range 0 chunks)]
+          (test.assert-i64-eq
+            (array-ref state.released chunk)
+            1
+            "every chunk is released once during the walk"))
+        (test.assert-i64-eq (array-ref state.whole 0) 1 "whole retirement ran")
+        (test.assert-true
+          (opt-test-program-eq
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            control
+            result)
+          "progressive release preserves the optimized program")])))
+
+;; Chunk 0 holds `main` and `input_loop`, which tailrec rewrites before the
+;; walk; chunk 1 holds `input_leaf` and `input_dead`.
+(test
+  optimizer-input-chunk-release
+  (opt-test-chunk-release-matches-control
+    (opt-input-arena-functions)
+    (__tl_make-array 0 2 4)))
+
+;; `cyc_f` and `cyc_g` call each other, and each sits alone in its chunk. The
+;; walk releases the first-placed member's chunk while the other member is
+;; still unplaced; that member's rewrite then reads the placed clone.
+(test
+  optimizer-input-chunk-release-cyclic-scc
+  (opt-test-chunk-release-matches-control
+    (match (irt.program
+      "function @cyc_f(n=%0:i64) -> i64 vars 3 {
+       entry:
+         %1 = call cyc_leaf(%0) : i64
+         %2 = call cyc_g(%1) : i64
+         return %2
+       }
+       function @cyc_g(n=%0:i64) -> i64 vars 2 {
+       entry:
+         %1 = call cyc_f(%0) : i64
+         return %1
+       }
+       function @main() -> i64 vars 1 {
+       entry:
+         %0 = call cyc_f(3) : i64
+         return %0
+       }
+       function @cyc_leaf(n=%0:i64) -> i64 vars 1 {
+       entry:
+         return 7
+       }")
+      [(Program _ functions _) functions])
+    (__tl_make-array 0 1 2 4)))
+
+;; The stage validates bounds against its actual input before any release, and
+;; consumes each slot's tag once; anything malformed fails closed.
+(test
+  optimizer-input-chunk-validation
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [indexed : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-clone-function-seq pools (& functions))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build indexed)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new 3)]
+    [address : i64
+      (unsafe
+        (cast (ptr->int (ptr-addr-of state)) : i64))]
+    [retire : opt.OptInputRetirement
+      (opt.OptInputRetirement.Retire
+        address
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!)]
+    (for [i (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots i))
+        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+    (opt.opt-inline-input-chunks-arm!
+      (opt.OptInputRetirement.Retain)
+      (__tl_make-array 0 2 4))
+    (test.assert-false
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "no release without an authority")
+    (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 2 5))
+    (test.assert-false
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "bounds must cover exactly the input")
+    (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 0 4))
+    (test.assert-false
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "bounds must rise strictly")
+    (let
+      [saved : i64 (array-ref names 1)]
+      (set! (array-ref names 1) (array-ref names 2))
+      (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 2 4))
+      (test.assert-false
+        (opt.opt-inline-input-chunks-begin! (& names) (& index))
+        "every slot keeps its input name")
+      (set! (array-ref names 1) saved))
+    (opt.opt-inline-input-chunks-arm! retire (__tl_make-array 0 3 4))
+    (test.assert-true
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "well-formed bounds arm release")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      1
+      "a one-function chunk is released at its placement")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      -1
+      "a second placement of a slot is refused")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 7)
+      -1
+      "a placement outside the input is refused")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 0)
+      0
+      "an unplaced original keeps its chunk")
+    (test.assert-i64-eq (array-ref state.released 0) 0 "chunk 0 is still held")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 1)
+      0
+      "chunk 0 still has an unplaced original")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 2)
+      1
+      "the last original releases its chunk")
+    (test.assert-i64-eq (array-ref state.released 0) 1 "chunk 0 released once")
+    (test.assert-i64-eq (array-ref state.released 1) 1 "chunk 1 released once")
+    (opt.opt-inline-input-chunks-disarm!)
+    (opt-test-retire-input-chunks! address)))
+
+;; The callee-cost memo can hold a view of a body that still lives in its source
+;; chunk, such as a same-SCC callee priced from its unplaced original. Releasing
+;; that chunk must clear the memo first. Here the memo prices `input_leaf` from
+;; its body in chunk 1. While `input_dead` keeps chunk 1 pending, the entry
+;; stays. Placing `input_dead` releases the chunk: the release callback requires
+;; an empty memo before it destroys the chunk, and a later lookup of an
+;; identical live body must miss without reading the destroyed one.
+(test
+  optimizer-input-chunk-release-clears-callee-cost-memo
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [type-segment-bases : i64
+      (ast.ast-node-pool-context-type-segment-bases pools)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [bounds : (__tl_dyn-array i64) (__tl_make-array 0 2 4)]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new 2)]
+    [address : i64
+      (unsafe
+        (cast (ptr->int (ptr-addr-of state)) : i64))]
+    [input : ir.CompilerIrFunctionSeq
+      (opt-test-chunked-input pools (& state) (& functions) (& bounds))]
+    [indexed : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-clone-function-seq pools (& functions))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build indexed)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
+    [probe : ir.CompilerIrFunction
+      (ir.compiler-ir-clone-function pools (& (array-ref functions.slots 2)))]
+    (for [i (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots i))
+        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+    (opt.opt-inline-callee-cost-reset!)
+    (opt.opt-inline-callee-cost-record! (& (array-ref input.slots 2)) 0 37)
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      37
+      "the memo prices the leaf from its body in chunk 1")
+    (opt.opt-inline-input-chunks-arm!
+      (opt.OptInputRetirement.Retire
+        address
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!)
+      bounds)
+    (test.assert-true
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "well-formed bounds arm release")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 2)
+      0
+      "chunk 1 still has an unplaced original")
+    (test.assert-i64-eq
+      opt.opt-inline-callee-cost-count
+      1
+      "the memo keeps its entry while its chunk is held")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      1
+      "the last original releases chunk 1")
+    (test.assert-i64-eq (array-ref state.released 1) 1 "chunk 1 released once")
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      -1
+      "no memo entry views the released chunk")
+    (opt.opt-inline-input-chunks-disarm!)
+    (opt-test-retire-input-chunks! address)))
 
 (define (opt-test-input-retirement-pools) : unit
   (let
@@ -3955,6 +4305,22 @@
         907
         44
         12)
+      ;; A collision adds a decimal attempt to the copy-0 spelling; it is
+      ;; still one recognized clone suffix, including under later clones.
+      (opt-location-lookup-ok?
+        spans
+        checked
+        (opt-bounds-span-check "bce_span_probe_body__u01")
+        907
+        44
+        12)
+      (opt-location-lookup-ok?
+        spans
+        checked
+        (opt-bounds-span-check "bce_span_probe_body__u01__licm_false")
+        907
+        44
+        12)
       ;; The fallback never invents a location: an unregistered base stays
       ;; unlocated, a look-alike no clone family produces is not stripped, and
       ;; the retry stays inside the function that owns the check.
@@ -3991,7 +4357,55 @@
           (opt.opt-licm-unswitch-clone-label body-labels body))
         "bce_span_probe_body__licm_false")
       (string.eq (opt.opt-unroll-copy-suffix 0) "__u0")
-      (string.eq (opt.opt-unroll-copy-suffix 12) "__u12"))))
+      (string.eq (opt.opt-unroll-copy-suffix 12) "__u12")
+      (compiler-optimize-spans-ubound-entry-copy-ok?))))
+
+(define (compiler-optimize-spans-ubound-entry-copy-ok?) : bool
+  (let
+    [checked : i64 (opt-test-symbol "main")]
+    [original : ir.CompilerIrInstr (opt-bounds-span-check "head_ok")]
+    [spans : ir.CompilerSourceSpans
+      (ir.compiler-source-spans-insert-instr-located
+        (opt-spans-base)
+        (ir.compiler-ir-symbol-typed-id checked)
+        (& original)
+        907
+        (opt-test-span 44 12))]
+    [result : ir.CompilerIrFunction
+      (opt-ubound-result "main" (opt-ubound-accepted-blocks))]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+    [join : ir.CompilerIrBlock
+      (opt-ubound-block-of blocks (opt-ubound-label "pre__ubound_join"))]
+    [entry-check : ir.CompilerIrInstr (opt-block-instr-at join 1)]
+    [collision-blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+ bounds_check %0, %1 message \"head_ok__u0\"
+ return 0")]
+    [collision : i64
+      (opt.opt-ubound-fresh-label
+        (& collision-blocks)
+        (opt-ubound-label "head_ok")
+        (opt.opt-unroll-copy-suffix 0)
+        0)]
+    (and
+      (match (opt-block-instr-at join 1)
+        [(BoundsCheck (I64 0) (Var 4) ok)
+          (string.eq (ir.compiler-ir-label-text ok) "head_ok__u0")]
+        [_ false])
+      (opt-location-lookup-ok? spans checked entry-check 907 44 12)
+      (string.eq (ir.compiler-ir-label-text collision) "head_ok__u01")
+      (opt-location-lookup-ok?
+        spans
+        checked
+        (BoundsCheck (I64 0) (Var 4) collision)
+        907
+        44
+        12)
+      (opt-span-lookup-missing?
+        spans
+        (opt-test-symbol "ubound_other_owner")
+        (opt-block-instr-at join 1)))))
 
 (test
   bounds-check-clone-suffix-span-fallback
@@ -70241,6 +70655,178 @@ return 0" true)
     (return 2))
   42)
 
+(defenum OptUboundSelfLoopCase
+  (Normal)
+  (TwoPhis)
+  (Minimal)
+  (CallBody)
+  (NoGuard)
+  (OpaqueLength)
+  (PriorEffect)
+  (SharedCompare)
+  (NegativeSeed))
+
+;; Minimal has no body instruction between its check and compare: retaining
+;; the old prefix while replacing the latch would accidentally keep the check.
+(define (opt-ubound-self-loop-function [kind : OptUboundSelfLoopCase]) : ir.CompilerIrFunction
+  (let
+    [seed : String
+      (match kind
+        [(NegativeSeed) "-1"]
+        [_ "0"])]
+    (irt.func
+      (str_cat.str-cat
+        "function @ubound_self(n=%0:i64, buf=%1:i64) -> i64 vars 13 {\nentry:\n"
+        (match kind
+          [(NoGuard) "%2 = eq %0, 7 : i64\n"]
+          [_ (str_cat.str-cat "%2 = lt " (string.copy (& seed)) ", %0 : i64\n")])
+        "branch %2, pre, exit\npre:\n"
+        (match kind
+          [(OpaqueLength) "%4 = mov %1 : i64\n"]
+          [_ "%3 = gep %1, 1 : i64\n%4 = load %3 : i64\n"])
+        (match kind
+          [(Minimal) "%9 = mov %0 : i64\n"]
+          [_ ""])
+        "jump head\nhead:\n%5 = phi ["
+        seed
+        ", pre], [%9, head] : i64\n"
+        (match kind
+          [(TwoPhis) "%6 = phi [10, pre], [%11, head] : i64\n"]
+          [_ ""])
+        (match kind
+          [(PriorEffect) "%11 = mov 0 : i64\n"]
+          [_ ""])
+        "bounds_check %5, %4 message \"self_ok\"\n"
+        (match kind
+          [(TwoPhis) "%11 = add %6, %5 : i64\n"]
+          [_ ""])
+        (match kind
+          [(Minimal) ""]
+          [(CallBody) "%9 = call ubound_clean(%5) : i64\n"]
+          [_ "%9 = add %5, 1 : i64\n"])
+        "%10 = lt %9, %0 : i64\nbranch %10, head, exit\nexit:\n"
+        (match kind
+          [(SharedCompare) "%11 = phi [false, entry], [%10, head] : bool\n"]
+          [_ ""])
+        "%12 = phi [0, entry], [%9, head] : i64\nreturn %12\n}"))))
+
+(define (compiler-optimize-ubound-self-loop-self-test) : i64
+  (for [case-id (iterator.range 0 4)]
+    (let
+      [kind : OptUboundSelfLoopCase
+        (match case-id
+          [0 (Normal)]
+          [1 (TwoPhis)]
+          [2 (Minimal)]
+          [_ (CallBody)])]
+      [before : ir.CompilerIrFunction (opt-ubound-self-loop-function kind)]
+      (unless
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& before))))
+        (return 1))
+      (match (opt.opt-ubound-function-pass 0 before)
+        [(Result result changed)
+          (unless changed (return 2))
+          (unless (= (opt.opt-function-frame result) 16) (return 3))
+          (unless
+            (opt.opt-verify-ok? (& (opt.opt-verify-function (& result))))
+            (return 4))
+          (let
+            [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+            [head : i64 (opt-ubound-label "head")]
+            [join : i64 (opt-ubound-label "pre__ubound_join")]
+            [chk : i64 (opt-ubound-label "head__ubound_exit")]
+            [trap : i64 (opt-ubound-label "head__ubound_trap")]
+            [block : ir.CompilerIrBlock (opt-ubound-block-of blocks head)]
+            [trap-block : ir.CompilerIrBlock (opt-ubound-block-of blocks trap)]
+            [count : i64 (opt-block-instr-count block)]
+            [phi-count : i64
+              (match kind
+                [(TwoPhis) 2]
+                [_ 1])]
+            (for [pos (iterator.range 0 count)]
+              (match (opt-block-instr-at block pos)
+                [(BoundsCheck _ _ _) (return 5)]
+                [(Phi _ inputs _)
+                  (unless
+                    (and
+                      (opt.opt-bool-branch-phi-input-has-label? inputs join)
+                      (opt.opt-bool-branch-phi-input-has-label? inputs head)
+                      (not
+                        (opt.opt-bool-branch-phi-input-has-label?
+                          inputs
+                          (opt-ubound-label "pre"))))
+                    (return 6))]
+                [_ unit]))
+            (when
+              (match kind
+                [(CallBody)
+                  (not
+                    (match (opt-block-instr-at block phi-count)
+                      [(Call 9 name (One (Var 5)) (I64))
+                        (= name (opt-test-symbol "ubound_clean"))]
+                      [_ false]))]
+                [_ false])
+              (return 10))
+            (unless
+              (and
+                (>= count (+ phi-count 2))
+                (match (opt-block-instr-at block (- count 2))
+                  [(BinOp dst (Lt) (Var back) (Var bound) (U64))
+                    (and (= dst 10) (= back 9) (= bound 14))]
+                  [_ false])
+                (match (opt-block-instr-at block (- count 1))
+                  [(Branch (Var cmp) yes no)
+                    (and (= cmp 10) (= yes head) (= no chk))]
+                  [_ false]))
+              (return 7))
+            (unless
+              (and
+                (opt-ubound-has-check? blocks join 1)
+                (opt-ubound-has-check? blocks trap 0)
+                (match (opt-block-instr-at trap-block 0)
+                  [(BoundsCheck (Var back) (Var len) ok)
+                    (and
+                      (= back 9)
+                      (= len 4)
+                      (= ok (opt-ubound-label "self_ok")))]
+                  [_ false])
+                (opt-ubound-phi-has-label? blocks (opt-ubound-label "exit") chk)
+                (opt-ubound-phi-has-label?
+                  blocks
+                  (opt-ubound-label "exit")
+                  trap)
+                (not
+                  (opt-ubound-phi-has-label?
+                    blocks
+                    (opt-ubound-label "exit")
+                    head)))
+              (return 8))
+            (when
+              (match (opt.opt-ubound-function-pass 0 result)
+                [(Result _ again) again])
+              (return 9)))])))
+  42)
+
+(define (compiler-optimize-ubound-self-loop-refusal-self-test) : i64
+  (for [case-id (iterator.range 0 5)]
+    (let
+      [kind : OptUboundSelfLoopCase
+        (match case-id
+          [0 (NoGuard)]
+          [1 (OpaqueLength)]
+          [2 (PriorEffect)]
+          [3 (SharedCompare)]
+          [_ (NegativeSeed)])]
+      [function : ir.CompilerIrFunction (opt-ubound-self-loop-function kind)]
+      (unless
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& function))))
+        (return (+ 10 case-id)))
+      (when
+        (match (opt.opt-ubound-function-pass 0 function)
+          [(Result _ changed) changed])
+        (return (+ 1 case-id)))))
+  42)
+
 ;; --- bounds-check group coalescing (bounds_group) ---------------------------
 ;;
 ;; The fixture is one self-looping body over two arrays:
@@ -77694,9 +78280,71 @@ return 0" true)
           "pass `preheaders` rewrote verified function `preheaders_ice`")
         (string.contains (& trusted-ice) "duplicate var definition"))
       "a rejected preheaders rewrite is an internal error naming the pass, the function and the verdict")
+    ;; Synthesis consumed the input (#9013), so under the capture the rejected
+    ;; rewrite comes back: it carries the preheader the input never had.
     (test.assert-true
-      (opt.opt-function-eq bases trusted-out broken)
-      "the rejected rewrite rolls back to the input")))
+      (not (opt.opt-function-eq bases trusted-out broken))
+      "a rejected preheaders rewrite returns the rewrite, never the consumed input")))
+
+;; The unchanged path returns its input object itself, so a move out of it
+;; (synthesis leaves a placeholder behind) would show up in the result.
+(test
+  preheaders-unchanged-path-returns-the-input-untouched
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run
+        true
+        (opt-preheaders-ice-function (opt-preheader-safe-blocks)))]
+    [expected : ir.CompilerIrFunction
+      (opt-preheaders-ice-function (opt-preheader-safe-blocks))]
+    (test.assert-true
+      (opt.opt-function-eq bases out expected)
+      "a loop that already owns a safe preheader leaves the function as it came in")))
+
+;; The checked-configuration guard on a consuming synthesis: the header's
+;; instructions must not share their storage with another block, or moving
+;; them out would rewrite that block too. The fixture builds that sharing
+;; deliberately (the view below), with `exit` holding the header's array.
+(test
+  preheaders-synthesis-refuses-shared-instruction-storage
+  (let
+    [loop : i64 (ir.compiler-ir-label "loop")]
+    [header-instrs : ir.CompilerIrInstrSeq
+      (ir.compiler-ir-instr-seq1
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 3)]
+    [_pre : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "pre")
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump loop))))]
+    [_exit : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "exit")
+          (opt.compiler-opt-global-shared-view header-instrs)))]
+    [_loop : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block loop header-instrs))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [_out : ir.CompilerIrBlockList
+      (opt.opt-loop-preheaders-apply
+        (ir.compiler-ir-block-builder-to-list builder)
+        loop
+        (opt.opt-label-add (Nil) (ir.compiler-ir-label "pre"))
+        (ir.compiler-ir-label "loop__preheader"))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (string.contains
+        (& ice)
+        "pass `preheaders` would move instructions out of an array another block shares")
+      "a consuming synthesis refuses a header whose instructions another block shares")))
 
 (define (opt-thread-branch-context-test [verified? : bool]) : unit
   (let

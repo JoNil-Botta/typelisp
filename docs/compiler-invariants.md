@@ -180,10 +180,11 @@ arguments only when an argument can write the storage it was read from: a local
 by the argument operand snapshot rule, a global cell unless every argument only
 reads. Function names and values the callee expression computed are not
 copied, so their direct-call facts survive.
-Scalar global reads, including folds and rematerialized reads, use
-the prepared program's symbol index. That index resolves extern metadata and
-ordinary module symbols identically to unfolded loads, and is replaced at
-each emission boundary and unpublished before the backend owner retires.
+Global reads, stores and address references, including folds, rematerialized
+reads and direct-object relocations, use the prepared program's symbol index.
+That index resolves extern metadata and ordinary module symbols identically
+across these operations, and is replaced at each emission boundary and
+unpublished before the backend owner retires.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.
@@ -637,6 +638,22 @@ does not import the lowerer or select an ambient job. Its callback context stays
 outside the retired arena; calls without authority retain their source storage.
 At opt1 the original IR ends after optimizer copy-out; at opt0 it lasts through
 the final IR consumer. Later driver cleanup remains idempotent.
+
+Level 2 also releases the original IR progressively during the inline walk. The
+driver sets the lowering request's chunk policy before lowering, so only opt2
+lowering deep-clones function bodies into chunk arenas, rotating at a byte budget
+between complete clones; the owner's existing arena keeps the escaped
+sequences' shells and slot arrays, and a chunk owns no other chunk's shells,
+metadata or bodies. The request carries the chunks' plain lower-sequence bounds
+and a second synchronous callback that releases one exact chunk of the exact
+owner. Before any release the inline stage checks the bounds against its
+actual input (full coverage, index slot `i` is input position `i`, unchanged
+names) and tags slots in its own arena; after a slot's complete caller phase it
+consumes the tag, and when a chunk's last original is placed it clears the
+callee-cost memo and releases that chunk. A malformed bound releases nothing,
+and a duplicate or out-of-range placement is an internal error. Whole
+retirement after the walk, error cleanup and later driver cleanup still release
+every remaining chunk and the shell arena, idempotently.
 Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;
@@ -703,6 +720,16 @@ notification still reaches its handler without receiving a response. Field
 inspection borrows the parsed JSON owner; it neither clones request payloads
 nor retains references beyond dispatch. Method parameter validation remains
 separate from this envelope boundary.
+
+Required document, position, name and edit-operand parameter types are checked
+before document lookup or stateful dispatch. Malformed parameters produce
+`-32602` with the request ID, or no response for a notification, and preserve
+the server owner and semantic cache. Position coordinates use LSP's unsigned
+31-bit integer range. Structural selectors retain their path/name/position
+precedence; valid lookup misses and source-validation failures keep their
+existing contextual handler errors and `error.data`.
+The direct `tl/check` URI and structural paths retain precedence when present;
+a malformed primary selector is rejected instead of falling back to another.
 
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the
@@ -901,6 +928,18 @@ records carry no variant tag, so a slot costs exactly its fields. An append with
 spare capacity writes the shared slot and growth copies the live prefix;
 escaping a table copies only that prefix into the current arena, which leaves
 no pointer into the arena that built it.
+
+A copied bounds check derives its unique ok-label from the original check.
+Recognized clone suffixes let span lookup recover the source location without
+crossing function ownership. The unsigned-bound entry check uses the same
+copy-0 suffix as unrolling and single-block versioning; its exit check retains
+the original label, so both abort sites remain distinct and located.
+
+When the unsigned-bound header is also its latch, phi incoming edges are mapped
+and the first post-phi check is removed before the latch tail is replaced.
+Body calls retain their order, and the entry copy checks before the first
+call. The exit re-test and trap retain the backedge operands, including negative
+indices; both new exit predecessors replace the old latch in exit phis.
 
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
@@ -2188,6 +2227,14 @@ table and the gates; read it before changing CI structure.
 
 `typelisp --help` lists the commands and the global and common options;
 `typelisp <command> --help` shows each command's options.
+
+`cli_option_core.tl` owns common compile-option parsing, singleton presence,
+repeatable root/cfg ordering and diagnostics. Commands supply their existing
+defaults and apply the parsed record; backend conversion never revalidates
+strings. Package workers serialize the same options, including cfg names.
+Names cross the package-discovery scratch/interner boundary as strings and are
+interned only after installing the child session; environments containing
+parent-session IDs cannot cross that boundary.
 
 `typelisp expand` and LSP `tl/expandMacro` share the query in
 `compiler_expand_query.tl`. It checks the source through the production

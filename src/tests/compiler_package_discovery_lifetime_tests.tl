@@ -39,6 +39,7 @@
   (driver.compiler-driver-load-package-paths-with-runtime
     path
     target
+    (& (roots_vec.new))
     (discovery-test-roots)
     "target/exp/package-discovery-lifetime"
     (load.compiler-pkg-deps-empty)
@@ -410,3 +411,31 @@
     (unless
       (and ok? (= table-id (ci.intern-active-table-id)))
       (io.panic "package discovery retained structural generations"))))
+
+(test
+  package-discovery-interns-user-cfg-in-child
+  (discovery-test-write-fixture!)
+  (load_tests.compiler-load-write-file-text
+    "target/exp/package-discovery-lifetime/src/cfg.tl"
+    "(cfg selected (import helper as helper))\n(cfg (not selected) (import missing_cfg_module))\n(define (main) : i64 helper.value)")
+  (let
+    [names : roots_vec.Vec (roots_vec.new)]
+    [parent-interns : i64 (ci.intern-active-table-id)]
+    (roots_vec.push-ref! (&mut names) "selected")
+    (match (driver.compiler-driver-load-package-paths-with-runtime
+      "target/exp/package-discovery-lifetime/src/cfg.tl"
+      (Linux)
+      (& names)
+      (discovery-test-roots)
+      "target/exp/package-discovery-lifetime"
+      (load.compiler-pkg-deps-empty)
+      true)
+      [(Err _) (io.panic "user cfg must select the child import closure")]
+      [(Ok paths)
+        (unless
+          (and
+            (= parent-interns (ci.intern-active-table-id))
+            (> (ast.ast-decl-path-list-len (& paths)) 1)
+            (string.eq (roots_vec.get (& names) 0 "") "selected"))
+          (io.panic
+            "cfg discovery must restore the parent and retain input names"))])))

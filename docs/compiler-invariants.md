@@ -2194,6 +2194,49 @@ The encoder does not select exports from package declarations or publish an
 archive. Its inline oracle test compares all seven payloads in a maintained
 LLVM AMD64 fixture, including the empty-export support objects.
 
+### COFF short import input
+
+`src/linker_coff_import_reader.tl` reads one immutable member payload and a
+caller-supplied `ArchiveMemberId`. It does not traverse archives, select or
+coalesce members, choose symbol winners, search DLLs, or assign PE addresses.
+#7102 consumes its checked records for resolution; #7175 consumes live imports
+for PE import tables and thunks; #7127 can reuse the parser for round trips.
+
+Short imports require version 0, AMD64, known code/data/const type, zero
+reserved bits, and one of ordinal/exact/no-prefix/undecorate. `EXPORTAS` fails
+explicitly. The declared string extent must equal the entire remaining input
+and contain exactly two nonempty NUL-terminated strings, with no trailing data.
+Portable names use printable ASCII without path separators. DLL basenames also
+reject Windows path/wildcard characters and leading/trailing dots. Non-ASCII,
+including otherwise valid UTF-8, is outside this profile; no host code page or
+Unicode case conversion participates in identity.
+
+The reader reuses the encoder's name policy and transformation. No-prefix
+drops exactly one leading `?`, `@` or `_`; undecorate then stops at the first
+`@`. Empty transformed names fail. Literal public spellings are preserved,
+including an existing `__imp_` prefix; the IAT spelling always prepends another
+literal `__imp_`. DLL identity folds only ASCII case and retains the written
+basename separately. Ordinal mode requires 1..65535 and produces no hint/name;
+named mode preserves any 16-bit hint and produces no ordinal. Timestamp and
+hint are provenance rather than identity/order inputs. Code/data/const stay
+distinct; conflicting public/IAT identities are left for the resolver.
+
+The shared short-import/bigobj signature is classified from version, complete
+header, AMD64 machine, bigobj UUID and checked section/symbol/string-table
+extents. Other-object results are header classifications; full ordinary COFF
+and bigobj section/symbol semantics belong to their object reader. Unused
+bigobj words do not acquire import-header meanings.
+
+Caller limits bound input bytes, every name including the derived IAT symbol,
+owned output-string content, and work. Output reserves `6 + 3*public + 2*dll`
+bytes before allocating names; fixed record storage and bounded temporary
+buffers are separate. Work reserves `64 + 16*input` before field access and
+string scans. There are exactly two strings and at most one result/diagnostic.
+Division and subtraction checks precede table-count multiplication, and
+`SizeOfData` is compared with the remaining span without adding an untrusted
+size to an offset. Errors retain the physical member, static field and
+member-relative byte. Returned names are owned snapshots of validated input.
+
 Embedded link policy is read by `src/linker_coff_directive_reader.tl`. The
 object reader passes a section header summary (object identity, section
 number, name, characteristics, relocation and line-number counts) and the

@@ -1863,6 +1863,15 @@ the existing sequence handling. The public comptime `expr-while` builder keeps
 its one expression as a singleton list. Native quasiquote uses the same host
 callback with its body-list flag so it agrees with interpreted expansion.
 
+Quoted body sequences represented by a single expression retain a singleton
+`Begin` around a lone `UnquoteSplicing`. Collapsing that list before quasiquote
+would lose its splice position. The shared body parser and single-form match arms
+apply the same rule, retaining the original spanned splice inside the list;
+ordinary single-form bodies, including match-arm cfg handling, stay unchanged.
+`tests/integration/macro_body_splice.tl` covers expansion through native code
+and the inline-test harness, with invalid positions and operands in the safety
+corpus.
+
 Caller-origin macro markers have a negative macro-name ID and preserve the
 captured operand's source path without adding a user-visible expansion frame.
 For ordinary unobserved operands, capture replaces

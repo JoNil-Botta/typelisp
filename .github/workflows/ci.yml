@@ -120,6 +120,18 @@ jobs:
             exit 1
           }
 
+      - name: Cache pinned Intel SDE archive
+        uses: actions/cache@v4
+        with:
+          path: target/sde/*.tar.xz
+          key: intel-sde-${{ runner.os }}-${{ hashFiles('scripts/fetch-sde.sh') }}
+
+      - name: Verify and unpack Intel SDE
+        shell: bash
+        run: |
+          sde_bin=$(sh scripts/fetch-sde.sh)
+          printf 'TYPELISP_SDE_BIN=%s\n' "$sde_bin" >> "$GITHUB_ENV"
+
       - name: CI verification
         shell: bash
         env:

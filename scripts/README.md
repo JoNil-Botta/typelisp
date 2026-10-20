@@ -38,6 +38,38 @@ A required gate is a row of `ci-gates.tsv`; `ci-verify.sh` rejects a row whose
 command names a missing script or `gate_*` function. Optional local tools
 should use a `benchmark-`, `measure-`, or `analyze-` name.
 
+## AVX-512 test execution
+
+CI downloads Intel SDE 10.13.1 from Intel's distribution page through
+`fetch-sde.sh`. Its Linux and Windows archives have pinned SHA-256 digests;
+cache hits are verified again and extracted afresh with all license notices.
+The maintainer approved Intel's Simplified Software License for this CI use
+in #8664. See [Intel's download and license page](https://www.intel.com/content/www/us/en/download/684897/intel-software-development-emulator.html).
+
+`lib-simd-execution.sh` keeps the native CPUID/OS probe unchanged. The codegen,
+SPMD comparison, package-call and cross-mode differential harnesses select
+native execution when available, or SDE's Sapphire Rapids (`-spr`) model for AVX-512. Compiler
+builds and performance measurements stay native. Existing cases, optimization
+levels, exit statuses, stderr assertions and negative paths remain required.
+Each AVX-512 execution has a route receipt; each execution harness reports
+native, emulated and skipped totals. Cross-mode checks validate the producing
+SPMD receipt. With `CI=true`, missing both routes is an error. Local runs may
+still report unavailable execution explicitly. CLI transcript `if-isa` checks
+and runtime-dispatch selection continue to test the actual native host,
+including the CLI's unsupported-host diagnostics.
+
+To validate the emulator route even on an AVX-512 host, run the existing corpus:
+
+```sh
+export TYPELISP_SDE_BIN=$(sh scripts/fetch-sde.sh)
+TYPELISP_AVX512_EXECUTION=sde scripts/verify-spmd-simd.sh
+```
+
+`TYPELISP_AVX512_EXECUTION=sde` requires SDE even when native execution is
+available; its consumer is this forced-emulation validation. Omit it for the
+normal native-first route. Fetching SDE downloads software under Intel's
+license, so local users should review that license before running the fetcher.
+
 ## Core development loop
 
 | Purpose | Entry point |

@@ -991,7 +991,7 @@ validate_manifest() {
     _catalog="$WORKDIR/repository-files.txt"
     : > "$_known"
 
-    find benchmarks examples src stdlib tests/integration tests/safety -type f -print |
+    find benchmarks examples src stdlib tests/fixtures tests/integration tests/safety -type f -print |
         sed 's#^\./##' > "$_catalog"
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \

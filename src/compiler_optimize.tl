@@ -18895,7 +18895,9 @@
       [_ index])))
 
 ;; Each header phi must carry exactly the two loop-edge inputs {preheader,
-;; latch}; the record keeps (dst, preheader input, latch input, type).
+;; latch}; the record keeps (dst, preheader input, latch input, type). Its type
+;; must share the input owner: round copy-out shares type leaves, so persisting
+;; a new compound-type container here would leave it in retiring round storage.
 (define (opt-rotate-ssa-phi-recs-from
   [phis : (& phis ir.CompilerIrInstrSeq)]
   [preheader : i64]
@@ -18912,7 +18914,11 @@
               [(Some pre-value latch-value)
                 (Some
                   (opt-rotate-ssa-phi-recs-cons
-                    (Rec dst pre-value latch-value (ast.ty-node-persist ty))
+                    (Rec
+                      dst
+                      pre-value
+                      latch-value
+                      (owned_view.compiler-owned-reference-shared-view ty))
                     recs))]
               [(No) (No)])]
           [_ (No)])])))

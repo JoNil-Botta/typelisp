@@ -143,7 +143,8 @@ jobs:
         run: |
           export TYPELISP_BIN=$(cat target/ci-verify-stage2.path)
           # Hosts without native AVX-512 already exercised SDE in every gate.
-          if sh scripts/detect-simd-isa.sh | tr -d '\r' | grep -qx avx512; then
+          sde_native_isas=$(sh scripts/detect-simd-isa.sh)
+          if printf '%s\n' "$sde_native_isas" | tr -d '\r' | grep -qx avx512; then
             export TYPELISP_AVX512_EXECUTION=sde
             export TYPELISP_CROSS_MODE_PREVIOUS_COMPILER=$(cat target/ci-verify-stage1.path)
             scripts/run-memory-bounded.sh --limit-mib 8192 \

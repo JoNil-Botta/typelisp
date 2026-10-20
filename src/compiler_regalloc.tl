@@ -29185,11 +29185,11 @@
             dst)
           (- 0 1))
         inputs)]
-    ;; These read no operand that invalidates a colour.
+    ;; These read no operand that invalidates a colour. Pack is not exempt:
+    ;; its words can retain a storage address after the tracked pointer dies.
     [(or (Alloc _ _) (AddrOf _ _) (Load _ _ _) (CopyBytes _ _ _) (LaneId _ _ _)
-         (EntryArgc _) (EntryArgv _) (EntryEnvp _) (Jump _) (Pack _ _ _)
-         (Word _ _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
-         (TotalEnumSwitch _ _ _ _ _))
+         (EntryArgc _) (EntryArgv _) (EntryEnvp _) (Jump _) (Word _ _ _ _)
+         (TailCallIndirect _ _ _) (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
       unit]
     [_
       (ir.compiler-ir-instr-visit-uses

@@ -30901,6 +30901,55 @@
       (opt.opt-cfg-index-build (& blocks))
       0)))
 
+;; The borrowed lookups read the function's own list, which the index numbers in
+;; walk order: a label the index knows finds that label's block, and an unknown
+;; one finds nothing (#9013).
+(test
+  cfg-index-borrowed-lookups-read-the-function-list
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-cfg-switch-blocks)]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+    (test.assert-true
+      (match (opt.opt-cfg-index-find-block-in
+        (& blocks)
+        (& index)
+        (ir.compiler-ir-label "two"))
+        [(Some block)
+          (match block
+            [(Block label _) (= label (ir.compiler-ir-label "two"))])]
+        [(No) false])
+      "a label the index knows finds its own block in the function's list")
+    (test.assert-true
+      (match (opt.opt-cfg-index-find-block-in
+        (& blocks)
+        (& index)
+        (ir.compiler-ir-label "missing"))
+        [(Some _) false]
+        [(No) true])
+      "a label the index does not know finds nothing")))
+
+;; A lookup through a list the index does not number is an internal error under
+;; `cfg test`: the id would name some other block.
+(test
+  cfg-index-lookup-through-another-list-is-internal-error
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-cfg-switch-blocks)]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+    [other : ir.CompilerIrBlockList (opt-ssa-diamond-blocks)]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [read : i64
+      (match (opt.opt-cfg-index-block-at (& other) (& index) 1)
+        [(Block label _) label])]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (and
+        (= read (ir.compiler-ir-label "then"))
+        (string.contains
+          (& ice)
+          "a CFG index lookup read a block list the index does not number"))
+      "a lookup through another list is caught")))
+
 (define (opt-cfg-switch-successors-ok?) : bool
   (let
     [successors : opt.OptLabelSet

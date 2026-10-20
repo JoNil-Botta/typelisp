@@ -14090,7 +14090,7 @@
       (compiler-backend-state-function-state backend-state)]
     ;; An empty plan homes nothing, whatever the installed mask describes; this
     ;; keeps out-of-emission callers correct.
-    (if (= (compiler_regalloc.compiler-reg-assignment-count assignments) 0)
+    (if (compiler_regalloc.compiler-reg-assignment-table-empty? assignments)
       false
       (if (compiler-backend-function-state-bool?
         function-state
@@ -15356,7 +15356,7 @@
         (<= prefix-count (compiler_ir_types.compiler-ir-block-seq-count seq))
         (or
           (not incoming?)
-          (if (= (compiler_regalloc.compiler-reg-assignment-count selected) 0)
+          (if (compiler_regalloc.compiler-reg-assignment-table-empty? selected)
             (= (compiler_ir_types.compiler-ir-param-seq-count params) 0)
             true)))]
     [function-state : CompilerBackendFunctionState
@@ -29113,10 +29113,6 @@
                                           result-ty
                                           backend-state)))))]))))])]))))))))
 
-(define (compiler-backend-empty-assignments?
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : bool
-  (= (compiler_regalloc.compiler-reg-assignment-count assignments) 0))
-
 (define (compiler-backend-commutative-binop?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
@@ -29132,7 +29128,7 @@
   [rhs : (& compiler_ir_types.CompilerIrValue)]
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (and
-    (compiler-backend-empty-assignments? assignments)
+    (compiler_regalloc.compiler-reg-assignment-table-empty? assignments)
     (not (compiler-backend-compare-op? op))
     (not (compiler-backend-binop-f64? types global-types lhs rhs ty))))
 

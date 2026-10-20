@@ -14124,31 +14124,31 @@
 ;; lowering the same source again reaches the identical shape.
 (define (compiler-lower-bounds-operand-idempotent-ok?) : bool
   (and
-    (lower.lower-bounds-operand-width-64? (U64))
+    (lower.lower-bounds-operand-width-64? (& (U64)))
     (compiler-lower-bounds-operand-shape-ok?)))
 
 (define (compiler-lower-bounds-operand-width-predicate-ok?) : bool
   (let
     [ok : bool true]
-    (if (lower.lower-bounds-operand-width-64? (I64))
+    (if (lower.lower-bounds-operand-width-64? (& (I64)))
       unit
       (set! ok false))
-    (if (lower.lower-bounds-operand-width-64? (U64))
+    (if (lower.lower-bounds-operand-width-64? (& (U64)))
       unit
       (set! ok false))
-    (if (lower.lower-bounds-operand-width-64? (I32))
+    (if (lower.lower-bounds-operand-width-64? (& (I32)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (U32))
+    (if (lower.lower-bounds-operand-width-64? (& (U32)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (U8))
+    (if (lower.lower-bounds-operand-width-64? (& (U8)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (F64))
+    (if (lower.lower-bounds-operand-width-64? (& (F64)))
       (set! ok false)
       unit)
-    (if (lower.lower-bounds-operand-width-64? (Bool))
+    (if (lower.lower-bounds-operand-width-64? (& (Bool)))
       (set! ok false)
       unit)
     ok))
@@ -15092,7 +15092,7 @@
               (ci.intern-compat-state-str
                 intern-state
                 (lower.lower-spmd-package-structural-identity
-                  (owned_view.compiler-owned-shared-view intern-state)
+                  intern-state
                   first)))
             0)
           (=
@@ -15107,12 +15107,8 @@
       (and
         lazy-before
         (=
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            first)
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            repeat))
+          (lower.lower-spmd-package-structural-identity intern-state first)
+          (lower.lower-spmd-package-structural-identity intern-state repeat))
         (=
           (lower.lower-spmd-package-structural-linker-symbol intern-state first)
           (lower.lower-spmd-package-structural-linker-symbol

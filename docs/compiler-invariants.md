@@ -859,6 +859,18 @@ index. The `macro-segmented-program-events` test and the generated-declaration
 typecheck cases cover the event index and the re-resolution boundary; the
 `expansions` compiler-scaling row measures expansions within one module.
 
+Macro and CTFE diagnostic raises supply a `CompilerMacroKind` to
+`ctfe-diagnostic-at-expr`. The shared code transport preserves an existing
+parse/typecheck/load code, while a `comptime-error` String always receives the
+author-error cause. Generated declaration parsing consumes the tagged parser
+result before the legacy text-only adapter strips its code. Typechecker
+canonicalization derives the category from the retained code and leaves
+spans, labels, notes, help and fixes intact. Native CTFE callbacks encode the
+same codes in their existing diagnostic String slot; the dispatch boundary
+classifies fuel by its status value and keeps a code ahead of dependency
+attribution text. No diagnostic schema or successful expansion path changes.
+The code/owner inventory is in [diagnostic-codes.md](diagnostic-codes.md).
+
 Declaration diagnostics look up a recorded origin only when their own span is
 absent. The parser's origin index keeps direct slot records and alias ranges
 separate; insertion order decides which record wins. Long alias chains use
@@ -1633,6 +1645,12 @@ segments and shared endpoints merge; even a one-position gap remains a hole.
 The root's coarse bounds remain the minimum start and maximum end of its
 members. Gathering and compaction leave the member indexes and parent map
 unchanged, including when same-value coalescing admits overlapping members.
+
+A parameter's incoming-register pin is revalidated against the coalesced
+class's exclusions as well as its live ranges. A blocked outgoing argument
+cannot inherit a parameter pin through a phi or copy. Tail calls have no
+live-after survival constraint, but their argument marshalling must still read
+each source before an argument-register write can destroy it.
 
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large

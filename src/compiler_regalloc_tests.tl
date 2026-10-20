@@ -16449,3 +16449,72 @@
       (test.assert-true
         (> builder.moves.len 97)
         "both directions and repeated growth were exercised"))))
+
+(cfg
+  test
+  (test
+    regalloc-move-index-hash-collisions
+    (let
+      [builder : reg.CompilerRegMoveBuilder
+        (reg.compiler-reg-move-builder-empty)]
+      [key : i64 (reg.compiler-reg-move-pair-hash 1 17162)]
+      (test.assert-i64-eq
+        key
+        (reg.compiler-reg-move-pair-hash 2 1)
+        "distinct pairs share a structural hash")
+      (test.assert-i64-eq
+        key
+        (reg.compiler-reg-move-pair-hash 3 -17160)
+        "negative endpoint shares the bucket")
+      (set!
+        builder
+        (reg.compiler-reg-move-list-add builder 1 17162 false false))
+      (set! builder (reg.compiler-reg-move-list-add builder 2 1 false false))
+      (set!
+        builder
+        (reg.compiler-reg-move-list-add builder 3 -17160 false false))
+      (test.assert-i64-eq
+        builder.moves.len
+        3
+        "hash collisions do not suppress distinct moves")
+      (test.assert-i64-eq
+        (reg.compiler-reg-move-builder-slot (& builder) 1 17162 false)
+        0
+        "oldest collision slot")
+      (test.assert-i64-eq
+        (reg.compiler-reg-move-builder-slot (& builder) 2 1 false)
+        1
+        "middle collision slot")
+      (test.assert-i64-eq
+        (reg.compiler-reg-move-builder-slot (& builder) 3 -17160 false)
+        2
+        "newest collision slot")
+      (test.assert-i64-eq
+        key
+        (reg.compiler-reg-move-pair-hash 4 -34321)
+        "missing pair reaches the same collision bucket")
+      (test.assert-i64-eq
+        (reg.compiler-reg-move-builder-slot (& builder) 4 -34321 false)
+        -1
+        "absent collision walks through the final link")
+      (set!
+        builder
+        (reg.compiler-reg-move-list-add builder 1 17162 false false))
+      (set! builder (reg.compiler-reg-move-list-add builder 17162 1 true true))
+      (test.assert-i64-eq
+        builder.moves.len
+        3
+        "colliding directed and reversed undirected duplicates are suppressed")
+      (test.assert-true
+        (array-ref builder.moves.slots 0).strict
+        "strict upgrade walks the collision chain")
+      (test.assert-true
+        (not (array-ref builder.moves.slots 1).strict)
+        "middle collider keeps strictness")
+      (test.assert-true
+        (not (array-ref builder.moves.slots 2).strict)
+        "newest collider keeps strictness")
+      (test.assert-i64-eq
+        builder.links.len
+        builder.moves.len
+        "one link per retained move"))))

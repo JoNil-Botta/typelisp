@@ -4,8 +4,10 @@
 undirected duplicate suppression and newest-first strict upgrades.
 `regalloc-move-index-growth-and-reference` compares every slot with the former
 list-scan semantics through mixed insertion modes, full-width signed IDs,
-table growth and interleaved builders. Run both at opt0/1/2, retain the dense
-sequence contract tests, and compare fixed-source compiler, benchmark and CFG
+table growth and interleaved builders. `regalloc-move-index-hash-collisions`
+checks real structural-hash collisions, an absent pair at the chain tail and
+strict upgrades through colliding entries. Run these at opt0/1/2, retain the
+dense sequence contract tests, and compare fixed-source compiler, benchmark and CFG
 scaling assembly when changing move indexing.
 
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,

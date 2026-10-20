@@ -18454,13 +18454,14 @@
         [(Block _ instrs) (opt-loop-rotation-final-jump-to? (& instrs) target)])]))
 
 (define (opt-loop-rotation-replace-final-jump
-  [pools : ast.AstNodePoolContext]
   [instrs : (& ir.CompilerIrInstrSeq)]
   [guard : (& guard ir.CompilerIrInstrSeq)]) : ir.CompilerIrInstrSeq
   (let
     [instr-count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [prefix-count : i64 (- instr-count 1)]
     [guard-count : i64 (ir.compiler-ir-instr-seq-count guard)]
+    [no-remap : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue 0)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr (+ prefix-count guard-count))]
     (for [index (iterator.range 0 prefix-count)]
@@ -18468,13 +18469,15 @@
     (for [index (iterator.range 0 guard-count)]
       (set!
         (array-ref slots (+ prefix-count index))
-        (ir.compiler-ir-clone-instr
-          pools
-          (ir.compiler-ir-instr-seq-ref guard index))))
+        ;; Rotation creates containers, not operand/type leaves. Those leaves
+        ;; must retain their pre-pass owner when later rounds recycle storage.
+        (opt-region-clone-instr
+          (& no-remap)
+          (& (Keep))
+          (ir.compiler-ir-instr-seq-borrow guard index))))
     (ir.CompilerIrInstrSeq slots (+ prefix-count guard-count))))
 
 (define (opt-loop-rotation-rewrite-block
-  [pools : ast.AstNodePoolContext]
   [block : ir.CompilerIrBlock]
   [preheader : i64]
   [latch : i64]
@@ -18484,13 +18487,12 @@
       (if (or (= label preheader) (= label latch))
         (Block
           label
-          (opt-loop-rotation-replace-final-jump pools (& instrs) guard))
+          (opt-loop-rotation-replace-final-jump (& instrs) guard))
         block)]))
 
 (define (opt-loop-rotation-rewrite-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [pools : ast.AstNodePoolContext]
   [header : i64]
   [preheader : i64]
   [latch : i64]
@@ -18505,7 +18507,6 @@
             (ir.compiler-ir-block-builder-push!
               out
               (opt-loop-rotation-rewrite-block
-                pools
                 (owned_view.compiler-owned-reference-shared-view block)
                 preheader
                 latch
@@ -18513,14 +18514,12 @@
           (opt-loop-rotation-rewrite-blocks!
             out
             rest
-            pools
             header
             preheader
             latch
             guard)])]))
 
 (define (opt-loop-rotation-apply-guard
-  [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [header : i64]
   [preheader : i64]
@@ -18531,7 +18530,6 @@
       (opt-blocks-build
         blocks
         opt-loop-rotation-rewrite-blocks!
-        pools
         header
         preheader
         latch
@@ -18543,7 +18541,6 @@
       (Result blocks false))))
 
 (define (opt-loop-rotation-loop
-  [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
   [loops : (& loops opt_natural_loop_vec.Vec)]
@@ -18571,7 +18568,6 @@
             [(No) (Result blocks false)]
             [(Header guard)
               (opt-loop-rotation-apply-guard
-                pools
                 blocks
                 header
                 preheader
@@ -18580,7 +18576,6 @@
           (Result blocks false))])))
 
 (define (opt-loop-rotation-loops
-  [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]
   [context : (& context OptCfgContext)]
   [loops : (& loops opt_natural_loop_vec.Vec)]
@@ -18589,7 +18584,6 @@
     [(slice) (Result blocks false)]
     [(slice loop & rest)
       (match (opt-loop-rotation-loop
-        pools
         (compiler-opt-global-shared-view blocks)
         context
         loops
@@ -18597,7 +18591,7 @@
         [(Result next changed)
           (if changed
             (Result next true)
-            (opt-loop-rotation-loops pools blocks context loops rest))])]))
+            (opt-loop-rotation-loops blocks context loops rest))])]))
 
 ;; The step already builds a CFG context for `blocks`. Carry it out so the
 ;; fixpoint below can hand the LAST step's context -- the one built for the
@@ -18607,7 +18601,6 @@
   (Result ir.CompilerIrBlockList bool OptCfgContext))
 
 (define (opt-loop-rotation-blocks-once-result
-  [pools : ast.AstNodePoolContext]
   [blocks : (& ir.CompilerIrBlockList)]) : OptLoopRotationCtxResult
   (let
     [context : OptCfgContext
@@ -18618,29 +18611,64 @@
         (owned_view.compiler-owned-reference-shared-view blocks)
         context)]
     (match (opt-loop-rotation-loops
-      pools
       (owned_view.compiler-owned-reference-shared-view blocks)
       context
       loops
       (opt_natural_loop_vec.view loops))
       [(Result next changed) (Result next changed context)])))
 
-(define (opt-loop-rotation-blocks-fixed-result
-  [pools : ast.AstNodePoolContext]
+;; Each changed round shares untouched blocks with its input. Re-home every
+;; container before retiring the old home, then copy the final list back into
+;; the caller. Only a no-change last step licenses a context for that list;
+;; exhausting fuel must preserve the false/empty-context result.
+(define (opt-loop-rotation-later-rounds-result
   [blocks : ir.CompilerIrBlockList]
   [remaining : i64]) : OptBlockCtxResult
   (if (<= remaining 0)
     (Result blocks (opt-cfg-context-empty) false)
-    (match (opt-loop-rotation-blocks-once-result pools (& blocks))
+    (let
+      [regions : OptRoundRegions (opt-round-regions-new)]
+      [current : ir.CompilerIrBlockList blocks]
+      [left : i64 remaining]
+      [valid? : bool false]
+      (while (and (> left 0) (not valid?))
+        (opt-round-regions-enter-work! (& regions))
+        (match (opt-loop-rotation-blocks-once-result (& current))
+          [(Result next changed _)
+            (if changed
+              (begin
+                (opt-round-regions-enter-next-home! (&mut regions))
+                (set! current (opt-round-copy-blocks (& next)))
+                (opt-round-regions-commit! (&mut regions))
+                (-= left 1))
+              (set! valid? true))]))
+      (opt-round-regions-enter-outer! (& regions))
+      (let
+        [result : ir.CompilerIrBlockList
+          (if (opt-round-regions-held? (& regions))
+            (opt-round-copy-blocks (& current))
+            current)]
+        [context : OptCfgContext
+          (if valid?
+            (opt-cfg-context-build (compiler-opt-global-shared-view result))
+            (opt-cfg-context-empty))]
+        (opt-round-regions-leave! (& regions))
+        (Result result context valid?)))))
+
+(define (opt-loop-rotation-blocks-fixed-result
+  [blocks : ir.CompilerIrBlockList]
+  [remaining : i64]) : OptBlockCtxResult
+  (if (<= remaining 0)
+    (Result blocks (opt-cfg-context-empty) false)
+    (match (opt-loop-rotation-blocks-once-result (& blocks))
       [(Result next changed context)
         (if changed
-          (opt-loop-rotation-blocks-fixed-result pools next (- remaining 1))
+          (opt-loop-rotation-later-rounds-result next (- remaining 1))
           ;; Every arm of `opt-loop-rotation-loops` returns its input verbatim
           ;; when it reports no change, so `context` is valid for `next`.
           (Result next context true))])))
 
 (define (opt-loop-rotation-blocks-result
-  [pools : ast.AstNodePoolContext]
   [blocks : ir.CompilerIrBlockList]) : OptBlockCtxResult
   ;; The natural-loop finder is dominance based, so let it decide whether the
   ;; CFG contains a loop. Textual block order is not a loop property: inlining
@@ -18648,7 +18676,6 @@
   (if (opt-ssa-blocks-have-phi? blocks)
     (Result blocks (opt-cfg-context-empty) false)
     (opt-loop-rotation-blocks-fixed-result
-      pools
       (compiler-opt-global-shared-view blocks)
       (+ 1 (ir.compiler-ir-block-list-count blocks)))))
 
@@ -18658,7 +18685,6 @@
 ;; commits this result only when unrolling succeeds; unsupported scan/shuffle
 ;; shapes therefore keep the ordinary, unnormalized rotation result.
 (define (opt-loop-rotation-normalized-function-result
-  [pools : ast.AstNodePoolContext]
   [func : ir.CompilerIrFunction]) : OptBlockCtxResult
   (match func
     [(Function _ _ _ _ blocks _)
@@ -18670,23 +18696,19 @@
               (opt-cfg-fold-branches-blocks (& blocks))
               blocks)]
           (opt-loop-rotation-blocks-fixed-result
-            pools
             (compiler-opt-global-shared-view normalized)
             (+ 1 (ir.compiler-ir-block-list-count normalized)))))]))
 
 (define (opt-loop-rotation-blocks
-  [pools : ast.AstNodePoolContext]
   [blocks : (& ir.CompilerIrBlockList)]) : ir.CompilerIrBlockList
   (match (opt-loop-rotation-blocks-result
-    pools
     (owned_view.compiler-owned-reference-shared-view blocks))
     [(Result out _ _) out]))
 
 (define (opt-loop-rotation-function-result
-  [pools : ast.AstNodePoolContext]
   [func : (& ir.CompilerIrFunction)]) : OptBlockCtxResult
   (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ _ _ _ blocks _) (opt-loop-rotation-blocks-result pools blocks)]))
+    [(Function _ _ _ _ blocks _) (opt-loop-rotation-blocks-result blocks)]))
 
 ;; --- post-SSA loop rotation (rotate_ssa) -------------------------------------
 ;;
@@ -20380,9 +20402,16 @@
   (match loops
     [(slice) (No)]
     [(slice loop & rest)
-      (match (opt-rotate-ssa-loop-verified regions homed? func context loop)
-        [(Some next next-context) (Some next next-context)]
-        [(No) (opt-rotate-ssa-loops regions homed? func context rest)])]))
+      ;; The input, context and loop list predate this mark. A refusal exports
+      ;; nothing, including verifier errors; fresh label text has its own IR
+      ;; label arena. Accepted first-round results still belong to the caller.
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        (match (opt-rotate-ssa-loop-verified regions homed? func context loop)
+          [(Some next next-context) (Some next next-context)]
+          [(No)
+            (unsafe (arena.tl_region_reset mark))
+            (opt-rotate-ssa-loops regions homed? func context rest)]))]))
 
 ;; One round: the first verified rotation among FUNC's natural loops.
 (define (opt-rotate-ssa-round
@@ -98558,14 +98587,12 @@
 ;; exact-shape unroller runs here; its later pipeline position remains as a
 ;; fallback for functions whose SSA construction is intentionally rejected.
 (define (opt-pass-rotation
-  [pools : ast.AstNodePoolContext]
   [state : OptPassState]) : OptPassState
   (let
     [rotation : OptBlockCtxResult
-      (opt-loop-rotation-function-result pools (& (opt-pass-func state)))]
+      (opt-loop-rotation-function-result (& (opt-pass-func state)))]
     [simd : OptFunctionCtxResult
       (match (opt-loop-rotation-normalized-function-result
-        pools
         (opt-pass-func state))
         [(Result blocks ctx valid?)
           (let
@@ -98732,7 +98759,7 @@
                   (& (opt-pass-blocks s))))
               s)
             s)))]
-    [s (opt-stage "rotation" (opt-pass-rotation pools s))]
+    [s (opt-stage "rotation" (opt-pass-rotation s))]
     ;; A multi-def register-group var becomes one word var per word, which the
     ;; SSA below renames (opt-group-split-function). A split hands SSA a stale
     ;; context, since the CFG index holds the block values; an untouched

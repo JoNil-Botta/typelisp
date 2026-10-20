@@ -50760,16 +50760,13 @@
     [raw : ir.CompilerIrBlockList (opt-loop-rotation-top-test-blocks false)]
     [rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
-        (ast.ast-node-pool-reader-context-current)
         (& raw))]
     [constant-edge-rotated : ir.CompilerIrBlockList
       (match (opt.opt-loop-rotation-normalized-function-result
-        (ast.ast-node-pool-reader-context-current)
         (opt-cfg-test-function (opt-loop-rotation-top-test-blocks true)))
         [(Result blocks _ _) blocks])]
     [false-body-rotated : ir.CompilerIrBlockList
       (opt.opt-loop-rotation-blocks
-        (ast.ast-node-pool-reader-context-current)
         (& (opt-loop-rotation-false-body-blocks)))]
     [ssa : ir.CompilerIrFunction
       (opt.opt-ssa-construct-function
@@ -50848,7 +50845,6 @@
             [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
             [a
               (opt.opt-loop-rotation-blocks
-                (ast.ast-node-pool-reader-context-current)
                 (& no-preheader))]
             (opt.opt-block-list-eq type-segment-bases a no-preheader)))
         13]
@@ -50857,7 +50853,6 @@
             [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
             [a
               (opt.opt-loop-rotation-blocks
-                (ast.ast-node-pool-reader-context-current)
                 (& multi-backedge))]
             (opt.opt-block-list-eq type-segment-bases a multi-backedge)))
         14]
@@ -50866,7 +50861,6 @@
             [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
             [a
               (opt.opt-loop-rotation-blocks
-                (ast.ast-node-pool-reader-context-current)
                 (& with-phi))]
             (opt.opt-block-list-eq type-segment-bases a with-phi)))
         15]

@@ -91427,10 +91427,11 @@
 ;; The splice walk will visit the delta itself, so this updates only the
 ;; whole-program facts and name sets that later declarations consult.
 (define (macro-live-prescan-append-decls!
-  [state : TcMacroState]
+  [job-state : TcJobState]
   [decls : ast.AstDeclList]
   [module-id : i64]) : unit
   (let
+    [state : TcMacroState (tc-job-state-macro-state job-state)]
     [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
     [delta-has-defmacro : bool (macro-program-has-defmacro? decls)]
     (tc-macro-walk-set!
@@ -91456,6 +91457,10 @@
         (macro-program-has-summary-macro-import? decls)))
     (when
       delta-has-defmacro
+      ;; Symbols and registries already contain the committed delta. Refresh
+      ;; selected aliases before publishing its next expansion context, using
+      ;; the existing module/import events rather than scanning declarations.
+      (macro-alias-cache-build-segmented! job-state true)
       (tc-macro-walk-set!
         state
         macro-live-prescan-expr-type-names
@@ -103788,6 +103793,42 @@
 
 ;; The alias index's step for one row that is, once unwrapped, a module
 ;; marker or an import: returns the module the rows after it belong to.
+;; Selected-item replay shares the event traversal, but keeps symbol-map
+;; publication out of the ordinary module-alias indexing path.
+(define (macro-selected-item-alias-index-at!
+  [state : TcMacroState]
+  [decls : (& decls ast.AstDeclList)]
+  [index : i64]
+  [cur-module-id : i64]) : i64
+  (match (ast.ast-decl-list-ref-borrowed decls index)
+    [(Module _) (ast.ast-decl-list-module-id-at decls index cur-module-id)]
+    [(or (Import _ _) (Unsafe _))
+      ;; Peel wrappers and read nested import payloads through the existing
+      ;; owned accessor; ordinary module markers need only their scalar id.
+      (match (ast.ast-decl-unwrapped
+        (& (array-ref decls.slots (+ decls.offset index))))
+        [(Module next-module) next-module]
+        [(Import _ (Spec (ModuleItem item) _ (Some target) (Some alias) _))
+          (when
+            (csym.compiler-symbols-handle-found?
+              (csym.compiler-symbols-lookup-macro-in-module-id-or
+                (& (tc-macro-walk-field state macro-live-symbols-value))
+                target
+                item
+                (csym.compiler-symbols-missing-handle)))
+            (tc-macro-walk-set!
+              state
+              macro-live-symbols-value
+              (csym.compiler-symbols-add-selected-item-alias
+                (& (tc-macro-walk-field state macro-live-symbols-value))
+                target
+                item
+                cur-module-id
+                alias)))
+          cur-module-id]
+        [_ cur-module-id])]
+    [_ cur-module-id]))
+
 (define (macro-alias-cache-index-at!
   [state : TcMacroState]
   [decls : (& decls ast.AstDeclList)]
@@ -103864,7 +103905,9 @@
       9
       (macro-decl-list-slots-data-addr decls))))
 
-(define (macro-alias-cache-build-segmented! [job-state : TcJobState]) : unit
+(define (macro-alias-cache-build-segmented!
+  [job-state : TcJobState]
+  [refresh-selected? : bool]) : unit
   (let
     [state : TcMacroState (tc-job-state-macro-state job-state)]
     [count : i64 (macro-segmented-program-decl-count job-state)]
@@ -103875,16 +103918,22 @@
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [node-address : i64 data.head]
     [start : i64 data.cursor]
-    (tc-macro-import-index-control-set! state 6 1)
+    (unless refresh-selected? (tc-macro-import-index-control-set! state 6 1))
     ;; Only event rows carry what the index reads (macro-decl-list-events).
     (for [event (iterator.range 0 data.prefix-event-count)]
       (set!
         cur-module-id
-        (macro-alias-cache-index-at!
-          state
-          (& prefix)
-          (- (- len 1) (array-ref data.prefix-events event))
-          cur-module-id)))
+        (if refresh-selected?
+          (macro-selected-item-alias-index-at!
+            state
+            (& prefix)
+            (- (- len 1) (array-ref data.prefix-events event))
+            cur-module-id)
+          (macro-alias-cache-index-at!
+            state
+            (& prefix)
+            (- (- len 1) (array-ref data.prefix-events event))
+            cur-module-id))))
     (while (> node-address 0)
       (let
         [node : MacroProgramSegmentNodeData
@@ -103899,20 +103948,28 @@
           (< (array-ref events next-event) end))
           (set!
             cur-module-id
-            (macro-alias-cache-index-at!
-              state
-              (& decls)
-              (- (array-ref events next-event) decls.offset)
-              cur-module-id))
+            (if refresh-selected?
+              (macro-selected-item-alias-index-at!
+                state
+                (& decls)
+                (- (array-ref events next-event) decls.offset)
+                cur-module-id)
+              (macro-alias-cache-index-at!
+                state
+                (& decls)
+                (- (array-ref events next-event) decls.offset)
+                cur-module-id)))
           (+= next-event 1))
         (set! node-address node.next)
         (set! start 0)))
-    (tc-macro-import-index-control-set! state 10 cur-module-id)
-    (tc-macro-import-index-control-set! state 4 1)
-    (tc-macro-import-index-control-set! state 5 1)
-    (tc-macro-import-index-control-set! state 7 count)
-    (tc-macro-import-index-control-set! state 8 -1)
-    (tc-macro-import-index-control-set! state 9 0)))
+    (unless
+      refresh-selected?
+      (tc-macro-import-index-control-set! state 10 cur-module-id)
+      (tc-macro-import-index-control-set! state 4 1)
+      (tc-macro-import-index-control-set! state 5 1)
+      (tc-macro-import-index-control-set! state 7 count)
+      (tc-macro-import-index-control-set! state 8 -1)
+      (tc-macro-import-index-control-set! state 9 0))))
 
 ;; Macro expansion appends generated declarations to the active program view.
 ;; Keep the eager index synchronized once per larger view. When the backing
@@ -104062,7 +104119,7 @@
           (= (tc-macro-import-index-control state 5) 1))
         (tc-macro-import-index-control-set! state 3 0)
         (macro-alias-cache-ensure! state)
-        (macro-alias-cache-build-segmented! job-state)))
+        (macro-alias-cache-build-segmented! job-state false)))
     (macro-import-alias-target-cached-id
       state
       decls
@@ -114586,7 +114643,7 @@
                                     [_prescan-delta : unit
                                       (if incremental?
                                         (macro-live-prescan-append-decls!
-                                          macro-state
+                                          walk-state
                                           (tc-global-shared-view expanded)
                                           cur-module-id)
                                         unit)]
@@ -114827,7 +114884,7 @@
                                     unit)
                                   (if incremental?
                                     (macro-live-prescan-append-decls!
-                                      macro-state
+                                      walk-state
                                       (tc-global-shared-view materialized-decls)
                                       cur-module-id)
                                     (begin

@@ -3308,8 +3308,8 @@
 (define (compiler-parse-tag-expr-retired-array-take) : i64
   305)
 
-;; Legacy nodes remain available while parsing quoted seed templates. They are
-;; not accepted as ordinary source expressions at depth zero.
+;; Quote templates retain syntax that is not an ordinary expression at depth
+;; zero, including legacy nodes and body-splice list positions.
 (define compiler-parse-quote-depth : i64
   0)
 
@@ -7311,6 +7311,21 @@
     [_ (try (parse-ast-expr-list-into dispatch pools s (&mut out)))]
     (Ok out)))
 
+(define (parse-ast-body-single [pools : ast.AstNodePoolContext] [expr : i64]) : i64
+  (if (= compiler-parse-quote-depth 0)
+    expr
+    (match (ast.ast-expr-unspan-with-pools
+      pools
+      (& (ast.ast-node-pool-context-expr-get pools expr)))
+      [(UnquoteSplicing _)
+        ;; A lone splice still needs its body-list position. Keep the original
+        ;; spanned expression as the element for expansion diagnostics.
+        (let
+          [body : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
+          (ast.ast-expr-list-push (&mut body) expr)
+          (ast.ast-node-pool-context-expr-push pools (Begin body)))]
+      [_ expr])))
+
 (define (parse-ast-body-tail
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -7325,7 +7340,11 @@
         [n : i64 exprs.len]
         (cond
           [(= n 0) (Err (parse-kind-message (MalformedForm) missing-message))]
-          [(= n 1) (Ok (ast.ast-expr-list-get (& exprs) 0 0))]
+          [(= n 1)
+            (Ok
+              (parse-ast-body-single
+                pools
+                (ast.ast-expr-list-get (& exprs) 0 0)))]
           [else (Ok (ast.ast-node-pool-context-expr-push pools (Begin exprs)))]))]))
 
 (define (parse-ast-call-bracket-clause
@@ -9222,7 +9241,11 @@
       (let
         [end (reader.spanned-sexpr-drop body-tail 1)]
         (match (reader.spanned-sexpr-view end)
-          [(List (slice) _) (parse-ast-expr-with-pools dispatch pools body)]
+          [(List (slice) _)
+            (let
+              [parsed-body
+                (try (parse-ast-expr-with-pools dispatch pools body))]
+              (Ok (parse-ast-body-single pools parsed-body)))]
           [_
             (let
               [parsed-body

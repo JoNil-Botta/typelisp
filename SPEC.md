@@ -1135,7 +1135,11 @@ both prefix shorthand and the equivalent list-headed forms:
 `quasiquote` produces an `Expr` while evaluating `unquote` operands as
 compile-time `Expr` values and inserting their checked AST. `unquote-splicing`
 evaluates to an `ExprList` and splices that list into the surrounding
-template list. Clause lists and binding-clause lists do not splice
+template list. A body expression sequence is a list position even when its
+only template form is `,@body`, including `let`, `lambda`, and `match` arms.
+An empty splice contributes no expressions; the expanded form must still meet
+its ordinary body and result-type requirements. Clause lists and binding-clause
+lists do not splice
 implicitly; use `expr-clause-list->expr-list` or
 `expr-binding-clause-list->expr-list` when a macro needs to splice generated
 bracket operands. `unquote` and `unquote-splicing` outside quasiquote are

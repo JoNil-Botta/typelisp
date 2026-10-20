@@ -10,6 +10,11 @@
 (define (doc-site-link-smoke) : unit
   (let
     [sections (site.doc-site-typelisp-sections)]
+    [root-url : String
+      (str_cat.str-cat
+        (site.doc-site-repo-tree-root)
+        (site.doc-site-source-identity)
+        "/")]
     [cases : (Array LinkCase 20)
       (array
         (Case
@@ -43,8 +48,8 @@
           "docs/guide.md"
           "../scripts"
           (site.doc-site-repo-source-url "scripts"))
-        (Case "docs/guide.md" ".." (site.doc-site-repo-source-url "."))
-        (Case "README.md" "." (site.doc-site-repo-source-url "."))
+        (Case "docs/guide.md" ".." (string.copy (& root-url)))
+        (Case "README.md" "." (string.copy (& root-url)))
         (Case
           "docs/guide.md"
           "missing.md#anchor"

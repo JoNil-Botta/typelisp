@@ -416,14 +416,19 @@
   (doc_bridge.bridge-doc-string-contains? target "."))
 
 (define (doc-site-repo-source-url [target : String]) : String
-  (str_cat.str-cat
-    (if (doc-site-href-file-like? target)
-      (doc-site-repo-blob-root)
-      (doc-site-repo-tree-root))
-    (doc-site-source-identity)
-    "/"
-    target
-    ""))
+  (let
+    [path : String
+      (if (string.eq target ".")
+        ""
+        target)]
+    (str_cat.str-cat
+      (if (doc-site-href-file-like? path)
+        (doc-site-repo-blob-root)
+        (doc-site-repo-tree-root))
+      (doc-site-source-identity)
+      "/"
+      path
+      "")))
 
 (define (doc-site-guide-output-for-source
   [target : (& target str)]

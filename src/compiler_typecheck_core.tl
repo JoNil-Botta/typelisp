@@ -52665,7 +52665,34 @@
     (& (tc-context-expr-get ctx id)))
     [(ast.AstExpr.Literal (ast.AstLiteral.Int _ _)) true]
     [(ast.AstExpr.Literal (ast.AstLiteral.Float _)) true]
+    ;; A branch whose every value position is such a literal: the last form
+    ;; of a sequence (a `cond` arm of several forms), a `let` body, both arms
+    ;; of an `if` (the rest of a `cond`). Main re-checks such a branch against
+    ;; the other's type (`tc-merge-if-branch-types`), and its literals are
+    ;; what adopt it.
+    [(ast.AstExpr.If _ then-id else-id)
+      (and
+        (tc-selected-numeric-literal-id? ctx then-id)
+        (tc-selected-numeric-literal-id? ctx else-id))]
+    [(ast.AstExpr.Begin items)
+      (tc-selected-numeric-literal-tail? ctx (& items))]
+    [(ast.AstExpr.Let let-box)
+      (match (ast.ast-let-box-shared-view let-box)
+        [(ast.AstLet.Let _ body) (tc-selected-numeric-literal-id? ctx body)])]
+    [(ast.AstExpr.MacroExpansion expanded _ _)
+      (tc-selected-numeric-literal-id? ctx expanded)]
     [_ false]))
+
+(define (tc-selected-numeric-literal-tail?
+  [ctx : TcContext]
+  [items : (& items ast.AstExprList)]) : bool
+  (let
+    [count : i64 (ast.ast-expr-list-len items)]
+    (and
+      (> count 0)
+      (tc-selected-numeric-literal-id?
+        ctx
+        (ast.ast-expr-list-get items (- count 1) 0)))))
 
 (define (tc-infer-selected-if
   [ctx : TcContext]

@@ -1751,6 +1751,9 @@ constant fact naming such a var, as destination or source.
   in separately classified global, descriptor or buffer storage: raw pointers
   can reinterpret a local's bits at another type. Byte or unclassified writes
   invalidate every possibly aliasing load.
+  `Alloc` uses its fresh storage root and allocation epoch, preserving loads
+  available before that storage existed. A pointer-valued assignment cannot
+  use its pointee's root to describe the frame cell it writes.
   GVN installs the set before its function walk, so predecessor-exit tables,
   MF-2 join phis and MF-3 PRE obey the same availability boundary. Its loop
   carry summaries also count these definitions as writes (#8514).

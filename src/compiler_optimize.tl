@@ -129838,7 +129838,14 @@
                     type-segment-bases
                     table
                     facts
-                    (NoRoot)
+                    ;; Alloc creates the local's storage at the new epoch.
+                    ;; Its root excludes every previously available load.
+                    ;; Other definitions write the existing frame cell: a
+                    ;; pointer result's root describes its pointee, not that
+                    ;; cell, and cannot prove the write disjoint.
+                    (match (& instr)
+                      [(Alloc dst _) (opt-alias-root-of-var (& facts) dst)]
+                      [_ (NoRoot)])
                     (& class))]
                 (Result
                   (State

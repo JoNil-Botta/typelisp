@@ -20991,9 +20991,9 @@
   ;; by-value ownership is enforced and represented explicitly in IR.
   ;;
   ;; WHY NO PARAMETER-ROOT RULE (ALIAS-3). The language's borrow rule is a
-  ;; PLACE-PATH rule, not a physical noalias rule: tc-move-path-conflicts?
-  ;; (compiler_typecheck_core.tl) makes two paths conflict only when they share
-  ;; a syntactic ROOT NAME and one is a prefix of the other, so it rejects
+  ;; PLACE-PATH rule, not a physical noalias rule: the ownership graph
+  ;; (compiler_ownership_core.tl) makes two places conflict only when they
+  ;; share a ROOT local and one is a prefix of the other, so it rejects
   ;; `(f (& p) (&mut p))` and `(f (&mut p) (&mut p))` -- both diagnosed E0207
   ;; "cannot mutably borrow borrowed place" -- while saying nothing whatever
   ;; about two DIFFERENT roots that happen to designate one object. SPEC.md

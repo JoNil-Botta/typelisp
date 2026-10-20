@@ -9389,45 +9389,6 @@
 (define (change [value : Big]) : unit
   (set! value.a 7))")))
 
-(define (compiler-typecheck-moved-facts-same-dense-snapshot?
-  [a : tc_core.TcMovedPathFacts]
-  [b : tc_core.TcMovedPathFacts]) : bool
-  (match a
-    [(Dense store tail len)
-      (match b
-        [(Dense other-store other-tail other-len)
-          (and
-            (unsafe
-              (=
-                (ptr->int
-                  (__tl_array-data
-                    (__tl-project-field (__tl-box-place store) nodes)))
-                (ptr->int
-                  (__tl_array-data
-                    (__tl-project-field (__tl-box-place other-store) nodes)))))
-            (= tail other-tail)
-            (= len other-len))]
-        [_ false])]
-    [_ false]))
-
-(define (compiler-typecheck-moved-facts-same-dense-store?
-  [a : tc_core.TcMovedPathFacts]
-  [b : tc_core.TcMovedPathFacts]) : bool
-  (match a
-    [(Dense store _ _)
-      (match b
-        [(Dense other-store _ _)
-          (unsafe
-            (=
-              (ptr->int
-                (__tl_array-data
-                  (__tl-project-field (__tl-box-place store) nodes)))
-              (ptr->int
-                (__tl_array-data
-                  (__tl-project-field (__tl-box-place other-store) nodes)))))]
-        [_ false])]
-    [_ false]))
-
 ;; Returns true when use-after-move is rejected (straight-line and after a
 ;; branch that moves on every arm), while a single move, copyable reuse, ordinary
 ;; aggregate/projection sharing, one-shot owner transfers, branch isolation,

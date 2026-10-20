@@ -2700,11 +2700,6 @@
   (type-fact-index (__tl_dyn-array i64))
   (type-fact-expr-ids (__tl_dyn-array i64))
   (type-fact-types (__tl_dyn-array ast.AstType))
-  ;; Parallel to type-fact-types. Zero means no checker-only concrete closure
-  ;; fact has been computed for this expression; encoded facts start at 16.
-  ;; Move analysis populates a lambda body slot once, and the later borrow and
-  ;; tail-escape walks reuse it instead of recursively rechecking the lambda.
-  (type-fact-closure-codes (__tl_dyn-array i64))
   (type-fact-count i64)
   (type-fact-storage-arena i64)
   (type-fact-enclosing-arena i64)
@@ -2715,28 +2710,16 @@
   (early-exit-source-expr-limit i64)
   (early-exit-facts (__tl_dyn-array i64))
   (early-exit-known (__tl_dyn-array i64))
-  ;; The address of the one-slot TcMoveBreakCollection cell; see
-  ;; tc-body-move-breaks-swap!.
-  (move-breaks-cell i64)
-  (move-operand-control bool)
-  (move-operand-edges bool)
   ;; By-value parameters written in place (#7901). `param-facts` holds what
   ;; each checked body recorded: under its node id, the mask of written
   ;; parameter positions that lowering reads (tc-body-param-write-fact); under
   ;; tc-body-mut-borrow-key, each root it borrows `&mut`; under
   ;; tc-body-memory-class-key, whether a nominal name needs private parameter
-  ;; storage (tc-body-param-storage-name?); and under tc-body-param-note-key,
-  ;; the names noted during the current move check, the first
-  ;; `param-writes-count`. A noted name `-1 - name` is a local root the body
-  ;; borrows `&mut` rather than a written parameter.
-  (param-writes-count i64)
+  ;; storage (tc-body-param-storage-name?).
   (param-facts tc_i64_i64_map.Map)
   ;; These outlive every function's scratch arena, so they grow in the arena
   ;; the facts started in; 0 until then, when nothing is recorded.
   (param-write-arena i64)
-  ;; The address of the one-slot TcBorrowLoopExits cell; see
-  ;; tc-body-borrow-exits-swap!.
-  (borrow-exits-cell i64)
   (selected-owner u64)
   (selected-revision u64)
   (selected-source-path String)
@@ -10503,7 +10486,6 @@
                       [live-owner : i64
                         (tc-move-live-cleanup-owner-in-region
                           (tc-global-shared-view env)
-                          (tc-moved-empty)
                           brand
                           -1)]
                       (cond
@@ -11117,7 +11099,6 @@
           [live-owner : i64
             (tc-move-live-cleanup-owner-in-region
               (tc-global-shared-view env)
-              (tc-moved-empty)
               owner
               region)]
           (match (tc-selected-release-gate
@@ -21566,7 +21547,6 @@
         (__tl_make-array i64 1)
         (__tl_make-array i64 1)
         (__tl_make-array ast.AstType 1)
-        (__tl_make-array i64 1)
         0
         0
         0
@@ -21577,13 +21557,8 @@
         -1
         (__tl_make-array i64 1)
         (__tl_make-array i64 1)
-        (tc-move-break-collection-cell-new)
-        false
-        false
-        0
         (tc_i64_i64_map.with-capacity 0)
         0
-        (tc-borrow-loop-exits-cell-new)
         (tc-selected-body-owner-allocate!)
         (cast 0 : u64)
         ""
@@ -22107,7 +22082,6 @@
       (set! (deref data).early-exit-source-expr-limit expr-limit)
       (set! (deref data).early-exit-facts-ready false)
       (set! (deref data).early-exit-facts-collecting true)
-      (set! (deref data).param-writes-count 0)
       (set! (deref data).param-facts (tc_i64_i64_map.with-capacity 128))
       (set! (deref data).param-write-arena (arena.tl_arena_current)))
     (tc-body-type-fact-storage-start! state expr-limit)))
@@ -22181,49 +22155,10 @@
         (set! (deref data).early-exit-current true)
         unit))))
 
-;; Note a name for the current move check (see TcBodyStateData).
-(define (tc-body-move-note-push! [state : TcBodyState] [entry : i64]) : unit
-  (let
-    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
-    [ptr : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
-    [arena-id : i64
-      (unsafe
-        (deref view).param-write-arena)]
-    (when
-      (!= arena-id 0)
-      (in-arena
-        (unsafe
-          (arena.Arena arena-id))
-        (let
-          [count : i64
-            (unsafe
-              (deref view).param-writes-count)]
-          [notes : tc_i64_i64_map.Map
-            (unsafe
-              (deref view).param-facts)]
-          (tc_i64_i64_map.insert-ref!
-            (&mut notes)
-            (tc-body-param-note-key count)
-            entry)
-          (unsafe
-            (set! (deref ptr).param-facts notes)
-            (set! (deref ptr).param-writes-count (+ count 1))))))))
-
-;; The `param-facts` key of the move check's noted name at `index`: bits 61
-;; and 60 are 11 (see tc-body-mut-borrow-key).
-(define (tc-body-param-note-key [index : i64]) : i64
-  (bit-or index 3458764513820540928))
-
-;; A by-value parameter's storage written in place, by name; see
-;; tc-param-storage-note-write.
-(define (tc-body-param-write-note! [state : TcBodyState] [name-id : i64]) : unit
-  (tc-body-move-note-push! state name-id))
-
 ;; The `param-facts` key of a body's borrowed root name, or with name -1 of the
 ;; body itself, present when it borrows any root. Its bits 61 and 60 are 01,
-;; where a body's node id has 00, tc-body-memory-class-key 10 and
-;; tc-body-param-note-key 11 (node and name ids and note indexes stay below
-;; 2^60), so entries of different kinds never collide. The map's
+;; where a body's node id has 00 and tc-body-memory-class-key 10 (node and
+;; name ids stay below 2^60), so entries of different kinds never collide. The map's
 ;; bucket index sees only a key's low bits, so the body id is spread over all
 ;; of them; were two root keys to collide, a call would only copy more often.
 (define (tc-body-mut-borrow-key [body-id : i64] [name-id : i64]) : i64
@@ -22348,7 +22283,6 @@
         (set! (deref data).type-fact-index (__tl_make-array i64 1))
         (set! (deref data).type-fact-expr-ids (__tl_make-array i64 1))
         (set! (deref data).type-fact-types (__tl_make-array ast.AstType 1))
-        (set! (deref data).type-fact-closure-codes (__tl_make-array i64 1))
         (set! (deref data).type-fact-storage-arena 0)
         (set! (deref data).type-fact-enclosing-arena 0)
         (set! (deref data).type-fact-count 0)
@@ -22382,17 +22316,12 @@
           (set!
             (deref data).type-fact-types
             (__tl_make-array ast.AstType (tc-body-type-fact-initial-capacity)))
-          (set!
-            (deref data).type-fact-closure-codes
-            (__tl_make-array i64 (tc-body-type-fact-initial-capacity)))
           (set! (deref data).type-fact-count 0))))))
 
 (define (tc-body-type-fact-grow-copy!
   [dst-types : (&mut dst-types (__tl_dyn-array ast.AstType))]
-  [dst-closure-codes : (&mut dst-closure-codes (__tl_dyn-array i64))]
   [dst-expr-ids : (&mut dst-expr-ids (__tl_dyn-array i64))]
   [src-types : (& src-types (__tl_dyn-array ast.AstType))]
-  [src-closure-codes : (& src-closure-codes (__tl_dyn-array i64))]
   [src-expr-ids : (& src-expr-ids (__tl_dyn-array i64))]
   [count : i64]
   [index : i64]) : unit
@@ -22402,7 +22331,6 @@
       (set!
         (array-ref dst-types i)
         (owned_view.compiler-owned-element-view src-types i))
-      (set! (array-ref dst-closure-codes i) (array-ref src-closure-codes i))
       (set! (array-ref dst-expr-ids i) (array-ref src-expr-ids i))
       (set! i (+ i 1)))))
 
@@ -22411,8 +22339,6 @@
     (let
       [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
       [old-types : (__tl_dyn-array ast.AstType) (deref data).type-fact-types]
-      [old-closure-codes : (__tl_dyn-array i64)
-        (deref data).type-fact-closure-codes]
       [old-expr-ids : (__tl_dyn-array i64) (deref data).type-fact-expr-ids]
       [old-cap : i64 (array-length old-types)]
       [new-cap : i64
@@ -22425,20 +22351,15 @@
         (let
           [next-types : (__tl_dyn-array ast.AstType)
             (__tl_make-array ast.AstType new-cap)]
-          [next-closure-codes : (__tl_dyn-array i64)
-            (__tl_make-array i64 new-cap)]
           [next-expr-ids : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
           (tc-body-type-fact-grow-copy!
             (&mut next-types)
-            (&mut next-closure-codes)
             (&mut next-expr-ids)
             (& old-types)
-            (& old-closure-codes)
             (& old-expr-ids)
             (deref data).type-fact-count
             0)
           (set! (deref data).type-fact-types next-types)
-          (set! (deref data).type-fact-closure-codes next-closure-codes)
           (set! (deref data).type-fact-expr-ids next-expr-ids))))))
 
 (define (tc-body-type-fact-clear-recorded-index! [state : TcBodyState]) : unit
@@ -22528,7 +22449,6 @@
             (let
               [ready : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
               (set! (array-ref (deref ready).type-fact-types slot) ty)
-              (set! (array-ref (deref ready).type-fact-closure-codes slot) 0)
               (set! (array-ref (deref ready).type-fact-expr-ids slot) expr-id)
               (set!
                 (array-ref (deref ready).type-fact-index expr-id)
@@ -22566,37 +22486,6 @@
             (tc-semantic-recorded-type ctx inner)]
           [_ (Miss)])
         (Miss)))))
-
-;; Concrete closure facts use the same per-body slot index as inferred types.
-;; They are written during the move pass, while type facts are being consumed,
-;; and remain available to the immediately following borrow pass. Lambda body
-;; ids synthesized after source typecheck simply miss and retain the
-;; conservative recomputation path.
-(define (tc-body-closure-fact-code [state : TcBodyState] [body-id : i64]) : i64
-  (let
-    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
-    [slot : i64 (tc-body-type-fact-slot state body-id)]
-    (unsafe
-      (if (and
-        (deref data).type-facts-consuming
-        (>= slot 0)
-        (< slot (deref data).type-fact-count))
-        (array-ref (deref data).type-fact-closure-codes slot)
-        0))))
-
-(define (tc-body-closure-fact-record!
-  [state : TcBodyState]
-  [body-id : i64]
-  [code : i64]) : unit
-  (let
-    [data : TcBodyStateData (tc-body-state-data-value state)]
-    [slot : i64 (tc-body-type-fact-slot state body-id)]
-    (if (and
-      data.type-facts-consuming
-      (>= slot 0)
-      (< slot data.type-fact-count))
-      (set! (array-ref data.type-fact-closure-codes slot) code)
-      unit)))
 
 (defenum TcBorrowPlace
   ;; The borrow's lifetime, the referent type, whether the path to the
@@ -29693,7 +29582,7 @@
                   (if (> parent-len 0)
                     (let
                       [parent : TcChainIndex (tc-chain-state-read existing)]
-                      (tc-moved-clone-id-map (& parent.map)))
+                      (tc-clone-id-map (& parent.map)))
                     (tc_i64_i64_map.with-capacity 1024))
                   (if (> existing 0)
                     (__tl-project-field (tc-chain-state-read existing) next-seq)
@@ -60363,8 +60252,11 @@
   [env : TcTypeEnv]
   [owner-expr : ast.AstExpr]
   [owner-ty : ast.AstType]) : TcMaybeNameId
-  (match (tc-move-direct-root-base-path (tc-context-expr-bases ctx) owner-expr)
-    [(Some place)
+  (let
+    [root : i64
+      (tc-move-direct-root-place (tc-context-expr-bases ctx) owner-expr)]
+    (if (= root -1)
+      (No)
       (match (tc-arena-branded-region ctx owner-ty)
         [(Some brand)
           (if (tc-invalidate-brand-destroyable? env brand)
@@ -60372,13 +60264,12 @@
             (No))]
         [(No)
           (if (and
-            (= place.segments.len 0)
+            (>= root 0)
             (or
-              (tc-ordinary-arena-owner-active-id? env place.root)
-              (tc-atomic-arena-owner-active-id? env place.root)))
-            (Some place.root)
-            (No))])]
-    [(No) (No)]))
+              (tc-ordinary-arena-owner-active-id? env root)
+              (tc-atomic-arena-owner-active-id? env root)))
+            (Some root)
+            (No))]))))
 
 (define (tc-destroy-safe-call
   [ctx : TcContext]
@@ -89010,385 +88901,22 @@
                 [(Ok value _) (tc-check-defmacro-produced-type ctx ret value)]
                 [(Err _) Ok]))))))))
 
-;; --- whole-local move checker -----------------------------------------------
-;;
-;; Reject use-after-move for move-only whole locals/parameters in source
-;; evaluation order. Copyable reads remain reusable; by-value move sites consume
-;; every structurally move-only value, including closure environment captures.
-;; Reads never move; branches
-;; merge by union (a place moved on any arm is moved afterward). Loops reject
-;; owner moves from values visible before the repeated body, then discard body
-;; moves for the post-state because they may run zero times; lambdas still
-;; discard their body's moves because they may be deferred. Reassigning a slot
-;; with `set!` clears its moved mark. Owner-consuming struct fields, tuple
-;; elements, and fixed-array literal elements are tracked as root paths so
-;; unrelated entries remain usable. Nested direct-root struct/tuple/fixed-array
-;; literal chains are represented by stable paths. Box and non-literal
-;; aggregate projections stay rejected until their path/reinitialization policy
-;; lands; dynamic arrays have a separate diagnostic because element ownership
-;; cannot be made sound without an index policy.
-(defstruct TcMovePathSegmentNode
-  (parent i64)
-  (kind i64)
-  (value i64))
-
-(defstruct TcMovePathSegmentStoreData
-  (nodes (__tl_dyn-array TcMovePathSegmentNode))
-  (len i64)
-  (owner-arena i64))
-
-(defstruct TcMovePathSegments
-  ;; Empty roots carry address 0 and allocate nothing. The first projection
-  ;; creates one stable store; every later append adds a dense tagged node whose
-  ;; parent is the previous tail. Retained prefixes and siblings therefore share
-  ;; immutable nodes without copying or per-segment boxes.
-  (store-address i64)
-  (tail i64)
-  (len i64))
-
-(defstruct TcMovePath
-  ;; A nonnegative root identifies a lexical place. Its bitwise complement
-  ;; identifies the same source name in the global namespace, captured before
-  ;; a later local can shadow it. A missing place is represented by No.
-  (root i64)
-  (segments TcMovePathSegments))
-
-(defenum TcMovedPathKind
-  (Move)
-  (BorrowShared)
-  (BorrowMut)
-  (BorrowTwoPhaseMut)
-  (BorrowLending i64)
-  ;; Records that the lending binding has actually been evaluated. Existing
-  ;; lexical compatibility keeps an otherwise-unused bound mutable reference
-  ;; live; NLL shortening begins after a real source use.
-  (BorrowLendingUsed i64)
-  ;; A scoped liveness guard for a lending binding used after the expression
-  ;; currently being checked. The scope id lets nested ordered walkers remove
-  ;; only their own guard while preserving an outer pending-use horizon.
-  (BorrowPending i64)
-  ;; A direct local closure captures a value owned by this arena brand. This
-  ;; checker-only fact lets destroy-safe! invalidate the closure binding even
-  ;; though its source-level function type has no capture parameters.
-  (OwnerDependency i64)
-  ;; The cleanup obligation of an ordinary `let` owner rooted here left it
-  ;; through an edge that discharges or transfers it (#6947). Its root is also
-  ;; moved; a move without this fact lost the obligation.
-  (ObligationDischarged))
-
-(defstruct TcMovedPathFact
-  (path TcMovePath)
-  (kind TcMovedPathKind)
-  ;; Origins and captured source names belong to this body's immutable
-  ;; context/symbol/source owner; neither is narrowed or packed together.
-  (origin i64))
-
-;; Moved-path facts are persistent snapshots over an append-only node store.
-;; The singleton stays inline; larger snapshots carry only the stable store
-;; address, their newest node, and their logical length.
-(defstruct TcMovedPathFactNode
-  (fact TcMovedPathFact)
-  (parent i64)
-  ;; Exact over this immutable parent chain, including non-borrow markers.
-  (has-globals bool))
-
-(defstruct TcMovedPathFactStoreData
-  (nodes (__tl_dyn-array TcMovedPathFactNode))
-  (len i64)
-  (owner-arena i64))
-
-(defenum TcMovedPathFacts
-  (Nil)
-  (One TcMovedPathFact)
-  (Dense (Box TcMovedPathFactStoreData) i64 i64))
-
-(defstruct TcParamStorageOriginNode
-  (name-id i64)
-  (parameter-id i64)
-  (parent i64))
-
-(defstruct TcMovedSet
-  (roots tc_i64_i64_map.Map)
-  (partials tc_i64_i64_map.Map)
-  (paths TcMovedPathFacts)
-  (hidden-atomic-users tc_i64_i64_map.Map)
-  ;; Persistent one-word head for the rare local aliases that still point into
-  ;; a memory-class by-value parameter's ABI backing storage. Keeping this out
-  ;; of the broad type environment avoids copying another hash-map value
-  ;; through every move-check frame.
-  (param-storage-origins i64))
-
-;; The innermost open frame of `break` states collected for the loop walker
-;; (#8575); `moved` is meaningful only once `seen`. See
-;; `tc-body-move-breaks-swap!`.
-(defstruct TcMoveBreakCollection
-  (collecting bool)
-  (seen bool)
-  (moved TcMovedSet))
-
-(define (tc-move-break-collection-new [collecting : bool]) : TcMoveBreakCollection
-  (TcMoveBreakCollection collecting false (tc-moved-empty)))
-
-(define (tc-move-break-collection-cell-new) : i64
-  (let
-    [cell : (__tl_dyn-array TcMoveBreakCollection)
-      (__tl_make-array TcMoveBreakCollection 1)]
-    (set! (array-ref cell 0) (tc-move-break-collection-new false))
-    (cast
-      (unsafe
-        (ptr->int
-          (ptr-cast (__tl_array-data cell) : (Ptr TcMoveBreakCollection))))
-      : i64)))
-
-;; The borrow checker's counterpart of TcMoveBreakCollection (#8671): the
-;; innermost open frame of the borrow states at the `break`s and `continue`s
-;; the non-loop walker reaches inside one loop-body form. Each state is
-;; meaningful only once its flag is set. See `tc-body-borrow-exits-swap!`.
-(defstruct TcBorrowLoopExits
-  (collecting bool)
-  (breaks bool)
-  (break-borrowed TcMovedSet)
-  (repeats bool)
-  (repeat-borrowed TcMovedSet))
-
-(define (tc-borrow-loop-exits-new [collecting : bool]) : TcBorrowLoopExits
-  (TcBorrowLoopExits collecting false (tc-moved-empty) false (tc-moved-empty)))
-
-(define (tc-borrow-loop-exits-cell-new) : i64
-  (let
-    [cell : (__tl_dyn-array TcBorrowLoopExits)
-      (__tl_make-array TcBorrowLoopExits 1)]
-    (set! (array-ref cell 0) (tc-borrow-loop-exits-new false))
-    (cast
-      (unsafe
-        (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr TcBorrowLoopExits))))
-      : i64)))
-
-(defenum TcMoveMaybeIndex
-  (No)
-  (Some i64))
-
-(defenum TcMaybeMovePath
-  (No)
-  (Some TcMovePath))
-
-(defenum TcMaybeMoveName
-  (No)
-  (Some i64 String))
-
-(defenum TcMaybeSliceSplitProjection
-  (No)
-  (Some i64 i64))
-
-(defenum TcMoveConflict
-  (No)
-  (Some String i64))
-
-;; --- shared empty moved-set id map -----------------------------------------
-;;
-;; Branch checking clones the moved-set at every arm/branch entry, and the
-;; id-map copies are overwhelmingly empty. Allocating a private empty table for
-;; each of those is pure waste, so an empty table is ALIASED instead of copied,
-;; with copy-on-write at the writers.
-;;
-;; The sharing invariant has two halves, both checked locally:
-;;
-;;   1. Nothing ever writes through the shared map. Its full write surface is
-;;      `tc-moved-add`, `tc-moved-add-value`, `tc-moved-add-partial-value`,
-;;      `tc-moved-add-hidden-atomic-user`, `tc-moved-union-id-loop`,
-;;      `tc-moved-clone-id-map` (which writes only into its own fresh map) and
-;;      the two removers. Every inserting site takes private storage first via
-;;      `tc-moved-id-map-own`. The removers need no guard: `remove-ref!` writes
-;;      only after its probe finds an Occupied slot, and the shared map has
-;;      none -- exactly how a freshly allocated empty copy would behave.
-;;   2. The "is this the shared map?" test is exact. Every private moved-set map
-;;      is born at `with-capacity 8` (from `tc-moved-id-map-own`) or copied at
-;;      its source's capacity, and `grow!` only doubles, so private capacities
-;;      are 8, 16, 32, ...; capacity 1 is the shared map and nothing else.
-;;
-;; This global is initialized in the program arena at startup, so it outlives
-;; every per-function typecheck scratch arena that may hold sets pointing at it.
-(define tc-moved-shared-empty-id-map : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 1))
-
-(define (tc-moved-id-map-shared-empty? [map : (& map tc_i64_i64_map.Map)]) : bool
-  (= (tc_i64_i64_map.capacity map) 1))
-
-;; Give an inserting writer private storage when it holds the shared empty map.
-;; The replacement starts at the private-map birth capacity, so only the shared
-;; alias pays an allocation here.
-(define (tc-moved-id-map-own [map : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
-  (if (tc-moved-id-map-shared-empty? (& map))
-    (tc_i64_i64_map.with-capacity 8)
-    map))
-
-(define (tc-moved-empty) : TcMovedSet
-  (TcMovedSet
-    (tc-global-shared-view tc-moved-shared-empty-id-map)
-    (tc-global-shared-view tc-moved-shared-empty-id-map)
-    Nil
-    (tc-global-shared-view tc-moved-shared-empty-id-map)
-    0))
-
-(define (tc-moved-roots [set : TcMovedSet]) : tc_i64_i64_map.Map
-  set.roots)
-
-(define (tc-moved-partials [set : TcMovedSet]) : tc_i64_i64_map.Map
-  set.partials)
-
-(define (tc-moved-paths [set : TcMovedSet]) : TcMovedPathFacts
-  set.paths)
-
-(define (tc-moved-path-fact-store-node
-  [data : (& data TcMovedPathFactStoreData)]
-  [index : i64]) : TcMovedPathFactNode
-  (unsafe
-    (ptr-read (ptr-offset (__tl_array-data data.nodes) index))))
-
-(define (tc-moved-path-facts-have-globals? [facts : TcMovedPathFacts]) : bool
-  (match facts
-    [(Nil) false]
-    [(One fact) (< fact.path.root 0)]
-    [(Dense store tail _)
-      (array-ref (__tl-box-place store).nodes tail).has-globals]))
-
-(define (tc-moved-path-facts-empty-impl [facts : TcMovedPathFacts]) : bool
-  (match facts
-    [(Nil) true]
-    [_ false]))
-
-(defmacro (tc-moved-path-facts-empty? [facts : Expr]) : Expr
-  `(tc-moved-path-facts-empty-impl (tc-global-shared-view ,facts)))
-
-(define (tc-moved-path-facts-head-impl [facts : TcMovedPathFacts]) : TcMovedPathFact
-  (match facts
-    [(Nil) (io.panic "typecheck: moved-path fact head of empty snapshot")]
-    [(One fact) fact]
-    [(Dense store tail _)
-      (__tl-project-field
-        (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
-        fact)]))
-
-(defmacro (tc-moved-path-facts-head [facts : Expr]) : Expr
-  `(tc-moved-path-facts-head-impl (tc-global-shared-view ,facts)))
-
-(define (tc-moved-path-facts-rest-impl [facts : TcMovedPathFacts]) : TcMovedPathFacts
-  (match facts
-    [(or (Nil) (One _)) Nil]
-    [(Dense store tail len)
-      (let
-        [parent : i64
-          (__tl-project-field
-            (tc-moved-path-fact-store-node (& (__tl-box-place store)) tail)
-            parent)]
-        (if (= len 2)
-          (One
-            (__tl-project-field
-              (tc-moved-path-fact-store-node (& (__tl-box-place store)) parent)
-              fact))
-          (Dense store parent (- len 1))))]))
-
-(defmacro (tc-moved-path-facts-rest [facts : Expr]) : Expr
-  `(tc-moved-path-facts-rest-impl (tc-global-shared-view ,facts)))
-
-(define (tc-moved-hidden-atomic-users [set : TcMovedSet]) : tc_i64_i64_map.Map
-  set.hidden-atomic-users)
-
-(define (tc-moved-param-storage-origins [set : TcMovedSet]) : i64
-  set.param-storage-origins)
-
-(define (tc-param-storage-origin-node-read [address : i64]) : TcParamStorageOriginNode
-  (unsafe
-    (ptr-read (int->ptr (cast address : u64) : (Ptr TcParamStorageOriginNode)))))
-
-(define (tc-param-storage-origin-lookup [head : i64] [name-id : i64]) : TcMaybeNameId
-  (let
-    [cursor : i64 head]
-    [result : TcMaybeNameId No]
-    [done : bool false]
-    (while (and (not done) (not (= cursor 0)))
-      (let
-        [node : TcParamStorageOriginNode
-          (tc-param-storage-origin-node-read cursor)]
-        (if (= node.name-id name-id)
-          (begin
-            (if (>= node.parameter-id 0)
-              (set! result (Some node.parameter-id))
-              unit)
-            (set! done true))
-          (set! cursor node.parent))))
-    result))
-
-(define (tc-param-storage-origin-in-set [set : TcMovedSet] [name-id : i64]) : TcMaybeNameId
-  (tc-param-storage-origin-lookup (tc-moved-param-storage-origins set) name-id))
-
-(define (tc-moved-clone-id-map [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
-  ;; Counting down the entry count skips the scan-to-capacity tail entirely;
-  ;; branch moved-sets are usually empty or tiny, so a full-capacity walk
-  ;; would be almost all empty slots.
+(define (tc-clone-id-map [src : (& src tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
+  ;; Counting down the entry count skips the scan-to-capacity tail entirely.
   (let
     [remaining : i64 (tc_i64_i64_map.len src)]
-    (if (= remaining 0)
-      ;; An empty copy would have no content and no identity of its own -- it
-      ;; would exist only so a later insert could not reach the
-      ;; source's slots. `tc-moved-id-map-own` provides that separation at the
-      ;; insert instead, so the empty case aliases the shared map and allocates
-      ;; nothing. Lookups and removals see an empty table either way.
-      (tc-global-shared-view tc-moved-shared-empty-id-map)
-      (let
-        [out : tc_i64_i64_map.Map
-          (tc_i64_i64_map.with-capacity (tc_i64_i64_map.capacity src))]
-        [index : i64 0]
-        (while (> remaining 0)
-          (set! index (tc_i64_i64_map.next-occupied src index))
-          (match (tc_i64_i64_map.entry-at src index)
-            [(EntrySome key value)
-              (tc_i64_i64_map.insert-ref! (&mut out) key value)]
-            [(EntryNone) unit])
-          (+= index 1)
-          (-= remaining 1))
-        out))))
-
-(define (tc-moved-contains? [set : (& set TcMovedSet)] [name-id : i64]) : bool
-  (let
-    [set : TcMovedSet (owned_view.compiler-owned-reference-shared-view set)]
-    [map : tc_i64_i64_map.Map (tc-moved-roots set)]
-    (tc_i64_i64_map.contains? (& map) name-id)))
-
-(define (tc-moved-no-origin-id) : i64
-  -1)
-
-(define (tc-moved-add [set : TcMovedSet] [name-id : i64]) : TcMovedSet
-  (let
     [out : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-roots (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut out) name-id (tc-moved-no-origin-id))
-    (TcMovedSet
-      out
-      (tc-moved-partials (tc-global-shared-view set))
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      (tc-moved-param-storage-origins set))))
-
-(define (tc-moved-add-value [set : TcMovedSet] [name-id : i64] [value : i64]) : TcMovedSet
-  (let
-    [out : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-roots (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut out) name-id value)
-    (TcMovedSet
-      out
-      (tc-moved-partials (tc-global-shared-view set))
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      (tc-moved-param-storage-origins set))))
-
-(define (tc-moved-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
-  (let
-    [map : tc_i64_i64_map.Map (tc-moved-roots set)]
-    (match (tc_i64_i64_map.get (& map) name-id)
-      [(LookupFound origin-id)
-        (Some (tc-hygiene-name-text-id name-id) origin-id)]
-      [(LookupMissing) No])))
+      (tc_i64_i64_map.with-capacity (tc_i64_i64_map.capacity src))]
+    [index : i64 0]
+    (while (> remaining 0)
+      (set! index (tc_i64_i64_map.next-occupied src index))
+      (match (tc_i64_i64_map.entry-at src index)
+        [(EntrySome key value)
+          (tc_i64_i64_map.insert-ref! (&mut out) key value)]
+        [(EntryNone) unit])
+      (+= index 1)
+      (-= remaining 1))
+    out))
 
 (define (tc-move-use-message [name : String]) : String
   (str_cat.str-cat
@@ -89414,231 +88942,8 @@
 (define (tc-move-help) : String
   "clone the owner before moving it again, reinitialize the moved place before reuse, or keep the owner move inside a narrower scope")
 
-(define (tc-move-path-root-id [path : TcMovePath]) : i64
-  path.root)
-
-(define (tc-move-path-source-root-id [path : TcMovePath]) : i64
-  (if (< path.root 0)
-    (bit-xor path.root -1)
-    path.root))
-
-(define (tc-move-path-capture-owner [path : TcMovePath] [owner : i64]) : TcMovePath
-  (if (and (>= owner 0) (>= path.root 0))
-    (TcMovePath (bit-xor path.root -1) path.segments)
-    path))
-
-(define tc-move-path-segment-kind-field : i64
-  0)
-(define tc-move-path-segment-kind-tuple : i64
-  1)
-(define tc-move-path-segment-kind-array : i64
-  2)
-(define tc-move-path-segment-kind-slice-split : i64
-  3)
-
-(define (tc-move-path-segments-empty) : TcMovePathSegments
-  (TcMovePathSegments 0 -1 0))
-
-(define (tc-move-path-segment-store-read [address : i64]) : TcMovePathSegmentStoreData
-  (unsafe
-    (ptr-read
-      (int->ptr (cast address : u64) : (Ptr TcMovePathSegmentStoreData)))))
-
-(define (tc-move-path-segment-store-write!
-  [address : i64]
-  [data : TcMovePathSegmentStoreData]) : unit
-  (unsafe
-    (ptr-write!
-      (int->ptr (cast address : u64) : (MutPtr TcMovePathSegmentStoreData))
-      data)))
-
-(define (tc-move-path-segment-store-new) : i64
-  (let
-    [cell : (__tl_dyn-array TcMovePathSegmentStoreData)
-      (__tl_make-array TcMovePathSegmentStoreData 1)]
-    [owner : i64 (arena.tl_arena_current)]
-    (set!
-      (array-ref cell 0)
-      (TcMovePathSegmentStoreData
-        (__tl_make-array TcMovePathSegmentNode 4)
-        0
-        owner))
-    (unsafe
-      (cast
-        (ptr->int
-          (ptr-cast (__tl_array-data cell) : (Ptr TcMovePathSegmentStoreData)))
-        : i64))))
-
-(define (tc-move-path-segment-store-grow!
-  [data : (&mut data TcMovePathSegmentStoreData)]
-  [required : i64]) : unit
-  (let
-    [old : (__tl_dyn-array TcMovePathSegmentNode) data.nodes]
-    [old-capacity : i64 (array-length old)]
-    [next-capacity : i64 old-capacity]
-    (unless
-      (<= required old-capacity)
-      (while (< next-capacity required)
-        (set! next-capacity (* next-capacity 2)))
-      (in-arena
-        (unsafe
-          (arena.Arena data.owner-arena))
-        (let
-          [next : (__tl_dyn-array TcMovePathSegmentNode)
-            (__tl_make-array TcMovePathSegmentNode next-capacity)]
-          [index : i64 0]
-          (while (< index data.len)
-            (let
-              [node : TcMovePathSegmentNode (array-ref old index)]
-              (set!
-                (array-ref next index)
-                (TcMovePathSegmentNode node.parent node.kind node.value))
-              (set! index (+ index 1))))
-          (set! data.nodes next))))))
-
-(define (tc-move-path-segments-node
-  [segments : TcMovePathSegments]
-  [index : i64]) : TcMovePathSegmentNode
-  (let
-    [data : TcMovePathSegmentStoreData
-      (tc-move-path-segment-store-read segments.store-address)]
-    (array-ref data.nodes index)))
-
-(define (tc-move-path-segments-prefix?
-  [prefix : TcMovePathSegments]
-  [value : TcMovePathSegments]) : bool
-  (let
-    [prefix-len : i64 prefix.len]
-    [value-len : i64 value.len]
-    (if (= prefix-len 0)
-      true
-      (if (> prefix-len value-len)
-        false
-        (let
-          [prefix-index : i64 prefix.tail]
-          [value-index : i64 value.tail]
-          [value-depth : i64 value-len]
-          [remaining : i64 prefix-len]
-          [equal : bool true]
-          (while (> value-depth prefix-len)
-            (let
-              [node : TcMovePathSegmentNode
-                (tc-move-path-segments-node value value-index)]
-              (set! value-index node.parent)
-              (-= value-depth 1)))
-          (if (and
-            (= prefix.store-address value.store-address)
-            (= prefix-index value-index))
-            true
-            (begin
-              (while (and equal (> remaining 0))
-                (let
-                  [prefix-node : TcMovePathSegmentNode
-                    (tc-move-path-segments-node prefix prefix-index)]
-                  [value-node : TcMovePathSegmentNode
-                    (tc-move-path-segments-node value value-index)]
-                  (if (and
-                    (= prefix-node.kind value-node.kind)
-                    (= prefix-node.value value-node.value))
-                    unit
-                    (set! equal false))
-                  (set! prefix-index prefix-node.parent)
-                  (set! value-index value-node.parent)
-                  (-= remaining 1)))
-              equal)))))))
-
-(define (tc-move-path-conflicts? [a : TcMovePath] [b : TcMovePath]) : bool
-  (and
-    (= a.root b.root)
-    (or
-      (tc-move-path-segments-prefix? a.segments b.segments)
-      (tc-move-path-segments-prefix? b.segments a.segments))))
-
-;; Render a move/borrow place in user-facing source syntax: struct fields as
-;; `.field`, tuple elements as `.N`, and array elements as `[N]`, so
-;; diagnostics read like what the user wrote rather than internal place
-;; encodings. Refs #5149.
-(define (tc-move-path-segments-render [segments : TcMovePathSegments]) : String
-  (let
-    [length : i64 segments.len]
-    (if (= length 0)
-      ""
-      (let
-        [order : (__tl_dyn-array i64) (__tl_make-array i64 length)]
-        [cursor : i64 segments.tail]
-        [write-index : i64 (- length 1)]
-        [out : String ""]
-        (while (>= write-index 0)
-          (let
-            [node : TcMovePathSegmentNode
-              (tc-move-path-segments-node segments cursor)]
-            (set! (array-ref order write-index) cursor)
-            (set! cursor node.parent)
-            (-= write-index 1)))
-        (for [read-index (iterator.range 0 length)]
-          (let
-            [node : TcMovePathSegmentNode
-              (tc-move-path-segments-node segments (array-ref order read-index))]
-            (cond
-              [(= node.kind tc-move-path-segment-kind-field)
-                (set!
-                  out
-                  (str_cat.str-cat out "." (tc-env-key-name-text node.value)))]
-              [(= node.kind tc-move-path-segment-kind-tuple)
-                (set!
-                  out
-                  (str_cat.str-cat out "." (string.int->string node.value)))]
-              [(= node.kind tc-move-path-segment-kind-array)
-                (set!
-                  out
-                  (str_cat.str-cat out "[" (string.int->string node.value) "]"))]
-              [(= node.kind tc-move-path-segment-kind-slice-split)
-                (set! out (str_cat.str-cat out ".<slice-split>"))]
-              [else
-                (set!
-                  out
-                  (str_cat.str-cat out "." (string.int->string node.value)))])))
-        out))))
-
-(define (tc-move-path-render [path : TcMovePath]) : String
-  (str_cat.str-cat
-    (tc-env-key-name-text (tc-move-path-source-root-id path))
-    (tc-move-path-segments-render path.segments)))
-
-(define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
-  fact.origin)
-
-(define (tc-moved-add-partial-value
-  [set : TcMovedSet]
-  [name-id : i64]
-  [origin-id : i64]) : TcMovedSet
-  (let
-    [partials : tc_i64_i64_map.Map
-      (tc-moved-id-map-own (tc-moved-partials (tc-global-shared-view set)))]
-    (tc_i64_i64_map.insert-ref! (&mut partials) name-id origin-id)
-    (TcMovedSet
-      (tc-moved-roots (tc-global-shared-view set))
-      partials
-      (tc-moved-paths (tc-global-shared-view set))
-      (tc-moved-hidden-atomic-users (tc-global-shared-view set))
-      (tc-moved-param-storage-origins set))))
-
-(define (tc-moved-partial-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
-  (let
-    [partials : tc_i64_i64_map.Map (tc-moved-partials set)]
-    (match (tc_i64_i64_map.get (& partials) name-id)
-      [(LookupFound origin-id)
-        (Some (tc-hygiene-name-text-id name-id) origin-id)]
-      [(LookupMissing) No])))
-
-(define (tc-moved-conflict-display-path [key : String]) : String
-  key)
-
 (define (tc-move-origin-label [key : String]) : String
-  (str_cat.str-cat
-    "move of `"
-    (tc-moved-conflict-display-path key)
-    "` happened here"))
+  (str_cat.str-cat "move of `" key "` happened here"))
 
 (define (tc-move-loop-carried-origin-label [name : String]) : String
   (str_cat.str-cat
@@ -89654,58 +88959,6 @@
 
 (define (tc-move-obligation-help) : String
   "pass the value to its declared cleanup function, return it, or move it into another `let`, a `with` binding or a cleanup-owning aggregate on every path")
-
-(define (tc-moved-root-path-conflict-loop
-  [facts : TcMovedPathFacts]
-  [root-id : i64]) : TcMoveConflict
-  (if (tc-moved-path-facts-empty? facts)
-    No
-    (let
-      [fact : TcMovedPathFact (tc-moved-path-facts-head facts)]
-      [rest : TcMovedPathFacts (tc-moved-path-facts-rest facts)]
-      (if (and
-        (match fact.kind
-          [(Move) true]
-          [_ false])
-        (= (tc-move-path-root-id fact.path) root-id))
-        (Some (tc-move-path-render fact.path) (tc-moved-path-fact-origin fact))
-        (tc-moved-root-path-conflict-loop rest root-id)))))
-
-(define (tc-moved-root-path-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
-  (tc-moved-root-path-conflict-loop (tc-moved-paths set) root-id))
-
-(define (tc-moved-root-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
-  (match (tc-moved-conflict (tc-global-shared-view set) root-id)
-    [(Some key origin-id) (Some key origin-id)]
-    [No
-      (match (tc-moved-root-path-conflict (tc-global-shared-view set) root-id)
-        [(Some key origin-id) (Some key origin-id)]
-        [No (tc-moved-partial-conflict set root-id)])]))
-
-(define (tc-moved-union-id-loop
-  [a : (& a tc_i64_i64_map.Map)]
-  [index : i64]
-  [out : tc_i64_i64_map.Map]) : tc_i64_i64_map.Map
-  ;; Counting down the entry count skips the scan-to-capacity tail entirely;
-  ;; branch moved-sets are usually empty or tiny.
-  (let
-    [remaining : i64 (tc_i64_i64_map.len a)]
-    [cursor : i64 index]
-    ;; Only take private storage when there is something to insert; a union with
-    ;; an empty left side leaves the (possibly shared) right side untouched.
-    [result : tc_i64_i64_map.Map
-      (if (> remaining 0)
-        (tc-moved-id-map-own out)
-        out)]
-    (while (> remaining 0)
-      (set! cursor (tc_i64_i64_map.next-occupied a cursor))
-      (match (tc_i64_i64_map.entry-at a cursor)
-        [(EntrySome key value)
-          (tc_i64_i64_map.insert-ref! (&mut result) key value)]
-        [(EntryNone) unit])
-      (+= cursor 1)
-      (-= remaining 1))
-    result))
 
 ;; A direct local owner tracked from `arena.make`/`arena.make-atomic`. A bare
 ;; `arena.Arena` handle is Copy, but a copy stored in another binding, an
@@ -89741,114 +88994,50 @@
     (ResourceOwnership)
     "typecheck: cannot move owner-consuming value out of dynamic array element"))
 
-(define (tc-move-path-segments-append
-  [segments : TcMovePathSegments]
-  [kind : i64]
-  [value : i64]) : TcMovePathSegments
-  (let
-    [address : i64
-      (if (= segments.store-address 0)
-        (tc-move-path-segment-store-new)
-        segments.store-address)]
-    [data : TcMovePathSegmentStoreData
-      (tc-move-path-segment-store-read address)]
-    [index : i64 data.len]
-    (tc-move-path-segment-store-grow! (&mut data) (+ index 1))
-    (set!
-      (array-ref data.nodes index)
-      (TcMovePathSegmentNode segments.tail kind value))
-    (set! data.len (+ index 1))
-    (tc-move-path-segment-store-write! address data)
-    (TcMovePathSegments address index (+ segments.len 1))))
-
-(define (tc-move-path-segments-append-field
-  [segments : TcMovePathSegments]
-  [field-id : i64]) : TcMovePathSegments
-  (tc-move-path-segments-append
-    segments
-    tc-move-path-segment-kind-field
-    field-id))
-
-(define (tc-move-path-segments-append-tuple
-  [segments : TcMovePathSegments]
-  [tuple-index : i64]) : TcMovePathSegments
-  (tc-move-path-segments-append
-    segments
-    tc-move-path-segment-kind-tuple
-    tuple-index))
-
-(define (tc-move-path-segments-append-array
-  [segments : TcMovePathSegments]
-  [array-index : i64]) : TcMovePathSegments
-  (tc-move-path-segments-append
-    segments
-    tc-move-path-segment-kind-array
-    array-index))
-
-(define (tc-move-path-append [base : TcMovePath] [field-id : i64]) : TcMovePath
-  (TcMovePath
-    base.root
-    (tc-move-path-segments-append-field base.segments field-id)))
-
-(define (tc-move-tuple-index-path [base : TcMovePath] [index : i64]) : TcMovePath
-  (TcMovePath
-    base.root
-    (tc-move-path-segments-append-tuple base.segments index)))
-
-(define (tc-move-array-index-path [base : TcMovePath] [index : i64]) : TcMovePath
-  (TcMovePath
-    base.root
-    (tc-move-path-segments-append-array base.segments index)))
-
-(define (tc-move-literal-index [expr-bases : i64] [expr : ast.AstExpr]) : TcMoveMaybeIndex
+(define (tc-move-literal-index? [expr-bases : i64] [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(or (Ann inner-box _) (Cast inner-box _))
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-move-literal-index expr-bases inner))]
+      (tc-move-literal-index?
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(Literal lit)
       (match lit
-        [(Int index text)
-          (Some (ast.ast-int-literal-value-or-payload index text))]
-        [_ (No)])]
-    [_ (No)]))
+        [(Int _ _) true]
+        [_ false])]
+    [_ false]))
 
-(define (tc-move-direct-root-base-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
+;; The root local of a direct place: a local, or a field, tuple element or
+;; literal-index array element of one (through annotations and casts). The
+;; local's name ID, -2 for a projection of one, or -1 for any other operand.
+(define (tc-move-direct-root-place [expr-bases : i64] [expr : ast.AstExpr]) : i64
   (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(or (Ann inner-box _) (Cast inner-box _))
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-move-direct-root-base-path expr-bases inner))]
-    [(StructGet inner-box field)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-move-direct-root-base-path expr-bases inner)
-          [(Some base) (Some (tc-move-path-append base field))]
-          [(No) (No)]))]
-    [(TupleRef inner-box index)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (match (tc-move-direct-root-base-path expr-bases inner)
-          [(Some base) (Some (tc-move-tuple-index-path base index))]
-          [(No) (No)]))]
+      (tc-move-direct-root-place
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(or (StructGet inner-box _) (TupleRef inner-box _))
+      (if (=
+        (tc-move-direct-root-place
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box))
+        -1)
+        -1
+        -2)]
     [(ArrayRef array-box index-box)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        [index-expr : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (match (tc-move-direct-root-base-path expr-bases array)
-          [(Some base)
-            (match (tc-move-literal-index expr-bases index-expr)
-              [(Some index) (Some (tc-move-array-index-path base index))]
-              [(No) (No)])]
-          [(No) (No)]))]
-    [(Var name) (Some (TcMovePath name (tc-move-path-segments-empty)))]
-    [_ (No)]))
+      (if (or
+        (=
+          (tc-move-direct-root-place
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases array-box))
+          -1)
+        (not
+          (tc-move-literal-index?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases index-box))))
+        -1
+        -2)]
+    [(Var name) name]
+    [_ -1]))
 
 (define (tc-param-storage-type? [ctx : TcContext] [ty : ast.AstType]) : bool
   (let
@@ -89921,98 +89110,6 @@
                       (set! (deref ptr).param-facts grown)))))
               memory?)]
           [(Err _) (tc-type-copyable? ctx ty)])])))
-
-(define (tc-param-storage-fixed-array-type?
-  [ctx : TcContext]
-  [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(Array _ _) true]
-    [_ false]))
-
-(define (tc-param-storage-tuple-type? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(Tuple _) true]
-    [_ false]))
-
-;; Return the original by-value memory-class nominal Struct/Enum parameter
-;; whose ABI backing storage contains this place. Only those nominal
-;; parameters are seeded/tracked here: by-value fixed arrays and tuples have
-;; private callee storage. Tuple and fixed-array projections are inline and
-;; inherit provenance only when rooted in a tracked nominal memory parameter;
-;; dynamic-array/box/reference projections remain shallow handles and do not.
-(define (tc-param-storage-place-origin
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [moved : TcMovedSet]
-  [place : ast.AstExpr]) : TcMaybeNameId
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& place))
-    [(Var name)
-      (if (tc-dotted-place-name-id? ctx env name)
-        (match (tc-dotted-local-field-expr-id-after-check
-          (tc-context-structural-session ctx)
-          name)
-          [(Ok virtual-id)
-            (tc-param-storage-place-origin
-              ctx
-              expr-bases
-              env
-              moved
-              (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
-          [(Err _) No])
-        (tc-param-storage-origin-in-set moved name))]
-    [(or (Ann inner-box _) (Cast inner-box _))
-      (tc-param-storage-place-origin
-        ctx
-        expr-bases
-        env
-        moved
-        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-    [(StructGet receiver-box _)
-      (let
-        [receiver : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-        (match (tc-expr ctx env (tc-global-shared-view receiver))
-          [(Ok receiver-ty)
-            (if (tc-param-storage-type? ctx receiver-ty)
-              (tc-param-storage-place-origin ctx expr-bases env moved receiver)
-              No)]
-          [(Err _) No]))]
-    [(ArrayRef array-box _)
-      (let
-        [array : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases array-box)]
-        (match (tc-expr ctx env (tc-global-shared-view array))
-          [(Ok array-ty)
-            (if (tc-param-storage-fixed-array-type? ctx array-ty)
-              (tc-param-storage-place-origin ctx expr-bases env moved array)
-              No)]
-          [(Err _) No]))]
-    [(TupleRef tuple-box _)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (match (tc-expr ctx env (tc-global-shared-view tuple))
-          [(Ok tuple-ty)
-            (if (tc-param-storage-tuple-type? ctx tuple-ty)
-              (tc-param-storage-place-origin ctx expr-bases env moved tuple)
-              No)]
-          [(Err _) No]))]
-    [_ No]))
-
-;; An in-place write through `place` -- a field, element or `replace!` write,
-;; or a `&mut` borrow -- notes the by-value parameter whose storage it reaches,
-;; if any.
-(define (tc-param-storage-note-write
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [moved : TcMovedSet]
-  [place : ast.AstExpr]) : unit
-  (match (tc-param-storage-place-origin ctx expr-bases env moved place)
-    [(Some parameter-id)
-      (tc-body-param-write-note! (tc-context-body-state ctx) parameter-id)]
-    [(No) unit]))
 
 ;; Resolve source, hygiene, and qualified value names through the same immutable
 ;; symbol-table path used for direct calls. Extern values intentionally remain
@@ -90088,35 +89185,30 @@
     (tc-move-global-source-name name-id)
     "`; borrow the global instead"))
 
-;; The innermost live `with` cleanup owner whose binding carries the brands
-;; being invalidated, or -1: the brands `owner` owns when `owner` >= 0 (safe
+;; The innermost `with` cleanup owner whose binding carries the brands being
+;; invalidated, or -1: the brands `owner` owns when `owner` >= 0 (safe
 ;; destroy), otherwise the phase generation `region` (safe rewind). Such an
 ;; owner cannot simply be marked moved: its cleanup runs when its `with` scope
 ;; ends, after the arena is gone, whether or not the body mentions it again.
 ;; A marker directly follows its owner's binding, so `prev-key`/`prev-ty` is
-;; the binding the marker belongs to. A shadowed owner is still live; a wholly
-;; moved one is not, and a partially moved one still cleans up the rest.
+;; the binding the marker belongs to. A shadowed owner is still live.
 (define (tc-move-live-cleanup-owner-in-region-scan
   [root : TcTypeEnv]
   [env : TcTypeEnv]
-  [moved : TcMovedSet]
   [owner : i64]
   [region : i64]
   [prev-key : i64]
-  [prev-ty : ast.AstType]
-  [later : TcNameIdList]) : i64
+  [prev-ty : ast.AstType]) : i64
   (match (tc-type-env-marker-step env)
     [(Done) -1]
     [(Cache rest-env)
       (tc-move-live-cleanup-owner-in-region-scan
         root
         rest-env
-        moved
         owner
         region
         prev-key
-        prev-ty
-        later)]
+        prev-ty)]
     [(Bind key ty rest-env)
       (cond
         [(= key (tc-default-boundary-id)) -1]
@@ -90124,40 +89216,44 @@
             (tc-cleanup-owner-marker-for? key ty prev-key)
             (if (>= owner 0)
               (tc-type-contains-arena-owner-region? root prev-ty owner)
-              (tc-type-contains-region prev-ty region))
-            (or
-              (tc-name-id-list-contains later prev-key)
-              (not (tc-moved-contains? moved prev-key))))
+              (tc-type-contains-region prev-ty region)))
           prev-key]
         [else
           (tc-move-live-cleanup-owner-in-region-scan
             root
             rest-env
-            moved
             owner
             region
             key
-            ty
-            (if (>= prev-key 0)
-              (tc-name-id-list-add later prev-key)
-              later))])]))
+            ty)])]))
 
 (define (tc-move-live-cleanup-owner-in-region
   [env : TcTypeEnv]
-  [moved : TcMovedSet]
   [owner : i64]
   [region : i64]) : i64
   (if (tc-cleanup-owner-markers-possible?)
-    (tc-move-live-cleanup-owner-in-region-scan
-      env
-      env
-      moved
-      owner
-      region
-      -1
-      (Unit)
-      Nil)
+    (tc-move-live-cleanup-owner-in-region-scan env env owner region -1 (Unit))
     -1))
+
+;; A `with` cleanup owner `name` holding values of `arena` at its safe destroy
+;; or rewind (`operation`), the producer's and the graph's (exits 9 and 10)
+;; wording.
+(define (tc-safe-invalidation-cleanup-owner-text
+  [operation : String]
+  [arena : String]
+  [name : String]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (ArenaOwnership))
+    "typecheck: "
+    operation
+    " cannot invalidate `"
+    arena
+    "` while `with` cleanup owner `"
+    name
+    "` holds values from it; the owner's cleanup runs when its `with` scope ends"))
+
+(define (tc-safe-invalidation-cleanup-owner-help) : String
+  "end the `with` scope before invalidating the arena, or allocate the owner in an arena that outlives the scope")
 
 (define (tc-move-safe-invalidation-cleanup-owner-message
   [expr-bases : i64]
@@ -90167,15 +89263,7 @@
   [name : String]) : String
   (let
     [message : String
-      (str_cat.str-cat
-        (cdiag.compiler-diagnostic-typecheck-tag (ArenaOwnership))
-        "typecheck: "
-        operation
-        " cannot invalidate `"
-        arena
-        "` while `with` cleanup owner `"
-        name
-        "` holds values from it; the owner's cleanup runs when its `with` scope ends")]
+      (tc-safe-invalidation-cleanup-owner-text operation arena name)]
     ;; The invalidating call is located at its arena argument, or at the call's
     ;; own source view when that argument has no span.
     (match (match (match (ast.ast-expr-unspan-with-segment-bases
@@ -90194,7 +89282,7 @@
         (tc-rich-error-with-help
           span
           message
-          "end the `with` scope before invalidating the arena, or allocate the owner in an arena that outlives the scope")]
+          (tc-safe-invalidation-cleanup-owner-help))]
       [(No) message])))
 
 ;; The brand an `(:invalidate r T)` formal ends at one call: `r` after
@@ -90596,13 +89684,9 @@
       owner
       "` defines instead")))
 
-;; Checker-only closure facts never enter AstType or the lowering ABI. Call
-;; capabilities are 0 = shared/reusable, 1 = exclusive/reusable (FnMut), and
-;; 2 = consuming (FnOnce). A local lambda binding stores that capability in a
-;; disjoint Copy/non-Copy range inside the existing locals map; ordinary locals
-;; keep the -1 sentinel. This keeps concrete environment
-;; copyability available after a fact-preserving local alias without making a
-;; plain `(-> ...)` type depend on one particular lambda value.
+;; Checker-only closure call capabilities never enter AstType or the lowering
+;; ABI: 0 = shared/reusable, 1 = exclusive/reusable (FnMut), and 2 = consuming
+;; (FnOnce).
 (define (tc-closure-call-capability-shared) : i64
   0)
 
@@ -90612,104 +89696,20 @@
 (define (tc-closure-call-capability-once) : i64
   2)
 
-(define (tc-closure-local-fact-copy-base) : i64
-  16)
-
-(define (tc-closure-local-fact-move-base) : i64
-  32)
-
-(define (tc-closure-local-fact-code? [code : i64]) : bool
-  (or
-    (and
-      (>= code (tc-closure-local-fact-copy-base))
-      (<= code (+ (tc-closure-local-fact-copy-base) 2)))
-    (and
-      (>= code (tc-closure-local-fact-move-base))
-      (<= code (+ (tc-closure-local-fact-move-base) 2)))))
-
-(define (tc-closure-local-fact-code [locals : TcMovedSet] [name-id : i64]) : i64
-  (let
-    [roots : tc_i64_i64_map.Map (tc-moved-roots locals)]
-    (match (tc_i64_i64_map.get (& roots) name-id)
-      [(LookupFound code)
-        (if (tc-closure-local-fact-code? code)
-          code
-          -1)]
-      [(LookupMissing) -1])))
-
-(define (tc-closure-local-fact-copyable-code? [code : i64]) : bool
-  (and
-    (>= code (tc-closure-local-fact-copy-base))
-    (<= code (+ (tc-closure-local-fact-copy-base) 2))))
-
-(define (tc-closure-local-fact-move-only-code? [code : i64]) : bool
-  (and
-    (>= code (tc-closure-local-fact-move-base))
-    (<= code (+ (tc-closure-local-fact-move-base) 2))))
-
-(define (tc-closure-local-fact-encode [copyable : bool] [capability : i64]) : i64
-  (+
-    (if copyable
-      (tc-closure-local-fact-copy-base)
-      (tc-closure-local-fact-move-base))
-    capability))
-
-(define (tc-closure-local-fact-capability [code : i64]) : i64
-  (if (tc-closure-local-fact-copyable-code? code)
-    (- code (tc-closure-local-fact-copy-base))
-    (if (tc-closure-local-fact-move-only-code? code)
-      (- code (tc-closure-local-fact-move-base))
-      (tc-closure-call-capability-shared))))
-
-(define (tc-move-local-or-type-move-only?
-  [ctx : TcContext]
-  [locals : TcMovedSet]
-  [name-id : i64]
-  [ty : ast.AstType]) : bool
-  (let
-    [code : i64 (tc-closure-local-fact-code locals name-id)]
-    (if (tc-closure-local-fact-code? code)
-      (tc-closure-local-fact-move-only-code? code)
-      (tc-type-move-only? ctx ty))))
-
-;; What a captured-binding scan asks of each binding a lambda body names: does
-;; its type hold a mutable reference, is it move-only (as a local fact or by
-;; type), or is it move-only and already moved.
-(defenum TcCaptureQuery
-  (MutReference)
-  (MoveOnly TcMovedSet)
-  (Consumed TcMovedSet TcMovedSet))
-
-(define (tc-capture-query-matches?
-  [ctx : TcContext]
-  [query : TcCaptureQuery]
-  [key : i64]
-  [ty : ast.AstType]) : bool
-  (match query
-    [(MutReference) (tc-type-contains-mut-reference? ty)]
-    [(MoveOnly locals) (tc-move-local-or-type-move-only? ctx locals key ty)]
-    [(Consumed locals moved)
-      (and
-        (tc-move-local-or-type-move-only? ctx locals key ty)
-        (match (tc-moved-root-conflict moved key)
-          [(Some _ _) true]
-          [No false]))]))
-
-;; Whether some binding the lambda captures answers `query`. Bindings are
-;; visited innermost first up to the default boundary; a shadowed binding is
-;; skipped.
+;; Whether some binding the lambda captures has a move-only type. Bindings
+;; are visited innermost first up to the default boundary; a shadowed binding
+;; is skipped.
 (define (tc-lambda-capture-scan?
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [bound : TcStringList]
   [body : ast.AstExpr]
-  [query : TcCaptureQuery]
   [seen : TcStringList]) : bool
   (match (tc-type-env-marker-step env)
     [(Done) false]
     [(Cache rest-env)
-      (tc-lambda-capture-scan? ctx expr-bases rest-env bound body query seen)]
+      (tc-lambda-capture-scan? ctx expr-bases rest-env bound body seen)]
     [(Bind key ty rest-env)
       (let
         [name : String (tc-env-key-name-text key)]
@@ -90727,25 +89727,14 @@
               (tc-string-list-contains
                 (tc-global-shared-view seen)
                 (tc-global-shared-view name)))
-            (tc-lambda-capture-scan?
-              ctx
-              expr-bases
-              rest-env
-              bound
-              body
-              query
-              seen)]
+            (tc-lambda-capture-scan? ctx expr-bases rest-env bound body seen)]
           [(and
               (tc-expr-uses-free-name?
                 expr-bases
                 (tc-global-shared-view body)
                 (tc-global-shared-view name)
                 (tc-global-shared-view bound))
-              (tc-capture-query-matches?
-                ctx
-                (tc-global-shared-view query)
-                key
-                ty))
+              (tc-type-move-only? ctx ty))
             true]
           [else
             (tc-lambda-capture-scan?
@@ -90754,14 +89743,12 @@
               rest-env
               bound
               body
-              query
               (tc-string-list-add seen name))]))]))
 
-(define (tc-lambda-capture-has-move-only-with-locals?
+(define (tc-lambda-capture-has-move-only?
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
-  [locals : TcMovedSet]
   [params : ast.AstParamList]
   [body : ast.AstExpr]) : bool
   (tc-lambda-capture-scan?
@@ -90770,22 +89757,7 @@
     (tc-type-env-marker-start env)
     (tc-param-bound-names params)
     body
-    (MoveOnly locals)
     Nil))
-
-(define (tc-lambda-capture-has-move-only?
-  [ctx : TcContext]
-  [expr-bases : i64]
-  [env : TcTypeEnv]
-  [params : ast.AstParamList]
-  [body : ast.AstExpr]) : bool
-  (tc-lambda-capture-has-move-only-with-locals?
-    ctx
-    expr-bases
-    env
-    (tc-moved-empty)
-    params
-    body))
 
 (define (tc-borrow-check-move-message [path : String]) : String
   (str_cat.str-cat
@@ -123313,19 +122285,13 @@
       (& diagnostic.source.expansion)
       (tc-rich-error-with-help
         (tc-selected-source-span (& diagnostic.source))
-        (str_cat.str-cat
-          (cdiag.compiler-diagnostic-typecheck-tag
-            (cdiag.CompilerTypecheckKind.ArenaOwnership))
-          "typecheck: "
+        (tc-safe-invalidation-cleanup-owner-text
           (if (= diagnostic.exit 10)
             "arena.rewind-safe!"
             "arena.destroy-safe!")
-          " cannot invalidate `"
           arena
-          "` while `with` cleanup owner `"
-          name
-          "` holds values from it; the owner's cleanup runs when its `with` scope ends")
-        "end the `with` scope before invalidating the arena, or allocate the owner in an arena that outlives the scope"))))
+          name)
+        (tc-safe-invalidation-cleanup-owner-help)))))
 
 ;; A `with` owner moved out before its scope's cleanup (obligation status 4),
 ;; at the move, in the legacy move checker's wording and labels.

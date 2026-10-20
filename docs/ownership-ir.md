@@ -2095,9 +2095,12 @@ checkpoints do not establish production cutover.
 
 The cutover retired the authoritative `tc-move-check-*` and
 `tc-borrow-check-*` walks and the legacy lambda capability walk (Production
-cutover, above). Definitions that keep the `tc-borrow-*`, `tc-move-*` and
-`tc-moved-*` prefixes are place typing, diagnostic text shared with the
-graph's messages, and state the typechecker still threads; none decides a move
-or borrow verdict. Source/entry-point, seed-regression, unsafe-wrapper,
+cutover, above). Definitions that keep the `tc-borrow-*` and `tc-move-*`
+prefixes are place typing and diagnostic text shared with the graph's
+messages; none decides a move or borrow verdict. The walkers' state the
+typechecker kept threading afterwards (`TcMovedSet`, which no reachable code
+ever filled, its path facts, the loop-exit cells and closure codes of
+`TcBodyState`) is removed too.
+Source/entry-point, seed-regression, unsafe-wrapper,
 mutation, instrumentation, performance and target-route evidence accompanies
 the pull request that lands this work.

@@ -148,12 +148,39 @@ commit_relation() {
     gh api "repos/$1/compare/$2...$3" --jq '.status'
 }
 
-# The commit the current stable alias targets, or nothing when it is absent.
+validate_alias_sha() {
+    case "$1" in
+        "" | *[!0-9a-f]*)
+            fail "invalid $FINAL_TAG object SHA: $1"
+            return 1
+            ;;
+    esac
+    [ "${#1}" -eq 40 ] || fail "invalid $FINAL_TAG object SHA length: $1"
+}
+
+# The Git tag remains authoritative when its release is draft or missing.
+# The public releases/tags endpoint hides drafts and cannot prove absence.
 current_latest_target_sha() {
     latest_error=${TMPDIR:-/tmp}/stage0-latest-target.$$
-    if gh api "repos/$REPO/releases/tags/$FINAL_TAG" --jq '.target_commitish' \
-        2>"$latest_error"; then
+    if latest_ref=$(gh api "repos/$REPO/git/ref/tags/$FINAL_TAG" \
+        --jq '[.object.type, .object.sha] | join("|")' 2>"$latest_error"); then
         rm -f "$latest_error"
+        IFS='|' read -r latest_kind latest_sha <<EOF
+$latest_ref
+EOF
+        validate_alias_sha "$latest_sha" || return 1
+        case "$latest_kind" in
+            commit) ;;
+            tag)
+                # Resolve the explicit tag, including nested annotated tags;
+                # a same-named branch must not become the comparison base.
+                latest_sha=$(gh api "repos/$REPO/commits/refs%2Ftags%2F$FINAL_TAG" \
+                    --jq '.sha') || return 1
+                validate_alias_sha "$latest_sha" || return 1
+                ;;
+            *) fail "unexpected $FINAL_TAG ref object type: $latest_kind"; return 1 ;;
+        esac
+        printf '%s\n' "$latest_sha"
         return 0
     fi
     if grep -F "HTTP 404" "$latest_error" >/dev/null 2>&1; then
@@ -162,7 +189,7 @@ current_latest_target_sha() {
     fi
     cat "$latest_error" >&2 || true
     rm -f "$latest_error"
-    fail "cannot inspect the current $FINAL_TAG release"
+    fail "cannot inspect the current $FINAL_TAG Git ref"
 }
 
 create_candidate_release() {
@@ -487,6 +514,41 @@ self_test() {
     mock_existing_ids=90
     mock_promote_drafts=false
     mock_promote_published=2026-08-09T00:00:00Z
+    mock_release_visibility=public
+    mock_annotated_sha=$older_sha
+
+    gh() {
+        case "$*" in
+            "api repos/$REPO/git/ref/tags/$FINAL_TAG --jq [.object.type, .object.sha] | join(\"|\")")
+                latest_value=$(next_latest_value)
+                case "$latest_value" in
+                    none) echo 'gh: Not Found (HTTP 404)' >&2; return 1 ;;
+                    denied) echo 'gh: Forbidden (HTTP 403)' >&2; return 1 ;;
+                    tag) echo 'tag|aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' ;;
+                    bad-type) printf 'blob|%s\n' "$older_sha" ;;
+                    empty-sha) echo 'commit|' ;;
+                    short-sha) echo 'commit|abcd' ;;
+                    bad-sha) echo 'commit|0123456789abcdef0123456789abcdef0123456g' ;;
+                    *) printf 'commit|%s\n' "$latest_value" ;;
+                esac
+                ;;
+            "api repos/$REPO/commits/refs%2Ftags%2F$FINAL_TAG --jq .sha")
+                echo resolve-annotated >> "$action_log"
+                [ "$mock_annotated_sha" != denied ] || return 1
+                printf '%s\n' "$mock_annotated_sha"
+                ;;
+            "api repos/$REPO/releases/tags/$FINAL_TAG --jq .target_commitish")
+                # Main-red control: the old adapter hides this newer draft.
+                latest_value=$(next_latest_value)
+                if [ "$mock_release_visibility" = draft ] || [ "$latest_value" = none ]; then
+                    echo 'gh: Not Found (HTTP 404)' >&2
+                    return 1
+                fi
+                printf '%s\n' "$latest_value"
+                ;;
+            *) fail "unexpected alias lookup: $*" ;;
+        esac
+    }
 
     current_main_sha() {
         count=$(cat "$main_counter")
@@ -496,13 +558,13 @@ self_test() {
         printf '%s\n' "$mock_main_values" | sed -n "${count}p"
     }
     # One line per call; a line `none` models an absent alias.
-    current_latest_target_sha() {
+    next_latest_value() {
         latest_count=$(cat "$latest_counter")
         latest_count=$((latest_count + 1))
         printf '%s\n' "$latest_count" > "$latest_counter"
         printf 'latest-target\n' >> "$action_log"
         latest_value=$(printf '%s\n' "$mock_latest_values" | sed -n "${latest_count}p")
-        [ "$latest_value" = none ] || printf '%s\n' "$latest_value"
+        printf '%s\n' "$latest_value"
     }
     # `BASE HEAD status` rows; a missing row models an API failure.
     commit_relation() {
@@ -684,6 +746,51 @@ false'
     reset_case "$expected_sha" "$expected_sha" ""
     run_case already-promoted 3 || return 1
     expect_no_candidate already-promoted || return 1
+
+    # Release visibility must not turn an existing newer/equal Git tag into
+    # absence. Exercise the real target adapter at the mocked API boundary.
+    mock_release_visibility=draft
+    reset_case "$newer_sha
+$newer_sha
+$newer_sha" "$newer_sha
+$newer_sha" "$expected_sha $newer_sha ahead
+$newer_sha $expected_sha behind"
+    run_case newer-draft-alias 3 || return 1
+    expect_no_candidate newer-draft-alias || return 1
+    reset_case "$expected_sha
+$expected_sha
+$expected_sha" "$expected_sha
+$expected_sha" ""
+    run_case equal-draft-alias 3 || return 1
+    expect_no_candidate equal-draft-alias || return 1
+    reset_case "$expected_sha
+$expected_sha" "$older_sha
+$newer_sha" "$advance
+$newer_sha $expected_sha behind"
+    run_case draft-alias-advanced-during-upload 3 || return 1
+    grep -F 'delete-release:100' "$action_log" >/dev/null 2>&1 ||
+        self_test_fail "did not discard candidate superseded by a draft" || return 1
+    mock_release_visibility=public
+
+    reset_case "$expected_sha
+$expected_sha
+$expected_sha" "tag
+tag" "$advance"
+    run_case annotated-alias 0 || return 1
+    [ "$(grep -c '^resolve-annotated$' "$action_log")" -eq 2 ] ||
+        self_test_fail "annotated tag was not resolved at both checkpoints" || return 1
+    for invalid_ref in denied bad-type empty-sha short-sha bad-sha; do
+        reset_case "$expected_sha" "$invalid_ref" ""
+        run_case "invalid-ref-$invalid_ref" 1 || return 1
+        expect_no_candidate "invalid-ref-$invalid_ref" || return 1
+    done
+    for invalid_target in denied '' abcd 0123456789abcdef0123456789abcdef0123456g; do
+        mock_annotated_sha=$invalid_target
+        reset_case "$expected_sha" tag ""
+        run_case invalid-annotated-target 1 || return 1
+        expect_no_candidate invalid-annotated-target || return 1
+    done
+    mock_annotated_sha=$older_sha
 
     # An API that cannot answer fails the run instead of skipping promotion.
     reset_case "$newer_sha" "$older_sha" ""

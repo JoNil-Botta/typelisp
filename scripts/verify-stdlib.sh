@@ -400,9 +400,6 @@ stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captur
 stdlib/tests/format_duplicate_named_reject.tl|fail|format: duplicate named argument name
 stdlib/tests/format_debug_nominal_reject.tl|fail|format: Debug is not implemented for nominal type
 stdlib/tests/format_debug_pointer_safe_reject.tl|fail|requires unsafe context
-stdlib/tests/string_raw_copy_reject.tl|fail|requires unsafe context
-stdlib/tests/string_raw_owned_copy_reject.tl|fail|requires unsafe context
-stdlib/tests/string_raw_borrowed_copy_reject.tl|fail|requires unsafe context
 stdlib/tests/string_raw_substring_reject.tl|fail|requires unsafe context
 stdlib/tests/string_raw_integer_byte_reject.tl|fail|requires unsafe context
 stdlib/tests/string_raw_integer_digits_reject.tl|fail|requires unsafe context
@@ -413,7 +410,6 @@ stdlib/tests/format_raw_debug_length_reject.tl|fail|requires unsafe context
 stdlib/tests/format_raw_debug_write_reject.tl|fail|requires unsafe context
 stdlib/tests/format_raw_debug_byte_reject.tl|fail|requires unsafe context
 stdlib/tests/format_raw_debug_render_reject.tl|fail|requires unsafe context
-stdlib/tests/string_raw_copy_function_value_reject.tl|fail|is an unsafe callable and cannot be used as a plain function value
 stdlib/tests/format_debug_tuple_reject.tl|fail|format: Debug is not implemented for type tuple_
 stdlib/tests/format_debug_box_reject.tl|fail|format: Debug is not implemented for type box_
 stdlib/tests/format_exponent_bool_reject.tl|fail|format: 'e' selector requires an integer or float argument; got bool

@@ -485,6 +485,7 @@
   [request : CompilerObservedCheckRequest]) : ResultCompilerCheck
   (let
     [job : tc.TcJobState request.job-state]
+    [previous-parser-control : i64 (tc.tc-job-state-parser-control job)]
     [parse-state : parser.CompilerParseState (parser.compiler-parse-state-new)]
     [_binding-tokens : unit
       (parser.compiler-parse-state-set-binding-origins! (&mut parse-state) true)]
@@ -522,6 +523,9 @@
             [(Err diagnostics advisories) (Err diagnostics advisories)])])]
     (tc.tc-job-state-set-semantic-observer! job previous)
     (request.consumer request.consumer-context)
+    (parser.compiler-parse-origin-reset!
+      (parser.compiler-parse-array-data-addr parse-state.semantic-origins))
+    (tc.tc-job-state-set-parser-control! job previous-parser-control)
     result))
 
 (define (compiler-check-source-with-roots-and-cfg-and-job-state

@@ -610,7 +610,7 @@
 
 ;; Re-home the live spanned-node prefix in an exact transfer owner. At a
 ;; whole-program load handoff, parser compaction has removed every source form
-;; and left only declaration/member/semantic-origin marker rows. The segments
+;; and left only declaration/member-origin marker rows. The segments
 ;; still cover the largest transient form, however, and otherwise retain that
 ;; broad read arena through macro expansion.
 ;;

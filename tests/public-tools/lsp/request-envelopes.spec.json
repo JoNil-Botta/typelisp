@@ -1,0 +1,17 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_count": 14,
+  "stdout_contains": ["\"id\":null,\"error\":{\"code\":-32600", "\"id\":\"bad-version\",\"error\":{\"code\":-32600"],
+  "stdout_not_contains": ["\"id\":4,", "\"id\":5,", "\"id\":true", "\"name\":\"changed\""],
+  "message_checks": [
+    {"jsonpath_id": 2, "raw_contains": "\"code\":-32600"},
+    {"jsonpath_id": 3, "raw_contains": "\"code\":-32600"},
+    {"jsonpath_id": 6, "raw_contains": "\"code\":-32601"},
+    {"jsonpath_id": 7, "raw_contains": "\"code\":-32600"},
+    {"jsonpath_id": 8, "raw_contains": "\"success\":true", "raw_contains": "(define (main) : i32 42)"},
+    {"jsonpath_id": 9, "raw_contains": "\"name\":\"main\""},
+    {"jsonpath_id": 10, "raw_contains": "\"success\":true", "raw_contains": "(define (main) : i32 43)"},
+    {"jsonpath_id": 11, "jsonpath_result": null}
+  ]
+}

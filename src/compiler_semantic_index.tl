@@ -6582,7 +6582,10 @@
             (set! (deref walk-state.next-local-ordinal) 0)
             (set!
               walk-state.semantic-origin-run
-              (parse_core.compiler-parse-semantic-origin-run (& decls) index))
+              (parse_core.compiler-parse-semantic-origin-run-in-state
+                (tc.tc-job-state-parser-control decl-ctx.job-state)
+                (& decls)
+                index))
             (compiler-semantic-origin-cursors-reset! walk-state)
             (compiler-semantic-source-anchor-set! walk-state 0 1 1)
             ;; Imports and module markers have no semantic definition row,

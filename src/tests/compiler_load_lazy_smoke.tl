@@ -74,6 +74,31 @@
         (load_tests.compiler-load-test-seen-contains? seen "nested.dep"))]
     [(Err _) false]))
 
+(define (lazy-selected-after-summary-ok?) : bool
+  (load.compiler-load-test-mkdir "target/cl_lazy_selected")
+  (lazy-write-text
+    "target/cl_lazy_selected/provider.tl"
+    "(module provider)
+(define (answer) : i64 42)")
+  (lazy-write-text
+    "target/cl_lazy_selected/entry.tl"
+    "(import provider as unused)
+(import provider.answer as value)
+(define (main) : i64 (value))")
+  (match (load_tests.compiler-load-file-with-paths
+    "target/cl_lazy_selected/entry.tl"
+    (sym_i64_env.sym-i64-empty))
+    [(Ok decls _ _ seen)
+      (and
+        (= (load_tests.compiler-load-lazy-import-skip-count) 1)
+        (load_tests.compiler-load-test-seen-contains? seen "provider")
+        (load_tests.compiler-load-decl-list-has-selected-import?
+          decls
+          "provider"
+          "answer"
+          "value"))]
+    [(Err _) false]))
+
 (define (lazy-removed-array-module-rejected?) : bool
   (load.compiler-load-test-mkdir "target/cl_removed_array_module")
   (lazy-write-text
@@ -602,21 +627,17 @@
         [field-span : ast.AstSourceSpan field-origin.span]
         (and
           (= (parser.compiler-parse-semantic-origin-run-len (& run)) 4)
-          (string.eq
-            (reader.sp-text
-              (parser.compiler-parse-semantic-origin-kind-marker
-                type-origin.kind))
-            "__tl_semantic_origin_type_definition")
+          (=
+            (parser.compiler-parse-semantic-origin-kind-tag type-origin.kind)
+            0)
           (string.eq (ci.intern-str type-origin.written-name) "Same")
           (= (ast.ast-source-span-start-line type-span) 3)
           (= (ast.ast-source-span-start-col type-span) 12)
           (= (ast.ast-source-span-end-line type-span) 3)
           (= (ast.ast-source-span-end-col type-span) 16)
-          (string.eq
-            (reader.sp-text
-              (parser.compiler-parse-semantic-origin-kind-marker
-                field-origin.kind))
-            "__tl_semantic_origin_struct_field_definition")
+          (=
+            (parser.compiler-parse-semantic-origin-kind-tag field-origin.kind)
+            2)
           (string.eq (ci.intern-str field-origin.written-name) "same-field")
           (= (ast.ast-source-span-start-line field-span) 3)
           (= (ast.ast-source-span-start-col field-span) 18)
@@ -662,7 +683,7 @@
         (set! ok (= (lazy-semantic-origin-same-count decls 0) 2))]
       [(Err _) unit])
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (main) : i64
@@ -672,6 +693,9 @@
   (unless
     (lazy-used-dotted-import-ok?)
     (return (io.panic "lazy used dotted import smoke mismatch")))
+  (unless
+    (lazy-selected-after-summary-ok?)
+    (return (io.panic "lazy selected import after summary smoke mismatch")))
   (unless
     (lazy-removed-array-module-rejected?)
     (return (io.panic "removed array module import was accepted")))

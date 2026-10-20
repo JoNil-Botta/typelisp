@@ -2914,6 +2914,19 @@
     [prefix-cache-b : tc_core.TcPrefixSnapshotCacheState
       (tc_core.tc-prefix-snapshot-cache-state-new)]
     [job-state-a : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [job-state-b : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [macro-b : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state job-state-b)]
+    [peer-decls : ast.AstDeclList
+      (core_tests.tc-module-index-test-decls 11 12 13 2 true)]
+    [_bind-peer : unit
+      (tc_core.tc-macro-state-bind-source-names!
+        macro-b
+        (ci.intern-source-name-session-capture-active-handle))]
+    [_peer-index : unit
+      (tc_core.tc-module-decl-index-ensure! macro-b (& peer-decls))]
+    [peer-index-arena : i64
+      (tc_core.tc-module-decl-index-arena-for-state macro-b)]
     [_enable-a : unit
       (load_tests.compiler-load-session-state-cache-enable! state-a)]
     [_seed-b : unit
@@ -2985,6 +2998,14 @@
         [(Err diag) (Err (diagnostic.compiler-diagnostic-list-box-single diag))])]
     [ok : bool
       (and
+        (=
+          (tc_core.tc-module-decl-index-arena-for-state
+            (tc_core.tc-job-state-macro-state job-state-a))
+          0)
+        (=
+          (tc_core.tc-module-decl-index-arena-for-state macro-b)
+          peer-index-arena)
+        (core_tests.tc-module-index-test-alias? macro-b (& peer-decls) 11 13 12)
         (match result
           [(Ok _) true]
           [(Err diag)
@@ -3028,6 +3049,7 @@
           (ci.intern "tc_state_dep"))
           [(CompilerLoadNoSurfaceSummary) true]
           [(CompilerLoadSomeSurfaceSummary _) false]))]
+    (tc_core.tc-module-decl-index-release! macro-b)
     (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-a)
     (tc_core.tc-prefix-snapshot-cache-invalidate-for-state! prefix-cache-b)
     (load.compiler-load-session-state-use! previous-state)
@@ -4888,7 +4910,7 @@
         [(Err _) false])]
     (tc_core.compiler-typecheck-reset-file-state!)
     (reader.sp-node-pool-truncate! mark)
-    (parser.compiler-parse-decl-origin-cache-reset!)
+    (parser.compiler-parse-standalone-origin-reset!)
     ok))
 
 (define (compiler-typecheck-smoke-macro-no-change-signal-ok?) : bool
@@ -4982,7 +5004,7 @@
         (tc_core.tc-macro-state-source-names macro-a))]
     [ctx-a : tc_core.TcContext
       (tc_core.tc-context-new-with-source-names-and-body-state
-        (ast.ast-program (ast.ast-decl-list-new))
+        (& (ast.ast-program (ast.ast-decl-list-new)))
         (compiler_symbols.compiler-symbols-empty)
         (compiler_symbols.compiler-registries-empty)
         ""
@@ -5457,6 +5479,9 @@
     (unless
       (core_tests.tc-dotted-identity-boundary-self-test)
       (io.panic "typecheck: dotted identity diagnostic boundary smoke failed"))
+    (unless
+      (core_tests.tc-module-index-state-isolation-self-test)
+      (io.panic "typecheck: module index job ownership smoke failed"))
     (unless
       (compiler-typecheck-core-macro-bodies-observed?)
       (io.panic "typecheck: stdlib core macro body was bypassed"))

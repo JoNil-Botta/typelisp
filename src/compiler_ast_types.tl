@@ -1,7 +1,7 @@
 ;; compiler_ast_types.tl - Self-hosted model of the real TypeLisp AST.
-;;
-;; Parser result/error wrappers, typechecker registries, inferred types, and
-;; lowered IR metadata live elsewhere.
+;; Pooled IDs and source views retain their owner's lifetime and identity;
+;; see docs/compiler-state-and-facts.md before changing shared accessors.
+;; Parser/typechecker registries and inferred/lowered facts live elsewhere.
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
@@ -1231,8 +1231,17 @@
 ;; retains the proven grow path for larger legacy callers.
 ;; Plain mutable globals keep the hot compatibility path simple and avoid the
 ;; global-struct reassignment that previously tripped an opt2 miscompile.
+;;
+;; Expression rows live in fixed segments that never relocate (#8863); a row
+;; id splits into `(shr id ast-expr-node-pool-segment-shift)` and its offset.
+;; A segment and its span slots are allocated whole, so the segment size is the
+;; step by which a compile's allocator peak moves as its row count crosses a
+;; segment boundary; segments are kept small so that step stays well inside the
+;; peak-memory budget (#9060).
+(define ast-expr-node-pool-segment-shift : i64
+  14)
 (define ast-expr-node-pool-segment-size : i64
-  65536)
+  16384)
 (define ast-type-node-pool-segment-size : i64
   1024)
 
@@ -1266,6 +1275,37 @@
 ;; record becomes compact.
 (define ast-expr-span-packed-escape-tag : i64
   255)
+
+;; The escape value has no coordinates. Callers retain an exact AstSourceSpan
+;; separately when a column or line delta cannot be represented.
+(defmacro (ast-source-span-pack
+  [start-line : Expr]
+  [start-col : Expr]
+  [end-line : Expr]
+  [end-col : Expr]) : Expr
+  `(let
+    [start-line : i64 (cast ,start-line : i64)]
+    [start-col : i64 (cast ,start-col : i64)]
+    [end-line : i64 (cast ,end-line : i64)]
+    [end-col : i64 (cast ,end-col : i64)]
+    [delta : i64 (- end-line start-line)]
+    (if (and
+      (= (shr (bit-or start-col end-col) 12) 0)
+      (< (cast delta : u64) (cast 255 : u64)))
+      (bit-or
+        (shl start-line 32)
+        (bit-or (shl start-col 20) (bit-or (shl end-col 8) delta)))
+      ast-expr-span-packed-escape-tag)))
+
+(defmacro (ast-source-span-unpack [coordinates : Expr]) : Expr
+  `(let
+    [coordinate-word : i64 ,coordinates]
+    [start-line : i64 (shr coordinate-word 32)]
+    (AstSourceSpan
+      (cast start-line : i32)
+      (cast (bit-and (shr coordinate-word 20) 4095) : i32)
+      (cast (+ start-line (bit-and coordinate-word 255)) : i32)
+      (cast (bit-and (shr coordinate-word 8) 4095) : i32))))
 
 (defenum AstMaybeSourceSpan
   (No)
@@ -1384,16 +1424,10 @@
     (if (= tag ast-expr-span-packed-escape-tag)
       (unsafe
         (ptr-read (int->ptr ids : (Ptr AstExprCanonicalSpanRecord))))
-      (let
-        [start-line : i64 (shr coordinates 32)]
-        (AstExprCanonicalSpanRecord
-          (cast ids : i32)
-          (cast (shr ids 32) : i32)
-          (AstSourceSpan
-            (cast start-line : i32)
-            (cast (bit-and (shr coordinates 20) 4095) : i32)
-            (cast (+ start-line tag) : i32)
-            (cast (bit-and (shr coordinates 8) 4095) : i32)))))))
+      (AstExprCanonicalSpanRecord
+        (cast ids : i32)
+        (cast (shr ids 32) : i32)
+        (ast-source-span-unpack coordinates)))))
 
 (defmacro (ast-expr-canonical-record-set!
   [table : Expr]
@@ -1439,31 +1473,17 @@
     [data : (Ptr i32)
       (unsafe
         (ptr-cast record-data : (Ptr i32)))]
-    [start-line : i64
-      (cast
+    [coordinates : i64
+      (ast-source-span-pack
         (unsafe
           (ptr-read (ptr-offset data 2)))
-        : i64)]
-    [start-col : i64
-      (cast
         (unsafe
           (ptr-read (ptr-offset data 3)))
-        : i64)]
-    [end-line : i64
-      (cast
         (unsafe
           (ptr-read (ptr-offset data 4)))
-        : i64)]
-    [end-col : i64
-      (cast
         (unsafe
-          (ptr-read (ptr-offset data 5)))
-        : i64)]
-    [delta : i64 (- end-line start-line)]
-    [compact? : bool
-      (and
-        (= (shr (bit-or start-col end-col) 12) 0)
-        (< (cast delta : u64) (cast 255 : u64)))]
+          (ptr-read (ptr-offset data 5))))]
+    [compact? : bool (not (= coordinates ast-expr-span-packed-escape-tag))]
     [old-tag : i64
       (cast
         (unsafe
@@ -1477,9 +1497,7 @@
           (ptr-read (ptr-cast record-data : (Ptr i64))))
         (ptr-write!
           (ptr-offset (int->ptr address : (MutPtr i64)) 1)
-          (bit-or
-            (shl start-line 32)
-            (bit-or (shl start-col 20) (bit-or (shl end-col 8) delta))))))))
+          coordinates)))))
 
 ;; Wide writes reuse their existing slot. On a compact transition, recycle it
 ;; and clear the tag before retrying: the valid input then takes the hot path,
@@ -1691,7 +1709,10 @@
   (let
     [biased-base : i64
       (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (cast
       (unsafe
         (ptr-read
@@ -1705,7 +1726,10 @@
   (let
     [biased-base : i64
       (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-write!
         (int->ptr
@@ -2301,7 +2325,7 @@
           (ptr-read
             (ptr-offset
               (int->ptr ast-node-pool-segment-bases : (Ptr i64))
-              (shr id 16))))]
+              (shr id ast-expr-node-pool-segment-shift))))]
       [dest : (MutPtr i64)
         (unsafe
           (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -2353,7 +2377,7 @@
         (ptr-read
           (ptr-offset
             (int->ptr ast-node-pool-segment-bases : (Ptr i64))
-            (shr id 16))))]
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -2372,7 +2396,7 @@
           (ptr-read
             (ptr-offset
               (int->ptr ast-node-pool-segment-bases : (Ptr i64))
-              (shr id 16))))]
+              (shr id ast-expr-node-pool-segment-shift))))]
       [dest : (MutPtr i64)
         (unsafe
           (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -3037,7 +3061,9 @@
       [biased-base : i64
         (unsafe
           (ptr-read
-            (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+            (ptr-offset
+              (int->ptr segment-bases : (Ptr i64))
+              (shr id ast-expr-node-pool-segment-shift))))]
       [dest : (MutPtr i64)
         (unsafe
           (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -3076,7 +3102,9 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 16))))]
+          (ptr-offset
+            (int->ptr pool.segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -3231,7 +3259,9 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset (int->ptr pool.segment-bases : (Ptr i64)) (shr id 16))))]
+          (ptr-offset
+            (int->ptr pool.segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     [dest : (MutPtr i64)
       (unsafe
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64)))]
@@ -5173,7 +5203,10 @@
   (let
     [biased-base : i64
       (unsafe
-        (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 16))))]
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -5193,7 +5226,9 @@
     [biased-base : i64
       (unsafe
         (ptr-read
-          (ptr-offset (int->ptr bases-address : (Ptr i64)) (shr row-id 16))))]
+          (ptr-offset
+            (int->ptr bases-address : (Ptr i64))
+            (shr row-id ast-expr-node-pool-segment-shift))))]
     (unsafe
       (ptr-read
         (int->ptr
@@ -5227,7 +5262,10 @@
             count)]
         [base : i64
           (unsafe
-            (ptr-read (ptr-offset (int->ptr bases : (Ptr i64)) (shr index 16))))]
+            (ptr-read
+              (ptr-offset
+                (int->ptr bases : (Ptr i64))
+                (shr index ast-expr-node-pool-segment-shift))))]
         [address : i64 (+ base (* index (ast-expr-node-bytes)))]
         [remaining : i64 (- end index)]
         (while (> remaining 0)

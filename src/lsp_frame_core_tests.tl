@@ -4,6 +4,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.json)
+(import stdlib.iterator)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)
 (import compiler_semantic_index as sem)
@@ -2412,3 +2413,112 @@
             (not (string.contains (& replaced) (& old-match))))]
         [(Err _) false]))
     (io.panic "lsp-replace-body-by-path-smoke failed")))
+
+(define (lsp-envelope-case-ok?
+  [source : (& source str)]
+  [expected : i64]
+  [expected-id : (& expected-id str)]) : bool
+  (match (json.parse source)
+    [(OkJson message)
+      (let
+        [kind : i64
+          (match (lsp.lsp-message-envelope (& message))
+            [(Request) 0]
+            [(Response) 1]
+            [(Invalid) 2])]
+        [id : String (json.stringify (lsp.lsp-invalid-request-id (& message)))]
+        (and (= kind expected) (string.eq id expected-id)))]
+    [(ErrJson _) false]))
+
+(test
+  lsp-json-rpc-envelope-admission
+  (let
+    [cases : (Array (Tuple String i64 String) 35)
+      (array
+        (tuple "{}" 2 "null")
+        (tuple "null" 2 "null")
+        (tuple "true" 2 "null")
+        (tuple "42" 2 "null")
+        (tuple "\"request\"" 2 "null")
+        (tuple "[]" 2 "null")
+        (tuple "[{}]" 2 "null")
+        (tuple "{\"method\":\"shutdown\",\"id\":1}" 2 "1")
+        (tuple "{\"jsonrpc\":2,\"method\":\"shutdown\",\"id\":2}" 2 "2")
+        (tuple "{\"jsonrpc\":\"1.0\",\"method\":\"shutdown\",\"id\":3}" 2 "3")
+        (tuple "{\"jsonrpc\":null,\"method\":\"shutdown\",\"id\":4}" 2 "4")
+        (tuple "{\"jsonrpc\":\"2.0\",\"id\":\"missing\"}" 2 "\"missing\"")
+        (tuple "{\"jsonrpc\":\"2.0\",\"method\":42,\"id\":5}" 2 "5")
+        (tuple "{\"jsonrpc\":\"2.0\",\"method\":null,\"id\":6}" 2 "6")
+        (tuple "{\"jsonrpc\":\"2.0\",\"method\":{},\"id\":7}" 2 "7")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"shutdown\",\"id\":true}"
+          2
+          "null")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"shutdown\",\"id\":[]}"
+          2
+          "null")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"shutdown\",\"id\":{}}"
+          2
+          "null")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"shutdown\",\"id\":8,\"params\":null}"
+          0
+          "8")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"shutdown\",\"id\":null}"
+          0
+          "null")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"unknown\",\"id\":1.5}"
+          0
+          "1.5")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"unknown\",\"id\":1e50}"
+          0
+          "1e50")
+        (tuple "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\"}" 0 "null")
+        (tuple "{\"jsonrpc\":\"2.0\",\"method\":\"\",\"id\":9}" 0 "9")
+        (tuple "{\"jsonrpc\":\"2.0\",\"id\":10,\"result\":null}" 1 "10")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"id\":\"response\",\"error\":{\"code\":-32601,\"message\":\"missing\",\"data\":{}}}"
+          1
+          "\"response\"")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"id\":11,\"result\":null,\"error\":{\"code\":-32601,\"message\":\"missing\"}}"
+          2
+          "11")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"id\":12,\"error\":{\"code\":1.5,\"message\":\"bad\"}}"
+          2
+          "12")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"id\":13,\"error\":{\"code\":\"bad\",\"message\":\"bad\"}}"
+          2
+          "13")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"id\":14,\"error\":{\"code\":-32601,\"message\":42}}"
+          2
+          "14")
+        (tuple "{\"jsonrpc\":\"2.0\",\"id\":15,\"error\":null}" 2 "15")
+        (tuple "{\"jsonrpc\":\"2.0\",\"result\":null}" 2 "null")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"tl/getType\",\"params\":42,\"id\":16}"
+          0
+          "16")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"method\":\"unknown\",\"params\":42,\"id\":17}"
+          0
+          "17")
+        (tuple
+          "{\"jsonrpc\":\"2.0\",\"id\":18,\"error\":{\"code\":99999999999999999999999999,\"message\":\"large\"}}"
+          1
+          "18"))]
+    (for [index (iterator.range 0 (array-length cases))]
+      (unless
+        (lsp-envelope-case-ok?
+          (tuple-ref (array-ref cases index) 0)
+          (tuple-ref (array-ref cases index) 1)
+          (tuple-ref (array-ref cases index) 2))
+        (io.panic (string.copy (tuple-ref (array-ref cases index) 0)))))))

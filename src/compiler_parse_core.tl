@@ -10,6 +10,9 @@
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_cfg_core as cfg_core)
+(cfg
+  compiler-dependency-audit
+  (import compiler_dependency_trace as dependency_trace))
 (import compiler_module_name as module_name)
 (import compiler_diagnostic as cdiag)
 (import lex as lexer)
@@ -61,6 +64,10 @@
   (ordinal i64))
 
 (defstruct CompilerParseSemanticOriginRun
+  (storage i64)
+  (generation i64)
+  (record i64)
+  (serial i64)
   (start i64)
   (count i64))
 
@@ -81,11 +88,239 @@
   (items (__tl_dyn-array ParseSemanticOriginRecord))
   (len i64))
 
-;; Semantic-origin records live in the retained spanned-node sidecar pool. A
-;; source index asks for one run per declaration, so rescanning that entire
-;; pool for every slot makes a sequence of cached checks quadratic. Incrementally
-;; index appended sidecars instead, and invalidate the index when the reader
-;; resets its pool.
+;; A parser owns the control cell; its lazy arena owns every segment, including
+;; segment directories and exact span overflows. Occurrence segments contain
+;; 1024 i64 names, 1024 packed spans, then 1024 u8 kinds. Run segments contain
+;; six i64 words per entry: key, slot, start, count, reader boundary and serial.
+;; The boundary merges typed runs with unchanged reader aliases in append order.
+;; Serial numbers never rewind within a generation, so a rolled-back handle
+;; cannot name a new run that subsequently reuses its index. Kind bit 7 selects
+;; the exact span-overflow column. No payload or segment address escapes.
+;; Control words: 0 arena, 1 generation, 2 occurrences, 3 runs, 4 wide spans,
+;; 5 serial; 6/7, 8/9, 10/11 are segment-directory addresses/capacities;
+;; 12 parser control, 13 paired interner generation, 14 standalone reader reset,
+;; 15 paired interner table identity.
+(defstruct CompilerParseOriginCheckpoint
+  (occurrences i64)
+  (runs i64)
+  (wide-spans i64))
+
+(defstruct CompilerParseOriginCopyRange
+  (reader-start i64)
+  (reader-end i64)
+  (origin-start i64)
+  (origin-end i64)
+  ;; Detached parses have not published handles or scratch declaration keys.
+  ;; Transfer their directory entries in place; ordinary copies append refs.
+  (retire-source bool))
+
+(define (compiler-parse-origin-word [storage : i64] [slot : i64]) : i64
+  (compiler-parse-raw-i64-ref storage slot))
+
+(define (compiler-parse-origin-word-set!
+  [storage : i64]
+  [slot : i64]
+  [value : i64]) : unit
+  (compiler-parse-raw-i64-set! storage slot value))
+
+(define (compiler-parse-origin-segment
+  [storage : i64]
+  [slot : i64]
+  [index : i64]) : i64
+  (compiler-parse-raw-i64-ref
+    (compiler-parse-origin-word storage slot)
+    (shr index 10)))
+
+(define (compiler-parse-origin-segment-ensure!
+  [storage : i64]
+  [slot : i64]
+  [index : i64]
+  [stride : i64]) : i64
+  (let
+    [segment : i64 (shr index 10)]
+    [old-capacity : i64 (compiler-parse-origin-word storage (+ slot 1))]
+    [owner : i64 (compiler-parse-origin-word storage 0)]
+    (in-arena
+      (unsafe
+        (arena.Arena owner))
+      (when
+        (>= segment old-capacity)
+        (let
+          [capacity : i64
+            (if (= old-capacity 0)
+              16
+              old-capacity)]
+          (while (<= capacity segment)
+            (set! capacity (* capacity 2)))
+          (let
+            [directory : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+            [address : i64 (compiler-parse-array-data-addr directory)]
+            [old : i64 (compiler-parse-origin-word storage slot)]
+            (for [cursor (iterator.range 0 old-capacity)]
+              (compiler-parse-raw-i64-set!
+                address
+                cursor
+                (compiler-parse-raw-i64-ref old cursor)))
+            (compiler-parse-origin-word-set! storage slot address)
+            (compiler-parse-origin-word-set! storage (+ slot 1) capacity))))
+      (let
+        [directory : i64 (compiler-parse-origin-word storage slot)]
+        [address : i64 (compiler-parse-raw-i64-ref directory segment)]
+        (if (!= address 0)
+          address
+          (let
+            [bytes : (__tl_dyn-array u8) (__tl_make-array u8 (* 1024 stride))]
+            [address : i64 (compiler-parse-array-data-addr bytes)]
+            (compiler-parse-raw-i64-set! directory segment address)
+            address))))))
+
+(define (compiler-parse-origin-run-word
+  [storage : i64]
+  [record : i64]
+  [field : i64]) : i64
+  (compiler-parse-raw-i64-ref
+    (compiler-parse-origin-segment storage 8 record)
+    (+ (* (bit-and record 1023) 6) field)))
+
+(define (compiler-parse-origin-run-word-set!
+  [storage : i64]
+  [record : i64]
+  [field : i64]
+  [value : i64]) : unit
+  (compiler-parse-raw-i64-set!
+    (compiler-parse-origin-segment storage 8 record)
+    (+ (* (bit-and record 1023) 6) field)
+    value))
+
+(define (compiler-parse-origin-checkpoint [storage : i64]) : CompilerParseOriginCheckpoint
+  (CompilerParseOriginCheckpoint
+    (compiler-parse-origin-word storage 2)
+    (compiler-parse-origin-word storage 3)
+    (compiler-parse-origin-word storage 4)))
+
+(define (compiler-parse-origin-rollback!
+  [storage : i64]
+  [mark : CompilerParseOriginCheckpoint]) : unit
+  (compiler-parse-origin-word-set! storage 2 mark.occurrences)
+  (compiler-parse-origin-word-set! storage 3 mark.runs)
+  (compiler-parse-origin-word-set! storage 4 mark.wide-spans)
+  (compiler-parse-semantic-origin-lookup-cache-reset!))
+
+(define (compiler-parse-origin-reset! [storage : i64]) : unit
+  (let
+    [owner : i64 (compiler-parse-origin-word storage 0)]
+    [generation : i64 (+ (compiler-parse-origin-word storage 1) 1)]
+    (compiler-parse-origin-word-set! storage 1 generation)
+    (for [slot (iterator.range 0 12)]
+      (unless (= slot 1) (compiler-parse-origin-word-set! storage slot 0)))
+    (compiler-parse-semantic-origin-lookup-cache-reset!)
+    (unless
+      (= owner 0)
+      (unsafe
+        ;; lint-allow: raw-arena-op -- generations and index are revoked before retiring scalar-only segments; no payload pointers escape.
+        (arena.tl_arena_destroy owner)))))
+
+(define (compiler-parse-origin-storage [control : i64]) : i64
+  (let
+    [storage : i64 (compiler-parse-raw-i64-ref control 8)]
+    [generation : i64 (compiler-parse-state-owner-generation control)]
+    [table-id : i64 (compiler-parse-state-owner-table-id control)]
+    [reader-generation : i64 (reader.sp-node-pool-reset-generation-value)]
+    (when
+      (or
+        (!= generation (compiler-parse-origin-word storage 13))
+        (!= table-id (compiler-parse-origin-word storage 15))
+        (and
+          (= (compiler-parse-raw-i64-ref control 3) 0)
+          (!= reader-generation (compiler-parse-origin-word storage 14))))
+      (compiler-parse-origin-reset! storage)
+      (compiler-parse-origin-word-set! storage 13 generation)
+      (compiler-parse-origin-word-set! storage 14 reader-generation)
+      (compiler-parse-origin-word-set! storage 15 table-id))
+    storage))
+
+(define (compiler-parse-control-from-cfg [cfgs : sym_i64_env.SymI64Env]) : i64
+  (let
+    [control : i64
+      (compiler-parse-env-marker-value cfgs compiler-parse-state-marker-id)]
+    (if (= control 0)
+      (compiler-parse-state-control-addr
+        (& (array-ref compiler-parse-default-state 0)))
+      control)))
+
+(define (compiler-parse-origin-append-reference!
+  [storage : i64]
+  [key : i64]
+  [slot : i64]
+  [start : i64]
+  [count : i64]) : unit
+  (let
+    [record : i64 (compiler-parse-origin-word storage 3)]
+    [_segment : i64 (compiler-parse-origin-segment-ensure! storage 8 record 48)]
+    [serial : i64 (+ (compiler-parse-origin-word storage 5) 1)]
+    (compiler-parse-origin-run-word-set! storage record 0 key)
+    (compiler-parse-origin-run-word-set! storage record 1 slot)
+    (compiler-parse-origin-run-word-set! storage record 2 start)
+    (compiler-parse-origin-run-word-set! storage record 3 count)
+    (compiler-parse-origin-run-word-set!
+      storage
+      record
+      4
+      (reader.sp-node-pool-len))
+    (compiler-parse-origin-run-word-set! storage record 5 serial)
+    (compiler-parse-origin-word-set! storage 5 serial)
+    (compiler-parse-origin-word-set! storage 3 (+ record 1))))
+
+(define (compiler-parse-origin-append!
+  [storage : i64]
+  [origin : (& origin ParseSemanticOriginRecord)]) : unit
+  (let
+    [index : i64 (compiler-parse-origin-word storage 2)]
+    [base : i64 (compiler-parse-origin-segment-ensure! storage 6 index 17)]
+    [offset : i64 (bit-and index 1023)]
+    [coordinates : i64
+      (ast.ast-source-span-pack
+        (cast origin.start-line : i32)
+        (cast origin.start-col : i32)
+        (cast origin.end-line : i32)
+        (cast origin.end-col : i32))]
+    [tag : i64 origin.kind-tag]
+    ;; Closed tags are 0..12; unknown tags keep from-tag's ValueName fallback.
+    [kind : i64
+      (if (< (cast tag : u64) (cast 13 : u64))
+        tag
+        11)]
+    (when
+      (= coordinates ast.ast-expr-span-packed-escape-tag)
+      (let
+        [wide : i64 (compiler-parse-origin-word storage 4)]
+        [wide-base : i64
+          (compiler-parse-origin-segment-ensure! storage 10 wide 16)]
+        (unsafe
+          (ptr-write!
+            (ptr-offset
+              (int->ptr wide-base : (MutPtr ast.AstSourceSpan))
+              (bit-and wide 1023))
+            (ast.AstSourceSpan
+              (cast origin.start-line : i32)
+              (cast origin.start-col : i32)
+              (cast origin.end-line : i32)
+              (cast origin.end-col : i32))))
+        (set! coordinates wide)
+        (set! kind (bit-or kind 128))
+        (compiler-parse-origin-word-set! storage 4 (+ wide 1))))
+    (compiler-parse-raw-i64-set! base offset origin.written-name)
+    (compiler-parse-raw-i64-set! base (+ 1024 offset) coordinates)
+    (unsafe
+      (ptr-write!
+        (ptr-offset (int->ptr base : (MutPtr u8)) (+ 16384 offset))
+        (cast kind : u8)))
+    (compiler-parse-origin-word-set! storage 2 (+ index 1))))
+
+;; The cold index merges the caller's typed semantic runs with declaration
+;; spans and aliases in the reader pool. It indexes appended records instead of
+;; rescanning for every declaration, and invalidates on owner switches, rollback
+;; or reader reset. Its scalar cache identity never owns a parser or its arena.
 ;;
 ;; Direct records (one semantic run or one declaration span per slot) go into
 ;; an open-addressing table. Aliases stay runs, chained per destination key from newest to
@@ -165,10 +400,18 @@
   1)
 (define compiler-parse-semantic-origin-lookup-order : i64
   0)
-(define compiler-parse-semantic-origin-lookup-indexed-len : i64
-  0)
 (define compiler-parse-semantic-origin-lookup-reader-reset-generation : i64
   0)
+
+;; Cache identity only; these words do not own or retain parser storage.
+(defstruct CompilerParseSemanticOriginLookupCursor
+  (storage i64)
+  (indexed-len i64)
+  (run-count i64)
+  (run-serial i64))
+
+(define compiler-parse-semantic-origin-lookup-cursor : CompilerParseSemanticOriginLookupCursor
+  (CompilerParseSemanticOriginLookupCursor 0 0 0 0))
 (define compiler-parse-origin-alias-runs : (__tl_dyn-array
     CompilerParseOriginAliasRun)
   (__tl_make-array CompilerParseOriginAliasRun 0))
@@ -279,6 +522,12 @@
     (compiler-parse-semantic-origin-empty-name-view-shared))
   (set! compiler-parse-semantic-quote-depth 0))
 
+(define (compiler-parse-standalone-origin-reset!) : unit
+  (compiler-parse-decl-origin-cache-reset!)
+  (compiler-parse-origin-reset!
+    (compiler-parse-array-data-addr
+      (array-ref compiler-parse-default-state 0).semantic-origins)))
+
 (define (compiler-parse-token-span-from-ast-span [span : ast.AstSourceSpan]) : token.SourceSpan
   (token.SourceSpan
     (ast.ast-source-span-start-line span)
@@ -293,32 +542,6 @@
 
 (defmacro (compiler-parse-marker? [marker : Expr] [spelling : Expr]) : Expr
   `(ci.intern-id-eq? ,marker (compiler-parse-marker ,spelling)))
-
-(define (compiler-parse-semantic-origin-kind-marker
-  [kind : CompilerParseSemanticOriginKind]) : ci.InternId
-  (match kind
-    [(TypeName) (compiler-parse-marker "__tl_semantic_origin_type_name")]
-    [(TypeDefinition)
-      (compiler-parse-marker "__tl_semantic_origin_type_definition")]
-    [(StructFieldDefinition)
-      (compiler-parse-marker "__tl_semantic_origin_struct_field_definition")]
-    [(EnumVariantDefinition)
-      (compiler-parse-marker "__tl_semantic_origin_enum_variant_definition")]
-    [(StructFieldUse)
-      (compiler-parse-marker "__tl_semantic_origin_struct_field_use")]
-    [(EnumVariantPattern)
-      (compiler-parse-marker "__tl_semantic_origin_enum_variant_pattern")]
-    [(DispatchFunction)
-      (compiler-parse-marker "__tl_semantic_origin_dispatch_function")]
-    [(ModuleDefinition)
-      (compiler-parse-marker "__tl_semantic_origin_module_definition")]
-    [(ModulePath) (compiler-parse-marker "__tl_semantic_origin_module_path")]
-    [(ImportAlias) (compiler-parse-marker "__tl_semantic_origin_import_alias")]
-    [(ValueQualifier)
-      (compiler-parse-marker "__tl_semantic_origin_value_qualifier")]
-    [(ValueName) (compiler-parse-marker "__tl_semantic_origin_value_name")]
-    [(BindingDefinition)
-      (compiler-parse-marker "__tl_semantic_origin_binding_definition")]))
 
 (define (compiler-parse-semantic-origin-kind-tag
   [kind : CompilerParseSemanticOriginKind]) : i64
@@ -336,32 +559,6 @@
     [(ValueQualifier) 10]
     [(ValueName) 11]
     [(BindingDefinition) 12]))
-
-(define (compiler-parse-semantic-origin-kind-tag-from-marker
-  [marker : ci.InternId]) : i64
-  (cond
-    [(compiler-parse-marker? marker "__tl_semantic_origin_type_name") 1]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_type_definition") 0]
-    [(compiler-parse-marker?
-        marker
-        "__tl_semantic_origin_struct_field_definition")
-      2]
-    [(compiler-parse-marker?
-        marker
-        "__tl_semantic_origin_enum_variant_definition")
-      3]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_struct_field_use") 4]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_enum_variant_pattern")
-      5]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_dispatch_function") 6]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_module_definition") 7]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_module_path") 8]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_import_alias") 9]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_value_qualifier") 10]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_value_name") 11]
-    [(compiler-parse-marker? marker "__tl_semantic_origin_binding_definition")
-      12]
-    [else -1]))
 
 (define (compiler-parse-semantic-origin-kind-from-tag [tag : i64]) : CompilerParseSemanticOriginKind
   (cond
@@ -615,59 +812,54 @@
   (unsafe
     (cast (ptr->int (ptr-cast (__tl_array-data decls.slots) : (Ptr u8))) : i64)))
 
-;; Every cold-pool scanner must jump over a semantic run as one record. Walking
-;; its occurrence payload made the existing declaration/member-origin queries
-;; proportional to every semantic token in the compilation and turned the
-;; self-host bootstrap quadratic.
-(define (compiler-parse-semantic-origin-next-record
-  [cursor : i64]
-  [limit : i64]) : i64
-  (if (< (+ cursor 1) limit)
-    (match (reader.sp-node-get cursor)
-      [(Int _ marker _)
-        (if (compiler-parse-marker? marker "__tl_semantic_origin")
-          (match (reader.sp-node-get (+ cursor 1))
-            [(Int _ run-marker run-span)
-              (let
-                [count : i64 (token.span-start-line run-span)]
-                [next : i64 (+ (+ cursor 2) count)]
-                (if (and
-                  (compiler-parse-marker?
-                    run-marker
-                    "__tl_semantic_origin_start")
-                  (>= count 0)
-                  (<= next limit))
-                  next
-                  (+ cursor 1)))]
-            [_ (+ cursor 1)])
-          (+ cursor 1))]
-      [_ (+ cursor 1)])
-    (+ cursor 1)))
-
 (define (compiler-parse-semantic-origin-lookup-cache-reset!) : unit
   (+= compiler-parse-semantic-origin-lookup-generation 1)
   (set! compiler-parse-semantic-origin-lookup-len 0)
   (set! compiler-parse-origin-alias-run-len 0)
   (set! compiler-parse-origin-alias-head-len 0)
   (set! compiler-parse-origin-segment-len 0)
-  (set! compiler-parse-semantic-origin-lookup-indexed-len 0))
+  (set! compiler-parse-semantic-origin-lookup-cursor.indexed-len 0)
+  (set! compiler-parse-semantic-origin-lookup-cursor.run-count 0)
+  (set! compiler-parse-semantic-origin-lookup-cursor.run-serial 0))
 
-(define (compiler-parse-semantic-origin-lookup-prepare!) : unit
+(define (compiler-parse-semantic-origin-lookup-prepare! [storage : i64]) : unit
   (let
     [reader-generation : i64 (reader.sp-node-pool-reset-generation-value)]
     [pool-len : i64 (reader.sp-node-pool-len)]
+    [runs : i64
+      (if (= storage 0)
+        0
+        (compiler-parse-origin-word storage 3))]
     (when
       (or
+        (and
+          (!= storage 0)
+          (or
+            (!= storage compiler-parse-semantic-origin-lookup-cursor.storage)
+            (< runs compiler-parse-semantic-origin-lookup-cursor.run-count)
+            (and
+              (> compiler-parse-semantic-origin-lookup-cursor.run-count 0)
+              (!=
+                compiler-parse-semantic-origin-lookup-cursor.run-serial
+                (compiler-parse-origin-run-word
+                  storage
+                  (- compiler-parse-semantic-origin-lookup-cursor.run-count 1)
+                  5)))))
         (!=
           reader-generation
           compiler-parse-semantic-origin-lookup-reader-reset-generation)
-        (< pool-len compiler-parse-semantic-origin-lookup-indexed-len))
+        (< pool-len compiler-parse-semantic-origin-lookup-cursor.indexed-len))
       (compiler-parse-semantic-origin-lookup-cache-reset!)
+      (unless
+        (= storage 0)
+        (set! compiler-parse-semantic-origin-lookup-cursor.storage storage))
       (set!
         compiler-parse-semantic-origin-lookup-reader-reset-generation
         reader-generation))
-    (if (< compiler-parse-semantic-origin-lookup-indexed-len pool-len)
-      (compiler-parse-semantic-origin-lookup-build!)
+    (if (or
+      (< compiler-parse-semantic-origin-lookup-cursor.indexed-len pool-len)
+      (< compiler-parse-semantic-origin-lookup-cursor.run-count runs))
+      (compiler-parse-semantic-origin-lookup-build! storage)
       unit)))
 
 (define (compiler-parse-semantic-origin-lookup-hash
@@ -1170,38 +1362,20 @@
                 head.decl-segment-len
                 slot)]))))))
 
-(define (compiler-parse-semantic-origin-lookup-build!) : unit
+(define (compiler-parse-semantic-origin-lookup-build! [storage : i64]) : unit
   (let
-    [cursor : i64 compiler-parse-semantic-origin-lookup-indexed-len]
+    [cursor : i64 compiler-parse-semantic-origin-lookup-cursor.indexed-len]
     [limit : i64 (reader.sp-node-pool-len)]
+    [run : i64 compiler-parse-semantic-origin-lookup-cursor.run-count]
+    [runs : i64
+      (if (= storage 0)
+        0
+        (compiler-parse-origin-word storage 3))]
     (while (< cursor limit)
+      (set! compiler-parse-semantic-origin-lookup-order (+ (* cursor 2) 1))
       (match (reader.sp-node-get cursor)
         [(Int record-key marker marker-span)
           (cond
-            [(and
-                (compiler-parse-marker? marker "__tl_semantic_origin")
-                (< (+ cursor 1) limit))
-              (match (reader.sp-node-get (+ cursor 1))
-                [(Int run-slot run-marker run-span)
-                  (let
-                    [count : i64 (token.span-start-line run-span)]
-                    (if (and
-                      (compiler-parse-marker?
-                        run-marker
-                        "__tl_semantic_origin_start")
-                      (>= count 0)
-                      (<= (+ (+ cursor 2) count) limit))
-                      (compiler-parse-semantic-origin-lookup-insert!
-                        1
-                        record-key
-                        run-slot
-                        1
-                        (+ cursor 2)
-                        count
-                        0
-                        0)
-                      unit))]
-                [_ unit])]
             [(and
                 (compiler-parse-marker? marker "__tl_decl_origin")
                 (< (+ cursor 2) limit))
@@ -1242,8 +1416,34 @@
                     "__tl_decl_origin_alias_repeat")))]
             [else unit])]
         [_ unit])
-      (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))
-    (set! compiler-parse-semantic-origin-lookup-indexed-len limit)))
+      (set! cursor (+ cursor 1)))
+    (set! compiler-parse-semantic-origin-lookup-cursor.indexed-len limit)
+    (unless
+      (= storage 0)
+      (while (< run runs)
+        (when
+          (> (compiler-parse-origin-run-word storage run 3) 0)
+          ;; A typed entry at boundary N precedes reader row N. Entries at
+          ;; one boundary retain directory order; aliases at N are later.
+          (set!
+            compiler-parse-semantic-origin-lookup-order
+            (* (compiler-parse-origin-run-word storage run 4) 2))
+          (compiler-parse-semantic-origin-lookup-insert!
+            1
+            (compiler-parse-origin-run-word storage run 0)
+            (compiler-parse-origin-run-word storage run 1)
+            1
+            run
+            (compiler-parse-origin-run-word storage run 3)
+            0
+            0))
+        (+= run 1))
+      (set! compiler-parse-semantic-origin-lookup-cursor.run-count run)
+      (set!
+        compiler-parse-semantic-origin-lookup-cursor.run-serial
+        (if (= run 0)
+          0
+          (compiler-parse-origin-run-word storage (- run 1) 5))))))
 
 (define (compiler-parse-semantic-origin-lookup-direct
   [domain : i64]
@@ -1313,7 +1513,7 @@
   [key : i64]
   [target : i64]) : CompilerParseMaybeDeclSpan
   (for [depth (iterator.range 0 64)]
-    (compiler-parse-semantic-origin-lookup-prepare!)
+    (compiler-parse-semantic-origin-lookup-prepare! 0)
     (let
       [entry : CompilerParseSemanticOriginLookupSlot
         (compiler-parse-semantic-origin-lookup 2 key target)]
@@ -1431,19 +1631,54 @@
       unit)))
 
 (define (compiler-parse-decl-origin-copy-direct-records!
+  [storage : i64]
   [source : (& source ast.AstDeclList)]
   [dest : (& dest ast.AstDeclList)]
   [dest-slot : i64]
-  [scan-start : i64]
-  [scan-end : i64]) : unit
+  [range : CompilerParseOriginCopyRange]) : unit
   (let
     [source-key : i64 (compiler-parse-decl-list-storage-key source)]
     [source-start : i64 source.offset]
     [source-end : i64 (+ source-start (ast.ast-decl-list-len source))]
     [dest-key : i64 (compiler-parse-decl-list-storage-key dest)]
     [dest-start : i64 (+ dest.offset dest-slot)]
-    [cursor : i64 scan-start]
-    [limit : i64 scan-end]
+    [cursor : i64 range.reader-start]
+    [limit : i64 range.reader-end]
+    (let
+      [runs : i64 range.origin-end]
+      (for [record (iterator.range range.origin-start runs)]
+        (let
+          [slot : i64 (compiler-parse-origin-run-word storage record 1)]
+          [boundary : i64 (compiler-parse-origin-run-word storage record 4)]
+          (when
+            (and
+              (= source-key (compiler-parse-origin-run-word storage record 0))
+              (>= slot source-start)
+              (< slot source-end)
+              (>= boundary range.reader-start)
+              (<= boundary range.reader-end))
+            (if range.retire-source
+              (let
+                [serial : i64 (+ (compiler-parse-origin-word storage 5) 1)]
+                (compiler-parse-origin-run-word-set! storage record 0 dest-key)
+                (compiler-parse-origin-run-word-set!
+                  storage
+                  record
+                  1
+                  (+ dest-start (- slot source-start)))
+                (compiler-parse-origin-run-word-set!
+                  storage
+                  record
+                  4
+                  (reader.sp-node-pool-len))
+                (compiler-parse-origin-run-word-set! storage record 5 serial)
+                (compiler-parse-origin-word-set! storage 5 serial))
+              (compiler-parse-origin-append-reference!
+                storage
+                dest-key
+                (+ dest-start (- slot source-start))
+                (compiler-parse-origin-run-word storage record 2)
+                (compiler-parse-origin-run-word storage record 3)))))))
     (while (< cursor limit)
       (match (reader.sp-node-get cursor)
         [(Int record-key marker _)
@@ -1475,43 +1710,11 @@
                         unit)
                       unit)]
                   [_ unit])]
-              [(and
-                  (compiler-parse-marker? marker "__tl_semantic_origin")
-                  (< (+ cursor 1) limit))
-                (match (reader.sp-node-get (+ cursor 1))
-                  [(Int record-slot run-marker run-span)
-                    (let
-                      [count : i64 (token.span-start-line run-span)]
-                      (if (and
-                        (compiler-parse-marker?
-                          run-marker
-                          "__tl_semantic_origin_start")
-                        (>= record-slot source-start)
-                        (< record-slot source-end)
-                        (>= count 0)
-                        (<= (+ (+ cursor 2) count) limit))
-                        (begin
-                          (reader.sp-node-push
-                            (Int
-                              dest-key
-                              (compiler-parse-marker "__tl_semantic_origin")
-                              run-span))
-                          (reader.sp-node-push
-                            (Int
-                              (+ dest-start (- record-slot source-start))
-                              (compiler-parse-marker
-                                "__tl_semantic_origin_start")
-                              run-span))
-                          (for [record-index (iterator.range 0 count)]
-                            (reader.sp-node-push
-                              (reader.sp-node-get (+ (+ cursor 2) record-index)))
-                            unit))
-                        unit))]
-                  [_ unit])]
               [else unit])
             unit)]
         [_ unit])
-      (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))))
+      (set! cursor (+ cursor 1)))
+    (compiler-parse-semantic-origin-lookup-cache-reset!)))
 
 (define (compiler-parse-decl-origin-register-list-aliases!
   [decls : (& decls ast.AstDeclList)]
@@ -1656,38 +1859,64 @@
 ;; slot. A normal declaration-origin alias preserves the run; a repeat alias is
 ;; intentionally ignored because it represents a one-to-many generated rewrite
 ;; whose new declarations have no independent editable source occurrences.
-(define (compiler-parse-semantic-origin-run-key-slot-depth
+(define (compiler-parse-semantic-origin-run-key-slot-in-state
+  [control : i64]
   [key : i64]
   [target : i64]) : CompilerParseMaybeSemanticOriginRun
-  (for [depth (iterator.range 0 64)]
-    (compiler-parse-semantic-origin-lookup-prepare!)
-    (let
-      [entry : CompilerParseSemanticOriginLookupSlot
-        (compiler-parse-semantic-origin-lookup 1 key target)]
-      (cond
-        [(= entry.kind 1)
-          (return
-            (Some
-              (CompilerParseSemanticOriginRun entry.run-start entry.run-count)))]
-        [(= entry.kind 2)
-          (set! key entry.source-key)
-          (set! target entry.source-slot)]
-        [else (break)])))
-  None)
+  (let
+    [storage : i64 (compiler-parse-origin-storage control)]
+    (compiler-parse-semantic-origin-lookup-prepare! storage)
+    (for [depth (iterator.range 0 64)]
+      (let
+        [entry : CompilerParseSemanticOriginLookupSlot
+          (compiler-parse-semantic-origin-lookup 1 key target)]
+        (cond
+          [(= entry.kind 1)
+            (return
+              (Some
+                (CompilerParseSemanticOriginRun
+                  storage
+                  (compiler-parse-origin-word storage 1)
+                  entry.run-start
+                  (compiler-parse-origin-run-word storage entry.run-start 5)
+                  (compiler-parse-origin-run-word storage entry.run-start 2)
+                  entry.run-count)))]
+          [(= entry.kind 2)
+            (set! key entry.source-key)
+            (set! target entry.source-slot)]
+          [else (break)])))
+    None))
 
+;; Serial standalone adapters. Production consumers pass the parser capability
+;; from their cfgs or checked context and returned runs retain that same owner.
 (define (compiler-parse-semantic-origin-run-key-slot [key : i64] [slot : i64]) : CompilerParseMaybeSemanticOriginRun
-  (compiler-parse-semantic-origin-run-key-slot-depth key slot))
+  (compiler-parse-semantic-origin-run-key-slot-in-state
+    (compiler-parse-control-from-cfg (sym_i64_env.sym-i64-empty))
+    key
+    slot))
+
+(define (compiler-parse-semantic-origin-run-in-state
+  [control : i64]
+  [decls : (& decls ast.AstDeclList)]
+  [slot : i64]) : CompilerParseMaybeSemanticOriginRun
+  (compiler-parse-semantic-origin-run-key-slot-in-state
+    control
+    (compiler-parse-decl-list-storage-key decls)
+    (+ decls.offset slot)))
 
 (define (compiler-parse-semantic-origin-run
   [decls : (& decls ast.AstDeclList)]
   [slot : i64]) : CompilerParseMaybeSemanticOriginRun
-  (compiler-parse-semantic-origin-run-key-slot
-    (compiler-parse-decl-list-storage-key decls)
-    (+ decls.offset slot)))
+  (compiler-parse-semantic-origin-run-in-state
+    (compiler-parse-control-from-cfg (sym_i64_env.sym-i64-empty))
+    decls
+    slot))
 
 (define (compiler-parse-semantic-origin-run-len
   [run : (& run CompilerParseSemanticOriginRun)]) : i64
-  run.count)
+  (if (compiler-parse-semantic-origin-run-valid? run)
+    run.count
+    0))
 
 (define (compiler-parse-semantic-origin-fallback) : CompilerParseSemanticOrigin
   (CompilerParseSemanticOrigin
@@ -1696,24 +1925,64 @@
     (ast.ast-decl-span-fallback)
     -1))
 
+(define (compiler-parse-semantic-origin-run-valid?
+  [run : (& run CompilerParseSemanticOriginRun)]) : bool
+  (and
+    (= run.generation (compiler-parse-origin-word run.storage 1))
+    (or
+      (!=
+        (compiler-parse-raw-i64-ref
+          (compiler-parse-origin-word run.storage 12)
+          3)
+        0)
+      (=
+        (compiler-parse-origin-word run.storage 14)
+        (reader.sp-node-pool-reset-generation-value)))
+    (=
+      (compiler-parse-origin-word run.storage 13)
+      (compiler-parse-state-owner-generation
+        (compiler-parse-origin-word run.storage 12)))
+    (=
+      (compiler-parse-origin-word run.storage 15)
+      (compiler-parse-state-owner-table-id
+        (compiler-parse-origin-word run.storage 12)))
+    (>= run.record 0)
+    (< run.record (compiler-parse-origin-word run.storage 3))
+    (= run.serial (compiler-parse-origin-run-word run.storage run.record 5))))
+
 (define (compiler-parse-semantic-origin-run-get
   [run : (& run CompilerParseSemanticOriginRun)]
   [index : i64]
   [fallback : CompilerParseSemanticOrigin]) : CompilerParseSemanticOrigin
-  (if (and (>= index 0) (< index run.count))
-    (match (reader.sp-node-get (+ run.start index))
-      [(Int written-name marker span)
-        (let
-          [kind-tag : i64
-            (compiler-parse-semantic-origin-kind-tag-from-marker marker)]
-          (if (>= kind-tag 0)
-            (CompilerParseSemanticOrigin
-              (compiler-parse-semantic-origin-kind-from-tag kind-tag)
-              written-name
-              (ast-source-span-from-source-span span)
-              index)
-            fallback))]
-      [_ fallback])
+  (if (and
+    (>= index 0)
+    (< index run.count)
+    (compiler-parse-semantic-origin-run-valid? run))
+    (let
+      [position : i64 (+ run.start index)]
+      [base : i64 (compiler-parse-origin-segment run.storage 6 position)]
+      [offset : i64 (bit-and position 1023)]
+      [kind : i64
+        (cast
+          (unsafe
+            (ptr-read (ptr-offset (int->ptr base : (Ptr u8)) (+ 16384 offset))))
+          : i64)]
+      [coordinates : i64 (compiler-parse-raw-i64-ref base (+ 1024 offset))]
+      [span : ast.AstSourceSpan
+        (if (= (bit-and kind 128) 0)
+          (ast.ast-source-span-unpack coordinates)
+          (unsafe
+            (ptr-read
+              (ptr-offset
+                (int->ptr
+                  (compiler-parse-origin-segment run.storage 10 coordinates)
+                  : (Ptr ast.AstSourceSpan))
+                (bit-and coordinates 1023)))))]
+      (CompilerParseSemanticOrigin
+        (compiler-parse-semantic-origin-kind-from-tag (bit-and kind 127))
+        (compiler-parse-raw-i64-ref base offset)
+        span
+        index))
     fallback))
 
 ;; Aggregate member origins reuse the transient spanned-node pool instead of
@@ -1753,7 +2022,7 @@
                   [_ (set! done true)])))
             unit)]
         [_ unit])
-      (set! cursor (compiler-parse-semantic-origin-next-record cursor limit)))
+      (set! cursor (+ cursor 1)))
     result))
 
 (define (compiler-parse-field-def-list-span-get
@@ -1781,6 +2050,7 @@
     fallback))
 
 (define (compiler-parse-member-records-compact!
+  [storage : i64]
   [mark : i64]
   [records-start : i64]) : unit
   (let
@@ -1789,7 +2059,23 @@
     (for [read-index (iterator.range records-start end)]
       (reader.sp-node-pool-fill! write-index (reader.sp-node-get read-index))
       (+= write-index 1))
-    (reader.sp-node-pool-truncate! write-index)))
+    (reader.sp-node-pool-truncate! write-index)
+    (let
+      [record : i64 (- (compiler-parse-origin-word storage 3) 1)]
+      (while (and
+        (>= record 0)
+        (>= (compiler-parse-origin-run-word storage record 4) mark))
+        (let
+          [boundary : i64 (compiler-parse-origin-run-word storage record 4)]
+          (compiler-parse-origin-run-word-set!
+            storage
+            record
+            4
+            (if (< boundary records-start)
+              mark
+              (- boundary (- records-start mark)))))
+        (-= record 1)))
+    (compiler-parse-semantic-origin-lookup-cache-reset!)))
 
 (defenum ResultAstType
   (Ok ast.AstType)
@@ -2163,7 +2449,8 @@
   (dispatch-index-keys (__tl_dyn-array i64))
   (dispatch-index-tags (__tl_dyn-array i64))
   (dispatch-cache (__tl_dyn-array sym_i64_env.SymI64Env))
-  (intern-owner (__tl_dyn-array ci.InternCompatState)))
+  (intern-owner (__tl_dyn-array ci.InternCompatState))
+  (semantic-origins (__tl_dyn-array i64)))
 
 ;; Kept inline in each parser entry frame so spanned-node arena rewinds cannot
 ;; invalidate the diagnostic span and dispatch-control fast path.
@@ -2212,6 +2499,7 @@
   [owner : (__tl_dyn-array ci.InternCompatState)]) : CompilerParseState
   (let
     [control : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [origins : (__tl_dyn-array i64) (__tl_make-array i64 16)]
     [keys : (__tl_dyn-array i64) (__tl_make-array i64 512)]
     [tags : (__tl_dyn-array i64) (__tl_make-array i64 512)]
     [cache : (__tl_dyn-array sym_i64_env.SymI64Env)
@@ -2236,7 +2524,10 @@
     (set! (array-ref control compiler-parse-state-control-marker-id) -1)
     (set! (array-ref control compiler-parse-state-control-ready) 0)
     (set! (array-ref control compiler-parse-state-control-binding-origins) 0)
-    (CompilerParseState control keys tags cache owner)))
+    (set! (array-ref control 8) (compiler-parse-array-data-addr origins))
+    (set! (array-ref origins 12) (compiler-parse-array-data-addr control))
+    (set! (array-ref origins 13) -1)
+    (CompilerParseState control keys tags cache owner origins)))
 
 (define (compiler-parse-state-new) : CompilerParseState
   (compiler-parse-state-new-from-owner (__tl_make-array ci.InternCompatState 0)))
@@ -2606,7 +2897,13 @@
   [predicate : reader.SpannedSexpr]) : ResultCompilerCfg
   (match (reader.spanned-sexpr-view predicate)
     [(Sym name _)
-      (Ok (compiler-cfg-enabled? dispatch (ci.intern-syntax-id-value name)))]
+      (begin
+        (cfg
+          compiler-dependency-audit
+          (dependency_trace.compiler-dependency-trace
+            "cfg"
+            (compiler-parse-dispatch-syntax-id-text dispatch name)))
+        (Ok (compiler-cfg-enabled? dispatch (ci.intern-syntax-id-value name))))]
     [(List (slice (Sym op _) & predicates) _)
       (cond
         [(= (ci.intern-syntax-id-value op) (cbi.compiler-builtin-ctfe "all"))
@@ -11291,7 +11588,7 @@
   (let
     [previous-capture : CompilerParseSemanticOriginCaptureState
       (compiler-parse-semantic-origin-capture-current)]
-    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
     [result : ResultAstDecl
       (match (parse-ast-module-body-forms-into-vec
         dispatch
@@ -12114,12 +12411,13 @@
   (slots (__tl_dyn-array ast.AstDecl))
   (spans (__tl_dyn-array ast.AstSourceSpan))
   (semantic-origins ParseSemanticOriginVec)
+  (origin-storage i64)
   (len i64))
 
 (define (parse-ast-decl-vec-fallback) : ast.AstDecl
   (Module cbi.compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt))
 
-(define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
+(define (parse-ast-decl-vec-with-capacity [capacity : i64] [control : i64]) : ParseAstDeclVec
   (let
     [cap : i64
       (if (< capacity 1)
@@ -12129,10 +12427,13 @@
       (__tl_make-array ast.AstDecl cap)
       (__tl_make-array ast.AstSourceSpan cap)
       (parse-semantic-origin-vec-with-capacity (* cap 8))
+      (compiler-parse-origin-storage control)
       0)))
 
-(define (parse-ast-decl-vec-new) : ParseAstDeclVec
-  (parse-ast-decl-vec-with-capacity 16))
+(define (parse-ast-decl-vec-new [dispatch : sym_i64_env.SymI64Env]) : ParseAstDeclVec
+  (parse-ast-decl-vec-with-capacity
+    16
+    (compiler-parse-control-from-cfg dispatch)))
 
 (define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
   v.len)
@@ -12253,49 +12554,29 @@
       unit)))
 
 (define (compiler-parse-semantic-origin-register-run!
+  [storage : i64]
   [decls : (& decls ast.AstDeclList)]
   [slot : i64]
   [origins : (& origins ParseSemanticOriginVec)]
   [start : i64]
   [count : i64]) : unit
-  (if (<= count 0)
-    unit
+  (when
+    (> count 0)
+    (when
+      (= (compiler-parse-origin-word storage 0) 0)
+      (compiler-parse-origin-word-set! storage 0 (arena.tl_arena_make)))
     (let
-      [first : ParseSemanticOriginRecord (array-ref origins.items start)]
-      [marker-span : token.SourceSpan
-        (token.SourceSpan
-          first.start-line
-          first.start-col
-          first.end-line
-          first.end-col)]
-      [run-start : i64 (reader.sp-node-pool-reserve! (+ count 2))]
-      (reader.sp-node-pool-fill!
-        run-start
-        (Int
-          (compiler-parse-decl-list-storage-key decls)
-          (compiler-parse-marker "__tl_semantic_origin")
-          marker-span))
-      (reader.sp-node-pool-fill!
-        (+ run-start 1)
-        (Int
-          (+ decls.offset slot)
-          (compiler-parse-marker "__tl_semantic_origin_start")
-          (token.SourceSpan count 0 0 0)))
+      [occurrence-start : i64 (compiler-parse-origin-word storage 2)]
       (for [index (iterator.range 0 count)]
-        (let
-          [origin : ParseSemanticOriginRecord
-            (array-ref origins.items (+ start index))]
-          (reader.sp-node-pool-fill!
-            (+ (+ run-start 2) index)
-            (Int
-              origin.written-name
-              (compiler-parse-semantic-origin-kind-marker
-                (compiler-parse-semantic-origin-kind-from-tag origin.kind-tag))
-              (token.SourceSpan
-                origin.start-line
-                origin.start-col
-                origin.end-line
-                origin.end-col))))))))
+        (compiler-parse-origin-append!
+          storage
+          (& (array-ref origins.items (+ start index)))))
+      (compiler-parse-origin-append-reference!
+        storage
+        (compiler-parse-decl-list-storage-key decls)
+        (+ decls.offset slot)
+        occurrence-start
+        count))))
 
 (define (compiler-parse-semantic-origin-register-selected!
   [items : (& items ParseAstDeclVec)]
@@ -12315,6 +12596,7 @@
             first.decl-slot))
           (+= count 1))
         (compiler-parse-semantic-origin-register-run!
+          items.origin-storage
           out
           first.decl-slot
           (& items.semantic-origins)
@@ -12377,6 +12659,8 @@
       ;; truncate the spanned pool back to here before reading the next form.
       ;; Bounds the spanned pool to a single form so it never has to grow.
       [mark : i64 (reader.sp-node-pool-len)]
+      [origin-mark : CompilerParseOriginCheckpoint
+        (compiler-parse-origin-checkpoint out.origin-storage)]
       (match (reader.form-spanned-result toks (&mut cur))
         [(Ok form)
           (let
@@ -12395,7 +12679,10 @@
                   decl
                   (compiler-parse-decl-origin-syntax-span dispatch form))
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-program-forms-into-vec
                   dispatch
                   pools
@@ -12406,7 +12693,10 @@
               [(Decls decls)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-decl-vec-push-list! out (& decls))
                 (parse-ast-program-forms-into-vec
                   dispatch
@@ -12416,9 +12706,13 @@
                   semantic-origins
                   out)]
               [(NoDecl)
+                (compiler-parse-origin-rollback! out.origin-storage origin-mark)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-program-forms-into-vec
                   dispatch
                   pools
@@ -12429,9 +12723,11 @@
               [(Err message)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-origin-rollback! out.origin-storage origin-mark)
                 (reader.sp-node-pool-truncate! mark)
                 (Err message)]))]
         [(Err err)
+          (compiler-parse-origin-rollback! out.origin-storage origin-mark)
           (reader.sp-node-pool-truncate! mark)
           (Err (token.source-error-message err))]))))
 
@@ -12441,7 +12737,9 @@
   [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cur : (& (__tl_dyn-array i64))]) : ResultAstDeclList
   (let
-    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
+    [origin-mark : CompilerParseOriginCheckpoint
+      (compiler-parse-origin-checkpoint out.origin-storage)]
     [result : ResultParseAstDeclVec
       (parse-ast-program-forms-into-vec
         dispatch
@@ -12451,8 +12749,11 @@
         (unsafe
           (ptr-addr-of out.semantic-origins))
         (&mut out))]
-    [_ (try result)]
-    (Ok (parse-ast-decl-vec-to-list (& out)))))
+    (match result
+      [(Ok) (Ok (parse-ast-decl-vec-to-list (& out)))]
+      [(Err error)
+        (compiler-parse-origin-rollback! out.origin-storage origin-mark)
+        (Err error)])))
 
 (define (parse-ast-program-dispatch) : sym_i64_env.SymI64Env
   (compiler-parse-dispatch-env))
@@ -12585,6 +12886,8 @@
                               (parse-ast-repl-expr-item dispatch pools form)
                               (Ok (AstReplDecl decl)))]
                           (compiler-parse-member-records-compact!
+                            (compiler-parse-origin-storage
+                              (compiler-parse-control-from-cfg dispatch))
                             mark
                             records-start)
                           result)]
@@ -12691,6 +12994,8 @@
     unit
     (let
       [mark : i64 (reader.sp-node-pool-len)]
+      [origin-mark : CompilerParseOriginCheckpoint
+        (compiler-parse-origin-checkpoint out.origin-storage)]
       [form-start : i64 (reader.cur-pos (& cur))]
       (match (reader.form-spanned-result toks (&mut cur))
         [(Ok spanned-form)
@@ -12711,7 +13016,10 @@
                   decl
                   (compiler-parse-decl-origin-syntax-span dispatch spanned-form))
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-program-forms-recovery-into-vec
                   path
                   dispatch
@@ -12724,7 +13032,10 @@
               [(Decls decls)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-decl-vec-push-list! out (& decls))
                 (parse-ast-program-forms-recovery-into-vec
                   path
@@ -12736,9 +13047,13 @@
                   out
                   diagnostics)]
               [(NoDecl)
+                (compiler-parse-origin-rollback! out.origin-storage origin-mark)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-program-forms-recovery-into-vec
                   path
                   dispatch
@@ -12761,6 +13076,9 @@
                           message)))]
                   (set! out.semantic-origins.len semantic-start)
                   (compiler-parse-semantic-origin-capture-end!)
+                  (compiler-parse-origin-rollback!
+                    out.origin-storage
+                    origin-mark)
                   (reader.sp-node-pool-truncate! mark)
                   (cdiag.compiler-diagnostic-list-push! diagnostics diag)
                   (parse-ast-program-forms-recovery-into-vec
@@ -12780,6 +13098,7 @@
                   (cdiag.compiler-diagnostic-from-source-error
                     (compiler-parse-place-shared-view path)
                     err)))]
+            (compiler-parse-origin-rollback! out.origin-storage origin-mark)
             (reader.sp-node-pool-truncate! mark)
             (parse-ast-recover-top-level-cursor! toks (&mut cur) form-start)
             (cdiag.compiler-diagnostic-list-push! diagnostics diag)
@@ -12823,7 +13142,7 @@
         dispatch-with-invocation
         compiler-parse-invocation-control-marker-id
         base-control)]
-    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
     (set! (array-ref cur 0) 0)
     (compiler-parse-raw-i64-set!
       invocation-address
@@ -12896,6 +13215,8 @@
       ;; parse-ast-program-forms): the decl carries no sp ids, so truncate back
       ;; before reading the next form.
       [mark : i64 (reader.sp-node-pool-len)]
+      [origin-mark : CompilerParseOriginCheckpoint
+        (compiler-parse-origin-checkpoint out.origin-storage)]
       (match (reader.form-spanned-result toks (&mut cur))
         [(Ok spanned-form)
           (let
@@ -12915,7 +13236,10 @@
                   decl
                   (compiler-parse-decl-origin-syntax-span dispatch spanned-form))
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
@@ -12927,7 +13251,10 @@
               [(Decls decls)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-decl-vec-push-list! out (& decls))
                 (parse-ast-program-forms-diagnostic-into-vec
                   path
@@ -12938,9 +13265,13 @@
                   semantic-origins
                   out)]
               [(NoDecl)
+                (compiler-parse-origin-rollback! out.origin-storage origin-mark)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
-                (compiler-parse-member-records-compact! mark records-start)
+                (compiler-parse-member-records-compact!
+                  out.origin-storage
+                  mark
+                  records-start)
                 (parse-ast-program-forms-diagnostic-into-vec
                   path
                   dispatch
@@ -12952,6 +13283,7 @@
               [(Err message)
                 (set! out.semantic-origins.len semantic-start)
                 (compiler-parse-semantic-origin-capture-end!)
+                (compiler-parse-origin-rollback! out.origin-storage origin-mark)
                 (reader.sp-node-pool-truncate! mark)
                 (Err
                   (box
@@ -12964,6 +13296,7 @@
                             (reader.spanned-sexpr-span spanned-form))
                           message)))))]))]
         [(Err err)
+          (compiler-parse-origin-rollback! out.origin-storage origin-mark)
           (reader.sp-node-pool-truncate! mark)
           (Err
             (box
@@ -12977,7 +13310,9 @@
   [toks : (& (__tl_dyn-array token.SpannedToken))]
   [cur : (& (__tl_dyn-array i64))]) : ResultAstDeclListDiagnostic
   (let
-    [out : ParseAstDeclVec (parse-ast-decl-vec-new)]
+    [out : ParseAstDeclVec (parse-ast-decl-vec-new dispatch)]
+    [origin-mark : CompilerParseOriginCheckpoint
+      (compiler-parse-origin-checkpoint out.origin-storage)]
     [result : ResultParseAstDeclVecDiagnostic
       (parse-ast-program-forms-diagnostic-into-vec
         path
@@ -12988,8 +13323,11 @@
         (unsafe
           (ptr-addr-of out.semantic-origins))
         (&mut out))]
-    [_ (try result)]
-    (Ok (parse-ast-decl-vec-to-list (& out)))))
+    (match result
+      [(Ok) (Ok (parse-ast-decl-vec-to-list (& out)))]
+      [(Err error)
+        (compiler-parse-origin-rollback! out.origin-storage origin-mark)
+        (Err error)])))
 
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]

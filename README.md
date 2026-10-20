@@ -56,6 +56,9 @@ Hello, TypeLisp!
 factorial(5) = 120
 ```
 
+Fetching uses `curl`; recovery from an unavailable `stage0-latest` also
+requires `jq` to select a checksum-verified immutable release from `main`.
+
 ### Windows PowerShell
 
 ```powershell
@@ -188,7 +191,8 @@ for active work and design decisions.
 - [Concurrency and SIMD](docs/concurrency-and-simd.md)
 - [Packages](docs/packages.md)
 - [Testing, documentation, and bootstrap](docs/testing-and-bootstrap.md)
-- [Compiler architecture and CLI](docs/compiler-architecture.md)
+- [Compiler architecture](docs/compiler-architecture.md)
+- [Compiler invariants and CLI](docs/compiler-invariants.md)
 - [Standard library reference](stdlib/README.md)
 - [VS Code extension](tools/vs-code-extension/README.md)
 - [Generated documentation site](https://jonil-botta.github.io/typelisp/)

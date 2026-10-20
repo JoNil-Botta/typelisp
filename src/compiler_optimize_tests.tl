@@ -45,62 +45,99 @@
 ;; Storage adoption consumes a private completed value at the original copy.
 ;; Each refusal changes one proof obligation; expectations compare the complete
 ;; instruction sequence, preserving initialization, unrelated effects and uses.
+;; IR text interns `tl_memcpy` as a generated symbol, while lowering emits the
+;; copy builtin the matcher recognizes (`opt-ctor-fwd-match-copy`): such a call
+;; is rebuilt with the builtin's id.
+(define (opt-ctor-adopt-builtin-memcpy [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
+  (let
+    [out : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity instrs.len)]
+    [index : i64 0]
+    (while (< index instrs.len)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [memcpy-dst : i64
+          (match (& instr)
+            [(ir.CompilerIrInstr.Call dst name _ _)
+              (if (string.eq (ir.compiler-ir-symbol-text name) "tl_memcpy")
+                dst
+                -1)]
+            [_ -1])]
+        (ir.compiler-ir-instr-builder-push!
+          (&mut out)
+          (if (>= memcpy-dst 0)
+            (ir.CompilerIrInstr.Call
+              memcpy-dst
+              cbi.compiler-builtin-id-tl-memcpy
+              (ir.compiler-ir-call-args-from-seq
+                (&
+                  (ir.compiler-ir-value-seq3
+                    (ir.CompilerIrValue.Var 7)
+                    (ir.CompilerIrValue.Var 3)
+                    (ir.CompilerIrValue.I64 16))))
+              (ast.AstType.U64))
+            instr)))
+      (set! index (+ index 1)))
+    (ir.compiler-ir-instr-builder-to-seq out)))
+
 (define (opt-ctor-adopt-test-instrs [mode : i64] [adopted? : bool]) : ir.CompilerIrInstrSeq
-  (irt.instrs
-    (str_cat.str-cat
-      "%1 = alloc i64\n%2 = alloc i64\n%3 = addr_of %2\n"
+  (opt-ctor-adopt-builtin-memcpy
+    (irt.instrs
       (str_cat.str-cat
-        (cond
-          [(= mode 1) "copy_bytes %3, %0, 8\n"]
-          [(= mode 2) "store_owned %12 -> %3 : String\n"]
-          [else "store_ptr %3, 11 : i64\n"])
+        "%1 = alloc i64\n%2 = alloc i64\n%3 = addr_of %2\n"
         (str_cat.str-cat
-          "%4 = gep %3, 8 : u8\n"
+          (cond
+            [(= mode 1) "copy_bytes %3, %0, 8\n"]
+            [(= mode 2) "store_owned %12 -> %3 : String\n"]
+            [else "store_ptr %3, 11 : i64\n"])
           (str_cat.str-cat
-            (if (= mode 18)
-              "%4 = mov %0 : u64\n"
-              "")
+            "%4 = gep %3, 8 : u8\n"
             (str_cat.str-cat
-              (cond
-                [(= mode 8) "store_ptr %4, %3 : u64\n"]
-                [(= mode 12) ""]
-                [(= mode 16) "store_ptr %4, 31 : i32\n"]
-                [else "store_ptr %4, 31 : i64\n"])
+              (if (= mode 18)
+                "%4 = mov %0 : u64\n"
+                "")
               (str_cat.str-cat
                 (cond
-                  [(= mode 4) "%11 = call unrelated() : i64\n"]
-                  [(= mode 5) "%11 = call observe(%3) : i64\n"]
-                  [(= mode 7) "%11 = call observe(%4) : i64\n"]
-                  [(= mode 9) "%11 = addr_of %2\n"]
-                  [(= mode 10) "%11 = addr_of %1\n"]
-                  [(= mode 11) "%3 = mov %0 : u64\n"]
-                  [(= mode 17) "%11 = mov %3 : u64\n"]
-                  [else ""])
+                  [(= mode 8) "store_ptr %4, %3 : u64\n"]
+                  [(= mode 12) ""]
+                  [(= mode 16) "store_ptr %4, 31 : i32\n"]
+                  [else "store_ptr %4, 31 : i64\n"])
                 (str_cat.str-cat
                   (cond
-                    [adopted? ""]
-                    [(= mode 15) "%5 = alloc u64\n%6 = alloc u64\n"]
-                    [else "%5 = alloc i64\n%6 = alloc i64\n"])
+                    [(= mode 4) "%11 = call unrelated() : i64\n"]
+                    [(= mode 5) "%11 = call observe(%3) : i64\n"]
+                    [(= mode 7) "%11 = call observe(%4) : i64\n"]
+                    [(= mode 9) "%11 = addr_of %2\n"]
+                    [(= mode 10) "%11 = addr_of %1\n"]
+                    [(= mode 11) "%3 = mov %0 : u64\n"]
+                    [(= mode 17) "%11 = mov %3 : u64\n"]
+                    [else ""])
                   (str_cat.str-cat
-                    (if adopted?
-                      ""
-                      "%7 = addr_of %6\n")
+                    (cond
+                      [adopted? ""]
+                      [(= mode 15) "%5 = alloc u64\n%6 = alloc u64\n"]
+                      [else "%5 = alloc i64\n%6 = alloc i64\n"])
                     (str_cat.str-cat
-                      (if (= mode 14)
-                        "%11 = call observe(%7) : i64\n"
-                        "")
+                      (if adopted?
+                        ""
+                        "%7 = addr_of %6\n")
                       (str_cat.str-cat
-                        (cond
-                          [adopted? "%7 = mov %3 : u64\n"]
-                          [(= mode 3) "%9 = call tl_memcpy(%7, %3, 16) : u64\n"]
-                          [(= mode 13) "copy_bytes %7, %3, 8\n"]
-                          [else "copy_bytes %7, %3, 16\n"])
+                        (if (= mode 14)
+                          "%11 = call observe(%7) : i64\n"
+                          "")
                         (str_cat.str-cat
                           (cond
-                            [(= mode 6) "%10 = load %3 : i64\n"]
-                            [(= mode 19) "%7 = mov %0 : u64\n"]
-                            [else ""])
-                          "%8 = call observe(%7) : i64\nreturn %8")))))))))))))
+                            [adopted? "%7 = mov %3 : u64\n"]
+                            [(= mode 3)
+                              "%9 = call tl_memcpy(%7, %3, 16) : u64\n"]
+                            [(= mode 13) "copy_bytes %7, %3, 8\n"]
+                            [else "copy_bytes %7, %3, 16\n"])
+                          (str_cat.str-cat
+                            (cond
+                              [(= mode 6) "%10 = load %3 : i64\n"]
+                              [(= mode 19) "%7 = mov %0 : u64\n"]
+                              [else ""])
+                            "%8 = call observe(%7) : i64\nreturn %8"))))))))))))))
 
 (define (opt-ctor-adopt-test-blocks [mode : i64] [adopted? : bool]) : ir.CompilerIrBlockList
   (let
@@ -2819,13 +2856,11 @@
             (ir.compiler-ir-instr-effect (& hygienic-alloc))
             Unknown))
         4]
-      [(match (opt.opt-aggregate-direct-alloc
-          (opt.compiler-opt-global-shared-view runtime-alloc))
+      [(match (opt.opt-aggregate-direct-alloc runtime-alloc)
           [(Some _ _ _) false]
           [(No) true])
         5]
-      [(match (opt.opt-aggregate-direct-alloc
-          (opt.compiler-opt-global-shared-view hygienic-alloc))
+      [(match (opt.opt-aggregate-direct-alloc hygienic-alloc)
           [(No) false]
           [(Some _ _ _) true])
         6]

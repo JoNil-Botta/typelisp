@@ -129,6 +129,16 @@
   (Found json.Json)
   (Missing))
 
+(defenum LspJsonFieldRef
+  (:lifetimes value)
+  (Found (& value json.Json))
+  (Missing))
+
+(defenum LspMessageEnvelope
+  (Request)
+  (Response)
+  (Invalid))
+
 (defenum LspCodeActionDocument
   (Found String String i64)
   (Missing))
@@ -759,6 +769,20 @@
         k2
         v2
         (lsp-json-member k3 v3 (lsp-json-member k4 v4 (json.member-list-empty)))))))
+
+(define (lsp-json-field-ref [value : (& value json.Json)] [key : (& key str)]) : (LspJsonFieldRef
+    value)
+  (match value
+    [(JsonObject members)
+      (let
+        [count : i64 (json.member-list-count-ref members)]
+        (for [index (iterator.range 0 count)]
+          (let
+            [member : (& value json.JsonMember)
+              (& (array-ref members.slots index))]
+            (when (string.eq member.key key) (return (Found (& member.value))))))
+        Missing)]
+    [_ Missing]))
 
 (define (lsp-json-string-field [value : (& value json.Json)] [key : String]) : LspJsonText
   (let
@@ -13461,6 +13485,81 @@
             (arena.tl_arena_destroy scratch))
           (Continue state))])))
 
+(define (lsp-json-rpc-id? [value : (& value json.Json)]) : bool
+  (match value
+    [(or (JsonString _) (JsonNumber _) (JsonNull)) true]
+    [_ false]))
+
+(define (lsp-invalid-request-id [message : (& message json.Json)]) : json.Json
+  (let
+    [key : String "id"]
+    (match (lsp-json-field-ref message (& key))
+      [(Found id)
+        (if (lsp-json-rpc-id? id)
+          (clone (deref id))
+          JsonNull)]
+      [(Missing) JsonNull])))
+
+(define (lsp-json-rpc-error? [value : (& value json.Json)]) : bool
+  (let
+    [code-key : String "code"]
+    [message-key : String "message"]
+    (match (lsp-json-field-ref value (& code-key))
+      [(Found code)
+        (match code
+          [(JsonNumber text)
+            (if (json.number-integer-text? text)
+              (match (lsp-json-field-ref value (& message-key))
+                [(Found message)
+                  (match message
+                    [(JsonString _) true]
+                    [_ false])]
+                [(Missing) false])
+              false)]
+          [_ false])]
+      [(Missing) false])))
+
+;; Only a valid request may dispatch. Valid client responses are ignored; a
+;; missing method alone cannot distinguish a response from an invalid request.
+(define (lsp-message-envelope [message : (& message json.Json)]) : LspMessageEnvelope
+  (let
+    [version-key : String "jsonrpc"]
+    [method-key : String "method"]
+    [id-key : String "id"]
+    [result-key : String "result"]
+    [error-key : String "error"]
+    (match (lsp-json-field-ref message (& version-key))
+      [(Found version)
+        (match version
+          [(JsonString text)
+            (when (not (string.eq text "2.0")) (return Invalid))]
+          [_ (return Invalid)])]
+      [(Missing) (return Invalid)])
+    (match (lsp-json-field-ref message (& id-key))
+      [(Found id) (when (not (lsp-json-rpc-id? id)) (return Invalid))]
+      [(Missing) unit])
+    (match (lsp-json-field-ref message (& method-key))
+      [(Found method)
+        (match method
+          [(JsonString _) (return Request)]
+          [_ (return Invalid)])]
+      [(Missing) unit])
+    (match (lsp-json-field-ref message (& id-key))
+      [(Missing) (return Invalid)]
+      [(Found _) unit])
+    (match (lsp-json-field-ref message (& result-key))
+      [(Found _)
+        (match (lsp-json-field-ref message (& error-key))
+          [(Missing) Response]
+          [(Found _) Invalid])]
+      [(Missing)
+        (match (lsp-json-field-ref message (& error-key))
+          [(Found error)
+            (if (lsp-json-rpc-error? error)
+              Response
+              Invalid)]
+          [(Missing) Invalid])])))
+
 ;; Production state dispatch. All long-lived data crosses the loop through the
 ;; explicit aggregate; document providers never receive mutable workspace
 ;; vectors.
@@ -13469,6 +13568,16 @@
   [state : lsp_vector_families.LspServerState]
   [stdlib-roots : lsp_svec.Vec]
   [job-state : tc.TcJobState]) : LspHandleResult
+  (match (lsp-message-envelope (& message))
+    [(Invalid)
+      (with-scratch
+        (lsp-write-error
+          (lsp-invalid-request-id (& message))
+          -32600
+          "Invalid Request"))
+      (return (Continue state))]
+    [(Response) (return (Continue state))]
+    [(Request) unit])
   (match (lsp-json-string-field message "method")
     [(Missing) (Continue state)]
     [(Ok method)

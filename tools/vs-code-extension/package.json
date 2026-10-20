@@ -26,7 +26,7 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p .",
-    "check": "tsc -p . --noEmit",
+    "check": "tsc -p . && node test/stage0.test.js",
     "lint": "npm run check",
     "package": "npm run package:smoke",
     "package:smoke": "node -e \"require('fs').mkdirSync('dist', { recursive: true })\" && vsce package --out dist/typelisp-0.1.0.vsix",

@@ -1,0 +1,158 @@
+[
+  [
+    "terminal-success",
+    "pass",
+    "core IR dependency boundary passed",
+    [
+      [
+        "root.tl",
+        "[\"done\", \"\"]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "missing-terminal",
+    "fail",
+    "compiler did not finish frontend processing",
+    [
+      [
+        "root.tl",
+        "",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "truncated-fact",
+    "fail",
+    "truncated compiler fact stream",
+    [
+      [
+        "root.tl",
+        "[\"done\", \"\"]",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "after-terminal",
+    "fail",
+    "facts after terminal event",
+    [
+      [
+        "root.tl",
+        "[\"done\", \"\"]\n[\"cfg\", \"late\"]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "empty-fact",
+    "fail",
+    "empty compiler fact",
+    [
+      [
+        "root.tl",
+        "\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "unknown-kind",
+    "fail",
+    "unknown compiler fact",
+    [
+      [
+        "root.tl",
+        "[\"edge\", \"ignored\"]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "malformed-shape",
+    "fail",
+    "malformed compiler fact",
+    [
+      [
+        "root.tl",
+        "[\"done\"]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "non-string-fact",
+    "fail",
+    "expected a JSON string",
+    [
+      [
+        "root.tl",
+        "[\"done\", 2]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "bad-terminal",
+    "fail",
+    "malformed terminal fact",
+    [
+      [
+        "root.tl",
+        "[\"done\", \"unfinished\"]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "empty-cfg",
+    "fail",
+    "empty cfg name",
+    [
+      [
+        "root.tl",
+        "[\"cfg\", \"\"]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "configuration-work-limit",
+    "fail",
+    "4096-target/configuration-job work limit",
+    [
+      [
+        "root.tl",
+        "[\"cfg\", \"test-flag-0\"]\n[\"cfg\", \"test-flag-1\"]\n[\"cfg\", \"test-flag-2\"]\n[\"cfg\", \"test-flag-3\"]\n[\"cfg\", \"test-flag-4\"]\n[\"cfg\", \"test-flag-5\"]\n[\"cfg\", \"test-flag-6\"]\n[\"cfg\", \"test-flag-7\"]\n[\"cfg\", \"test-flag-8\"]\n[\"cfg\", \"test-flag-9\"]\n[\"cfg\", \"test-flag-10\"]\n[\"cfg\", \"test-flag-11\"]\n[\"done\", \"\"]\n",
+        "core",
+        "write"
+      ]
+    ]
+  ],
+  [
+    "fact-output-work-limit",
+    "fail",
+    "compiler fact output exceeds 8 MiB work limit",
+    [
+      [
+        "root.tl",
+        "oversized\n",
+        "core",
+        "write"
+      ]
+    ]
+  ]
+]

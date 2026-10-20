@@ -1252,17 +1252,30 @@
         (driver.compiler-driver-state-owned-lower-state state-b))]
     [macro-a : tc.TcMacroState (tc.tc-job-state-macro-state job-a)]
     [macro-b : tc.TcMacroState (tc.tc-job-state-macro-state job-b)]
+    [decls-a : ast.AstDeclList (ast.ast-decl-list-new)]
+    [decls-b : ast.AstDeclList (ast.ast-decl-list-new)]
     (driver.compiler-driver-state-install-pools! state-a)
     (driver.compiler-driver-state-install-interns! state-a)
     (driver.compiler-driver-state-reset-file-state! state-a)
     (tc.tc-lazy-import-stub-record-for-job! job-a 11 12 13 true)
     (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-a)
+    (ast.ast-decl-list-push (&mut decls-a) (Module 11))
+    (ast.ast-decl-list-push (&mut decls-a) (IncludeStr 12 "owner-a"))
+    (tc.tc-module-decl-index-ensure! macro-a (& decls-a))
     (driver.compiler-driver-state-install-pools! state-b)
     (driver.compiler-driver-state-install-interns! state-b)
     (driver.compiler-driver-state-reset-file-state! state-b)
     (tc.tc-lazy-import-stub-record-for-job! job-b 11 12 14 false)
     (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-b)
+    (ast.ast-decl-list-push (&mut decls-b) (Module 11))
+    (ast.ast-decl-list-push (&mut decls-b) (IncludeStr 13 "owner-b"))
+    (ast.ast-decl-list-push (&mut decls-b) (IncludeStr 14 "peer"))
+    (tc.tc-module-decl-index-ensure! macro-b (& decls-b))
     (let
+      [b-index-arena : i64 (tc.tc-module-decl-index-arena-for-state macro-b)]
+      [b-index-positions : (__tl_dyn-array i64)
+        (unsafe
+          (deref (tc.tc-module-decl-index-state-ptr macro-b)).positions)]
       [a-scratch : i64
         (lower.compiler-lower-arena-state-ensure-scratch! arenas-a)]
       [a-ir : i64 (lower.compiler-lower-arena-state-ensure-ir! arenas-a)]
@@ -1282,6 +1295,9 @@
       (let
         [ok : bool
           (and
+            (= (tc.tc-module-decl-index-arena-for-state macro-a) 0)
+            (= (tc.tc-module-decl-index-arena-for-state macro-b) b-index-arena)
+            (= (array-ref b-index-positions 1) 2)
             (> a-scratch 0)
             (> a-ir 0)
             (> b-scratch 0)
@@ -1310,6 +1326,7 @@
             (match (tc.tc-lazy-import-stub-target-id-for-state macro-b 11 12)
               [(Some target) (= target 14)]
               [(No) false]))]
+        (tc.tc-module-decl-index-release! macro-b)
         (lower.compiler-lower-arena-state-release! arenas-a)
         (lower.compiler-lower-arena-state-release! arenas-b)
         ok))))

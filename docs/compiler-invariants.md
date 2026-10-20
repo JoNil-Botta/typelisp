@@ -906,6 +906,12 @@ spare capacity writes the shared slot and growth copies the live prefix;
 escaping a table copies only that prefix into the current arena, which leaves
 no pointer into the arena that built it.
 
+A copied bounds check derives its unique ok-label from the original check.
+Recognized clone suffixes let span lookup recover the source location without
+crossing function ownership. The unsigned-bound entry check uses the same
+copy-0 suffix as unrolling and single-block versioning; its exit check retains
+the original label, so both abort sites remain distinct and located.
+
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original

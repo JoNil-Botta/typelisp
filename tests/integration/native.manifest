@@ -21,6 +21,13 @@
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+ubound_self_call_inbounds|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|6\n|3 3 2 1 1|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_first_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|0 1 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=0 length=0\n
+ubound_self_call_mid_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 3 2 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=2 length=2\n
+ubound_self_call_negative_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 2 2 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=-1 length=2\n
+ubound_self_call_zero|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|0\n|0 0 2 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_negative_bound|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|0\n|0 -1 2 1 0|stdlib/io.tl stdlib/string.tl|-
+ubound_self_call_division|all|0,1,2|tests/integration/ubound_self_loop_call.tl|135|-|3 2 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:8: integer division or remainder error: dividend=2 divisor=0\n
 ubound_entry_inbounds|all|0,1,2|tests/integration/ubound_entry_location.tl|42|2\n|3 3 1 1|stdlib/io.tl stdlib/string.tl|-
 ubound_entry_first_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|0 1 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=0 length=0\n
 ubound_entry_mid_abort|all|0,1,2|tests/integration/ubound_entry_location.tl|134|-|2 3 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:17:53: array index out of bounds: index=2 length=2\n

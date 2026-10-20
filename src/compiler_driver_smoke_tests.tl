@@ -1344,14 +1344,14 @@
     [name-b : i64
       (ci.intern-compat-state-intern (&mut intern-b) "driver-state.cache.name")]
     (tc.tc-source-dotted-alias-key-cache-put-for-state!
-      (owned_view.compiler-owned-shared-view cache-a)
+      cache-a
       (ci.intern-compat-state-table-id (& intern-a))
       (ci.intern-compat-state-generation (& intern-a))
       module-a
       name-a
       71)
     (tc.tc-source-dotted-alias-key-cache-put-for-state!
-      (owned_view.compiler-owned-shared-view cache-b)
+      cache-b
       (ci.intern-compat-state-table-id (& intern-b))
       (ci.intern-compat-state-generation (& intern-b))
       module-b

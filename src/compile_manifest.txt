@@ -233,3 +233,6 @@ end
 
 case|selfhost_linker_ar_dialect_reader|src/linker_ar_dialect_reader.tl|assembly|none|direct
 end
+
+case|selfhost_native_link_manifest|src/native_link_manifest.tl|assembly|none|direct
+end

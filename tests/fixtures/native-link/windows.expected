@@ -1,0 +1,1380 @@
+auto-capability: internal-representation-available
+content-closure-required: true
+opaque-external-closure: false
+native-link-v1 {
+  "manifest": {
+    "abi": {
+      "payload": [],
+      "tag": "WindowsAMD64"
+    },
+    "artifact-id": "example.app",
+    "events": [
+      {
+        "id": "e0",
+        "ordinal": 0,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "payload": [
+                    "_tl_start"
+                  ],
+                  "tag": "CompilerEntry"
+                }
+              ],
+              "tag": "EntryControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "entry",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e1",
+        "ordinal": 1,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "payload": [
+                    "typelisp.compiler-startup.v1"
+                  ],
+                  "tag": "CompilerStartup"
+                }
+              ],
+              "tag": "StartupControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "startup",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e2",
+        "ordinal": 2,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "payload": [],
+                  "tag": "RejectUnresolved"
+                }
+              ],
+              "tag": "UnresolvedControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "unresolved",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e3",
+        "ordinal": 3,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "payload": [],
+                  "tag": "KeepAllSections"
+                }
+              ],
+              "tag": "SectionGcControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "section-gc",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e4",
+        "ordinal": 4,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "payload": [],
+                  "tag": "ExplicitExports"
+                }
+              ],
+              "tag": "ExportsControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "exports",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e5",
+        "ordinal": 5,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "build-id": {
+                    "payload": [],
+                    "tag": "NoBuildId"
+                  },
+                  "deterministic": true,
+                  "form": {
+                    "payload": [],
+                    "tag": "NoDebug"
+                  },
+                  "pdb": {
+                    "payload": [],
+                    "tag": "NoPdb"
+                  }
+                }
+              ],
+              "tag": "DebugControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "debug",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e6",
+        "ordinal": 6,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "file-alignment": 512,
+                  "heap-commit": 4096,
+                  "heap-reserve": 1048576,
+                  "image-base": 5368709120,
+                  "section-alignment": 4096,
+                  "stack-commit": 4096,
+                  "stack-reserve": 268435456,
+                  "subsystem": {
+                    "payload": [],
+                    "tag": "ConsoleSubsystem"
+                  }
+                }
+              ],
+              "tag": "WindowsImageControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "windows-image",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e7",
+        "ordinal": 7,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "PositionIndependent"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            0
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e8",
+        "ordinal": 8,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "AddressRandomization"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Forbidden"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            1
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e9",
+        "ordinal": 9,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "NoExecute"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            2
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e10",
+        "ordinal": 10,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "NonExecutableStack"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            3
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e11",
+        "ordinal": 11,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "Relro"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            4
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e12",
+        "ordinal": 12,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "ControlFlowGuard"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            5
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e13",
+        "ordinal": 13,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "Cet"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            6
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e14",
+        "ordinal": 14,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "EhContinuation"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            7
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      },
+      {
+        "id": "e15",
+        "ordinal": 15,
+        "payload": {
+          "payload": [
+            {
+              "payload": [
+                {
+                  "feature": {
+                    "payload": [],
+                    "tag": "StackProtector"
+                  },
+                  "helper-id": "",
+                  "requirement": {
+                    "payload": [],
+                    "tag": "Off"
+                  },
+                  "schema-id": "typelisp.native-link.hardening.v1"
+                }
+              ],
+              "tag": "HardeningControl"
+            }
+          ],
+          "tag": "Control"
+        },
+        "provenance": {
+          "payload": [
+            "typelisp-freestanding-windows-x86_64-v1",
+            "hardening",
+            8
+          ],
+          "tag": "ProfileRowOrigin"
+        }
+      }
+    ],
+    "extension-version": 0,
+    "output": {
+      "payload": [],
+      "tag": "FreestandingStaticExecutable"
+    },
+    "profile": {
+      "content": {
+        "algorithm-version": 1,
+        "sha256": "<content identity>"
+      },
+      "id": "typelisp-freestanding-windows-x86_64-v1",
+      "version": 1
+    },
+    "reproducibility": {
+      "payload": [],
+      "tag": "HermeticInputs"
+    },
+    "roots": [],
+    "schema-version": 1,
+    "target": {
+      "payload": [],
+      "tag": "WindowsX86_64"
+    },
+    "target-triple": "x86_64-pc-windows-msvc"
+  },
+  "profile": {
+    "abi": {
+      "payload": [],
+      "tag": "WindowsAMD64"
+    },
+    "capabilities": [
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "ArchiveInputs"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "CodeView"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Constructors"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "DefaultLibraries"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "DefinitionFiles"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "DelayLoad"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Directives"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Dwarf"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Exports"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "ExternalArguments"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Groups"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "TargetMismatch"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Ifunc"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "ImportLibraryInputs"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "LibrarySearch"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "ObjectInputs"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "OutputArchive"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "OutputElfDso"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "OutputFreestandingStatic"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "OutputImportLibrary"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "OutputPeDll"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "OutputPie"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "OutputRelocatable"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "OutputStatic"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "OutputStaticPie"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "Relocations"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Resources"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "RuntimeHelpers"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "SharedInputs"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "StaticDynamicPreference"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "TargetMismatch"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "typelisp.windows-system-imports.v1",
+        "kind": {
+          "payload": [],
+          "tag": "SystemImports"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Tls"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "Unwind"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "",
+        "kind": {
+          "payload": [],
+          "tag": "VersionMaps"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "RequiresTargetConsumer"
+            }
+          ],
+          "tag": "Unsupported"
+        }
+      },
+      {
+        "helper-id": "typelisp.runtime.v1",
+        "kind": {
+          "payload": [],
+          "tag": "WholeArchive"
+        },
+        "schema-id": "typelisp.native-link.capability.v1",
+        "support": {
+          "payload": [
+            {
+              "payload": [],
+              "tag": "Implemented"
+            }
+          ],
+          "tag": "Supported"
+        }
+      }
+    ],
+    "debug": {
+      "build-id": {
+        "payload": [],
+        "tag": "NoBuildId"
+      },
+      "deterministic": true,
+      "form": {
+        "payload": [],
+        "tag": "NoDebug"
+      },
+      "pdb": {
+        "payload": [],
+        "tag": "NoPdb"
+      }
+    },
+    "entry": {
+      "payload": [
+        "_tl_start"
+      ],
+      "tag": "CompilerEntry"
+    },
+    "extension-version": 0,
+    "files": [],
+    "hardening": [
+      {
+        "feature": {
+          "payload": [],
+          "tag": "AddressRandomization"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Forbidden"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "Cet"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "ControlFlowGuard"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "EhContinuation"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "NoExecute"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "NonExecutableStack"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "PositionIndependent"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "Relro"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      },
+      {
+        "feature": {
+          "payload": [],
+          "tag": "StackProtector"
+        },
+        "helper-id": "",
+        "requirement": {
+          "payload": [],
+          "tag": "Off"
+        },
+        "schema-id": "typelisp.native-link.hardening.v1"
+      }
+    ],
+    "id": "typelisp-freestanding-windows-x86_64-v1",
+    "imports": [
+      {
+        "dll": "kernel32.dll",
+        "symbol": "ConvertThreadToFiber"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "CreateFiberEx"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "ExitProcess"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "GetCommandLineA"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "GetStdHandle"
+      },
+      {
+        "dll": "ntdll.dll",
+        "symbol": "NtCreateFile"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "SetThreadStackGuarantee"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "SetUnhandledExceptionFilter"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "SwitchToFiber"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "VirtualAlloc"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "VirtualFree"
+      },
+      {
+        "dll": "kernel32.dll",
+        "symbol": "WriteFile"
+      }
+    ],
+    "inputs": [],
+    "interpreter": {
+      "payload": [],
+      "tag": "NoInterpreter"
+    },
+    "outputs": [
+      {
+        "payload": [],
+        "tag": "FreestandingStaticExecutable"
+      },
+      {
+        "payload": [],
+        "tag": "Relocatable"
+      },
+      {
+        "payload": [],
+        "tag": "StaticArchive"
+      }
+    ],
+    "roots": [],
+    "runtime": {
+      "payload": [],
+      "tag": "CompilerFreestanding"
+    },
+    "runtime-floor": {
+      "major": 0,
+      "minor": 0,
+      "patch": 0
+    },
+    "runtime-identities": [
+      "typelisp.compiler-startup.v1",
+      "typelisp.runtime.v1",
+      "typelisp.windows-system-imports.v1"
+    ],
+    "schema-version": 1,
+    "startup": {
+      "payload": [
+        "typelisp.compiler-startup.v1"
+      ],
+      "tag": "CompilerStartup"
+    },
+    "target": {
+      "payload": [],
+      "tag": "WindowsX86_64"
+    },
+    "target-triple": "x86_64-pc-windows-msvc",
+    "version": 1,
+    "windows": {
+      "file-alignment": 512,
+      "heap-commit": 4096,
+      "heap-reserve": 1048576,
+      "image-base": 5368709120,
+      "section-alignment": 4096,
+      "stack-commit": 4096,
+      "stack-reserve": 268435456,
+      "subsystem": {
+        "payload": [],
+        "tag": "ConsoleSubsystem"
+      }
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "linux-profile.in": {
+    "bytes": 14865,
+    "sha256": "6bc278090076bb489958d9c6a65ebe08abe9a366c34d9c23e2e3e291a2ec4175"
+  },
+  "linux-manifest.in": {
+    "bytes": 9932,
+    "sha256": "4143ad8ee2ea9c93d1831d65a795f31a38943cccb63b30d58bb3ffbf6838c200"
+  },
+  "linux-input.in": {
+    "bytes": 24801,
+    "sha256": "96bab1726e5982c9e8575f6c0971b11bc7a60f0a0d1824aca3fb748dc387b710"
+  },
+  "windows-profile.in": {
+    "bytes": 15778,
+    "sha256": "8b65209cc1762a2bc64f7762d070a20ce2cde98088cc720b86dccfc7f0865d5e"
+  },
+  "windows-manifest.in": {
+    "bytes": 10243,
+    "sha256": "7f3c8c134cf8f11b4573a21c6c9044294fccc0c1568f64424c9b36a0d77ea349"
+  },
+  "windows-input.in": {
+    "bytes": 26025,
+    "sha256": "094b041ac8f9c491f57035cc441aeaac283bea5f497481a453e53e4fc1718007"
+  }
+}

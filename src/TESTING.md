@@ -1,5 +1,17 @@
 # Selfhost compiler testing
 
+`tests/native_link_manifest_*` keeps v1 schema tests pure: independently generated
+Linux/Windows golden bytes, a bounded independent decoder, framing/byte mutations,
+exact/one-below resource limits, every origin class, profile/capability/hardening
+admission and canonical field sensitivity. The native integration fixture runs
+both target profiles at opt0/1/2 without external tools or discovery. Run focused
+files with a fresh compiler and `--stdlib-root stdlib --stdlib-root src`; helpers
+use the `tests.*` namespace, matching the full inline runner's roots. Keep every
+ordered event and profile-input schedule, the six independent goldens and the
+compile-manifest public root when adding a field. A v1 byte-affecting field needs
+an explicit version decision and a named consumer. See
+[the contract](../docs/native-link-v1.md) for byte layout and budget semantics.
+
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
 and E0218, and carries rich nested frames through a later compiler job. Run it

@@ -19,6 +19,11 @@ Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
 
+The pure [native-link v1 contract](native-link-v1.md) owns ordered native input
+events, provenance and resolved profiles. Its admission, canonical codec and
+closed capability rows are the shared boundary for the next #7367/#7368
+producers and native-link consumers; operational bindings remain separate.
+
 | Shared fact | Canonical implementation | Consumer obligation |
 | --- | --- | --- |
 | Syntax and pooled AST nodes | [parser](../src/compiler_parse_core.tl), [AST model](../src/compiler_ast_types.tl) | Reuse parsing and `ast-expr-child-ids`/`ast-expr-children`; carry the node's owner. |

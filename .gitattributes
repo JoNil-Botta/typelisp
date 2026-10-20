@@ -19,3 +19,7 @@ scripts/ci-gates.tsv text eol=lf
 
 # Unicode profile inputs are exact upstream byte oracles (including CSV CRLF).
 tools/idna-unicode12-data/inputs/* binary
+
+# Native-link v1 golden bytes are byte-exact on both checkout hosts.
+tests/fixtures/native-link/*.in binary
+tests/fixtures/native-link/*.expected text eol=lf

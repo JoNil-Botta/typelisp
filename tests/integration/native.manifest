@@ -1013,3 +1013,6 @@ store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|4
 literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
 exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
+
+# Pure v1 schema executes both target profiles without invoking a toolchain.
+native_link_manifest|all|0,1,2|tests/integration/native_link_manifest_smoke.tl|42|-|-|native_link_manifest.tl native_link_manifest_types.tl native_link_manifest_profiles.tl native_link_manifest_builder.tl native_link_manifest_core.tl native_link_manifest_codec.tl native_link_manifest_wire.tl native_link_manifest_binary.tl native_link_manifest_budget.tl native_link_manifest_render.tl stdlib/serialize.tl|stage-stdlib

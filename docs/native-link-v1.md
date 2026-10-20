@@ -161,7 +161,9 @@ the second pass's charged work before any input-sized construction.
 Validation reserves work for identity cross-checks before quadratic scans.
 The profile input/file join is built once after preflight and reused for all
 events, bounding profile references without a repeated three-way search.
-Diagnostics follow header/profile/event order. A zero diagnostic limit still
+Diagnostics follow header/profile/event order. Profile-digest and reserved-built-in
+identity checks remain independent of other semantic errors; only a resource
+stop prevents further traversal. A zero diagnostic limit still
 retains failure and truncation. `complete=false` marks a resource/limit stop;
 ordinary semantic errors do not hide independent backend-selection reasons.
 

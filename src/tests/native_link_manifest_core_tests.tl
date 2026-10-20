@@ -620,3 +620,35 @@
       (test.assert-true
         found
         "runtime family and target triple must agree in both directions"))))
+
+(test
+  native-link-profile-diagnostics-survive-independent-errors
+  (let
+    [input : n.NativeLinkSemanticInput (support.sample true)]
+    [limits : core.NativeLinkLimits (core.default-limits)]
+    (set! input.manifest.artifact-id "invalid identity")
+    (set! input.profile.windows.stack-reserve (cast 134217728 : u64))
+    (set! (array-ref input.manifest.events 0).id "invalid")
+    (let
+      [validation : core.NativeLinkValidation
+        (core.validate (& input) (& limits))]
+      [header : i64 -1]
+      [binding : i64 -1]
+      [builtin : i64 -1]
+      [event : i64 -1]
+      (for [i (iterator.range 0 validation.count)]
+        (let
+          [field (& (array-ref validation.diagnostics i).field)]
+          (when (string.eq field "manifest.artifact-id") (set! header i))
+          (when (string.eq field "manifest.profile.content") (set! binding i))
+          (when (string.eq field "profile.builtin") (set! builtin i))
+          (when (string.eq field "event.id") (set! event i))))
+      (test.assert-true
+        (and
+          (not validation.ok)
+          validation.complete
+          (>= header 0)
+          (> binding header)
+          (> builtin binding)
+          (> event builtin))
+        "header, profile binding, reserved builtin and event errors are independently ordered"))))

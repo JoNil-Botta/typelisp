@@ -1854,7 +1854,76 @@
           "opaque argv requires explicit external compatibility policy"))]
     [(n.Control control) (control! v m p (& control) ordinal)]))
 
-(define (validate-structure
+;: Profile binding and reserved-record identity are independent of other
+;: semantic errors and precede event diagnostics after bounded preflight.
+(define (profile-identity!
+  [v : (&mut v NativeLinkValidation)]
+  [m : (& m n.NativeLinkManifest)]
+  [p : (& p n.NativeToolchainProfile)]
+  [limits : (& l NativeLinkLimits)]) : unit
+  (match (codec.profile-identity p (& limits.wire))
+    [(codec.NativeDigest identity)
+      (let
+        [same : bool
+          (= identity.algorithm-version m.profile.content.algorithm-version)]
+        (for [i (iterator.range 0 32)]
+          (when
+            (!=
+              (array-ref identity.sha256 i)
+              (array-ref m.profile.content.sha256 i))
+            (set! same false)))
+        (when
+          (not same)
+          (diagnose!
+            v
+            (ProfileMismatch)
+            "manifest.profile.content"
+            -1
+            "selected profile digest differs from resolved canonical profile")))
+      (when
+        (or
+          (string.eq (& p.id) "typelisp-freestanding-linux-x86_64-v1")
+          (string.eq (& p.id) "typelisp-freestanding-windows-x86_64-v1"))
+        (let
+          [expected : n.NativeToolchainProfile
+            (profiles.freestanding-profile
+              (if (string.eq (& p.id) "typelisp-freestanding-linux-x86_64-v1")
+                (n.LinuxX86_64)
+                (n.WindowsX86_64)))]
+          (match (codec.profile-identity (& expected) (& limits.wire))
+            [(codec.NativeDigest builtin)
+              (let
+                [same : bool true]
+                (for [i (iterator.range 0 32)]
+                  (when
+                    (!=
+                      (array-ref identity.sha256 i)
+                      (array-ref builtin.sha256 i))
+                    (set! same false)))
+                (when
+                  (not same)
+                  (diagnose!
+                    v
+                    (ProfileMismatch)
+                    "profile.builtin"
+                    -1
+                    "reserved builtin identity requires the exact v1 profile record")))]
+            [_
+              (diagnose!
+                v
+                (ResourceLimit)
+                "profile.builtin"
+                -1
+                "builtin profile encoding exceeds explicit limits")])))]
+    [_
+      (diagnose!
+        v
+        (ResourceLimit)
+        "profile.canonical"
+        -1
+        "profile cannot be encoded within explicit limits")]))
+
+(define (validate
   [input : (& i n.NativeLinkSemanticInput)]
   [limits : (& l NativeLinkLimits)]) : NativeLinkValidation
   (let
@@ -1974,6 +2043,8 @@
           (__tl_make-array Scope limits.max-nesting)]
         [depth : i64 0]
         [controls : i64 0]
+        (profile-identity! (&mut v) m p limits)
+        (when (not v.complete) (return v))
         (for [i (iterator.range 0 (array-length (& m.events)))]
           (when
             (!= (array-ref m.events i).ordinal (cast i : u64))
@@ -2080,87 +2151,6 @@
                     "missing explicit control row "
                     (string.int->string i)))))))))
     v))
-
-;: Profile content identity binds the selected resolved record, not its display
-;: id alone. Canonical bytes are a link projection; file/tool content closure
-;: observations are admitted separately by the consumers of #7494.
-(define (validate
-  [input : (& i n.NativeLinkSemanticInput)]
-  [limits : (& l NativeLinkLimits)]) : NativeLinkValidation
-  (let
-    [result : NativeLinkValidation (validate-structure input limits)]
-    (when
-      result.ok
-      (match (codec.profile-identity (& input.profile) (& limits.wire))
-        [(codec.NativeDigest identity)
-          (let
-            [same : bool
-              (=
-                identity.algorithm-version
-                input.manifest.profile.content.algorithm-version)]
-            (for [i (iterator.range 0 32)]
-              (when
-                (!=
-                  (array-ref identity.sha256 i)
-                  (array-ref input.manifest.profile.content.sha256 i))
-                (set! same false)))
-            (when
-              (not same)
-              (diagnose!
-                (&mut result)
-                (ProfileMismatch)
-                "manifest.profile.content"
-                -1
-                "selected profile digest differs from resolved canonical profile")))
-          (when
-            (or
-              (string.eq
-                (& input.profile.id)
-                "typelisp-freestanding-linux-x86_64-v1")
-              (string.eq
-                (& input.profile.id)
-                "typelisp-freestanding-windows-x86_64-v1"))
-            (let
-              [expected : n.NativeToolchainProfile
-                (profiles.freestanding-profile
-                  (if (string.eq
-                    (& input.profile.id)
-                    "typelisp-freestanding-linux-x86_64-v1")
-                    (n.LinuxX86_64)
-                    (n.WindowsX86_64)))]
-              (match (codec.profile-identity (& expected) (& limits.wire))
-                [(codec.NativeDigest builtin)
-                  (let
-                    [same : bool true]
-                    (for [i (iterator.range 0 32)]
-                      (when
-                        (!=
-                          (array-ref identity.sha256 i)
-                          (array-ref builtin.sha256 i))
-                        (set! same false)))
-                    (when
-                      (not same)
-                      (diagnose!
-                        (&mut result)
-                        (ProfileMismatch)
-                        "profile.builtin"
-                        -1
-                        "reserved builtin identity requires the exact v1 profile record")))]
-                [_
-                  (diagnose!
-                    (&mut result)
-                    (ResourceLimit)
-                    "profile.builtin"
-                    -1
-                    "builtin profile encoding exceeds explicit limits")])))]
-        [_
-          (diagnose!
-            (&mut result)
-            (ResourceLimit)
-            "profile.canonical"
-            -1
-            "profile cannot be encoded within explicit limits")]))
-    result))
 
 (defenum NativeBackendChoice
   (InternalBackend)

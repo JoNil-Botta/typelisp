@@ -4,6 +4,7 @@
 #
 # Source this file. doc_site_check_pages validates every page listed in
 # PAGES_FILE (one path per line, in check order) against the site in SITE and
+# repository paths at SOURCE_IDENTITY listed in SOURCE_PATHS. It
 # prints the number of local links it checked. The first violation is printed
 # as "FAIL: ..." on stderr and the function returns 1.
 #
@@ -22,6 +23,8 @@
 doc_site_check_pages() {
     _dscp_site=$1
     _dscp_pages=$2
+    _dscp_sources=$3
+    _dscp_identity=$4
     _dscp_files=$(mktemp "${TMPDIR:-/tmp}/typelisp-doc-site-files.XXXXXX") ||
         return 1
     # Paths relative to the site, so a link resolves exactly when it names one
@@ -34,8 +37,11 @@ doc_site_check_pages() {
     fi
     _dscp_status=0
     LC_ALL=C awk -v site="$_dscp_site" -v pages_file="$_dscp_pages" \
-        -v files_file="$_dscp_files" '
+        -v files_file="$_dscp_files" -v sources_file="$_dscp_sources" \
+        -v source_identity="$_dscp_identity" '
     function fail(message) {
+        if (page_source != "")
+            message = message " [source " page_source "]"
         print "FAIL: " message > "/dev/stderr"
         failed = 1
         exit 1
@@ -67,6 +73,15 @@ doc_site_check_pages() {
         marker_message[marker_count] = base(page) " " message
     }
     BEGIN {
+        repo = "https://github.com/JoNil-Botta/typelisp/"
+        blob = repo "blob/" source_identity "/"
+        tree = repo "tree/" source_identity "/"
+        while ((getline line < sources_file) > 0) {
+            source_exists[line] = 1
+            while (sub(/\/[^/]+$/, "", line))
+                source_exists[line] = 1
+        }
+        close(sources_file)
         while ((getline line < files_file) > 0) {
             sub(/^\.\//, "", line)
             exists[line] = 1
@@ -86,6 +101,7 @@ doc_site_check_pages() {
         for (p = 1; p <= page_count; p++) {
             page = pages[p]
             page_base = base(page)
+            page_source = ""
             marker_count = 0
             require_marker(page, "href=\"typelisp-docs.css\"", "does not reference typelisp-docs.css")
             require_marker(page, "src=\"typelisp-docs-search-index.js\"", "does not reference the search index")
@@ -110,6 +126,13 @@ doc_site_check_pages() {
             # next href=" on the line, and then that one is not a new link.
             href_count = 0
             while ((getline line < page) > 0) {
+                source_start = index(line, "data-doc-source=\"")
+                if (source_start > 0) {
+                    source_text = substr(line, source_start + 17)
+                    source_end = index(source_text, "\"")
+                    if (source_end > 0)
+                        page_source = substr(source_text, 1, source_end - 1)
+                }
                 for (m = 1; m <= marker_count; m++)
                     if (!found[m] && index(line, marker_text[m]) > 0)
                         found[m] = 1
@@ -138,7 +161,17 @@ doc_site_check_pages() {
 
             for (h = 1; h <= href_count; h++) {
                 href = hrefs[h]
-                if (index(href, "://") > 0 || href ~ /^mailto:/)
+                source_path = ""
+                if (index(href, blob) == 1)
+                    source_path = substr(href, length(blob) + 1)
+                else if (index(href, tree) == 1)
+                    source_path = substr(href, length(tree) + 1)
+                if (source_path != "") {
+                    sub(/#.*/, "", source_path)
+                    if (!(source_path in source_exists))
+                        fail(page_base ": dead repository source link '\''" href "'\'' (missing " source_path ")")
+                }
+                if (index(href, "://") > 0 || href ~ /^\/\// || href ~ /^mailto:/)
                     continue
                 link_count++
                 hash = index(href, "#")
@@ -187,6 +220,8 @@ doc_site_page_check_fixture() {
     rm -rf "$_dspf_site"
     mkdir -p "$_dspf_site"
     : > "$_dspf_site/typelisp-docs.css"
+    printf '%s\n' README.md docs/guide.md docs/template.md src/module.tl \
+        > "$_dspf_site.sources"
     for _dspf_page in readme.html spec.html stdlib.html stdlib-io.html; do
         case "$_dspf_page" in
             stdlib.html) _dspf_current='class="tl-doc-tree-root is-current" aria-current="page" href="stdlib.html"' ;;
@@ -198,6 +233,7 @@ doc_site_page_check_fixture() {
             '<nav class="tl-doc-stdlib-sidebar" aria-label="Documentation tree"><a href="stdlib.html">stdlib</a><a href="stdlib-io.html">io</a>' \
             "<a href=\"readme.html\">README</a><a href=\"spec.html\">SPEC</a><a $_dspf_current>here</a></nav>" \
             '<h1 id="top">x</h1><a href="#top">self</a><a href="https://example.com/#x">ext</a><a href="mailto:a@b">mail</a>' \
+            '<article data-doc-source="docs/guide.md"></article>' \
             > "$_dspf_site/$_dspf_page"
     done
     printf '%s\n' '<a href="spec.html#top">spec</a> <a href="stdlib-io.html#tl-io" data-id="tl-io">io</a>' \
@@ -212,7 +248,7 @@ doc_site_page_check_expect_failure() {
     _dspe_name=$1
     _dspe_site=$2
     _dspe_message=$3
-    if doc_site_check_pages "$_dspe_site" "$_dspe_site.pages" \
+    if doc_site_check_pages "$_dspe_site" "$_dspe_site.pages" "$_dspe_site.sources" fixture \
         > "$_dspe_site.out" 2> "$_dspe_site.err"; then
         echo "docs-site page check self-test $_dspe_name: accepted an invalid site" >&2
         return 1
@@ -227,7 +263,7 @@ doc_site_page_check_expect_failure() {
 doc_site_page_check_self_test_cases() {
     _dspc_site="$1/site"
     doc_site_page_check_fixture "$_dspc_site"
-    _dspc_count=$(doc_site_check_pages "$_dspc_site" "$_dspc_site.pages") || {
+    _dspc_count=$(doc_site_check_pages "$_dspc_site" "$_dspc_site.pages" "$_dspc_site.sources" fixture) || {
         echo "docs-site page check self-test rejected the conforming fixture" >&2
         return 1
     }
@@ -237,6 +273,26 @@ doc_site_page_check_self_test_cases() {
         echo "docs-site page check self-test counted $_dspc_count local links, expected 30" >&2
         return 1
     }
+
+    printf '%s\n' \
+        '<a href="https://github.com/JoNil-Botta/typelisp/blob/fixture/docs/template.md#heading">source</a>' \
+        '<a href="https://github.com/JoNil-Botta/typelisp/tree/fixture/src">directory</a>' \
+        '<a href="https://example.com/missing.md#heading">external</a>' \
+        '<a href="//example.com/missing.md#heading">external</a>' \
+        >> "$_dspc_site/readme.html"
+    doc_site_check_pages "$_dspc_site" "$_dspc_site.pages" "$_dspc_site.sources" fixture >/dev/null || return 1
+
+    doc_site_page_check_fixture "$_dspc_site"
+    printf '%s\n' '<a href="https://github.com/JoNil-Botta/typelisp/blob/fixture/docs/missing.md#heading">gone</a>' \
+        >> "$_dspc_site/spec.html"
+    doc_site_page_check_expect_failure dead-source "$_dspc_site" \
+        "missing docs/missing.md) [source docs/guide.md]" || return 1
+
+    doc_site_page_check_fixture "$_dspc_site"
+    printf '%s\n' '<a href="https://github.com/JoNil-Botta/typelisp/tree/fixture/missing">gone</a>' \
+        >> "$_dspc_site/spec.html"
+    doc_site_page_check_expect_failure dead-source-directory "$_dspc_site" \
+        "missing missing) [source docs/guide.md]" || return 1
 
     doc_site_page_check_fixture "$_dspc_site"
     printf '%s\n' '<a href="missing.html">gone</a>' >> "$_dspc_site/spec.html"

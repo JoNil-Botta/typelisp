@@ -2700,7 +2700,10 @@
 ;; another module or program allocates nothing. `module` and `program-decls`
 ;; hold the bits of the module-name String and of the program's
 ;; declaration-list Box; their owners keep them alive, as they did for the
-;; shallow copies of the former by-value context.
+;; shallow copies of the former by-value context. A reference to a String or
+;; a Box is represented as the handle itself, so `tc-context-string-bits` and
+;; `tc-context-program-bits` read those bits from a `(& str)` and from a
+;; borrowed Box.
 (defstruct TcContext
   (shared u64)
   (job-state TcJobState)
@@ -8083,7 +8086,7 @@
 (define (tc-vector-ref-rvalue-source-span
   [expr-bases : i64]
   [arg : (& ast.AstExpr)]) : TcMaybeAstSourceSpan
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
     [(ArrayRef array-box _)
       (match (ast.ast-expr-unspan-with-segment-bases
         expr-bases
@@ -10125,7 +10128,7 @@
           (cfg compile-profile (counters.bump! tc-profile-env-binds))
           (let
             [next : TcTypeEnv (tc-type-env-bind-node env slot.name-id slot.ty)]
-            (tc-semantic-observe-binding-transfer! (& stack) index next false)
+            (tc-semantic-observe-binding-transfer! stack index next false)
             next))))))
 
 (define (tc-type-env-scoped-sidecar-materialize
@@ -20781,7 +20784,7 @@
 
 ;; Returns the cached lookup-name id, -1 for no alias import, or -2 when absent.
 (define (tc-source-dotted-alias-key-cache-get-for-state
-  [state : TcSourceKeyCacheState]
+  [state : (& TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [module-id : i64]
@@ -20799,7 +20802,7 @@
 
 ;; Returns the cached lookup-name id, -1 for no full path, or -2 when absent.
 (define (tc-source-dotted-full-path-key-cache-get-for-state
-  [state : TcSourceKeyCacheState]
+  [state : (& TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [module-id : i64]
@@ -20821,7 +20824,7 @@
 
 ;; Returns the cached lookup-name id, -1 for no variant, or -2 when absent.
 (define (tc-source-qualified-variant-key-cache-get-for-state
-  [state : TcSourceKeyCacheState]
+  [state : (& TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [registry-id : i64]
@@ -20845,7 +20848,7 @@
 
 ;; Returns the cached registry handle, -1 for no variant, or -2 when absent.
 (define (tc-source-qualified-variant-handle-cache-get-for-state
-  [state : TcSourceKeyCacheState]
+  [state : (& TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [registry-id : i64]
@@ -20868,7 +20871,7 @@
       -2)))
 
 (define (tc-source-dotted-alias-key-cache-put-for-state!
-  [state : TcSourceKeyCacheState]
+  [state : (& TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [module-id : i64]
@@ -20882,7 +20885,7 @@
     (set! (array-ref state.dotted-alias-values cursor) value)))
 
 (define (tc-source-dotted-full-path-key-cache-put-for-state!
-  [state : TcSourceKeyCacheState]
+  [state : (& TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [module-id : i64]
@@ -20900,7 +20903,7 @@
     (set! (array-ref state.dotted-full-path-values cursor) value)))
 
 (define (tc-source-qualified-variant-key-cache-put-for-state!
-  [state : TcSourceKeyCacheState]
+  [state : (& TcSourceKeyCacheState)]
   [table-id : i64]
   [generation : i64]
   [registry-id : i64]
@@ -20940,7 +20943,7 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-alias-key-cache-get-for-state
-      (tc-job-state-source-key-cache body-state.job-state)
+      (& (tc-job-state-source-key-cache body-state.job-state))
       body-state.intern-table-id
       body-state.intern-generation
       module-id
@@ -20953,7 +20956,7 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-full-path-key-cache-get-for-state
-      (tc-job-state-source-key-cache body-state.job-state)
+      (& (tc-job-state-source-key-cache body-state.job-state))
       body-state.intern-table-id
       body-state.intern-generation
       module-id
@@ -20967,7 +20970,7 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-qualified-variant-key-cache-get-for-state
-      (tc-job-state-source-key-cache body-state.job-state)
+      (& (tc-job-state-source-key-cache body-state.job-state))
       body-state.intern-table-id
       body-state.intern-generation
       registry-id
@@ -20982,7 +20985,7 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-qualified-variant-handle-cache-get-for-state
-      (tc-job-state-source-key-cache body-state.job-state)
+      (& (tc-job-state-source-key-cache body-state.job-state))
       body-state.intern-table-id
       body-state.intern-generation
       registry-id
@@ -20997,7 +21000,7 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-alias-key-cache-put-for-state!
-      (tc-job-state-source-key-cache body-state.job-state)
+      (& (tc-job-state-source-key-cache body-state.job-state))
       body-state.intern-table-id
       body-state.intern-generation
       module-id
@@ -21012,7 +21015,7 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-dotted-full-path-key-cache-put-for-state!
-      (tc-job-state-source-key-cache body-state.job-state)
+      (& (tc-job-state-source-key-cache body-state.job-state))
       body-state.intern-table-id
       body-state.intern-generation
       module-id
@@ -21029,7 +21032,7 @@
   (let
     [body-state : TcBodyState (tc-context-body-state ctx)]
     (tc-source-qualified-variant-key-cache-put-for-state!
-      (tc-job-state-source-key-cache body-state.job-state)
+      (& (tc-job-state-source-key-cache body-state.job-state))
       body-state.intern-table-id
       body-state.intern-generation
       registry-id
@@ -30132,7 +30135,7 @@
 (define (tc-import-alias-summary-index-build-current
   [all-decls : (& ast.AstDeclList)]) : TcImportAliasSummaryIndex
   (let
-    [capacity : i64 (+ (parser.ast-decl-list-count (& all-decls)) 1)]
+    [capacity : i64 (+ (parser.ast-decl-list-count all-decls) 1)]
     [decls : (__tl_dyn-array ast.AstDeclList)
       (__tl_make-array ast.AstDeclList capacity)]
     [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
@@ -30417,7 +30420,7 @@
   [import-unqualified : bool]) : ResultTcEnv
   (tc-bind-import-alias-module-list
     ctx
-    (& decls)
+    decls
     env
     target-module
     alias
@@ -34716,8 +34719,8 @@
   [actual : (& ast.AstLifetimeList)]) : ResultTcLifetimeSubst
   (if (=
     (ast.ast-lifetime-list-len (& formal))
-    (ast.ast-lifetime-list-len (& actual)))
-    (tc-infer-lifetime-list-at params subst (& formal) (& actual) 0)
+    (ast.ast-lifetime-list-len actual))
+    (tc-infer-lifetime-list-at params subst (& formal) actual 0)
     (Err (tc-call-lifetime-subst-mismatch-message))))
 
 (define (tc-infer-lifetime-list-at
@@ -35987,7 +35990,7 @@
               (tc-call-lifetime-function-type-with-subst
                 ctx
                 env
-                (tc-global-shared-view func)
+                func
                 (tc-global-shared-view args)
                 (tc-global-shared-view params)
                 (tc-global-shared-view ret)
@@ -36340,7 +36343,7 @@
   [expr : (& ast.AstExpr)]) : i64
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (& expr))
+    expr)
     [(Call func-box args)
       (let
         [nid : i64
@@ -37855,7 +37858,7 @@
   [arg : (& ast.AstExpr)]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (& arg))
+    arg)
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params _ body-box)
@@ -42393,7 +42396,7 @@
 (define (tc-resource-cleanup-direct-name-ok
   [expr-bases : i64]
   [cleanup : (& ast.AstExpr)]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& cleanup))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases cleanup)
     [(Var _) Ok]
     [_
       (Err
@@ -42629,7 +42632,7 @@
   [func : (& ast.AstExpr)]) : TcNameLookup
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (& func))
+    func)
     [(Var raw-name)
       (let
         [raw-text : String
@@ -43554,7 +43557,7 @@
   [expr-bases : i64]
   [spmd-env : TcSpmdEnv]
   [expr : (& ast.AstExpr)]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(or (Ann inner-box _) (Cast inner-box _))
       (let
         [inner : ast.AstExpr
@@ -44204,7 +44207,7 @@
   [expr-bases : i64]
   [spmd-env : TcSpmdEnv]
   [expr : (& ast.AstExpr)]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(or (Ann inner-box _) (Cast inner-box _))
       (let
         [inner : ast.AstExpr
@@ -45168,7 +45171,7 @@
 (define (tc-spmd-scan-body-no-nested-spmd
   [expr-bases : i64]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(TupleRef tuple-box index-box)
       (tc-spmd-scan-body-no-nested-pair
         expr-bases
@@ -45216,7 +45219,7 @@
       (tc-spmd-scan-body-no-nested-list
         expr-bases
         (ast.ast-expr-child-ids
-          (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))))]))
+          (ast.ast-expr-unspan-with-segment-bases expr-bases expr)))]))
 
 (define (tc-spmd-check-scan-body
   [ctx : TcContext]
@@ -45428,7 +45431,7 @@
       expr-bases
       env
       spmd-env
-      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))))
+      (ast.ast-expr-unspan-with-segment-bases expr-bases expr))))
 
 (define (tc-spmd-reduce-class-unspanned
   [ctx : TcContext]
@@ -46760,7 +46763,7 @@
                         ctx
                         expr-bases
                         env
-                        (tc-global-shared-view bounds-env)
+                        bounds-env
                         outer
                         inner
                         c-box
@@ -49533,7 +49536,8 @@
     [(Struct size _ _) size]
     [(Enum size _ _) size]))
 
-(define (tc-inline-aggregate-layout-align [layout : TcInlineAggregateLayout]) : i64
+(define (tc-inline-aggregate-layout-align
+  [layout : (& TcInlineAggregateLayout)]) : i64
   (match layout
     [(Struct _ align _) align]
     [(Enum _ align _) align]))
@@ -52339,7 +52343,7 @@
   [expr : (& ast.AstExpr)]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (& expr))
+    expr)
     [(Var name)
       (let
         [ty (try (tc-lookup-visible-id ctx env name))]
@@ -52615,9 +52619,7 @@
       ;; A successfully typed place cannot be a temporary. Direct call
       ;; arguments recover temporary borrows from this error; other positions
       ;; keep the diagnostic without rescanning successful place borrows.
-      (if (tc-borrow-operand-temporary?
-        expr-bases
-        (tc-global-shared-view place-expr))
+      (if (tc-borrow-operand-temporary? expr-bases place-expr)
         (ResultTcType.Err (tc-temporary-borrow-position-message))
         (Err message))]))
 
@@ -53917,7 +53919,7 @@
     [field-ctx : TcContext
       (tc-context-with-nominal-owner-index-module ctx owner-index)]
     [resolved-fields : ast.AstTypeList (tc-resolve-type-list field-ctx fields)]
-    (if (ast.ast-lifetime-list-empty? (& enum-lifetimes))
+    (if (ast.ast-lifetime-list-empty? enum-lifetimes)
       (Ok resolved-fields)
       (let
         [subst : TcLifetimeSubst
@@ -58215,7 +58217,7 @@
   [expr-bases : i64]
   [expr : (& ast.AstExpr)]
   [in-index : bool]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
     [(or (Literal _) (SpmdProgramIndex) (SpmdProgramCount) (Var _)) Ok]
     [(Binary _ left-box right-box)
       (let
@@ -69137,7 +69139,7 @@
             (ast.ast-expr-list-get (& args) 0 0)))]
       [_ TcMaybeAstSourceSpan.No])
       [(Some span) (TcMaybeAstSourceSpan.Some span)]
-      [(No) (tc-expr-maybe-span expr-bases (tc-global-shared-view origin))])
+      [(No) (tc-expr-maybe-span expr-bases origin)])
       [(Some span)
         (tc-rich-error-with-help
           span
@@ -69315,7 +69317,7 @@
   [env : TcTypeEnv]
   [formal : ast.AstType]
   [actual : ast.AstType]) : TcMaybeNameId
-  (match (tc-global-shared-view formal)
+  (match formal
     [(Invalidate lifetime inner)
       (let
         [inner-ty : ast.AstType (ast.ty-node-get inner)]
@@ -82423,7 +82425,7 @@
                     (=
                       (tc-slice-view-spelling-kind (& text))
                       TcSliceViewCallKind.None))
-                  (tc-layout-query-name? (tc-global-shared-view text))))
+                  (tc-layout-query-name? text)))
               (cbi.compiler-builtin-typecheck-tls-current-arena-id? builtin)
               (cbi.compiler-builtin-lower-arena-id? builtin)
               (cbi.compiler-builtin-c-fn-check-id? builtin))))
@@ -83957,7 +83959,7 @@
                             (match query.origin
                               [(Some span) span]
                               [(No) primary])
-                            (tc-global-shared-view query.label))]
+                            query.label)]
                         [(No)
                           (match query.origin
                             [(Some origin)
@@ -83966,7 +83968,7 @@
                                 message
                                 (tc-borrow-check-help)
                                 origin
-                                (tc-global-shared-view query.label))]
+                                query.label)]
                             [(No) message])])]
                     (cdiag.compiler-diagnostic-list-push!
                       (&mut out)
@@ -91215,10 +91217,7 @@
           1))
       (let
         [registries : csym.CompilerRegistries
-          (try
-            (csym.build-compiler-registries-with-symbols
-              (& program)
-              (& symbols)))]
+          (try (csym.build-compiler-registries-with-symbols program symbols))]
         (set!
           (array-ref (tc-macro-walk-field state macro-live-registries-cell) 0)
           registries)
@@ -91247,8 +91246,8 @@
       compile-profile
       (compiler-tc-macro-profile-metric-add! state tc-profile-live-rebuilds 1))
     (match (csym.build-compiler-symbols-diagnostic-with-paths-and-capacity
-      (& program)
-      (& paths)
+      program
+      paths
       (macro-live-symbols-reserved-capacity program))
       [(Ok symbols)
         (let
@@ -92721,7 +92720,7 @@
   [rest : ast.AstDeclList]) : ast.AstDeclList
   (let
     [rest-key : i64 (parser.compiler-parse-decl-list-storage-key (& rest))]
-    [source-key : i64 (parser.compiler-parse-decl-list-storage-key (& source))]
+    [source-key : i64 (parser.compiler-parse-decl-list-storage-key source)]
     [source-slot : i64 (+ source.offset source-index)]
     [out : ast.AstDeclList
       (ast.ast-decl-list-prepend-builder head (tc-global-shared-view rest))]
@@ -92744,10 +92743,10 @@
     out))
 
 (define (macro-decl-list-reverse-into
-  [items : ast.AstDeclList]
+  [items : (& ast.AstDeclList)]
   [out : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [count : i64 (ast.ast-decl-list-len (& items))]
+    [count : i64 (ast.ast-decl-list-len items)]
     [result : ast.AstDeclList out]
     (for [index (iterator.range 0 count)]
       (set!
@@ -92819,7 +92818,7 @@
   [left : (& ast.AstDeclList)]
   [right : ast.AstDeclList]) : ast.AstDeclList
   (let
-    [left-len : i64 (ast.ast-decl-list-len (& left))]
+    [left-len : i64 (ast.ast-decl-list-len left)]
     [right-len : i64 (ast.ast-decl-list-len (& right))]
     (if (and
       (<= left-len right.offset)
@@ -92850,17 +92849,17 @@
           (parser.compiler-parse-decl-origin-register-list-aliases!
             (& out)
             0
-            (& left))
+            left)
           out))
       (let
         [out : ast.AstDeclList
           (ast.ast-decl-list-with-capacity (+ left-len right-len))]
-        (macro-decl-list-append-from (&mut out) (& left))
+        (macro-decl-list-append-from (&mut out) left)
         (macro-decl-list-append-from (&mut out) (& right))
         (parser.compiler-parse-decl-origin-register-list-aliases!
           (& out)
           0
-          (& left))
+          left)
         (parser.compiler-parse-decl-origin-register-list-aliases!
           (& out)
           left-len
@@ -94276,7 +94275,7 @@
   [expr : (& ast.AstExpr)]
   [env : ctfe_support.CtfeEnv]
   [fuel : i64]) : spec.ResultGenKey
-  (match (ctfe_support.compiler-ctfe-eval (& expr) env fuel)
+  (match (ctfe_support.compiler-ctfe-eval expr env fuel)
     [(Ok value next-fuel)
       (match value
         [(String text _) (Ok (spec.spec-string-key (& text)) next-fuel)]
@@ -95037,7 +95036,7 @@
     [(Nil) false]
     [(Cons decl rest)
       (or
-        (spec.gen-decl-eq? (& decl) (& want))
+        (spec.gen-decl-eq? (& decl) want)
         (macro-decl-list-contains-structural? rest want))]))
 
 (define (macro-decls-missing-generated-imports
@@ -96021,16 +96020,16 @@
   [decls : (& ast.AstDeclList)]
   [target-module : (& str)]) : bool
   (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len decls)]
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index count))
-      (match (ast.ast-decl-list-ref-borrowed (& decls) index)
+      (match (ast.ast-decl-list-ref-borrowed decls index)
         [(Module _)
           (if (string.eq
             (tc-env-key-name-text
               (ast.ast-decl-list-module-id-at
-                (& decls)
+                decls
                 index
                 cbi.compiler-builtin-id-fix-empty))
             target-module)
@@ -96391,7 +96390,7 @@
     [_ "<expression>"]))
 
 (define (macro-output-origin-name [expr-bases : i64] [origin : (& ast.AstExpr)]) : String
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& origin))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases origin)
     [(Call func-box args)
       (let
         [func-name : String
@@ -103276,7 +103275,7 @@
   [module-id : i64]
   [targets : MacroFlatImportTargetList]) : MacroFlatImportTargetList
   (let
-    [count : i64 (ast.ast-decl-list-len (& decls))]
+    [count : i64 (ast.ast-decl-list-len decls)]
     [decl-offset : i64 decls.offset]
     [cur-module-id : i64 module-id]
     [cur-targets : MacroFlatImportTargetList targets]
@@ -103446,7 +103445,7 @@
         (= (tc-macro-import-index-control state 20) 1)
         (=
           (tc-macro-import-index-control state 21)
-          (ast.ast-decl-list-len (& decls)))
+          (ast.ast-decl-list-len decls))
         (= (tc-macro-import-index-control state 22) decls.offset))
         (macro-flat-import-target-list-empty)
         (let
@@ -104797,11 +104796,11 @@
 (define (macro-type-arg-reflections-from-decls [decls : (& ast.AstDeclList)]) : ctfe_support.CtfeReflectInfoList
   (ctfe_support.ctfe-build-seen-reset!)
   (ctfe_support.ctfe-reflections-from-decls
-    (& decls)
+    decls
     ""
     cbi.compiler-builtin-id-fix-empty
     (ctfe_support.ctfe-reflect-info-list-with-capacity
-      (ctfe_support.ctfe-metadata-decl-capacity (& decls)))))
+      (ctfe_support.ctfe-metadata-decl-capacity decls))))
 
 (define (macro-type-arg-reflect-resolve
   [ctx : TcContext]
@@ -104867,8 +104866,8 @@
   [arg : (& ast.AstExpr)]) : ResultMacroTypeArg
   (tc-context-capture-active-pools! ctx)
   (match (ctfe_support.ctfe-expr-to-type
-    (& arg)
-    (& arg)
+    arg
+    arg
     (ctfe_support.ctfe-env-empty-with-pools (tc-context-pools ctx))
     (ctfe_support.ctfe-fuel-limit))
     [(Ok ty _)
@@ -104984,7 +104983,7 @@
 (define (macro-module-strategy-arg [ctx : TcContext] [arg : (& ast.AstExpr)]) : ResultMacroModuleArg
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    (& arg))
+    arg)
     [(Var name-id)
       (let
         [source-id : i64
@@ -105368,7 +105367,7 @@
 (define (macro-operand-bracket-clause?
   [expr-bases : i64]
   [arg : (& ast.AstExpr)]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
     [(BracketClause _) true]
     [_ false]))
 
@@ -106764,7 +106763,7 @@
       (tc-context-macro-state ctx)
       macro-dependency-catalog-handle)
     slot
-    (& identity)))
+    identity))
 
 (define (macro-dependency-catalog-slot-cache-reset! [state : TcMacroState]) : unit
   (let
@@ -114280,7 +114279,7 @@
                                         (set!
                                           out-rev
                                           (macro-decl-list-reverse-into
-                                            (tc-global-shared-view expanded)
+                                            expanded
                                             out-rev))
                                         (set!
                                           out-paths-rev
@@ -114811,9 +114810,7 @@
                               (& expanded))
                             (set!
                               out-rev
-                              (macro-decl-list-reverse-into
-                                (tc-global-shared-view expanded)
-                                out-rev))
+                              (macro-decl-list-reverse-into expanded out-rev))
                             (set!
                               out-paths-rev
                               (macro-decl-path-list-reverse-into
@@ -115070,8 +115067,8 @@
   [cache-scope : String]
   [surface-count : i64]) : TcPrefixCandidate
   (let
-    [decl-count : i64 (ast.ast-decl-list-len (& decls))]
-    [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
+    [decl-count : i64 (ast.ast-decl-list-len decls)]
+    [path-count : i64 (ast.ast-decl-path-list-len paths)]
     [index : i64 0]
     [remaining : i64 surface-count]
     [module : String ""]
@@ -115082,14 +115079,14 @@
         (while (and (> remaining 0) (< index decl-count) (< index path-count))
           (let
             [decl : ast.AstDecl
-              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+              (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))]
             [provenance-id : i64
               (ast.ast-decl-path-list-provenance-id
-                (& paths)
+                paths
                 index
                 cbi.compiler-builtin-id-fix-empty)]
             (if (cload.compiler-load-session-state-dependency-surface-provenance?
-              (& load-state)
+              load-state
               provenance-id)
               (-= remaining 1)
               unit)
@@ -115491,7 +115488,7 @@
   (match (ast.ast-decl-generated-meta decl)
     [(Some _ _ _ _)
       (let
-        [template : ast.AstDecl (ast.ast-decl-unwrapped (& decl))]
+        [template : ast.AstDecl (ast.ast-decl-unwrapped decl)]
         (match (tc-global-shared-view template)
           [(Import decl-meta (Spec kind import-path expected alias span))
             (if (macro-import-placeholder-kind? kind)
@@ -117400,8 +117397,8 @@
         true
         (cload.compiler-load-path-under-roots-from?
           normalized
-          (& stdlib-roots)
-          (svec.len (& stdlib-roots)))))))
+          stdlib-roots
+          (svec.len stdlib-roots))))))
 
 (define (tc-prefix-cache-module-marker? [decl : (& ast.AstDecl)]) : bool
   (match decl

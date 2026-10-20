@@ -1612,6 +1612,12 @@ The root's coarse bounds remain the minimum start and maximum end of its
 members. Gathering and compaction leave the member indexes and parent map
 unchanged, including when same-value coalescing admits overlapping members.
 
+A parameter's incoming-register pin is revalidated against the coalesced
+class's exclusions as well as its live ranges. A blocked outgoing argument
+cannot inherit a parameter pin through a phi or copy. Tail calls have no
+live-after survival constraint, but their argument marshalling must still read
+each source before an argument-register write can destroy it.
+
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
 analysis temporaries after copying their small result. The budget selects only
@@ -2210,6 +2216,68 @@ the successful-image boundary before compiler arenas retire, then returned as
 bounded owned data alongside bytes. This preserves the route contract while
 the backend migrates to shared machine records; it does not broaden object
 eligibility or introduce public strict-mode options (#7452, #7395, #7032).
+
+### ELF relocatable object input
+
+`src/linker_elf_object_reader.tl` is the pure ELF64/LSB/x86-64 `ET_REL`
+reader for #8206. `read-object` takes one immutable borrowed byte array and an
+`ElfReadRequest` containing caller-assigned input/content tokens and limits.
+It returns either an owned syntax directory retaining that single input borrow
+or one fixed-size `ElfError` with kind, input/content identity, physical section
+and entry ordinals, and exact offending field/byte offset. Header errors have
+section/entry -1. At least one diagnostic slot is required. Unsupported class,
+encoding, version, OSABI, object type, machine, program headers, `SHT_REL` and
+compressed structural metadata have distinct rejection kinds.
+
+Header/section/symbol/rela IDs combine the caller's identity, physical index
+and source byte offset. A caller must not reuse a content token for changed
+bytes or mutate a returned directory while consumers retain its records. Public
+constructors are provenance records, not capability-security boundaries. Names
+are bounded raw byte spans, including non-UTF8 bytes; no name or payload is
+copied, interned, decompressed or interpreted as instructions. `SHT_NOBITS`
+retains its unsigned offset/size but has no file bytes. Inactive `SHT_NULL`
+headers also have no file range. All other nonempty ranges must be disjoint
+from each other, the ELF header and the section table.
+
+Extended section/name-table counts and parallel `SHT_SYMTAB_SHNDX` words are
+validated before index conversion. A symbol retains its local/global boundary,
+binding/type, raw `st_other`, low-two-bit SYSV/GNU visibility, special/defined
+section index and exact source of an extended index. Common `st_value` is an
+alignment, not an address. Relocations retain target/symbol identities, unsigned
+field offset, typed number, signed addend and ABI width. Width zero is a known
+marker/no fixed field; width -1 is an explicit unknown type. Width checks use a
+compressed target's declared uncompressed size; no relocation equation runs.
+
+Groups retain flags/signature/member IDs and require each `SHF_GROUP` section
+to occur in exactly one group. Link-order/info links, merge/string entry sizes,
+TLS flags, pointer-array suffix priorities, GNU-stack flags and bounded note
+owner/descriptor spans remain syntax. `Elf64_Chdr` retains type, uncompressed
+size/alignment and compressed bytes. Compressed symbol/string/rela/group/note/
+SHNDX tables fail with `UnsupportedCompressedMetadata`: validating their
+structural relationships requires a separately owned decompression stage.
+Other compressed sections remain opaque, including unknown compression kinds.
+Unknown nonallocatable/allocatable section types have distinct class markers;
+unknown live sections/relocations must be rejected by the later #7101 admission
+layer. This API supplies no winners, symbol resolution, liveness, image layout,
+archive/DSO/script access, or EH/DWARF/SFrame/note/TLS semantics. Its next
+consumers remain #7038, #7101, #7388, #7471, #7599 and #8185.
+
+Limits cover input/section/symbol/rela/group/note/string counts, retained bytes,
+diagnostics and work. Subtraction-based range/count checks precede every
+hostile offset addition, cast and variable allocation. A preflight counts
+records and checks the entire retained metadata budget before creating arrays;
+the bound includes record `sizeof` values, group owners, two sorting ranges per
+section and fixed overhead. No retained allocation scales with payload size.
+Work conservatively charges byte visits, string/priority scans, note passes,
+record visits and sort comparisons/moves before the corresponding operation;
+it is not a time limit. A fixed mutation corpus, every structured-file prefix,
+all limits at/under their bounds, real high extended indexes, compressed target
+bounds and allocation-counter controls exercise this contract. Test-only dumps
+use physical order, decimal scalars and hex byte names (empty names use `-`), never addresses or
+ambient worker state. Native opt0/1/2 and inline tests share `self-test` bodies;
+normal tests embed the recorded bytes and LLVM projections. The separate
+`stage2-elf-object-reader-oracle` Linux gate rechecks all producer records with
+GNU readelf and LLVM JSON where available. See the [fixture provenance](../tests/fixtures/elf-object/README.md).
 
 ## Performance gates
 

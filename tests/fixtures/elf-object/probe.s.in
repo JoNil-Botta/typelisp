@@ -1,0 +1,42 @@
+.section .text.group,"axG",@progbits,signature,comdat
+.globl signature
+.type signature,@function
+signature:
+  ret
+.size signature,.-signature
+.section .rodata.group,"aG",@progbits,signature,comdat
+.quad signature
+.section .rodata.associated,"ao",@progbits,signature
+.quad signature
+.section .rodata.str2.2,"aMS",@progbits,2
+.short 65,66,0
+.section .rodata.cst8,"aM",@progbits,8
+.quad 0x1122334455667788
+.section .data,"aw",@progbits
+.globl unique_data
+.type unique_data,@gnu_unique_object
+.size unique_data,8
+unique_data: .quad 42
+.globl hidden_alias
+.hidden hidden_alias
+.set hidden_alias,unique_data
+.comm common_data,16,16
+.type common_data,@common
+.section .text.resolver,"ax",@progbits
+.globl indirect_fn
+.type indirect_fn,@gnu_indirect_function
+indirect_fn:
+  leaq signature(%rip),%rax
+  ret
+.section .unknown_nonalloc,"",@0x6000abcd
+.byte 1,2,3
+.section .unknown_alloc,"a",@0x6000abce
+.byte 4,5,6
+.section .note.vendor,"",@note
+.balign 4
+.long 5,3,7
+.asciz "unit"
+.balign 4
+.byte 0x80,0,0xff
+.balign 4
+.section .note.GNU-stack,"",@progbits

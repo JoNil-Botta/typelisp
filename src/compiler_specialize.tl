@@ -5746,7 +5746,7 @@
               owner
               (&
                 (ast.ast-maybe-type-from-id-with-pools
-                  (spec-owner-pools owner)
+                  (& (spec-owner-pools owner))
                   maybe-ty-id))
               (& subs.types)))))]
     [(FixedMakeArray elem-ty-id len-box)

@@ -7,13 +7,13 @@
 # A row whose growth is not linear names the issue that owns the defect; the PR
 # that fixes it refreshes the row. Refresh with --update-budgets and review the
 # diff: a changed number needs its measured cause in the PR.
-decls	check	250	500	1000	95702	982	-
-decls	opt1	250	500	1000	355576	1005	-
-decls	opt2	125	250	500	562941	1009	-
-cfg	check	250	500	1000	107194	1003	-
-cfg	opt1	250	500	1000	432788	991	-
-cfg	opt2	125	250	500	5055570	1457	#8283
-fields	check	250	500	1000	241493	1619	#7922
-fields	opt1	250	500	1000	1705745	1775	#7922
-fields	opt2	125	250	500	2171961	1659	#7922
-expansions	check	250	500	1000	1023386	1510	#8120
+decls	check	250	500	1000	212404	995	-
+decls	opt1	250	500	1000	547896	1004	-
+decls	opt2	125	250	500	761332	994	-
+cfg	check	250	500	1000	369991	1115	-
+cfg	opt1	250	500	1000	763236	1051	-
+cfg	opt2	125	250	500	5577599	1454	#8283
+fields	check	250	500	1000	393469	1435	#7922
+fields	opt1	250	500	1000	2165246	1725	#7922
+fields	opt2	125	250	500	2581308	1615	#7922
+expansions	check	250	500	1000	1201375	1433	#8120

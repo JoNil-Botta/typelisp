@@ -4221,7 +4221,8 @@
 (defstruct CompilerDriverCheckedLowerHandoff
   (dest-pools compiler_ast_types.AstNodePoolContext)
   (entry-arena i64)
-  (source-pools-arena i64))
+  (source-pools-arena i64)
+  (frontend-routed bool))
 
 (defstruct CompilerDriverCheckedLowerResult
   (lowered compiler_lower.ResultCompilerLower)
@@ -4281,7 +4282,8 @@
       (CompilerDriverCheckedLowerHandoff
         dest-pools
         entry-arena
-        source-pools-arena))))
+        source-pools-arena
+        (!= frontend-arena 0)))))
 
 (define (compiler-driver-state-finish-checked-lower!
   [state : CompilerDriverState]
@@ -4327,7 +4329,11 @@
       (if release-source-pools?
         (unsafe
           (arena.tl_arena_set
-            (if frontend-released?
+            ;; Lowering can retire its own macro frontend even when this
+            ;; entry never routed source allocations into a separate owner.
+            ;; Only a routed frontend installed the pending return handle;
+            ;; that handle may itself legitimately be zero.
+            (if (and frontend-released? handoff.frontend-routed)
               compiler-driver-pending-frontend-return-arena
               (if (and dest-committed? (= entry-arena source-pools-arena))
                 (compiler_ast_types.ast-node-pool-context-base-arena

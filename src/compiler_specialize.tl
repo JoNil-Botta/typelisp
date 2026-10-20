@@ -1211,7 +1211,7 @@
       (let
         [patterns : ast.AstPatternList (deref patterns-box)]
         (spec-template-env-shadow-pattern-list templates (& patterns)))]
-    [(or (Wildcard) (Literal _)) (spec-template-env-shared-view templates)]))
+    [(or (Wildcard) (Literal _)) (deref templates)]))
 
 (define (spec-template-env-shadow-pattern-list
   [templates : (& templates SpecTemplateEnv)]
@@ -4140,7 +4140,7 @@
   [subs : (& subs SpecValueSubst)]
   [name-id : i64]) : SpecValueSubst
   (if (< (spec-value-subst-find subs name-id) 0)
-    (spec-value-subst-shared-view subs)
+    (deref subs)
     (let
       [slots : (__tl_dyn-array SpecValueBinding)
         (__tl_make-array SpecValueBinding subs.len)]
@@ -4158,7 +4158,7 @@
   [subs : (& subs SpecTypeSubst)]
   [name-id : i64]) : SpecTypeSubst
   (if (< (spec-type-subst-find subs name-id) 0)
-    (spec-type-subst-shared-view subs)
+    (deref subs)
     (let
       [slots : (__tl_dyn-array SpecTypeBinding)
         (__tl_make-array SpecTypeBinding subs.len)]
@@ -4194,7 +4194,7 @@
     owner
     (& (spec-owner-expr-get owner binder-id)))
     [(Some name) (spec-subst-remove-name subs name)]
-    [(None) (spec-subst-shared-view subs)]))
+    [(None) (deref subs)]))
 
 (define (spec-subst-remove-params
   [subs : (& subs SpecSubst)]
@@ -4250,7 +4250,7 @@
       (let
         [patterns : ast.AstPatternList (deref patterns-box)]
         (spec-subst-remove-pattern-list subs (& patterns)))]
-    [(or (Wildcard) (Literal _)) (spec-subst-shared-view subs)]))
+    [(or (Wildcard) (Literal _)) (deref subs)]))
 
 (define (spec-subst-remove-pattern-list
   [subs : (& subs SpecSubst)]
@@ -5580,7 +5580,7 @@
   (let
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
-    [scope : SpecTemplateEnv (spec-template-env-shared-view templates)]
+    [scope : SpecTemplateEnv (deref templates)]
     (for [index (iterator.range 0 bindings.len)]
       (match (ast.ast-resource-binding-list-get
         bindings
@@ -5657,7 +5657,7 @@
   (let
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
-    [scope : SpecSubst (spec-subst-shared-view subs)]
+    [scope : SpecSubst (deref subs)]
     (for [index (iterator.range 0 bindings.len)]
       (match (ast.ast-resource-binding-list-get
         bindings

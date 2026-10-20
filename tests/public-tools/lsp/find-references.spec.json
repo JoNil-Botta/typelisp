@@ -8,7 +8,7 @@
     {"jsonpath_id": 4, "json_contains": "\"result\":[{\"uri\":\"${{TMP_URI}}/root/main.tl\",\"range\":{\"start\":{\"line\":4,\"character\":17},\"end\":{\"line\":4,\"character\":29}}},{\"uri\":\"${{TMP_URI}}/root/main.tl\",\"range\":{\"start\":{\"line\":4,\"character\":44},\"end\":{\"line\":4,\"character\":56}}}]"},
     {"jsonpath_id": 5, "json_contains": "\"result\":[]"},
     {"jsonpath_id": 6, "json_contains": "\"result\":[]"},
-    {"jsonpath_id": 7, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 7, "raw_contains": "\"code\":-32602", "raw_contains": "Missing position parameter"},
     {"jsonpath_id": 8, "json_contains": "\"error\":{\"code\":-32803,\"message\":\"Workspace semantic references are currently incomplete\"}"},
     {"jsonpath_id": 9, "json_contains": "\"result\":null", "jsonpath_result": null}
   ]

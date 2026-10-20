@@ -30,6 +30,7 @@
         (= cbi.compiler-builtin-id-tl-arena-growth-target target-id)
         (= (cbi.state-ref snapshot 327) target-id)
         (cbi.compiler-builtin-backend-runtime-core-id? target-id)
+        (cbi.compiler-builtin-backend-runtime-platform-id? target-id)
         (cbi.compiler-builtin-backend-runtime-always-provided-id? target-id)
         (not (cbi.compiler-builtin-backend-tl-alloc-id? target-id))
         (string.eq (ci.intern-str target-id) "tl_arena_growth_target"))

@@ -89,6 +89,8 @@ creates a root lazily through the ordinary root constructor, including debug
 registration. Reserving an empty arena consumes no profiled payload bytes.
 The unsafe stdlib extern is the prerequisite consumed next by owner-aware
 container growth in [#8703](https://github.com/JoNil-Botta/typelisp/issues/8703).
+As an assembly runtime hook it uses the platform calling convention, including
+when called from code using the internal TypeLisp convention.
 
 Linux stores the default root in `tl_root_arena` TLS alongside
 `tl_current_arena`. Windows GS:0x28 points to a private per-thread cell: current

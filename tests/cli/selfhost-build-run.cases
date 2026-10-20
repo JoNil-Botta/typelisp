@@ -1040,6 +1040,9 @@ end-file
 file over-cap.expected
 wait: queue saturated; review: 9 PRs in flight; implement: 1 ready issue held back; research/triage: 0 claimed
 end-file
+file -n blocked-only.expected
+Error: no eligible candidates were provided
+end-file
 step selfhost-cli-work-queue-chooser
 run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{dir}}/chooser.json"
 stderr empty
@@ -1063,6 +1066,22 @@ step selfhost-cli-work-queue-chooser-over-cap
 run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/over-cap-wait.json"
 stderr empty
 same "{{dir}}/over-cap.expected" "{{stdout}}"
+
+step selfhost-cli-work-queue-review-first
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/review-first.json"
+stderr empty
+stdout is review pr #40: Review
+
+step selfhost-cli-work-queue-blocked-fallback
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/blocked-fallback.json"
+stderr empty
+stdout is implement issue #7000: Ready issue
+
+step selfhost-cli-work-queue-blocked-only
+run run "{{root}}/tools/work-queue-chooser/chooser.tl" --stdlib-root "{{root}}/stdlib" < "{{root}}/tools/work-queue-chooser/fixtures/blocked-only.json"
+exit 1
+stdout empty
+same "{{dir}}/blocked-only.expected" "{{stderr}}"
 
 case common-build-source-cfg
 file selected.tl

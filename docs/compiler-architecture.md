@@ -18,6 +18,9 @@ batch and LSP services orchestrate these stages.
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
+Generated macro commits refresh selected aliases through the existing
+module/import event index and symbol map before the next expansion context is
+published; see the [import invariants](compiler-invariants.md#architecture).
 
 The parser preserves body-sequence list positions through macro expansion,
 including a lone splice in a body stored as one AST expression. The

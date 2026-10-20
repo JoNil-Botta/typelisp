@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`linker_coff_import_reader_tests.tl` shares its assertion body with the native
+opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
+kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,
+every truncated prefix, malformed strings/headers, bigobj classification,
+resource boundaries and stable normalized/diagnostic dumps. Normal tests run
+neither producer tool. Preserve physical member IDs, original spellings and
+timestamps separately from normalized identity when adding cases.
+
 `regalloc-move-index-direction-and-strictness` pins directed admission,
 undirected duplicate suppression and newest-first strict upgrades.
 `regalloc-move-index-growth-and-reference` compares every slot with the former

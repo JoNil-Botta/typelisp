@@ -349,6 +349,12 @@ tail_call_parallel_gp_cycles|all|0,1,2|tests/integration/tail_call_parallel_gp_c
 tail_call_parallel_gp_overflow|all|0,1,2|tests/integration/tail_call_parallel_gp_overflow.tl|42|-|-|-|-
 tail_call_parallel_mixed_overflow|all|0,1,2|tests/integration/tail_call_parallel_mixed_overflow.tl|42|-|-|-|-
 tail_call_parallel_mixed_regs|all|0,1,2|tests/integration/tail_call_parallel_mixed_regs.tl|42|-|-|-|-
+tail_param_group_swap|all|0,1,2|tests/integration/tail_param_group_swap.tl|42|-|-|-|-
+tail_param_group_overflow|all|0,1,2|tests/integration/tail_param_group_overflow.tl|42|-|-|-|-
+tail_param_indirect_mixed_swap|all|0,1,2|tests/integration/tail_param_indirect_mixed_swap.tl|42|-|-|-|-
+tail_param_memory_swap|all|0,1,2|tests/integration/tail_param_memory_swap.tl|42|-|-|-|-
+tail_param_indirect_overflow|all|0,1,2|tests/integration/tail_param_indirect_overflow.tl|42|-|-|-|-
+tail_param_indirect_group_swap|all|0,1,2|tests/integration/tail_param_indirect_group_swap.tl|42|-|-|-|-
 tail_call_parallel_xmm_cycle|all|0,1,2|tests/integration/tail_call_parallel_xmm_cycle.tl|42|-|-|-|-
 tail_call_parallel_xmm_overflow|all|0,1,2|tests/integration/tail_call_parallel_xmm_overflow.tl|42|-|-|-|-
 synth_tail_wrapper_abort|all|-,2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n

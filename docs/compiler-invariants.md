@@ -1583,6 +1583,12 @@ The root's coarse bounds remain the minimum start and maximum end of its
 members. Gathering and compaction leave the member indexes and parent map
 unchanged, including when same-value coalescing admits overlapping members.
 
+A parameter's incoming-register pin is revalidated against the coalesced
+class's exclusions as well as its live ranges. A blocked outgoing argument
+cannot inherit a parameter pin through a phi or copy. Tail calls have no
+live-after survival constraint, but their argument marshalling must still read
+each source before an argument-register write can destroy it.
+
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
 analysis temporaries after copying their small result. The budget selects only

@@ -1,0 +1,3 @@
+(define data : i64 7)
+(define (add [value : i64]) : i64 (+ value data))
+(define (main) : i64 (add 35))

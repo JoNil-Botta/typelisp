@@ -1,0 +1,25 @@
+fixture	producer	version	options	bytes	sha256
+gcc-O0-g-common	gcc	16.2.1	-O0 -g  -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	7952	176933ed6e0591f63a8dcd5e72a607d5e3ff60287f9cd4b6536695c8d0d96f52
+gcc-O0-g-no-common	gcc	16.2.1	-O0 -g  -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	8040	47b93e2325f53963527a56d8358ab612744f2741eb032105f004f26f776ff0c1
+gcc-O0-gz-common	gcc	16.2.1	-O0 -g -gz=zlib -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	7960	53fcf04aa4d92cac10e09a49ea601846cb858677c0d3c3e2411fe5a977b7f22a
+gcc-O0-gz-no-common	gcc	16.2.1	-O0 -g -gz=zlib -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	8040	c248a9e27eaf1fdc91b9bc2b132dce63b565372671c006c05924341609631fe6
+gcc-O0-tlsdesc	gcc	16.2.1	-O0 -g -fPIC -fcf-protection=full -mtls-dialect=gnu2	6336	52a75833276e098df5b65dd679cc2602e06ed3ed1f2ebf2319d0015bebfbfb3f
+gcc-O2-g-common	gcc	16.2.1	-O2 -g  -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	8464	38b036ec98d5910ffcfe81e622c70f923f28feb606c9c7fd4bcf6bae29c1d44f
+gcc-O2-g-no-common	gcc	16.2.1	-O2 -g  -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	8544	22266fd94e3142dce0ffb295c9dedf76dbc2b8b87a429034c7c593a51cd1f006
+gcc-O2-gz-common	gcc	16.2.1	-O2 -g -gz=zlib -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	8464	cd7bf6b5756f7c16d1c3f0d62f2cf045d8d79790000f4d7623fef473ec70c1f0
+gcc-O2-gz-no-common	gcc	16.2.1	-O2 -g -gz=zlib -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	8544	9c72ee0270f90bbf71da05f256349b5036d7c5ad2b77e3b2f506023b971325f8
+gcc-O2-tlsdesc	gcc	16.2.1	-O2 -g -fPIC -fcf-protection=full -mtls-dialect=gnu2	7504	d30f4cd38463caf7ffa0d66f4f0be4f5cf7bda86d6283c173f8369e6701d189c
+clang-O0-g-common	clang	22.1.8	-O0 -g  -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	8000	f1135497494d64828f9b90a3a82368c5a0bb26f49ce357b8d1524b0e05075e8c
+clang-O0-g-no-common	clang	22.1.8	-O0 -g  -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	8064	2dc0213cf041ff5783c07306af01d8a7b3578bc89092a787bad153adc1f1c79d
+clang-O0-gz-common	clang	22.1.8	-O0 -g -gz=zlib -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	7632	d855917a56ba2572e3bccc3fe04b6bcb3b1880d89ae9815271c2433d935d03f1
+clang-O0-gz-no-common	clang	22.1.8	-O0 -g -gz=zlib -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	7696	faf71e7bdfe0043101805d05819e075a99a74608a854cd81345ea685604ab16d
+clang-O0-tlsdesc	clang	22.1.8	-O0 -g -fPIC -fcf-protection=full -mtls-dialect=gnu2	6896	204cbbec91e0517d222c28cf9380f2add2d64808c1658d52e28a9a0a516f92fa
+clang-O2-g-common	clang	22.1.8	-O2 -g  -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	8984	cc4ee4ed275e6b1d69d81d6dfc01bb2ffd49f2e99ff0849342626cce4801d951
+clang-O2-g-no-common	clang	22.1.8	-O2 -g  -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	9056	0375cbbcf8e0b11b8c9a22c866ea85ff26a6e6f126362ca366881f433fd6edf0
+clang-O2-gz-common	clang	22.1.8	-O2 -g -gz=zlib -ffunction-sections -fdata-sections -fcommon -fPIC -fcf-protection=full	8376	f6c1893d40ea94cd0fad03a2e56d470d9de25b07c0c7595f569160458dcf6da5
+clang-O2-gz-no-common	clang	22.1.8	-O2 -g -gz=zlib -ffunction-sections -fdata-sections -fno-common -fPIC -fcf-protection=full	8448	8e0f928b50a54503c3eb1bfa5f10e087d4599518224af790bf65ccbaa075be7a
+clang-O2-tlsdesc	clang	22.1.8	-O2 -g -fPIC -fcf-protection=full -mtls-dialect=gnu2	7824	556d4afc75b8a66ed43e6eb179d95575086d33e8e44cde74f2334f635bed5ad8
+gcc-O0-sframe	gcc	16.2.1	-O0 -g -fPIC -Wa,--gsframe=yes	6712	5975b4f6911a9b2c873c9f43356f05d64566864c65d1b0831c510345069dabc7
+gcc-O2-sframe	gcc	16.2.1	-O2 -g -fPIC -Wa,--gsframe=yes	7992	e8c152458c0ad3980195e3917f8f2919bb502a41d367d2aeae96dae390098edb
+gnu-as-groups	as	GNU assembler (GNU Binutils) 2.47	probe.s	2128	2fd1f75f587acc42dedaf5fb7f3f0cbf5eb85981e9327b0e772175098160bd03
+typelisp-direct	typelisp	0cbbbdd51b5de3e6e0842c78905a002a65a4d5e4c186a90e5b2dd03a96da1c8a	build --direct --target linux-x86_64 --backend-mode scalar --opt-level 2; assembler denied	15112	8c6f2539a56add4779df7100b6f172aa4a92152242ae751645739f71571023cf

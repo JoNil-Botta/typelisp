@@ -1,0 +1,30 @@
+struct Record {
+    long words[12];
+    double fraction;
+    const char *label;
+};
+int tentative;
+int weak_data __attribute__((weak)) = 5;
+int hidden_data __attribute__((visibility("hidden"))) = 7;
+int protected_data __attribute__((visibility("protected"))) = 11;
+__thread int tls_gd __attribute__((tls_model("global-dynamic")));
+__thread int tls_ld __attribute__((tls_model("local-dynamic")));
+__thread int tls_ie __attribute__((tls_model("initial-exec")));
+__thread int tls_le __attribute__((tls_model("local-exec")));
+extern long external_call(long);
+
+long entry(struct Record *record) {
+    long total = record->words[0] + (long)record->fraction;
+    for (int i = 1; i != 12; ++i)
+        total = external_call(total + record->words[i]);
+    return total + tentative + weak_data + hidden_data + protected_data
+        + tls_gd + tls_ld + tls_ie + tls_le;
+}
+
+static void before(void) __attribute__((constructor(101)));
+static void after(void) __attribute__((destructor(201)));
+static void before(void) { weak_data += 1; }
+static void after(void) { weak_data -= 1; }
+static void early(void) { hidden_data += 1; }
+void (*const preinit[])(void)
+    __attribute__((section(".preinit_array"), used)) = { early };

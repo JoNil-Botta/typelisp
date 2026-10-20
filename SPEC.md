@@ -3197,6 +3197,13 @@ ordinary TypeLisp functions and closure descriptors use a different runtime
 representation. Direct extern functions still use their function-head syntax;
 their code-pointer results must name `CFunc` explicitly.
 
+External data is a writable storage place: `(set! name value)` stores a value
+of the declared type, and `(unsafe (ptr-addr-of name))` returns a `(MutPtr T)`
+to its storage for declared type `T`. Reads, writes and addresses all refer to
+the same external linker symbol, including any `:symbol` override. The native
+declaration must provide storage with the declared layout and permit any writes
+performed by the program; TypeLisp does not infer C `const` qualification.
+
 An explicit C function-pointer type is `(CFunc mode (-> argument-types... result-type))`.
 Modes are `nullable`, `non-null`, `unsafe-nullable`, and `unsafe-non-null`.
 These values are one-word C code addresses, distinct from ordinary function
@@ -7607,6 +7614,7 @@ input slice's lifetime. The `ffi.c-string-*` compatibility wrappers borrow their
   read: dereferencing the resulting raw pointer to copy a non-Copy handle is an
   explicit unsafe ownership/aliasing operation whose validity is entirely the
   caller's responsibility.
+- An external data storage slot, under the `extern` storage contract above.
 - A struct field path rooted in addressable local, parameter, or ordinary
   global storage, written with dotted projection such as `place.field`.
 - A fixed-array element path rooted in addressable storage, written as
@@ -7616,8 +7624,8 @@ input slice's lifetime. The `ffi.c-string-*` compatibility wrappers borrow their
   bounds policy as fixed-array element access before the pointer is returned.
 
 The operation's result type is `(MutPtr T)` for the selected local, parameter,
-or ordinary global storage slot of type `T`. V1 does not define projections
-through a reference root: if a slot `r` has type `(& r T)` or `(&mut r T)`,
+ordinary global, or external data storage slot of type `T`. V1 does not define
+projections through a reference root: if a slot `r` has type `(& r T)` or `(&mut r T)`,
 `(ptr-addr-of r)` addresses the reference value and is valid, while
 `(ptr-addr-of r.field)` and `(ptr-addr-of (array-ref r i))` are rejected.
 

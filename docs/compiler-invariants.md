@@ -1697,6 +1697,13 @@ and ordered block storage; no returned loop borrows the workspace. Empty,
 acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
 arrays.
 
+Post-SSA rotation's round homes own block, instruction and phi-input containers.
+Their type leaves retain the input function's owner. Phi analysis must borrow
+that existing type rather than create a compound-type container in round
+scratch: the round copier shares those leaves while retiring its old home.
+The compound-phi rotation tests overwrite all retired homes before reading
+every returned type and verifying the carried function/context.
+
 Empty work records initially read one immutable zero-length array descriptor;
 each record replaces both handles before its first element write. The work
 record itself is private, never a shallow view of shared mutable storage. The

@@ -22903,7 +22903,7 @@ f:
           (backend.compiler-backend-string-count
             asm
             "%fs:tl_current_arena@tpoff")
-          24)
+          26)
         (= (backend.compiler-backend-string-count asm "%gs:0x28") 0)))))
 
 (define (compiler-backend-test-runtime-functions-for-target
@@ -23094,9 +23094,19 @@ f:
       (compiler-backend-test-runtime-functions-for-target
         (backend.CompilerBackendTarget.Linux))]
     (and
+      (=
+        (backend.compiler-backend-string-count
+          asm
+          "    movq %rax, %fs:tl_current_arena@tpoff\n")
+        2)
+      (=
+        (backend.compiler-backend-string-count
+          asm
+          "    movq %rax, 40(%rax)\n    movq %rax, 56(%rax)\n    movq %rax, %fs:tl_current_arena@tpoff\n")
+        2)
       (asm-has?
         asm
-        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 72(%rax), %r8\n"
+        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    movq %r9, %fs:tl_current_arena@tpoff\n    jmp .L_tl_alloc_root_ready\n"
         "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n")
       (and
@@ -23104,10 +23114,11 @@ f:
           (backend.compiler-backend-string-count
             asm
             "    movq %r8, %fs:tl_current_arena@tpoff\n")
-          1)
+          2)
         (asm-has?
           asm
-          ".L_tl_alloc_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n"))
+          ".L_tl_alloc_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n"
+          ".L_tl_alloc_aligned_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_aligned_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n"))
       (asm-has?
         asm
         "    movq 56(%r10), %r8\n    testq %r8, %r8\n    jnz .L_tl_region_reset_all_head_ready\n    movq %r10, %r8\n.L_tl_region_reset_all_head_ready:\n.L_tl_region_reset_all_retired_ready:\n    movq 32(%r10), %rbx\n"))))
@@ -39685,9 +39696,7 @@ b_keep:
       "    movq $1, 48(%rax)\n"
       "    leaq 72(%rax), %rcx\n"
       "    movq %r9, %fs:tl_current_arena@tpoff\n")
-    (lacks
-      "    movq %rax, %fs:tl_current_arena@tpoff\n"
-      ".L_tl_alloc_size_ready:\n")))
+    (lacks ".L_tl_alloc_size_ready:\n")))
 
 (define (compiler-backend-alloc-runtime-shape-ok?) : bool
   (match (backend.compiler-backend-emit-source
@@ -41778,8 +41787,8 @@ user_fn:
     (and
       (asm-has?
         rewritten
-        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
-        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
+        "    movq tl_current_arena@gottpoff(%rip), %r10\n    movq %r9, %fs:(%r10)\n    jmp .L_tl_alloc_root_ready\n"
+        "    movq tl_current_arena@gottpoff(%rip), %r10\n    movq %rax, %fs:(%r10)\n.L_tl_alloc_aligned_root_ready:\n"
         "    movq tl_root_arena@gottpoff(%rip), %r10\n    movq %rax, %fs:(%r10)\n"
         "    call tl_arena_make\n    addq $8, %rsp\n    movq tl_root_arena@gottpoff(%rip), %r11\n    movq %rax, %fs:(%r11)\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
@@ -41795,8 +41804,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          16
-          14))
+          18
+          16))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test

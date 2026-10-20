@@ -117,8 +117,8 @@ primitive for the private I/O error channel; Windows uses its native TLS API.
 The [arena runtime interface](compiler-architecture.md#arena-runtime-interface)
 defines the header offsets and separate current/default-root state. Every
 dynamic root constructor, including aligned allocation, initializes its creator
-before publishing the root. Atomic-owner selection reads only immutable flags;
-ordinary-owner selection reads only the immutable creator. Selection does not
+before publishing the root. Atomic-owner selection tests only the immutable
+atomic flag; ordinary-owner selection reads only the immutable creator. Selection does not
 inspect another thread's mutable bump or current-segment state. Identity reuse
 after a thread exits is safe because its arenas remain mapped and it no longer
 allocates in them. This does not authorize concurrent reset or destruction:

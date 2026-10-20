@@ -256,6 +256,12 @@ tl_alloc:
     testb $16, 48(%r9)
     jnz .L_tl_alloc_root_self
     movq 56(%r9), %r10
+    movq %r10, 0(%rax)
+    movq $0, 32(%rax)
+    movq %r9, 40(%rax)
+    movq $0, 48(%rax)
+    movq %rax, 56(%r9)
+    movq %r9, %fs:tl_current_arena@tpoff
     jmp .L_tl_alloc_root_ready
 .L_tl_alloc_root_self:
     movq %fs:0, %r10
@@ -263,21 +269,17 @@ tl_alloc:
     movq %rax, %fs:tl_root_arena@tpoff
 "
         (compiler-backend-runtime-linux-register-root-hook arena-debug)
-        "    xorq %r10, %r10
-    movq %rax, %r9
+        ;; A fresh anonymous mapping already has zero previous/retired links
+        ;; and non-atomic flags. Child segments retain their explicit setup.
+        "    movq %rax, 40(%rax)
+    movq %rax, 56(%rax)
+    movq %rax, %fs:tl_current_arena@tpoff
 .L_tl_alloc_root_ready:
-    movq %r10, 0(%rax)
-    movq $0, 32(%rax)
-    movq %r9, 40(%rax)
-    movq $0, 48(%rax)
-    movq %rax, 56(%r9)
     leaq 72(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
-    movq %r8, %rcx
-    addq %rsi, %rcx
+    leaq (%r8,%rsi), %rcx
     movq %rcx, 16(%rax)
-    movq %r9, %fs:tl_current_arena@tpoff
     movq %r8, %rax
 ")]
     ;; `.L_tl_alloc_abort` is tl_alloc's own out-of-line stub, so the symbol
@@ -544,6 +546,13 @@ tl_alloc_aligned:
     testb $16, 48(%r8)
     jnz .L_tl_alloc_aligned_root_self
     movq 56(%r8), %r9
+    movq %r9, 0(%rax)
+    movq $0, 32(%rax)
+    movq %r8, 40(%rax)
+    movq $0, 48(%rax)
+    movq %rax, 56(%r8)
+    movq %r8, %r9
+    movq %r9, %fs:tl_current_arena@tpoff
     jmp .L_tl_alloc_aligned_root_ready
 .L_tl_alloc_aligned_root_self:
     movq %fs:0, %r9
@@ -561,14 +570,12 @@ tl_alloc_aligned:
     popq %rdx
 "
             "")
-          "    xorq %r9, %r9
-    movq %rax, %r8
+          ;; Anonymous root pages supply zero links/flags; the aligned data
+          ;; calculation below initializes the bump before the entry returns.
+          "    movq %rax, 40(%rax)
+    movq %rax, 56(%rax)
+    movq %rax, %fs:tl_current_arena@tpoff
 .L_tl_alloc_aligned_root_ready:
-    movq %r9, 0(%rax)
-    movq $0, 32(%rax)
-    movq %r8, 40(%rax)
-    movq $0, 48(%rax)
-    movq %rax, 56(%r8)
     leaq 72(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rdi, 24(%rax)
@@ -582,8 +589,6 @@ tl_alloc_aligned:
     addq %rdx, %r10
     jc .L_tl_alloc_aligned_abort
     movq %r10, 16(%rax)
-    movq %r8, %r9
-    movq %r9, %fs:tl_current_arena@tpoff
     subq %rcx, %r10
 "
           new-profile

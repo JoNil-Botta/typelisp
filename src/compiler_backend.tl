@@ -76395,7 +76395,7 @@
 ;; the region runtime, and the first-class arena builtins. Physical growth heads
 ;; are reached through root+56 and never replace this public identity. It is a
 ;; per-thread active-arena slot: Linux uses local-exec ELF TLS; Windows stores
-;; the root in the TEB arbitrary-user slot (GS:0x28). Like the arena
+;; a private current/default-root cell through the TEB slot GS:0x28. Like the arena
 ;; primitives, the runtime lives in exactly ONE object per executable (the entry
 ;; object, `emit-entry=true`); library/dependency objects (`emit-entry=false`)
 ;; emit none of the runtime and reference the Linux TLS slot as an extern.
@@ -76728,26 +76728,21 @@ tl_shared_object_init:
 "))
 
 ;; The register a TLS store borrows under the shared-object code model, by
-;; enclosing function and TLS symbol, or "" for none. An initial-exec store
+;; enclosing function, or "" for none. An initial-exec store
 ;; reaches the variable through its GOT offset, loaded into a register first.
 ;; Each runtime helper that stores TLS names a register dead at its stores.
 ;; Generated code stores TLS only through the current-arena store builtin,
 ;; which is lowered at a call site, where %rax is call-clobbered.
 (define (compiler-backend-shared-object-tls-scratch
-  [function : (& function str)]
-  [symbol : (& symbol str)]) : String
+  [function : (& function str)]) : String
   (cond
-    [(and
-        (string.eq symbol "tl_root_arena")
-        (or
-          (string.eq function "tl_alloc")
-          (string.eq function "tl_alloc_aligned")))
-      ;; Reservation end has already been computed; r10 is overwritten before
-      ;; its next use. rax must retain the new root for header initialization.
-      "%r10"]
     [(or
         (string.eq function "tl_alloc")
-        (string.eq function "tl_alloc_aligned")
+        (string.eq function "tl_alloc_aligned"))
+      ;; TLS stores precede data/bump setup, after the reservation end and
+      ;; previous link have consumed r10. rax still holds the new mapping.
+      "%r10"]
+    [(or
         (string.eq function "tl_arena_set")
         (string.eq function "tl_backtrace_stack_set"))
       "%rax"]
@@ -76835,9 +76830,7 @@ tl_shared_object_init:
               (> (string.string-length (& store-symbol)) 0))
             (let
               [scratch : String
-                (compiler-backend-shared-object-tls-scratch
-                  function
-                  (& store-symbol))]
+                (compiler-backend-shared-object-tls-scratch function)]
               (if (or
                 (= (string.string-length (& scratch)) 0)
                 (string.eq scratch source))

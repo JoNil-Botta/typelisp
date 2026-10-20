@@ -5,7 +5,6 @@
 (import compiler_diagnostic as cdiag)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
-(import compiler_owned_view as owned_view)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -245,9 +244,7 @@
         (lower.lower-spmd-package-structural-registration-key
           intern-state
           identity-a)
-        (lower.lower-spmd-package-structural-identity
-          (owned_view.compiler-owned-shared-view intern-state)
-          identity-a))]
+        (lower.lower-spmd-package-structural-identity intern-state identity-a))]
     [repeat : lower.LowerSpmdPackageSymbolRegistration
       (lower.lower-spmd-package-symbol-register
         state
@@ -257,9 +254,7 @@
         (lower.lower-spmd-package-structural-registration-key
           intern-state
           identity-a)
-        (lower.lower-spmd-package-structural-identity
-          (owned_view.compiler-owned-shared-view intern-state)
-          identity-a))]
+        (lower.lower-spmd-package-structural-identity intern-state identity-a))]
     [collision : lower.LowerSpmdPackageSymbolRegistration
       (lower.lower-spmd-package-symbol-register
         state
@@ -269,18 +264,12 @@
         (lower.lower-spmd-package-structural-registration-key
           intern-state
           identity-b)
-        (lower.lower-spmd-package-structural-identity
-          (owned_view.compiler-owned-shared-view intern-state)
-          identity-b))]
+        (lower.lower-spmd-package-structural-identity intern-state identity-b))]
     (and
       (not
         (=
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            identity-a)
-          (lower.lower-spmd-package-structural-identity
-            (owned_view.compiler-owned-shared-view intern-state)
-            identity-b)))
+          (lower.lower-spmd-package-structural-identity intern-state identity-a)
+          (lower.lower-spmd-package-structural-identity intern-state identity-b)))
       (not
         (=
           (lower.lower-spmd-package-structural-linker-symbol
@@ -324,7 +313,7 @@
   [state : lower.CompilerLowerState]
   [record : i64]) : i64
   (lower.lower-spmd-package-structural-identity
-    (lower.compiler-lower-state-interns state)
+    (& (lower.compiler-lower-state-interns state))
     record))
 
 (define (compiler-lower-spmd-test-symbol
@@ -479,7 +468,7 @@
       (lower.lower-spmd-private-helper-symbol
         state-a
         (ci.intern-compat-state-intern (&mut intern-a) "__tl_lambda_fixture_0")
-        (Bool)
+        (& (Bool))
         true)]
     [expected-identity : String
       (lower.lower-spmd-package-symbol-identity

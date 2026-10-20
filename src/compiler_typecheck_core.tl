@@ -76169,25 +76169,6 @@
     [(Ok lifetime _) (ResultTcNameId.Ok lifetime)]
     [(Err message) (ResultTcNameId.Err message)]))
 
-;; A `&mut` held in storage that `holder` reaches through a shared reference
-;; grants only shared access (Rust's supporting prefixes, E0594/E0596): writing
-;; its referent is the `&mut` borrow rule's violation (#8694, #8696), whatever
-;; form writes. A holder that is a value is a temporary the write owns.
-(define (tc-held-mut-ok
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [holder : (& holder ast.AstExpr)]) : ResultTcUnit
-  (let
-    [expr-bases : i64 (tc-context-expr-bases ctx)]
-    (if (tc-borrow-place-form? expr-bases holder)
-      (match (tc-borrow-place ctx expr-bases env (clone (deref holder)))
-        [(ResultTcBorrowPlace.Ok (TcBorrowPlace _ _ through-shared _))
-          (if through-shared
-            (ResultTcUnit.Err (tc-borrow-through-shared-message))
-            ResultTcUnit.Ok)]
-        [(ResultTcBorrowPlace.Err _) ResultTcUnit.Ok])
-      ResultTcUnit.Ok)))
-
 (define (tc-store-place-target
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -76231,7 +76212,6 @@
         [_ (try (tc-box-set-inner-type ctx (tc-global-shared-view box-ty)))]
         (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
           [(MutRef lifetime referent)
-            (try (tc-held-mut-ok ctx env (& box-expr)))
             (tc-store-place-reference-target ctx lifetime referent)]
           [_ (tc-store-place-target ctx env box-expr)]))]
     [(BoxTake receiver-box)
@@ -76251,7 +76231,6 @@
                     (tc-global-shared-view receiver-ty)))]
               (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
                 [(MutRef lifetime referent)
-                  (try (tc-held-mut-ok ctx env (& receiver)))
                   (tc-store-place-reference-target ctx lifetime referent)]
                 [_ (tc-store-place-target ctx env receiver)]))]))]
     [_
@@ -84174,8 +84153,10 @@
     [(Err message) (Err (tc-replace-storage-place-error message))]))
 
 ;; A `replace!` target that is no storage place, or that is reached only
-;; through a shared reference (E0215). A `&mut` reached through a shared
-;; reference keeps the `&mut` borrow rule's diagnostic (`tc-held-mut-ok`).
+;; through a shared reference (E0215). A target whose typing reports the `&mut`
+;; borrow rule's diagnostic (a `&mut` borrow through a shared reference) keeps
+;; it; a write through a `&mut` held behind a shared reference is the graph's
+;; (`normalize-exclusive-ok`).
 (define (tc-replace-storage-place-error [message : String]) : String
   (if (string.eq message (tc-borrow-through-shared-message))
     message

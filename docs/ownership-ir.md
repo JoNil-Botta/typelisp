@@ -78,8 +78,8 @@ borrow and writes through the referent's loan, which is exclusive only when
 every reference on the path is mutable: a `&mut` behind a `&` is not
 writable (Rust E0594). Every write or mutable borrow reaching a `&mut`
 through a `&` reports the `&mut` borrow rule's E0207 "mutable borrow through
-a shared reference" (`normalize-exclusive-ok`, access kind 7, and typing's
-`tc-held-mut-ok` for a write target whose held `&mut` is reached through one);
+a shared reference" (`normalize-exclusive-ok`, access kind 7; typing reports
+it first only for a `&mut` borrow expression, `tc-borrow-place-result-type`);
 a write through a `&` itself keeps its own diagnostic. A view (a non-Copy value read by value
 through a reference) is a shared loan of the viewed place; the first write or
 mutable reborrow through it makes that loan, and every view loan it was read

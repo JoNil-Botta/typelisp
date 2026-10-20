@@ -2791,7 +2791,7 @@
       (tc_core.tc-context-job-state ctx)
       pools
       type-bases
-      (tc_core.tc-global-shared-view types))
+      types)
       (tc-resolve-type-list-at-with-pools ctx pools (& types) 0)
       types)))
 
@@ -4688,7 +4688,7 @@
         [before-restore : bool
           (and
             (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
-              (tc_core.tc-global-shared-view sidecar)
+              sidecar
               value-id)
               [(Found (Bool) unsafe marker-kind depth generation)
                 (and
@@ -4699,9 +4699,7 @@
                   (= depth 1)
                   (= generation generation-before))]
               [_ false])
-            (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
-              (tc_core.tc-global-shared-view sidecar)
-              fn-id)
+            (match (tc_core.tc-type-env-scoped-sidecar-lookup-id sidecar fn-id)
               [(Found (I64) unsafe _ depth generation)
                 (and unsafe (= depth 1) (= generation generation-before))]
               [_ false])
@@ -4740,14 +4738,10 @@
           (=
             (tc_core.tc-type-env-scoped-stack-cache-generation sidecar.stack)
             (+ generation-before 1))
-          (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
-            (tc_core.tc-global-shared-view sidecar)
-            fn-id)
+          (match (tc_core.tc-type-env-scoped-sidecar-lookup-id sidecar fn-id)
             [(Missing) true]
             [_ false])
-          (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
-            (tc_core.tc-global-shared-view sidecar)
-            value-id)
+          (match (tc_core.tc-type-env-scoped-sidecar-lookup-id sidecar value-id)
             [(Found (I64) unsafe marker-kind depth _)
               (and
                 (not unsafe)
@@ -4939,7 +4933,7 @@
               (tc_core.tc-type-env-scoped-carrier-env deep)
               fn-id)
             (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
-              (tc_core.tc-global-shared-view deep-sidecar)
+              deep-sidecar
               fn-id)
               [(Found (Func _ _) unsafe _ _ _) (and unsafe)]
               [_ false])
@@ -5668,8 +5662,7 @@
           (ast.ast-decl-def-id root-name (No) 11)
           tail)]
       [summary : tc_core.TcImportAliasSummaryIndex
-        (tc_core.tc-import-alias-summary-index-build-current
-          (tc_core.tc-global-shared-view all-decls))]
+        (tc_core.tc-import-alias-summary-index-build-current all-decls)]
       [root-slot : i64
         (tc-import-alias-summary-index-test-slot-or
           (& summary)
@@ -5701,7 +5694,7 @@
           (ast.ast-decl-def-id generated-name (No) 99))]
       [empty-summary : tc_core.TcImportAliasSummaryIndex
         (tc_core.tc-import-alias-summary-index-build-current
-          (ast.ast-decl-list-new))]
+          (& (ast.ast-decl-list-new)))]
       (and
         (> all-decls.offset 0)
         (= summary.count 3)
@@ -6442,32 +6435,32 @@
         (=
           (tc_core.tc-call-arg-fact-key
             ctx-a
-            (Spanned 1 (ast.ast-source-span 7 3 7 5)))
+            (& (Spanned 1 (ast.ast-source-span 7 3 7 5))))
           1)
-        (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 2 0 0)) 1)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (MacroExpansion 2 0 0))) 1)
         ;; A nested view keys on its immediate payload, not the deepest leaf.
-        (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 3 0 0)) 2)
-        (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 5 0 0)) 2)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (MacroExpansion 3 0 0))) 2)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (MacroExpansion 5 0 0))) 2)
         ;; The decoy holds a view where the owner holds a non-view.
-        (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 6 0 0)) -1)
-        (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 1 0 0)) -1)
-        (= (tc_core.tc-call-arg-fact-key ctx-a (Literal (Int 17 "17"))) -1)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (MacroExpansion 6 0 0))) -1)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (MacroExpansion 1 0 0))) -1)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (Literal (Int 17 "17")))) -1)
         ;; The decoy's own context selects the decoy's keys for the same ids.
-        (= (tc_core.tc-call-arg-fact-key ctx-b (MacroExpansion 2 0 0)) 0)
-        (= (tc_core.tc-call-arg-fact-key ctx-b (MacroExpansion 5 0 0)) 0)
-        (= (tc_core.tc-call-arg-fact-key ctx-b (MacroExpansion 6 0 0)) 0)))
+        (= (tc_core.tc-call-arg-fact-key ctx-b (& (MacroExpansion 2 0 0))) 0)
+        (= (tc_core.tc-call-arg-fact-key ctx-b (& (MacroExpansion 5 0 0))) 0)
+        (= (tc_core.tc-call-arg-fact-key ctx-b (& (MacroExpansion 6 0 0))) 0)))
     ;; A compatibility pool context does not redirect typechecker reads: the
     ;; owner-A context keeps its own keys for the same ids.
     (ast.ast-node-pool-compat-context-use! pools-b)
     (set!
       compat-ok?
       (and
-        (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 2 0 0)) 1)
-        (= (tc_core.tc-call-arg-fact-key ctx-a (MacroExpansion 3 0 0)) 2)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (MacroExpansion 2 0 0))) 1)
+        (= (tc_core.tc-call-arg-fact-key ctx-a (& (MacroExpansion 3 0 0))) 2)
         (=
           (tc_core.tc-call-arg-fact-key
             ctx-a
-            (Spanned 1 (ast.ast-source-span 7 3 7 5)))
+            (& (Spanned 1 (ast.ast-source-span 7 3 7 5))))
           1)))
     (ast.ast-node-pool-compat-context-clear!)
     ;; Seed three valid keys with distinct types that inference cannot
@@ -8213,7 +8206,7 @@
           (+ prefix-count suffix.len)
           false))
       (tc_core.macro-decl-list-append
-        (tc_core.macro-decl-list-reverse prefix-rev)
+        (& (tc_core.macro-decl-list-reverse prefix-rev))
         suffix))))
 
 (define (macro-decl-path-list-prefix-rev-current-suffix
@@ -10430,13 +10423,13 @@
         [symbols-a : csym.ResultCompilerSymbols
           (tc_core.macro-live-symbols-build-fresh
             state-a
-            (tc_core.tc-global-shared-view empty-program)
-            (tc_core.tc-global-shared-view empty-paths))]
+            empty-program
+            empty-paths)]
         [symbols-a-rebuild : csym.ResultCompilerSymbols
           (tc_core.macro-live-symbols-build-fresh
             state-a
-            (tc_core.tc-global-shared-view empty-program)
-            (tc_core.tc-global-shared-view empty-paths))]
+            empty-program
+            empty-paths)]
         [_reclaim-a-symbols : unit
           (tc_core.macro-live-symbols-reclaim-retired! state-a)]
         [a-rebuild-reclaimed? : bool
@@ -10446,8 +10439,8 @@
         [symbols-b : csym.ResultCompilerSymbols
           (tc_core.macro-live-symbols-build-fresh
             state-b
-            (tc_core.tc-global-shared-view empty-program)
-            (tc_core.tc-global-shared-view empty-paths))]
+            empty-program
+            empty-paths)]
         [symbols-b-arena : i64
           (tc-macro-walk-field state-b macro-live-symbols-arena)]
         [symbols-b-reused : csym.ResultCompilerSymbols

@@ -459,9 +459,10 @@
           profile-state
           true
           representations
-          (compiler_optimize.OptInputRetirement.Retire
-            lower-state.address
-            compiler_driver_core.compiler-driver-retire-lowered-input!)))
+          (compiler_driver_core.compiler-driver-lowered-input-retirement
+            lower-state)
+          (compiler_driver_core.compiler-driver-lowered-input-chunk-bounds
+            lower-state)))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -590,7 +591,8 @@
             state
             target
             cfgs)
-          (>= opt-level 1))]
+          (>= opt-level 1)
+          opt-level)]
       ;; No builtin reinstall here; this state's parse-derived table is still
       ;; installed and id values are spelling-derived and state-independent.
       (compiler-windows-batch-emit-lowered-result

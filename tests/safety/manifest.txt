@@ -380,6 +380,7 @@ hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nomina
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|error[E0210]: typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& left-life str), found (& right-life str); source lifetime `right-life` does not outlive required lifetime `left-life`
+tail_ref_param_local_rebind_reject|check-fail|tests/safety/tail_ref_param_local_rebind_reject.tl|-|error[E0210]: typecheck: assignment type mismatch
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`

@@ -1472,6 +1472,83 @@ in fn _tl_tail_reborrow_param_wrap_local_ref
 count = 1 ^[[:space:]]+call _tl_tail_reborrow_param_inner$
 not-match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
 
+# References and views into released frames must retain a call (#9183).
+# At opt0 these checks observe lowering before inlining; the native corpus
+# also runs all cases at opt1 and opt2 on both operating systems.
+case tail-call-frame-provenance
+source tests/integration/tail_call_frame_provenance.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_tail_call_frame_provenance_local_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_implicit_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_array_element
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_tuple
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_slice
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_local_call_ref
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_ref_scrutinee
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_ref_direct
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_ref_reborrow
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_slice_view
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_local_lst_reborrow
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_lst_len$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_lst_len$
+in fn _tl_tail_call_frame_provenance_shadowed_ref
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_heap_copy_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_ref
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_reborrow
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_field
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_heap_element
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_heap_slice
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_scalar_copy
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_heap_projected_field
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_global_pair
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_global_pair_target$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_global_pair_target$
+in fn _tl_tail_call_frame_provenance_global_shadow
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_local_indirect_field
+match ^[[:space:]]+call \*
+not-match ^[[:space:]]+jmp \*
+
 case extern-data-memory-symbols
 source tests/integration/extern_data_memory.tl
 target linux-x86_64 windows-x86_64

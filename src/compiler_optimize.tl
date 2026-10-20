@@ -23256,10 +23256,7 @@
       (opt-licm-root-env-with-capacity
         17
         (owned_view.compiler-owned-reference-shared-view return-alias))]
-    [_owned : unit
-      (set!
-        roots.owned-globals
-        (owned_view.compiler-owned-reference-shared-view owned-globals))]
+    [_owned : unit (set! roots.owned-globals (clone (deref owned-globals)))]
     [_params : unit
       (opt-licm-root-env-seed-params! type-segment-bases (&mut roots) params)]
     [initial
@@ -93849,7 +93846,7 @@
 ;; Index of the last definition of `var` in `[0, from]`, or -1 when `var` enters
 ;; the block already defined.
 (define (opt-ctor-fwd-find-def
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [instrs : (& instrs (__tl_dyn-array ir.CompilerIrInstr))]
   [from : i64]
   [var : i64]) : i64
   (let
@@ -93857,7 +93854,7 @@
     [found : i64 -1]
     (while (>= i 0)
       (match (let
-        [instr (ir.compiler-ir-instr-seq-borrow instrs i)]
+        [instr (& (array-ref instrs i))]
         (opt-instr-def-var (& instr)))
         [(Some d) (when (= d var) (set! found i) (set! i 0))]
         [(None) unit])
@@ -93930,7 +93927,7 @@
   [base : i64]
   [var : i64]) : i64
   (let
-    [index : i64 (opt-ctor-fwd-find-def instrs hi var)]
+    [index : i64 (opt-ctor-fwd-find-def (& instrs.slots) hi var)]
     (if (or (< index lo) (< index 0))
       -1
       (let
@@ -94024,7 +94021,8 @@
   (if (< dest-var 0)
     (NoDest)
     (let
-      [def-index : i64 (opt-ctor-fwd-find-def instrs (- copy-index 1) dest-var)]
+      [def-index : i64
+        (opt-ctor-fwd-find-def (& instrs.slots) (- copy-index 1) dest-var)]
       [gep-offset : i64
         (if (< def-index 0)
           -1
@@ -116424,7 +116422,7 @@
   (let
     [seen : (__tl_dyn-array bool) (__tl_make-array bool 1)]
     (ir.compiler-ir-instr-visit-uses
-      (owned_view.compiler-owned-reference-shared-view instr)
+      (clone (deref instr))
       opt-owned-output-note-use!
       roots
       root
@@ -116498,9 +116496,7 @@
                       (Return (Some (Var out.descriptor))))]
                   [_ unit])
                 (set! out.bad? true))
-              (ir.compiler-ir-instr-builder-push!
-                (&mut projected)
-                (owned_view.compiler-owned-reference-shared-view instr)))))
+              (ir.compiler-ir-instr-builder-push! (&mut projected) instr))))
         (ir.compiler-ir-block-builder-push!
           builder
           (Block label (ir.compiler-ir-instr-builder-to-seq projected))))]))
@@ -116509,11 +116505,16 @@
   [type-segment-bases : i64]
   [proof : (&mut proof (__tl_dyn-array i64))]
   [instr : ir.CompilerIrInstr]) : unit
-  (unless
-    (match (compiler-opt-global-shared-view instr)
-      [(StoreOwned _ value _) (opt-value-is-var? (& value) (array-ref proof 2))]
-      [_ false])
-    (opt-cl-init-escape-instr! type-segment-bases proof instr)))
+  (let
+    [owner-store? : bool
+      (let
+        [view (& instr)]
+        (match view
+          [(StoreOwned _ value _) (opt-value-is-var? value (array-ref proof 2))]
+          [_ false]))]
+    (unless
+      owner-store?
+      (opt-cl-init-escape-instr! type-segment-bases proof instr))))
 
 ;; -2 means unknown; -1 means a directly returned fresh descriptor; otherwise
 ;; the result's byte offset names its sole proven owning descriptor field.
@@ -116525,7 +116526,7 @@
 (define (opt-owned-return-field
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]) : i64
-  (match (owned_view.compiler-owned-reference-shared-view func)
+  (match func
     [(Function name params ret frame blocks abi)
       (unless (opt-blocks-every? blocks opt-owned-explicit-return?) (return -2))
       (let
@@ -116533,9 +116534,9 @@
         [field : i64 -1]
         [types : OptSsaVarTypes
           (opt-licm-type-env-from-function (& params) blocks)]
-        [view : ir.CompilerIrFunction
+        [proof : (__tl_dyn-array i64)
           (if (< parameter 0)
-            (owned_view.compiler-owned-reference-shared-view func)
+            (opt-cl-init-proof type-segment-bases func)
             (let
               [root : i64
                 (match (ir.compiler-ir-param-seq-borrow params parameter)
@@ -116585,15 +116586,16 @@
                 (&mut projected))
               (when output.bad? (return -2))
               (set! field output.offset)
-              (Function
-                name
-                params
-                ret
-                frame
-                (ir.compiler-ir-block-builder-to-list projected)
-                abi)))]
-        [proof : (__tl_dyn-array i64)
-          (opt-cl-init-proof type-segment-bases (& view))]
+              (opt-cl-init-proof
+                type-segment-bases
+                (&
+                  (Function
+                    name
+                    (clone (deref params))
+                    (clone (deref ret))
+                    frame
+                    (ir.compiler-ir-block-builder-to-list projected)
+                    (clone (deref abi)))))))]
         ;; Projection must not hide an escape of the fresh buffer through a
         ;; scalar field, or another use of its descriptor/header pointers.
         (when
@@ -116614,30 +116616,31 @@
           -2))]))
 
 (defstruct OptOwnedTransfers
+  (:lifetimes constructors aliases)
   (flat OptSplitFlat)
   (sources OptValueSources)
   (uses (__tl_dyn-array i64))
-  (constructors opt_i64_i64_map.Map)
-  (return-alias opt_i64_i64_map.Map))
+  (constructors (& constructors opt_i64_i64_map.Map))
+  (return-alias (& aliases opt_i64_i64_map.Map)))
 
 (define (opt-owned-transfers-new
-  [constructors : (& opt_i64_i64_map.Map)]
-  [return-alias : (& opt_i64_i64_map.Map)]
-  [func : (& ir.CompilerIrFunction)]) : OptOwnedTransfers
+  [constructors : (& constructors opt_i64_i64_map.Map)]
+  [return-alias : (& aliases opt_i64_i64_map.Map)]
+  [func : (& ir.CompilerIrFunction)]) : (OptOwnedTransfers constructors aliases)
   (match func
     [(Function _ params _ frame blocks _)
       (OptOwnedTransfers
         (opt-aggregate-split-flatten blocks)
         (opt-call-memory-sources params blocks)
         (opt-collect-blocks-uses-array frame blocks)
-        (owned_view.compiler-owned-reference-shared-view constructors)
-        (owned_view.compiler-owned-reference-shared-view return-alias))]))
+        constructors
+        return-alias)]))
 
 ;; The complete function use count prevents a transfer from leaving a second
 ;; alias behind. Same-block ordering proves that every accepted copy executes
 ;; before its consumer, even when the input has not undergone SSA construction.
 (define (opt-owned-transfer-definition
-  [ctx : (& OptOwnedTransfers)]
+  [ctx : (& (OptOwnedTransfers constructors aliases))]
   [var : i64]
   [at : i64]) : i64
   (if (and
@@ -116645,18 +116648,14 @@
     (< at ctx.flat.count)
     (opt-gvn-stable-var? (& ctx.sources) var))
     (let
-      [instrs : ir.CompilerIrInstrSeq
-        (ir.CompilerIrInstrSeq
-          (owned_view.compiler-owned-reference-shared-view (& ctx.flat.instrs))
-          ctx.flat.count)]
-      [found : i64 (opt-ctor-fwd-find-def (& instrs) (- at 1) var)]
+      [found : i64 (opt-ctor-fwd-find-def (& ctx.flat.instrs) (- at 1) var)]
       (if (>= found (array-ref ctx.flat.starts at))
         found
         -1))
     -1))
 
 (define (opt-owned-transfer-local-slot?
-  [ctx : (& OptOwnedTransfers)]
+  [ctx : (& (OptOwnedTransfers constructors aliases))]
   [value : (& ir.CompilerIrValue)]
   [at : i64]) : bool
   (match value
@@ -116683,15 +116682,15 @@
     [_ false]))
 
 (define (opt-owned-transfer-call-field
-  [ctx : (& OptOwnedTransfers)]
+  [ctx : (& (OptOwnedTransfers constructors aliases))]
   [name : i64]
   [args : (& ir.CompilerIrCallArgs)]
   [at : i64]) : i64
-  (match (opt_i64_i64_map.get (& ctx.constructors) name)
+  (match (opt_i64_i64_map.get ctx.constructors name)
     [(LookupFound encoded)
       (if (< encoded 0)
         (- (- 0 encoded) 2)
-        (match (opt_i64_i64_map.get (& ctx.return-alias) name)
+        (match (opt_i64_i64_map.get ctx.return-alias name)
           [(LookupFound parameter)
             (match (opt-call-memory-arg-at args (- parameter 1))
               [(Some value)
@@ -116703,7 +116702,7 @@
     [_ -2]))
 
 (define (opt-owned-transfer-copy-field
-  [ctx : (& OptOwnedTransfers)]
+  [ctx : (& (OptOwnedTransfers constructors aliases))]
   [var : i64]
   [allocation-size : i64]
   [definition : i64]
@@ -116726,7 +116725,7 @@
   -2)
 
 (define (opt-owned-transfer-field
-  [ctx : (& OptOwnedTransfers)]
+  [ctx : (& (OptOwnedTransfers constructors aliases))]
   [value : (& ir.CompilerIrValue)]
   [at : i64]) : i64
   (match value
@@ -116778,8 +116777,8 @@
         (- 0 (+ field 2))))))
 
 (define (opt-owned-wrapper-row
-  [constructors : (& opt_i64_i64_map.Map)]
-  [return-alias : (& opt_i64_i64_map.Map)]
+  [constructors : (& constructors opt_i64_i64_map.Map)]
+  [return-alias : (& aliases opt_i64_i64_map.Map)]
   [func : (& ir.CompilerIrFunction)]) : i64
   (match func
     [(Function _ _ _ _ blocks _)
@@ -116787,7 +116786,7 @@
         (= (opt-len-eq-return-count blocks 0) 1)
         (opt-blocks-every? blocks opt-owned-explicit-return?))
         (let
-          [ctx : OptOwnedTransfers
+          [ctx : (OptOwnedTransfers constructors aliases)
             (opt-owned-transfers-new constructors return-alias func)]
           (for [index (iterator.range 0 ctx.flat.count)]
             (match (opt-aggregate-split-at (& ctx.flat) index)
@@ -116806,7 +116805,7 @@
 (define (opt-owned-constructors-build
   [type-segment-bases : i64]
   [index : (& index OptProgramIndex)]
-  [return-alias : (& opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
+  [return-alias : (& aliases opt_i64_i64_map.Map)]) : opt_i64_i64_map.Map
   (let
     [count : i64 (opt-program-index-count index)]
     [rows : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity count)]
@@ -116945,7 +116944,7 @@
   [type-segment-bases : i64]
   [env : (&mut env OptLicmRootEnv)]
   [instr : (& ir.CompilerIrInstr)]) : unit
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(Mov dst source _)
       (opt-owned-path-bind!
         env
@@ -117095,10 +117094,12 @@
   (let
     [allowed : i64
       (opt-owned-path-allowed-role type-segment-bases env (& instr))]
-    (match (compiler-opt-global-shared-view instr)
-      [(AddrOf _ source)
-        (opt-owned-path-audit-use! env 0 bad (Address) (Var source))]
-      [_ unit])
+    (let
+      [view (& instr)]
+      (match view
+        [(AddrOf _ source)
+          (opt-owned-path-audit-use! env 0 bad (Address) (Var source))]
+        [_ unit]))
     (ir.compiler-ir-instr-visit-uses
       instr
       opt-owned-path-audit-use!
@@ -117108,7 +117109,7 @@
 
 (define (opt-owned-global-stores!
   [globals : (& OptOwnedGlobals)]
-  [transfers : (& OptOwnedTransfers)]
+  [transfers : (& (OptOwnedTransfers constructors aliases))]
   [bad : (&mut bad opt_i64_i64_map.Map)]) : unit
   (for [index (iterator.range 0 transfers.flat.count)]
     (match (opt-aggregate-split-at (& transfers.flat) index)
@@ -117195,7 +117196,7 @@
       (for [index (iterator.range 0 functions.len)]
         (let
           [func (ir.compiler-ir-function-seq-ref functions index)]
-          (match (compiler-opt-global-shared-view func)
+          (match (& func)
             [(Function _ params _ _ blocks _)
               (when
                 (opt-blocks-any?
@@ -117209,9 +117210,8 @@
                 [env : OptLicmRootEnv
                   (opt-licm-root-env-with-capacity
                     1
-                    (owned_view.compiler-owned-reference-shared-view
-                      return-alias))]
-                (set! env.owned-globals (compiler-opt-global-shared-view out))
+                    (opt_i64_i64_map.with-capacity 1))]
+                (set! env.owned-globals out)
                 (opt-blocks-visit
                   blocks
                   opt-owned-path-scan!
@@ -117231,15 +117231,19 @@
                   (& env)
                   (&mut bad))
                 (when
-                  (opt-blocks-any? blocks opt-owned-global-store? (& out))
+                  (opt-blocks-any?
+                    blocks
+                    opt-owned-global-store?
+                    (& env.owned-globals))
                   (opt-owned-global-stores!
-                    (& out)
+                    (& env.owned-globals)
                     (&
                       (opt-owned-transfers-new
                         (& constructors)
                         return-alias
                         (& func)))
-                    (&mut bad))))]))))
+                    (&mut bad)))
+                (set! out env.owned-globals))]))))
     (for [slot (iterator.range 0 globals.len)]
       (when
         (opt_i64_i64_map.contains? (& bad) slot)

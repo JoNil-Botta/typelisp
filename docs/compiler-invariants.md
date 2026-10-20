@@ -1378,7 +1378,9 @@ storage. Known runtime calls use the existing external-write effect proof.
 The first slice supports a direct scalar-array descriptor or one fixed-offset
 owning descriptor field. Transfers stay within a block; an inlined replacement
 whose fresh tree crosses blocks is conservatively unproven. The summary is
-built in scratch storage and clones only its job-owned maps out. It carries no
+built in scratch storage and clones only its job-owned maps out. Transfer
+contexts borrow constructor tables with explicit lifetimes; per-function LICM
+environments own their retained summary copy. The summary carries no
 pooled type IDs or process-global symbol cache. Rebuilding after inlining or a
 batch reset establishes a new set of dense buffer identities. LICM tracks cell,
 descriptor and backing-buffer paths separately, resetting byte coordinates at

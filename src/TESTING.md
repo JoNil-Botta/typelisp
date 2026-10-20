@@ -29,6 +29,19 @@ under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
 
+`backend-call-conventions` checks every IR call form, C and TypeLisp extern
+aliases, variadic signatures, private by-value copies and call-fact lifetime.
+`backend-call-convention-facts-parity` compares all convention-dependent ABI
+facts on both targets, including invalid register indices and mixed-bank stack
+boundaries. `backend-call-convention-emission-sites` turns on a `cfg test` hook
+that gives Windows `Internal` calls RSI/RDI as fifth and sixth argument
+registers, then checks where a TypeLisp call, C extern call, C function pointer
+call, closure adapter forwarding to C or TypeLisp, backend runtime helper call,
+TLS-arena intrinsic and variadic call place those arguments. Run these at
+opt0/1/2; a convention-only refactor also needs exact before/after Linux and
+Windows assembly for the integration corpus and compiler, plus the bootstrap
+fixpoints.
+
 `tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
 with colliding numeric names while a decoy interner remains installed. It keeps
 an earlier job's payload readable through peer invalidation, shape rebuilds and

@@ -71733,6 +71733,39 @@ return 0" true)
 
 (test
   load-cse-address-taken-def-store
+  ;; A new local allocation cannot change a load available before it.
+  (opt-load-local-def-check
+    "%2 = load %9 : i64
+     %0 = alloc i64
+     %1 = addr_of %0
+     %3 = load %9 : i64
+     return %3"
+    1
+    1)
+  ;; The fresh pointee of a pointer value is not its destination cell.
+  (opt-load-local-def-check
+    "%6 = alloc i64
+     %0 = mov %6 : (MutPtr i64)
+     %1 = addr_of %0
+     %2 = load %1 : (MutPtr i64)
+     %3 = load %10 : (MutPtr i64)
+     %0 = mov %6 : (MutPtr i64)
+     %4 = load %1 : (MutPtr i64)
+     %5 = load %10 : (MutPtr i64)
+     return %5"
+    4
+    4)
+  ;; Initialization after Alloc still writes the newly addressable cell.
+  (opt-load-local-def-check
+    "%0 = alloc i64
+     %1 = addr_of %0
+     %0 = mov 1 : i64
+     %2 = load %1 : i64
+     %0 = mov 5 : i64
+     %3 = load %1 : i64
+     return %3"
+    2
+    2)
   ;; Different raw pointer types can still read the same local word.
   (opt-load-local-def-check
     "%0 = mov 1 : i64

@@ -14,7 +14,9 @@ loop iterations at opt0/1/2. `load_addr_taken_join.tl` isolates cross-block
 forwarding at opt2; #7975 owns its opt1 frame-slot collision in #8190's matrix.
 The optimizer IR tests separately exercise fold and GVN, typed-store
 precision, non-Mov definitions, pre-write load reuse, function-fact reset,
-join availability and loop carry.
+join availability and loop carry. Fresh local allocation preserves preceding
+loads; subsequent initialization still invalidates them, and assigning a
+fresh pointer does not make its destination cell fresh.
 `load_addr_taken_call.tl` keeps a read-only callee across a local write, and
 `load_addr_taken_cast.tl` reads that storage through another raw-pointer type.
 Both run at opt0/1/2. Call-deduplication IR tests cover Mov, arithmetic, Load,

@@ -3955,6 +3955,22 @@
         907
         44
         12)
+      ;; A collision adds a decimal attempt to the copy-0 spelling; it is
+      ;; still one recognized clone suffix, including under later clones.
+      (opt-location-lookup-ok?
+        spans
+        checked
+        (opt-bounds-span-check "bce_span_probe_body__u01")
+        907
+        44
+        12)
+      (opt-location-lookup-ok?
+        spans
+        checked
+        (opt-bounds-span-check "bce_span_probe_body__u01__licm_false")
+        907
+        44
+        12)
       ;; The fallback never invents a location: an unregistered base stays
       ;; unlocated, a look-alike no clone family produces is not stripped, and
       ;; the retry stays inside the function that owns the check.
@@ -3991,7 +4007,55 @@
           (opt.opt-licm-unswitch-clone-label body-labels body))
         "bce_span_probe_body__licm_false")
       (string.eq (opt.opt-unroll-copy-suffix 0) "__u0")
-      (string.eq (opt.opt-unroll-copy-suffix 12) "__u12"))))
+      (string.eq (opt.opt-unroll-copy-suffix 12) "__u12")
+      (compiler-optimize-spans-ubound-entry-copy-ok?))))
+
+(define (compiler-optimize-spans-ubound-entry-copy-ok?) : bool
+  (let
+    [checked : i64 (opt-test-symbol "main")]
+    [original : ir.CompilerIrInstr (opt-bounds-span-check "head_ok")]
+    [spans : ir.CompilerSourceSpans
+      (ir.compiler-source-spans-insert-instr-located
+        (opt-spans-base)
+        (ir.compiler-ir-symbol-typed-id checked)
+        (& original)
+        907
+        (opt-test-span 44 12))]
+    [result : ir.CompilerIrFunction
+      (opt-ubound-result "main" (opt-ubound-accepted-blocks))]
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks result)]
+    [join : ir.CompilerIrBlock
+      (opt-ubound-block-of blocks (opt-ubound-label "pre__ubound_join"))]
+    [entry-check : ir.CompilerIrInstr (opt-block-instr-at join 1)]
+    [collision-blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "entry:
+ bounds_check %0, %1 message \"head_ok__u0\"
+ return 0")]
+    [collision : i64
+      (opt.opt-ubound-fresh-label
+        (& collision-blocks)
+        (opt-ubound-label "head_ok")
+        (opt.opt-unroll-copy-suffix 0)
+        0)]
+    (and
+      (match (opt-block-instr-at join 1)
+        [(BoundsCheck (I64 0) (Var 4) ok)
+          (string.eq (ir.compiler-ir-label-text ok) "head_ok__u0")]
+        [_ false])
+      (opt-location-lookup-ok? spans checked entry-check 907 44 12)
+      (string.eq (ir.compiler-ir-label-text collision) "head_ok__u01")
+      (opt-location-lookup-ok?
+        spans
+        checked
+        (BoundsCheck (I64 0) (Var 4) collision)
+        907
+        44
+        12)
+      (opt-span-lookup-missing?
+        spans
+        (opt-test-symbol "ubound_other_owner")
+        (opt-block-instr-at join 1)))))
 
 (test
   bounds-check-clone-suffix-span-fallback

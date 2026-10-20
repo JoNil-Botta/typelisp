@@ -1710,6 +1710,12 @@ should be removed.
 
 ### Native integration tests
 
+`ubound_entry_location.tl` exercises the existing multi-block unsigned-bound
+rewrite at opt0/1/2 on both hosts. Its manifest rows pin first-trip and mid-loop
+bounds diagnostics, a negative cursor, skipped loops, and check-before-division
+trap ordering. The optimizer span tests also exercise the actual entry-copy
+producer, collision suffixes and function ownership.
+
 `scripts/verify-integration.sh` contains the heavier native checks that build
 and run TypeLisp programs as native executables. Linux uses the explicit
 `compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses
@@ -2058,6 +2064,16 @@ that require native `as`/`ld` either no-op by design or should be run through a
 Linux environment.
 
 ## Checklist for new coverage
+
+The required `stage2-core-ir-dependency-boundary` gate runs
+[`verify-core-ir-dependencies.sh`](../scripts/verify-core-ir-dependencies.sh)
+with the converged compiler. It compiles the canonical frontend inspector with
+`compiler-dependency-audit`, runs source and fact-stream fixtures, then checks
+the complete shared IR closure across the supported target/cfg space. See the
+[boundary decision](../docs/compiler-core-ir-dependencies.md) for authority,
+scope, policy maintenance and diagnostic-cfg retirement. Extend its table-driven
+fixtures for new dependency forms; retain the bounded resource report and
+measure full gate cost when changing discovery or orchestration.
 
 New behavior gets TypeLisp-owned coverage (see the implementation-language rule
 in [`../CONTRIBUTING.md`](../CONTRIBUTING.md)):

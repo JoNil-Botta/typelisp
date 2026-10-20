@@ -157,6 +157,7 @@ EOF
 run_failure_pair() {
     case_name=$1
     expected=$2
+    expected_code=$3
     failure_source="$WORKDIR/failure-$case_name.tl"
     write_failure_source "$case_name" "$failure_source"
     cp "$failure_source" "$CONSUMER/src/main.tl"
@@ -212,6 +213,10 @@ run_failure_pair() {
         fail "$case_name native diagnostic omitted semantic text"
     grep -F "$expected" "$WORKDIR/failure-$case_name-source.diag" >/dev/null ||
         fail "$case_name source diagnostic omitted semantic text"
+    grep -F "error[$expected_code]:" "$WORKDIR/failure-$case_name-native.diag" >/dev/null ||
+        fail "$case_name native diagnostic has wrong cause code"
+    grep -F "error[$expected_code]:" "$WORKDIR/failure-$case_name-source.diag" >/dev/null ||
+        fail "$case_name source diagnostic has wrong cause code"
     grep -F "macro right.src.lib/$case_name-failure" \
         "$WORKDIR/failure-$case_name-native.diag" >/dev/null ||
         fail "$case_name native diagnostic omitted defining package attribution"
@@ -545,9 +550,9 @@ cmp "$WORKDIR/trusted.program.err" "$WORKDIR/forced-source.program.err" >/dev/nu
     fail "trusted and forced-source consumer stderr differ"
 
 echo "[package-surface-tlci] authored dependency diagnostic differential"
-run_failure_pair authored "surface-right authored diagnostic"
+run_failure_pair authored "surface-right authored diagnostic" E0505
 echo "[package-surface-tlci] dependency fuel diagnostic differential"
-run_failure_pair fuel "compile-time evaluation limit exceeded"
+run_failure_pair fuel "compile-time evaluation limit exceeded" E0507
 
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 rm -rf "$CONSUMER/target"

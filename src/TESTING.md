@@ -1,5 +1,15 @@
 # Selfhost compiler testing
 
+`compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
+author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
+and E0218, and carries rich nested frames through a later compiler job. Run it
+at opt0/1/2. The safety corpus observes every new code through `check` and pairs
+an unfinished generated-macro table cycle with an accepted ordinary import
+cycle. The dependency TLCI surface gate checks E0505/E0507 on both native and
+forced-source routes, retaining its exact route and cross-file attribution
+checks on Linux and Windows. The registry and parser smoke cover parse-code
+round trips and complete `explain` entries.
+
 `linker_ar_dialect_reader_tests.tl` compares GNU `ar`/`ranlib`, LLVM GNU/64-bit
 and BSD archives against recorded `ar tO` and `nm --print-armap` oracles.
 The internal test runs no external tools. It checks duplicate/empty/byte names,

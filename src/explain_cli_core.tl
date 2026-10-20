@@ -853,6 +853,165 @@ See also:
       (set! start (+ start 1)))
     found))
 
+(define (diagnostic-explain-e0501) : String
+  "E0501: macro namespace error
+
+Description:
+    A macro lookup cannot resolve its declaration, or two macros share a
+    module/name identity. Imported macros require provider qualification.
+    A generator cannot use a macro from an unfinished imported table.
+
+Minimal failing example:
+    (defmacro (answer) : Expr (expr-int 1))
+    (defmacro (answer) : Expr (expr-int 2))
+    (define (main) : i64 (answer))
+
+Fix:
+    Keep one declaration per identity, or rename the second. For an imported
+    macro, check the provider and alias at the invocation. Break macro-table
+    cycles by moving shared macros into a separate provider. Ordinary import
+    cycles remain valid under load-once semantics.
+
+See also:
+    SPEC.md, \"Modules\" and \"Macros\"; E0304 (selected import item).
+")
+
+(define (diagnostic-explain-e0502) : String
+  "E0502: invalid macro use
+
+Description:
+    An operand has the wrong syntax or strategy, or a macro is used in a
+    position that cannot accept its result. Existing arity and type errors
+    keep their E02xx codes.
+
+Minimal failing example:
+    (defmacro (take [arm : ExprClause]) : i64 (expr-int 0))
+    (define (main) : i64 (take 42))
+
+Fix:
+    Pass bracket syntax, for example `(take [1 2])`. Use Module macros in
+    imports, Decls macros at module scope and expression macros in expressions.
+    For imported macros, inspect the signature in the provider named by the
+    expansion frame; the operands belong to the caller.
+
+See also:
+    SPEC.md, \"Macros\"; E0202 (arity mismatch); E0218 (compile-time constraint).
+")
+
+(define (diagnostic-explain-e0503) : String
+  "E0503: invalid macro output
+
+Description:
+    A transformer did not produce the expression or declarations promised by
+    its signature. Module output must begin with exactly one module declaration
+    and agree with any existing generated identity. Syntax and type errors
+    inside valid output retain their E01xx/E02xx codes.
+
+Minimal failing example:
+    (defmacro (gen) : Module `(define (answer) : i64 42))
+    (import (gen))
+    (define (main) : i64 0)
+
+Fix:
+    Return the module declaration before its contents:
+    (defmacro (gen) : Module
+      `(begin (module generated.answer) (define (answer) : i64 42)))
+    Follow invocation labels and generated-identity notes to the provider
+    that creates the output, including generators reached by imports.
+
+See also:
+    SPEC.md, \"Macros\"; E0103 (malformed form); E0502 (invalid macro use).
+")
+
+(define (diagnostic-explain-e0504) : String
+  "E0504: macro expansion depth exceeded
+
+Description:
+    Expanding produced syntax exceeded the deterministic nesting limit.
+    Commonly a macro directly or indirectly emits itself. Evaluation fuel
+    is a separate limit, reported as E0507.
+
+Minimal failing example:
+    (defmacro (again) : Expr `(again))
+    (define (main) : i64 (again))
+
+Fix:
+    Make expansion terminate, for example by returning `(expr-int 42)` instead
+    of another call to `again`. Recursive transformers must reduce their input
+    toward a base case. Follow nested invocation labels across imported
+    providers to find indirect recursion.
+
+See also:
+    SPEC.md, \"Macros\"; E0507 (compile-time evaluation limit exceeded).
+")
+
+(define (diagnostic-explain-e0505) : String
+  "E0505: explicit compile-time error
+
+Description:
+    A taken branch called comptime-error with an author-provided String. The
+    text is data and cannot select a different code. Untaken error branches
+    do not report errors. Source and native execution use the same code.
+
+Minimal failing example:
+    (defmacro (reject) : Expr (comptime-error \"reject this input\"))
+    (define (main) : i64 (reject))
+
+Fix:
+    Satisfy the macro's input contract or correct its rejection condition.
+    Here returning `(expr-int 42)` makes the transformer succeed. Read an
+    imported macro's message with its invocation labels and defining-provider
+    attribution to locate the rejected call.
+
+See also:
+    SPEC.md, \"Compile-time evaluation\"; E0506 (compile-time evaluation failed).
+")
+
+(define (diagnostic-explain-e0506) : String
+  "E0506: compile-time evaluation failed
+
+Description:
+    Evaluation encountered an invalid operation, out-of-bounds access,
+    unsupported form or call, or native execution failure. Existing typed
+    constraints keep E0218; nested type errors keep their own codes.
+
+Minimal failing example:
+    (defmacro (bad) : Expr (expr-int (/ 1 0)))
+    (define (main) : i64 (bad))
+
+Fix:
+    Supply a nonzero divisor, for example `(expr-int (/ 42 1))`. Check bounds
+    before indexing and use operations supported during compile-time
+    evaluation. Follow expression spans and expansion labels to the failing
+    helper, which may be defined in another source file.
+
+See also:
+    SPEC.md, \"Compile-time evaluation\"; E0218 (compile-time constraint).
+")
+
+(define (diagnostic-explain-e0507) : String
+  "E0507: compile-time evaluation limit exceeded
+
+Description:
+    Evaluation exhausted its deterministic work budget. Loops, recursion and
+    nested helpers consume the budget on source and native execution routes.
+
+Minimal failing example:
+    (defmacro (spin) : Expr (begin (while true unit) (expr-int 0)))
+    (define (main) : i64 (spin))
+
+Fix:
+    Bound the work and advance toward termination, for example:
+    (defmacro (spin) : Expr
+      (let [i : i64 0]
+        (while (< i 4) (set! i (+ i 1)))
+        (expr-int i)))
+    For imported macros, inspect the helper named in the expansion frames.
+
+See also:
+    SPEC.md, \"Compile-time evaluation\"; E0504 (macro expansion depth exceeded).
+")
+
 (define (diagnostic-explain-lookup [code : String]) : DiagnosticExplainLookup
   (cond
     [(diagnostic-explain-ascii-case-eq
@@ -991,6 +1150,20 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-load-duplicate-module))
       (DiagnosticExplainDetailed (diagnostic-explain-e0307))]
+    [(diagnostic-explain-ascii-case-eq code "E0501")
+      (DiagnosticExplainDetailed (diagnostic-explain-e0501))]
+    [(diagnostic-explain-ascii-case-eq code "E0502")
+      (DiagnosticExplainDetailed (diagnostic-explain-e0502))]
+    [(diagnostic-explain-ascii-case-eq code "E0503")
+      (DiagnosticExplainDetailed (diagnostic-explain-e0503))]
+    [(diagnostic-explain-ascii-case-eq code "E0504")
+      (DiagnosticExplainDetailed (diagnostic-explain-e0504))]
+    [(diagnostic-explain-ascii-case-eq code "E0505")
+      (DiagnosticExplainDetailed (diagnostic-explain-e0505))]
+    [(diagnostic-explain-ascii-case-eq code "E0506")
+      (DiagnosticExplainDetailed (diagnostic-explain-e0506))]
+    [(diagnostic-explain-ascii-case-eq code "E0507")
+      (DiagnosticExplainDetailed (diagnostic-explain-e0507))]
     [else DiagnosticExplainUnknown]))
 
 (define (diagnostic-explain-print-registry-row [index : i64]) : unit

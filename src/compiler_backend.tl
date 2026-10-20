@@ -36819,20 +36819,22 @@
   [function-ids : (& function-ids backend_i64_i64_map.Map)]) : unit
   (when
     (cbi.compiler-builtin-table-current?)
-    (let
-      [state : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
-      (for [slot (iterator.range 0 (array-length state.ids))]
-        (let
-          [id : i64 (array-ref state.ids slot)]
-          (when
-            (and
-              (>= id 0)
-              (cbi.compiler-builtin-backend-runtime-platform-id? id)
-              (not
-                (backend_i64_i64_map.contains?
-                  function-ids
-                  (compiler_ir_types.compiler-ir-symbol-id id))))
-            (compiler_regalloc.compiler-reg-add-platform-call-name! id)))))))
+    ;; The facts own their storage; the captured table is scratch.
+    (with-scratch
+      (let
+        [state : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+        (for [slot (iterator.range 0 (array-length state.ids))]
+          (let
+            [id : i64 (array-ref state.ids slot)]
+            (when
+              (and
+                (>= id 0)
+                (cbi.compiler-builtin-backend-runtime-platform-id? id)
+                (not
+                  (backend_i64_i64_map.contains?
+                    function-ids
+                    (compiler_ir_types.compiler-ir-symbol-id id))))
+              (compiler_regalloc.compiler-reg-add-platform-call-name! id))))))))
 
 (define (compiler-backend-program-index-build-with-backend-state-and-profile-state
   [backend-state : CompilerBackendState]

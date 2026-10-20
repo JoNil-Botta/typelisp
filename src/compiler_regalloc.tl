@@ -21439,8 +21439,25 @@
 (define (compiler-reg-suppress-program-maps! [on : bool]) : unit
   (set! compiler-reg-program-maps-suppressed? on))
 
+;; Raw handle of the arena that owns the current program's call facts, or 0
+;; before the first program. A long-lived compiler retains one program's facts.
+(define compiler-reg-call-facts-arena : i64
+  0)
+
 (define (compiler-reg-clear-c-memory-call-names!) : unit
-  (set! compiler-reg-c-memory-call-names (reg_i64_i64_map.with-capacity 8)))
+  (let
+    [retired : i64 compiler-reg-call-facts-arena]
+    [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+    (set!
+      compiler-reg-c-memory-call-names
+      (in-arena owner (reg_i64_i64_map.with-capacity 8)))
+    (set! compiler-reg-call-facts-arena (arena.raw-handle owner))
+    (when
+      (> retired 0)
+      (unsafe
+        ;; Only the replaced map referenced the retired arena.
+        ;; lint-allow: raw-arena-op
+        (arena.tl_arena_destroy retired)))))
 
 ;; W3 step (c). FROZEN GLOBAL CELLS -- the program fact that licenses
 ;; rematerialising `movq g(%rip), %r`.
@@ -21495,14 +21512,20 @@
 (define (compiler-reg-add-platform-call-name! [name : i64]) : unit
   (compiler-reg-add-call-fact! name 2))
 
+;; The map grows in the facts arena, whatever arena the caller has current.
 (define (compiler-reg-add-call-fact! [name : i64] [flag : i64]) : unit
+  (when
+    (= compiler-reg-call-facts-arena 0)
+    (compiler-reg-clear-c-memory-call-names!))
   (let
     [prior : i64
       (reg_i64_i64_map.get-value-or (& compiler-reg-c-memory-call-names) name 0)]
-    (reg_i64_i64_map.insert-ref!
-      (&mut compiler-reg-c-memory-call-names)
-      name
-      (bit-or prior flag))))
+    (in-arena
+      (arena.Arena compiler-reg-call-facts-arena)
+      (reg_i64_i64_map.insert-ref!
+        (&mut compiler-reg-c-memory-call-names)
+        name
+        (bit-or prior flag)))))
 
 (define (compiler-reg-call-facts [name : i64]) : i64
   (if compiler-reg-program-maps-suppressed?

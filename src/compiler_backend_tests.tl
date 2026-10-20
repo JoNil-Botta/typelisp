@@ -42232,3 +42232,233 @@ user_fn:
                     floats
                     position))
                 "internal and platform stack placement differs"))))))))
+
+;; Six-argument calls of each kind for `backend-call-convention-emission-sites`.
+;; Runtime helper and TLS rows use their builtin ids with a synthetic arity:
+;; only a fifth and sixth argument separate the two conventions' placement.
+(define (compiler-backend-convention-site-extern
+  [name : String]
+  [params : (& params str)]
+  [abi : ast.AstExternAbi]) : ir.CompilerIrExtern
+  (let
+    [id : i64 (compiler-backend-test-symbol (string.copy name))]
+    (Extern
+      id
+      id
+      name
+      (ast.ast-ty-func (compiler-backend-type-list-of params) (& (I64)))
+      abi
+      id
+      (ast.ast-extern-link-input-list-new)
+      false)))
+
+(define (compiler-backend-convention-site-builtin-call
+  [symbol : String]
+  [callee : i64]
+  [ty : ast.AstType]) : ir.CompilerIrFunction
+  (let
+    [values : ir.CompilerIrValueSeq (ir.compiler-ir-value-seq-empty)]
+    (for [value (iterator.range 0 5)]
+      (set!
+        values
+        (ir.compiler-ir-value-seq-prepend (& (I64 (- 15 value))) (& values))))
+    (Function
+      (compiler-backend-test-symbol symbol)
+      (irt.params "x=%0:i64")
+      (I64)
+      2
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "entry")
+          (compiler-backend-test-instr-seq-prepend
+            (Call
+              1
+              callee
+              (ir.compiler-ir-call-args-from-seq
+                (& (ir.compiler-ir-value-seq-prepend (& (Var 0)) (& values))))
+              ty)
+            (ir.compiler-ir-instr-seq1 (Return (Some (I64 0)))))))
+      Ordinary)))
+
+(define (compiler-backend-convention-site-program) : ir.CompilerIrProgram
+  (let
+    [externs : ir.CompilerIrExternBuilder
+      (ir.compiler-ir-extern-builder-with-capacity 2)]
+    [functions : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (compiler-backend-convention-site-builtin-call
+            "conv_rt"
+            cbi.compiler-builtin-id-tl-arena-make
+            (I64)))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (&
+              (compiler-backend-convention-site-builtin-call
+                "conv_tls"
+                cbi.compiler-builtin-id-tl-tls-current-arena-store
+                (Unit)))
+            (& (ir.compiler-ir-function-seq-empty)))))]
+    [texts : (__tl_dyn-array String)
+      (__tl_make-array
+        "function @conv_tl_six(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> i64 vars 6 {
+         entry:
+           return %5
+         }"
+        "function @conv_tl(x=%0:i64) -> i64 vars 2 {
+         entry:
+           %1 = call conv_tl_six(%0, 11, 12, 13, 14, 15) : i64
+           return %1
+         }"
+        "function @conv_c(x=%0:i64) -> i64 vars 2 {
+         entry:
+           %1 = call conv_c_six(%0, 11, 12, 13, 14, 15) : i64
+           return %1
+         }"
+        "function @conv_cfp(fp=%0:i64, x=%1:i64) -> i64 vars 3 {
+         entry:
+           %2 = call_c* %0(%1, 11, 12, 13, 14, 15) : i64
+           return %2
+         }"
+        "function @conv_va(x=%0:i64) -> i64 vars 2 {
+         entry:
+           %1 = call conv_c_va(%0, 11, 12, 13, 14, 15) : i64
+           return %1
+         }"
+        "function @conv_sink(a=%0:i64, b=%1:i64) -> i64 vars 2 {
+         entry:
+           return %0
+         }")]
+    (ir.compiler-ir-extern-builder-push!
+      (&mut externs)
+      (compiler-backend-convention-site-extern "conv_c_six" "iiiiii" (C)))
+    (ir.compiler-ir-extern-builder-push!
+      (&mut externs)
+      (compiler-backend-convention-site-extern "conv_c_va" "i" (CVarargsOpen)))
+    (for [text (& texts)]
+      (set!
+        functions
+        (ir.compiler-ir-function-seq-prepend
+          (& (irt.func (string.copy text)))
+          (& functions))))
+    ;; Both function values get closure entry adapters: one forwards to C and
+    ;; one to TypeLisp.
+    (Program
+      (ir.compiler-ir-global-seq-empty)
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (Function
+            cbi.compiler-builtin-id-fix-main
+            (ir.compiler-ir-param-seq-empty)
+            (I64)
+            1
+            (irt.blocks
+              "entry:
+               %0 = call conv_sink(fn@conv_c_six, fn@conv_tl_six) : i64
+               return %0")
+            Ordinary))
+        (& functions))
+      (ir.compiler-ir-extern-builder-snapshot-seq (& externs)))))
+
+;; The text from `label` through the end of its function's first `ret`.
+(define (compiler-backend-convention-site-body
+  [asm : (& asm str)]
+  [label : (& label str)]) : String
+  (let
+    [start : i64
+      (backend.compiler-backend-string-find-from
+        asm
+        (str_cat.str-cat label ":\n")
+        0)]
+    [end : i64
+      (if (< start 0)
+        -1
+        (backend.compiler-backend-string-find-from asm "    ret\n" start))]
+    (if (< end 0)
+      ""
+      (string.substring asm start (- end start)))))
+
+;; With the test-only Windows Internal registers, a Platform call passes its
+;; fifth and sixth arguments at 32/40(%rsp) and an Internal call passes them in
+;; RSI/RDI. Adapters forward register values; the other rows pass 14 and 15.
+(define (compiler-backend-convention-site-ok?
+  [asm : (& asm str)]
+  [label : (& label str)]
+  [platform? : bool]) : bool
+  (let
+    [body : String (compiler-backend-convention-site-body asm label)]
+    [adapter? : bool (string.is-string-prefix-at label ".L_tl_fn_entry_" 0)]
+    (and
+      (> (string.string-length body) 0)
+      (if adapter?
+        (if platform?
+          (asm-has? body ", 32(%rsp)\n" ", 40(%rsp)\n")
+          (and
+            (asm-has? body ", %rsi\n" ", %rdi\n")
+            (asm-lacks? body ", 32(%rsp)\n" ", 40(%rsp)\n")))
+        (if platform?
+          (and
+            (asm-has? body "$14, 32(%rsp)\n" "$15, 40(%rsp)\n")
+            (asm-lacks? body "$14, %esi\n" "$15, %edi\n"))
+          (and
+            (asm-has? body "$14, %esi\n" "$15, %edi\n")
+            (asm-lacks? body "$14, 32(%rsp)\n" "$15, 40(%rsp)\n")))))))
+
+(test
+  backend-call-convention-emission-sites
+  (cbi.compiler-builtin-initialize-for-parse!)
+  ;; Program indexing makes backend-emitted runtime helpers Platform without an
+  ;; extern alias; stdlib TypeLisp helpers stay Internal.
+  (let
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    (for [kind (iterator.range 0 5)]
+      (test.assert-true
+        (=
+          (match (regalloc.compiler-reg-direct-call-convention
+            (cond
+              [(= kind 0) cbi.compiler-builtin-id-tl-arena-make]
+              [(= kind 1) cbi.compiler-builtin-id-tl-arena-destroy]
+              [(= kind 2) cbi.compiler-builtin-id-tl-profile-alloc-total]
+              [(= kind 3) cbi.compiler-builtin-id-tl-mem-copy8-fwd]
+              [else cbi.compiler-builtin-id-tl-string-concat]))
+            [(Platform) true]
+            [(Internal) false])
+          (< kind 4))
+        "runtime helper selected the wrong calling convention"))
+    (backend.compiler-backend-state-release-final-arenas! index.backend-state))
+  (cabi.compiler-abi-test-windows-internal-six-gp-args! true)
+  (let
+    [emitted : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-program-for-target
+        (compiler-backend-convention-site-program)
+        (backend.CompilerBackendTarget.Windows))]
+    (cabi.compiler-abi-test-windows-internal-six-gp-args! false)
+    (match emitted
+      [(Ok asm)
+        (for [kind (iterator.range 0 8)]
+          (let
+            [label : String
+              (cond
+                [(= kind 0) "_tl_conv_tl"]
+                [(= kind 1) "_tl_conv_c"]
+                [(= kind 2) "_tl_conv_cfp"]
+                [(= kind 3) ".L_tl_fn_entry_conv_c_six"]
+                [(= kind 4) ".L_tl_fn_entry_conv_tl_six"]
+                [(= kind 5) "_tl_conv_rt"]
+                [(= kind 6) "_tl_conv_tls"]
+                [else "_tl_conv_va"])]
+            ;; The TLS intrinsic follows the allocator's classification of its
+            ;; `Call`, which names no C callee.
+            [platform? : bool (not (or (= kind 0) (= kind 4) (= kind 6)))]
+            (test.assert-true
+              (compiler-backend-convention-site-ok? (& asm) (& label) platform?)
+              (str_cat.str-cat
+                label
+                " marshals its call with the wrong convention"
+                ""))))]
+      [(Err _)
+        (test.assert-true false "convention emission-site program failed")])))

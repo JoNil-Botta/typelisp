@@ -71,30 +71,37 @@ enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
 Codegen Parity*) describes its rules.
 
 `CompilerCallConvention` is independent of the target: every register, bank,
-clobber, stack-placement and shadow-space query receives `Internal` or
-`Platform`. Both currently return the same facts. IR function bodies, closure
-descriptors and private SPMD calls use `Internal`; C externs (including varargs),
-C function pointers and C store-result calls use `Platform`. TypeLisp package
-externs retain `Internal`. Backend runtime and C-entered trampolines retain
-their platform contract.
+clobber, stack-placement, shadow-space and aggregate-classification query
+receives `Internal` or `Platform`. Both currently return the same facts. IR
+function bodies, closure descriptors and private SPMD calls use `Internal`; C
+externs (including varargs), C function pointers and C store-result calls use
+`Platform`. TypeLisp package externs retain `Internal`. Helpers the backend
+emits in assembly (the allocator/arena/TLS core, profile shims and bulk memory
+helpers, `compiler-builtin-backend-runtime-platform-id?`) and C-entered
+trampolines retain their platform contract.
 
 `compiler-reg-call-instr-convention` owns call-form classification. Program
 indexing seeds its direct-name facts from extern ABI metadata for logical,
-source and link identities; function definitions take precedence over extern
-aliases. These facts share the existing reset and suppression lifetime
-with memory-transport facts. These are independent bits: a private by-value
+source and link identities, and by builtin id for every backend-emitted helper,
+with or without an extern alias; function definitions take precedence over
+both. These facts share the existing reset and suppression lifetime with
+memory-transport facts. These are independent bits: a private by-value
 TypeLisp parameter needs memory transport without selecting the platform ABI.
 C exports retain `Platform` for their raw link entry, while their IR function
 name uses `Internal`; TypeLisp exports use `Internal` for both names. Inlined
-atomic and volatile operations read the same convention as their argument setup.
-The allocator and both backend emission paths carry the selected convention
-through argument preferences, marshalling and outgoing frame sizing. Incoming
-parameter and saved-register facts use the function's `Internal` contract;
-caller-clobber allocation remains conservative across the call family.
-`backend-call-conventions` pins classification and fact lifetime, and
-`backend-call-convention-facts-parity` checks both targets, register boundaries
-and mixed argument banks. Full before/after assembly and bootstrap comparisons
-guard the no-output-change invariant.
+atomic, volatile and TLS-arena operations read the same convention as their
+argument setup. A closure entry adapter is entered with `Internal` and forwards
+with its target's convention, so a C extern used as a function value receives
+a `Platform` call. The allocator and both backend emission paths carry the
+selected convention through argument preferences, marshalling, aggregate
+classification and outgoing frame sizing. Incoming parameter and saved-register
+facts use the function's `Internal` contract; caller-clobber allocation remains
+conservative across the call family. `backend-call-conventions` pins
+classification and fact lifetime, `backend-call-convention-facts-parity` checks
+both targets, register boundaries and mixed argument banks, and
+`backend-call-convention-emission-sites` pins each emission site's convention.
+Full before/after assembly and bootstrap comparisons guard the no-output-change
+invariant.
 
 The freestanding Linux runtime installs a zeroed TLS mapping before global
 initializers and at each native worker entry. FS:0 holds the mapping's thread

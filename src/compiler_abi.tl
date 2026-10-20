@@ -284,14 +284,47 @@
     [(Linux) false]
     [(Windows) true]))
 
+;; Inline tests can give Windows Internal calls RSI and RDI as their fifth and
+;; sixth integer argument registers, as #8437 plans. Emitted argument placement
+;; then shows which convention each call site selected. The hook exists only
+;; under `cfg test`; every other build shares all facts between conventions.
+(cfg
+  test
+  (define compiler-abi-test-windows-internal-six-gp-args? : bool
+    false))
+
+(cfg
+  test
+  (define (compiler-abi-test-windows-internal-six-gp-args! [on? : bool]) : unit
+    (set! compiler-abi-test-windows-internal-six-gp-args? on?)))
+
+(cfg
+  test
+  (define (compiler-abi-windows-six-gp-args?
+    [convention : CompilerCallConvention]) : bool
+    (and
+      compiler-abi-test-windows-internal-six-gp-args?
+      (match convention
+        [(Internal) true]
+        [(Platform) false]))))
+
+(cfg
+  (not test)
+  (define (compiler-abi-windows-six-gp-args?
+    [_convention : CompilerCallConvention]) : bool
+    false))
+
 ;; Terminal queries share facts until the conventions diverge. Forwarding
 ;; queries retain the caller's convention.
 (define (compiler-abi-gp-arg-register-count
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]) : i64
+  [convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 6]
-    [(Windows) 4]))
+    [(Windows)
+      (if (compiler-abi-windows-six-gp-args? convention)
+        6
+        4)]))
 
 (define (compiler-abi-float-arg-register-count
   [abi : CompilerRegTargetAbi]
@@ -309,7 +342,7 @@
 
 (define (compiler-abi-gp-arg-register-id
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]
+  [convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux)
@@ -327,6 +360,10 @@
         [(= idx 1) compiler-reg-id-rdx]
         [(= idx 2) compiler-reg-id-r8]
         [(= idx 3) compiler-reg-id-r9]
+        [(not (compiler-abi-windows-six-gp-args? convention))
+          compiler-reg-id-invalid]
+        [(= idx 4) compiler-reg-id-rsi]
+        [(= idx 5) compiler-reg-id-rdi]
         [else compiler-reg-id-invalid])]))
 
 (define (compiler-abi-gp-arg-register

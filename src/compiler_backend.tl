@@ -1090,10 +1090,11 @@
   (compiler-backend-target-policy-new target).stack-probe)
 
 (define (compiler-backend-target-sysv-aggregates?
-  [target : CompilerBackendTarget]) : bool
+  [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]) : bool
   (compiler_abi.compiler-abi-aggregate-eightbyte-classes?
     (compiler-backend-target-abi target)
-    (Platform)))
+    convention))
 
 ;; The target's name as diagnostics and fallback categories spell it.
 (define (compiler-backend-target-triple [target : CompilerBackendTarget]) : String
@@ -36810,6 +36811,29 @@
       functions
       (+ index 1))))
 
+;; Helpers the backend emits keep the platform contract whether or not the
+;; program declares an extern alias for them. As for aliases, a function
+;; definition of the same name takes precedence. Builtin ids name nothing in an
+;; intern table they were not loaded for.
+(define (compiler-backend-seed-runtime-platform-call-names
+  [function-ids : (& function-ids backend_i64_i64_map.Map)]) : unit
+  (when
+    (cbi.compiler-builtin-table-current?)
+    (let
+      [state : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+      (for [slot (iterator.range 0 (array-length state.ids))]
+        (let
+          [id : i64 (array-ref state.ids slot)]
+          (when
+            (and
+              (>= id 0)
+              (cbi.compiler-builtin-backend-runtime-platform-id? id)
+              (not
+                (backend_i64_i64_map.contains?
+                  function-ids
+                  (compiler_ir_types.compiler-ir-symbol-id id))))
+            (compiler_regalloc.compiler-reg-add-platform-call-name! id)))))))
+
 (define (compiler-backend-program-index-build-with-backend-state-and-profile-state
   [backend-state : CompilerBackendState]
   [type-segment-bases : i64]
@@ -36854,6 +36878,8 @@
       (compiler-backend-seed-private-memory-call-names
         type-segment-bases
         (compiler-backend-global-shared-view functions))]
+    [_seed-runtime-platform-calls : unit
+      (compiler-backend-seed-runtime-platform-call-names (& function-ids))]
     [extern-signature-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-signatures-into
         type-segment-bases
@@ -37254,7 +37280,7 @@
     [w1-sse : bool
       (compiler-backend-group-word-sse? type-segment-bases program-index ty 1)]
     (and
-      (compiler-backend-target-sysv-aggregates? target)
+      (compiler-backend-target-sysv-aggregates? target convention)
       (not
         (compiler-backend-stack-call-arg-for-banks?
           target
@@ -38350,7 +38376,7 @@
   [ty : compiler_ast_types.AstType]) : bool
   (and
     c-abi?
-    (compiler-backend-target-sysv-aggregates? target)
+    (compiler-backend-target-sysv-aggregates? target (Platform))
     (not
       (string.eq
         (compiler-backend-aggregate-type-name type-segment-bases ty)
@@ -38430,7 +38456,7 @@
       ;; made tail-call stack accounting diverge from emission.
       (cond
         [(and
-            (compiler-backend-target-sysv-aggregates? target)
+            (compiler-backend-target-sysv-aggregates? target convention)
             (> private-memory-size 0))
           (compiler-backend-call-stack-arg-count
             type-segment-bases
@@ -38511,7 +38537,7 @@
                 float1
                 pos1)]
             (if (and
-              (compiler-backend-target-sysv-aggregates? target)
+              (compiler-backend-target-sysv-aggregates? target convention)
               (not linux-group-fits))
               (compiler-backend-call-stack-arg-count
                 type-segment-bases
@@ -38635,7 +38661,7 @@
           type-segment-bases
           (compiler-backend-global-shared-view arg-ty))]
       (if (and
-        (compiler-backend-target-sysv-aggregates? target)
+        (compiler-backend-target-sysv-aggregates? target convention)
         (> private-memory-size 0))
         (compiler-backend-type-list-stack-arg-count-at
           type-segment-bases
@@ -38702,7 +38728,7 @@
                 float1
                 (+ position 1))]
             (if (and
-              (compiler-backend-target-sysv-aggregates? target)
+              (compiler-backend-target-sysv-aggregates? target convention)
               (not linux-group-fits))
               (compiler-backend-type-list-stack-arg-count-at
                 type-segment-bases
@@ -40386,7 +40412,7 @@
       ;; retains the existing unified-position group convention.
       (cond
         [(and
-            (compiler-backend-target-sysv-aggregates? target)
+            (compiler-backend-target-sysv-aggregates? target convention)
             (> private-memory-size 0))
           (let
             [head
@@ -40506,7 +40532,7 @@
                 float1
                 (+ position 1))]
             (if (and
-              (compiler-backend-target-sysv-aggregates? target)
+              (compiler-backend-target-sysv-aggregates? target convention)
               (not linux-group-fits))
               (let
                 [head
@@ -46283,6 +46309,7 @@
 ;; stand in for a call, so %r11 is free.
 (define (compiler-backend-tls-current-arena-inline-asm
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [name-id : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : ResultCompilerBackend
   (cond
@@ -46294,7 +46321,7 @@
     cmovnzq .L_tl_null_arena(%rip), %rax
 "))]
     [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
-      (match (compiler-backend-target-arg-reg target (Platform) 0)
+      (match (compiler-backend-target-arg-reg target convention 0)
         [(Ok reg)
           (Ok
             (str_cat.str-cat
@@ -46315,6 +46342,7 @@
 (define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [arg-assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [dst : i64]
@@ -46353,7 +46381,7 @@
       type-segment-bases
       (compiler-backend-function-state-rax-forward-pending-var backend-state)
       target
-      (Platform)
+      convention
       arg-assignments
       args
       param-types
@@ -46378,6 +46406,7 @@
           [(Ok result-store)
             (match (compiler-backend-tls-current-arena-inline-asm
               target
+              convention
               name
               (compiler-backend-global-shared-view instr-diag))
               [(Ok inline-asm)
@@ -46762,6 +46791,7 @@
         (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
           type-segment-bases
           target
+          convention
           assignments
           arg-assignments
           dst
@@ -55294,6 +55324,7 @@
           (not (compiler-backend-index-function-defines? program-index name)))
           (match (compiler-backend-tls-current-arena-inline-asm
             target
+            convention
             name
             (compiler-backend-global-shared-view instr-diag))
             [(Ok inline-asm)
@@ -61569,7 +61600,7 @@
           ;; stack placement for mixed-bank aggregate words.
           (cond
             [(and
-                (compiler-backend-target-sysv-aggregates? target)
+                (compiler-backend-target-sysv-aggregates? target (Internal))
                 (> private-memory-size 0))
               (let
                 [tail
@@ -61667,7 +61698,7 @@
                     float1
                     (+ position 1))]
                 (if (and
-                  (compiler-backend-target-sysv-aggregates? target)
+                  (compiler-backend-target-sysv-aggregates? target (Internal))
                   (not linux-group-fits))
                   (let
                     [head0
@@ -73287,6 +73318,7 @@
 (define (compiler-backend-closure-adapter-outgoing-frame-space
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
+  [convention : compiler_abi.CompilerCallConvention]
   [args : compiler_ir_types.CompilerIrCallArgs]
   [param-types : compiler_ast_types.AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : i64
@@ -73296,11 +73328,11 @@
     [(CompilerBackendTarget.Linux)
       (compiler-backend-round-up-16
         (+
-          (compiler-backend-outgoing-shadow-space target (Internal))
+          (compiler-backend-outgoing-shadow-space target convention)
           (compiler-backend-linux-stack-arg-space
             type-segment-bases
             target
-            (Internal)
+            convention
             args
             param-types
             program-index)))]
@@ -73309,7 +73341,7 @@
       ;; per forwarded argument so a register-group never overruns the area.
       (compiler-backend-round-up-16
         (+
-          (compiler-backend-outgoing-shadow-space target (Internal))
+          (compiler-backend-outgoing-shadow-space target convention)
           (compiler-backend-windows-words-stack-space
             (* 2 (compiler-backend-call-args-count args)))))]))
 
@@ -73335,6 +73367,10 @@
             0)))]
     [extern-call-info : i64
       (compiler-backend-index-extern-call-info program-index name)]
+    ;; The adapter is entered as an Internal closure, then forwards with its
+    ;; target's own convention: a C extern target receives a Platform call.
+    [convention : compiler_abi.CompilerCallConvention
+      (compiler_regalloc.compiler-reg-direct-call-convention name)]
     [frame : i64
       (+
         (compiler-backend-frame-size
@@ -73352,6 +73388,7 @@
         (compiler-backend-closure-adapter-outgoing-frame-space
           type-segment-bases
           target
+          convention
           (compiler-backend-global-shared-view args)
           (compiler-backend-global-shared-view param-types)
           program-index))]
@@ -73383,7 +73420,7 @@
         (compiler-backend-emit-call-args
           type-segment-bases
           target
-          (Internal)
+          convention
           (compiler_regalloc.compiler-reg-assignment-table-empty)
           args
           (compiler-backend-global-shared-view param-types)

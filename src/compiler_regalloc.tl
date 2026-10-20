@@ -21512,8 +21512,9 @@
 (define (compiler-reg-c-memory-call-name? [name : i64]) : bool
   (!= (bit-and (compiler-reg-call-facts name) 1) 0))
 
-;; A valid direct IR call without a platform extern fact names TypeLisp code.
-;; Implicit backend runtime calls carry Platform at their emission boundary.
+;; Program indexing records a platform fact for every C extern alias and every
+;; runtime helper the backend emits for the platform contract. Any other valid
+;; direct call names TypeLisp code.
 (define (compiler-reg-direct-call-convention [name : i64]) : cabi.CompilerCallConvention
   (if (!= (bit-and (compiler-reg-call-facts name) 2) 0)
     (Platform)

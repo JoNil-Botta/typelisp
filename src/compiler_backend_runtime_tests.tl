@@ -9,6 +9,33 @@
 (import stdlib.test)
 
 (test
+  compiler-builtin-arena-growth-target-lifecycle
+  (ci.intern-reset!)
+  (cbi.compiler-builtin-reset!)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (cbi.compiler-builtin-refresh!)
+  (let
+    [snapshot : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    [empty : cbi.CompilerBuiltinIdsState (cbi.state-new)]
+    [target-id : i64 cbi.compiler-builtin-id-tl-arena-growth-target]
+    (cbi.compiler-builtin-reset!)
+    (cbi.state-install! empty)
+    (test.assert-i64-eq
+      cbi.compiler-builtin-id-tl-arena-growth-target
+      -1
+      "an empty state invalidates the growth target ID")
+    (cbi.state-install! snapshot)
+    (test.assert-true
+      (and
+        (= cbi.compiler-builtin-id-tl-arena-growth-target target-id)
+        (= (cbi.state-ref snapshot 327) target-id)
+        (cbi.compiler-builtin-backend-runtime-core-id? target-id)
+        (cbi.compiler-builtin-backend-runtime-always-provided-id? target-id)
+        (not (cbi.compiler-builtin-backend-tl-alloc-id? target-id))
+        (string.eq (ci.intern-str target-id) "tl_arena_growth_target"))
+      "growth target identity survives reset/install and never treats its owner as an allocation size")))
+
+(test
   compiler-builtin-global-allocator-lifecycle
   (ci.intern-reset!)
   (cbi.compiler-builtin-reset!)
@@ -466,15 +493,15 @@
           "disabled Windows allocator debug emits no arena-debug hooks"))
       (test.assert-true
         (and
-          (= (string.string-length (& linux-ordinary-alloc)) 8156)
-          (= (hash.string-key (& linux-ordinary-alloc)) 2102350846)
-          (= (string.string-length (& linux-profile-ordinary-alloc)) 14789)
-          (= (hash.string-key (& linux-profile-ordinary-alloc)) 2008108109)
-          (= (string.string-length (& windows-ordinary-alloc)) 13900)
-          (= (hash.string-key (& windows-ordinary-alloc)) 1070032323)
-          (= (string.string-length (& windows-profile-ordinary-alloc)) 20573)
-          (= (hash.string-key (& windows-profile-ordinary-alloc)) 1677209187))
-        "ordinary tl_alloc assembly remains byte-identical in base/profile modes")
+          (= (string.string-length (& linux-ordinary-alloc)) 8479)
+          (= (hash.string-key (& linux-ordinary-alloc)) 1080036616)
+          (= (string.string-length (& linux-profile-ordinary-alloc)) 15112)
+          (= (hash.string-key (& linux-profile-ordinary-alloc)) 134123956)
+          (= (string.string-length (& windows-ordinary-alloc)) 14460)
+          (= (hash.string-key (& windows-ordinary-alloc)) 1218029846)
+          (= (string.string-length (& windows-profile-ordinary-alloc)) 21133)
+          (= (hash.string-key (& windows-profile-ordinary-alloc)) 276955845))
+        "ordinary tl_alloc assembly matches the reviewed base/profile payloads")
       (test.assert-true
         (and
           (not

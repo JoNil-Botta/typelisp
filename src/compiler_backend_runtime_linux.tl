@@ -15,6 +15,9 @@ tl_current_arena:
     .quad .L_tl_null_arena
     .section .tbss,\"awT\",@nobits
     .balign 8
+    .globl tl_root_arena
+tl_root_arena:
+    .zero 8
     .globl tl_thread_local_word
 tl_thread_local_word:
     .zero 8
@@ -122,6 +125,7 @@ tl_alloc:
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_atomic
+.L_tl_alloc_ordinary_retry:
     movq 16(%r9), %rcx
     movq %rcx, %rax
     addq %rsi, %rcx
@@ -135,7 +139,7 @@ tl_alloc:
       "    ret
 .L_tl_alloc_atomic:
     testb $16, 48(%r8)
-    jnz .L_tl_alloc_new_arena
+    jnz .L_tl_alloc_thread_root
     movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
@@ -178,7 +182,7 @@ tl_alloc:
 .L_tl_alloc_atomic_map:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
-    addq $64, %rcx
+    addq $72, %rcx
     jc .L_tl_alloc_abort
     cmpq %rdx, %rcx
     jbe .L_tl_alloc_atomic_len_ready
@@ -209,7 +213,7 @@ tl_alloc:
     movq %r9, 40(%rax)
     movq $1, 48(%rax)
     movq $0, 56(%rax)
-    leaq 64(%rax), %r8
+    leaq 72(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
     movq %r8, %rcx
@@ -225,7 +229,7 @@ tl_alloc:
 .L_tl_alloc_new_arena:
     movq $0x4000000, %rdx
     movq %rsi, %rcx
-    addq $64, %rcx
+    addq $72, %rcx
     jc .L_tl_alloc_abort
     cmpq %rdx, %rcx
     jbe .L_tl_alloc_len_ready
@@ -254,6 +258,9 @@ tl_alloc:
     movq 56(%r9), %r10
     jmp .L_tl_alloc_root_ready
 .L_tl_alloc_root_self:
+    movq %fs:0, %r10
+    movq %r10, 64(%rax)
+    movq %rax, %fs:tl_root_arena@tpoff
 "
         (compiler-backend-runtime-linux-register-root-hook arena-debug)
         "    xorq %r10, %r10
@@ -264,7 +271,7 @@ tl_alloc:
     movq %r9, 40(%rax)
     movq $0, 48(%rax)
     movq %rax, 56(%r9)
-    leaq 64(%rax), %r8
+    leaq 72(%rax), %r8
     movq %r8, 8(%rax)
     movq %rcx, 24(%rax)
     movq %r8, %rcx
@@ -277,6 +284,13 @@ tl_alloc:
     ;; extent closes after it -- the last byte this block emits.
     [tail-asm : String
       "    ret
+.L_tl_alloc_thread_root:
+    movq %fs:tl_root_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_new_arena
+    movq %r8, %fs:tl_current_arena@tpoff
+    movq 56(%r8), %r9
+    jmp .L_tl_alloc_ordinary_retry
 .L_tl_alloc_abort:
     jmp tl_oom_abort
     .size tl_alloc, . - tl_alloc
@@ -380,7 +394,7 @@ tl_alloc_aligned:
       "    ret
 .L_tl_alloc_aligned_atomic:
     testb $16, 48(%r8)
-    jnz .L_tl_alloc_aligned_new_arena
+    jnz .L_tl_alloc_aligned_thread_root
     movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
@@ -441,7 +455,7 @@ tl_alloc_aligned:
     movq %rdx, %r10
     addq %r11, %r10
     jc .L_tl_alloc_aligned_abort_locked
-    addq $64, %r10
+    addq $72, %r10
     jc .L_tl_alloc_aligned_abort_locked
     movq $0x4000000, %rdi
     cmpq %rdi, %r10
@@ -475,7 +489,7 @@ tl_alloc_aligned:
     movq %r9, 40(%rax)
     movq $1, 48(%rax)
     movq $0, 56(%rax)
-    leaq 64(%rax), %rcx
+    leaq 72(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rdi, 24(%rax)
     movq %rcx, %rsi
@@ -500,7 +514,7 @@ tl_alloc_aligned:
     movq %rdx, %r10
     addq %r11, %r10
     jc .L_tl_alloc_aligned_abort
-    addq $64, %r10
+    addq $72, %r10
     jc .L_tl_alloc_aligned_abort
     movq $0x4000000, %rdi
     cmpq %rdi, %r10
@@ -532,6 +546,9 @@ tl_alloc_aligned:
     movq 56(%r8), %r9
     jmp .L_tl_alloc_aligned_root_ready
 .L_tl_alloc_aligned_root_self:
+    movq %fs:0, %r9
+    movq %r9, 64(%rax)
+    movq %rax, %fs:tl_root_arena@tpoff
 "
           (if arena-debug
             "    pushq %rdx
@@ -552,7 +569,7 @@ tl_alloc_aligned:
     movq %r8, 40(%rax)
     movq $0, 48(%rax)
     movq %rax, 56(%r8)
-    leaq 64(%rax), %rcx
+    leaq 72(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rdi, 24(%rax)
     movq %rcx, %rsi
@@ -572,6 +589,13 @@ tl_alloc_aligned:
           new-profile
           "    movq %rsi, %rax
     ret
+.L_tl_alloc_aligned_thread_root:
+    movq %fs:tl_root_arena@tpoff, %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_aligned_new_arena
+    movq %r8, %fs:tl_current_arena@tpoff
+    movq 56(%r8), %r9
+    jmp .L_tl_alloc_aligned_ordinary_retry
 .L_tl_alloc_aligned_abort:
     jmp tl_oom_abort
     .size tl_alloc_aligned, . - tl_alloc_aligned
@@ -650,6 +674,31 @@ tl_arena_set:
     "    ret
     .size tl_arena_set, . - tl_arena_set
 
+    .globl tl_arena_growth_target
+    .type tl_arena_growth_target,@function
+tl_arena_growth_target:
+    testq %rdi, %rdi
+    jz .L_tl_arena_growth_thread_root
+    testq $1, 48(%rdi)
+    jnz .L_tl_arena_growth_owner
+    movq %fs:0, %rax
+    cmpq %rax, 64(%rdi)
+    je .L_tl_arena_growth_owner
+.L_tl_arena_growth_thread_root:
+    movq %fs:tl_root_arena@tpoff, %rax
+    testq %rax, %rax
+    jnz .L_tl_arena_growth_done
+    subq $8, %rsp
+    call tl_arena_make
+    addq $8, %rsp
+    movq %rax, %fs:tl_root_arena@tpoff
+.L_tl_arena_growth_done:
+    ret
+.L_tl_arena_growth_owner:
+    movq %rdi, %rax
+    ret
+    .size tl_arena_growth_target, . - tl_arena_growth_target
+
     .globl tl_arena_poison_enable
     .type tl_arena_poison_enable,@function
 tl_arena_poison_enable:
@@ -683,7 +732,9 @@ tl_arena_make_small:
     movq %rax, 40(%rax)
     movq $0, 48(%rax)
     movq %rax, 56(%rax)
-    leaq 64(%rax), %rcx
+    movq %fs:0, %r10
+    movq %r10, 64(%rax)
+    leaq 72(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -716,7 +767,9 @@ tl_arena_make_atomic:
     movq %rax, 40(%rax)
     movq $1, 48(%rax)
     movq %rax, 56(%rax)
-    leaq 64(%rax), %rcx
+    movq %fs:0, %r10
+    movq %r10, 64(%rax)
+    leaq 72(%rax), %rcx
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
@@ -743,6 +796,11 @@ tl_arena_destroy:
     movq 40(%rbx), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_loop
+    movq %fs:tl_root_arena@tpoff, %rax
+    cmpq %r12, %rax
+    jne .L_tl_arena_destroy_root_kept
+    movq $0, %fs:tl_root_arena@tpoff
+.L_tl_arena_destroy_root_kept:
 "
     (if arena-debug
       "    testq $8, 48(%r12)
@@ -961,7 +1019,12 @@ tl_region_reset:
 .L_tl_region_reset_all_debug_unregister_done:
 "
       "")
-    "    leaq .L_tl_null_arena(%rip), %r9
+    "    movq %fs:tl_root_arena@tpoff, %rax
+    cmpq %r8, %rax
+    jne .L_tl_region_reset_thread_root_kept
+    movq $0, %fs:tl_root_arena@tpoff
+.L_tl_region_reset_thread_root_kept:
+    leaq .L_tl_null_arena(%rip), %r9
     movq %r9, %fs:tl_current_arena@tpoff
     xorq %rbx, %rbx
     testq %r8, %r8

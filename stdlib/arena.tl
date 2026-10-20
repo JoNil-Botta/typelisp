@@ -131,6 +131,12 @@
 ;: Runtime hook backing `current`.
 (extern (tl_arena_current) : i64)
 
+;: Select an owner root writable by this thread, or its independent default
+;: root. The raw owner must be zero or a live root; scoped/current arenas are
+;: never used as a foreign-owner fallback. #8703 consumes this runtime hook.
+(unsafe
+  (extern (tl_arena_growth_target [owner : i64]) : i64))
+
 ;: Runtime hook backing `mark`.
 (extern (tl_region_mark) : i64)
 

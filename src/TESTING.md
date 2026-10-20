@@ -1,5 +1,17 @@
 # Selfhost compiler testing
 
+`arena_growth_target.tl` and its minimal companion run at opt0/1/2 on both
+hosts. Keep the first worker query before any managed allocation, the
+foreign-owner check inside a third arena, and both allocator root-construction
+paths. Reset-all/destroy must retire a matching cached root and preserve an
+unrelated one. The minimal fixture also links without requesting `tl_alloc`.
+The compiler arena debug matrix repeats both fixtures with debug registration
+and combined profiling/backtrace instrumentation; poison is enabled by the
+fixture before its reset/recreate checks. The runtime leaf tests retain exact
+payload pins and verify builtin capture/install without classifying an owner
+address as an allocation size. The safety corpus rejects a safe call to the
+raw extern.
+
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
 and E0218, and carries rich nested frames through a later compiler job. Run it

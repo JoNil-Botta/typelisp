@@ -58,6 +58,46 @@ broader pass/analysis safety contracts. Shared checked tooling facts remain the
 migration in [#7110](https://github.com/JoNil-Botta/typelisp/issues/7110).
 Extend these authorities instead of introducing parallel registries.
 
+## Arena runtime interface
+
+Arena handles identify roots; physical growth segments resolve their root
+through word 40. The platform runtime leaves maintain this segment layout:
+
+| Offset | Field |
+| --- | --- |
+| 0 | Previous physical segment |
+| 8 | Data start |
+| 16 | Allocation bump |
+| 24 | Reservation end |
+| 32 | Retired segment chain |
+| 40 | Stable root |
+| 48 | Flags, including atomic allocation bit 1 |
+| 56 | Current physical segment, on roots |
+| 64 | Linux root creator; Windows committed end |
+| 72 | Windows root creator |
+
+Dynamic segment data starts at 72 bytes on Linux and 80 on Windows. Only roots
+need a creator tag. Linux records FS:0; Windows records GS:0x30. The private
+static aggregate root is atomic, so its legacy static-page layout needs no tag.
+The null-arena sentinel is also recognized before accessing a creator field.
+
+`tl_arena_growth_target(owner)` accepts zero or a live root. It returns an
+atomic owner, an owner created by the calling thread, or the calling thread's
+independent default root. Zero selects that default root. The fallback never
+uses an ambient first-class arena and does not change the current arena. It
+creates a root lazily through the ordinary root constructor, including debug
+registration. Reserving an empty arena consumes no profiled payload bytes.
+The unsafe stdlib extern is the prerequisite consumed next by owner-aware
+container growth in [#8703](https://github.com/JoNil-Botta/typelisp/issues/8703).
+
+Linux stores the default root in `tl_root_arena` TLS alongside
+`tl_current_arena`. Windows GS:0x28 points to a private per-thread cell: current
+arena at offset 0 and default root at offset 8. Main and native worker entry
+initialize this cell before allocation. Restoring the null-arena sentinel
+allows the next allocation to resume the cached default root. Reset-all and
+destruction clear that cache only when they unmap its root; reclaiming another
+arena preserves it. See the [thread and lifetime invariant](compiler-invariants.md#arena-growth-targets).
+
 ## Evolving the design
 
 Any worker may improve the design with evidence in its claimed task. There is

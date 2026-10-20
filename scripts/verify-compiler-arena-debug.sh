@@ -77,6 +77,35 @@ for source in global_aggregate_storage_lifetime global_aggregate_storage_threads
 done
 echo "global storage debug/profile/backtrace matrix passed (9 cases, $HOST_OS)"
 
+# Root selection and cache teardown must also preserve debug registration and
+# profile accounting when a worker has no current arena or switches to another.
+for source in arena_growth_target arena_growth_target_minimal; do
+    for variant in debug combined; do
+        for opt in 0 1 2; do
+            asm="$WORKDIR/$source-$variant-opt$opt.s"
+            binary="$WORKDIR/$source-$variant-opt$opt$BIN_EXT"
+            set -- --cfg compiler-arena-debug
+            if [ "$variant" = combined ]; then
+                set -- "$@" --cfg compile-profile --backtrace
+            fi
+            "$SUPPORT" compile "tests/integration/$source.tl" \
+                --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) \
+                --stdlib-root stdlib --stdlib-root src --opt-level "$opt" \
+                "$@" -o "$asm"
+            grep -F '.L_tl_arena_debug_roots:' "$asm" >/dev/null ||
+                fail "growth target $variant opt$opt omitted debug registration"
+            assemble_and_link "growth target $source $variant opt$opt" "$asm" \
+                "$WORKDIR/$source-$variant-opt$opt.$OBJ_EXT" "$binary"
+            status=0
+            "$binary" > "$binary.stdout" 2> "$binary.stderr" || status=$?
+            [ "$status" -eq 42 ] || fail "growth target $source $variant opt$opt: exit $status"
+            [ ! -s "$binary.stdout" ] && [ ! -s "$binary.stderr" ] ||
+                fail "growth target $source $variant opt$opt: unexpected output"
+        done
+    done
+done
+echo "arena growth target debug/profile/backtrace matrix passed (12 cases, $HOST_OS)"
+
 # Linux's private TLS word must also work with the debug renderer enabled in
 # this emitter. Ordinary compilers deliberately omit that renderer.
 if [ "$HOST_OS" = linux ]; then

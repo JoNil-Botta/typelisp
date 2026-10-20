@@ -76728,21 +76728,34 @@ tl_shared_object_init:
 "))
 
 ;; The register a TLS store borrows under the shared-object code model, by
-;; enclosing function, or "" for none. An initial-exec store reaches the
-;; variable through its GOT offset, which must be loaded into a register first.
+;; enclosing function and TLS symbol, or "" for none. An initial-exec store
+;; reaches the variable through its GOT offset, loaded into a register first.
 ;; Each runtime helper that stores TLS names a register dead at its stores.
 ;; Generated code stores TLS only through the current-arena store builtin,
 ;; which is lowered at a call site, where %rax is call-clobbered.
 (define (compiler-backend-shared-object-tls-scratch
-  [function : (& function str)]) : String
+  [function : (& function str)]
+  [symbol : (& symbol str)]) : String
   (cond
+    [(and
+        (string.eq symbol "tl_root_arena")
+        (or
+          (string.eq function "tl_alloc")
+          (string.eq function "tl_alloc_aligned")))
+      ;; Reservation end has already been computed; r10 is overwritten before
+      ;; its next use. rax must retain the new root for header initialization.
+      "%r10"]
     [(or
         (string.eq function "tl_alloc")
         (string.eq function "tl_alloc_aligned")
         (string.eq function "tl_arena_set")
         (string.eq function "tl_backtrace_stack_set"))
       "%rax"]
-    [(string.eq function "tl_alloc_global") "%r11"]
+    [(or
+        (string.eq function "tl_alloc_global")
+        (string.eq function "tl_arena_growth_target")
+        (string.eq function "tl_arena_destroy"))
+      "%r11"]
     [(string.eq function "tl_region_reset") "%rbx"]
     [(string.eq function "tl_thread_init") "%rdi"]
     [(string.is-string-prefix-at function "tl_" 0) ""]
@@ -76822,7 +76835,9 @@ tl_shared_object_init:
               (> (string.string-length (& store-symbol)) 0))
             (let
               [scratch : String
-                (compiler-backend-shared-object-tls-scratch function)]
+                (compiler-backend-shared-object-tls-scratch
+                  function
+                  (& store-symbol))]
               (if (or
                 (= (string.string-length (& scratch)) 0)
                 (string.eq scratch source))
@@ -81207,10 +81222,11 @@ tl_shared_object_init:
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringSeq
   (let
     [symbols : BackendStringSeq
-      (BackendStringSeq (__tl_make-array String 17) 0)]
+      (BackendStringSeq (__tl_make-array String 18) 0)]
     (compiler-backend-string-push! (&mut symbols) "tl_alloc")
     (compiler-backend-string-push! (&mut symbols) "tl_alloc_aligned")
     (compiler-backend-string-push! (&mut symbols) "tl_arena_current")
+    (compiler-backend-string-push! (&mut symbols) "tl_arena_growth_target")
     (compiler-backend-string-push! (&mut symbols) "tl_arena_set")
     (compiler-backend-string-push! (&mut symbols) "tl_arena_make_small")
     (compiler-backend-string-push! (&mut symbols) "tl_arena_make_atomic")
@@ -81277,6 +81293,10 @@ tl_shared_object_init:
       (compiler-backend-plan-provides-id?
         plan
         cbi.compiler-builtin-id-tl-arena-current)]
+    [(string.eq name "tl_arena_growth_target")
+      (compiler-backend-plan-provides-id?
+        plan
+        cbi.compiler-builtin-id-tl-arena-growth-target)]
     [(string.eq name "tl_arena_debug_protect_never_reset")
       (compiler-backend-plan-provides-id?
         plan

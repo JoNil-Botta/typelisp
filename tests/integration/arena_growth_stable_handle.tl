@@ -17,7 +17,7 @@
     (let
       [mark : arena.ArenaMark (arena.mark)]
       ; Leave exactly one small allocation for the overflow segment.
-      (tl_alloc (cast 67108800 : u64))
+      (tl_alloc (cast (cfg windows 67108784 67108792) : u64))
       (tl_alloc (cast 8 : u64))
       (let
         [grown-head : i64 (raw-head owner)]

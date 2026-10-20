@@ -112,6 +112,34 @@ thread, survives arena changes and must never escape to another thread.
 Issue [#8638](https://github.com/JoNil-Botta/typelisp/issues/8638) consumes this
 primitive for the private I/O error channel; Windows uses its native TLS API.
 
+### Arena growth targets
+
+The [arena runtime interface](compiler-architecture.md#arena-runtime-interface)
+defines the header offsets and separate current/default-root state. Every
+dynamic root constructor, including aligned allocation, initializes its creator
+before publishing the root. Atomic-owner selection reads only immutable flags;
+ordinary-owner selection reads only the immutable creator. Selection does not
+inspect another thread's mutable bump or current-segment state. Identity reuse
+after a thread exits is safe because its arenas remain mapped and it no longer
+allocates in them. This does not authorize concurrent reset or destruction:
+the raw owner must remain live for the operation.
+
+Lazy default-root creation registers the same debug lifetime as other roots
+and leaves current-arena state and payload allocation counters unchanged.
+Normal and aligned allocation from the sentinel reuse that root. A cache must
+never retain an unmapped root: reset-all and destroy clear a matching default
+root before unmapping it, while preserving an unrelated cached root. Callers
+of unsafe destruction still must restore a live current arena themselves.
+Windows' per-thread state cell has thread lifetime, independent of arena
+reclamation, matching the lifetime of Linux's TLS mapping.
+
+`arena_growth_target` and `arena_growth_target_minimal` exercise the public
+extern at opt0/1/2 on both hosts. They cover fresh workers, foreign atomic and
+ordinary owners, a distinct current arena, normal/aligned root creation,
+sentinel restoration, poison reset and destruction. The debug runtime matrix
+also runs these cases with debug registration, allocation profiling and
+backtraces enabled.
+
 The Linux shared-object code model
 ([#8257](https://github.com/JoNil-Botta/typelisp/issues/8257)) makes an ELF
 emission link with `-shared` into a DSO. It is the code-generation half of the

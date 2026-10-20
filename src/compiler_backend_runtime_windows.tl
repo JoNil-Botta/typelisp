@@ -5,10 +5,18 @@
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
-  (str_cat.str-cat "    movq %gs:0x28, " dst "\n"))
+  (str_cat.str-cat
+    "    movq %gs:0x28, "
+    (clone dst)
+    "\n    movq 0("
+    (clone dst)
+    "), "
+    dst
+    "\n"))
 
 (define (compiler-backend-current-arena-store [src : String]) : String
-  (str_cat.str-cat "    movq " src ", %gs:0x28\n"))
+  ;; The call/intrinsic and global-allocation clients leave r11 volatile.
+  (str_cat.str-cat "    movq %gs:0x28, %r11\n    movq " src ", 0(%r11)\n"))
 
 ;; Offset in an arena segment header of the bound an inline bump allocation
 ;; must stay below: the end of the committed part of the segment.
@@ -191,8 +199,7 @@ _tl_start:
 "
       "")
     "    call tl_setup_argv
-    leaq .L_tl_null_arena(%rip), %rax
-    movq %rax, %gs:0x28
+    call tl_arena_thread_init
     leaq .L_tl_stack_overflow_filter(%rip), %rcx
     call SetUnhandledExceptionFilter
     xorl %ecx, %ecx
@@ -339,7 +346,27 @@ tl_boot_pool:
   [profile : bool]
   [arena-debug : bool]) : String
   (str_cat.str-cat
-    "    .globl tl_arena_current
+    "    .globl tl_arena_thread_init
+tl_arena_thread_init:
+    subq $40, %rsp
+    xorq %rcx, %rcx
+    movq $4096, %rdx
+    movq $0x3000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_arena_thread_init_fail
+    leaq .L_tl_null_arena(%rip), %rcx
+    movq %rcx, 0(%rax)
+    movq $0, 8(%rax)
+    movq %rax, %gs:0x28
+    addq $40, %rsp
+    ret
+.L_tl_arena_thread_init_fail:
+    movl $134, %ecx
+    call ExitProcess
+
+    .globl tl_arena_current
 tl_arena_current:
 "
     (compiler-backend-current-arena-load "%rax")
@@ -361,6 +388,31 @@ tl_arena_set:
 "
     (compiler-backend-current-arena-store "%rcx")
     "    ret
+
+    .globl tl_arena_growth_target
+tl_arena_growth_target:
+    testq %rcx, %rcx
+    jz .L_tl_arena_growth_thread_root
+    testq $1, 48(%rcx)
+    jnz .L_tl_arena_growth_owner
+    movq %gs:0x30, %rax
+    cmpq %rax, 72(%rcx)
+    je .L_tl_arena_growth_owner
+.L_tl_arena_growth_thread_root:
+    movq %gs:0x28, %r10
+    movq 8(%r10), %rax
+    testq %rax, %rax
+    jnz .L_tl_arena_growth_done
+    subq $40, %rsp
+    call tl_arena_make
+    movq %gs:0x28, %r10
+    movq %rax, 8(%r10)
+    addq $40, %rsp
+.L_tl_arena_growth_done:
+    ret
+.L_tl_arena_growth_owner:
+    movq %rcx, %rax
+    ret
 
     .globl tl_arena_poison_enable
 tl_arena_poison_enable:
@@ -407,7 +459,9 @@ tl_arena_make_small:
     movq %rbx, 40(%rbx)
     movq $0, 48(%rbx)
     movq %rbx, 56(%rbx)
-    leaq 72(%rbx), %rcx
+    movq %gs:0x30, %r10
+    movq %r10, 72(%rbx)
+    leaq 80(%rbx), %rcx
     movq %rcx, 8(%rbx)
     movq %rcx, 16(%rbx)
     movq %rbx, %rsi
@@ -482,7 +536,9 @@ tl_arena_make_atomic:
     movq %rbx, 40(%rbx)
     movq $1, 48(%rbx)
     movq %rbx, 56(%rbx)
-    leaq 72(%rbx), %rcx
+    movq %gs:0x30, %r10
+    movq %r10, 72(%rbx)
+    leaq 80(%rbx), %rcx
     movq %rcx, 8(%rbx)
     movq %rcx, 16(%rbx)
     movq %rbx, %rsi
@@ -545,6 +601,11 @@ tl_arena_destroy:
     movq 40(%rsi), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_win_loop
+    movq %gs:0x28, %r10
+    cmpq %r12, 8(%r10)
+    jne .L_tl_arena_destroy_win_root_kept
+    movq $0, 8(%r10)
+.L_tl_arena_destroy_win_root_kept:
 "
     (if arena-debug
       "    testq $8, 48(%r12)
@@ -712,6 +773,7 @@ tl_alloc:
     andq $-8, %rcx
     movq %rcx, %r11
     movq %gs:0x28, %r8
+    movq 0(%r8), %r8
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_win_atomic
@@ -730,7 +792,7 @@ tl_alloc:
       "    ret
 .L_tl_alloc_win_atomic:
     testb $16, 48(%r8)
-    jnz .L_tl_alloc_new_arena_entry
+    jnz .L_tl_alloc_win_thread_root
     movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
@@ -747,6 +809,15 @@ tl_alloc:
 "
       atomic-fast-profile
       "    ret
+.L_tl_alloc_win_thread_root:
+    movq %gs:0x28, %r8
+    movq 8(%r8), %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_new_arena_entry
+    movq %gs:0x28, %r9
+    movq %r8, 0(%r9)
+    movq 56(%r8), %r9
+    jmp .L_tl_alloc_win_ordinary_retry
 .L_tl_alloc_commit_arena_entry:
     push %rbp
     mov %rsp, %rbp
@@ -829,7 +900,7 @@ tl_alloc:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx
     movq %r11, %rax
-    addq $72, %rax
+    addq $80, %rax
     jc .L_tl_alloc_atomic_abort_locked
     cmpq %rdx, %rax
     jbe .L_tl_alloc_atomic_len_ready
@@ -845,7 +916,7 @@ tl_alloc:
     movq %rax, -32(%rbp)
     movq -8(%rbp), %r11
     movq %r11, %rdx
-    addq $72, %rdx
+    addq $80, %rdx
     jc .L_tl_alloc_atomic_commit_failed
     cmpq $0x400000, %rdx
     jae .L_tl_alloc_atomic_commit_len_ready
@@ -871,7 +942,7 @@ tl_alloc:
     jc .L_tl_alloc_atomic_commit_failed
     movq 56(%r9), %r8
     movq %r8, 0(%rax)
-    leaq 72(%rax), %r8
+    leaq 80(%rax), %r8
     movq %r8, 8(%rax)
     movq %r8, 16(%rax)
     movq %rcx, 24(%rax)
@@ -930,7 +1001,7 @@ tl_alloc:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx
     movq %r11, %rax
-    addq $72, %rax
+    addq $80, %rax
     jc .L_tl_alloc_abort
     cmpq %rdx, %rax
     jbe .L_tl_alloc_len_ready
@@ -946,7 +1017,7 @@ tl_alloc:
     movq %rax, -32(%rbp)
     movq -8(%rbp), %r11
     movq %r11, %rdx
-    addq $72, %rdx
+    addq $80, %rdx
     jc .L_tl_alloc_abort
     cmpq $0x400000, %rdx
     jae .L_tl_alloc_commit_len_ready
@@ -970,8 +1041,9 @@ tl_alloc:
     addq %rdx, %rcx
     jc .L_tl_alloc_abort
     movq %gs:0x28, %r8
+    movq 0(%r8), %r8
     movq %r8, -48(%rbp)
-    leaq 72(%rax), %r8
+    leaq 80(%rax), %r8
     movq %r8, 8(%rax)
     movq %r8, 16(%rax)
     movq %rcx, 24(%rax)
@@ -982,6 +1054,10 @@ tl_alloc:
     movq 56(%r8), %r10
     jmp .L_tl_alloc_win_root_ready
 .L_tl_alloc_win_root_self:
+    movq %gs:0x30, %r10
+    movq %r10, 72(%rax)
+    movq %gs:0x28, %r10
+    movq %rax, 8(%r10)
 "
       (compiler-backend-runtime-windows-register-root-hook arena-debug)
       "    xorq %r10, %r10
@@ -991,7 +1067,8 @@ tl_alloc:
     movq %r8, 40(%rax)
     movq $0, 48(%rax)
     movq %rax, 56(%r8)
-    movq %r8, %gs:0x28
+    movq %gs:0x28, %r10
+    movq %r8, 0(%r10)
     movq -40(%rbp), %rdx
     addq %rax, %rdx
     movq %rdx, 64(%rax)
@@ -1106,6 +1183,7 @@ tl_alloc_aligned:
     jnz .L_tl_alloc_aligned_win_abort
     movq %r11, -16(%rbp)
     movq %gs:0x28, %r8
+    movq 0(%r8), %r8
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_aligned_win_atomic
@@ -1134,6 +1212,15 @@ tl_alloc_aligned:
     movq %rbp, %rsp
     popq %rbp
     ret
+.L_tl_alloc_aligned_win_thread_root:
+    movq %gs:0x28, %r8
+    movq 8(%r8), %r8
+    testq %r8, %r8
+    jz .L_tl_alloc_aligned_win_new_arena
+    movq %gs:0x28, %r9
+    movq %r8, 0(%r9)
+    movq 56(%r8), %r9
+    jmp .L_tl_alloc_aligned_win_ordinary_retry
 .L_tl_alloc_aligned_win_commit:
     movq %r9, -24(%rbp)
     movq %r9, %rcx
@@ -1145,7 +1232,7 @@ tl_alloc_aligned:
     jmp .L_tl_alloc_aligned_win_ordinary_retry
 .L_tl_alloc_aligned_win_atomic:
     testb $16, 48(%r8)
-    jnz .L_tl_alloc_aligned_win_new_arena
+    jnz .L_tl_alloc_aligned_win_thread_root
     movq %r8, -24(%rbp)
     movq 56(%r8), %r8
     movq 16(%r8), %rax
@@ -1233,7 +1320,7 @@ tl_alloc_aligned:
     movq -8(%rbp), %r10
     addq -16(%rbp), %r10
     jc .L_tl_alloc_aligned_win_abort_locked
-    addq $72, %r10
+    addq $80, %r10
     jc .L_tl_alloc_aligned_win_abort_locked
     movq $0x4000000, %rdx
     cmpq %rdx, %r10
@@ -1252,7 +1339,7 @@ tl_alloc_aligned:
     movq -8(%rbp), %r10
     addq -16(%rbp), %r10
     jc .L_tl_alloc_aligned_win_atomic_initial_fail
-    addq $72, %r10
+    addq $80, %r10
     jc .L_tl_alloc_aligned_win_atomic_initial_fail
     cmpq $0x400000, %r10
     jae .L_tl_alloc_aligned_win_atomic_commit_len_ready
@@ -1282,7 +1369,7 @@ tl_alloc_aligned:
     movq $1, 48(%rax)
     movq $0, 32(%rax)
     movq $0, 56(%rax)
-    leaq 72(%rax), %rcx
+    leaq 80(%rax), %rcx
     movq %rcx, 8(%rax)
     movq -64(%rbp), %r10
     movq %r10, 24(%rax)
@@ -1347,7 +1434,7 @@ tl_alloc_aligned:
     movq -8(%rbp), %r10
     addq -16(%rbp), %r10
     jc .L_tl_alloc_aligned_win_abort
-    addq $72, %r10
+    addq $80, %r10
     jc .L_tl_alloc_aligned_win_abort
     movq $0x4000000, %rdx
     cmpq %rdx, %r10
@@ -1366,7 +1453,7 @@ tl_alloc_aligned:
     movq -8(%rbp), %r10
     addq -16(%rbp), %r10
     jc .L_tl_alloc_aligned_win_initial_fail
-    addq $72, %r10
+    addq $80, %r10
     jc .L_tl_alloc_aligned_win_initial_fail
     cmpq $0x400000, %r10
     jae .L_tl_alloc_aligned_win_commit_len_ready
@@ -1390,11 +1477,16 @@ tl_alloc_aligned:
     jc .L_tl_alloc_aligned_win_abort
     movq %r11, -64(%rbp)
     movq %gs:0x28, %r8
+    movq 0(%r8), %r8
     testb $16, 48(%r8)
     jnz .L_tl_alloc_aligned_win_root_self
     movq 56(%r8), %r9
     jmp .L_tl_alloc_aligned_win_root_ready
 .L_tl_alloc_aligned_win_root_self:
+    movq %gs:0x30, %r9
+    movq %r9, 72(%rax)
+    movq %gs:0x28, %r9
+    movq %rax, 8(%r9)
 "
           (compiler-backend-runtime-windows-register-root-hook arena-debug)
           "    xorq %r9, %r9
@@ -1405,7 +1497,7 @@ tl_alloc_aligned:
     movq $0, 48(%rax)
     movq $0, 32(%rax)
     movq %rax, 56(%r8)
-    leaq 72(%rax), %rcx
+    leaq 80(%rax), %rcx
     movq %rcx, 8(%rax)
     movq -64(%rbp), %r10
     movq %r10, 24(%rax)
@@ -1423,7 +1515,8 @@ tl_alloc_aligned:
     addq -8(%rbp), %r10
     jc .L_tl_alloc_aligned_win_abort
     movq %r10, 16(%rax)
-    movq %r8, %gs:0x28
+    movq %gs:0x28, %r9
+    movq %r8, 0(%r9)
     subq %rcx, %r10
     movq -8(%rbp), %rdx
 "
@@ -1492,6 +1585,7 @@ tl_region_reset:
     testq %r12, %r12
     jz .L_tl_region_reset_win_all
     movq %gs:0x28, %r13
+    movq 0(%r13), %r13
     testb $16, 48(%r13)
     jnz .L_tl_region_reset_win_invalid
 "
@@ -1593,6 +1687,7 @@ tl_region_reset:
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
     movq %gs:0x28, %r14
+    movq 0(%r14), %r14
     testb $16, 48(%r14)
     cmovnzq .L_tl_null_arena(%rip), %r14
 "
@@ -1614,8 +1709,13 @@ tl_region_reset:
 .L_tl_region_reset_win_all_debug_unregister_done:
 "
       "")
-    "    leaq .L_tl_null_arena(%rip), %r12
-    movq %r12, %gs:0x28
+    "    movq %gs:0x28, %r10
+    cmpq %r14, 8(%r10)
+    jne .L_tl_region_reset_win_thread_root_kept
+    movq $0, 8(%r10)
+.L_tl_region_reset_win_thread_root_kept:
+    leaq .L_tl_null_arena(%rip), %r12
+    movq %r12, 0(%r10)
     xorq %r12, %r12
     testq %r14, %r14
     jz .L_tl_region_reset_win_done
@@ -1682,8 +1782,9 @@ tl_thread_entry_ptr:
     pushq %r12
     pushq %r13
     subq $40, %rsp
-    leaq .L_tl_null_arena(%rip), %rax
-    movq %rax, %gs:0x28
+    movq %rcx, 32(%rsp)
+    call tl_arena_thread_init
+    movq 32(%rsp), %rcx
     movq (%rcx), %r11
     movq 8(%rcx), %rdx
     movq 16(%rcx), %r12
@@ -1955,6 +2056,7 @@ tl_array_zero:
     cmpq $64, %rdx
     jb .Ltl_array_zero_fill
     movq %gs:0x28, %r8
+    movq 0(%r8), %r8
     testq %r8, %r8
     jz .Ltl_array_zero_fill
     movq 56(%r8), %r8

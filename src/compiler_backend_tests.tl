@@ -1353,7 +1353,10 @@
 
 (define (compiler-backend-runtime-tls-windows-wrapper-asm-ok? [asm : String]) : bool
   (and
-    (asm-has? asm "    movq %gs:0x28, %rax\n" "    movq %rcx, %gs:0x28\n")
+    (asm-has?
+      asm
+      "    movq %gs:0x28, %rax\n    movq 0(%rax), %rax\n"
+      "    movq %gs:0x28, %r11\n    movq %rcx, 0(%r11)\n")
     (asm-lacks?
       asm
       "    call tl_tls_current_arena_load\n"
@@ -22779,6 +22782,9 @@ f:
       (compiler-backend-runtime-helper-full-plan)]
     (and
       (compiler-backend-runtime-helper-inventory-core-ok? plan)
+      (compiler-backend-runtime-helper-inventory-core-symbol-ok?
+        plan
+        "tl_arena_growth_target")
       (compiler-backend-runtime-helper-inventory-stdlib-ffi-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-string-ok? plan)
       (compiler-backend-runtime-helper-inventory-stdlib-atomic-ok? plan)
@@ -22834,6 +22840,7 @@ f:
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_atomic"))
     (compiler-backend-runtime-global-symbol-ok? asm "tl_memcpy_fresh")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_make_small")
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_growth_target")
     (backend.backend-and8
       (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_destroy")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_profile_alloc_total")
@@ -22857,7 +22864,7 @@ f:
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (backend.compiler-backend-string-count asm "    .globl ") 27)
+    (= (backend.compiler-backend-string-count asm "    .globl ") 28)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_local_word_addr")
@@ -22867,9 +22874,10 @@ f:
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (backend.compiler-backend-string-count asm "    .globl ") 29)
+    (= (backend.compiler-backend-string-count asm "    .globl ") 31)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_arena_thread_init")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
     (compiler-backend-runtime-global-symbol-ok? asm "tl_setup_argv")
     (compiler-backend-runtime-global-symbol-ok? asm "_tl_start")
@@ -22884,7 +22892,7 @@ f:
       (and
         ;; tl_array_zero reads the current arena once for its virgin-arena
         ;; zero-fill skip; the remaining reads are the allocator/region paths.
-        (= (backend.compiler-backend-string-count asm "%gs:0x28") 23)
+        (= (backend.compiler-backend-string-count asm "%gs:0x28") 31)
         (=
           (backend.compiler-backend-string-count
             asm
@@ -22895,7 +22903,7 @@ f:
           (backend.compiler-backend-string-count
             asm
             "%fs:tl_current_arena@tpoff")
-          22)
+          24)
         (= (backend.compiler-backend-string-count asm "%gs:0x28") 0)))))
 
 (define (compiler-backend-test-runtime-functions-for-target
@@ -22982,7 +22990,7 @@ f:
             (backend.compiler-backend-string-count
               asm
               "    call VirtualAlloc\n")
-            13)
+            14)
           (=
             (backend.compiler-backend-string-count
               asm
@@ -23088,10 +23096,18 @@ f:
     (and
       (asm-has?
         asm
-        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 64(%rax), %r8\n"
+        "    movq %r10, 0(%rax)\n    movq $0, 32(%rax)\n    movq %r9, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r9)\n    leaq 72(%rax), %r8\n"
         "    movq 56(%r12), %rbx\n    testq %rbx, %rbx\n    jnz .L_tl_arena_destroy_head_ready\n    movq %r12, %rbx\n.L_tl_arena_destroy_head_ready:\n.L_tl_arena_destroy_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %rbx, 16(%r8)\n    movq %r8, 56(%r12)\n")
-      (asm-lacks? asm "    movq %r8, %fs:tl_current_arena@tpoff\n")
+      (and
+        (=
+          (backend.compiler-backend-string-count
+            asm
+            "    movq %r8, %fs:tl_current_arena@tpoff\n")
+          1)
+        (asm-has?
+          asm
+          ".L_tl_alloc_thread_root:\n    movq %fs:tl_root_arena@tpoff, %r8\n    testq %r8, %r8\n    jz .L_tl_alloc_new_arena\n    movq %r8, %fs:tl_current_arena@tpoff\n    movq 56(%r8), %r9\n"))
       (asm-has?
         asm
         "    movq 56(%r10), %r8\n    testq %r8, %r8\n    jnz .L_tl_region_reset_all_head_ready\n    movq %r10, %r8\n.L_tl_region_reset_all_head_ready:\n.L_tl_region_reset_all_retired_ready:\n    movq 32(%r10), %rbx\n"))))
@@ -23104,7 +23120,7 @@ f:
     (and
       (asm-has?
         asm
-        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %r8, %gs:0x28\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n"
+        "    movq %r10, 0(%rax)\n    movq %r8, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r8)\n    movq %gs:0x28, %r10\n    movq %r8, 0(%r10)\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n"
         "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n"
         "    movq %r12, 16(%r13)\n    movq %r13, 56(%r11)\n")
       (asm-lacks? asm "    movq %r13, %gs:0x28\n")
@@ -39658,16 +39674,16 @@ b_keep:
       "    movq %fs:tl_current_arena@tpoff, %r8\n"
       ".L_tl_alloc_new_arena:\n"
       "    movq $0x4000000, %rdx\n"
-      "    addq $64, %rcx\n"
+      "    addq $72, %rcx\n"
       "    movq $0, 32(%rax)\n"
       "    movq %r10, 0(%rax)\n"
       "    movq %r9, 40(%rax)\n"
       "    movq $0, 48(%rax)\n"
       "    movq %rax, 56(%r9)\n"
-      "    leaq 64(%rax), %r8\n"
+      "    leaq 72(%rax), %r8\n"
       "    movq %rax, 40(%rax)\n"
       "    movq $1, 48(%rax)\n"
-      "    leaq 64(%rax), %rcx\n"
+      "    leaq 72(%rax), %rcx\n"
       "    movq %r9, %fs:tl_current_arena@tpoff\n")
     (lacks
       "    movq %rax, %fs:tl_current_arena@tpoff\n"
@@ -41764,6 +41780,8 @@ user_fn:
         rewritten
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
+        "    movq tl_root_arena@gottpoff(%rip), %r10\n    movq %rax, %fs:(%r10)\n"
+        "    call tl_arena_make\n    addq $8, %rsp\n    movq tl_root_arena@gottpoff(%rip), %r11\n    movq %rax, %fs:(%r11)\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
         "    leaq .L_tl_global_aggregate_arena(%rip), %rbx\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %rbx, %fs:(%r11)\n    call tl_alloc\n"
         "    call tl_alloc\n    movq tl_current_arena@gottpoff(%rip), %r11\n    movq %r13, %fs:(%r11)\n    addq $40, %rsp\n"
@@ -41777,8 +41795,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          9
-          7))
+          16
+          14))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test

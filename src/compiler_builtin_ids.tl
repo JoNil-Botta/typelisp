@@ -36,6 +36,8 @@
   -1)
 (define compiler-builtin-id-tl-arena-make : i64
   -1)
+(define compiler-builtin-id-tl-arena-growth-target : i64
+  -1)
 (define compiler-builtin-id-tl-arena-make-small : i64
   -1)
 (define compiler-builtin-id-tl-arena-make-atomic : i64
@@ -1432,6 +1434,10 @@
           (id compiler-builtin-id-arena-destroy-safe-base 307 "destroy-safe!")
           (id compiler-builtin-id-tl-memcpy 325 "tl_memcpy")
           (id compiler-builtin-id-tl-memcpy-fresh 326 "tl_memcpy_fresh")
+          (id
+            compiler-builtin-id-tl-arena-growth-target
+            327
+            "tl_arena_growth_target")
           ;; Captured into their slots but never loaded, so they stay -1.
           (id compiler-builtin-id-fix-LetBinding 311)
           (id compiler-builtin-id-fix-LetBindingList 312))
@@ -2659,6 +2665,7 @@
       compiler-builtin-id-tl-arena-make)
     (= name-id compiler-builtin-id-tl-alloc-aligned)
     (= name-id compiler-builtin-id-tl-alloc-global)
+    (= name-id compiler-builtin-id-tl-arena-growth-target)
     (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-tl-arena-make-small
@@ -2765,6 +2772,7 @@
   (compiler-builtin-refresh!)
   (or
     (= name-id compiler-builtin-id-tl-thread-local-word-addr)
+    (= name-id compiler-builtin-id-tl-arena-growth-target)
     (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-tl-arena-poison-enable

@@ -31,18 +31,20 @@ count_matches 3 'compiler-x64-template-render-assembly' src/compiler_backend.tl
 # visible even if its owner forgot to add a render gate.
 # The shared global allocator contributes one entry/return and one call in
 # each of the two registered global-allocation leaves.
+# Root selection and Windows thread-state initialization add entries; cached
+# root restoration and retirement add control-flow sites in the existing leaves.
 count_matches 10 '\.globl' src/compiler_backend_runtime_common.tl
 count_matches 17 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 3 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 7 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 34 '\.globl' src/compiler_backend_runtime_linux.tl
-count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 7 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 18 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
-count_matches 27 '\.globl' src/compiler_backend_runtime_windows.tl
-count_matches 38 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 93 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 41 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 36 '\.globl' src/compiler_backend_runtime_linux.tl
+count_matches 46 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 8 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 20 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 29 '\.globl' src/compiler_backend_runtime_windows.tl
+count_matches 41 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 99 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+count_matches 43 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 
 # All target-owned executable byte helpers carry closed IDs.  Windows has two
 # additional bytes-from-hex sites: the data-only UNWIND_INFO and resource tree.

@@ -2441,7 +2441,7 @@
                   (lower.lower-name-env-from-decls-with-state
                     owner
                     (deref decls)
-                    (clone paths)
+                    (& paths)
                     ""
                     (Nil))])]
             [_install : unit (ast.ast-node-pool-context-install! pools)]

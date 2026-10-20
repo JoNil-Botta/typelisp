@@ -6444,6 +6444,30 @@
 (define (main) : i64
   (step (Big 1 2 3) 39))")
 
+(define (compiler-lower-tail-reborrow-param-source) : String
+  "(defstruct Lst (slots (__tl_dyn-array i64)) (len i64))
+(define (inner [l : (& Lst)] [k : i64]) : i64
+  (if (>= k l.len) k (inner l (+ k 1))))
+(define (bump [l : (&mut Lst)] [k : i64]) : i64
+  (if (>= k l.len) k (begin (set! l.len (- l.len 1)) (bump l (+ k 1)))))
+(define (reborrow [l : (& Lst)]) : i64
+  (inner (& l) 0))
+(define (shared-of-mut [l : (&mut Lst)]) : i64
+  (inner (& l) 0))
+(define (mut-reborrow [l : (&mut Lst)]) : i64
+  (bump (&mut l) 0))
+(define (local [n : i64]) : i64
+  (let [xs : Lst (Lst (__tl_make-array i64 2) n)]
+    (inner (& xs) 0)))
+(define (local-ref [n : i64]) : i64
+  (let [xs : Lst (Lst (__tl_make-array i64 2) n)]
+    (let [r : (& xs Lst) (& xs)]
+      (inner (& r) 0))))
+(define (main) : i64
+  (let [xs : Lst (Lst (__tl_make-array i64 2) 2)]
+    (+ (+ (reborrow (& xs)) (shared-of-mut (&mut xs)))
+       (+ (mut-reborrow (&mut xs)) (+ (local 1) (local-ref 1))))))")
+
 (define (compiler-lower-tail-indirect-source) : String
   "(define (finish [x : i64]) : i64 x)
 (define (step [f : (-> i64 i64)] [x : i64]) : i64
@@ -6561,6 +6585,41 @@
         (= (lower-test-function-tail-call-count functions "step" "finish") 0)
         (> (lower-test-function-call-count functions "step" "finish") 0))]
     [_ false]))
+
+(define (compiler-lower-tail-reborrow-param-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-tail-reborrow-param-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-function-tail-call-count functions "reborrow" "inner") 1)
+        (= (lower-test-function-call-count functions "reborrow" "inner") 0)
+        (=
+          (lower-test-function-tail-call-count
+            functions
+            "shared-of-mut"
+            "inner")
+          1)
+        (= (lower-test-function-call-count functions "shared-of-mut" "inner") 0)
+        (=
+          (lower-test-function-tail-call-count functions "mut-reborrow" "bump")
+          1)
+        (= (lower-test-function-call-count functions "mut-reborrow" "bump") 0)
+        (= (lower-test-function-tail-call-count functions "local" "inner") 0)
+        (> (lower-test-function-call-count functions "local" "inner") 0)
+        (=
+          (lower-test-function-tail-call-count functions "local-ref" "inner")
+          0)
+        (> (lower-test-function-call-count functions "local-ref" "inner") 0))]
+    [_ false]))
+
+;; A tail call whose argument re-borrows a reference parameter passes that same
+;; reference, so it stays a tail call; a borrow of a frame local, directly or
+;; through a local reference, keeps the call (#9137).
+(test
+  compiler-lower-tail-reborrow-param
+  (test.assert-true
+    (compiler-lower-tail-reborrow-param-shape-ok?)
+    "a re-borrowed reference parameter keeps its tail call"))
 
 (define (compiler-lower-tail-indirect-shape-ok?) : bool
   (match (lower-test-functions

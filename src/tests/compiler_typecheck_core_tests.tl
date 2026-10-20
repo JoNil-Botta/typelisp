@@ -8742,6 +8742,9 @@
     [ok : bool true]
     (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
     (tc_core.macro-alias-cache-ensure! macro-state)
+    ;; Selected-item replay must not publish an unbuilt module-alias cache.
+    (tc_core.macro-alias-cache-build-segmented! state true)
+    (set! ok (= (tc_core.tc-macro-import-index-control macro-state 4) 0))
     (tc_core.macro-alias-cache-build-segmented! state false)
     (while (< index count)
       (set!

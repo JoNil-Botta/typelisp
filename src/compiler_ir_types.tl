@@ -5243,6 +5243,16 @@
     (__tl-project-field-name ,instrs "slots")
     ,index))
 
+;; Moves the element out of a sequence the caller owns, leaving a placeholder
+;; jump that nothing may read: the consuming rewrites of #9013 take an
+;; instruction this way instead of copying it out of a view.
+(define (compiler-ir-instr-seq-take!
+  [instrs : (&mut instrs CompilerIrInstrSeq)]
+  [index : i64]) : CompilerIrInstr
+  (replace!
+    (array-ref instrs.slots index)
+    (CompilerIrInstr.Jump (compiler-ir-label-none))))
+
 (define (compiler-ir-instr-loop-dst-or
   [instr : (& CompilerIrInstr)]
   [fallback : i64]) : i64
@@ -5329,6 +5339,16 @@
   `(compiler-ir-array-shared-view
     (__tl-project-field-name ,blocks "slots")
     ,index))
+
+;; compiler-ir-instr-seq-take! for blocks: the placeholder is an empty block.
+(define (compiler-ir-block-seq-take!
+  [blocks : (&mut blocks CompilerIrBlockSeq)]
+  [index : i64]) : CompilerIrBlock
+  (replace!
+    (array-ref blocks.slots index)
+    (CompilerIrBlock.Block
+      (compiler-ir-label-none)
+      (compiler-ir-instr-seq-empty))))
 
 (define (compiler-ir-block-list-empty) : CompilerIrBlockList
   (Array (CompilerIrBlockSeq (__tl_make-array CompilerIrBlock 0) 0)))

@@ -3920,6 +3920,71 @@
     (opt.opt-inline-input-chunks-disarm!)
     (opt-test-retire-input-chunks! address)))
 
+;; The callee-cost memo can hold a view of a body that still lives in its source
+;; chunk, such as a same-SCC callee priced from its unplaced original. Releasing
+;; that chunk must clear the memo first. Here the memo prices `input_leaf` from
+;; its body in chunk 1. While `input_dead` keeps chunk 1 pending, the entry
+;; stays. Placing `input_dead` releases the chunk: the release callback requires
+;; an empty memo before it destroys the chunk, and a later lookup of an
+;; identical live body must miss without reading the destroyed one.
+(test
+  optimizer-input-chunk-release-clears-callee-cost-memo
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [type-segment-bases : i64
+      (ast.ast-node-pool-context-type-segment-bases pools)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [bounds : (__tl_dyn-array i64) (__tl_make-array 0 2 4)]
+    [state : OptInputChunkTestState (opt-test-input-chunk-state-new 2)]
+    [address : i64
+      (unsafe
+        (cast (ptr->int (ptr-addr-of state)) : i64))]
+    [input : ir.CompilerIrFunctionSeq
+      (opt-test-chunked-input pools (& state) (& functions) (& bounds))]
+    [indexed : ir.CompilerIrFunctionSeq
+      (ir.compiler-ir-clone-function-seq pools (& functions))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build indexed)]
+    [names : (__tl_dyn-array i64) (__tl_make-array i64 functions.len)]
+    [probe : ir.CompilerIrFunction
+      (ir.compiler-ir-clone-function pools (& (array-ref functions.slots 2)))]
+    (for [i (iterator.range 0 functions.len)]
+      (match (& (array-ref functions.slots i))
+        [(Function name _ _ _ _ _) (set! (array-ref names i) name)]))
+    (opt.opt-inline-callee-cost-reset!)
+    (opt.opt-inline-callee-cost-record! (& (array-ref input.slots 2)) 0 37)
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      37
+      "the memo prices the leaf from its body in chunk 1")
+    (opt.opt-inline-input-chunks-arm!
+      (opt.OptInputRetirement.Retire
+        address
+        opt-test-retire-input-chunks!
+        opt-test-release-input-chunk!)
+      bounds)
+    (test.assert-true
+      (opt.opt-inline-input-chunks-begin! (& names) (& index))
+      "well-formed bounds arm release")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 2)
+      0
+      "chunk 1 still has an unplaced original")
+    (test.assert-i64-eq
+      opt.opt-inline-callee-cost-count
+      1
+      "the memo keeps its entry while its chunk is held")
+    (test.assert-i64-eq
+      (opt.opt-inline-input-slot-placed-status 3)
+      1
+      "the last original releases chunk 1")
+    (test.assert-i64-eq (array-ref state.released 1) 1 "chunk 1 released once")
+    (test.assert-i64-eq
+      (opt.opt-inline-callee-cost-lookup type-segment-bases (& probe) 0)
+      -1
+      "no memo entry views the released chunk")
+    (opt.opt-inline-input-chunks-disarm!)
+    (opt-test-retire-input-chunks! address)))
+
 (define (opt-test-input-retirement-pools) : unit
   (let
     [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
@@ -78215,9 +78280,71 @@ return 0" true)
           "pass `preheaders` rewrote verified function `preheaders_ice`")
         (string.contains (& trusted-ice) "duplicate var definition"))
       "a rejected preheaders rewrite is an internal error naming the pass, the function and the verdict")
+    ;; Synthesis consumed the input (#9013), so under the capture the rejected
+    ;; rewrite comes back: it carries the preheader the input never had.
     (test.assert-true
-      (opt.opt-function-eq bases trusted-out broken)
-      "the rejected rewrite rolls back to the input")))
+      (not (opt.opt-function-eq bases trusted-out broken))
+      "a rejected preheaders rewrite returns the rewrite, never the consumed input")))
+
+;; The unchanged path returns its input object itself, so a move out of it
+;; (synthesis leaves a placeholder behind) would show up in the result.
+(test
+  preheaders-unchanged-path-returns-the-input-untouched
+  (let
+    [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [out : ir.CompilerIrFunction
+      (opt-preheaders-ice-run
+        true
+        (opt-preheaders-ice-function (opt-preheader-safe-blocks)))]
+    [expected : ir.CompilerIrFunction
+      (opt-preheaders-ice-function (opt-preheader-safe-blocks))]
+    (test.assert-true
+      (opt.opt-function-eq bases out expected)
+      "a loop that already owns a safe preheader leaves the function as it came in")))
+
+;; The checked-configuration guard on a consuming synthesis: the header's
+;; instructions must not share their storage with another block, or moving
+;; them out would rewrite that block too. The fixture builds that sharing
+;; deliberately (the view below), with `exit` holding the header's array.
+(test
+  preheaders-synthesis-refuses-shared-instruction-storage
+  (let
+    [loop : i64 (ir.compiler-ir-label "loop")]
+    [header-instrs : ir.CompilerIrInstrSeq
+      (ir.compiler-ir-instr-seq1
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "exit")))]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity 3)]
+    [_pre : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "pre")
+          (ir.compiler-ir-instr-seq1 (ir.CompilerIrInstr.Jump loop))))]
+    [_exit : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "exit")
+          (opt.compiler-opt-global-shared-view header-instrs)))]
+    [_loop : unit
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (ir.CompilerIrBlock.Block loop header-instrs))]
+    [_capture : unit (opt.opt-rewrite-ice-capture! true)]
+    [_out : ir.CompilerIrBlockList
+      (opt.opt-loop-preheaders-apply
+        (ir.compiler-ir-block-builder-to-list builder)
+        loop
+        (opt.opt-label-add (Nil) (ir.compiler-ir-label "pre"))
+        (ir.compiler-ir-label "loop__preheader"))]
+    [ice : String (opt.opt-rewrite-ice-last)]
+    [_release : unit (opt.opt-rewrite-ice-capture! false)]
+    (test.assert-true
+      (string.contains
+        (& ice)
+        "pass `preheaders` would move instructions out of an array another block shares")
+      "a consuming synthesis refuses a header whose instructions another block shares")))
 
 (define (opt-thread-branch-context-test [verified? : bool]) : unit
   (let

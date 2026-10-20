@@ -180,10 +180,11 @@ arguments only when an argument can write the storage it was read from: a local
 by the argument operand snapshot rule, a global cell unless every argument only
 reads. Function names and values the callee expression computed are not
 copied, so their direct-call facts survive.
-Scalar global reads, including folds and rematerialized reads, use
-the prepared program's symbol index. That index resolves extern metadata and
-ordinary module symbols identically to unfolded loads, and is replaced at
-each emission boundary and unpublished before the backend owner retires.
+Global reads, stores and address references, including folds, rematerialized
+reads and direct-object relocations, use the prepared program's symbol index.
+That index resolves extern metadata and ordinary module symbols identically
+across these operations, and is replaced at each emission boundary and
+unpublished before the backend owner retires.
 Checked bindings retain the complete type; their replay record stores only arena
 owner and phase transitions. Argument compatibility compares types directly,
 without a separate syntax walk to infer a raw pointer provenance.
@@ -719,6 +720,16 @@ notification still reaches its handler without receiving a response. Field
 inspection borrows the parsed JSON owner; it neither clones request payloads
 nor retains references beyond dispatch. Method parameter validation remains
 separate from this envelope boundary.
+
+Required document, position, name and edit-operand parameter types are checked
+before document lookup or stateful dispatch. Malformed parameters produce
+`-32602` with the request ID, or no response for a notification, and preserve
+the server owner and semantic cache. Position coordinates use LSP's unsigned
+31-bit integer range. Structural selectors retain their path/name/position
+precedence; valid lookup misses and source-validation failures keep their
+existing contextual handler errors and `error.data`.
+The direct `tl/check` URI and structural paths retain precedence when present;
+a malformed primary selector is rejected instead of falling back to another.
 
 Each function body typechecks against a function-local fork of the module
 environment (#8375): `tc-type-env-fork-function-store` creates a store in the

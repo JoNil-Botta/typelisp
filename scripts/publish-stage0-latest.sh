@@ -251,14 +251,16 @@ move_final_tag() {
         2>"$tag_error"; then
         rm -f "$tag_error"
         gh api --method PATCH "repos/$REPO/git/refs/tags/$FINAL_TAG" \
-            -f sha="$EXPECTED_SHA" -F force=true --silent
-        return $?
+            -f sha="$EXPECTED_SHA" -F force=true --silent || return $?
+        echo "[stage0-publish] moved tag $FINAL_TAG to $EXPECTED_SHA"
+        return 0
     fi
     if grep -F "HTTP 404" "$tag_error" >/dev/null 2>&1; then
         rm -f "$tag_error"
         gh api --method POST "repos/$REPO/git/refs" \
-            -f ref="refs/tags/$FINAL_TAG" -f sha="$EXPECTED_SHA" --silent
-        return $?
+            -f ref="refs/tags/$FINAL_TAG" -f sha="$EXPECTED_SHA" --silent || return $?
+        echo "[stage0-publish] created tag $FINAL_TAG at $EXPECTED_SHA"
+        return 0
     fi
     cat "$tag_error" >&2 || true
     rm -f "$tag_error"
@@ -624,15 +626,22 @@ self_test() {
     run_case() {
         case_name=$1
         expected_status=$2
+        case_output=$test_dir/case-output
         set +e
-        publish_latest "$asset_a" "$asset_b"
+        publish_latest "$asset_a" "$asset_b" > "$case_output" 2>&1
         case_status=$?
         set -e
+        cat "$case_output"
         [ "$case_status" -eq "$expected_status" ] ||
             self_test_fail "$case_name exited $case_status, expected $expected_status" || return 1
         if [ "$expected_status" -ne 0 ] &&
             grep -E 'delete-release:90|delete-tag|move-tag:|create-tag:|promote:' "$action_log" >/dev/null 2>&1; then
             self_test_fail "$case_name reached the stable cutover" || return 1
+        fi
+        if [ "$expected_status" -eq 0 ]; then
+            grep -E "\[stage0-publish\] (moved tag $FINAL_TAG to|created tag $FINAL_TAG at) $EXPECTED_SHA" \
+                "$case_output" >/dev/null 2>&1 ||
+                self_test_fail "$case_name did not report the successful tag mutation" || return 1
         fi
     }
 

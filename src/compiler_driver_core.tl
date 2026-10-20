@@ -333,7 +333,7 @@
 (define (compiler-driver-state-reset-typecheck! [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-job-state-reset-file-state!
     (compiler-driver-state-typecheck state))
-  (compiler_typecheck_core.tc-job-state-release-selected-certificates!
+  (compiler_typecheck_core.tc-job-state-release-selected-file-storage!
     (compiler-driver-state-typecheck state)))
 
 ;; An intern reset publishes a new generation before the loader can record the

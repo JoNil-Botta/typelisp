@@ -334,9 +334,12 @@
   (type-pool-owner-id i64)
   (type-segment-bases i64)
   (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry))
-  ;; The lanes of `tc-selected-holds-memo-bind!`, allocated in `owner-arena`
-  ;; on first use (0 until then); the arena retains them for the job.
-  (holds-memo-address i64))
+  ;; The lanes of `tc-selected-holds-memo-bind!`, allocated on first use in
+  ;; `holds-memo-arena` (0 until then). Their entries hold for one resolution
+  ;; stamp, which every file moves, so the file boundary frees them
+  ;; (`tc-job-state-release-selected-file-storage!`).
+  (holds-memo-address i64)
+  (holds-memo-arena i64))
 
 (defstruct TcTypeResolutionCacheState
   (address i64))
@@ -880,6 +883,7 @@
         0
         0
         (__tl_make-array TcLifetimeOutlivesMemoEntry 0)
+        0
         0))
     (TcTypeResolutionCacheState
       (cast
@@ -2594,6 +2598,7 @@
         (= (tc-macro-walk-field state macro-hygiene-env-root-depth) 0)
         (io.panic "typecheck: cannot retire an active macro hygiene owner")))
     (tc-global-call-effects-finish! job)
+    (tc-job-state-release-selected-file-storage! job)
     (tc-job-state-reset-advisories! job)
     (tc-job-state-release-scratch-arenas! job)
     (tc-checked-let-binding-facts-finish!
@@ -21650,16 +21655,19 @@
 ;; A DynArray append reallocates its exact length, so permanent publication
 ;; uses reserved slots and a separate published count. Never expose slack rows.
 ;; Job-owned ownership-certificate tables. A file's certificates are dead once
-;; its lowering ends, so the next file's first publishing body restarts at
-;; count zero over the same capacity instead of growing fresh tables in the
-;; job's lifetime arena (one table set per batch entry otherwise accumulates
-;; there). At most one body owns the tables at a time: a body that finds them
-;; owned grows private tables as before, and the driver releases ownership at
-;; each file boundary (`tc-job-state-release-selected-certificates!`).
+;; its lowering ends, so they live in an arena of their own that the driver
+;; destroys at each file boundary (`tc-job-state-release-selected-file-storage!`):
+;; neither the tables nor the smaller ones they outgrew stay in the job's
+;; lifetime arena, which would hold them for every later batch entry. At most
+;; one body owns the tables at a time: a body that finds them owned grows
+;; private tables as before.
 (defstruct TcSelectedCertificateStoreData
   (owner u64)
   (certificates (__tl_dyn-array TcSelectedCertificate))
-  (index tc_i64_i64_map.Map))
+  (index tc_i64_i64_map.Map)
+  ;; The arena holding `certificates` and `index`; 0 once a file boundary
+  ;; destroyed it, when the next owner starts fresh tables.
+  (arena i64))
 
 (define (tc-job-state-selected-certificate-store-address [state : TcJobState]) : i64
   (tc-job-state-field state selected-certificate-store-address i64))
@@ -21677,8 +21685,26 @@
         : (MutPtr i64))
       address)))
 
-;; File boundary: no body of the finished file reads its certificates again.
-(define (tc-job-state-release-selected-certificates! [state : TcJobState]) : unit
+;; File boundary: no body of the finished file reads its certificates again,
+;; and the next file's stamp kills every holds-memo entry, so both arenas go.
+;; Job retirement releases them too.
+(define (tc-job-state-release-selected-file-storage! [state : TcJobState]) : unit
+  (let
+    [resolution : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache state)]
+    [cache : (MutPtr TcTypeResolutionCacheStateData)
+      (tc-type-resolution-cache-state-ptr resolution)]
+    [memo : i64
+      (if (> resolution.address 0)
+        (unsafe
+          (deref cache).holds-memo-arena)
+        0)]
+    (when
+      (> memo 0)
+      (unsafe
+        (set! (deref cache).holds-memo-address 0)
+        (set! (deref cache).holds-memo-arena 0)
+        (arena.tl_arena_destroy memo))))
   (let
     [address : i64 (tc-job-state-selected-certificate-store-address state)]
     (when
@@ -21686,14 +21712,36 @@
       (let
         [store : TcSelectedCertificateStoreData
           (tc-state-cell-read address TcSelectedCertificateStoreData)]
+        [storage : i64 store.arena]
         (set! store.owner (cast 0 : u64))
-        (tc-state-cell-write! address TcSelectedCertificateStoreData store)))))
+        (set! store.arena 0)
+        (tc-state-cell-write! address TcSelectedCertificateStoreData store)
+        (when
+          (> storage 0)
+          (unsafe
+            (arena.tl_arena_destroy storage)))))))
+
+;; The arena of the job's certificate tables when `data`'s body owns them
+;; (growth must stay there), else 0 (private tables grow where they live).
+(define (tc-selected-certificate-store-arena
+  [state : TcBodyState]
+  [data : (& data TcBodyStateData)]) : i64
+  (let
+    [address : i64
+      (tc-job-state-selected-certificate-store-address state.job-state)]
+    (if (> address 0)
+      (let
+        [store : TcSelectedCertificateStoreData
+          (tc-state-cell-read address TcSelectedCertificateStoreData)]
+        (if (= store.owner data.selected-owner)
+          store.arena
+          0))
+      0)))
 
 ;; A body about to publish its first certificate adopts the job's tables when
-;; no other body owns them. Runs in the job owner's arena (publication's
-;; precondition), where a first store is allocated.
-;; The job's first certificate tables hold a typical file's bodies: grown from
-;; empty, every table they outgrow would stay in the job's lifetime arena.
+;; no other body owns them. The job's store cell is allocated in the job
+;; owner's arena (publication's precondition); a file's tables start in a
+;; fresh arena of their own, sized for a typical file's bodies.
 (define tc-selected-certificate-initial-capacity : i64
   256)
 
@@ -21702,51 +21750,54 @@
     [data : TcBodyStateData (tc-body-state-data-value state)]
     [job : TcJobState state.job-state]
     [address : i64 (tc-job-state-selected-certificate-store-address job)]
-    (if (= address 0)
-      (let
-        [cell : (__tl_dyn-array TcSelectedCertificateStoreData)
-          (__tl_make-array TcSelectedCertificateStoreData 1)]
-        (set!
-          data.selected-certificates
-          (__tl_make-array
-            TcSelectedCertificate
-            tc-selected-certificate-initial-capacity))
-        (set!
-          data.selected-certificate-index
-          (tc_i64_i64_map.with-capacity
-            tc-selected-certificate-initial-capacity))
-        (set!
-          (array-ref cell 0)
-          (TcSelectedCertificateStoreData
-            data.selected-owner
-            (tc-global-shared-view data.selected-certificates)
-            (tc-global-shared-view data.selected-certificate-index)))
-        (tc-job-state-set-selected-certificate-store-address!
-          job
-          (cast
+    [store : TcSelectedCertificateStoreData
+      (if (= address 0)
+        (TcSelectedCertificateStoreData
+          (cast 0 : u64)
+          (__tl_make-array TcSelectedCertificate 0)
+          (tc_i64_i64_map.with-capacity 0)
+          0)
+        (tc-state-cell-read address TcSelectedCertificateStoreData))]
+    (when
+      (= store.owner (cast 0 : u64))
+      (if (> store.arena 0)
+        (tc_i64_i64_map.clear-ref! (&mut store.index))
+        (let
+          [storage : i64 (arena.tl_arena_make_small)]
+          (set! store.arena storage)
+          (in-arena
             (unsafe
-              (ptr->int
-                (ptr-cast
-                  (__tl_array-data cell)
-                  : (Ptr TcSelectedCertificateStoreData))))
-            : i64))
-        (tc-body-state-data-set! state data))
-      (let
-        [store : TcSelectedCertificateStoreData
-          (tc-state-cell-read address TcSelectedCertificateStoreData)]
-        (when
-          (= store.owner (cast 0 : u64))
-          (begin
-            (tc_i64_i64_map.clear-ref! (&mut store.index))
-            (set! store.owner data.selected-owner)
+              (arena.Arena storage))
             (set!
-              data.selected-certificates
-              (tc-global-shared-view store.certificates))
+              store.certificates
+              (__tl_make-array
+                TcSelectedCertificate
+                tc-selected-certificate-initial-capacity))
             (set!
-              data.selected-certificate-index
-              (tc-global-shared-view store.index))
-            (tc-state-cell-write! address TcSelectedCertificateStoreData store)
-            (tc-body-state-data-set! state data)))))))
+              store.index
+              (tc_i64_i64_map.with-capacity
+                tc-selected-certificate-initial-capacity)))))
+      (set! store.owner data.selected-owner)
+      (set!
+        data.selected-certificates
+        (tc-global-shared-view store.certificates))
+      (set! data.selected-certificate-index (tc-global-shared-view store.index))
+      (if (= address 0)
+        (let
+          [cell : (__tl_dyn-array TcSelectedCertificateStoreData)
+            (__tl_make-array TcSelectedCertificateStoreData 1)]
+          (set! (array-ref cell 0) store)
+          (tc-job-state-set-selected-certificate-store-address!
+            job
+            (cast
+              (unsafe
+                (ptr->int
+                  (ptr-cast
+                    (__tl_array-data cell)
+                    : (Ptr TcSelectedCertificateStoreData))))
+              : i64)))
+        (tc-state-cell-write! address TcSelectedCertificateStoreData store))
+      (tc-body-state-data-set! state data))))
 
 ;; Keep the job's tables at the owning body's latest (possibly grown) storage.
 (define (tc-selected-certificate-store-sync! [state : TcBodyState]) : unit
@@ -21810,8 +21861,14 @@
           [(ResultTcUnit.Ok) unit]
           [(ResultTcUnit.Err message) (return (ResultTcUnit.Err message))])]
       [data : TcBodyStateData (tc-body-state-data-value state)]
+      [storage : i64 (tc-selected-certificate-store-arena state (& data))]
       [slots : (__tl_dyn-array TcSelectedCertificate)
-        (__tl_make-array TcSelectedCertificate next)]
+        (if (> storage 0)
+          (in-arena
+            (unsafe
+              (arena.Arena storage))
+            (__tl_make-array TcSelectedCertificate next))
+          (__tl_make-array TcSelectedCertificate next))]
       [index : i64 0]
       (while (< index count)
         (set!
@@ -21885,11 +21942,21 @@
           (return
             (ResultTcUnit.Err "typecheck: invalid ownership certificate index")))
         (set! (array-ref data.selected-certificates old) entry))
-      (begin
-        (tc_i64_i64_map.insert-ref!
-          (&mut data.selected-certificate-index)
-          key
-          data.selected-certificate-count)
+      (let
+        [storage : i64 (tc-selected-certificate-store-arena state (& data))]
+        ;; The index grows where its table lives.
+        (if (> storage 0)
+          (in-arena
+            (unsafe
+              (arena.Arena storage))
+            (tc_i64_i64_map.insert-ref!
+              (&mut data.selected-certificate-index)
+              key
+              data.selected-certificate-count))
+          (tc_i64_i64_map.insert-ref!
+            (&mut data.selected-certificate-index)
+            key
+            data.selected-certificate-count))
         (set!
           (array-ref data.selected-certificates data.selected-certificate-count)
           entry)
@@ -119237,8 +119304,9 @@
       (unsafe
         (when
           (= (deref data).holds-memo-address 0)
+          (set! (deref data).holds-memo-arena (arena.tl_arena_make_small))
           (in-arena
-            (arena.Arena (deref data).owner-arena)
+            (arena.Arena (deref data).holds-memo-arena)
             (let
               [lanes : (__tl_dyn-array i64)
                 (__tl_make-array

@@ -10,6 +10,12 @@
 ;#
 ;# `encoded-length` and `decoded-length` perform all checked arithmetic and,
 ;# for decoding, the complete validation pass before a destination is touched.
+;# Every planner and codec takes a nonnegative `max-output-bytes` limit. Output
+;# exceeding it is rejected before allocation or mutation, even when the
+;# destination has spare capacity. Decoding rejects lengths whose minimum
+;# possible output exceeds the limit before inspecting payload bytes; otherwise
+;# syntax is checked before the exact output limit. Zero permits only empty
+;# output. Arithmetic overflow and limit failures never include input bytes.
 ;# `encode-into` and `decode-into` write from offset zero of a caller-owned
 ;# `ByteBuf`: the backing capacity must cover the complete output and the
 ;# source may not overlap that backing storage. A failure leaves the
@@ -29,16 +35,15 @@
 ;#   (let
 ;#     [text : String "foobar"]
 ;#     (match
-;#       (base64.encode (byte_buf.str-as-bytes (& text)))
+;#       (base64.encode (byte_buf.str-as-bytes (& text)) 8)
 ;#       [(base64.Base64EncodeOk encoded)
-;#         (match (base64.decode (byte_buf.as-bytes (& encoded)))
+;#         (match (base64.decode (byte_buf.as-bytes (& encoded)) 6)
 ;#           [(base64.Base64DecodeOk decoded)
 ;#             (if (= (byte_buf.len decoded) 6) 42 1)]
 ;#           [(base64.Base64DecodeErr _) 1])]
 ;#       [(base64.Base64EncodeErr _) 1])))
 ;# ```
 (import stdlib.byte_buf)
-(import stdlib.string)
 (import stdlib.test)
 
 ;: Stable strict base64 failure categories.
@@ -49,14 +54,17 @@
   (Base64NonZeroPadBits)
   (Base64LengthOverflow)
   (Base64DestinationTooSmall)
-  (Base64DestinationOverlap))
+  (Base64DestinationOverlap)
+  (Base64InvalidLimit)
+  (Base64OutputLimitExceeded))
 
 ;: Recoverable failure with a stable location.
 ;:
 ;: Source failures use `offset` as the byte offset of the first offending or
 ;: truncated input byte. Count overflow stores the rejected count and
 ;: `Base64DestinationTooSmall` stores the destination capacity;
-;: `Base64DestinationOverlap` uses zero.
+;: `Base64DestinationOverlap` uses zero. `Base64InvalidLimit` and
+;: `Base64OutputLimitExceeded` store the rejected output limit.
 (defstruct Base64Error
   (kind Base64ErrorKind)
   (offset i64))
@@ -141,8 +149,18 @@
         destination-start
         destination-length))))
 
-;: Return the checked canonical encoded length for a raw byte count.
-(define (encoded-length-count [input-length : i64]) : Base64LengthResult
+;: Bound a representable nonnegative output length by a validated limit.
+(define (base64-bounded-length [length : i64] [max-output-bytes : i64]) : Base64LengthResult
+  (if (> length max-output-bytes)
+    (Base64LengthErr (Base64Error (Base64OutputLimitExceeded) max-output-bytes))
+    (Base64LengthOk length)))
+
+;: Return the checked canonical encoded length within `max-output-bytes`.
+(define (encoded-length-count [input-length : i64] [max-output-bytes : i64]) : Base64LengthResult
+  (when
+    (< max-output-bytes 0)
+    (return
+      (Base64LengthErr (Base64Error (Base64InvalidLimit) max-output-bytes))))
   (if (< input-length 0)
     (Base64LengthErr (Base64Error (Base64InvalidLength) 0))
     (let
@@ -154,14 +172,15 @@
           [base : i64 (* quanta 4)]
           (if (and (> remainder 0) (> base 9223372036854775803))
             (Base64LengthErr (Base64Error (Base64LengthOverflow) input-length))
-            (Base64LengthOk
+            (base64-bounded-length
               (if (= remainder 0)
                 base
-                (+ base 4)))))))))
+                (+ base 4))
+              max-output-bytes)))))))
 
 ;: Return the checked canonical encoded length of borrowed bytes.
-(define (encoded-length [input : (& input bytes)]) : Base64LengthResult
-  (encoded-length-count (byte_buf.bytes-length input)))
+(define (encoded-length [input : (& input bytes)] [max-output-bytes : i64]) : Base64LengthResult
+  (encoded-length-count (byte_buf.bytes-length input) max-output-bytes))
 
 ;: Validate canonical padded standard base64 and return the decoded length.
 ;:
@@ -169,133 +188,139 @@
 ;: mutated. Empty input is the canonical encoding of zero bytes. The result is
 ;: at most three quarters of the input length, so it cannot overflow once the
 ;: input length is representable.
-(define (decoded-length [input : (& input bytes)]) : Base64LengthResult
+(define (decoded-length [input : (& input bytes)] [max-output-bytes : i64]) : Base64LengthResult
+  (when
+    (< max-output-bytes 0)
+    (return
+      (Base64LengthErr (Base64Error (Base64InvalidLimit) max-output-bytes))))
   (let
     [n : i64 (byte_buf.bytes-length input)]
     [truncated : i64 (% n 4)]
+    (when
+      (< n 0)
+      (return (Base64LengthErr (Base64Error (Base64InvalidLength) 0))))
     (if (!= truncated 0)
       (Base64LengthErr (Base64Error (Base64InvalidLength) (- n truncated)))
       (let
         [quanta : i64 (/ n 4)]
         [quantum : i64 0]
         [padding : i64 0]
-        (begin
-          (while (< quantum quanta)
-            (let
-              [base : i64 (* quantum 4)]
-              [last : bool (= quantum (- quanta 1))]
-              [b0 : u8 (byte_buf.bytes-ref input base)]
-              [b1 : u8 (byte_buf.bytes-ref input (+ base 1))]
-              [b2 : u8 (byte_buf.bytes-ref input (+ base 2))]
-              [b3 : u8 (byte_buf.bytes-ref input (+ base 3))]
-              [v0 : i64 (base64-value b0)]
-              [v1 : i64 (base64-value b1)]
-              [v2 : i64 (base64-value b2)]
-              [v3 : i64 (base64-value b3)]
+        ; Even two padding bytes cannot bring this input within the limit.
+        ; This bounds the validation scan without reading an oversized view.
+        (when
+          (and (> quanta 0) (> (- (* quanta 3) 2) max-output-bytes))
+          (return
+            (Base64LengthErr
+              (Base64Error (Base64OutputLimitExceeded) max-output-bytes))))
+        (while (< quantum quanta)
+          (let
+            [base : i64 (* quantum 4)]
+            [last : bool (= quantum (- quanta 1))]
+            [b0 : u8 (byte_buf.bytes-ref input base)]
+            [b1 : u8 (byte_buf.bytes-ref input (+ base 1))]
+            [b2 : u8 (byte_buf.bytes-ref input (+ base 2))]
+            [b3 : u8 (byte_buf.bytes-ref input (+ base 3))]
+            [v0 : i64 (base64-value b0)]
+            [v1 : i64 (base64-value b1)]
+            [v2 : i64 (base64-value b2)]
+            [v3 : i64 (base64-value b3)]
+            (if last
               (begin
-                (if last
+                (when
+                  (= (cast b0 : i64) 61)
+                  (return
+                    (Base64LengthErr (Base64Error (Base64InvalidPadding) base))))
+                (when
+                  (< v0 0)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidCharacter) base))))
+                (when
+                  (= (cast b1 : i64) 61)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidPadding) (+ base 1)))))
+                (when
+                  (< v1 0)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidCharacter) (+ base 1)))))
+                (if (= (cast b2 : i64) 61)
                   (begin
                     (when
-                      (= (cast b0 : i64) 61)
+                      (!= (cast b3 : i64) 61)
                       (return
                         (Base64LengthErr
-                          (Base64Error (Base64InvalidPadding) base))))
+                          (Base64Error (Base64InvalidPadding) (+ base 3)))))
+                    (set! padding 2)
                     (when
-                      (< v0 0)
+                      (!= (bit-and v1 15) 0)
                       (return
                         (Base64LengthErr
-                          (Base64Error (Base64InvalidCharacter) base))))
-                    (when
-                      (= (cast b1 : i64) 61)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidPadding) (+ base 1)))))
-                    (when
-                      (< v1 0)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidCharacter) (+ base 1)))))
-                    (if (= (cast b2 : i64) 61)
-                      (begin
-                        (when
-                          (!= (cast b3 : i64) 61)
-                          (return
-                            (Base64LengthErr
-                              (Base64Error (Base64InvalidPadding) (+ base 3)))))
-                        (set! padding 2)
-                        (when
-                          (!= (bit-and v1 15) 0)
-                          (return
-                            (Base64LengthErr
-                              (Base64Error (Base64NonZeroPadBits) (+ base 1))))))
-                      (begin
-                        (when
-                          (< v2 0)
-                          (return
-                            (Base64LengthErr
-                              (Base64Error (Base64InvalidCharacter) (+ base 2)))))
-                        (if (= (cast b3 : i64) 61)
-                          (begin
-                            (set! padding 1)
-                            (when
-                              (!= (bit-and v2 3) 0)
-                              (return
-                                (Base64LengthErr
-                                  (Base64Error
-                                    (Base64NonZeroPadBits)
-                                    (+ base 2))))))
-                          (begin
-                            (when
-                              (< v3 0)
-                              (return
-                                (Base64LengthErr
-                                  (Base64Error
-                                    (Base64InvalidCharacter)
-                                    (+ base 3)))))
-                            (set! padding 0))))))
+                          (Base64Error (Base64NonZeroPadBits) (+ base 1))))))
                   (begin
-                    (when
-                      (= (cast b0 : i64) 61)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidPadding) base))))
-                    (when
-                      (< v0 0)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidCharacter) base))))
-                    (when
-                      (= (cast b1 : i64) 61)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidPadding) (+ base 1)))))
-                    (when
-                      (< v1 0)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidCharacter) (+ base 1)))))
-                    (when
-                      (= (cast b2 : i64) 61)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidPadding) (+ base 2)))))
                     (when
                       (< v2 0)
                       (return
                         (Base64LengthErr
                           (Base64Error (Base64InvalidCharacter) (+ base 2)))))
-                    (when
-                      (= (cast b3 : i64) 61)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidPadding) (+ base 3)))))
-                    (when
-                      (< v3 0)
-                      (return
-                        (Base64LengthErr
-                          (Base64Error (Base64InvalidCharacter) (+ base 3)))))))
-                (set! quantum (+ quantum 1)))))
-          (Base64LengthOk (- (* quanta 3) padding)))))))
+                    (if (= (cast b3 : i64) 61)
+                      (begin
+                        (set! padding 1)
+                        (when
+                          (!= (bit-and v2 3) 0)
+                          (return
+                            (Base64LengthErr
+                              (Base64Error (Base64NonZeroPadBits) (+ base 2))))))
+                      (begin
+                        (when
+                          (< v3 0)
+                          (return
+                            (Base64LengthErr
+                              (Base64Error (Base64InvalidCharacter) (+ base 3)))))
+                        (set! padding 0))))))
+              (begin
+                (when
+                  (= (cast b0 : i64) 61)
+                  (return
+                    (Base64LengthErr (Base64Error (Base64InvalidPadding) base))))
+                (when
+                  (< v0 0)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidCharacter) base))))
+                (when
+                  (= (cast b1 : i64) 61)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidPadding) (+ base 1)))))
+                (when
+                  (< v1 0)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidCharacter) (+ base 1)))))
+                (when
+                  (= (cast b2 : i64) 61)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidPadding) (+ base 2)))))
+                (when
+                  (< v2 0)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidCharacter) (+ base 2)))))
+                (when
+                  (= (cast b3 : i64) 61)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidPadding) (+ base 3)))))
+                (when
+                  (< v3 0)
+                  (return
+                    (Base64LengthErr
+                      (Base64Error (Base64InvalidCharacter) (+ base 3)))))))
+            (set! quantum (+ quantum 1))))
+        (base64-bounded-length (- (* quanta 3) padding) max-output-bytes)))))
 
 ;: Write the canonical encoding of validated-shape borrowed bytes from offset
 ;: zero of `dst`. The caller must have checked capacity and non-overlap.
@@ -307,62 +332,54 @@
     [quanta : i64 (/ n 3)]
     [remainder : i64 (- n (* quanta 3))]
     [quantum : i64 0]
-    (begin
-      (while (< quantum quanta)
-        (let
-          [offset : i64 (* quantum 3)]
-          [out : i64 (* quantum 4)]
-          [b0 : i64 (cast (byte_buf.bytes-ref input offset) : i64)]
-          [b1 : i64 (cast (byte_buf.bytes-ref input (+ offset 1)) : i64)]
-          [b2 : i64 (cast (byte_buf.bytes-ref input (+ offset 2)) : i64)]
-          [word : i64 (bit-or (shl b0 16) (bit-or (shl b1 8) b2))]
-          (begin
-            (set!
-              (array-ref dst.slots out)
-              (base64-char (bit-and (shr word 18) 63)))
-            (set!
-              (array-ref dst.slots (+ out 1))
-              (base64-char (bit-and (shr word 12) 63)))
-            (set!
-              (array-ref dst.slots (+ out 2))
-              (base64-char (bit-and (shr word 6) 63)))
-            (set!
-              (array-ref dst.slots (+ out 3))
-              (base64-char (bit-and word 63)))
-            (set! quantum (+ quantum 1)))))
-      (if (= remainder 1)
+    (while (< quantum quanta)
+      (let
+        [offset : i64 (* quantum 3)]
+        [out : i64 (* quantum 4)]
+        [b0 : i64 (cast (byte_buf.bytes-ref input offset) : i64)]
+        [b1 : i64 (cast (byte_buf.bytes-ref input (+ offset 1)) : i64)]
+        [b2 : i64 (cast (byte_buf.bytes-ref input (+ offset 2)) : i64)]
+        [word : i64 (bit-or (shl b0 16) (bit-or (shl b1 8) b2))]
+        (set!
+          (array-ref dst.slots out)
+          (base64-char (bit-and (shr word 18) 63)))
+        (set!
+          (array-ref dst.slots (+ out 1))
+          (base64-char (bit-and (shr word 12) 63)))
+        (set!
+          (array-ref dst.slots (+ out 2))
+          (base64-char (bit-and (shr word 6) 63)))
+        (set! (array-ref dst.slots (+ out 3)) (base64-char (bit-and word 63)))
+        (set! quantum (+ quantum 1))))
+    (if (= remainder 1)
+      (let
+        [offset : i64 (* quanta 3)]
+        [out : i64 (* quanta 4)]
+        [b0 : i64 (cast (byte_buf.bytes-ref input offset) : i64)]
+        (set! (array-ref dst.slots out) (base64-char (bit-and (shr b0 2) 63)))
+        (set!
+          (array-ref dst.slots (+ out 1))
+          (base64-char (bit-and (shl b0 4) 63)))
+        (set! (array-ref dst.slots (+ out 2)) (cast 61 : u8))
+        (set! (array-ref dst.slots (+ out 3)) (cast 61 : u8)))
+      (if (= remainder 2)
         (let
           [offset : i64 (* quanta 3)]
           [out : i64 (* quanta 4)]
           [b0 : i64 (cast (byte_buf.bytes-ref input offset) : i64)]
-          (begin
-            (set!
-              (array-ref dst.slots out)
-              (base64-char (bit-and (shr b0 2) 63)))
-            (set!
-              (array-ref dst.slots (+ out 1))
-              (base64-char (bit-and (shl b0 4) 63)))
-            (set! (array-ref dst.slots (+ out 2)) (cast 61 : u8))
-            (set! (array-ref dst.slots (+ out 3)) (cast 61 : u8))))
-        (if (= remainder 2)
-          (let
-            [offset : i64 (* quanta 3)]
-            [out : i64 (* quanta 4)]
-            [b0 : i64 (cast (byte_buf.bytes-ref input offset) : i64)]
-            [b1 : i64 (cast (byte_buf.bytes-ref input (+ offset 1)) : i64)]
-            [word : i64 (bit-or (shl b0 8) b1)]
-            (begin
-              (set!
-                (array-ref dst.slots out)
-                (base64-char (bit-and (shr word 10) 63)))
-              (set!
-                (array-ref dst.slots (+ out 1))
-                (base64-char (bit-and (shr word 4) 63)))
-              (set!
-                (array-ref dst.slots (+ out 2))
-                (base64-char (bit-and (shl word 2) 63)))
-              (set! (array-ref dst.slots (+ out 3)) (cast 61 : u8))))
-          unit)))))
+          [b1 : i64 (cast (byte_buf.bytes-ref input (+ offset 1)) : i64)]
+          [word : i64 (bit-or (shl b0 8) b1)]
+          (set!
+            (array-ref dst.slots out)
+            (base64-char (bit-and (shr word 10) 63)))
+          (set!
+            (array-ref dst.slots (+ out 1))
+            (base64-char (bit-and (shr word 4) 63)))
+          (set!
+            (array-ref dst.slots (+ out 2))
+            (base64-char (bit-and (shl word 2) 63)))
+          (set! (array-ref dst.slots (+ out 3)) (cast 61 : u8)))
+        unit))))
 
 ;: Write canonical decoded bytes from validated borrowed base64 from offset
 ;: zero of `dst`. The caller must have checked capacity and non-overlap.
@@ -373,60 +390,58 @@
     [n : i64 (byte_buf.bytes-length input)]
     [quanta : i64 (/ n 4)]
     [quantum : i64 0]
-    (begin
-      (while (< quantum quanta)
-        (let
-          [base : i64 (* quantum 4)]
-          [out : i64 (* quantum 3)]
-          [last : bool (= quantum (- quanta 1))]
-          [d0 : i64 (base64-value (byte_buf.bytes-ref input base))]
-          [d1 : i64 (base64-value (byte_buf.bytes-ref input (+ base 1)))]
-          [d2 : i64 (base64-value (byte_buf.bytes-ref input (+ base 2)))]
-          [d3 : i64 (base64-value (byte_buf.bytes-ref input (+ base 3)))]
-          [count : i64
-            (if last
-              (if (< d2 0)
-                1
-                (if (< d3 0)
-                  2
-                  3))
-              3)]
-          (begin
-            (set!
-              (array-ref dst.slots out)
-              (cast (bit-or (shl d0 2) (shr d1 4)) : u8))
-            (when
-              (>= count 2)
-              (set!
-                (array-ref dst.slots (+ out 1))
-                (cast (bit-or (shl (bit-and d1 15) 4) (shr d2 2)) : u8)))
-            (when
-              (>= count 3)
-              (set!
-                (array-ref dst.slots (+ out 2))
-                (cast (bit-or (shl (bit-and d2 3) 6) d3) : u8)))
-            (set! quantum (+ quantum 1)))))
-      unit)))
+    (while (< quantum quanta)
+      (let
+        [base : i64 (* quantum 4)]
+        [out : i64 (* quantum 3)]
+        [last : bool (= quantum (- quanta 1))]
+        [d0 : i64 (base64-value (byte_buf.bytes-ref input base))]
+        [d1 : i64 (base64-value (byte_buf.bytes-ref input (+ base 1)))]
+        [d2 : i64 (base64-value (byte_buf.bytes-ref input (+ base 2)))]
+        [d3 : i64 (base64-value (byte_buf.bytes-ref input (+ base 3)))]
+        [count : i64
+          (if last
+            (if (< d2 0)
+              1
+              (if (< d3 0)
+                2
+                3))
+            3)]
+        (set!
+          (array-ref dst.slots out)
+          (cast (bit-or (shl d0 2) (shr d1 4)) : u8))
+        (when
+          (>= count 2)
+          (set!
+            (array-ref dst.slots (+ out 1))
+            (cast (bit-or (shl (bit-and d1 15) 4) (shr d2 2)) : u8)))
+        (when
+          (>= count 3)
+          (set!
+            (array-ref dst.slots (+ out 2))
+            (cast (bit-or (shl (bit-and d2 3) 6) d3) : u8)))
+        (set! quantum (+ quantum 1))))
+    unit))
 
 ;: Allocate one canonical RFC 4648 encoding of borrowed bytes.
-(define (encode [input : (& input bytes)]) : Base64EncodeResult
-  (match (encoded-length input)
+(define (encode [input : (& input bytes)] [max-output-bytes : i64]) : Base64EncodeResult
+  (match (encoded-length input max-output-bytes)
     [(Base64LengthErr error) (Base64EncodeErr error)]
     [(Base64LengthOk length)
       (let
         [out : byte_buf.ByteBuf (byte_buf.with-capacity length)]
-        (begin
-          (base64-encode-bytes! input (&mut out))
-          (set! out.len length)
-          (Base64EncodeOk out)))]))
+        (base64-encode-bytes! input (&mut out))
+        (set! out.len length)
+        (Base64EncodeOk out))]))
 
 ;: Encode borrowed bytes into caller-owned storage from offset zero.
 ;:
 ;: The destination keeps its old live length and bytes on every failure.
 (define (encode-into
   [input : (& input bytes)]
-  [dst : (&mut dst byte_buf.ByteBuf)]) : Base64EncodeIntoResult
-  (match (encoded-length input)
+  [dst : (&mut dst byte_buf.ByteBuf)]
+  [max-output-bytes : i64]) : Base64EncodeIntoResult
+  (match (encoded-length input max-output-bytes)
     [(Base64LengthErr error) (Base64EncodeIntoErr error)]
     [(Base64LengthOk length)
       (if (> length (byte_buf.capacity dst))
@@ -440,16 +455,15 @@
             (Base64EncodeIntoOk length))))]))
 
 ;: Allocate one strict canonical decoding of borrowed base64 bytes.
-(define (decode [input : (& input bytes)]) : Base64DecodeResult
-  (match (decoded-length input)
+(define (decode [input : (& input bytes)] [max-output-bytes : i64]) : Base64DecodeResult
+  (match (decoded-length input max-output-bytes)
     [(Base64LengthErr error) (Base64DecodeErr error)]
     [(Base64LengthOk length)
       (let
         [out : byte_buf.ByteBuf (byte_buf.with-capacity length)]
-        (begin
-          (base64-decode-bytes! input (&mut out))
-          (set! out.len length)
-          (Base64DecodeOk out)))]))
+        (base64-decode-bytes! input (&mut out))
+        (set! out.len length)
+        (Base64DecodeOk out))]))
 
 ;: Decode borrowed canonical base64 bytes into caller-owned storage.
 ;:
@@ -457,8 +471,9 @@
 ;: The destination keeps its old live length and bytes on every failure.
 (define (decode-into
   [input : (& input bytes)]
-  [dst : (&mut dst byte_buf.ByteBuf)]) : Base64DecodeIntoResult
-  (match (decoded-length input)
+  [dst : (&mut dst byte_buf.ByteBuf)]
+  [max-output-bytes : i64]) : Base64DecodeIntoResult
+  (match (decoded-length input max-output-bytes)
     [(Base64LengthErr error) (Base64DecodeIntoErr error)]
     [(Base64LengthOk length)
       (if (> length (byte_buf.capacity dst))
@@ -475,24 +490,22 @@
   base64-rfc4648-round-trip
   (let
     [text : String "foobar"]
-    (match (encode (byte_buf.str-as-bytes (& text)))
+    (match (encode (byte_buf.str-as-bytes (& text)) 8)
       [(Base64EncodeErr _) (test.assert-true false "encode should succeed")]
       [(Base64EncodeOk encoded)
-        (begin
-          (test.assert-i64-eq (byte_buf.len encoded) 8 "encoded length")
-          (match (decode (byte_buf.as-bytes (& encoded)))
-            [(Base64DecodeErr _)
-              (test.assert-true false "decode should succeed")]
-            [(Base64DecodeOk decoded)
-              (let
-                [actual : String (byte_buf.to-string decoded)]
-                (test.assert-string-eq
-                  (& actual)
-                  (& text)
-                  "RFC 4648 vector round trip"))])
-          (let
-            [rendered : String (byte_buf.to-string encoded)]
-            (test.assert-string-eq
-              (& rendered)
-              "Zm9vYmFy"
-              "RFC 4648 vector spelling")))])))
+        (test.assert-i64-eq (byte_buf.len encoded) 8 "encoded length")
+        (match (decode (byte_buf.as-bytes (& encoded)) 6)
+          [(Base64DecodeErr _) (test.assert-true false "decode should succeed")]
+          [(Base64DecodeOk decoded)
+            (let
+              [actual : String (byte_buf.to-string decoded)]
+              (test.assert-string-eq
+                (& actual)
+                (& text)
+                "RFC 4648 vector round trip"))])
+        (let
+          [rendered : String (byte_buf.to-string encoded)]
+          (test.assert-string-eq
+            (& rendered)
+            "Zm9vYmFy"
+            "RFC 4648 vector spelling"))])))

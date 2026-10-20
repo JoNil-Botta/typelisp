@@ -71,6 +71,9 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   counts, all 64 pad-bit values, every invalid alphabet byte at every position,
   truncated/trailing/padded quanta, checked length overflow, destination
   capacity, unchanged-on-failure, and source/destination overlap rejection.
+  All 65,536 two-byte inputs also check an independent literal-alphabet oracle.
+  Every API checks negative, zero, short, exact, and oversized output limits;
+  rejected limits preserve every physical destination byte and its live length.
 - `http_head_codec.tl` covers strict byte-oriented HTTP/1.1 request-head
   serialization and incremental response-head parsing: every split boundary,
   exact consumption with one-byte and 32 KiB coalesced body suffixes, bounded

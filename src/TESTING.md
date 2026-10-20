@@ -2120,3 +2120,15 @@ expression segment boundaries, including more than two full segments. Run it at
 opt0, opt1 and opt2 alongside the native smoke's row-rewrite, truncation/reuse
 and equal-ID/different-pool cases. Wrapper removal consumes each row before
 reading the next and copies out the leaf without recursive stack growth.
+
+`decls_module_scopes` and `serialize_module_scopes` run at opt0/1/2 on both
+hosts. The former repeats one declaration expansion within two generated
+modules and reimports a generated module. The latter round-trips shared enum
+payloads through separate enclosing serializers and checks distinct struct,
+string and scalar values. `decls_same_scope_incompatible` preserves a located
+incompatible-output diagnostic for one module/canonical expansion identity.
+`decls_explicit_module_scopes` combines local declarations with shared explicit
+modules; `decls_explicit_module_tail_conflict` checks that replayed markers
+still assign subsequent declarations to their explicit owner.
+The typechecker memo scope test complements its existing owner-isolation,
+collision-probing, scratch-persistence and re-arm allocation checks.

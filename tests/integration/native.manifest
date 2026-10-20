@@ -1013,3 +1013,7 @@ store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|4
 literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
 exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
+
+decls_module_scopes|all|0,1,2|tests/integration/decls_module_scopes.tl|42|-|-|decls_generated_import_dep.tl|-
+serialize_module_scopes|all|0,1,2|tests/integration/serialize_module_scopes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl|-
+decls_explicit_module_scopes|all|0,1,2|tests/integration/decls_explicit_module_scopes.tl|42|-|-|-|-

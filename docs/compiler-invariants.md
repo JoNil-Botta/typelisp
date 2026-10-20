@@ -811,6 +811,15 @@ core-macro Clone handoff supplies its explicit
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved
 cfg driver-state smoke guard this boundary.
 
+`Decls` splice admission is keyed by the consuming module and expansion
+identity in the job-owned structural intern session. A compatible repeat in
+one module remains empty; another module still receives its imports and local
+declarations. Explicit module switches group admission by the actual owner;
+all marker rows and the original declaration interleaving are preserved. Incompatible output under one module/identity still diagnoses.
+`decls_module_scopes` and `serialize_module_scopes` exercise independent generated
+modules and shared enum payload serializers; the memo scope and re-arm tests
+cover owner isolation, collision probing and invalidation.
+
 The expansion walk splices each macro's output into a segmented program view
 and continues over it. A splice costs work in its delta and the module it
 expands in, never a rescan of the whole program (#8120). Segment nodes and the

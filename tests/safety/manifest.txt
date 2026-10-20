@@ -1602,3 +1602,7 @@ macro_diagnostic_division|check-fail|tests/safety/macro_diagnostic_division.tl|-
 macro_diagnostic_fuel|check-fail|tests/safety/macro_diagnostic_fuel.tl|-|error[E0507]:
 macro_table_cycle_reject|check-fail|tests/safety/macro_table_cycle/main.tl|-|error[E0501]: typecheck: missing macro
 macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.tl|-|-
+
+# Same canonical Decls identity in one module must retain collision checks.
+decls_same_scope_incompatible|check-fail|tests/safety/decls_same_scope_incompatible.tl|-|has incompatible payload
+decls_explicit_module_tail_conflict|check-fail|tests/safety/decls_explicit_module_tail_conflict.tl|-|duplicate value declaration generated.decls_explicit_global/value

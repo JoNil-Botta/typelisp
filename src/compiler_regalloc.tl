@@ -10,13 +10,13 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
+(import stdlib.hash)
 (import compiler_regalloc_interval_sort as interval_sort)
 (import compiler_regalloc_dense_seq as dense_seq)
 
 ;; Block labels are interned ids, so their maps are integer-keyed.
 (import (hashmap.hashmap i64 i64) as reg_label_i64_map)
 (import (hashmap.hashmap i64 i64) as reg_i64_i64_map)
-(import (hashmap.hashmap (Tuple i64 i64) i64) as reg_move_index)
 (import stdlib.vector)
 (import (vector.vector i64 core) as reg_ids)
 (import compiler_ast_types as ast)
@@ -598,22 +598,26 @@
   (slots (__tl_dyn-array CompilerRegMove))
   (len i64))
 
-;; The index belongs to this single-consumer builder, not to retained sequence
-;; views. It maps full-width ordered pairs to their newest slot; querying both
-;; orientations preserves newest-first undirected strict upgrades. Both fields
-;; live in the function's scratch arena and only the sequence escapes building.
+;; Hash buckets point to newest move slots. Links always point to older slots,
+;; so collision lookup terminates and compares both full-width endpoints.
+;; This single-consumer builder owns the index in the function scratch arena;
+;; only the dense sequence escapes, and retained views never consult the index.
 (defstruct CompilerRegMoveBuilder
   (moves CompilerRegMoveSeq)
-  (index reg_move_index.Map))
+  (index reg_i64_i64_map.Map)
+  (links CompilerRegIdSeq))
 
 (define (compiler-reg-move-builder-empty) : CompilerRegMoveBuilder
   (let
-    [index : reg_move_index.Map (init)]
-    (CompilerRegMoveBuilder (compiler-reg-move-seq-empty) index)))
+    [index : reg_i64_i64_map.Map (init)]
+    (CompilerRegMoveBuilder
+      (compiler-reg-move-seq-empty)
+      index
+      (compiler-reg-id-seq-empty))))
 
 (define (compiler-reg-move-builder-finish [builder : CompilerRegMoveBuilder]) : CompilerRegMoveSeq
   (match builder
-    [(CompilerRegMoveBuilder moves _) moves]))
+    [(CompilerRegMoveBuilder moves _ _) moves]))
 
 ;; Deterministic move-copy classes used by scalar home coalescing. Roots are the
 ;; lowest var id in each class; allocation then reuses any assigned class home.
@@ -1515,18 +1519,39 @@
 (define (compiler-reg-move-list-empty? [moves : (& moves CompilerRegMoveSeq)]) : bool
   (= moves.len 0))
 
+(define (compiler-reg-move-pair-hash [src : i64] [dst : i64]) : i64
+  (hash.hash-once (tuple src dst)))
+
+(define (compiler-reg-move-builder-directed-slot
+  [builder : (& CompilerRegMoveBuilder)]
+  [src : i64]
+  [dst : i64]) : i64
+  (let
+    [slot : i64
+      (reg_i64_i64_map.get-value-or
+        (& builder.index)
+        (compiler-reg-move-pair-hash src dst)
+        -1)]
+    (while (>= slot 0)
+      (when
+        (and
+          (= (array-ref builder.moves.slots slot).src src)
+          (= (array-ref builder.moves.slots slot).dst dst))
+        (return slot))
+      (set! slot (array-ref builder.links.slots slot)))
+    -1))
+
 (define (compiler-reg-move-builder-slot
   [builder : (& CompilerRegMoveBuilder)]
   [src : i64]
   [dst : i64]
   [undirected : bool]) : i64
   (let
-    [forward : i64
-      (reg_move_index.get-value-or (& builder.index) (tuple src dst) -1)]
+    [forward : i64 (compiler-reg-move-builder-directed-slot builder src dst)]
     (if undirected
       (compiler-reg-max
         forward
-        (reg_move_index.get-value-or (& builder.index) (tuple dst src) -1))
+        (compiler-reg-move-builder-directed-slot builder dst src))
       forward)))
 
 (define (compiler-reg-move-list-add
@@ -1544,11 +1569,11 @@
         (let
           [slot : i64 (compiler-reg-move-builder-slot (& builder) src dst true)]
           (set! (array-ref builder.moves.slots slot).strict true)))
-      (begin
-        (reg_move_index.insert-ref!
-          (&mut builder.index)
-          (tuple src dst)
-          builder.moves.len)
+      (let
+        [key : i64 (compiler-reg-move-pair-hash src dst)]
+        [head : i64 (reg_i64_i64_map.get-value-or (& builder.index) key -1)]
+        (set! builder.links (compiler-reg-id-seq-push builder.links head))
+        (reg_i64_i64_map.insert-ref! (&mut builder.index) key builder.moves.len)
         (set!
           builder.moves
           (compiler-reg-move-seq-push

@@ -1653,9 +1653,11 @@ live-after survival constraint, but their argument marshalling must still read
 each source before an argument-register write can destroy it.
 
 Move harvesting carries one `CompilerRegMoveBuilder` through casts,
-destructive ties, copies and phi inputs. Its full-width ordered-pair index
-identifies sequence slots without changing insertion order. Undirected lookup
-selects the newer of both orientations; a strict duplicate upgrades that same
+destructive ties, copies and phi inputs. Its integer map indexes structural
+hashes into chains of move slots; lookups compare both full-width endpoints.
+Each collision link points to an older slot or -1, so lookup terminates while
+preserving newest-first order. Undirected lookup selects the newer of both
+orientations; a strict duplicate upgrades that same
 newest undirected slot even when admission was directed. Self moves never enter
 the sequence or index. The builder is consumed by each insertion and lives in
 the function scratch arena; coalescing receives only its dense sequence.

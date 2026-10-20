@@ -1416,6 +1416,39 @@ match ^[[:space:]]+jmp _tl_try_sret_forward_checked$
 not-contains movups
 not-match ^[[:space:]]+call[[:space:]]
 
+# A self tail call in an arm of a match on a borrowed enum place jumps (#9044):
+# an element through a reference parameter, a field through one, and a two-word
+# enum the match spills to a slot. At opt 2 tailrec makes each walker a loop. A
+# binding that borrows a frame local's aggregate payload keeps its call.
+case tail-borrowed-enum-match
+source tests/integration/tail_borrowed_enum_match.tl
+opt 0 1
+in fn _tl_tail_borrowed_enum_match_walk_borrow
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_walk_borrow$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_walk_borrow$
+in fn _tl_tail_borrowed_enum_match_count_field
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_count_field$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_count_field$
+in fn _tl_tail_borrowed_enum_match_sum_on
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_sum_on$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_sum_on$
+
+case tail-borrowed-enum-match-loop
+source tests/integration/tail_borrowed_enum_match.tl
+in fn _tl_tail_borrowed_enum_match_walk_borrow
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_walk_borrow$
+in fn _tl_tail_borrowed_enum_match_count_field
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_count_field$
+in fn _tl_tail_borrowed_enum_match_sum_on
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_sum_on$
+
+case tail-borrowed-enum-match-frame-local
+source tests/integration/tail_borrowed_enum_match.tl
+opt 0
+in fn _tl_tail_borrowed_enum_match_local_shape
+count = 1 ^[[:space:]]+call _tl_tail_borrowed_enum_match_pt_sum$
+not-match ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_pt_sum$
+
 case extern-data-memory-symbols
 source tests/integration/extern_data_memory.tl
 target linux-x86_64 windows-x86_64

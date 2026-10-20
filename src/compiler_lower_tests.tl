@@ -6386,6 +6386,45 @@
 (define (main) : i64
   (step (Big 1 2 3) 39))")
 
+(define (compiler-lower-tail-borrowed-enum-match-source) : String
+  "(defenum Item (Var i64) (Pair i64 i64))
+(defstruct ItemSeq (slots (__tl_dyn-array Item)) (len i64))
+(define (walk [seq : (& ItemSeq)] [i : i64] [acc : i64]) : i64
+  (if (>= i seq.len)
+    acc
+    (match (& (array-ref seq.slots i))
+      [(Var _) (walk seq (+ i 1) (+ acc 1))]
+      [_ (walk seq (+ i 1) acc)])))
+(defstruct Holder (item Item) (next i64))
+(define (field [h : (& Holder)] [k : i64] [acc : i64]) : i64
+  (if (= k 0)
+    acc
+    (match (& h.item)
+      [(Pair a _) (field h (- k 1) (+ acc a))]
+      [_ (field h (- k 1) acc)])))
+(defenum Flag (On i64) (Off))
+(defstruct FlagSeq (slots (__tl_dyn-array Flag)) (len i64))
+(define (flags [seq : (& FlagSeq)] [i : i64] [acc : i64]) : i64
+  (if (>= i seq.len)
+    acc
+    (match (& (array-ref seq.slots i))
+      [(On v) (flags seq (+ i 1) (+ acc v))]
+      [(Off) (flags seq (+ i 1) acc)])))
+(defstruct Pt (x i64) (y i64) (z i64))
+(defenum Shape (Dot Pt) (Blank))
+(define (pt-sum [p : (& Pt)]) : i64 (+ p.x (+ p.y p.z)))
+(define (local-shape [n : i64]) : i64
+  (let [sh : Shape (Dot (Pt n 1 2))]
+    (match (& sh)
+      [(Dot p) (pt-sum p)]
+      [(Blank) 0])))
+(define (main) : i64
+  (let [seq : ItemSeq (ItemSeq (__tl_make-array Item 1) 1)]
+    [fs : FlagSeq (FlagSeq (__tl_make-array Flag 1) 1)]
+    [h : Holder (Holder (Pair 1 2) 0)]
+    (+ (+ (walk (& seq) 0 0) (flags (& fs) 0 0))
+       (+ (field (& h) 2 0) (local-shape 1)))))")
+
 (define (compiler-lower-tail-indirect-source) : String
   "(define (finish [x : i64]) : i64 x)
 (define (step [f : (-> i64 i64)] [x : i64]) : i64
@@ -6503,6 +6542,34 @@
         (= (lower-test-function-tail-call-count functions "step" "finish") 0)
         (> (lower-test-function-call-count functions "step" "finish") 0))]
     [_ false]))
+
+(define (compiler-lower-tail-borrowed-enum-match-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      (compiler-lower-tail-borrowed-enum-match-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-function-tail-call-count functions "walk" "walk") 2)
+        (= (lower-test-function-call-count functions "walk" "walk") 0)
+        (= (lower-test-function-tail-call-count functions "field" "field") 2)
+        (= (lower-test-function-call-count functions "field" "field") 0)
+        (= (lower-test-function-tail-call-count functions "flags" "flags") 2)
+        (= (lower-test-function-call-count functions "flags" "flags") 0)
+        (=
+          (lower-test-function-tail-call-count functions "local-shape" "pt-sum")
+          0)
+        (> (lower-test-function-call-count functions "local-shape" "pt-sum") 0))]
+    [_ false]))
+
+;; A self tail call in an arm of a match on a borrowed enum place stays a tail
+;; call: an element through a reference parameter, a field through one, and a
+;; two-word enum the match spills to a slot. A binding that borrows a frame
+;; local's aggregate payload keeps its call (#9044).
+(test
+  compiler-lower-tail-borrowed-enum-match
+  (test.assert-true
+    (compiler-lower-tail-borrowed-enum-match-shape-ok?)
+    "a tail match on a borrowed enum place keeps its arms' tail calls"))
 
 (define (compiler-lower-tail-indirect-shape-ok?) : bool
   (match (lower-test-functions
@@ -6738,8 +6805,13 @@
     (lower.lower-compiler-source (compiler-lower-borrowed-enum-match-source)))
     [(Some functions)
       (and
-        (> (lower-test-function-phi-count functions "score") 0)
-        (> (lower-test-function-call-count functions "score" "take") 0)
+        ;; `score`'s match is in tail position, so its arms return directly
+        ;; and the arm call stays a tail call (#9044). The borrowed `i64`
+        ;; binding is copied to its own storage, so the call may reuse the
+        ;; frame.
+        (= (lower-test-function-phi-count functions "score") 0)
+        (= (lower-test-function-tail-call-count functions "score" "take") 1)
+        (= (lower-test-function-call-count functions "score" "take") 0)
         (> (lower-test-count functions "score" (GepOffset 8)) 0)
         (> (lower-test-count functions "slot-score" (Branch)) 0))]
     [_ false]))

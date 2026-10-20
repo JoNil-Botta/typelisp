@@ -6630,22 +6630,22 @@
         (cabi.compiler-abi-vector-register-id 31))
       ;; ABI tables return canonical IDs, including their invalid boundaries.
       (=
-        (cabi.compiler-abi-gp-arg-register-id (Linux) 0)
+        (cabi.compiler-abi-gp-arg-register-id (Linux) (Platform) 0)
         cabi.compiler-reg-id-rdi)
       (=
-        (cabi.compiler-abi-gp-arg-register-id (Windows) 3)
+        (cabi.compiler-abi-gp-arg-register-id (Windows) (Platform) 3)
         cabi.compiler-reg-id-r9)
       (=
-        (cabi.compiler-abi-float-arg-register-id (Linux) 7)
+        (cabi.compiler-abi-float-arg-register-id (Linux) (Platform) 7)
         (cabi.compiler-abi-xmm-register-id 7))
       (=
-        (cabi.compiler-abi-callee-saved-xmm-register-id (Windows) 9)
+        (cabi.compiler-abi-callee-saved-xmm-register-id (Windows) (Platform) 9)
         (cabi.compiler-abi-xmm-register-id 15))
       (=
-        (cabi.compiler-abi-gp-arg-register-id (Windows) 4)
+        (cabi.compiler-abi-gp-arg-register-id (Windows) (Platform) 4)
         cabi.compiler-reg-id-invalid)
       (=
-        (cabi.compiler-abi-caller-saved-xmm-register-id (Windows) 6)
+        (cabi.compiler-abi-caller-saved-xmm-register-id (Windows) (Platform) 6)
         cabi.compiler-reg-id-invalid))))
 
 (cfg
@@ -12774,6 +12774,71 @@
             (= (array-ref remap 4) 1))]
         [(None) false])]))
 
+(define (compiler-reg-packed-storage-color-case
+  [words : String]
+  [escapes? : bool]) : bool
+  (let
+    [func : ir.CompilerIrFunction
+      (irt.func
+        (str_cat.str-cat
+          "function @packed_storage() -> u64 vars 10 {
+           entry:
+             %0 = alloc PackedStorage
+             %1 = alloc PackedStorage
+             %2 = addr_of %1
+             %3 = gep %2, 0 : u8
+             %4 = mov %3 : u64
+             %5 = pack "
+          words
+          " : Pair
+             %6 = alloc PackedStorage
+             %7 = alloc PackedStorage
+             %8 = addr_of %7
+             store_ptr %8, 99 : i64
+             %9 = word %5, 0 : u64
+             return %9
+           }"))]
+    [intervals : reg.CompilerRegIntervalSeq
+      (reg.compiler-reg-stack-only-block-intervals (& func))]
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (for [index (iterator.range 0 10)]
+      (set! (array-ref slots index) -1)
+      (set! (array-ref remap index) -1))
+    (match func
+      [(Function _ _ _ vars blocks _)
+        (reg.compiler-reg-color-inline-storage
+          (& blocks)
+          (& intervals)
+          (&mut slots)
+          (&mut remap)
+          vars
+          0)])
+    (if escapes?
+      ;; Unmapped storage receives private slots after the coloring walk.
+      (and
+        (= (array-ref remap 0) -1)
+        (= (array-ref remap 1) -1)
+        (>= (array-ref remap 6) 0))
+      (and
+        (>= (array-ref remap 0) 0)
+        (= (array-ref remap 0) (array-ref remap 6))
+        (= (array-ref remap 1) (array-ref remap 7))))))
+
+(test
+  regalloc-packed-storage-escape
+  (let
+    [words : (Array String 6)
+      (array "[%4, 17]" "[17, %4]" "[%4, %4]" "[%2, 0]" "[0, %3]" "[11, 12]")]
+    (for [index (iterator.range 0 6)]
+      (test.assert-true
+        (compiler-reg-packed-storage-color-case
+          (clone (array-ref words index))
+          (< index 5))
+        (str_cat.str-cat
+          "packed storage escape case "
+          (string.int->string index))))))
+
 ;; The hidden output pointer is borrowed only across the call. Its result is
 ;; another alias of the same two-word range; an ordinary pointer call must
 ;; still invalidate the range even when it has the same physical ABI.
@@ -15190,7 +15255,8 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : reg.CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-caller-saved-gp-register-count target-abi (Internal))]
     [out : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -15201,7 +15267,10 @@
         out
         (reg.compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-caller-saved-gp-register-id target-abi index))))
+          (cabi.compiler-abi-caller-saved-gp-register-id
+            target-abi
+            (Internal)
+            index))))
     out))
 
 (define (compiler-reg-sysv-caller-saved-integer-registers) : reg.CompilerRegIdSeq
@@ -15217,7 +15286,8 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : reg.CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-caller-saved-xmm-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-caller-saved-xmm-register-count target-abi (Internal))]
     [out : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -15228,14 +15298,18 @@
         out
         (reg.compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index))))
+          (cabi.compiler-abi-caller-saved-xmm-register-id
+            target-abi
+            (Internal)
+            index))))
     out))
 
 (define (compiler-reg-callee-saved-xmm-registers-from-abi
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : reg.CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-callee-saved-xmm-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-callee-saved-xmm-register-count target-abi (Internal))]
     [out : reg.CompilerRegIdSeq
       (reg.compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -15246,7 +15320,10 @@
         out
         (reg.compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index))))
+          (cabi.compiler-abi-callee-saved-xmm-register-id
+            target-abi
+            (Internal)
+            index))))
     out))
 
 (define (compiler-reg-sysv-caller-saved-xmm-registers) : reg.CompilerRegIdSeq

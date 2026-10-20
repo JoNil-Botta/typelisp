@@ -2240,8 +2240,75 @@
     (string.int->string (csym.compiler-registry-child-stride))
     " members"))
 
+(define (compiler-symbols-selected-macro-alias-check!) : unit
+  (match (build-compiler-symbols-from-source
+    "(module shadow)
+(defmacro (ft) : Expr `7)
+(module provider)
+(defmacro (answer) : Expr `42)")
+    [(Ok symbols)
+      (let
+        [root : i64 (csym.compiler-symbol-root-module-id)]
+        [local-name : i64 (ci.intern "ft")]
+        [missing : i64 (csym.compiler-symbols-missing-handle)]
+        [foreign : i64
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (& symbols)
+            (ci.intern "shadow")
+            local-name
+            missing)]
+        [expected : i64
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (& symbols)
+            (ci.intern "provider")
+            (ci.intern "answer")
+            missing)]
+        [before : i64
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (& symbols)
+            root
+            local-name
+            missing)]
+        [selected : csym.CompilerSymbols
+          (csym.compiler-symbols-add-selected-item-alias
+            (& symbols)
+            (ci.intern "provider")
+            (ci.intern "answer")
+            root
+            local-name)]
+        [later-bare : csym.CompilerSymbols
+          (csym.compiler-symbols-add-macro-alias-key-id
+            (& selected)
+            (csym.compiler-symbol-name-id-key local-name)
+            foreign
+            false)]
+        (unless
+          (and
+            (csym.compiler-symbols-handle-found? foreign)
+            (csym.compiler-symbols-handle-found? expected)
+            (not (= foreign expected))
+            (= before foreign)
+            (=
+              (csym.compiler-symbols-lookup-macro-in-module-id-or
+                (& later-bare)
+                root
+                local-name
+                missing)
+              expected)
+            (=
+              (csym.compiler-symbols-lookup-macro-in-module-id-or
+                (& later-bare)
+                (ci.intern "shadow")
+                local-name
+                missing)
+              foreign))
+          (io.panic
+            "symbols: selected macro alias lost to a foreign bare alias")))]
+    [(Err message) (io.panic message)]))
+
 (define (compiler-symbols-self-test) : i64
   (cbi.compiler-builtin-refresh!)
+  (compiler-symbols-selected-macro-alias-check!)
   (match (parser.parse-ast-source
     "(import stdlib.test)
 (defstruct Point (x i64) (y i64))

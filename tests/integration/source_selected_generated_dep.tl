@@ -13,7 +13,13 @@
       (right i64))
     (defenum Shape
       (Dot)
-      (Line i64))))
+      (Line i64))
+    (defmacro (generated-answer) : Expr
+      `42)
+    (defmacro (generated-add [value : Expr]) : Expr
+      `(let
+        [answer : i64 42]
+        (+ answer ,value)))))
 
 (emit-exports)
 

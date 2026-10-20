@@ -176,7 +176,7 @@
         (lower.lower-compiler-source-with-request
           "proof-parity.tl"
           source
-          (owned_view.compiler-owned-shared-view request))
+          request)
         (lower.lower-compiler-source-with-path-mode
           "proof-parity.tl"
           source
@@ -289,7 +289,7 @@
       (lower.lower-compiler-source-with-request
         "unsupported-proof.tl"
         source
-        (owned_view.compiler-owned-shared-view request))]
+        request)]
     (match (lower.lower-compiler-pointer-proof-result
       request
       (owned_view.compiler-owned-shared-view lowered))
@@ -459,7 +459,7 @@
       (lower.lower-compiler-source-with-request
         "first.tl"
         (owned_view.compiler-owned-shared-view source)
-        (owned_view.compiler-owned-shared-view request))]
+        request)]
     [second-result : lower.ResultCompilerLower
       (lower.lower-compiler-source-with-request
         "second.tl"
@@ -480,7 +480,7 @@
         (io.panic
           "pointer-proof smoke: a foreign semantic reference was admitted")])
     (match (lower.lower-compiler-pointer-proof-result
-      (owned_view.compiler-owned-shared-view request)
+      request
       (owned_view.compiler-owned-shared-view second-result))
       [(Err _) unit]
       [_
@@ -491,7 +491,7 @@
         (match (owned_view.compiler-owned-shared-view second-result)
           [(Ok _ spans _lower-owner)
             (match (lower.lower-compiler-pointer-proof-result
-              (owned_view.compiler-owned-shared-view request)
+              request
               (Ok program spans first-owner))
               [(Err _) unit]
               [_
@@ -509,7 +509,7 @@
     (match (lower.lower-compiler-source-with-request
       "reuse.tl"
       (owned_view.compiler-owned-shared-view source)
-      (owned_view.compiler-owned-shared-view request))
+      request)
       [(Err _) unit]
       [_ (io.panic "pointer-proof smoke: a bound owner was reused")])
     (proof.pointer-proof-input-release! first)
@@ -540,7 +540,7 @@
           (lower.lower-compiler-source-with-request
             "failed-source.tl"
             (owned_view.compiler-owned-array-element-shared-view sources index)
-            (owned_view.compiler-owned-shared-view request))]
+            request)]
         (match failed
           [(Err _) unit]
           [_ (io.panic "pointer-proof smoke: invalid source was accepted")])
@@ -590,7 +590,7 @@
     (svec.push-ref! (&mut roots) "stdlib")
     (lower.compiler-lower-state-use-request!
       (driver.compiler-driver-state-owned-lower-state state)
-      (owned_view.compiler-owned-shared-view request))
+      request)
     (match (driver.compiler-driver-load-and-lower-escaping-with-state-and-retirement
       (owned_view.compiler-owned-shared-view state)
       (owned_view.compiler-owned-shared-view path)

@@ -3912,6 +3912,10 @@
   loop-rotation
   (smoke-require-42 (ot.compiler-optimize-loop-rotation-self-test)))
 
+(test
+  rotation-compound-type-lifetime
+  (smoke-require-42 (ot.compiler-optimize-rotate-ssa-compound-types-self-test)))
+
 (test rotate-ssa (smoke-require-42 (ot.compiler-optimize-rotate-ssa-self-test)))
 
 (test licm (smoke-require-42 (ot.compiler-optimize-licm-self-test)))

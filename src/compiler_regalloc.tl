@@ -958,7 +958,8 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [idx : i64]) : CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-callee-saved-gp-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-callee-saved-gp-register-count target-abi (Internal))]
     [out : CompilerRegIdSeq
       (compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -969,7 +970,10 @@
         out
         (compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-callee-saved-gp-register-id target-abi index))))
+          (cabi.compiler-abi-callee-saved-gp-register-id
+            target-abi
+            (Internal)
+            index))))
     out))
 
 (define (compiler-reg-win64-callee-saved-integer-registers) : CompilerRegIdSeq
@@ -1019,9 +1023,15 @@
   [vector : bool]) : CompilerRegIdSeq
   (let
     [limit : i64
-      (if (< end (cabi.compiler-abi-caller-saved-xmm-register-count target-abi))
+      (if (<
         end
-        (cabi.compiler-abi-caller-saved-xmm-register-count target-abi))]
+        (cabi.compiler-abi-caller-saved-xmm-register-count
+          target-abi
+          (Internal)))
+        end
+        (cabi.compiler-abi-caller-saved-xmm-register-count
+          target-abi
+          (Internal)))]
     [out : CompilerRegIdSeq
       (compiler-reg-id-seq-with-capacity
         (if (< idx limit)
@@ -1030,7 +1040,10 @@
     (for [index (iterator.range idx limit)]
       (let
         [reg : i64
-          (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index)]
+          (cabi.compiler-abi-caller-saved-xmm-register-id
+            target-abi
+            (Internal)
+            index)]
         (if (or (compiler-reg-xmm-fixed-spill-scratch? reg) (< index 2))
           unit
           (set!
@@ -1047,7 +1060,7 @@
   (compiler-reg-xmm-caller-registers-for-abi-range
     target-abi
     idx
-    (cabi.compiler-abi-caller-saved-xmm-register-count target-abi)
+    (cabi.compiler-abi-caller-saved-xmm-register-count target-abi (Internal))
     vector))
 
 (define (compiler-reg-xmm-callee-registers-for-abi-from
@@ -1055,7 +1068,8 @@
   [idx : i64]
   [vector : bool]) : CompilerRegIdSeq
   (let
-    [count : i64 (cabi.compiler-abi-callee-saved-xmm-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-callee-saved-xmm-register-count target-abi (Internal))]
     [out : CompilerRegIdSeq
       (compiler-reg-id-seq-with-capacity
         (if (< idx count)
@@ -1064,7 +1078,10 @@
     (for [index (iterator.range idx count)]
       (let
         [reg : i64
-          (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index)]
+          (cabi.compiler-abi-callee-saved-xmm-register-id
+            target-abi
+            (Internal)
+            index)]
         (if (compiler-reg-xmm-fixed-spill-scratch? reg)
           unit
           (set!
@@ -1092,7 +1109,9 @@
         (compiler-reg-xmm-caller-registers-for-abi-range
           target-abi
           6
-          (cabi.compiler-abi-caller-saved-xmm-register-count target-abi)
+          (cabi.compiler-abi-caller-saved-xmm-register-count
+            target-abi
+            (Internal))
           true)
         (compiler-reg-xmm-caller-registers-for-abi-range target-abi 2 6 true))]
     [(Windows)
@@ -5126,7 +5145,8 @@
       (+ index 1)
       (if (> index position)
         (let
-          [reg : i64 (cabi.compiler-abi-gp-arg-register-id target-abi index)]
+          [reg : i64
+            (cabi.compiler-abi-gp-arg-register-id target-abi (Internal) index)]
           (if (= reg cabi.compiler-reg-id-invalid)
             out
             (compiler-reg-id-seq-push out reg)))
@@ -5229,10 +5249,10 @@
   [position : i64]) : CompilerRegMaybeId
   (let
     [idx : i64
-      (if (cabi.compiler-abi-arg-banks-independent? target-abi)
+      (if (cabi.compiler-abi-arg-banks-independent? target-abi (Internal))
         int-idx
         position)]
-    [reg : i64 (cabi.compiler-abi-gp-arg-register-id target-abi idx)]
+    [reg : i64 (cabi.compiler-abi-gp-arg-register-id target-abi (Internal) idx)]
     ;; %r8 is the backend's integer scratch register on both ABIs.
     (if (or
       (= reg cabi.compiler-reg-id-invalid)
@@ -5246,10 +5266,11 @@
   [position : i64]) : CompilerRegMaybeId
   (let
     [idx : i64
-      (if (cabi.compiler-abi-arg-banks-independent? target-abi)
+      (if (cabi.compiler-abi-arg-banks-independent? target-abi (Internal))
         float-idx
         position)]
-    [reg : i64 (cabi.compiler-abi-float-arg-register-id target-abi idx)]
+    [reg : i64
+      (cabi.compiler-abi-float-arg-register-id target-abi (Internal) idx)]
     (if (or
       (= reg cabi.compiler-reg-id-invalid)
       (not
@@ -5746,8 +5767,9 @@
 ;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Mirrored in the backend at
 ;; compiler-backend-call-args-gp-parallel-from? -- keep the two in sync.
 (define (compiler-reg-arg-reg-limit-for-abi
-  [target-abi : cabi.CompilerRegTargetAbi]) : i64
-  (cabi.compiler-abi-gp-arg-register-count target-abi))
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]) : i64
+  (cabi.compiler-abi-gp-arg-register-count target-abi convention))
 
 ;; A call arg is passed in a SINGLE general-purpose arg register on both ABIs iff it
 ;; is neither a float nor a register-group value. Handle values (string/box/array/
@@ -5853,12 +5875,15 @@
   [type-segment-bases : i64]
   [args : (& ir.CompilerIrCallArgs)]
   [types : CompilerRegVarTypes]
-  [target-abi : cabi.CompilerRegTargetAbi]) : bool
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]) : bool
   (let
     [count : i64 (ir.compiler-ir-call-args-count args)]
     (and
       (> count 0)
-      (<= count (* 2 (compiler-reg-arg-reg-limit-for-abi target-abi)))
+      (<=
+        count
+        (* 2 (compiler-reg-arg-reg-limit-for-abi target-abi convention)))
       (compiler-reg-call-args-gp-class? type-segment-bases args types))))
 
 (define (compiler-reg-call-arg-float?
@@ -5929,6 +5954,7 @@
   [value : (& ir.CompilerIrValue)]
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : live.CompilerLiveI64Set
@@ -5941,6 +5967,7 @@
           (not
             (cabi.compiler-abi-stack-call-arg-for-banks?
               target-abi
+              convention
               is-float
               int-idx
               float-idx
@@ -5954,6 +5981,7 @@
   [values : (& (__tl_dyn-array ir.CompilerIrValue))]
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [i : i64]
   [int-idx : i64]
   [float-idx : i64]
@@ -5972,12 +6000,14 @@
           (& value)
           types
           target-abi
+          convention
           int-idx
           float-idx
           position)
         values
         types
         target-abi
+        convention
         (+ i 1)
         (if is-float
           int-idx
@@ -5992,6 +6022,7 @@
   [args : (& ir.CompilerIrCallArgs)]
   [types : CompilerRegVarTypes]
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [start : i64]) : live.CompilerLiveI64Set
   (match args
     [(Nil) out]
@@ -6001,6 +6032,7 @@
         (& a)
         types
         target-abi
+        convention
         start
         0
         start)]
@@ -6013,6 +6045,7 @@
             (& a)
             types
             target-abi
+            convention
             start
             0
             start)]
@@ -6021,6 +6054,7 @@
           (& b)
           types
           target-abi
+          convention
           (if a-float
             start
             (+ start 1))
@@ -6034,6 +6068,7 @@
         (& values)
         types
         target-abi
+        convention
         0
         start
         0
@@ -6049,25 +6084,33 @@
   [types : CompilerRegVarTypes]
   [start : i64]
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [overflow-ok? : bool]) : live.CompilerLiveI64Set
   (if (if overflow-ok?
     (compiler-reg-call-gp-overflow-from?
       type-segment-bases
       args
       types
-      target-abi)
+      target-abi
+      convention)
     (compiler-reg-call-gp-parallel-from?
       type-segment-bases
       args
       types
       start
-      (compiler-reg-arg-reg-limit-for-abi target-abi)))
+      (compiler-reg-arg-reg-limit-for-abi target-abi convention)))
     out
     (if (compiler-reg-call-args-have-group? type-segment-bases args types)
       (live.compiler-live-set-union
         out
         (live.compiler-live-call-args-vars args))
-      (compiler-reg-call-arg-vars-selective out args types target-abi start))))
+      (compiler-reg-call-arg-vars-selective
+        out
+        args
+        types
+        target-abi
+        convention
+        start))))
 
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
   [type-segment-bases : i64]
@@ -6105,6 +6148,7 @@
               types
               0
               target-abi
+              (compiler-reg-call-instr-convention (& (array-ref slots index)))
               true)]
           [(CallCAbiStoreResult (box (fields base args)))
             (compiler-reg-call-arg-vars-unless-gp-parallel
@@ -6114,6 +6158,7 @@
               types
               0
               target-abi
+              (compiler-reg-call-instr-convention (& (array-ref slots index)))
               false)]
           [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
             (compiler-reg-call-arg-vars-unless-gp-parallel
@@ -6125,6 +6170,7 @@
               types
               0
               target-abi
+              (compiler-reg-call-instr-convention (& (array-ref slots index)))
               false)]
           ;; Tail calls (M-G2a): the true tail-jump path marshals args FIRST
           ;; (compiler-backend-emit-tail-call routes a gp-parallel shape --
@@ -6148,6 +6194,7 @@
               types
               0
               target-abi
+              (compiler-reg-call-instr-convention (& (array-ref slots index)))
               false)]
           ;; Indirect tail calls marshal at base 1 (closure env reserved in
           ;; ABI arg-register 0). The backend's base-aware parallel move can
@@ -6167,6 +6214,7 @@
               types
               1
               target-abi
+              (compiler-reg-call-instr-convention (& (array-ref slots index)))
               false)]
           [(CallIndirectC _ func args _)
             (compiler-reg-call-arg-vars-unless-gp-parallel
@@ -6176,6 +6224,7 @@
               types
               0
               target-abi
+              (compiler-reg-call-instr-convention (& (array-ref slots index)))
               false)]
           [_ out])))
     out))
@@ -12130,7 +12179,7 @@
   [n : i64]) : (__tl_dyn-array i64)
   (let
     [csr-count : i64
-      (cabi.compiler-abi-callee-saved-gp-register-count target-abi)]
+      (cabi.compiler-abi-callee-saved-gp-register-count target-abi (Internal))]
     [keep : (__tl_dyn-array i64)
       (__tl_make-array
         i64
@@ -12141,7 +12190,11 @@
     [base-count : i64 (array-length base)]
     (for [i (iterator.range 0 csr-count)]
       (let
-        [r : i64 (cabi.compiler-abi-callee-saved-gp-register-id target-abi i)]
+        [r : i64
+          (cabi.compiler-abi-callee-saved-gp-register-id
+            target-abi
+            (Internal)
+            i)]
         (when
           (and
             (not (= r cabi.compiler-reg-id-invalid))
@@ -13960,12 +14013,16 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [reg : i64]) : bool
   (let
-    [count : i64 (cabi.compiler-abi-callee-saved-gp-register-count target-abi)]
+    [count : i64
+      (cabi.compiler-abi-callee-saved-gp-register-count target-abi (Internal))]
     [index : i64 0]
     [found : bool (= reg cabi.compiler-reg-id-rbp)]
     (while (and (< index count) (not found))
       (if (=
-        (cabi.compiler-abi-callee-saved-gp-register-id target-abi index)
+        (cabi.compiler-abi-callee-saved-gp-register-id
+          target-abi
+          (Internal)
+          index)
         reg)
         (set! found true)
         unit)
@@ -20670,8 +20727,9 @@
       next
       (compiler-reg-group-vars-fixpoint (& next) blocks))))
 
-;; Direct C calls do not carry ABI metadata in CompilerIrInstr.Call. The backend
-;; seeds this program-wide name set from extern signatures before planning.
+;; The backend seeds these program call facts before planning. Bit 0 requires
+;; memory transport; bit 1 selects the platform convention. A private by-value
+;; TypeLisp parameter may need the former without the latter.
 (define compiler-reg-c-memory-call-names : reg_i64_i64_map.Map
   (reg_i64_i64_map.with-capacity 8))
 
@@ -20684,8 +20742,25 @@
 (define (compiler-reg-suppress-program-maps! [on : bool]) : unit
   (set! compiler-reg-program-maps-suppressed? on))
 
+;; Raw handle of the arena that owns the current program's call facts, or 0
+;; before the first program. A long-lived compiler retains one program's facts.
+(define compiler-reg-call-facts-arena : i64
+  0)
+
 (define (compiler-reg-clear-c-memory-call-names!) : unit
-  (set! compiler-reg-c-memory-call-names (reg_i64_i64_map.with-capacity 8)))
+  (let
+    [retired : i64 compiler-reg-call-facts-arena]
+    [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+    (set!
+      compiler-reg-c-memory-call-names
+      (in-arena owner (reg_i64_i64_map.with-capacity 8)))
+    (set! compiler-reg-call-facts-arena (arena.raw-handle owner))
+    (when
+      (> retired 0)
+      (unsafe
+        ;; Only the replaced map referenced the retired arena.
+        ;; lint-allow: raw-arena-op
+        (arena.tl_arena_destroy retired)))))
 
 ;; W3 step (c). FROZEN GLOBAL CELLS -- the program fact that licenses
 ;; rematerialising `movq g(%rip), %r`.
@@ -20735,12 +20810,51 @@
     (not (reg_i64_i64_map.contains? (& compiler-reg-nonfrozen-globals) name))))
 
 (define (compiler-reg-add-c-memory-call-name! [name : i64]) : unit
-  (reg_i64_i64_map.insert-ref! (&mut compiler-reg-c-memory-call-names) name 1))
+  (compiler-reg-add-call-fact! name 1))
+
+(define (compiler-reg-add-platform-call-name! [name : i64]) : unit
+  (compiler-reg-add-call-fact! name 2))
+
+;; The map grows in the facts arena, whatever arena the caller has current.
+(define (compiler-reg-add-call-fact! [name : i64] [flag : i64]) : unit
+  (when
+    (= compiler-reg-call-facts-arena 0)
+    (compiler-reg-clear-c-memory-call-names!))
+  (let
+    [prior : i64
+      (reg_i64_i64_map.get-value-or (& compiler-reg-c-memory-call-names) name 0)]
+    (in-arena
+      (arena.Arena compiler-reg-call-facts-arena)
+      (reg_i64_i64_map.insert-ref!
+        (&mut compiler-reg-c-memory-call-names)
+        name
+        (bit-or prior flag)))))
+
+(define (compiler-reg-call-facts [name : i64]) : i64
+  (if compiler-reg-program-maps-suppressed?
+    0
+    (reg_i64_i64_map.get-value-or (& compiler-reg-c-memory-call-names) name 0)))
 
 (define (compiler-reg-c-memory-call-name? [name : i64]) : bool
-  (and
-    (not compiler-reg-program-maps-suppressed?)
-    (reg_i64_i64_map.contains? (& compiler-reg-c-memory-call-names) name)))
+  (!= (bit-and (compiler-reg-call-facts name) 1) 0))
+
+;; Program indexing records a platform fact for every C extern alias and every
+;; runtime helper the backend emits for the platform contract. Any other valid
+;; direct call names TypeLisp code.
+(define (compiler-reg-direct-call-convention [name : i64]) : cabi.CompilerCallConvention
+  (if (!= (bit-and (compiler-reg-call-facts name) 2) 0)
+    (Platform)
+    (Internal)))
+
+(define (compiler-reg-call-instr-convention [instr : (& ir.CompilerIrInstr)]) : cabi.CompilerCallConvention
+  (match instr
+    [(or (Call _ name _ _) (TailCall name _ _))
+      (compiler-reg-direct-call-convention name)]
+    [(or (CallIndirect _ _ _ _) (TailCallIndirect _ _ _) (SpmdCall _))
+      (Internal)]
+    ;; C indirect calls and C store-result forms retain the platform contract.
+    ;; Bounds checks also use Platform for their implicit runtime abort call.
+    [_ (Platform)]))
 
 (define (compiler-reg-linux-abi? [target-abi : cabi.CompilerRegTargetAbi]) : bool
   (match target-abi
@@ -23135,7 +23249,7 @@
     [(Windows)
       ;; The optional %rbp is appended to the nonvolatile suffix and must not
       ;; move this boundary.
-      (cabi.compiler-abi-caller-saved-gp-register-count target-abi)]))
+      (cabi.compiler-abi-caller-saved-gp-register-count target-abi (Internal))]))
 
 ;; Clobber-span test: must var's value SURVIVE any clobber-point?
 ;; (Register conflicts are the LiveIntervalUnion test's job, not this one's.)
@@ -23182,8 +23296,9 @@
 ;; register arguments (the rest are stack-passed and get no preference).
 (define (compiler-reg-abi-arg-reg
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pos : i64]) : i64
-  (cabi.compiler-abi-gp-arg-register-id target-abi pos))
+  (cabi.compiler-abi-gp-arg-register-id target-abi convention pos))
 
 (define (compiler-reg-id-seq-index-of
   [regs : CompilerRegIdSeq]
@@ -23206,10 +23321,11 @@
 ;; live ABI pool definition, so it stays correct if the pool order changes.
 (define (compiler-reg-greedy-arg-pool-index-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [pos : i64]) : i64
   (let
-    [reg : i64 (compiler-reg-abi-arg-reg target-abi pos)]
+    [reg : i64 (compiler-reg-abi-arg-reg target-abi convention pos)]
     (if (= reg cabi.compiler-reg-id-invalid)
       -1
       (compiler-reg-id-seq-index-of
@@ -23223,6 +23339,7 @@
 ;; preference for a root wins. Stack-passed positions yield -1 and are skipped.
 (define (compiler-reg-arg-pref-value!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [value : (& ir.CompilerIrValue)]
   [pos : i64]
@@ -23232,7 +23349,11 @@
     [(Var v)
       (let
         [idx : i64
-          (compiler-reg-greedy-arg-pool-index-for-abi target-abi pool pos)]
+          (compiler-reg-greedy-arg-pool-index-for-abi
+            target-abi
+            convention
+            pool
+            pos)]
         (if (< idx 0)
           unit
           (let
@@ -23254,6 +23375,7 @@
 
 (define (compiler-reg-arg-pref-array-at!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [values : (& (__tl_dyn-array ir.CompilerIrValue))]
   [i : i64]
@@ -23264,6 +23386,7 @@
     (>= i (array-length values))
     (compiler-reg-arg-pref-value!
       target-abi
+      convention
       pool
       (& (array-ref values i))
       pos
@@ -23271,6 +23394,7 @@
       parents)
     (compiler-reg-arg-pref-array-at!
       target-abi
+      convention
       pool
       values
       (+ i 1)
@@ -23280,6 +23404,7 @@
 
 (define (compiler-reg-arg-pref-args-at!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [args : (& ir.CompilerIrCallArgs)]
   [start : i64]
@@ -23288,11 +23413,26 @@
   (match args
     [(Nil) unit]
     [(One a)
-      (compiler-reg-arg-pref-value! target-abi pool (& a) start prefs parents)]
-    [(Two a b)
-      (compiler-reg-arg-pref-value! target-abi pool (& a) start prefs parents)
       (compiler-reg-arg-pref-value!
         target-abi
+        convention
+        pool
+        (& a)
+        start
+        prefs
+        parents)]
+    [(Two a b)
+      (compiler-reg-arg-pref-value!
+        target-abi
+        convention
+        pool
+        (& a)
+        start
+        prefs
+        parents)
+      (compiler-reg-arg-pref-value!
+        target-abi
+        convention
         pool
         (& b)
         (+ start 1)
@@ -23301,6 +23441,7 @@
     [(or (Array values) (Sret values _))
       (compiler-reg-arg-pref-array-at!
         target-abi
+        convention
         pool
         (& values)
         0
@@ -23310,11 +23451,19 @@
 
 (define (compiler-reg-arg-pref-args!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [args : (& ir.CompilerIrCallArgs)]
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
-  (compiler-reg-arg-pref-args-at! target-abi pool args 0 prefs parents))
+  (compiler-reg-arg-pref-args-at!
+    target-abi
+    convention
+    pool
+    args
+    0
+    prefs
+    parents))
 
 ;; Outgoing call instructions whose integer args are marshalled through ABI arg
 ;; registers. The callee/function-pointer operand of the indirect forms is NOT an
@@ -23329,13 +23478,38 @@
   [parents : (& parents (__tl_dyn-array i64))]) : unit
   (match (owned_view.compiler-owned-reference-shared-view instr)
     [(or (Call _ _ args _) (TailCall _ args _) (CallIndirectC _ _ args _))
-      (compiler-reg-arg-pref-args! target-abi pool (& args) prefs parents)]
+      (compiler-reg-arg-pref-args!
+        target-abi
+        (compiler-reg-call-instr-convention instr)
+        pool
+        (& args)
+        prefs
+        parents)]
     [(CallCAbiStoreResult (box (fields args)))
-      (compiler-reg-arg-pref-args! target-abi pool (& args) prefs parents)]
+      (compiler-reg-arg-pref-args!
+        target-abi
+        (compiler-reg-call-instr-convention instr)
+        pool
+        (& args)
+        prefs
+        parents)]
     [(CallIndirectCAbiStoreResult (box (fields args)))
-      (compiler-reg-arg-pref-args! target-abi pool (& args) prefs parents)]
+      (compiler-reg-arg-pref-args!
+        target-abi
+        (compiler-reg-call-instr-convention instr)
+        pool
+        (& args)
+        prefs
+        parents)]
     [(or (TailCallIndirect _ args _) (CallIndirect _ _ args _))
-      (compiler-reg-arg-pref-args-at! target-abi pool (& args) 1 prefs parents)]
+      (compiler-reg-arg-pref-args-at!
+        target-abi
+        (compiler-reg-call-instr-convention instr)
+        pool
+        (& args)
+        1
+        prefs
+        parents)]
     [_ unit]))
 
 ;; M-C (part 2): call-result %rax preference. The backend stores a scalar call
@@ -23502,6 +23676,7 @@
 ;; walked the sorted var-type list a second time for the same value.
 (define (compiler-reg-float-arg-pref-value!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [value : (& ir.CompilerIrValue)]
   [is-float : bool]
@@ -23514,11 +23689,14 @@
       (if is-float
         (let
           [abi-idx : i64
-            (if (cabi.compiler-abi-arg-banks-independent? target-abi)
+            (if (cabi.compiler-abi-arg-banks-independent? target-abi convention)
               float-idx
               position)]
           [reg : i64
-            (cabi.compiler-abi-float-arg-register-id target-abi abi-idx)]
+            (cabi.compiler-abi-float-arg-register-id
+              target-abi
+              convention
+              abi-idx)]
           [idx : i64
             (compiler-reg-id-seq-index-of
               (owned_view.compiler-owned-reference-shared-view pool)
@@ -23544,6 +23722,7 @@
 
 (define (compiler-reg-float-arg-pref-array!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [values : (& (__tl_dyn-array ir.CompilerIrValue))]
   [types : CompilerRegVarTypes]
@@ -23560,6 +23739,7 @@
       [is-float : bool (compiler-reg-call-arg-float? (& value) types)]
       (compiler-reg-float-arg-pref-value!
         target-abi
+        convention
         pool
         (& value)
         is-float
@@ -23576,6 +23756,7 @@
 
 (define (compiler-reg-float-arg-pref-args-at!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [pool : (& CompilerRegIdSeq)]
   [args : (& ir.CompilerIrCallArgs)]
   [types : CompilerRegVarTypes]
@@ -23587,6 +23768,7 @@
     [(One a)
       (compiler-reg-float-arg-pref-value!
         target-abi
+        convention
         pool
         (& a)
         (compiler-reg-call-arg-float? (& a) types)
@@ -23599,6 +23781,7 @@
         [a-float : bool (compiler-reg-call-arg-float? (& a) types)]
         (compiler-reg-float-arg-pref-value!
           target-abi
+          convention
           pool
           (& a)
           a-float
@@ -23608,6 +23791,7 @@
           parents)
         (compiler-reg-float-arg-pref-value!
           target-abi
+          convention
           pool
           (& b)
           (compiler-reg-call-arg-float? (& b) types)
@@ -23620,6 +23804,7 @@
     [(or (Array values) (Sret values _))
       (compiler-reg-float-arg-pref-array!
         target-abi
+        convention
         pool
         (& values)
         types
@@ -23639,6 +23824,7 @@
     [(or (Call _ _ args _) (TailCall _ args _) (CallIndirectC _ _ args _))
       (compiler-reg-float-arg-pref-args-at!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         pool
         (& args)
         types
@@ -23648,6 +23834,7 @@
     [(CallCAbiStoreResult (box (fields args)))
       (compiler-reg-float-arg-pref-args-at!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         pool
         (& args)
         types
@@ -23657,6 +23844,7 @@
     [(CallIndirectCAbiStoreResult (box (fields args)))
       (compiler-reg-float-arg-pref-args-at!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         pool
         (& args)
         types
@@ -23666,6 +23854,7 @@
     [(or (TailCallIndirect _ args _) (CallIndirect _ _ args _))
       (compiler-reg-float-arg-pref-args-at!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         pool
         (& args)
         types
@@ -23745,6 +23934,7 @@
 ;; Same as the pref variant: the caller has already classified this argument.
 (define (compiler-reg-float-arg-demote-value!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [value : (& ir.CompilerIrValue)]
   [is-float : bool]
   [float-idx : i64]
@@ -23756,11 +23946,14 @@
       (if is-float
         (let
           [abi-idx : i64
-            (if (cabi.compiler-abi-arg-banks-independent? target-abi)
+            (if (cabi.compiler-abi-arg-banks-independent? target-abi convention)
               float-idx
               position)]
           [target : i64
-            (cabi.compiler-abi-float-arg-register-id target-abi abi-idx)]
+            (cabi.compiler-abi-float-arg-register-id
+              target-abi
+              convention
+              abi-idx)]
           [root : i64
             (if (if (>= v 0)
               (< v (array-length parents))
@@ -23779,6 +23972,7 @@
 
 (define (compiler-reg-float-arg-demote-array!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [values : (& (__tl_dyn-array ir.CompilerIrValue))]
   [types : CompilerRegVarTypes]
   [float-idx : i64]
@@ -23794,6 +23988,7 @@
       [is-float : bool (compiler-reg-call-arg-float? (& value) types)]
       (compiler-reg-float-arg-demote-value!
         target-abi
+        convention
         (& value)
         is-float
         float-idx
@@ -23809,6 +24004,7 @@
 
 (define (compiler-reg-float-arg-demote-args!
   [target-abi : cabi.CompilerRegTargetAbi]
+  [convention : cabi.CompilerCallConvention]
   [args : (& ir.CompilerIrCallArgs)]
   [types : CompilerRegVarTypes]
   [position : i64]
@@ -23819,6 +24015,7 @@
     [(One a)
       (compiler-reg-float-arg-demote-value!
         target-abi
+        convention
         (& a)
         (compiler-reg-call-arg-float? (& a) types)
         0
@@ -23830,6 +24027,7 @@
         [a-float : bool (compiler-reg-call-arg-float? (& a) types)]
         (compiler-reg-float-arg-demote-value!
           target-abi
+          convention
           (& a)
           a-float
           0
@@ -23838,6 +24036,7 @@
           assignments)
         (compiler-reg-float-arg-demote-value!
           target-abi
+          convention
           (& b)
           (compiler-reg-call-arg-float? (& b) types)
           (if a-float
@@ -23849,6 +24048,7 @@
     [(or (Array values) (Sret values _))
       (compiler-reg-float-arg-demote-array!
         target-abi
+        convention
         (& values)
         types
         0
@@ -23866,6 +24066,7 @@
     [(or (Call _ _ args _) (TailCall _ args _) (CallIndirectC _ _ args _))
       (compiler-reg-float-arg-demote-args!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         (& args)
         types
         0
@@ -23874,6 +24075,7 @@
     [(CallCAbiStoreResult (box (fields args)))
       (compiler-reg-float-arg-demote-args!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         (& args)
         types
         0
@@ -23882,6 +24084,7 @@
     [(CallIndirectCAbiStoreResult (box (fields args)))
       (compiler-reg-float-arg-demote-args!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         (& args)
         types
         0
@@ -23890,6 +24093,7 @@
     [(or (TailCallIndirect _ args _) (CallIndirect _ _ args _))
       (compiler-reg-float-arg-demote-args!
         target-abi
+        (compiler-reg-call-instr-convention instr)
         (& args)
         types
         1
@@ -28027,11 +28231,11 @@
             dst)
           (- 0 1))
         inputs)]
-    ;; These read no operand that invalidates a colour.
+    ;; These read no operand that invalidates a colour. Pack is not exempt:
+    ;; its words can retain a storage address after the tracked pointer dies.
     [(or (Alloc _ _) (AddrOf _ _) (Load _ _ _) (CopyBytes _ _ _) (LaneId _ _ _)
-         (EntryArgc _) (EntryArgv _) (EntryEnvp _) (Jump _) (Pack _ _ _)
-         (Word _ _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
-         (TotalEnumSwitch _ _ _ _ _))
+         (EntryArgc _) (EntryArgv _) (EntryEnvp _) (Jump _) (Word _ _ _ _)
+         (TailCallIndirect _ _ _) (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
       unit]
     [_
       (ir.compiler-ir-instr-visit-uses

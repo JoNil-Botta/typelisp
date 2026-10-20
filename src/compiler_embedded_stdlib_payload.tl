@@ -7,6 +7,8 @@
 
 (include-str-lzss payload-args "../stdlib/args.tl")
 
+(include-str-lzss payload-base64 "../stdlib/base64.tl")
+
 (include-str-lzss payload-byte-buf "../stdlib/byte_buf.tl")
 
 (include-str-lzss payload-byte-buf-core "../stdlib/byte_buf_core.tl")
@@ -154,6 +156,8 @@
       (compiler-embedded-stdlib-payload-copy payload-atomic)]
     [(string.eq suffix "args.tl")
       (compiler-embedded-stdlib-payload-copy payload-args)]
+    [(string.eq suffix "base64.tl")
+      (compiler-embedded-stdlib-payload-copy payload-base64)]
     [(string.eq suffix "byte_buf.tl")
       (compiler-embedded-stdlib-payload-copy payload-byte-buf)]
     [(string.eq suffix "byte_buf_core.tl")

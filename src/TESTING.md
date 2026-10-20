@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`linker_coff_import_reader_tests.tl` shares its assertion body with the native
+opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
+kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,
+every truncated prefix, malformed strings/headers, bigobj classification,
+resource boundaries and stable normalized/diagnostic dumps. Normal tests run
+neither producer tool. Preserve physical member IDs, original spellings and
+timestamps separately from normalized identity when adding cases.
+
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
 and E0218, and carries rich nested frames through a later compiler job. Run it
@@ -28,6 +36,29 @@ This guide describes the testing convention for compiler-facing TypeLisp code
 under `src/`. The self-hosted compiler is built in layers, so tests
 are also layered: keep each case at the lowest layer that proves the behavior,
 then add runnable or end-to-end coverage only when that extra boundary matters.
+
+`compiler_tlci_native_producer_tests.tl` interleaves independent parsed macro
+captures with colliding expression/type and intern IDs under an installed decoy.
+It compares complete generated source and unsupported-body reasons with each
+owner's serial result, resets one source owner, and keeps its peer and the decoy
+unchanged. Result-kind tests distinguish equal IDs in different interners and
+missing sentinels. `compiler_tlci_native_source_owners.tl` runs the same assertions
+through the native corpus at opt0/1/2 on both hosts. Keep full-catalog source
+parity, all native macro entries and existing backend/image gates when changing
+the source-owner boundary.
+
+`backend-call-conventions` checks every IR call form, C and TypeLisp extern
+aliases, variadic signatures, private by-value copies and call-fact lifetime.
+`backend-call-convention-facts-parity` compares all convention-dependent ABI
+facts on both targets, including invalid register indices and mixed-bank stack
+boundaries. `backend-call-convention-emission-sites` turns on a `cfg test` hook
+that gives Windows `Internal` calls RSI/RDI as fifth and sixth argument
+registers, then checks where a TypeLisp call, C extern call, C function pointer
+call, closure adapter forwarding to C or TypeLisp, backend runtime helper call,
+TLS-arena intrinsic and variadic call place those arguments. Run these at
+opt0/1/2; a convention-only refactor also needs exact before/after Linux and
+Windows assembly for the integration corpus and compiler, plus the bootstrap
+fixpoints.
 
 `tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
 with colliding numeric names while a decoy interner remains installed. It keeps
@@ -302,6 +333,14 @@ declaration is paired with `thread_local_word_unsafe_call_reject.tl` in the
 safety corpus. This accessor is a freestanding Linux ABI primitive.
 
 ## Generated cfg declarations
+
+`source_selected_generated_export.tl` exercises selected aliases of generated
+macros, nested generators and a non-entry importer, with a caller-local shadow
+to check caller-syntax hygiene and an earlier qualified provider whose macro
+shares the selected alias's spelling. Its native row and the public package build
+case run at opt0/1/2 on both hosts; the inline test reaches the same assertions.
+The paired safety cases retain located missing-selection and alias-collision
+errors after provider expansion.
 
 `tests/integration/generated_cfg.tl` constructs conditional syntax in both
 `Decls` and `Module` macros, including nested expansion and inactive missing
@@ -677,6 +716,13 @@ bodies, quasiquote splicing and reuse of an operand list after a call at
 opt0/1/2.
 
 ## Late clone helper syntax
+
+`compiler-lower-missing-declaration-macro-diagnostic` checks nominal clone
+lowering without the clone prelude, a generated missing macro, an ordinary
+unknown macro and a function used as a declaration macro in Linux and Windows
+modes. All retain source spelling and available location; ordinary declaration
+macro expansion also retains E0501.
+Keep the valid `compiler-lower-clone-source-with-prelude` cases alongside it.
 
 `compiler-clone-late-tail-template` evaluates the stdlib producer's actual
 self-tail template with both boxing choices and requires ordinary syntax.

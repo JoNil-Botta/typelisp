@@ -70,6 +70,39 @@ Shared emission reads those facts and never tests the target itself.
 enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
 Codegen Parity*) describes its rules.
 
+`CompilerCallConvention` is independent of the target: every register, bank,
+clobber, stack-placement, shadow-space and aggregate-classification query
+receives `Internal` or `Platform`. Both currently return the same facts. IR
+function bodies, closure descriptors and private SPMD calls use `Internal`; C
+externs (including varargs), C function pointers and C store-result calls use
+`Platform`. TypeLisp package externs retain `Internal`. Helpers the backend
+emits in assembly (the allocator/arena/TLS core, profile shims and bulk memory
+helpers, `compiler-builtin-backend-runtime-platform-id?`) and C-entered
+trampolines retain their platform contract.
+
+`compiler-reg-call-instr-convention` owns call-form classification. Program
+indexing seeds its direct-name facts from extern ABI metadata for logical,
+source and link identities, and by builtin id for every backend-emitted helper,
+with or without an extern alias; function definitions take precedence over
+both. These facts share the existing reset and suppression lifetime with
+memory-transport facts. These are independent bits: a private by-value
+TypeLisp parameter needs memory transport without selecting the platform ABI.
+C exports retain `Platform` for their raw link entry, while their IR function
+name uses `Internal`; TypeLisp exports use `Internal` for both names. Inlined
+atomic, volatile and TLS-arena operations read the same convention as their
+argument setup. A closure entry adapter is entered with `Internal` and forwards
+with its target's convention, so a C extern used as a function value receives
+a `Platform` call. The allocator and both backend emission paths carry the
+selected convention through argument preferences, marshalling, aggregate
+classification and outgoing frame sizing. Incoming parameter and saved-register
+facts use the function's `Internal` contract; caller-clobber allocation remains
+conservative across the call family. `backend-call-conventions` pins
+classification and fact lifetime, `backend-call-convention-facts-parity` checks
+both targets, register boundaries and mixed argument banks, and
+`backend-call-convention-emission-sites` pins each emission site's convention.
+Full before/after assembly and bootstrap comparisons guard the no-output-change
+invariant.
+
 The freestanding Linux runtime installs a zeroed TLS mapping before global
 initializers and at each native worker entry. FS:0 holds the mapping's thread
 pointer; named TPOFF relocations locate the arena pointer, optional backtrace
@@ -418,10 +451,11 @@ Passes that rebuild a body push into one `CompilerIrBlockBuilder` sized from
 their input. Appending a list copies it, so a walk must not append each block's
 rewrite onto an already-built rest.
 
-Every `CompilerIrFunction` states its calling convention as a
+Every `CompilerIrFunction` also records its parameter protocol as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
 same-program SPMD helper (scalar, AVX2, AVX-512, and package producer helpers
-alike). The private descriptor, `CompilerIrSpmdPrivateAbi`, is immutable facts
+alike). Both variants use `Internal`. The private descriptor,
+`CompilerIrSpmdPrivateAbi`, is immutable facts
 under its own schema (`spmd-private-v1`, distinct from the imported catalog's
 `spmd-call-v1` row): callee, backend, lanes, every physical parameter in
 signature order with its ordinal, role (active mask; source parameter with its
@@ -1663,6 +1697,13 @@ and ordered block storage; no returned loop borrows the workspace. Empty,
 acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
 arrays.
 
+Post-SSA rotation's round homes own block, instruction and phi-input containers.
+Their type leaves retain the input function's owner. Phi analysis must borrow
+that existing type rather than create a compound-type container in round
+scratch: the round copier shares those leaves while retiring its old home.
+The compound-phi rotation tests overwrite all retired homes before reading
+every returned type and verifying the carried function/context.
+
 Empty work records initially read one immutable zero-length array descriptor;
 each record replaces both handles before its first element write. The work
 record itself is private, never a shallow view of shared mutable storage. The
@@ -1682,6 +1723,12 @@ Memoized provenance stays in the verification call's scratch lifetime. This
 storage-origin check does not establish the callee's return convention or the
 output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
 those proofs and their enforcement before stack coloring, including mutable IR.
+
+Inline-storage coloring tracks addresses through its known alias forms. A
+`Pack` can retain such an address in a register group after the original pointer
+dies; its operands therefore participate in the shared escape visitor. Without
+a complete lifetime proof for the packed result, the backing range stays private.
+Packing only values without tracked storage roots does not invalidate a range.
 
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it
@@ -1823,6 +1870,15 @@ the existing sequence handling. The public comptime `expr-while` builder keeps
 its one expression as a singleton list. Native quasiquote uses the same host
 callback with its body-list flag so it agrees with interpreted expansion.
 
+Quoted body sequences represented by a single expression retain a singleton
+`Begin` around a lone `UnquoteSplicing`. Collapsing that list before quasiquote
+would lose its splice position. The shared body parser and single-form match arms
+apply the same rule, retaining the original spanned splice inside the list;
+ordinary single-form bodies, including match-arm cfg handling, stay unchanged.
+`tests/integration/macro_body_splice.tl` covers expansion through native code
+and the inline-test harness, with invalid positions and operands in the safety
+corpus.
+
 Caller-origin macro markers have a negative macro-name ID and preserve the
 captured operand's source path without adding a user-visible expansion frame.
 For ordinary unobserved operands, capture replaces
@@ -1919,6 +1975,13 @@ check, a failed top-environment build reuses this path-aware validator to
 recover the selected import's canonical diagnostic. Macro setup permits pending
 generator exports; final typechecking requires complete exports. Recovery runs
 only on failure and adds no namespace scan to successful environment builds.
+An append that introduces a `defmacro` replays the existing alias pass over
+the segmented module/import event index before publishing its next context.
+Selected macro aliases then bind in the ordinary symbol map even when their import
+preceded the generator. Their explicit binding replaces a tentative bare macro
+alias from another module; actual import/local collisions still fail namespace
+validation. Ordinary value/function splices do not replay this
+pass; no pending alias registry or full declaration rescan is needed.
 Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
@@ -2005,6 +2068,18 @@ Before runtime lowering, `build-package-tlci-capture-exports` records callable
 metadata as canonical TLCI text, sorted macro identities as owned strings, and
 the complete generated transformer source. `TlciNativeMacroCaptures` contains
 AST body and parameter references, so it stays inside that capture operation.
+`TlciNativeSourceContext` supplies the expression/type pools and interner that
+own those references. All source-generation helpers borrow that context;
+rendering reads neither installed pool nor installed intern spellings. The
+context caches its source owner's result-kind and unquote sentinel IDs through
+read-only lookup. A missing sentinel is not a valid negative-ID match. These
+are source syntax identities, independent of the later backend's builtin table.
+Package capture passes the runtime child's driver owners. The standalone image
+builder and serial fixtures freeze their parsed owners at named boundaries.
+They must finish rendering before those owners reset or retire. The producer's
+existing serial rendering scratch and later backend compilation remain serial
+boundaries; this source-owner handoff does not remove the driver bridges still
+tracked by #5754 and #5756.
 Capture runs in a disposable scratch arena: collectors, temporary rendering and
 AST-backed macro captures do not survive it. Only the final metadata text, each
 catalog name, transformer source or diagnostic is copied into the caller owner.
@@ -2146,6 +2221,49 @@ these records without deriving names from payload bytes or changing their order.
 The encoder does not select exports from package declarations or publish an
 archive. Its inline oracle test compares all seven payloads in a maintained
 LLVM AMD64 fixture, including the empty-export support objects.
+
+### COFF short import input
+
+`src/linker_coff_import_reader.tl` reads one immutable member payload and a
+caller-supplied `ArchiveMemberId`. It does not traverse archives, select or
+coalesce members, choose symbol winners, search DLLs, or assign PE addresses.
+#7102 consumes its checked records for resolution; #7175 consumes live imports
+for PE import tables and thunks; #7127 can reuse the parser for round trips.
+
+Short imports require version 0, AMD64, known code/data/const type, zero
+reserved bits, and one of ordinal/exact/no-prefix/undecorate. `EXPORTAS` fails
+explicitly. The declared string extent must equal the entire remaining input
+and contain exactly two nonempty NUL-terminated strings, with no trailing data.
+Portable names use printable ASCII without path separators. DLL basenames also
+reject Windows path/wildcard characters and leading/trailing dots. Non-ASCII,
+including otherwise valid UTF-8, is outside this profile; no host code page or
+Unicode case conversion participates in identity.
+
+The reader reuses the encoder's name policy and transformation. No-prefix
+drops exactly one leading `?`, `@` or `_`; undecorate then stops at the first
+`@`. Empty transformed names fail. Literal public spellings are preserved,
+including an existing `__imp_` prefix; the IAT spelling always prepends another
+literal `__imp_`. DLL identity folds only ASCII case and retains the written
+basename separately. Ordinal mode requires 1..65535 and produces no hint/name;
+named mode preserves any 16-bit hint and produces no ordinal. Timestamp and
+hint are provenance rather than identity/order inputs. Code/data/const stay
+distinct; conflicting public/IAT identities are left for the resolver.
+
+The shared short-import/bigobj signature is classified from version, complete
+header, AMD64 machine, bigobj UUID and checked section/symbol/string-table
+extents. Other-object results are header classifications; full ordinary COFF
+and bigobj section/symbol semantics belong to their object reader. Unused
+bigobj words do not acquire import-header meanings.
+
+Caller limits bound input bytes, every name including the derived IAT symbol,
+owned output-string content, and work. Output reserves `6 + 3*public + 2*dll`
+bytes before allocating names; fixed record storage and bounded temporary
+buffers are separate. Work reserves `64 + 16*input` before field access and
+string scans. There are exactly two strings and at most one result/diagnostic.
+Division and subtraction checks precede table-count multiplication, and
+`SizeOfData` is compared with the remaining span without adding an untrusted
+size to an offset. Errors retain the physical member, static field and
+member-relative byte. Returned names are owned snapshots of validated input.
 
 Embedded link policy is read by `src/linker_coff_directive_reader.tl`. The
 object reader passes a section header summary (object identity, section

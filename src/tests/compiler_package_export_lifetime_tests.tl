@@ -93,9 +93,14 @@
                     [paths : ast.AstDeclPathList
                       (export-test-paths
                         (owned_view.compiler-owned-shared-view decls))]
+                    [context : producer.TlciNativeSourceContext
+                      (producer.tlci-native-source-context-new
+                        (ast.ast-node-pool-context-capture-active)
+                        (ci.intern-compat-state-capture-active))]
                     (in-arena
                       home
                       (build.build-package-tlci-capture-exports
+                        (& context)
                         manifest
                         mode
                         decls

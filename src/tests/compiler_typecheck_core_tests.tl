@@ -8742,7 +8742,10 @@
     [ok : bool true]
     (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
     (tc_core.macro-alias-cache-ensure! macro-state)
-    (tc_core.macro-alias-cache-build-segmented! state)
+    ;; Selected-item replay must not publish an unbuilt module-alias cache.
+    (tc_core.macro-alias-cache-build-segmented! state true)
+    (set! ok (= (tc_core.tc-macro-import-index-control macro-state 4) 0))
+    (tc_core.macro-alias-cache-build-segmented! state false)
     (while (< index count)
       (set!
         (array-ref segmented index)
@@ -11784,15 +11787,13 @@
             (tc_core.tc-bind-id (tc_core.tc-type-env-new) name global-type)]
           [shadowed : tc_core.TcTypeEnv
             (tc_core.tc-bind-id
-              (tc_core.tc-hygiene-global-env
-                (tc_core.tc-global-shared-view globals))
+              (tc_core.tc-hygiene-global-env globals)
               name
               (ast.ast-ty-ref local-region (& scalar)))]
           [local : tc_core.TcMovePath
             (tc_core.TcMovePath name (tc_core.tc-move-path-segments-empty))]
           [saved : tc_core.TcTypeEnvScopedRuntimeSave
-            (tc_core.tc-type-env-scoped-runtime-enter-env!
-              (tc_core.tc-global-shared-view shadowed))]
+            (tc_core.tc-type-env-scoped-runtime-enter-env! shadowed)]
           (tc_core.tc-hygiene-reset-active-top-env!
             (tc_core.tc-context-macro-state ctx)
             globals)
@@ -11813,10 +11814,7 @@
                     (tc_core.tc-move-path-segments-empty))
                   137)]
               (test.assert-i64-eq
-                (tc_core.tc-borrow-check-path-lifetime
-                  ctx
-                  (tc_core.tc-global-shared-view shadowed)
-                  global)
+                (tc_core.tc-borrow-check-path-lifetime ctx shadowed global)
                 global-region
                 "captured globals preserve declared lifetimes across local shadowing")))
           (test.assert-i64-eq

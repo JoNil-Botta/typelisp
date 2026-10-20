@@ -78,6 +78,8 @@
 (define (coff-import-valid-dll-part? [s : (& s str)]) : bool
   (and
     (coff-import-valid-name? s true)
+    (not (= (coff-import-char s 0) '.'))
+    (not (= (coff-import-char s (- (coff-import-len s) 1)) '.'))
     (not (string.contains-char s ':'))
     (not (string.contains-char s '*'))
     (not (string.contains-char s '?'))
@@ -499,14 +501,6 @@
       (Err "import member count limit")]
     [(not (coff-import-valid-dll-part? (& dll))) (Err "invalid DLL basename")]
     [(not (coff-import-valid-dll-part? (& stem))) (Err "invalid DLL stem")]
-    [(or
-        (= (coff-import-char dll 0) '.')
-        (= (coff-import-char dll (- (coff-import-len dll) 1)) '.'))
-      (Err "invalid DLL basename")]
-    [(or
-        (= (coff-import-char stem 0) '.')
-        (= (coff-import-char stem (- (coff-import-len stem) 1)) '.'))
-      (Err "invalid DLL stem")]
     [(not (coff-import-stem-matches? (clone dll) (clone stem)))
       (Err "DLL basename/stem mismatch")]
     [(or

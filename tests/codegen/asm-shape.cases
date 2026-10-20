@@ -1416,6 +1416,29 @@ match ^[[:space:]]+jmp _tl_try_sret_forward_checked$
 not-contains movups
 not-match ^[[:space:]]+call[[:space:]]
 
+# A tail call whose argument re-borrows a reference parameter, `(& l)` or
+# `(&mut l)` with `l` already a reference, passes that same pointer, so it jumps
+# like the direct form (#9137); a borrow of a frame local, directly or through a
+# local reference, keeps its call. At opt 2 the wrappers inline into `main`.
+case tail-reborrow-param
+source tests/integration/tail_reborrow_param.tl
+opt 0 1
+in fn _tl_tail_reborrow_param_wrap_reborrow
+match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+call[[:space:]]
+in fn _tl_tail_reborrow_param_wrap_shared_of_mut
+match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+call[[:space:]]
+in fn _tl_tail_reborrow_param_wrap_mut_reborrow
+match ^[[:space:]]+jmp _tl_tail_reborrow_param_bump$
+not-match ^[[:space:]]+call[[:space:]]
+in fn _tl_tail_reborrow_param_wrap_local
+count = 1 ^[[:space:]]+call _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+in fn _tl_tail_reborrow_param_wrap_local_ref
+count = 1 ^[[:space:]]+call _tl_tail_reborrow_param_inner$
+not-match ^[[:space:]]+jmp _tl_tail_reborrow_param_inner$
+
 case extern-data-memory-symbols
 source tests/integration/extern_data_memory.tl
 target linux-x86_64 windows-x86_64

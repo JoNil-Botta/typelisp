@@ -31,6 +31,15 @@
 (import build_cli_core as build)
 (cfg test (import compiler_object_elf))
 
+(cfg
+  test
+  ;; Serial fixture/tool boundary: freeze the parsed source owners before the
+  ;; pure producer call. Production package builds pass their driver owners.
+  (define (build-package-test-source-context) : compiler_tlci_native_producer.TlciNativeSourceContext
+    (compiler_tlci_native_producer.tlci-native-source-context-new
+      (ast.ast-node-pool-context-capture-active)
+      (ci.intern-compat-state-capture-active))))
+
 (test
   build-package-profile-opt-level-smoke
   (unless
@@ -940,6 +949,7 @@
                   "pkg/src/macros.tl"
                   cbi.compiler-builtin-id-fix-empty)
                 (build.build-package-tlci-collect-macros-into!
+                  (& (build-package-test-source-context))
                   decls
                   paths
                   ""
@@ -956,7 +966,8 @@
                   [catalog : (__tl_dyn-array String) collector.names]
                   [_source : String
                     (compiler_tlci_native_producer.embedded-native-source
-                      (owned_view.compiler-owned-shared-view catalog)
+                      (& (build-package-test-source-context))
+                      (& catalog)
                       (& collector.captures))]
                   (and
                     (= (array-length catalog) 2)

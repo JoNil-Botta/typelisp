@@ -13,6 +13,13 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 
+;; Serial fixture/tool boundary: freeze the parsed source owners before the
+;; pure producer call. Production package builds pass their driver owners.
+(define (embedded-stdlib-tlci-source-context) : compiler_tlci_native_producer.TlciNativeSourceContext
+  (compiler_tlci_native_producer.tlci-native-source-context-new
+    (ast.ast-node-pool-context-capture-active)
+    (ci.intern-compat-state-capture-active)))
+
 (define embedded-stdlib-tlci-build-error : String
   "")
 (define embedded-stdlib-tlci-source-hash : i64
@@ -99,10 +106,13 @@
         captures
         (compiler_tlci_native_producer.TlciNativeMacroCapture
           (compiler_tlci_native_producer.embedded-stdlib-tlci-identity
+            (& (embedded-stdlib-tlci-source-context))
             (string.copy module)
             name)
           params
-          (compiler_tlci_native_producer.embedded-native-macro-result-kind ret)
+          (compiler_tlci_native_producer.embedded-native-macro-result-kind
+            (& (embedded-stdlib-tlci-source-context))
+            ret)
           body))]
     [(Unsafe inner)
       (embedded-stdlib-tlci-collect-decl!
@@ -278,6 +288,7 @@
   [captures
     : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : i64
   (match (compiler_tlci_native_producer.embedded-native-emit-package
+    (& (embedded-stdlib-tlci-source-context))
     (tlci_core.tlci-metadata-emit
       (& (tlci_core.tlci-make-metadata "v1" "stdlib" "0.1.0")))
     build-hash

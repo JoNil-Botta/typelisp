@@ -1877,6 +1877,15 @@ the existing sequence handling. The public comptime `expr-while` builder keeps
 its one expression as a singleton list. Native quasiquote uses the same host
 callback with its body-list flag so it agrees with interpreted expansion.
 
+Quoted body sequences represented by a single expression retain a singleton
+`Begin` around a lone `UnquoteSplicing`. Collapsing that list before quasiquote
+would lose its splice position. The shared body parser and single-form match arms
+apply the same rule, retaining the original spanned splice inside the list;
+ordinary single-form bodies, including match-arm cfg handling, stay unchanged.
+`tests/integration/macro_body_splice.tl` covers expansion through native code
+and the inline-test harness, with invalid positions and operands in the safety
+corpus.
+
 Caller-origin macro markers have a negative macro-name ID and preserve the
 captured operand's source path without adding a user-visible expansion frame.
 For ordinary unobserved operands, capture replaces
@@ -1973,6 +1982,13 @@ check, a failed top-environment build reuses this path-aware validator to
 recover the selected import's canonical diagnostic. Macro setup permits pending
 generator exports; final typechecking requires complete exports. Recovery runs
 only on failure and adds no namespace scan to successful environment builds.
+An append that introduces a `defmacro` replays the existing alias pass over
+the segmented module/import event index before publishing its next context.
+Selected macro aliases then bind in the ordinary symbol map even when their import
+preceded the generator. Their explicit binding replaces a tentative bare macro
+alias from another module; actual import/local collisions still fail namespace
+validation. Ordinary value/function splices do not replay this
+pass; no pending alias registry or full declaration rescan is needed.
 Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
@@ -2059,6 +2075,18 @@ Before runtime lowering, `build-package-tlci-capture-exports` records callable
 metadata as canonical TLCI text, sorted macro identities as owned strings, and
 the complete generated transformer source. `TlciNativeMacroCaptures` contains
 AST body and parameter references, so it stays inside that capture operation.
+`TlciNativeSourceContext` supplies the expression/type pools and interner that
+own those references. All source-generation helpers borrow that context;
+rendering reads neither installed pool nor installed intern spellings. The
+context caches its source owner's result-kind and unquote sentinel IDs through
+read-only lookup. A missing sentinel is not a valid negative-ID match. These
+are source syntax identities, independent of the later backend's builtin table.
+Package capture passes the runtime child's driver owners. The standalone image
+builder and serial fixtures freeze their parsed owners at named boundaries.
+They must finish rendering before those owners reset or retire. The producer's
+existing serial rendering scratch and later backend compilation remain serial
+boundaries; this source-owner handoff does not remove the driver bridges still
+tracked by #5754 and #5756.
 Capture runs in a disposable scratch arena: collectors, temporary rendering and
 AST-backed macro captures do not survive it. Only the final metadata text, each
 catalog name, transformer source or diagnostic is copied into the caller owner.

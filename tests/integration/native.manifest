@@ -59,7 +59,7 @@ inline_aggregate_global_escape_opt2|linux|2|tests/integration/inline_aggregate_g
 # level by check-global-call-borrow-legacy-matrix in public-check.cases.
 inline_aggregate_global_three_field|all|-|tests/integration/inline_aggregate_global_three_field.tl|42|327\n669\n|-|stdlib/io.tl stdlib/string.tl|-
 inline_aggregate_global_nested|all|-|tests/integration/inline_aggregate_global_nested.tl|42|555\n897\n|-|stdlib/io.tl stdlib/string.tl|-
-cli_common_option|all|-|tests/integration/cli_common_option.tl|42|-|-|cli_option_core.tl stdlib/io.tl stdlib/string.tl|-
+cli_common_option|all|-|src/tests/cli_common_option_smoke.tl|42|-|-|cli_option_core.tl compiler_builtin_ids.tl compiler_cfg_core.tl compiler_intern.tl compiler_owned_view.tl compiler_profile_counters.tl compiler_target_cfg_core.tl sym_i64_env.tl stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_global_len_eq_pair|all|-|tests/integration/arg_global_len_eq_pair.tl|42|711\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 arg_specialize_global|all|-|tests/integration/arg_specialize_global.tl|42|36\n2\n64\n108\n80\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 main_private_stack|all|-|tests/integration/main_private_stack.tl|42|-|-|-|-

@@ -1,3 +1,5 @@
+(import cli_option_core as cli_option)
+
 ;; lsp_frame_core.tl - Main-free selfhost LSP stdio framing and JSON-RPC slice.
 ;;
 ;; This driver owns JSON-RPC/LSP Content-Length framing over stdin/stdout plus
@@ -101,11 +103,6 @@
 
 (defenum ResultLspTranscriptBatchEntry
   (Ok LspTranscriptBatchEntry)
-  (Err String))
-
-(defenum LspTranscriptBatchOption
-  (None)
-  (Path String)
   (Err String))
 
 (defenum LspLengthParse
@@ -880,7 +877,7 @@
       [(JsonFound target-value)
         (match target-value
           [(JsonString target-name)
-            (match (target_cfg.compiler-target-cfg-parse target-name)
+            (match (cli_option.cli-option-target target-name)
               [(Ok parsed-target) (set! target parsed-target)]
               [(Err message) (set! error (str_cat.str-cat "lsp: " message))])]
           [_ (set! error "lsp: initializationOptions.target must be a string")])])
@@ -13699,29 +13696,6 @@
           unit)
         (Continue docs)])))
 
-(define (lsp-stdlib-roots-from [idx : i64] [count : i64]) : lsp_svec.Vec
-  (let
-    [i : i64 idx]
-    [roots : lsp_svec.Vec (lsp_svec.new)]
-    (while (< i count)
-      (if (string.eq (io.arg i) "--stdlib-root")
-        (if (< (+ i 1) count)
-          (begin
-            (lsp_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
-            (+= i 2))
-          (set! i count))
-        (+= i 1)))
-    roots))
-
-(define (lsp-prefix-cache-stats-from [idx : i64] [count : i64]) : bool
-  (let
-    [enabled : bool false]
-    (for [i (iterator.range idx count)]
-      (if (string.eq (io.arg i) "--prefix-cache-stats")
-        (set! enabled true)
-        unit))
-    enabled))
-
 (define (lsp-frame-session-cache-enable!) : unit
   (compiler_load.compiler-load-session-cache-enable!))
 
@@ -14037,40 +14011,45 @@
           2)
         (lsp-transcript-batch-run-entries text stdlib-roots prefix-cache-stats)))))
 
-(define (lsp-transcript-batch-option-from [idx : i64] [count : i64]) : LspTranscriptBatchOption
-  (let
-    [i : i64 idx]
-    [path : String ""]
-    [error : String ""]
-    (while (and (< i count) (= (string.string-length error) 0))
-      (if (string.eq (io.arg i) "--transcript-batch")
-        (if (>= (+ i 1) count)
-          (set! error "lsp: --transcript-batch requires a manifest path")
-          (if (> (string.string-length path) 0)
-            (set! error "lsp: --transcript-batch was provided more than once")
-            (begin
-              (set! path (io.arg (+ i 1)))
-              (+= i 1))))
-        unit)
-      (+= i 1))
-    (if (> (string.string-length error) 0)
-      (Err error)
-      (if (> (string.string-length path) 0)
-        (Path path)
-        (None)))))
-
 (define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
   (let
-    [roots : lsp_svec.Vec (lsp-stdlib-roots-from idx count)]
-    [prefix-cache-stats : bool (lsp-prefix-cache-stats-from idx count)]
-    (match (lsp-transcript-batch-option-from idx count)
-      [(None) (lsp-frame-run-with-config roots prefix-cache-stats)]
-      [(Path manifest-path)
-        (lsp-transcript-batch-run manifest-path roots prefix-cache-stats)]
-      [(Err message)
-        (io.print-error message)
+    [args : cli_option.CliArgs
+      (cli_option.cli-args
+        "lsp"
+        "--stdlib-root <dir> --prefix-cache-stats --transcript-batch <manifest>"
+        idx
+        count)]
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options (target_cfg.compiler-target-cfg-host) 1)]
+    [prefix-cache-stats : bool false]
+    [manifest : String ""]
+    [has-manifest : bool false]
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
+        [(string.eq args.name "--prefix-cache-stats")
+          (if prefix-cache-stats
+            (cli_option.cli-option-duplicate! (&mut args))
+            (set! prefix-cache-stats true))]
+        [(string.eq args.name "--transcript-batch")
+          (if has-manifest
+            (cli_option.cli-option-duplicate! (&mut args))
+            (begin
+              (set! manifest (cli_option.cli-args-value (& args)))
+              (set! has-manifest true)))]
+        [else
+          (cli_option.cli-args-fail-arg! (&mut args) "lsp: unknown argument ")]))
+    (cond
+      [args.failed
+        (io.print-error args.error)
         (io.print-error "\n")
-        2])))
+        2]
+      [has-manifest
+        (lsp-transcript-batch-run
+          manifest
+          options.stdlib-roots
+          prefix-cache-stats)]
+      [else (lsp-frame-run-with-config options.stdlib-roots prefix-cache-stats)])))
 
 (define (lsp-replace-pattern-words
   [text : String]

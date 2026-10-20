@@ -9755,7 +9755,7 @@ Common Command Options:
   --stdlib-root <dir>            Search root for stdlib/... imports
   --opt-level <0|1|2>            Select optimizer level
   --debug, -g                    Emit source line and unwind debug information
-  --backtrace                    Emit fatal-backtrace metadata (implies --debug)
+  --backtrace                    Alias for --debug (includes fatal-backtrace metadata)
   --cfg <name>                   Enable a compile-time cfg predicate name
 
 Environment:
@@ -9767,10 +9767,10 @@ Selected Command Forms:
   typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic | --no-entry]
   typelisp compile --batch <input-output-list> [--no-entry]
   typelisp compile --batch <artifact-list> --windows-coff-plan <result-plan> --target windows-x86_64
-  typelisp build <file.tl> [-o <exe>]
-  typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
+  typelisp build <file.tl> [-o <exe>] [--cfg <name>...]
+  typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [--cfg <name>...]
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
-  typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
+  typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [--cfg <name>...] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
   typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case]
   typelisp test [<file.tl>] [--check]
@@ -9779,6 +9779,15 @@ Selected Command Forms:
 
 `typelisp <command> --help` is the source of truth for command-specific usage
 forms. `--version` prints the compiler build git hash and date.
+
+Shared compile options use the same value validation and diagnostic wording
+wherever a command accepts them. `--target`, `--backend-mode`, `--opt-level`
+and debug selection are singletons; `--debug`, `-g` and `--backtrace` select
+the same option, so combining them is a duplicate. `--cfg` and `--stdlib-root`
+are repeatable and require nonempty values. Source `build` and package
+`build`/`run` carry cfg names through preflight, dependency workers and compilation.
+`fmt` validates target/cfg/root arguments but retains every CST branch and
+does not load imports. `lsp` rejects unrecognized command-line arguments.
 
 `compile -o <file>` writes assembly or IR to the given path, `--emit-ir`
 emits the lowered and optimized IR instead of assembly, `--pic` emits

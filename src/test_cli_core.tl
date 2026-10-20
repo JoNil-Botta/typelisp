@@ -18,6 +18,8 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import cli_option_core as cli_option)
+(import compiler_ir_types as ir)
+(import compiler_target_cfg_core as target_cfg)
 (import build_run_core)
 (import compiler_ast_types as ast)
 (import compiler_backend)
@@ -136,16 +138,9 @@
   (cast 0 : u64))
 (define tltest-user-cfg-slots : cli_svec.Vec
   (cli_svec.new))
-(define tltest-user-cfg-len : i64
-  0)
 
 (define (tltest-user-cfg-reset!) : unit
-  (set! tltest-user-cfg-slots (cli_svec.new))
-  (set! tltest-user-cfg-len 0))
-
-(define (tltest-user-cfg-push! [name : String]) : unit
-  (cli_svec.push-ref! (&mut tltest-user-cfg-slots) name)
-  (set! tltest-user-cfg-len (+ tltest-user-cfg-len 1)))
+  (set! tltest-user-cfg-slots (cli_svec.new)))
 
 (define (tltest-selection-set?) : bool
   (or tltest-name-filter-set tltest-name-exact-set))
@@ -326,12 +321,6 @@
     cbi.compiler-builtin-id-runtime-module
     leaf-id))
 
-(define (tltest-unknown-target [value : String]) : String
-  (str_cat.str-cat "test: unknown target " value ""))
-
-(define (tltest-invalid-opt-level [value : String]) : String
-  (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
-
 (define (tltest-batch-paths-from-text-from
   [text : (& text str)]
   [start : i64]
@@ -425,10 +414,14 @@
 ;; first argument after any subcommand name). `count` is `(arg-count)`.
 (define (tltest-config-from [start : i64] [count : i64]) : ResultTestConfig
   (let
+    [options : cli_option.CliCompileOptions
+      (cli_option.cli-compile-options
+        (target_cfg.compiler-target-cfg-host)
+        (compiler_optimize.compiler-optimize-default-level))]
     [args : cli_option.CliArgs
       (cli_option.cli-args
         "test"
-        "--stdlib-root <dir> --cfg <name> --target <target> --opt-level <0|1|2>
+        "--stdlib-root <dir> --cfg <name> --target <target> --debug|-g|--backtrace --opt-level <0|1|2>
          --check --list --filter <substring> --exact <name> --include-ignored
          --include-slow --shuffle --seed <u64> --backend-mode <mode>
          --manifest-path <file> --batch <file> --prefix-cache-stats"
@@ -438,11 +431,6 @@
     [has-source : bool false]
     [manifest-path : String ""]
     [has-manifest : bool false]
-    [target : String (build_run_core.source-tool-default-target-name)]
-    [mode : compiler_backend.CompilerBackendMode (Scalar)]
-    [roots : cli_svec.Vec (cli_svec.new)]
-    [has-opt-level : bool false]
-    [opt-level : i64 (compiler_optimize.compiler-optimize-default-level)]
     [test-mode : TestMode Run]
     [batch-list : TestMaybeString (No)]
     (set! tltest-prefix-cache-stats false)
@@ -459,41 +447,7 @@
     (tltest-user-cfg-reset!)
     (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [(string.eq args.name "--stdlib-root")
-          (cli_svec.push-ref! (&mut roots) (cli_option.cli-args-value (& args)))]
-        [(string.eq args.name "--target")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            (match (build_run_core.source-tool-target (string.copy (& value)))
-              [(Ok _) (set! target value)]
-              [(Err _)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (tltest-unknown-target value))]))]
-        [(string.eq args.name "--opt-level")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            [level : i64 (cli_option.cli-option-opt-level (& value))]
-            (cond
-              [has-opt-level
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  "test: --opt-level was provided more than once")]
-              [(< level 0)
-                (cli_option.cli-args-fail!
-                  (&mut args)
-                  (tltest-invalid-opt-level value))]
-              [else
-                (set! has-opt-level true)
-                (set! opt-level level)]))]
-        [(string.eq args.name "--cfg")
-          (let
-            [value : String (cli_option.cli-args-value (& args))]
-            (if (= (string.string-length value) 0)
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "test: --cfg requires a non-empty value")
-              (tltest-user-cfg-push! value)))]
+        [(cli_option.cli-compile-option! (&mut options) (&mut args)) unit]
         [(string.eq args.name "--check")
           (if tltest-list-only
             (cli_option.cli-args-fail!
@@ -556,14 +510,6 @@
               [(Ok seed)
                 (set! tltest-seed-set true)
                 (set! tltest-seed seed)]))]
-        [(string.eq args.name "--backend-mode")
-          ;; The shared source-tool parser owns the accepted spellings, so
-          ;; `test` cannot drift from build and run.
-          (match (build_run_core.source-tool-backend-mode
-            "test"
-            (cli_option.cli-args-value (& args)))
-            [(Ok selected-mode) (set! mode selected-mode)]
-            [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
         [(string.eq args.name "--manifest-path")
           (if has-manifest
             (cli_option.cli-args-fail!
@@ -588,6 +534,8 @@
         [else
           (set! source (string.copy (& args.arg)))
           (set! has-source true)]))
+    (set! tltest-user-cfg-slots options.cfgs)
+    (unless args.failed (ir.compiler-debug-info-set-enabled! options.debug))
     (if args.failed
       (Err args.error)
       (tltest-config-finish
@@ -595,10 +543,10 @@
         has-source
         manifest-path
         has-manifest
-        target
-        mode
-        roots
-        opt-level
+        (cli_option.cli-option-target-name options.target)
+        (build_run_core.source-tool-backend-mode options.backend-mode)
+        options.stdlib-roots
+        options.opt-level
         test-mode
         batch-list))))
 
@@ -2326,23 +2274,12 @@
     cfgs
     cache-scope-prefix))
 
-(define (tltest-user-cfgs-from [index : i64] [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index tltest-user-cfg-len)
-    cfgs
-    (tltest-user-cfgs-from
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable
-        cfgs
-        (& (cli_svec.get (& tltest-user-cfg-slots) index ""))))))
-
 (define (tltest-cfgs [backend-target : compiler_backend.CompilerBackendTarget]) : sym_i64_env.SymI64Env
-  (tltest-user-cfgs-from
-    0
-    (cfg_core.compiler-cfg-enable
-      (driver.compiler-driver-target-cfgs
-        backend-target
-        (cfg_core.compiler-cfg-empty))
-      "test")))
+  (cfg_core.compiler-cfg-enable
+    (driver.compiler-driver-target-cfgs
+      backend-target
+      (target_cfg.compiler-target-user-cfgs (& tltest-user-cfg-slots)))
+    "test"))
 
 (define (tltest-check-only
   [program : ast.AstProgram]
@@ -2582,10 +2519,10 @@
   [opt-level : i64]
   [backend-mode : compiler_backend.CompilerBackendMode]
   [inline-harness : bool]) : i64
-  (match (build_run_core.source-tool-target
+  (match (build_run_core.source-tool-parse-target
     (owned_view.compiler-owned-shared-view target))
-    [(Err _)
-      (io.print-error (tltest-unknown-target target))
+    [(Err message)
+      (io.print-error message)
       1]
     [(Ok backend-target)
       (match (build_run_core.source-tool-create-temp-dir "typelisp-test")
@@ -3605,10 +3542,10 @@
   [opt-level : i64]
   [backend-mode : compiler_backend.CompilerBackendMode]
   [test-mode : TestMode]) : i64
-  (match (build_run_core.source-tool-target
+  (match (build_run_core.source-tool-parse-target
     (owned_view.compiler-owned-shared-view target))
-    [(Err _)
-      (io.print-error (tltest-unknown-target target))
+    [(Err message)
+      (io.print-error message)
       1]
     [(Ok backend-target)
       (match (package_source_core.package-source-discover-for
@@ -3913,10 +3850,10 @@
   (compiler_load.compiler-load-session-cache-enable!)
   (compiler_load.compiler-load-session-program-cache-disable!)
   (driver.compiler-driver-reset-file-state!)
-  (match (build_run_core.source-tool-target
+  (match (build_run_core.source-tool-parse-target
     (owned_view.compiler-owned-shared-view target))
-    [(Err _)
-      (io.print-error (tltest-unknown-target target))
+    [(Err message)
+      (io.print-error message)
       1]
     [(Ok backend-target)
       (let
@@ -4020,10 +3957,10 @@
   (compiler_load.compiler-load-session-cache-enable!)
   (compiler_load.compiler-load-session-program-cache-disable!)
   (driver.compiler-driver-reset-file-state!)
-  (match (build_run_core.source-tool-target
+  (match (build_run_core.source-tool-parse-target
     (owned_view.compiler-owned-shared-view target))
-    [(Err _)
-      (io.print-error (tltest-unknown-target target))
+    [(Err message)
+      (io.print-error message)
       1]
     [(Ok backend-target)
       (if tltest-prefix-cache-stats
@@ -4071,10 +4008,10 @@
 (define (tltest-run-config-ready [config : TestConfig]) : i64
   (match config
     [(File source target backend-mode roots opt-level test-mode)
-      (match (build_run_core.source-tool-target
+      (match (build_run_core.source-tool-parse-target
         (owned_view.compiler-owned-shared-view target))
-        [(Err _)
-          (io.print-error (tltest-unknown-target target))
+        [(Err message)
+          (io.print-error message)
           1]
         [(Ok backend-target)
           (match (driver.compiler-driver-load-file-with-runtime

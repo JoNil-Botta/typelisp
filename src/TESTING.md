@@ -47,6 +47,12 @@ through the native corpus at opt0/1/2 on both hosts. Keep full-catalog source
 parity, all native macro entries and existing backend/image gates when changing
 the source-owner boundary.
 
+`compiler-optimize-bitwise-width-self-test` checks narrow constants with wider
+bitwise masks and high bits, commuted operands, minimum signed values, narrow
+results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
+i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
+with smaller memory-storage layouts and zero/positive field values as controls.
+
 `backend-call-conventions` checks every IR call form, C and TypeLisp extern
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
 `backend-call-convention-facts-parity` compares all convention-dependent ABI

@@ -127929,13 +127929,14 @@
           [(None) bases]))]))
 
 ;; How a classified store writes memory (Unknown clears the whole table).
-;; TypedUnknown has no location proof; only a distinct known type class survives.
+;; Local writes a frame cell. Raw pointers may reinterpret that cell, so a
+;; distinct type class alone cannot preserve an unclassified address.
 ;; Classified forms carry the STORED TYPE: the typed-word rule in
 ;; `opt-load-entry-survives-store-location?` compares it against the loaded type
 ;; of each table entry.
 (defenum OptLoadStoreClass
   (OptLoadStoreUnknown)
-  (OptLoadStoreTypedUnknown ast.AstType)
+  (OptLoadStoreLocal ast.AstType)
   (OptLoadStoreElement ast.AstType)
   (OptLoadStoreField i64 i64 i64 bool ast.AstType))
 
@@ -128452,11 +128453,18 @@
               type-segment-bases
               (& sty)
               (& ety))])]
-      [(OptLoadStoreTypedUnknown sty)
-        (opt-load-alias-classes-distinct?
-          type-segment-bases
-          (& sty)
-          (& (opt-load-key-type (& key))))]
+      [(OptLoadStoreLocal sty)
+        (and
+          (opt-load-alias-classes-distinct?
+            type-segment-bases
+            (& sty)
+            (& (opt-load-key-type (& key))))
+          ;; Preserve only a different typed word in separately classified
+          ;; storage. A raw ptr-cast can read the local's bits at another type.
+          (match key
+            [(GlobalField _ _ _ _) true]
+            [(or (Field _ _ _ separate?) (Raw _ _ separate?)) separate?]
+            [(ScaledField _ _ _ _) false]))]
       [(OptLoadStoreUnknown) false])))
 
 ;; Epoch-ordering rule: freshly allocated storage is disjoint from every address
@@ -128630,7 +128638,7 @@
   [access : (& access OptLoadStoreClass)]
   [candidate : (& OptLoadStoreClass)]) : bool
   (match access
-    [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _)) false]
+    [(or (OptLoadStoreUnknown) (OptLoadStoreLocal _)) false]
     [(OptLoadStoreElement _)
       (match candidate
         [(OptLoadStoreField _ _ _ header? _) header?]
@@ -128642,7 +128650,7 @@
           (and
             (= abase bbase)
             (opt-load-ranges-disjoint? aoff awidth boff bwidth))]
-        [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _)) false])]))
+        [(or (OptLoadStoreUnknown) (OptLoadStoreLocal _)) false])]))
 
 (define (opt-dead-store-filter-store
   [pending : OptDeadStoreSet]
@@ -129547,7 +129555,7 @@
             store-root
             (& class))]
         (match class
-          [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _))
+          [(or (OptLoadStoreUnknown) (OptLoadStoreLocal _))
             ;; Unknown offset/location still preserves entries rooted at a
             ;; different exclusive checked or fresh allocation root, and entries
             ;; created before a fresh store root's allocation epoch.
@@ -129648,7 +129656,7 @@
             store-root
             (& class))]
         (match class
-          [(or (OptLoadStoreUnknown) (OptLoadStoreTypedUnknown _)
+          [(or (OptLoadStoreUnknown) (OptLoadStoreLocal _)
                (OptLoadStoreElement _))
             (State
               facts2
@@ -129823,7 +129831,7 @@
                 [class : OptLoadStoreClass
                   (match (ir.compiler-ir-instr-dst-type
                     (compiler-opt-global-shared-view instr))
-                    [(Some ty) (OptLoadStoreTypedUnknown ty)]
+                    [(Some ty) (OptLoadStoreLocal ty)]
                     [(No) (OptLoadStoreUnknown)])]
                 [filtered : OptLoadTable
                   (opt-load-table-filter-store
@@ -130474,6 +130482,7 @@
     (for [index (iterator.range 0 count)]
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+        [writes-local? : bool (opt-licm-writes-addr-taken? (& instr))]
         (match (compiler-opt-global-shared-view instr)
           [(Mov dst src _)
             (if (opt-pure-call-single-def? defs dst)
@@ -130536,7 +130545,10 @@
             (if (opt-alias-instr-clears-all? (& instr))
               (set! cur (Nil))
               unit)
-            (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])))
+            (ir.compiler-ir-instr-builder-push! (&mut builder) instr)])
+        ;; A write-free callee may read a pointed-to local. Its result is valid
+        ;; before this instruction writes its destination, never after it.
+        (when writes-local? (set! cur (Nil)))))
     (Out (ir.compiler-ir-instr-builder-to-seq builder) cur)))
 
 ;; Cache an expensive invariant call at its original execution point. The
@@ -131526,6 +131538,8 @@
         2)
         func
         (let
+          [_addr-taken : unit
+            (opt-function-addr-taken-install! frame (& blocks))]
           [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
           [count : i64 (array-length index.labels)]
           [exits : (__tl_dyn-array OptPureCallTable)

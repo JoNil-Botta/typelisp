@@ -44,7 +44,6 @@
 ;#       [(base64.Base64EncodeErr _) 1])))
 ;# ```
 (import stdlib.byte_buf)
-(import stdlib.test)
 
 ;: Stable strict base64 failure categories.
 (defenum Base64ErrorKind
@@ -485,27 +484,3 @@
             (base64-decode-bytes! input dst)
             (set! dst.len length)
             (Base64DecodeIntoOk length))))]))
-
-(test
-  base64-rfc4648-round-trip
-  (let
-    [text : String "foobar"]
-    (match (encode (byte_buf.str-as-bytes (& text)) 8)
-      [(Base64EncodeErr _) (test.assert-true false "encode should succeed")]
-      [(Base64EncodeOk encoded)
-        (test.assert-i64-eq (byte_buf.len encoded) 8 "encoded length")
-        (match (decode (byte_buf.as-bytes (& encoded)) 6)
-          [(Base64DecodeErr _) (test.assert-true false "decode should succeed")]
-          [(Base64DecodeOk decoded)
-            (let
-              [actual : String (byte_buf.to-string decoded)]
-              (test.assert-string-eq
-                (& actual)
-                (& text)
-                "RFC 4648 vector round trip"))])
-        (let
-          [rendered : String (byte_buf.to-string encoded)]
-          (test.assert-string-eq
-            (& rendered)
-            "Zm9vYmFy"
-            "RFC 4648 vector spelling"))])))

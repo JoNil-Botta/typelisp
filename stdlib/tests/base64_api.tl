@@ -782,6 +782,32 @@
       (set! first (+ first 1)))
     unit))
 
+(test
+  base64-rfc4648-round-trip
+  (let
+    [text : String "foobar"]
+    (match (base64.encode (byte_buf.str-as-bytes (& text)) 8)
+      [(base64.Base64EncodeErr _)
+        (test.assert-true false "encode should succeed")]
+      [(base64.Base64EncodeOk encoded)
+        (test.assert-i64-eq (byte_buf.len encoded) 8 "encoded length")
+        (match (base64.decode (byte_buf.as-bytes (& encoded)) 6)
+          [(base64.Base64DecodeErr _)
+            (test.assert-true false "decode should succeed")]
+          [(base64.Base64DecodeOk decoded)
+            (let
+              [actual : String (byte_buf.to-string decoded)]
+              (test.assert-string-eq
+                (& actual)
+                (& text)
+                "RFC 4648 vector round trip"))])
+        (let
+          [rendered : String (byte_buf.to-string encoded)]
+          (test.assert-string-eq
+            (& rendered)
+            "Zm9vYmFy"
+            "RFC 4648 vector spelling"))])))
+
 (define (main) : i64
   (assert-rfc-vectors)
   (assert-binary-fixtures)

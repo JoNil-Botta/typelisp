@@ -12,10 +12,11 @@ set -eu
 # Publishers must be serialized (the workflow uses stage0-bootstrap concurrency).
 #
 # The alias only moves forward along main. A candidate is promoted
-# while its commit is still on main and strictly newer than the commit the
-# alias currently targets; main advancing past it is normal and not a reason
-# to skip, or the alias starves whenever merges outpace a publish run. An older
-# or equal candidate, or one no longer on main, leaves the alias untouched.
+# while its commit is still on main and newer than the stable tag, or resumes
+# a same-commit cutover before a matching release exists. Main may advance
+# during preparation; requiring exact equality would starve publication.
+# Matching release targets, older candidates, and candidates no longer on main
+# leave the alias untouched.
 
 usage() {
     cat <<'EOF'
@@ -344,12 +345,29 @@ candidate_on_main() {
     return 1
 }
 
-# Whether the candidate moves the alias forward: there is no alias yet, the
-# alias is off main's history, or the candidate is strictly newer than it.
+# Whether the candidate advances publication: there is no alias, it is off
+# main, the candidate is newer, or its earlier tag move needs a release.
+# The final checkpoint supplies its already-discovered predecessor ID so no
+# paginated release discovery widens the final guarded mutation window.
 candidate_newer_than_latest() {
     latest_target=$(current_latest_target_sha) || return 2
     [ -n "$latest_target" ] || return 0
-    [ "$latest_target" != "$EXPECTED_SHA" ] || return 1
+    if [ "$latest_target" = "$EXPECTED_SHA" ]; then
+        # Moving the ref precedes release replacement. A failed cutover can
+        # therefore leave this ref ahead of the release, or without a release.
+        # Finish that publication without replacing a matching/newer release.
+        if [ "$#" -eq 0 ]; then
+            recovery_ids=$(release_ids_for_tag) || return 2
+            recovery_id=$(select_single_optional_release_id "$recovery_ids" "$FINAL_TAG") || return 2
+        else
+            recovery_id=$1
+        fi
+        [ -n "$recovery_id" ] || return 0
+        latest_target=$(gh api "repos/$REPO/releases/$recovery_id" \
+            --jq '.target_commitish') || return 2
+        validate_alias_sha "$latest_target" || return 2
+        [ "$latest_target" != "$EXPECTED_SHA" ] || return 1
+    fi
     relation=$(commit_relation "$REPO" "$latest_target" "$EXPECTED_SHA") || return 2
     known_relation "$relation" || return 2
     case "$relation" in
@@ -460,7 +478,7 @@ EOF
         cleanup_candidate
         return 3
     fi
-    candidate_newer_than_latest && newer_status=0 || newer_status=$?
+    candidate_newer_than_latest "$existing_id" && newer_status=0 || newer_status=$?
     if [ "$newer_status" -eq 2 ]; then
         cleanup_candidate
         return 1
@@ -477,7 +495,7 @@ EOF
     CUTOVER_STARTED=1
     if [ -n "$existing_id" ]; then
         echo "[stage0-publish] removing previous $FINAL_TAG release $existing_id"
-        delete_release "$existing_id"
+        delete_release "$existing_id" || return 1
     fi
     promote_error=${TMPDIR:-/tmp}/stage0-promote.$$
     promoted=false
@@ -539,6 +557,9 @@ self_test() {
     mock_release_visibility=public
     mock_annotated_sha=$older_sha
     mock_tag_state=present
+    mock_release_target=from-ref
+    mock_delete_failure=false
+    mock_catalog_failure=false
 
     # Exercise alias lookup and tag mutation at the real API adapter boundary.
     gh() {
@@ -569,6 +590,21 @@ self_test() {
                     return 1
                 fi
                 printf '%s\n' "$latest_value"
+                ;;
+            "api repos/$REPO/releases/90 --jq .target_commitish")
+                echo release-target >> "$action_log"
+                [ "$mock_release_target" != denied ] || return 1
+                if [ "$mock_release_target" = from-ref ]; then
+                    latest_count=$(cat "$latest_counter")
+                    latest_value=$(printf '%s\n' "$mock_latest_values" | sed -n "${latest_count}p")
+                    if [ "$latest_value" = tag ]; then
+                        printf '%s\n' "$mock_annotated_sha"
+                    else
+                        printf '%s\n' "$latest_value"
+                    fi
+                else
+                    printf '%s\n' "$mock_release_target"
+                fi
                 ;;
             "api repos/$REPO/git/ref/tags/$FINAL_TAG --silent")
                 printf 'inspect-tag:%s\n' "$FINAL_TAG" >> "$action_log"
@@ -638,10 +674,15 @@ self_test() {
     }
     release_ids_for_tag() {
         printf 'list-existing\n' >> "$action_log"
+        [ "$mock_catalog_failure" = false ] || return 1
         printf '%s\n' "$mock_existing_ids"
     }
     delete_release() {
         printf 'delete-release:%s\n' "$1" >> "$action_log"
+        if [ "$1" = 90 ] && [ "$mock_delete_failure" = true ]; then
+            echo 'injected predecessor deletion failure' >&2
+            return 1
+        fi
     }
     delete_candidate_tag() {
         printf 'delete-candidate-tag:%s\n' "$CANDIDATE_TAG" >> "$action_log"
@@ -876,6 +917,82 @@ tag" "$advance"
         expect_no_candidate invalid-annotated-target || return 1
     done
     mock_annotated_sha=$older_sha
+
+    mock_annotated_sha=$expected_sha
+    reset_case "$expected_sha" tag ""
+    run_case annotated-alias-already-current 3 || return 1
+    expect_no_candidate annotated-alias-already-current || return 1
+    mock_annotated_sha=$older_sha
+
+    # An interrupted cutover has moved the ref but retained the old release.
+    # A fresh same-commit attempt must finish replacing that older payload.
+    reset_case "$expected_sha
+$expected_sha
+$expected_sha" "$older_sha
+$older_sha" "$advance"
+    mock_delete_failure=true
+    set +e
+    publish_latest "$asset_a" "$asset_b" > "$test_dir/interrupted-output" 2>&1
+    interrupted_status=$?
+    set -e
+    [ "$interrupted_status" -eq 1 ] ||
+        self_test_fail "predecessor deletion failure was ignored" || return 1
+    if grep -F 'promote:' "$action_log" >/dev/null 2>&1; then
+        self_test_fail "promotion continued after failed predecessor deletion" || return 1
+    fi
+    grep -F "move-tag:$FINAL_TAG:$expected_sha" "$action_log" >/dev/null 2>&1 ||
+        self_test_fail "interrupted fixture did not move the tag" || return 1
+    mock_delete_failure=false
+    mock_release_target=$older_sha
+    reset_case "$expected_sha
+$expected_sha
+$expected_sha" "$expected_sha
+$expected_sha" "$advance"
+    run_case interrupted-tag-cutover-resume 0 || return 1
+    [ "$(grep -c '^list-existing$' "$action_log")" -eq 2 ] ||
+        self_test_fail "recovery repeated release discovery inside the final guard" || return 1
+
+    # Deletion can also finish before promotion fails: the tag then exists
+    # without a release. A retry restores it without deleting another release.
+    mock_existing_ids=
+    reset_case "$expected_sha
+$expected_sha
+$expected_sha" "$expected_sha
+$expected_sha" ""
+    run_case interrupted-release-cutover-resume 0 || return 1
+    if grep -F 'delete-release:' "$action_log" >/dev/null 2>&1; then
+        self_test_fail "release recovery deleted a nonexistent predecessor" || return 1
+    fi
+    mock_existing_ids=90
+
+    # Inconsistent/newer metadata or an unanswerable recovery lookup cannot
+    # justify replacing the current release, even when the ref equals us.
+    mock_release_target=$newer_sha
+    reset_case "$newer_sha
+$newer_sha
+$newer_sha" "$expected_sha
+$expected_sha" "$expected_sha $newer_sha ahead
+$newer_sha $expected_sha behind"
+    run_case newer-release-after-tag-read 3 || return 1
+    expect_no_candidate newer-release-after-tag-read || return 1
+    for invalid_release_target in '' abcd denied; do
+        mock_release_target=$invalid_release_target
+        reset_case "$expected_sha" "$expected_sha" ""
+        run_case invalid-recovery-target 1 || return 1
+        expect_no_candidate invalid-recovery-target || return 1
+    done
+    mock_existing_ids='90
+91'
+    reset_case "$expected_sha" "$expected_sha" ""
+    run_case duplicate-recovery-releases 1 || return 1
+    expect_no_candidate duplicate-recovery-releases || return 1
+    mock_existing_ids=90
+    mock_release_target=from-ref
+    mock_catalog_failure=true
+    reset_case "$expected_sha" "$expected_sha" ""
+    run_case recovery-catalog-unavailable 1 || return 1
+    expect_no_candidate recovery-catalog-unavailable || return 1
+    mock_catalog_failure=false
 
     # An API that cannot answer fails the run instead of skipping promotion.
     reset_case "$newer_sha" "$older_sha" ""

@@ -1768,7 +1768,8 @@
     [capability : String "\"semanticTokensProvider\""]
     [found : String "\"id\":83,\"result\":{\"data\":["]
     [missing : String "\"id\":85,\"result\":null"]
-    [malformed : String "\"id\":84,\"result\":null"]
+    [malformed : String
+      "\"id\":84,\"error\":{\"code\":-32602,\"message\":\"params must be an object\"}"]
     (and
       (= result.status 0)
       (lsp-transcript-result-contains? result capability)

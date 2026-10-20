@@ -15,6 +15,11 @@ forwarding at opt2; #7975 owns its opt1 frame-slot collision in #8190's matrix.
 The optimizer IR tests separately exercise fold and GVN, typed-store
 precision, non-Mov definitions, pre-write load reuse, function-fact reset,
 join availability and loop carry.
+`load_addr_taken_call.tl` keeps a read-only callee across a local write, and
+`load_addr_taken_cast.tl` reads that storage through another raw-pointer type.
+Both run at opt0/1/2. Call-deduplication IR tests cover Mov, arithmetic, Load,
+Call and Phi destinations, inlined sites, successor availability and function
+fact reset; ordinary definitions retain reuse.
 
 `linker_coff_import_reader_tests.tl` shares its assertion body with the native
 opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted

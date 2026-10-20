@@ -41806,6 +41806,68 @@
           (opt.opt-pure-call-sites-empty? sites)))
       "the last admitted membership position still survives")))
 
+(test
+  pure-call-address-taken-definitions
+  (for [inlined? (array false true)]
+    (for [variant (iterator.range 0 7)]
+      (let
+        [write : String
+          (cond
+            [(= variant 0) "%0 = mov 5 : i64"]
+            [(= variant 1) "%0 = add %0, 4 : i64"]
+            [(= variant 2) "%0 = load %8 : i64"]
+            [(= variant 3) "%0 = call pcd_pure(%8) : i64"]
+            [(= variant 4) "jump define\n define:\n %0 = phi [5, entry] : i64"]
+            [(= variant 5) "%7 = mov 5 : i64"]
+            [else "%0 = mov 5 : i64"])]
+        [func : ir.CompilerIrFunction
+          (Function
+            (opt-test-symbol "pcd_local")
+            (irt.params "q=%8:(MutPtr i64)")
+            (I64)
+            9
+            (irt.blocks
+              (str_cat.str-cat
+                "entry:\n %0 = mov 1 : i64\n"
+                (if (= variant 6)
+                  "%1 = mov %8 : (MutPtr i64)\n"
+                  "%1 = addr_of %0\n")
+                (if inlined?
+                  "%2 = mov 703 : i64\n"
+                  "%2 = call pcd_pure(%1) : i64\n")
+                write
+                "\n jump next\n next:\n
+                       %3 = call pcd_pure(%1) : i64
+                       %4 = call pcd_pure(%1) : i64
+                       return %4"))
+            Ordinary)]
+        [memory (opt-pcd-test-map false)]
+        [sites : opt.OptPureCallTable
+          (Cons
+            (opt.OptPureCallEntry (opt-pcd-test-pure) (One (Var 1)) 2)
+            (box (Nil)))]
+        [rewritten
+          (if inlined?
+            (opt.opt-pure-call-dedupe-function-sites memory (& sites) func)
+            (opt.opt-pure-call-dedupe-function memory (& func)))]
+        [out (opt.opt-function-blocks rewritten)]
+        [next : i64 (ir.compiler-ir-label "next")]
+        (if (< variant 5)
+          (begin
+            (test.assert-true
+              (opt-pcd-test-mov-at? out next 1 4 3)
+              "the new memory value can be reused")
+            (test.assert-true
+              (opt-pcd-test-call-at? out next 0 3)
+              "every local definition invalidates a read-only result"))
+          (begin
+            (test.assert-true
+              (opt-pcd-test-mov-at? out next 0 3 2)
+              "ordinary definitions and a fresh function preserve reuse")
+            (test.assert-true
+              (opt-pcd-test-mov-at? out next 1 4 2)
+              "unchanged memory retains the original result")))))))
+
 ;; --- merged-body exit-join versioning -----------------------------------------
 ;;
 ;; The shape INLINING leaves behind, which would make a loop that versions
@@ -71651,26 +71713,27 @@ return 0" true)
   [gvn-expected : i64]) : unit
   (let
     [params
-      (irt.params "other=%9:(MutPtr i64), handle=%10:(MutPtr (MutPtr i64))")]
+      (irt.params
+        "other=%9:(MutPtr i64), handle=%10:(MutPtr (MutPtr i64)), array=%11:(__tl_dyn-array i64)")]
     [local
       (opt-load-cse-run-with-params (clone params) (irt.instrs (clone body)))]
     [global
       (opt-gvn-blocks
         (ast.ast-node-pool-reader-type-segment-bases)
         params
-        (irt.blocks (string.concat "entry:\n" body)))]
+        (irt.blocks (str_cat.str-cat "entry:\n" (clone body))))]
     (test.assert-i64-eq
       (opt-count-load-instr-seq local)
       expected
-      (string.concat "fold: " body))
+      (str_cat.str-cat "fold: " (clone body)))
     (test.assert-i64-eq
       (opt-count-load-blocks (ir.compiler-ir-block-list-view global))
       gvn-expected
-      (string.concat "gvn: " body))))
+      (str_cat.str-cat "gvn: " body))))
 
 (test
   load-cse-address-taken-def-store
-  ;; A local write kills its word class, retaining differently typed loads.
+  ;; Different raw pointer types can still read the same local word.
   (opt-load-local-def-check
     "%0 = mov 1 : i64
      %1 = addr_of %0
@@ -71680,8 +71743,31 @@ return 0" true)
      %4 = load %1 : i64
      %5 = load %10 : (MutPtr i64)
      return %4"
+    4
+    4)
+  ;; A descriptor's data pointer is in separate storage, preserving precision.
+  (opt-load-local-def-check
+    "%0 = mov 1 : i64
+     %1 = addr_of %0
+     %6 = gep %11, 0 : (Ptr i64)
+     %2 = load %1 : i64
+     %3 = load %6 : (Ptr i64)
+     %0 = mov 5 : i64
+     %4 = load %1 : i64
+     %5 = load %6 : (Ptr i64)
+     return %4"
     3
     3)
+  ;; Reinterpreting the local through a raw pointer does not create storage.
+  (opt-load-local-def-check
+    "%0 = mov 4607182418800017408 : u64
+     %1 = addr_of %0
+     %2 = load %1 : f64
+     %0 = mov 4611686018427387904 : u64
+     %3 = load %1 : f64
+     return %3"
+    2
+    2)
   (opt-load-local-def-check
     "%0 = mov 1 : i64
      %1 = addr_of %0

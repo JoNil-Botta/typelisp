@@ -1747,11 +1747,16 @@ constant fact naming such a var, as destination or source.
 - Load-CSE in `fold` and dominator load GVN treat every definition of an
   address-taken local as a store of its destination type through an unknown
   pointer. The shared dispatcher invalidates availability after reading the
-  defining instruction's operands. Distinct known alias classes survive;
-  byte or unclassified writes invalidate every possibly aliasing load.
+  defining instruction's operands. A distinct known alias class survives only
+  in separately classified global, descriptor or buffer storage: raw pointers
+  can reinterpret a local's bits at another type. Byte or unclassified writes
+  invalidate every possibly aliasing load.
   GVN installs the set before its function walk, so predecessor-exit tables,
   MF-2 join phis and MF-3 PRE obey the same availability boundary. Its loop
   carry summaries also count these definitions as writes (#8514).
+- Read-only call deduplication installs the set for its own function and clears
+  cached results after every such definition, including a call's destination.
+  Standalone calls and results recorded at inlined sites share this rule.
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
 

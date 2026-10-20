@@ -872,6 +872,18 @@
         "profile.target-triple"
         -1
         "musl runtime requires musl target triple"))
+    (when
+      (and
+        (match p.runtime
+          [(n.GlibcRuntime) true]
+          [_ false])
+        (not (string.eq (& p.target-triple) "x86_64-unknown-linux-gnu")))
+      (diagnose!
+        v
+        (InvalidTarget)
+        "profile.target-triple"
+        -1
+        "glibc runtime requires GNU target triple"))
     (let
       [seen : i64 0]
       (for [i (iterator.range 0 (array-length (& p.outputs)))]

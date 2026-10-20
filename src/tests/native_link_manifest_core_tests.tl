@@ -4,6 +4,7 @@
 (import native_link_manifest_profiles as profiles)
 (import tests.native_link_manifest_test_support as support)
 (import stdlib.iterator)
+(import stdlib.string)
 (import stdlib.test)
 (import stdlib.byte_buf_core as buf)
 
@@ -595,3 +596,27 @@
           (& missing)
           (& (array-ref input.profile.files 0).path))
         "a missing insertion position cannot match"))))
+
+(test
+  native-link-glibc-cannot-use-musl-triple
+  (let
+    [input : n.NativeLinkSemanticInput (support.sample false)]
+    [limits : core.NativeLinkLimits (core.default-limits)]
+    (set! input.profile.runtime (n.GlibcRuntime))
+    (set! input.profile.target-triple "x86_64-unknown-linux-musl")
+    (set! input.manifest.target-triple "x86_64-unknown-linux-musl")
+    (let
+      [validation : core.NativeLinkValidation
+        (core.validate (& input) (& limits))]
+      [found : bool false]
+      (for [i (iterator.range 0 validation.count)]
+        (when
+          (and
+            (= (array-ref validation.diagnostics i).reason (core.InvalidTarget))
+            (stdlib.string.eq
+              (& (array-ref validation.diagnostics i).field)
+              "profile.target-triple"))
+          (set! found true)))
+      (test.assert-true
+        found
+        "runtime family and target triple must agree in both directions"))))

@@ -942,6 +942,14 @@ a main-less `src/*_tests.tl` helper. Manifest validation requires every suite
 member to remain an executable `src/tests/*_smoke.tl`, be named by the suite
 source, and not also appear as a standalone manifest source.
 
+`compiler-lower-nominal-init-pool` measures the checked expression pool around
+nominal default lowering, including imported field types, and requires no
+temporary operand nodes to remain.
+The native lower smoke repeats that assertion. `nominal_init_fields` exercises
+ordinary and destination initialization, register and memory layouts, imported
+field types, nested fields, zero-length arrays, and independent allocating
+defaults at opt0/1/2 on both hosts.
+
 ### Pointer-proof source fixtures
 
 `compiler_pointer_proof_smoke.tl` lowers source programs through the requested

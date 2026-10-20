@@ -2392,6 +2392,91 @@
 (define (main) : i64
   (get-y (make-point 20 22)))")
 
+(define (compiler-lower-nominal-init-pool-ok?) : bool
+  (match (parser.parse-ast-source
+    (&
+      "(module nominal_init_dep)
+(defstruct Small (number i64))
+(defstruct Field (number i64) (text String))
+(defenum Choice (First Field) (Last))
+(defstruct Holder (field Field) (choice Choice))
+(module main)
+(import nominal_init_dep as dep)
+(defstruct Empty (value unit))
+(defstruct Small (n i64))
+(defstruct Pair (n i64) (flag bool))
+(defstruct Wide (a i64) (b i64) (c i64))
+(defstruct Leaf (n i64) (text String))
+(defenum Tag (Zero) (Other i64))
+(defenum Choice (First Leaf i64) (Last))
+(defstruct Holder (leaf Leaf) (choice Choice) (cell (Box i64)) (imported dep.Holder))
+(define (empty) : Empty (init))
+(define (small) : Small (init))
+(define (pair) : Pair (init))
+(define (tag) : Tag (init))
+(define (imported-small) : dep.Small (init))
+(define (imported-holder) : dep.Holder (init))
+(define (main) : i64
+  (let
+    [rows : (__tl_dyn-array Holder) (__tl_make-array Holder 2)]
+    [wide : Wide (init)]
+    [choice : Choice (init)]
+    [imported : dep.Holder (init)]
+    (set! wide (init))
+    (set! choice (init))
+    (set! imported (init))
+    (+ wide.a (array-ref rows 0).leaf.n)))"))
+    [(Ok parsed)
+      (match (tc_api.typecheck-compiler-program-with-paths-checked
+        parsed
+        (ast.ast-decl-path-list-new))
+        [(Ok _ ctx top-env paths)
+          (let
+            [program : ast.AstProgram (tc_core.tc-context-program ctx)]
+            [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+            [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+            [names : lower.LowerNameEnv
+              (match (clone program)
+                [(Program decls)
+                  (lower.lower-name-env-from-decls-with-state
+                    owner
+                    (deref decls)
+                    (clone paths)
+                    ""
+                    (Nil))])]
+            [_install : unit (ast.ast-node-pool-context-install! pools)]
+            [before : i64 (ast.ast-node-pool-context-expr-len pools)]
+            [result : lower.ResultCompilerLower
+              (lower.lower-compiler-program-checked-with-names-mode
+                owner
+                ctx
+                top-env
+                program
+                paths
+                ""
+                names
+                (Empty)
+                (Scalar))]
+            (ast.ast-node-pool-context-capture-active! pools)
+            (let
+              [ok : bool
+                (and
+                  (= before (ast.ast-node-pool-context-expr-len pools))
+                  (match result
+                    [(Ok _ _ _) true]
+                    [_ false]))]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas owner))
+              ok))]
+        [_ false])]
+    [_ false]))
+
+(test
+  compiler-lower-nominal-init-pool
+  (test.assert-true
+    (compiler-lower-nominal-init-pool-ok?)
+    "nominal default fields do not retain temporary AST operands"))
+
 (define (compiler-lower-init-source) : String
   "(defstruct Point (x i64) (flag bool))
 (defenum Maybe (None) (Some i64))

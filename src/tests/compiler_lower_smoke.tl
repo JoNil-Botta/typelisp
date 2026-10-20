@@ -1001,6 +1001,9 @@
     (lower_tests.compiler-lower-ok? (lower_tests.compiler-lower-init-source))
     (io.panic "lower: init smoke mismatch"))
   (unless
+    (lower_tests.compiler-lower-nominal-init-pool-ok?)
+    (io.panic "lower: nominal defaults retained temporary AST operands"))
+  (unless
     (lower_tests.compiler-lower-tuple-shape-ok?)
     (io.panic "lower: tuple smoke mismatch"))
   (unless

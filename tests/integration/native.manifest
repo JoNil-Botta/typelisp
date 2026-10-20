@@ -486,6 +486,8 @@ bce_binary_interval_base_trap|all|0,1,2|tests/integration/bce_binary_interval.tl
 bce_affine_overflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:45: array index out of bounds: index=-9223372036854775807 length=8\n
 bce_affine_underflow_trap|all|-|tests/integration/bce_affine_versioning.tl|134|-|2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:34:45: array index out of bounds: index=-2 length=8\n
 make_array_init|all|-|tests/integration/make_array_init.tl|42|-|-|stdlib/string.tl|-
+nominal_init_fields|all|-|tests/integration/nominal_init_fields.tl|42|-|-|nominal_init_dep.tl|-
+nominal_init_fields|all|0,2|tests/integration/nominal_init_fields.tl|42|-|-|nominal_init_dep.tl|-
 make_array_zero|all|-|tests/integration/make_array_zero.tl|0|-|-|-|-
 mutable_reference_array|all|-|tests/integration/mutable_reference_array.tl|42|-|-|-|-
 mutable_reference_by_value_writeback|all|-|tests/integration/mutable_reference_by_value_writeback.tl|42|-|-|-|-

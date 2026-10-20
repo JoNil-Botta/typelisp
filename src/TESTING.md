@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`load_addr_taken_local.tl` checks pointer reads across direct local writes,
+copied pointers, byte widths, branch joins, stores and empty/single/multiple
+loop iterations at opt0/1/2. `load_addr_taken_join.tl` isolates cross-block
+forwarding at opt2; #7975 owns its opt1 frame-slot collision in #8190's matrix.
+The optimizer IR tests separately exercise fold and GVN, typed-store
+precision, non-Mov definitions, pre-write load reuse, function-fact reset,
+join availability and loop carry.
+
 `linker_coff_import_reader_tests.tl` shares its assertion body with the native
 opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
 kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,

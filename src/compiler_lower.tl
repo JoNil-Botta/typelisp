@@ -27253,7 +27253,8 @@
                           type-env
                           (& payload-types)
                           0)
-                          [(Exit exit-state) (Ok (Expr exit-state Unit (Never)))]
+                          [(Exit exit-state)
+                            (Ok (Expr exit-state Unit (Never)))]
                           [(Ok args-state values)
                             (match destination
                               [(No)

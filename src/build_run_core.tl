@@ -1,12 +1,13 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers.
 (import compiler_owned_view as owned_view)
+(import cli_option_core as cli_option)
+(import compiler_target_cfg_core as target_cfg)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import compiler_driver_core)
 (import compiler_lower)
 (import compiler_backend as backend)
 (import compiler_ast_types as ast)
-(import compiler_cfg_core as cfg_core)
 (import compiler_ir_types as ir)
 (import compiler_load as load)
 (import compiler_object as cobj)
@@ -73,17 +74,6 @@
   (Ok SourceToolLinkInputs)
   (Err String))
 
-(define (source-tool-cfg-names-to-env [names : cli_svec.Vec]) : sym_i64_env.SymI64Env
-  (let
-    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
-    [index : i64 0]
-    (while (< index (cli_svec.len (& names)))
-      (set!
-        env
-        (cfg_core.compiler-cfg-enable env (& (cli_svec.get (& names) index ""))))
-      (set! index (+ index 1)))
-    env))
-
 (define (source-tool-target-name [target : backend.CompilerBackendTarget]) : String
   (backend.compiler-backend-target-triple target))
 
@@ -95,21 +85,26 @@
 (define (source-tool-default-target-name) : String
   (source-tool-target-name (source-tool-default-target)))
 
-(define (source-tool-target [value : String]) : ResultSourceToolTarget
-  (if (or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-    (Ok (Linux))
-    (if (or
-      (string.eq value "windows-x86_64")
-      (string.eq value "windows_x86_64"))
-      (Ok (Windows))
-      (Err (str_cat.str-cat "unknown target " value)))))
+(define (source-tool-backend-target [target : target_cfg.CompilerTargetCfg]) : backend.CompilerBackendTarget
+  (match target
+    [(Linux) (Linux)]
+    [(Windows) (Windows)]))
 
-(define (source-tool-backend-mode [command : String] [value : String]) : ResultSourceToolBackendMode
-  (cond
-    [(string.eq value "scalar") (Ok (Scalar))]
-    [(string.eq value "avx2") (Ok (Avx2))]
-    [(string.eq value "avx512") (Ok (Avx512))]
-    [else (Err (str_cat.str-cat command ": unknown backend mode " value))]))
+(define (source-tool-backend-mode [mode : cli_option.CliBackendMode]) : backend.CompilerBackendMode
+  (match mode
+    [(Scalar) (Scalar)]
+    [(Avx2) (Avx2)]
+    [(Avx512) (Avx512)]))
+
+(define (source-tool-parse-target [value : String]) : ResultSourceToolTarget
+  (match (cli_option.cli-option-target value)
+    [(Ok target) (Ok (source-tool-backend-target target))]
+    [(Err message) (Err message)]))
+
+(define (source-tool-parse-backend-mode [value : String]) : ResultSourceToolBackendMode
+  (match (cli_option.cli-option-backend-mode value)
+    [(Ok mode) (Ok (source-tool-backend-mode mode))]
+    [(Err message) (Err message)]))
 
 (define (source-tool-args-append
   [args : process.ProcessStringList]
@@ -1932,6 +1927,7 @@
   [has-output : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : cli_svec.Vec]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
@@ -1965,7 +1961,7 @@
             (owned_view.compiler-owned-shared-view stdlib-roots)
             (compiler_driver_core.compiler-driver-target-cfgs
               target
-              (cfg_core.compiler-cfg-empty))
+              (target_cfg.compiler-target-user-cfgs (& cfg-names)))
             link-inputs)
             [(Err message)
               (io.print-error message)
@@ -1975,7 +1971,9 @@
               (match (source-tool-link-program
                 (SourceToolLinkRequest
                   source
-                  (Source stdlib-roots (cfg_core.compiler-cfg-empty))
+                  (Source
+                    stdlib-roots
+                    (target_cfg.compiler-target-user-cfgs (& cfg-names)))
                   target
                   opt-level
                   mode
@@ -2014,6 +2012,7 @@
   [has-output : bool]
   [target : backend.CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
+  [cfg-names : cli_svec.Vec]
   [opt-level : i64]
   [mode : backend.CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]) : i64
@@ -2025,6 +2024,7 @@
         has-output
         target
         stdlib-roots
+        cfg-names
         opt-level
         mode
         link-inputs
@@ -2065,8 +2065,7 @@
         (owned_view.compiler-owned-shared-view stdlib-roots)
         (compiler_driver_core.compiler-driver-target-cfgs
           target
-          (source-tool-cfg-names-to-env
-            (owned_view.compiler-owned-shared-view cfg-names)))
+          (target_cfg.compiler-target-user-cfgs (& cfg-names)))
         link-inputs)
         [(Err message)
           (io.print-error message)
@@ -2076,7 +2075,9 @@
           (match (source-tool-link-and-run
             (SourceToolLinkRequest
               source
-              (Source stdlib-roots (source-tool-cfg-names-to-env cfg-names))
+              (Source
+                stdlib-roots
+                (target_cfg.compiler-target-user-cfgs (& cfg-names)))
               target
               opt-level
               mode

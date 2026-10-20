@@ -806,17 +806,17 @@ step test-missing-opt
 run test "{{work}}/inline-test.tl" --opt-level
 exit nonzero
 stdout empty
-stderr contains test: --opt-level requires a value
+stderr contains --opt-level requires a value
 step test-invalid-opt
 run test "{{work}}/inline-test.tl" --opt-level 3
 exit nonzero
 stdout empty
-stderr contains test: invalid --opt-level 3; expected 0, 1, or 2
+stderr contains invalid --opt-level '3'; expected 0, 1, or 2
 step test-bad-target
 run test --check "{{work}}/inline-test.tl" --target nope
 exit nonzero
 stdout empty
-stderr contains test: unknown target nope
+stderr contains invalid --target 'nope'; expected linux-x86_64 or windows-x86_64
 
 # ---------------------------------------------------------------- fmt and lint
 

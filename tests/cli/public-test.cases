@@ -514,7 +514,7 @@ run test --backend-mode {{mode}} "{{dir}}/pkg/src/lib.tl" --target {{host-target
 exit 1
 stdout empty
 stderr contains test: backend mode {{mode}} cannot run on this host
-stderr not-contains unknown backend mode
+stderr not-contains invalid --backend-mode
 stderr not-contains test gang-width-{{width}}
 end-if
 
@@ -526,5 +526,5 @@ end-file
 run test --backend-mode neon "{{dir}}/lib.tl" --target {{host-target}} --stdlib-root "{{root}}/stdlib"
 exit 1
 stdout empty
-stderr contains test: unknown backend mode neon
+stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
 stderr not-contains cannot run on this host

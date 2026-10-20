@@ -19,7 +19,7 @@
                     (cli_option.cli-option-missing-value-message
                       "fmt"
                       "--stdlib-root")
-                    "fmt: --stdlib-root requires a value"))
+                    "--stdlib-root requires a value"))
                   42
                   1)]
               [_ 4])]

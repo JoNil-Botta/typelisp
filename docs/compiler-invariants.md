@@ -906,6 +906,12 @@ spare capacity writes the shared slot and growth copies the live prefix;
 escaping a table copies only that prefix into the current arena, which leaves
 no pointer into the arena that built it.
 
+A copied bounds check derives its unique ok-label from the original check.
+Recognized clone suffixes let span lookup recover the source location without
+crossing function ownership. The unsigned-bound entry check uses the same
+copy-0 suffix as unrolling and single-block versioning; its exit check retains
+the original label, so both abort sites remain distinct and located.
+
 The ordinary, PIC and owned package driver paths share checked-pool ownership through
 `compiler-driver-state-begin-checked-lower!` and
 `compiler-driver-state-finish-checked-lower!`. The handoff records its original
@@ -2192,6 +2198,14 @@ table and the gates; read it before changing CI structure.
 
 `typelisp --help` lists the commands and the global and common options;
 `typelisp <command> --help` shows each command's options.
+
+`cli_option_core.tl` owns common compile-option parsing, singleton presence,
+repeatable root/cfg ordering and diagnostics. Commands supply their existing
+defaults and apply the parsed record; backend conversion never revalidates
+strings. Package workers serialize the same options, including cfg names.
+Names cross the package-discovery scratch/interner boundary as strings and are
+interned only after installing the child session; environments containing
+parent-session IDs cannot cross that boundary.
 
 `typelisp expand` and LSP `tl/expandMacro` share the query in
 `compiler_expand_query.tl`. It checks the source through the production

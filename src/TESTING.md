@@ -1710,6 +1710,12 @@ should be removed.
 
 ### Native integration tests
 
+`ubound_entry_location.tl` exercises the existing multi-block unsigned-bound
+rewrite at opt0/1/2 on both hosts. Its manifest rows pin first-trip and mid-loop
+bounds diagnostics, a negative cursor, skipped loops, and check-before-division
+trap ordering. The optimizer span tests also exercise the actual entry-copy
+producer, collision suffixes and function ownership.
+
 `scripts/verify-integration.sh` contains the heavier native checks that build
 and run TypeLisp programs as native executables. Linux uses the explicit
 `compile -> as -> ld` path; Windows Git Bash/MSYS/Cygwin uses

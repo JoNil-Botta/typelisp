@@ -108,32 +108,32 @@ step compile-unknown-target
 run compile "{{work}}/main42.tl" --target plan9-x86_64
 exit nonzero
 stdout empty
-stderr contains Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64
+stderr contains invalid --target 'plan9-x86_64'; expected linux-x86_64 or windows-x86_64
 step build-unknown-target
 run build "{{work}}/main42.tl" --target plan9-x86_64
 exit nonzero
 stdout empty
-stderr contains build: unknown target plan9-x86_64
+stderr contains invalid --target 'plan9-x86_64'; expected linux-x86_64 or windows-x86_64
 step run-unknown-target
 run run "{{work}}/main42.tl" --target plan9-x86_64
 exit nonzero
 stdout empty
-stderr contains run: unknown target plan9-x86_64
+stderr contains invalid --target 'plan9-x86_64'; expected linux-x86_64 or windows-x86_64
 step compile-unknown-backend-mode
 run compile "{{work}}/main42.tl" --backend-mode neon
 exit nonzero
 stdout empty
-stderr contains Error: unknown backend mode 'neon'. Expected scalar, avx2, or avx512
+stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
 step build-unknown-backend-mode
 run build "{{work}}/main42.tl" --backend-mode neon
 exit nonzero
 stdout empty
-stderr contains build: unknown backend mode neon
+stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
 step run-unknown-backend-mode
 run run "{{work}}/main42.tl" --backend-mode neon
 exit nonzero
 stdout empty
-stderr contains run: unknown backend mode neon
+stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
 
 case check-unsupported-type-kind
 file main.tl
@@ -385,7 +385,7 @@ step selfhost-run-tool-missing-target
 run run --direct "{{dir}}/with space/main file.tl" --target
 exit nonzero
 stdout empty
-stderr contains run: --target requires a value
+stderr contains --target requires a value
 
 # Native libraries through --link-lib, constructors, and a package manifest
 # `(link ...)` section (#2892): a relative search path resolves against the
@@ -847,12 +847,12 @@ step selfhost-build-package-opt-duplicate
 run build --direct --manifest-path "{{dir}}/typelisp.pkg" --opt-level 1 --opt-level 2
 exit nonzero
 stdout empty
-stderr contains build: --opt-level was provided more than once
+stderr contains --opt-level was provided more than once
 step selfhost-build-package-opt-invalid
 run build --direct --manifest-path "{{dir}}/typelisp.pkg" --opt-level 3
 exit nonzero
 stdout empty
-stderr contains build: unknown opt level '3'; expected 0, 1, or 2
+stderr contains invalid --opt-level '3'; expected 0, 1, or 2
 sh rm -rf "{{dir}}/target"
 step selfhost-build-package-mode-staged
 run build --direct --manifest-path "{{dir}}/typelisp.pkg" --backend-mode avx2
@@ -1070,4 +1070,128 @@ step selfhost-build-package-opt-missing
 run build --direct --manifest-path "{{dir}}/optpkg/typelisp.pkg" --opt-level
 exit nonzero
 stdout empty
-stderr contains build: --opt-level requires a value
+stderr contains --opt-level requires a value
+
+# Shared parsing is identical before any command-specific work starts.
+case common-compile-option-errors
+each compile build run test check lint expand
+run {{each}} "{{work}}/main42.tl" --target plan9-x86_64
+exit nonzero
+stdout empty
+stderr match ^invalid --target 'plan9-x86_64'; expected linux-x86_64 or windows-x86_64$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --backend-mode neon
+exit nonzero
+stdout empty
+stderr match ^invalid --backend-mode 'neon'; expected scalar, avx2, or avx512$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --opt-level 3
+exit nonzero
+stdout empty
+stderr match ^invalid --opt-level '3'; expected 0, 1, or 2$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --target linux-x86_64 --target windows-x86_64
+exit nonzero
+stderr match ^--target was provided more than once$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --opt-level 0 --opt-level 2
+exit nonzero
+stderr match ^--opt-level was provided more than once$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --backend-mode scalar --backend-mode avx2
+exit nonzero
+stderr match ^--backend-mode was provided more than once$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" -g --backtrace
+exit nonzero
+stderr match ^--debug was provided more than once$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --target
+exit nonzero
+stderr match ^--target requires a value$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --opt-level --debug
+exit nonzero
+stderr match ^--opt-level requires a value$
+stderr count = 1 .
+run {{each}} "{{work}}/main42.tl" --cfg ""
+exit nonzero
+stderr match ^--cfg requires a non-empty value$
+stderr count = 1 .
+
+case common-package-option-errors
+each build run
+run {{each}} --target bad
+exit nonzero
+stderr match ^invalid --target 'bad'; expected linux-x86_64 or windows-x86_64$
+stderr count = 1 .
+run {{each}} --backend-mode bad
+exit nonzero
+stderr match ^invalid --backend-mode 'bad'; expected scalar, avx2, or avx512$
+stderr count = 1 .
+run {{each}} --opt-level bad
+exit nonzero
+stderr match ^invalid --opt-level 'bad'; expected 0, 1, or 2$
+stderr count = 1 .
+run {{each}} --target linux-x86_64 --target linux-x86_64
+exit nonzero
+stderr match ^--target was provided more than once$
+stderr count = 1 .
+run {{each}} --opt-level 1 --opt-level 1
+exit nonzero
+stderr match ^--opt-level was provided more than once$
+stderr count = 1 .
+run {{each}} --cfg
+exit nonzero
+stderr match ^--cfg requires a value$
+stderr count = 1 .
+
+case common-tool-root-errors
+each fmt doc lsp
+run {{each}} --stdlib-root
+exit nonzero
+stderr match ^--stdlib-root requires a value$
+stderr count = 1 .
+run {{each}} --stdlib-root ""
+exit nonzero
+stderr match ^--stdlib-root requires a non-empty value$
+stderr count = 1 .
+
+case common-lsp-unknown-argument
+run lsp --unknown
+exit nonzero
+stdout empty
+stderr match ^lsp: unknown argument --unknown$
+stderr count = 1 .
+run lsp extra
+exit nonzero
+stdout empty
+stderr match ^lsp: unknown argument extra$
+stderr count = 1 .
+
+case common-batch-option-errors
+each compile test
+run {{each}} --batch unused-list --target bad
+exit nonzero
+stderr match ^invalid --target 'bad'; expected linux-x86_64 or windows-x86_64$
+stderr count = 1 .
+run {{each}} --batch unused-list --backend-mode bad
+exit nonzero
+stderr match ^invalid --backend-mode 'bad'; expected scalar, avx2, or avx512$
+stderr count = 1 .
+run {{each}} --batch unused-list --opt-level 4
+exit nonzero
+stderr match ^invalid --opt-level '4'; expected 0, 1, or 2$
+stderr count = 1 .
+run {{each}} --batch unused-list --target linux-x86_64 --target linux-x86_64
+exit nonzero
+stderr match ^--target was provided more than once$
+stderr count = 1 .
+run {{each}} --batch unused-list --opt-level 0 --opt-level 2
+exit nonzero
+stderr match ^--opt-level was provided more than once$
+stderr count = 1 .
+run {{each}} --batch unused-list --cfg
+exit nonzero
+stderr match ^--cfg requires a value$
+stderr count = 1 .

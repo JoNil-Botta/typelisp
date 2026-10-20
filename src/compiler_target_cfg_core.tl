@@ -2,8 +2,6 @@
 ;;
 ;; Keep target predicate aliases in one place so compiler emission and
 ;; non-emitting tooling parse exactly the same source configuration.
-(import stdlib.str_cat_runtime as str_cat)
-(import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as target_cfg_svec)
 (import compiler_builtin_ids as cbi)
@@ -24,19 +22,6 @@
 
 (define (compiler-target-cfg-host) : CompilerTargetCfg
   (cfg windows Windows Linux))
-
-(define (compiler-target-cfg-parse [value : String]) : ResultCompilerTargetCfg
-  (cond
-    [(or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-      (Ok Linux)]
-    [(or (string.eq value "windows-x86_64") (string.eq value "windows_x86_64"))
-      (Ok Windows)]
-    [else
-      (Err
-        (str_cat.str-cat
-          "unknown target "
-          value
-          "; expected linux-x86_64 or windows-x86_64"))]))
 
 (define (compiler-target-enable-linux-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (cfg_core.compiler-cfg-enable
@@ -62,30 +47,40 @@
     [(Linux) (compiler-target-enable-linux-cfgs cfgs)]
     [(Windows) (compiler-target-enable-windows-cfgs cfgs)]))
 
-(define (compiler-target-cfgs-with-names-from
-  [target : CompilerTargetCfg]
+(define (compiler-target-user-cfgs [names : (& names target_cfg_svec.Vec)]) : sym_i64_env.SymI64Env
+  (let
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
+    (while (< index (target_cfg_svec.len names))
+      (set!
+        env
+        (cfg_core.compiler-cfg-enable
+          env
+          (& (target_cfg_svec.get names index ""))))
+      (set! index (+ index 1)))
+    env))
+
+(define (compiler-target-user-cfgs-with-intern-state
   [names : (& names target_cfg_svec.Vec)]
-  [index : i64]
-  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (>= index (target_cfg_svec.len names))
-    (compiler-target-cfgs target cfgs)
-    (compiler-target-cfgs-with-names-from
-      target
-      names
-      (+ index 1)
-      (cfg_core.compiler-cfg-enable
-        cfgs
-        (& (target_cfg_svec.get names index ""))))))
+  [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
+  (let
+    [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    [index : i64 0]
+    (while (< index (target_cfg_svec.len names))
+      (set!
+        env
+        (cfg_core.compiler-cfg-enable-with-intern-state
+          env
+          (& (target_cfg_svec.get names index ""))
+          intern-state))
+      (set! index (+ index 1)))
+    env))
 
 (define (compiler-target-cfgs-with-names
   [target : CompilerTargetCfg]
   [names : target_cfg_svec.Vec]) : sym_i64_env.SymI64Env
   (cbi.compiler-builtin-initialize-for-parse!)
-  (compiler-target-cfgs-with-names-from
-    target
-    names
-    0
-    (cfg_core.compiler-cfg-empty)))
+  (compiler-target-cfgs target (compiler-target-user-cfgs (& names))))
 
 (define (compiler-target-enable-linux-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]

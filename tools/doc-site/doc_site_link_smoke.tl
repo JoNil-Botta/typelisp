@@ -10,7 +10,7 @@
 (define (doc-site-link-smoke) : unit
   (let
     [sections (site.doc-site-typelisp-sections)]
-    [cases : (Array LinkCase 18)
+    [cases : (Array LinkCase 20)
       (array
         (Case
           "docs/guide.md"
@@ -43,6 +43,8 @@
           "docs/guide.md"
           "../scripts"
           (site.doc-site-repo-source-url "scripts"))
+        (Case "docs/guide.md" ".." (site.doc-site-repo-source-url "."))
+        (Case "README.md" "." (site.doc-site-repo-source-url "."))
         (Case
           "docs/guide.md"
           "missing.md#anchor"

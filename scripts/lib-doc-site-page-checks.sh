@@ -76,6 +76,7 @@ doc_site_check_pages() {
         repo = "https://github.com/JoNil-Botta/typelisp/"
         blob = repo "blob/" source_identity "/"
         tree = repo "tree/" source_identity "/"
+        source_exists["."] = 1
         while ((getline line < sources_file) > 0) {
             source_exists[line] = 1
             while (sub(/\/[^/]+$/, "", line))
@@ -277,6 +278,7 @@ doc_site_page_check_self_test_cases() {
     printf '%s\n' \
         '<a href="https://github.com/JoNil-Botta/typelisp/blob/fixture/docs/template.md?plain=1#heading">source</a>' \
         '<a href="https://github.com/JoNil-Botta/typelisp/tree/fixture/?plain=1">root</a>' \
+        '<a href="https://github.com/JoNil-Botta/typelisp/tree/fixture/.#heading">relative root</a>' \
         '<a href="https://github.com/JoNil-Botta/typelisp/tree/fixture/src">directory</a>' \
         '<a href="https://example.com/missing.md#heading">external</a>' \
         '<a href="//example.com/missing.md#heading">external</a>' \

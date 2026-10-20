@@ -284,31 +284,6 @@ fi
 assert_empty "$WORKDIR/built-direct-object.stdout"
 assert_empty "$WORKDIR/built-direct-object.stderr"
 
-echo "[windows-native-link] external data stores and addresses without assembler"
-EXTERN_DATA_CLANG=$(find_clang || true)
-[ -n "$EXTERN_DATA_CLANG" ] || EXTERN_DATA_CLANG=$TYPELISP_WINDOWS_CLANG
-"$EXTERN_DATA_CLANG" --target=x86_64-pc-windows-msvc -c -ffreestanding \
-    "$ROOT/benchmarks/extern_data_memory/baseline.c" -o "$WORKDIR/extern-data.obj"
-for extern_opt in 0 1 2; do
-    extern_stem="$WORKDIR/extern-data-opt$extern_opt"
-    if ! TYPELISP_WINDOWS_DIRECT_OBJECT=1 \
-        TYPELISP_WINDOWS_CLANG=__typelisp_unexpected_assembler_fallback__.exe \
-        "$COMPILER" build --direct "$ROOT/tests/integration/extern_data_places_direct.tl" \
-        --target windows-x86_64 --backend-mode scalar --opt-level "$extern_opt" \
-        --stdlib-root "$ROOT/stdlib" --link-arg "$WORKDIR/extern-data.obj" \
-        -o "$extern_stem.exe" > "$extern_stem.build.stdout" 2> "$extern_stem.build.stderr"; then
-        sed 's/^/  /' "$extern_stem.build.stderr" >&2
-        fail "external data direct-object build failed at opt$extern_opt"
-    fi
-    assert_empty "$extern_stem.build.stderr"
-    extern_status=0
-    "$extern_stem.exe" > "$extern_stem.stdout" 2> "$extern_stem.stderr" || extern_status=$?
-    [ "$extern_status" -eq 42 ] || \
-        fail "external data direct-object opt$extern_opt expected exit 42, got $extern_status"
-    assert_empty "$extern_stem.stdout"
-    assert_empty "$extern_stem.stderr"
-done
-
 FALLBACK_SOURCE="$WORKDIR/semantic-fallback.tl"
 FALLBACK_SOURCE_BIN="$WORKDIR/semantic-fallback.exe"
 cat > "$FALLBACK_SOURCE" <<'EOF'

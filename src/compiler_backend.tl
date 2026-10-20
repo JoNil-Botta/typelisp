@@ -22087,7 +22087,8 @@
   [program-index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (if (compiler-backend-index-extern-references? program-index name)
-    (compiler-backend-index-extern-link-symbol program-index name)
+    (compiler-backend-asm-safe-symbol
+      (compiler-backend-index-extern-link-symbol program-index name))
     (compiler-backend-state-user-symbol-id program-index.backend-state name)))
 
 (define (compiler-backend-unsigned-rel-ty?

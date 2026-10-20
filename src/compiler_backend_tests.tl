@@ -37718,15 +37718,16 @@ b_keep:
 
 (test
   backend-extern-data-object-symbols
-  (for [mode (iterator.range 0 2)]
+  (for [mode (iterator.range 0 6)]
     (let
       [target : backend.CompilerBackendTarget
-        (if (= mode 0)
+        (if (< mode 3)
           (Linux)
           (Windows))]
       [source : String
-        "(extern foreign-data (:symbol \"foreign_exact\") : i64)
+        "(extern foreign-data (:symbol \"foreign-exact\") : i64)
 (extern plain : i64)
+(extern (touch) : i64)
 (define saved : (MutPtr i64) (unsafe (ptr-addr-of foreign-data)))
 (define local : i64 7)
 (define (main) : i64
@@ -37734,10 +37735,28 @@ b_keep:
     (set! foreign-data 40)
     (set! plain 2)
     (set! local 9)
+    (touch)
     (+ (unsafe (ptr-read saved)) (+ foreign-data (+ plain local)))))"]
-      (match (backend.compiler-backend-emit-source-object-image-for-target
-        source
-        target)
+      [emitted : backend.ResultCompilerBackendObject
+        (match (backend.compiler-backend-lower-source-for-target source target)
+          [(Err diag) (Err diag)]
+          [(Ok program spans lower-owner)
+            (let
+              [result : backend.ResultCompilerBackendObject
+                (match (opt.optimize-program-with-spans-and-level
+                  (& program)
+                  spans
+                  (% mode 3))
+                  [(Program optimized optimized-spans)
+                    (backend.compiler-backend-emit-program-object-image-target
+                      optimized
+                      target
+                      optimized-spans
+                      true)])]
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas lower-owner))
+              result)])]
+      (match emitted
         [(Ok image)
           (test.assert-true
             (and
@@ -37762,14 +37781,6 @@ b_keep:
                 (RipAddress)
                 "_tl_local"))
             "direct object reads, stores and addresses share external symbols")
-          (match (object_asm.compiler-object-asm-render
-            (owned_view.compiler-owned-shared-view image))
-            [(Ok text)
-              (test.assert-true
-                (asm-lacks? text "_tl_foreign_data" "_tl_plain")
-                "direct object emission must not invent internal extern symbols")]
-            [(Err _)
-              (test.assert-true false "object assembly rendering failed")])
           (test.assert-true
             (match target
               [(Linux)
@@ -37780,7 +37791,14 @@ b_keep:
                 (match (coff.compiler-object-coff-render image)
                   [(Ok _) true]
                   [(Err _) false])])
-            "both object formats resolve all external data relocations")]
+            "both object formats resolve all external data relocations")
+          (match (object_asm.compiler-object-asm-render image)
+            [(Ok text)
+              (test.assert-true
+                (asm-lacks? text "_tl_foreign_data" "_tl_plain")
+                "direct object emission must not invent internal extern symbols")]
+            [(Err _)
+              (test.assert-true false "object assembly rendering failed")])]
         [(Err _)
           (test.assert-true false "external data object emission failed")]))))
 
@@ -37788,7 +37806,7 @@ b_keep:
   backend-global-symbol-emission-owner
   (let
     [name : i64 (ci.intern "shared-data")]
-    [alpha : i64 (ci.intern "foreign_alpha")]
+    [alpha : i64 (ci.intern "foreign-alpha?")]
     [beta : i64 (ci.intern "foreign_beta")]
     [state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
@@ -37803,7 +37821,7 @@ b_keep:
       (let
         [link : String
           (if (= mode 0)
-            "foreign_alpha"
+            "foreign_alpha_question"
             "foreign_beta")]
         [index : backend.CompilerBackendProgramIndex
           (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state

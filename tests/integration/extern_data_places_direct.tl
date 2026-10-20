@@ -1,4 +1,4 @@
-(extern foreign-word (:symbol "tl_data_word") : i64)
+(extern foreign-word (:symbol "tl-data-word") : i64)
 (extern plain : i64)
 
 (define (main) : i64

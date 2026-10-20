@@ -1,4 +1,4 @@
-(extern foreign-word (:symbol "tl_data_word") : i64)
+(extern foreign-word (:symbol "tl-data-word") : i64)
 (extern foreign-float (:symbol "tl_data_float") : f32)
 (extern foreign-byte (:symbol "tl_data_byte") : u8)
 (extern plain : i64)

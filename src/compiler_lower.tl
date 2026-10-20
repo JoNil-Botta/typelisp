@@ -27100,14 +27100,15 @@
             ctx
             (tc_core.tc-context-type-get ctx field-id)))]
       [lowered
-        (try
-          (lower-expr-and-coerce
-            ctx
-            state
-            env
-            type-env
-            (Init field-id)
-            field-ty))]
+        (match (lower-expr-and-coerce
+          ctx
+          state
+          env
+          type-env
+          (Init field-id)
+          field-ty)
+          [(Ok value) value]
+          [(Err message) (return (Err message))])]
       (match lowered
         [(Expr next-state value value-ty)
           (match (& value-ty)

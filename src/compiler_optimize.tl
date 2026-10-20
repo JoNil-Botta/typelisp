@@ -10597,6 +10597,53 @@
     [(Some id) (opt-cfg-index-block index id)]
     [(None) (No)]))
 
+;; A block of the function's own list, borrowed. An index numbers the blocks
+;; of the list it was built from in list order, so CFG id `i` is slot `i` of
+;; that list, and of any list that rewrote its blocks in place without moving
+;; them (#9013).
+(defenum OptBlockRef
+  (:lifetimes blocks)
+  (No)
+  (Some (& blocks ir.CompilerIrBlock)))
+
+;; The block at CFG id `id`, for a caller that knows `id` names one. Only the
+;; `cfg test` build reads `_index`: it checks that `blocks` is the list the
+;; index numbers.
+(define (opt-cfg-index-block-at
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [_index : (& OptCfgIndex)]
+  [id : i64]) : (& blocks ir.CompilerIrBlock)
+  (match blocks
+    [(Array seq)
+      (let
+        [block (ir.compiler-ir-block-seq-borrow seq id)]
+        (cfg
+          test
+          (match block
+            [(Block label _)
+              (when
+                (!= label (array-ref _index.labels id))
+                (opt-rewrite-ice!
+                  "optimizer: internal error: a CFG index lookup read a block list the index does not number"))])
+          unit)
+        block)]))
+
+(define (opt-cfg-index-block-in
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [index : (& OptCfgIndex)]
+  [id : i64]) : (OptBlockRef blocks)
+  (if (and (>= id 0) (< id (opt-cfg-index-block-count index)))
+    (Some (opt-cfg-index-block-at blocks index id))
+    (No)))
+
+(define (opt-cfg-index-find-block-in
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [index : (& OptCfgIndex)]
+  [label : i64]) : (OptBlockRef blocks)
+  (match (opt-cfg-index-id index label)
+    [(Some id) (opt-cfg-index-block-in blocks index id)]
+    [(None) (No)]))
+
 (define (opt-cfg-index-row-labels-from
   [index : (& index OptCfgIndex)]
   [csr : (& csr OptCfgCsr)]
@@ -91669,9 +91716,10 @@
 ;; loop's landing block, an early-exit arm, a straight-line body -- all leave
 ;; through an unconditional edge.
 (define (opt-guard-sink-decision-block?
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : (& st OptGuardSinkState)]
   [id : i64]) : bool
-  (match (compiler-opt-global-array-element-shared-view st.index.blocks id)
+  (match (opt-cfg-index-block-at blocks st.index id)
     [(Block _ instrs)
       (let
         [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -91830,6 +91878,7 @@
 (define (opt-guard-sink-scan-var!
   [scratch : (__tl_dyn-array i64)]
   [var : i64]
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [count : i64]
@@ -91840,7 +91889,7 @@
   (set! (array-ref out 2) 0)
   (set! (array-ref out 3) 0)
   (for [id (iterator.range 0 count)]
-    (match (compiler-opt-global-array-element-shared-view index.blocks id)
+    (match (opt-cfg-index-block-at blocks index id)
       [(Block _ instrs)
         (opt-guard-sink-scan-seq!
           (compiler-opt-global-shared-view scratch)
@@ -91850,7 +91899,7 @@
           id
           skip
           out
-          (& instrs)
+          instrs
           0)])))
 
 ;; Loop nesting depth per block id: the number of natural-loop bodies holding
@@ -92103,6 +92152,7 @@
 
 ;; Score one candidate. Returns the target block id, or -1.
 (define (opt-guard-sink-choose
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [source : i64]
   [var : i64]
@@ -92115,6 +92165,7 @@
   (opt-guard-sink-scan-var!
     st.scratch
     var
+    blocks
     st.index
     st.doms
     st.count
@@ -92133,7 +92184,7 @@
         (= target source)
         (not (opt-dom-info-dominates-id? st.doms source target))
         (not (opt-guard-sink-single-arm? st true-label false-label target))
-        (opt-guard-sink-decision-block? st target))
+        (opt-guard-sink-decision-block? blocks st target))
         (- 0 1)
         (match mem
           [(None) target]
@@ -92162,6 +92213,7 @@
               (- 0 1))])))))
 
 (define (opt-guard-sink-plan-instrs!
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [source : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -92209,6 +92261,7 @@
                         (array-ref st.budget 0)
                         (- (array-ref st.budget 0) 1))
                       (opt-guard-sink-choose
+                        blocks
                         (compiler-opt-global-shared-view st)
                         source
                         var
@@ -92223,6 +92276,7 @@
         (set! (array-ref st.budget 1) (+ (array-ref st.budget 1) 1))
         unit)
       (opt-guard-sink-plan-instrs!
+        blocks
         (compiler-opt-global-shared-view st)
         source
         instrs
@@ -92242,12 +92296,13 @@
           suffix-opaque)))))
 
 (define (opt-guard-sink-plan-blocks!
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [id : i64]
   [mv-count : (&mut mv-count (__tl_dyn-array i64))]) : unit
   (unless
     (>= id st.count)
-    (match (compiler-opt-global-array-element-shared-view st.index.blocks id)
+    (match (opt-cfg-index-block-at blocks st.index id)
       [(Block _ instrs)
         (let
           [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -92259,9 +92314,10 @@
             (match (ir.compiler-ir-instr-seq-borrow instrs (- total 1))
               [(Branch _ true-label false-label)
                 (opt-guard-sink-plan-instrs!
+                  blocks
                   (compiler-opt-global-shared-view st)
                   id
-                  (& instrs)
+                  instrs
                   (&mut targets)
                   (- total 1)
                   (- total 1)
@@ -92272,9 +92328,10 @@
                   0)]
               [(TotalEnumBranch _ true-label false-label)
                 (opt-guard-sink-plan-instrs!
+                  blocks
                   (compiler-opt-global-shared-view st)
                   id
-                  (& instrs)
+                  instrs
                   (&mut targets)
                   (- total 1)
                   (- total 1)
@@ -92295,7 +92352,7 @@
                 (set! (array-ref st.mv-dst at) (array-ref targets slot))
                 (set! (array-ref mv-count 0) (+ at 1)))
               unit)))])
-    (opt-guard-sink-plan-blocks! st (+ id 1) mv-count)))
+    (opt-guard-sink-plan-blocks! blocks st (+ id 1) mv-count)))
 
 (define (opt-guard-sink-moved-out?
   [st : (& st OptGuardSinkState)]
@@ -92331,21 +92388,23 @@
         from
         (opt-guard-sink-first-reader scratch var instrs (+ from 1) stop)))))
 
-(define (opt-guard-sink-moved-instr [st : (& st OptGuardSinkState)] [k : i64]) : ir.CompilerIrInstr
-  (match (compiler-opt-global-array-element-shared-view
-    st.index.blocks
-    (array-ref st.mv-src k))
+(define (opt-guard-sink-moved-instr
+  [blocks : (& ir.CompilerIrBlockList)]
+  [st : (& st OptGuardSinkState)]
+  [k : i64]) : ir.CompilerIrInstr
+  (match (opt-cfg-index-block-at blocks st.index (array-ref st.mv-src k))
     [(Block _ instrs)
       (ir.compiler-ir-instr-seq-ref instrs (array-ref st.mv-index k))]))
 
 (define (opt-guard-sink-moved-slot
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [k : i64]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [phi-end : i64]
   [stop : i64]) : i64
   (match (let
-    [instr (opt-guard-sink-moved-instr st k)]
+    [instr (opt-guard-sink-moved-instr blocks st k)]
     (opt-instr-def-var (& instr)))
     [(None) phi-end]
     [(Some var)
@@ -92354,6 +92413,7 @@
         (opt-guard-sink-first-reader st.scratch var instrs phi-end stop))]))
 
 (define (opt-guard-sink-push-moved-in!
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [moves : i64]
   [target : i64]
@@ -92369,6 +92429,7 @@
       (= (array-ref st.mv-dst k) target)
       (=
         (opt-guard-sink-moved-slot
+          blocks
           (compiler-opt-global-shared-view st)
           k
           instrs
@@ -92377,9 +92438,10 @@
         slot))
       (ir.compiler-ir-instr-builder-push!
         builder
-        (opt-guard-sink-moved-instr st k))
+        (opt-guard-sink-moved-instr blocks st k))
       unit)
     (opt-guard-sink-push-moved-in!
+      blocks
       st
       moves
       target
@@ -92391,10 +92453,11 @@
       builder)))
 
 (define (opt-guard-sink-rebuild-block
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [moves : i64]
   [id : i64]) : ir.CompilerIrBlock
-  (match (compiler-opt-global-array-element-shared-view st.index.blocks id)
+  (match (opt-cfg-index-block-at blocks st.index id)
     [(Block label instrs)
       (let
         [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -92413,6 +92476,7 @@
           (+= slot 1))
         (while (< slot total)
           (opt-guard-sink-push-moved-in!
+            blocks
             (compiler-opt-global-shared-view st)
             moves
             id
@@ -92430,7 +92494,10 @@
           (+= slot 1))
         (Block label (ir.compiler-ir-instr-builder-to-seq builder)))]))
 
-(define (opt-guard-sink-rebuild [st : OptGuardSinkState] [moves : i64]) : ir.CompilerIrBlockList
+(define (opt-guard-sink-rebuild
+  [blocks : (& ir.CompilerIrBlockList)]
+  [st : OptGuardSinkState]
+  [moves : i64]) : ir.CompilerIrBlockList
   (let
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock st.count)]
@@ -92438,6 +92505,7 @@
       (set!
         (array-ref slots id)
         (opt-guard-sink-rebuild-block
+          blocks
           (compiler-opt-global-shared-view st)
           moves
           id)))
@@ -92466,7 +92534,7 @@
       (set! (array-ref blk-obj id) 0)
       (set! (array-ref blk-opaque id) 0)
       (set! (array-ref blk-call id) 0)
-      (match (compiler-opt-global-array-element-shared-view index.blocks id)
+      (match (opt-cfg-index-block-at blocks index id)
         [(Block _ instrs)
           (opt-guard-sink-note-ptrs-seq!
             frame
@@ -92477,7 +92545,7 @@
             0)
           (opt-guard-sink-fill-block-masks!
             cells
-            (& instrs)
+            instrs
             id
             (&mut blk-cell)
             (&mut blk-obj)
@@ -92545,12 +92613,15 @@
         (set! (array-ref st.budget 0) (opt-guard-sink-scan-budget))
         (set! (array-ref st.budget 1) 0)
         (opt-guard-sink-plan-blocks!
+          blocks
           (compiler-opt-global-shared-view st)
           0
           (&mut mv-count))
         (if (= (array-ref mv-count 0) 0)
           (Result blocks false)
-          (Result (opt-guard-sink-rebuild st (array-ref mv-count 0)) true))))))
+          (Result
+            (opt-guard-sink-rebuild blocks st (array-ref mv-count 0))
+            true))))))
 
 ;; How many guard-first clones one function may take. The shape is a property of
 ;; the ENTRY block, so one is the usual answer and two covers a guard whose
@@ -92634,6 +92705,7 @@
 
 ;; `out` = [source block id, instruction index, target block id].
 (define (opt-guard-sink-remat-scan-instrs!
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [source : i64]
   [instrs : (& ir.CompilerIrInstrSeq)]
@@ -92667,6 +92739,7 @@
                       (not (opt-guard-sink-guard-compare? instrs cond-var var)))
                       (- 0 1)
                       (opt-guard-sink-remat-choose
+                        blocks
                         (compiler-opt-global-shared-view st)
                         source
                         var
@@ -92684,6 +92757,7 @@
   false)
 
 (define (opt-guard-sink-remat-choose
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [source : i64]
   [var : i64]
@@ -92693,6 +92767,7 @@
   (opt-guard-sink-scan-var!
     st.scratch
     var
+    blocks
     st.index
     st.doms
     st.count
@@ -92711,7 +92786,7 @@
         (= target source)
         (not (opt-dom-info-dominates-id? st.doms source target))
         (not (opt-guard-sink-single-arm? st true-label false-label target))
-        (opt-guard-sink-decision-block? st target)
+        (opt-guard-sink-decision-block? blocks st target)
         (= (array-ref st.blk-call source) 1)
         (not (opt-guard-sink-shrinkwrap-shape? st source target 0)))
         (- 0 1)
@@ -92746,9 +92821,10 @@
 ;; Only the function's entry block is a rematerialization source: the prologue
 ;; this exists to move is placed there and nowhere else.
 (define (opt-guard-sink-remat-find!
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : OptGuardSinkState]
   [out : (&mut out (__tl_dyn-array i64))]) : bool
-  (match (compiler-opt-global-array-element-shared-view st.index.blocks 0)
+  (match (opt-cfg-index-block-at blocks st.index 0)
     [(Block _ instrs)
       (let
         [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -92757,9 +92833,10 @@
           (match (ir.compiler-ir-instr-seq-borrow instrs (- total 1))
             [(Branch (Var cond-var) true-label false-label)
               (opt-guard-sink-remat-scan-instrs!
+                blocks
                 st
                 0
-                (& instrs)
+                instrs
                 (- total 1)
                 cond-var
                 true-label
@@ -92809,6 +92886,7 @@
         (opt-copy-subst-instr env instr))]))
 
 (define (opt-guard-sink-remat-block
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : (& st OptGuardSinkState)]
   [env : (& OptCopyEnv)]
   [var : i64]
@@ -92818,7 +92896,7 @@
   [source-id : i64]
   [target-id : i64]
   [id : i64]) : ir.CompilerIrBlock
-  (match (compiler-opt-global-array-element-shared-view st.index.blocks id)
+  (match (opt-cfg-index-block-at blocks st.index id)
     [(Block label instrs)
       (let
         [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
@@ -92843,6 +92921,7 @@
         (Block label (ir.compiler-ir-instr-builder-to-seq builder)))]))
 
 (define (opt-guard-sink-remat-apply
+  [blocks : (& ir.CompilerIrBlockList)]
   [st : (& st OptGuardSinkState)]
   [var : i64]
   [clone : i64]
@@ -92851,9 +92930,7 @@
   [target-id : i64]) : ir.CompilerIrBlockList
   (let
     [clone-instr : ir.CompilerIrInstr
-      (match (compiler-opt-global-array-element-shared-view
-        st.index.blocks
-        source-id)
+      (match (opt-cfg-index-block-at blocks st.index source-id)
         [(Block _ instrs)
           (opt-guard-sink-with-dst
             (ir.compiler-ir-instr-seq-ref instrs source-index)
@@ -92869,6 +92946,7 @@
       (set!
         (array-ref slots id)
         (opt-guard-sink-remat-block
+          blocks
           st
           (& env)
           var
@@ -92901,6 +92979,7 @@
             blocks)]
         [found : (__tl_dyn-array i64) (__tl_make-array i64 4)]
         (if (opt-guard-sink-remat-find!
+          blocks
           (compiler-opt-global-shared-view st)
           (&mut found))
           (let
@@ -92908,9 +92987,7 @@
             [source-index : i64 (array-ref found 1)]
             [target-id : i64 (array-ref found 2)]
             [var : i64
-              (match (compiler-opt-global-array-element-shared-view
-                st.index.blocks
-                source-id)
+              (match (opt-cfg-index-block-at blocks st.index source-id)
                 [(Block _ instrs)
                   (match (let
                     [instr
@@ -92923,6 +93000,7 @@
               (let
                 [next : ir.CompilerIrBlockList
                   (opt-guard-sink-remat-apply
+                    blocks
                     st
                     var
                     frame
@@ -131408,9 +131486,7 @@
             (let
               [entry : OptPureCallTable
                 (opt-pure-call-entry-table index (& exits) id)]
-              (match (compiler-opt-global-array-element-shared-view
-                index.blocks
-                id)
+              (match (opt-cfg-index-block-at blocks index id)
                 [(Block label instrs)
                   (match (opt-pure-call-block
                     call-memory
@@ -131418,7 +131494,7 @@
                     sites
                     (&mut env)
                     entry
-                    (& instrs)
+                    instrs
                     (&mut changed))
                     [(Out new-instrs exit-table)
                       (set! (array-ref exits id) exit-table)
@@ -134346,19 +134422,20 @@
 (define (opt-guard-dedup-writes-fill!
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [obj : (& obj OptGlobalModRef)]
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]
   [writes : (&mut writes (__tl_dyn-array bool))]) : i64
   (let
     [total : i64 0]
     (for [id (iterator.range 0 block-count)]
-      (match (opt-cfg-index-block index id)
+      (match (opt-cfg-index-block-in blocks index id)
         [(No) unit]
         [(Some block)
           (match block
             [(Block _ instrs)
               (when
-                (opt-guard-dedup-seq-writes? call-memory obj (& instrs))
+                (opt-guard-dedup-seq-writes? call-memory obj instrs)
                 (set! (array-ref writes id) true)
                 (+= total 1))])]))
     total))
@@ -134496,6 +134573,7 @@
 
 (define (opt-guard-dedup-collect-sites
   [type-segment-bases : i64]
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [hs : (& OptLoadHeaderSet)]
   [sources : (& sources OptValueSources)]
@@ -134506,7 +134584,7 @@
     [written : i64 0]
     (for [id (iterator.range 0 block-count)]
       (if (array-ref index.reachable id)
-        (match (opt-cfg-index-block index id)
+        (match (opt-cfg-index-block-in blocks index id)
           [(No) unit]
           [(Some block)
             (match block
@@ -134520,7 +134598,7 @@
                     uses
                     sites
                     id
-                    (& instrs)
+                    instrs
                     written))])])
         unit))
     written))
@@ -134534,11 +134612,12 @@
 ;; no such twin: the arm's copy
 ;; is gone, so nothing but the single moved definition is live either way.
 (define (opt-guard-dedup-gep-blocks-fill!
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]
   [out : (&mut out (__tl_dyn-array i64))]) : unit
   (for [id (iterator.range 0 block-count)]
-    (match (opt-cfg-index-block index id)
+    (match (opt-cfg-index-block-in blocks index id)
       [(No) unit]
       [(Some block)
         (match block
@@ -134554,12 +134633,13 @@
                   [_ unit])))])])))
 
 (define (opt-guard-dedup-moved-fill!
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]
   [before : (& (__tl_dyn-array i64))]
   [moved : (&mut moved (__tl_dyn-array bool))]) : unit
   (for [id (iterator.range 0 block-count)]
-    (match (opt-cfg-index-block index id)
+    (match (opt-cfg-index-block-in blocks index id)
       [(No) unit]
       [(Some block)
         (match block
@@ -134687,15 +134767,16 @@
 
 (define (opt-guard-dedup-defs-fill!
   [defs : (&mut defs (__tl_dyn-array OptBoolBranchDef))]
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]) : unit
   (for [id (iterator.range 0 block-count)]
-    (match (opt-cfg-index-block index id)
+    (match (opt-cfg-index-block-in blocks index id)
       [(No) unit]
       [(Some block)
         (match block
           [(Block label instrs)
-            (opt-guard-dedup-defs-fill-seq! defs label (& instrs))])])))
+            (opt-guard-dedup-defs-fill-seq! defs label instrs)])])))
 
 ;; Follow `Mov` copies to the var that actually holds the value.
 (define (opt-guard-dedup-resolve-var
@@ -134882,11 +134963,12 @@
 ;; Every instruction destination's block, as `block id + 1` (0 = a parameter or
 ;; an id no instruction defines).
 (define (opt-guard-dedup-def-blocks-fill!
+  [blocks : (& blocks ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]
   [out : (&mut out (__tl_dyn-array i64))]) : unit
   (for [id (iterator.range 0 block-count)]
-    (match (opt-cfg-index-block index id)
+    (match (opt-cfg-index-block-in blocks index id)
       [(No) unit]
       [(Some block)
         (match block
@@ -135163,15 +135245,16 @@
 
 (define (opt-guard-imply-defs-fill!
   [defs : (&mut defs (__tl_dyn-array OptBoolBranchDef))]
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]) : unit
   (for [id (iterator.range 0 block-count)]
-    (match (opt-cfg-index-block index id)
+    (match (opt-cfg-index-block-in blocks index id)
       [(No) unit]
       [(Some block)
         (match block
           [(Block label instrs)
-            (opt-guard-imply-defs-fill-seq! defs label (& instrs))])])))
+            (opt-guard-imply-defs-fill-seq! defs label instrs)])])))
 
 ;; `Mov` copies and the same-width integer cast, to the var that holds the value.
 (define (opt-guard-imply-resolve
@@ -136113,6 +136196,7 @@
     [(None) (- 0 1)]))
 
 (define (opt-guard-dedup-scan-branches!
+  [blocks : (& ir.CompilerIrBlockList)]
   [index : (& index OptCfgIndex)]
   [block-count : i64]
   [cond-var : (&mut cond-var (__tl_dyn-array i64))]
@@ -136122,7 +136206,7 @@
     [found : i64 0]
     (for [id (iterator.range 0 block-count)]
       (if (array-ref index.reachable id)
-        (match (opt-cfg-index-block index id)
+        (match (opt-cfg-index-block-in blocks index id)
           [(No) unit]
           [(Some block)
             (match block
@@ -136470,6 +136554,7 @@
   [type-segment-bases : i64]
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [obj : (& obj OptGlobalModRef)]
+  [blocks : (& ir.CompilerIrBlockList)]
   [context : (& context OptCfgContext)]
   [hs : (& OptLoadHeaderSet)]
   [sources : (& OptValueSources)]
@@ -136488,6 +136573,7 @@
     [site-count : i64
       (opt-guard-dedup-collect-sites
         type-segment-bases
+        blocks
         index
         hs
         sources
@@ -136518,6 +136604,7 @@
             (opt-guard-dedup-writes-fill!
               call-memory
               obj
+              blocks
               index
               block-count
               (&mut writes))]
@@ -136687,6 +136774,7 @@
               [before-gep : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
               [_before : unit
                 (opt-guard-dedup-gep-blocks-fill!
+                  blocks
                   index
                   block-count
                   (&mut before-gep))]
@@ -136705,6 +136793,7 @@
               [moved : (__tl_dyn-array bool) (__tl_make-array bool frame)]
               [_moved : unit
                 (opt-guard-dedup-moved-fill!
+                  hoisted
                   index
                   block-count
                   (& before-gep)
@@ -136719,6 +136808,7 @@
                 (__tl_make-array i64 (opt-guard-dedup-leaf-cap))]
               [_def-blocks : unit
                 (opt-guard-dedup-def-blocks-fill!
+                  hoisted
                   index
                   block-count
                   (&mut def-blocks))]
@@ -136727,6 +136817,7 @@
                   type-segment-bases
                   summaries.call-memory
                   summaries.global-cell.obj-mod-ref
+                  hoisted
                   context
                   (& hs)
                   (& sources)
@@ -136757,11 +136848,16 @@
               [fact-stack : (__tl_dyn-array i64)
                 (__tl_make-array i64 block-count)]
               [_defs : unit
-                (opt-guard-dedup-defs-fill! (&mut defs) index block-count)]
+                (opt-guard-dedup-defs-fill!
+                  (&mut defs)
+                  hoisted
+                  index
+                  block-count)]
               [_clear : unit
                 (opt-guard-dedup-fill-i64! (&mut cond-var) block-count (- 0 1))]
               [branch-count : i64
                 (opt-guard-dedup-scan-branches!
+                  hoisted
                   index
                   block-count
                   (&mut cond-var)
@@ -136798,6 +136894,7 @@
                       [_imply-defs : unit
                         (opt-guard-imply-defs-fill!
                           (&mut imply-defs)
+                          hoisted
                           index
                           block-count)]
                       [imply-conds : (__tl_dyn-array OptGuardImplyCond)
@@ -136810,6 +136907,7 @@
                         (opt-guard-dedup-writes-fill!
                           summaries.call-memory
                           summaries.global-cell.obj-mod-ref
+                          hoisted
                           index
                           block-count
                           (&mut imply-writes))]

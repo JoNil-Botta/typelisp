@@ -11906,9 +11906,15 @@
             [(TcSelectedResult.Err message after)
               (TcSelectedResult.Err message after)]
             [(TcSelectedResult.Ok value-ty occurrence after)
+              ;; As the graph sees types: a Copy value read through a
+              ;; reference is a plain value (`tc-selected-canonical-type`).
               (if (tc-selected-same-type?
-                (tc-type-strip-region (tc-global-shared-view element-ty))
-                (tc-global-shared-view value-ty))
+                (tc-selected-canonical-type
+                  ctx
+                  (tc-type-strip-region (tc-global-shared-view element-ty)))
+                (tc-selected-canonical-type
+                  ctx
+                  (tc-global-shared-view value-ty)))
                 (tc-selected-place-assign
                   (ResultTcType.Ok ast.AstType.Unit)
                   false
@@ -20550,12 +20556,20 @@
                             [(ResultTcUnit.Err message)
                               (TcSelectedResult.Err message after)]
                             [(ResultTcUnit.Ok)
-                              ;; A view stored back into the place it borrows
-                              ;; keeps the legacy route.
+                              ;; The value has the field's type as the graph
+                              ;; sees types: a Copy value read through a
+                              ;; reference (`(in p T)`) is a plain `T` there
+                              ;; (`tc-selected-canonical-type`). A view of a
+                              ;; move-only value stored back keeps the legacy
+                              ;; route.
                               (if (tc-selected-same-type?
-                                (tc-type-strip-region
-                                  (tc-global-shared-view field-ty))
-                                (tc-global-shared-view value-ty))
+                                (tc-selected-canonical-type
+                                  ctx
+                                  (tc-type-strip-region
+                                    (tc-global-shared-view field-ty)))
+                                (tc-selected-canonical-type
+                                  ctx
+                                  (tc-global-shared-view value-ty)))
                                 (tc-selected-place-assign
                                   (ResultTcType.Ok ast.AstType.Unit)
                                   false
@@ -64640,7 +64654,11 @@
             (match (& replacement-ty)
               [(ast.AstType.Never) true]
               [_ false])
-            (tc-selected-same-type? (clone own-ty) (clone replacement-ty)))]
+            ;; As the graph sees types: a Copy value read through a reference
+            ;; is a plain value (`tc-selected-canonical-type`).
+            (tc-selected-same-type?
+              (tc-selected-canonical-type ctx (clone own-ty))
+              (tc-selected-canonical-type ctx (clone replacement-ty))))]
         (match (tc-replace-replacement-ok
           ctx
           env
@@ -75779,6 +75797,11 @@
     ;; tuple shape recursively, so borrowing the tuple's storage is no less
     ;; representable than borrowing a lifetime-parameterized nominal below.
     [(Tuple _) true]
+    ;; A function value stores none of the references its signature names
+    ;; (they are its parameters' and result's); a closure's captured
+    ;; references are its environment's, which the ownership graph tracks.
+    ;; Calling a mutable or non-Copy closure borrows it.
+    [(Func _ _) true]
     ;; A fixed array stores its elements inline, so its borrowed referent type
     ;; keeps every element lifetime exactly as the element type spells it (the
     ;; `Slice` unsizing of `(& items)` carries the same element type). Admit it
@@ -84972,10 +84995,17 @@
                           (tc-selected-global-index ctx env name)]
                         [_ -1])]
                     (cond
+                      ;; Types compare as the graph sees them: a binder of a
+                      ;; Copy value read through a reference (`(in p T)`)
+                      ;; holds a plain `T` (`tc-selected-canonical-type`).
                       [(not
                           (tc-selected-same-type?
-                            (tc-global-shared-view var-ty)
-                            (tc-global-shared-view value-ty)))
+                            (tc-selected-canonical-type
+                              ctx
+                              (tc-global-shared-view var-ty))
+                            (tc-selected-canonical-type
+                              ctx
+                              (tc-global-shared-view value-ty))))
                         (TcSelectedResult.Ok
                           ast.AstType.Unit
                           TcSelectedOccurrence.Unrepresented
@@ -120160,10 +120190,8 @@
       (tc-selected-type-loan-free? (ast.ty-node-get elem))]
     [(ast.AstType.Box elem)
       (tc-selected-type-loan-free? (ast.ty-node-get elem))]
-    [(ast.AstType.Ptr elem)
-      (tc-selected-type-loan-free? (ast.ty-node-get elem))]
-    [(ast.AstType.MutPtr elem)
-      (tc-selected-type-loan-free? (ast.ty-node-get elem))]
+    ;; A raw pointer carries no loan, whatever it points to
+    ;; (`tc-selected-type-class`), also as an element or field.
     [_ true]))
 
 (define (tc-selected-pseudo-lifetimes? [lifetimes : ast.AstLifetimeList]) : bool
@@ -121779,7 +121807,8 @@
          (ownership_normalize.OwnershipNormalizeFailure.Moved _ _)
          (ownership_normalize.OwnershipNormalizeFailure.Borrowed _ _)
          (ownership_normalize.OwnershipNormalizeFailure.MoveOut _)
-         (ownership_normalize.OwnershipNormalizeFailure.Obligation _))
+         (ownership_normalize.OwnershipNormalizeFailure.Obligation _)
+         (ownership_normalize.OwnershipNormalizeFailure.Escaped _))
       true]
     [_ false]))
 
@@ -121936,7 +121965,54 @@
       (cond
         [(= diagnostic.exit 8) (tc-selected-overwrite-failure diagnostic)]
         [(>= diagnostic.exit 6) (tc-selected-release-failure "" "" diagnostic)]
-        [else (tc-selected-obligation-failure "" diagnostic)])]))
+        [else (tc-selected-obligation-failure "" diagnostic)])]
+    [(ownership_normalize.OwnershipNormalizeFailure.Escaped diagnostic)
+      (tc-selected-escape-failure "" (& diagnostic))]))
+
+;; A borrow still live where the storage it borrows ends (#8890), as Rust
+;; reports it (E0597 "does not live long enough", E0515 for a returned
+;; borrow): at the borrow, labelled with the use that needs it afterwards.
+(define (tc-selected-escape-failure
+  [name : String]
+  [diagnostic : (& diagnostic ownership_normalize.OwnershipEscapeDiagnostic)]) : ResultTcUnit
+  (let
+    [temporary? : bool (= (string.string-length (& name)) 0)]
+    [owner : String
+      (cond
+        [temporary? "a temporary value"]
+        [diagnostic.parameter?
+          (str_cat.str-cat "parameter `" (string.copy (& name)) "`")]
+        [else (str_cat.str-cat "local `" (string.copy (& name)) "`")])]
+    [message : String
+      (cond
+        [(= diagnostic.kind 1)
+          (str_cat.str-cat "typecheck: cannot return a reference to " owner)]
+        [(= diagnostic.kind 2)
+          (str_cat.str-cat
+            "typecheck: cannot return a value referencing "
+            owner)]
+        [temporary? "typecheck: temporary value does not live long enough"]
+        [else
+          (str_cat.str-cat "typecheck: `" name "` does not live long enough")])]
+    [label : String
+      (cond
+        [(> diagnostic.kind 0)
+          (if (= diagnostic.kind 3)
+            "stored here, where it outlives the call"
+            "returns a reference to data owned by the current function")]
+        [else "borrow later used here, after its storage ends"])]
+    (ResultTcUnit.Err
+      (tc-selected-expansion-framed
+        (& diagnostic.borrow.expansion)
+        (tc-rich-error-one-secondary
+          (tc-selected-source-span (& diagnostic.borrow))
+          (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag
+              (cdiag.CompilerTypecheckKind.RegionEscape))
+            message)
+          (tc-reference-escape-help)
+          (tc-selected-source-span (& diagnostic.use))
+          label)))))
 
 ;; A store into an initialized cleanup-owning place, in the legacy move
 ;; checker's wording.
@@ -122160,6 +122236,7 @@
     [(ownership_normalize.OwnershipNormalizeFailure.Borrowed _ _) true]
     [(ownership_normalize.OwnershipNormalizeFailure.MoveOut _) true]
     [(ownership_normalize.OwnershipNormalizeFailure.Obligation _) true]
+    [(ownership_normalize.OwnershipNormalizeFailure.Escaped _) true]
     [_ false]))
 
 ;; A loan conflict in the legacy borrow checker's wording: the conflicting
@@ -122346,6 +122423,14 @@
                 name
                 diagnostic)]
             [else (tc-selected-obligation-failure name diagnostic)]))]
+      [(ownership_normalize.OwnershipNormalizeFailure.Escaped diagnostic)
+        (tc-selected-escape-failure
+          (if (< diagnostic.name 0)
+            ""
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              diagnostic.name))
+          (& diagnostic))]
       [_
         (ResultTcUnit.Err
           "typecheck: ownership failure changed during rendering")])))

@@ -5220,12 +5220,15 @@
 (define (main) : RefBox
   (let [x : i64 1] (RefBox (& x))))"
         "typecheck: `RefBox` holds a reference but declares no lifetimes; declare them with (:lifetimes ...)")]
-    [lambda-return-ok : bool
-      (compiler-typecheck-ok?
+    ;; A lambda's by-value parameter is storage of the lambda's call, so its
+    ;; result cannot borrow it (Rust E0515; #8890).
+    [lambda-return-error-ok : bool
+      (compiler-typecheck-error-ok?
         "(define (main [n : i64]) : i64
   (begin
     (lambda ([x : i64]) : (& x i64) (& x))
-    n))")]
+    n))"
+        "typecheck: cannot return a reference to parameter `x`")]
     [mut-ref-ok : bool
       (compiler-typecheck-ok?
         "(define (main [n : (&mut phase i64)]) : unit unit)")]
@@ -5324,7 +5327,7 @@
       tuple-borrow-ok
       struct-return-error-ok
       struct-local-escape-error-ok
-      lambda-return-ok
+      lambda-return-error-ok
       mut-ref-ok
       mut-borrow-ok
       mut-array-set-ok
@@ -11012,7 +11015,9 @@
     (read-refs refs)))")
       "typecheck: cannot mutably borrow borrowed place `items[0]`")
     ;; Accepted: a body-local borrow ended at the break, a stored borrow read
-    ;; only through its holder, and breaks with no borrow live.
+    ;; only through its holder, and breaks with no borrow live. The stored
+    ;; borrow is of caller storage: one of a by-value parameter could not be
+    ;; stored under the signature lifetime `items` (#8890).
     (compiler-typecheck-ok?
       (compiler-typecheck-borrow-operand-loop-source
         "(define (local-borrow [run : bool] [items : (__tl_dyn-array i64)]) : i64
@@ -11023,7 +11028,7 @@
       (break))
     (set! (array-ref items 0) 1)
     (array-ref items 0)))
-(define (holder-read [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+(define (holder-read [run : bool] [items : (&mut items (__tl_dyn-array i64))] [refs : (__tl_dyn-array (&mut items i64))]) : i64
   (begin
     (while run
       (keep (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1)))

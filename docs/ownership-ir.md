@@ -1016,6 +1016,124 @@ answers it, the way it answers any other write:
   rejected like the equivalent call; main accepted it
   (`global_call_with_cleanup_argument_reject`).
 
+### Storage ends: Rust's `StorageDead` (#8890)
+
+Typing gives a borrow of a local or by-value parameter the binding's spelling
+as its lifetime, so a binding spelled like a caller lifetime let a dangling
+reference reach caller storage: `(set! b.value (& a))` with
+`[a : i64] [b : (&mut a (RefBox a))]` was accepted, and `a` died at the
+return. The graph now checks every borrow against the end of the storage it
+borrows, as rustc's borrow checker does, whatever the names.
+
+- **Retirement.** Every binder's storage ends where an edge leaves its
+  scope, after the scope's cleanup checks, innermost first, as rustc's MIR
+  builder emits drops and then `StorageDead` on each such edge. A stored
+  binder is an entry of kind 8 on the owner stack, pushed before its own
+  cleanup-owner entry (`normalize-scope-bind!`): `let` and `with` binders,
+  match and destructuring pattern binders, `for` items and other loop-body
+  binders. The stack's existing exits retire them: the end of a sequence, a
+  match arm's end, `break` and `continue` (the binders of the loop body, so
+  a loop binding ends with each trip), and every return and `try`
+  propagation (all of them, `normalize-exit-owners!`). Parameters and the
+  typechecker's storage-owning temporaries end at every return, after the
+  body's scopes (`normalize-retire-function!`); a temporary in a block's
+  result position is still read by the form it is lent to, so it is not
+  retired at the block. Globals are never retired. A region-tagged binder (a
+  view, or a value allocated in an arena) is not retired: a borrow through it
+  reaches memory it only points to, not storage of its own.
+- **The core operation.** A retirement is the core's `Invalidate` of the
+  binder's root place, which is `StorageDead` exactly: it needs no
+  initialized value, uninitializes the whole root, and is an exclusive write
+  access that conflicts (deferred, like every conflict) with any possibly
+  active loan of the root or a part of it. Core places are roots and fields:
+  a dereference is a place of its own, so retiring a reference binder does
+  not conflict with loans of what it points to, while a box's contents and an
+  array's elements are the box's and the array's own place. It changes no
+  cleanup state. The core is unchanged. A retirement is recorded among the
+  loan uses (`normalize-record-use!`, place `-2 - binder`) and inserted with
+  them in recording order, and only for a binder some loan borrows
+  (`normalize-borrowed-roots`), so bodies without such borrows pay nothing.
+- **The result region.** A return relates the returned value to the
+  universal return regions, and the exit holder's use at every return
+  demands every universal region after the body's and the parameters'
+  retirements. So a loan returned, stored behind a parameter (at any depth,
+  as before) or pushed into a parameter's vector is live at the retirement
+  of the storage it borrows and conflicts there, overwritten or not, as for
+  `*p = &x` with `p : &mut &'a T` in Rust, where `'a` contains every point
+  of the body.
+- **Diagnostics.** A conflict at a retirement is reported in Rust's terms,
+  E0205 (this tree's region-escape code), at the borrow, with one label
+  (`normalize-escape-diagnostic`, `tc-selected-escape-failure`): "`x` does
+  not live long enough" labelled "borrow later used here, after its storage
+  ends" at the first use past the retirement (Rust E0597); "cannot return a
+  reference to local `x`" / "to parameter `x`", or "cannot return a value
+  referencing ..." for an aggregate (E0515), labelled at the returned value;
+  for a loan kept in the caller's storage, the label "stored here, where it
+  outlives the call" at the store, the last use before the retirement. A
+  temporary is "temporary value".
+- **Typing kept.** No typing check is superseded in the sense that every
+  case it rejects the graph rejects too, so none is deleted. The store and
+  assignment checks ("cannot store reference into longer-lived ...") also
+  decide arena regions, which the graph erases: removing them accepts
+  `region_arena_store_param_array_reject`,
+  `region_arena_shadow_store_mut_param_reject` and
+  `region_arena_shadow_assign_reject` (each a dangling reference into a reset
+  arena), and they reject a same-spelled store into a local that is never
+  read afterwards, which the graph would accept as Rust does
+  (`storage_dead_inner_scope_unused_reject`). Without the `let`-result and
+  binding visibility checks ("reference value would escape lexical scope")
+  main's rows fall to typing's return-type comparison (E0210), for example
+  `slice_record_view_escape_reject` and `program_lifetime_return_local_reject`.
+  The signature check for a returned by-value parameter's lifetime (E0210)
+  rejects before the body is seen, and the lambda result check is an arena
+  region check. Each still rejects a case the graph does not, or with
+  another code. The new rule's cost in stage0 bytes is paid by moving the
+  normalizer's i64 and bool array growth out of line (`normalize-grown-i64s`),
+  which leaves the code smaller than before (stage0 measures 9,995,128 bytes
+  against the base's 9,995,120, a difference in initialized data).
+- **Controls fixed on the way.** Borrowing a place that holds a function
+  value is representable (it stores none of the references its signature
+  names), so a mutable closure taking references can be called
+  (`caller_lifetime_global_and_lambda_names_ok`, main accepted it); a raw
+  pointer carries no loan whatever its pointee type
+  (`caller_lifetime_written_types_ok`, `caller_lifetime_pointer_store_same_name_ok`);
+  and the selected producer compares a stored value's type with its place's
+  as the graph sees types, where a Copy value read through a reference is a
+  plain value (`caller_lifetime_tagged_store_ok`,
+  `caller_lifetime_shadowed_local_mix_ok`,
+  `caller_lifetime_incoming_storage_same_name_ok`); each was E0211 here.
+- **Verdict changes.** This tree rejects, and main accepts, 27 of the
+  `caller_lifetime_*_reject` rows, the parity rows
+  `storage_dead_param_store_direct_reject`,
+  `storage_dead_param_store_field_reject`,
+  `storage_dead_param_store_box_reject`,
+  `storage_dead_overwrite_param_reject` and
+  `storage_dead_by_value_param_return_reject`, and
+  `storage_dead_by_value_param_loop_store_reject`: main's
+  `loop_mut_borrow_stored_return_ok` as it was. That row and
+  `loop_mut_borrow_return_or_continue_ok`, `loop_mut_borrow_operand_edges_ok`,
+  `loop_mut_borrow_continue_edge_reject` and `try_loop_return_borrow_ok`
+  pushed `(&mut (array-ref items i))` of a by-value `items` into a vector of
+  the signature lifetime `items`; Rust rejects that (E0597, the argument
+  requires `items` borrowed for `'items`). They now take
+  `(&mut items (__tl_dyn-array i64))`, keeping their loop-edge checks and
+  verdicts. Main's typecheck tests that accepted a lambda returning a borrow
+  of its by-value parameter and a push of a by-value parameter's borrow into
+  the caller's vector now expect the rejections "cannot return a reference
+  to parameter `x`" and "`x` does not live long enough".
+- **Remaining differences from Rust.**
+  `caller_lifetime_call_inference_order_ok` is rejected (E0206), as by main:
+  call inference binds a callee lifetime from the first argument naming it,
+  so a covariant caller reference fixes it before an invariant `&mut` to a
+  local box needs the local's; Rust solves the call's constraints together.
+  `caller_lifetime_shadowed_let_result_reject` and
+  `storage_dead_inner_scope_unused_reject` are rejected by typing's
+  spelling checks, which Rust does not have. A borrow of a value allocated in
+  a nested `with-arena` spelled like an outer one, stored into a struct field
+  of the outer region and read after the inner arena resets, is accepted, on
+  main as here: typing's name-based arena check misses it and the graph does
+  not track arenas.
+
 ### Verdict and diagnostic changes from the rebase onto main 08eae4017
 
 Main's semantics were ported into the selected producer and normalizer. Where
@@ -1207,7 +1325,7 @@ is deliberate and has a regression twin:
 These 92 `check-fail` cases of `tests/safety/manifest.txt` pass `check` on
 main at 63b900cc8 and are rejected here, each with the diagnostic its manifest
 row names; every other `check-fail` case (1293 of 1385) is rejected by main
-too. Each fixture's leading comment states the rule. One of
+too. The storage row (#8890) adds 33 more, against main at bc7db18c1. Each fixture's leading comment states the rule. One of
 them was an accepted case in main's manifest:
 `borrow_call_arg_final_use_before_nested_write_ok` is the same program as
 `borrow_call_arg_nested_write_before_call_reject` (Rust rejects it with
@@ -1238,6 +1356,7 @@ implicit `f32` to `f64` widening now expect the rejections.
 | A `with` cleanup that receives its still-borrowed value and may assign the global it borrows (#7904), as the call form already was. | `global_call_with_cleanup_argument_reject` |
 | Overwriting an initialized array of cleanup-owning values (SPEC 4.7.1) would lose the old elements' cleanups; main accepted it, for holders of references too. | `cleanup_array_overwrite_reject`, `mir_cleanup_holder_array_overwrite_reject` |
 | Variance through a C function pointer: a lifetime used in a `CFunc` signature is contravariant in its parameters, as in a function type; main counted it bivariant and accepted shortening it. | `variance_cfunc_parameter_reject` |
+| Storage that ends before a borrow of it (#8890, Rust E0597 and E0515): a borrow of a local or by-value parameter spelled like a caller lifetime, stored through a `&mut` parameter (directly, in a field, tuple, array, box, slice or vector, through nested references or a call, from a match binder or a `for` item), returned, or pushed under a signature lifetime, outlives the storage it borrows. Main accepted each, and the caller read a dangling reference. | `caller_lifetime_alias_store_same_name_reject`, `caller_lifetime_annotated_alias_store_same_name_reject`, `caller_lifetime_call_mut_arg_same_name_reject`, `caller_lifetime_call_store_same_name_reject`, `caller_lifetime_constructor_array_arg_same_name_reject`, `caller_lifetime_constructor_fixed_lifetime_same_name_reject`, `caller_lifetime_constructor_region_flow_same_name_reject`, `caller_lifetime_constructor_tuple_arg_same_name_reject`, `caller_lifetime_lambda_param_return_same_name_reject`, `caller_lifetime_local_aggregate_store_same_name_reject`, `caller_lifetime_local_store_same_name_reject`, `caller_lifetime_match_binder_store_same_name_reject`, `caller_lifetime_nested_resource_store_same_name_reject`, `caller_lifetime_nested_shadow_store_reject`, `caller_lifetime_owned_for_item_store_same_name_reject`, `caller_lifetime_parameter_array_store_same_name_reject`, `caller_lifetime_parameter_box_store_same_name_reject`, `caller_lifetime_parameter_deref_store_same_name_reject`, `caller_lifetime_parameter_nested_constructor_store_same_name_reject`, `caller_lifetime_parameter_push_same_name_reject`, `caller_lifetime_parameter_return_same_name_reject`, `caller_lifetime_parameter_slice_store_same_name_reject`, `caller_lifetime_parameter_store_same_name_reject`, `caller_lifetime_parameter_tuple_store_same_name_reject`, `caller_lifetime_reassigned_alias_store_same_name_reject`, `caller_lifetime_resource_field_store_same_name_reject`, `caller_lifetime_tuple_value_store_same_name_reject`, `storage_dead_param_store_direct_reject`, `storage_dead_param_store_field_reject`, `storage_dead_param_store_box_reject`, `storage_dead_overwrite_param_reject`, `storage_dead_by_value_param_return_reject`, `storage_dead_by_value_param_loop_store_reject` |
 
 ## Revalidated base and existing authorities
 
@@ -1346,7 +1465,7 @@ operations already implemented in the initial core:
 
 | Operation | Concrete meaning and static obligation |
 | --- | --- |
-| `StorageLive` / `StorageDead` | Create or retire a root. Retirement rejects escaping loans and unmet cleanup obligations. Re-entry in a loop creates a new dynamic instance of the same static root. |
+| `StorageLive` / `StorageDead` | Create or retire a root. Retirement rejects escaping loans and unmet cleanup obligations. Re-entry in a loop creates a new dynamic instance of the same static root. (Retirement is implemented as the core's `Invalidate` of the binder's root after its exit checks; see "Storage ends".) |
 | `Init(place, value)` | Install a complete typed value into permitted uninitialized storage; initialize exactly its constituent leaves. |
 | `Copy(place, temporary)` | Read initialized Copy contents at this point. Later writes to the source cannot change the captured value. |
 | `Move(place, temporary)` | Transfer initialized contents and dependencies, mark source leaves uninitialized, and transfer cleanup responsibility. |

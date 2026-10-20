@@ -1005,9 +1005,12 @@
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (set! (array-ref items 0) (& x))))"
       "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-    (tc_tests.compiler-typecheck-ok?
+    ;; A by-value parameter is storage of the call: a borrow of it pushed
+    ;; into the caller's array would outlive it (Rust E0597; #8890).
+    (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
-  (__tl_array-push! items (& x)))")
+  (__tl_array-push! items (& x)))"
+      "typecheck: `x` does not live long enough")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (__tl_array-push! items (& x))))"

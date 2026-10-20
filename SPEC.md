@@ -2250,6 +2250,22 @@ parameter types, lifetime names are signature-local binders for incoming
 references. Multiple parameters using the same name require the same caller
 lifetime.
 
+**Storage outlives its borrows.** Whatever lifetime a reference's type spells,
+a borrow of a local's or a by-value parameter's storage cannot outlive that
+storage. A binding's storage ends on every edge that leaves its scope (the end
+of its `let` or `with`, of a match arm for its pattern binders, of each loop
+iteration for a binding in the loop body, a `break`, `continue`, `return` or
+`try` propagation), after the scope's cleanups; a parameter's ends when the
+call returns. Global storage never ends, and arena-allocated storage ends
+with its arena (section 3.9). A borrow still used after its storage ends, or
+stored where the caller can reach it (through a `&mut` parameter at any
+depth, or in the function's result, whose lifetimes are live until the call
+returns), is rejected (E0205): "`x` does not live long enough", or "cannot
+return a reference to local `x`" (or "to parameter `x`") for a returned one,
+as Rust's E0597 and E0515. This holds when a local or parameter is spelled
+like a caller lifetime: a borrow of a parameter `[a : i64]` stored through
+`[b : (&mut a (RefBox a))]` is rejected.
+
 **Immutable call-site auto-borrowing.** When a typed TypeLisp call, function
 value/lambda call, or constructor call has a formal parameter of type
 `(& lifetime T)`, the checker may treat the corresponding source argument as

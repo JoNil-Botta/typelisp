@@ -116,6 +116,19 @@
   (callee i64)
   (global i64))
 
+;; A borrow still live where the storage it borrows ends (#8890; Rust E0597,
+;; E0515): the binder (-1 for a temporary) and whether it is a parameter, how
+;; the borrow outlives it (0 a later use, 1 a returned reference, 2 a returned
+;; value holding the reference, 3 storage the caller keeps, such as a
+;; referent reached through a parameter), the borrow, and the use or store
+;; that needs it after the storage ends.
+(defstruct OwnershipEscapeDiagnostic
+  (name i64)
+  (parameter? bool)
+  (kind i64)
+  (borrow own.OwnershipSource)
+  (use own.OwnershipSource))
+
 (defenum OwnershipNormalizeFailure
   (Typed typed.TypedError)
   (Structural String)
@@ -125,7 +138,8 @@
   (Moved own.OwnershipFailure OwnershipMoveDiagnostic)
   (Borrowed own.OwnershipFailure OwnershipBorrowDiagnostic)
   (MoveOut OwnershipMoveOutDiagnostic)
-  (Obligation OwnershipObligationDiagnostic))
+  (Obligation OwnershipObligationDiagnostic)
+  (Escaped OwnershipEscapeDiagnostic))
 
 (defenum OwnershipNormalizeResult
   (Ok OwnershipNormalizedBody)
@@ -387,9 +401,9 @@
         (let
           [type-count : i64 state.type-count]
           (normalize-reserve! state.body.types type-count own.OwnershipType)
-          (normalize-reserve! state.type-keys type-count i64)
-          (normalize-reserve! state.type-references type-count i64)
-          (normalize-reserve! state.type-cleanups type-count bool)
+          (normalize-reserve-i64! state.type-keys type-count)
+          (normalize-reserve-i64! state.type-references type-count)
+          (normalize-reserve-bool! state.type-cleanups type-count)
           (set! (array-ref state.class-types key) type-count)
           (set!
             (array-ref state.body.types type-count)
@@ -547,6 +561,50 @@
         (set! at (+ at 1)))
       (set! ,cells grown))))
 
+;; `normalize-reserve!` of an i64 or bool backing: the room test stays at the
+;; call, while the relocation, run once per doubling, is out of line. (The
+;; grown backing is returned and stored at the call: the published seed does
+;; not store a whole array through a `&mut` to it.)
+(defmacro (normalize-reserve-i64! [cells : Expr] [count : Expr]) : Expr
+  `(when
+    (>= ,count (array-length ,cells))
+    (set! ,cells (normalize-grown-i64s (& ,cells) ,count 0))))
+
+(defmacro (normalize-reserve-bool! [cells : Expr] [count : Expr]) : Expr
+  `(when
+    (>= ,count (array-length ,cells))
+    (set! ,cells (normalize-grown-bools (& ,cells) ,count))))
+
+;; The first `count` cells of `cells` in a fresh backing of at least `room`
+;; cells (and twice `count`, plus 8); the new cells are 0.
+(define (normalize-grown-i64s
+  [cells : (& cells (__tl_dyn-array i64))]
+  [count : i64]
+  [room : i64]) : (__tl_dyn-array i64)
+  (let
+    [grown : (__tl_dyn-array i64)
+      (__tl_make-array
+        i64
+        (if (> room (+ 8 (* 2 count)))
+          room
+          (+ 8 (* 2 count))))]
+    [at : i64 0]
+    (while (< at count)
+      (set! (array-ref grown at) (array-ref cells at))
+      (set! at (+ at 1)))
+    grown))
+
+(define (normalize-grown-bools
+  [cells : (& cells (__tl_dyn-array bool))]
+  [count : i64]) : (__tl_dyn-array bool)
+  (let
+    [grown : (__tl_dyn-array bool) (__tl_make-array bool (+ 8 (* 2 count)))]
+    [at : i64 0]
+    (while (< at count)
+      (set! (array-ref grown at) (array-ref cells at))
+      (set! at (+ at 1)))
+    grown))
+
 ;; `normalize-reserve!` growing to at least `room` cells.
 (defmacro (normalize-reserve-room!
   [cells : Expr]
@@ -642,14 +700,14 @@
 (define (normalize-i64s-push!
   [cells : (&mut cells NormalizeI64s)]
   [value : i64]) : unit
-  (normalize-reserve! cells.items cells.len i64)
+  (normalize-reserve-i64! cells.items cells.len)
   (set! (array-ref cells.items cells.len) value)
   (set! cells.len (+ cells.len 1)))
 
 (define (normalize-bools-push!
   [cells : (&mut cells NormalizeBools)]
   [value : bool]) : unit
-  (normalize-reserve! cells.items cells.len bool)
+  (normalize-reserve-bool! cells.items cells.len)
   (set! (array-ref cells.items cells.len) value)
   (set! cells.len (+ cells.len 1)))
 
@@ -657,14 +715,9 @@
 (defmacro (normalize-handle-reserve! [cells : Expr] [index : Expr]) : Expr
   `(when
     (>= ,index (array-length ,cells))
-    (let
-      [old : i64 (array-length ,cells)]
-      [grown : (__tl_dyn-array i64) (__tl_make-array i64 (+ 8 (* 2 ,index)))]
-      [at : i64 0]
-      (while (< at old)
-        (set! (array-ref grown at) (array-ref ,cells at))
-        (set! at (+ at 1)))
-      (set! ,cells grown))))
+    (set!
+      ,cells
+      (normalize-grown-i64s (& ,cells) (array-length ,cells) (+ 8 (* 2 ,index))))))
 
 ;; `cells` lengthened to `size` cells (when shorter) in one allocation, the new
 ;; cells `fill`.
@@ -720,26 +773,38 @@
     state.place-count
     (normalize-place-room (& state))
     own.OwnershipPlace)
-  (normalize-reserve-room!
-    state.field-names
-    state.place-count
-    (normalize-place-room (& state))
-    i64)
-  (normalize-reserve-room!
-    state.place-typed
-    state.place-count
-    (normalize-place-room (& state))
-    i64)
-  (normalize-reserve-room!
-    state.place-deref
-    state.place-count
-    (normalize-place-room (& state))
-    i64)
-  (normalize-reserve-room!
-    state.region-roots
-    state.place-count
-    (normalize-place-room (& state))
-    i64)
+  (when
+    (>= state.place-count (array-length state.field-names))
+    (set!
+      state.field-names
+      (normalize-grown-i64s
+        (& state.field-names)
+        state.place-count
+        (normalize-place-room (& state)))))
+  (when
+    (>= state.place-count (array-length state.place-typed))
+    (set!
+      state.place-typed
+      (normalize-grown-i64s
+        (& state.place-typed)
+        state.place-count
+        (normalize-place-room (& state)))))
+  (when
+    (>= state.place-count (array-length state.place-deref))
+    (set!
+      state.place-deref
+      (normalize-grown-i64s
+        (& state.place-deref)
+        state.place-count
+        (normalize-place-room (& state)))))
+  (when
+    (>= state.place-count (array-length state.region-roots))
+    (set!
+      state.region-roots
+      (normalize-grown-i64s
+        (& state.region-roots)
+        state.place-count
+        (normalize-place-room (& state)))))
   (set! (array-ref state.body.places state.place-count) place)
   (set! (array-ref state.field-names state.place-count) name)
   (set! (array-ref state.place-typed state.place-count) -1)
@@ -974,19 +1039,29 @@
   [place : i64]) : NormalizeUnit
   (if (= (normalize-reference-kind (& state) place) 0)
     (NormalizeUnit.Ok unit)
-    (begin
-      (try (normalize-charge! state 1 1 0))
-      (normalize-reserve! state.use-blocks state.use-count i64)
-      (normalize-reserve! state.use-indices state.use-count i64)
-      (normalize-reserve! state.use-places state.use-count i64)
-      (set! (array-ref state.use-blocks state.use-count) block)
-      (set! (array-ref state.use-indices state.use-count) index)
-      ;; An aggregate's parts share its loans (field-insensitive origins).
-      (set!
-        (array-ref state.use-places state.use-count)
-        (normalize-place-root (& state) place))
-      (set! state.use-count (+ state.use-count 1))
-      (NormalizeUnit.Ok unit))))
+    ;; An aggregate's parts share its loans (field-insensitive origins).
+    (normalize-record-use!
+      state
+      block
+      index
+      (normalize-place-root (& state) place))))
+
+;; A use of root `used` before instruction `index` of `block`; `-2 - place`
+;; records the retirement of binder `place`'s storage (`normalize-retire!`).
+(define (normalize-record-use!
+  [state : (&mut state NormalizeState)]
+  [block : i64]
+  [index : i64]
+  [used : i64]) : NormalizeUnit
+  (try (normalize-charge! state 1 1 0))
+  (normalize-reserve-i64! state.use-blocks state.use-count)
+  (normalize-reserve-i64! state.use-indices state.use-count)
+  (normalize-reserve-i64! state.use-places state.use-count)
+  (set! (array-ref state.use-blocks state.use-count) block)
+  (set! (array-ref state.use-indices state.use-count) index)
+  (set! (array-ref state.use-places state.use-count) used)
+  (set! state.use-count (+ state.use-count 1))
+  (NormalizeUnit.Ok unit))
 
 (define (normalize-note-flow!
   [state : (&mut state NormalizeState)]
@@ -1041,14 +1116,14 @@
     (NormalizeUnit.Ok unit)
     (begin
       (try (normalize-charge! state 1 1 0))
-      (normalize-reserve! state.flow-from state.flow-count i64)
-      (normalize-reserve! state.flow-to state.flow-count i64)
-      (normalize-reserve! state.flow-outlives state.flow-count bool)
+      (normalize-reserve-i64! state.flow-from state.flow-count)
+      (normalize-reserve-i64! state.flow-to state.flow-count)
+      (normalize-reserve-bool! state.flow-outlives state.flow-count)
       (set! (array-ref state.flow-outlives state.flow-count) outlives?)
-      (normalize-reserve! state.flow-contents state.flow-count bool)
+      (normalize-reserve-bool! state.flow-contents state.flow-count)
       (set! (array-ref state.flow-contents state.flow-count) contents?)
-      (normalize-reserve! state.flow-from-place state.flow-count i64)
-      (normalize-reserve! state.flow-to-place state.flow-count i64)
+      (normalize-reserve-i64! state.flow-from-place state.flow-count)
+      (normalize-reserve-i64! state.flow-to-place state.flow-count)
       (set! (array-ref state.flow-from-place state.flow-count) from)
       (set! (array-ref state.flow-to-place state.flow-count) to)
       (set!
@@ -1065,8 +1140,8 @@
   [place : i64]
   [loan : i64]) : NormalizeUnit
   (try (normalize-charge! state 1 1 0))
-  (normalize-reserve! state.origin-places state.origin-count i64)
-  (normalize-reserve! state.origin-loans state.origin-count i64)
+  (normalize-reserve-i64! state.origin-places state.origin-count)
+  (normalize-reserve-i64! state.origin-loans state.origin-count)
   (set!
     (array-ref state.origin-places state.origin-count)
     (normalize-place-root (& state) place))
@@ -1363,7 +1438,8 @@
   (initialized-definition? bool)
   (name i64)
   ;; 1 a `let` cleanup owner, 2 a `with` owner, 3 an affine handle (an arena
-  ;; owner or phase token held as a Copy value), 0 none of these.
+  ;; owner or phase token held as a Copy value), 6 a move-aware `with` owner,
+  ;; 7 a temporary, 0 none of these.
   (owner i64)
   ;; An `:invalidate` parameter's lifetime, or -1.
   (lifetime i64))
@@ -1572,11 +1648,15 @@
   ;; Loans lending an array to an element store `(set! (array-ref a i) v)`: a
   ;; conflict there is reported as the assignment it is.
   (store-loans (__tl_dyn-array i64))
-  ;; Cleanup owners in scope, innermost last (`owner-count` live entries): the
-  ;; binder place, 1 a `let` owner or 2 a `with` owner, the loop depth it was
-  ;; bound at and, for a `let` owner, its whole-discharge marker: a scalar set
-  ;; when the owner moves out whole (moving its fields one by one does not
-  ;; discharge it). `loop-depth` counts the loop bodies around the walk.
+  ;; Cleanup owners and stored binders in scope, innermost last
+  ;; (`owner-count` live entries): the binder place, its kind (1 a `let`
+  ;; owner, 2 a `with` owner, 5 an `:invalidate` brand, 6 a move-aware `with`
+  ;; owner, 8 a binder's storage, whose scope ends with Rust's
+  ;; `StorageDead`), the loop depth it was bound at and, for a `let`
+  ;; owner, its whole-discharge marker: a scalar set when the owner moves out
+  ;; whole (moving its fields one by one does not discharge it). A binder's
+  ;; storage entry comes before its owner entry. `loop-depth` counts the loop
+  ;; bodies around the walk.
   (owner-places (__tl_dyn-array i64))
   (owner-kinds (__tl_dyn-array i64))
   (owner-depths (__tl_dyn-array i64))
@@ -1652,7 +1732,16 @@
   ;; Per typed place, as `normalize-projected!` fetched it: its handle and
   ;; step (`normalize-place-step-of!`).
   (place-memo-ids (__tl_dyn-array typed.TypedHandle))
-  (place-memo-steps (__tl_dyn-array NormalizePlaceStep)))
+  (place-memo-steps (__tl_dyn-array NormalizePlaceStep))
+  ;; The parameters and temporaries, whose storage ends with the call (#8890;
+  ;; a temporary in a block's result position is still read after the block,
+  ;; by the form it is lent to), how many retirements of a binder's storage
+  ;; are recorded among the uses, and where each of a borrowed binder landed
+  ;; (`normalize-insert-loan-uses!`).
+  (function-places (__tl_dyn-array i64))
+  (retire-count i64)
+  (retired-blocks NormalizeI64s)
+  (retired-indices NormalizeI64s))
 
 (define (normalize-charge!
   [state : (&mut state NormalizeState)]
@@ -2012,7 +2101,7 @@
       index
       (+ (/ state.occurrences 4) 4)
       own.OwnershipBlock)
-    (normalize-reserve! state.instruction-counts index i64)
+    (normalize-reserve-i64! state.instruction-counts index)
     (set!
       (array-ref state.body.blocks index)
       (own.OwnershipBlock
@@ -2154,8 +2243,7 @@
   ;; moved out of.
   (global? bool)
   (name i64)
-  ;; 1 a `let` cleanup owner, 2 a `with` owner, 3 an affine handle (an arena
-  ;; owner or phase token held as a Copy value), 0 none of these.
+  ;; As `NormalizeBinder.owner`.
   (owner i64)
   ;; An `:invalidate` parameter's lifetime, or -1.
   (lifetime i64))
@@ -2202,6 +2290,8 @@
               [(typed.TypedBinderKind.Affine) 3]
               ;; Cleanup effects only (`normalize-owner-cleanup-writes!`).
               [(typed.TypedBinderKind.MoveAwareOwner _) 6]
+              ;; Its storage ends with the function (`normalize-scope-bind!`).
+              [(typed.TypedBinderKind.Temporary) 7]
               [_ 0])
             (match (& binder.kind)
               [(typed.TypedBinderKind.InvalidateParameter lifetime) lifetime]
@@ -2381,6 +2471,8 @@
           (let
             [place : i64 (try (normalize-binder! state store lease id))]
             [kind : i64 (normalize-reference-kind (& state) place)]
+            ;; Its storage belongs to the call: it ends at every return.
+            [_storage : unit (normalize-push! state.function-places place)]
             [_brand : unit
               (when
                 (>= (normalize-binder-lifetime (& state) place) 0)
@@ -3362,7 +3454,10 @@
     (NormalizeUnit.Ok unit)))
 
 ;; Check the owners from `first` up, innermost first, at an exit of kind `exit`
-;; that leaves their scopes. A `with` owner's cleanup consumes it here.
+;; that leaves their scopes. A `with` owner's cleanup consumes it here. A
+;; binder's storage ends after its owner's check (Rust's drops, then
+;; `StorageDead`): a loan of it still live there is a borrow that outlives it
+;; (Rust E0597, E0515).
 (define (normalize-exit-owners!
   [state : (&mut state NormalizeState)]
   [block : i64]
@@ -3376,6 +3471,8 @@
         [place : i64 (array-ref state.owner-places index)]
         [marker : i64 (array-ref state.owner-markers index)]
         (cond
+          [(= (array-ref state.owner-kinds index) 8)
+            (try (normalize-retire! state block place))]
           ;; The cleanup runs with the owner still held, so its effects come
           ;; before the owner is consumed.
           [(= (array-ref state.owner-kinds index) 2)
@@ -3441,6 +3538,57 @@
                 source))])
         (set! index (- index 1))))
     (NormalizeUnit.Ok unit)))
+
+;; Where an edge leaves the scope of binder `place`, its storage ends. The
+;; retirement is recorded among the loan uses (`normalize-record-use!`) and
+;; kept only for a borrowed binder (`normalize-insert-loan-uses!`).
+(define (normalize-retire!
+  [state : (&mut state NormalizeState)]
+  [block : i64]
+  [place : i64]) : NormalizeUnit
+  (set! state.retire-count (+ state.retire-count 1))
+  (normalize-record-use!
+    state
+    block
+    (array-ref state.instruction-counts block)
+    (- -2 place)))
+
+;; At a function exit, after every scope is left, the storage of the
+;; parameters and temporaries ends.
+(define (normalize-retire-function!
+  [state : (&mut state NormalizeState)]
+  [block : i64]) : NormalizeUnit
+  (let
+    [index : i64 (- (array-length state.function-places) 1)]
+    (while (>= index 0)
+      (try
+        (normalize-retire! state block (array-ref state.function-places index)))
+      (set! index (- index 1)))
+    (NormalizeUnit.Ok unit)))
+
+;; The storage of the binder at `place` comes into scope here (Rust's
+;; `StorageLive`); a temporary's lasts until the function returns. A
+;; region-tagged binder (a view, or a value allocated in an arena) has no
+;; storage of its own that a borrow through it reaches.
+(define (normalize-scope-bind!
+  [state : (&mut state NormalizeState)]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [block : i64]
+  [place : i64]
+  [source : (& source own.OwnershipSource)]) : NormalizeUnit
+  (cond
+    [(match (normalize-view-type!
+        store
+        lease
+        (array-ref state.place-typed place))
+        [(NormalizeBool.Ok tagged?) tagged?]
+        [(NormalizeBool.Err failure) (return (NormalizeUnit.Err failure))])
+      (NormalizeUnit.Ok unit)]
+    [(= (normalize-binder-owner (& state) place) 7)
+      (normalize-push! state.function-places place)
+      (NormalizeUnit.Ok unit)]
+    [else (normalize-owner-bind! state block place 8 source)]))
 
 ;; The first owner a loop exit leaves: those bound in the innermost loop body.
 (define (normalize-loop-owners [state : (& state NormalizeState)]) : i64
@@ -3966,7 +4114,8 @@
     [last-type : i64 0]
     [last-place : i64 -1]
     [exited? : bool false]
-    ;; Owners bound by this sequence's `let` initializers end with it.
+    ;; Owners and stored binders this sequence's `let` initializers bind end
+    ;; with it.
     [owners : i64 state.owner-count]
     (while (< index (array-length node.children))
       (let
@@ -4225,7 +4374,8 @@
           (if propagates?
             4
             1)
-          (& node.source))))
+          (& node.source)))
+      (try (normalize-retire-function! state active)))
     (when
       (>= active 0)
       (try
@@ -4305,6 +4455,19 @@
               (begin
                 (normalize-push! state.local-referents dest)
                 (normalize-push! state.local-referent-loans loan)))))
+        ;; A reassigned reference no longer points at the loan it was
+        ;; initialized from: later dereferences reach its referent through
+        ;; whatever it holds (`normalize-opaque-referent!`), as any other
+        ;; reference's; earlier ones keep their checked route.
+        (when
+          (and assign? (!= (normalize-reference-kind (& state) dest) 0))
+          (let
+            [index : i64 0]
+            (while (< index (array-length state.local-referents))
+              (when
+                (= (array-ref state.local-referents index) dest)
+                (set! (array-ref state.local-referents index) -1))
+              (set! index (+ index 1)))))
         ;; Reassigning an initialized cleanup owner would lose its cleanup.
         (when
           (and assign? (normalize-cleanup-type? (& state) type))
@@ -4325,6 +4488,16 @@
             value.place
             dest
             (& node.source)))
+        (unless
+          assign?
+          (try
+            (normalize-scope-bind!
+              state
+              store
+              lease
+              value.block
+              dest
+              (& node.source))))
         (when
           (and
             (not assign?)
@@ -4431,6 +4604,24 @@
       (when (= (array-ref state.local-referents index) place) (set! found true))
       (set! index (+ index 1)))
     found))
+
+;; The referent of reference binder `place`, implicitly reborrowed
+;; (`normalize-reborrow-emit!`): a reference parameter's or a local reference's
+;; initialized from one borrow (`normalize-direct-referent?`).
+(define (normalize-direct-referent-place
+  [state : (& state NormalizeState)]
+  [place : i64]) : i64
+  (let
+    [index : i64 0]
+    [loan : i64 (normalize-local-referent-loan state place)]
+    (while (< index (array-length state.referent-binders))
+      (when
+        (= (array-ref state.referent-binders index) place)
+        (return (array-ref state.referent-places index)))
+      (set! index (+ index 1)))
+    (if (>= loan 0)
+      (array-ref state.body.loans loan).place.index
+      place)))
 
 ;; An implicit reborrow of any other mutable-reference binder (one bound by a
 ;; pattern, returned by a call or read from a field): a two-phase mutable
@@ -7217,6 +7408,9 @@
     ;; goes into the place the first operand borrows, which now holds the
     ;; value's loans (an array of references). A parameter's referent keeps
     ;; them live until the body returns (`normalize-note-exit-referent-uses!`).
+    ;; Through an implicit reborrow of a reference binder (a slice store
+    ;; through `(&mut r (Slice T))`), the loan names the binder until it is
+    ;; patched to its parent: the value goes into the binder's referent.
     (when
       (and
         (or
@@ -7235,7 +7429,16 @@
           (!= (normalize-reference-kind (& state) stored) 0)
           (while (< loan store-end)
             (let
-              [target : i64 (array-ref state.body.loans loan).place.index]
+              [target : i64
+                (if (or
+                  (normalize-i64-member? (& state.reborrow-loans) loan)
+                  (and
+                    (normalize-i64-member? (& state.reservation-loans) loan)
+                    (normalize-i64-member? (& state.reborrow-loans) (- loan 1))))
+                  (normalize-direct-referent-place
+                    (& state)
+                    (array-ref state.body.loans loan).place.index)
+                  (array-ref state.body.loans loan).place.index)]
               (try (normalize-note-flow! state stored target))
               (set! loan (+ loan 1)))))))
     ;; A call that may assign a module value writes it here, after its
@@ -8225,9 +8428,9 @@
             (let
               [at : i64 state.pattern-count]
               (normalize-reserve! state.pattern-binders at typed.TypedBinderId)
-              (normalize-reserve! state.pattern-positions at i64)
-              (normalize-reserve! state.pattern-boxed at bool)
-              (normalize-reserve! state.pattern-sources at i64)
+              (normalize-reserve-i64! state.pattern-positions at)
+              (normalize-reserve-bool! state.pattern-boxed at)
+              (normalize-reserve-i64! state.pattern-sources at)
               (set!
                 (array-ref state.pattern-binders at)
                 (typed.TypedBinderId
@@ -8394,7 +8597,10 @@
       (let
         [position : i64 (array-ref state.pattern-positions index)]
         [place : i64 (array-ref places (- index first))]
-        (when declare? (try (normalize-initializer! state place)))
+        (when
+          declare?
+          (try (normalize-initializer! state place))
+          (try (normalize-scope-bind! state store lease block place source)))
         ;; At owned box contents: when a binder takes a move-only part,
         ;; the pattern moves the contents out of the box, consuming it once
         ;; and handing each binder its part; otherwise each binder reads
@@ -9125,6 +9331,8 @@
           (try
             (normalize-node! state store lease (normalize-child-id node arm)))]
         [first : i64 state.pattern-count]
+        ;; The arm's pattern binders are in scope in its body.
+        [owners : i64 state.owner-count]
         (unless
           (and (normalize-arm? (& arm-node)) (>= active 0))
           (return
@@ -9174,12 +9382,20 @@
                       result
                       (& node.source))))
                 (try
+                  (normalize-exit-owners!
+                    state
+                    body.block
+                    owners
+                    0
+                    (& arm-node.source)))
+                (try
                   (normalize-terminate!
                     state
                     body.block
                     (own.OwnershipTerminator.Goto
                       (normalize-block-id (& state) merge))))
                 (set! reached? true))))
+          (set! state.owner-count owners)
           (try (normalize-retain-node! state arm-node -1))
           (set! active next)
           (set! arm (+ arm 1)))))
@@ -10686,7 +10902,7 @@
       (or
         (= loans 0)
         (and
-          (= (array-length state.use-places) 0)
+          (= (array-length state.use-places) state.retire-count)
           (= (array-length state.reborrow-loans) 0)
           (= (array-length state.deref-places) 0)))
       (return (NormalizeUnit.Ok unit)))
@@ -11113,19 +11329,100 @@
         (set! index (+ index 1))))
     (NormalizeUnit.Ok unit)))
 
+;; Per root, whether the body may make it hold another value: a write of the
+;; whole root, or an exclusive loan of it that is not one of the reborrows
+;; through it being patched.
+(define (normalize-rebound-roots [state : (& state NormalizeState)]) : (__tl_dyn-array
+    bool)
+  (let
+    [places : i64 (array-length state.body.places)]
+    [out : (__tl_dyn-array bool) (__tl_make-array bool places)]
+    [block : i64 0]
+    [loan : i64 0]
+    (while (< block state.block-count)
+      (let
+        [instructions : (& state (__tl_dyn-array own.OwnershipInstruction))
+          (& (array-ref state.body.blocks block).instructions)]
+        [at : i64 0]
+        (while (< at (array-ref state.instruction-counts block))
+          (let
+            [written : i64
+              (match (& (array-ref instructions at).operation)
+                [(own.OwnershipOperation.Assign place) place.index]
+                [(own.OwnershipOperation.Initialize place) place.index]
+                [(own.OwnershipOperation.Copy _ dest) dest.index]
+                [(own.OwnershipOperation.Move _ dest) dest.index]
+                [_ -1])]
+            (when
+              (>= written 0)
+              (set! (array-ref out (normalize-place-root state written)) true)))
+          (set! at (+ at 1))))
+      (set! block (+ block 1)))
+    (while (< loan (array-length state.body.loans))
+      (when
+        (and
+          (own.ownership-loan-exclusive? (& (array-ref state.body.loans loan)))
+          (not (normalize-i64-member? (& state.reborrow-loans) loan)))
+        (set!
+          (array-ref
+            out
+            (normalize-place-root
+              state
+              (array-ref state.body.loans loan).place.index))
+          true))
+      (set! loan (+ loan 1)))
+    out))
+
+;; The entry loan of reference parameter `place` when the body never makes it
+;; hold another value (`rebound`): it points at that loan's referent
+;; throughout, whatever its referent's lifetimes, so a reborrow through it is
+;; that loan's child. -1 otherwise.
+(define (normalize-fixed-parameter-loan
+  [state : (& state NormalizeState)]
+  [rebound : (& rebound (__tl_dyn-array bool))]
+  [place : i64]) : i64
+  (let
+    [index : i64 0]
+    (when (array-ref rebound place) (return -1))
+    (while (< index (array-length state.referent-binders))
+      (when
+        (= (array-ref state.referent-binders index) place)
+        (return (array-ref state.parameter-loans index)))
+      (set! index (+ index 1)))
+    -1))
+
 (define (normalize-patch-reborrows!
   [state : (&mut state NormalizeState)]
   [bits : (& bits (__tl_dyn-array i64))]
   [words : i64]) : NormalizeUnit
   (let
     [index : i64 0]
+    [rebound : (__tl_dyn-array bool)
+      (if (> (array-length state.reborrow-loans) 0)
+        (normalize-rebound-roots (& state))
+        (__tl_make-array bool 0))]
     (while (< index (array-length state.reborrow-loans))
       (let
         [child : i64 (array-ref state.reborrow-loans index)]
         [row : i64 (* (array-ref state.reborrow-places index) words)]
-        [parent : i64 -1]
-        [count : i64 0]
-        [loan : i64 (normalize-next-loan bits row words 0)]
+        ;; A parameter's referent loan, else the one loan its binder's
+        ;; outer region holds by value. A referent of its own lifetime
+        ;; (`(&mut a (Holder a))`) shares that region with what it holds,
+        ;; which then joins the row.
+        [fixed : i64
+          (normalize-fixed-parameter-loan
+            (& state)
+            (& rebound)
+            (array-ref state.reborrow-places index))]
+        [parent : i64 fixed]
+        [count : i64
+          (if (>= fixed 0)
+            1
+            0)]
+        [loan : i64
+          (if (>= fixed 0)
+            -1
+            (normalize-next-loan bits row words 0))]
         (while (>= loan 0)
           (set! parent loan)
           (set! count (+ count 1))
@@ -11224,10 +11521,30 @@
         (set! (array-ref out word) value))
       (set! word (+ word 1)))))
 
+;; Per place, whether some loan borrows that root or a part of it: only such a
+;; binder's retirement can meet a live loan.
+(define (normalize-borrowed-roots [state : (& state NormalizeState)]) : (__tl_dyn-array
+    bool)
+  (let
+    [out : (__tl_dyn-array bool)
+      (__tl_make-array bool (array-length state.body.places))]
+    [loan : i64 0]
+    (while (< loan (array-length state.body.loans))
+      (set!
+        (array-ref
+          out
+          (normalize-place-root
+            state
+            (array-ref state.body.loans loan).place.index))
+        true)
+      (set! loan (+ loan 1)))
+    out))
+
 ;; Rebuild each block once, inserting a use's MayUseLoan operations before the
-;; instruction it was recorded at (or before the terminator). Uses of one block
-;; were recorded in nondecreasing instruction order. A use names the root
-;; whose value holds each loan: a reference made by a borrow holds its own
+;; instruction it was recorded at (or before the terminator), and in its turn
+;; the retirement of a borrowed binder's storage (`normalize-retire!`). Uses of
+;; one block were recorded in nondecreasing instruction order. A use names the
+;; root whose value holds each loan: a reference made by a borrow holds its own
 ;; loan, while the loans of its referent are held by the borrowed root (the
 ;; regions are one), so they end where that root is overwritten whole before
 ;; the borrow, as in Rust, where a borrow is a use of the borrowed variable.
@@ -11248,6 +11565,7 @@
     [order : (__tl_dyn-array i64)
       (__tl_make-array i64 (array-length state.use-places))]
     [fill : (__tl_dyn-array i64) (__tl_make-array i64 (+ blocks 1))]
+    [borrowed : (__tl_dyn-array bool) (normalize-borrowed-roots (& state))]
     [index : i64 0]
     [block : i64 0]
     (try
@@ -11258,6 +11576,7 @@
           blocks
           (array-length state.use-places)
           (array-length state.body.places)
+          (array-length state.body.loans)
           state.flow-count)
         0))
     ;; Stable bucket sort of the recorded uses by block.
@@ -11299,25 +11618,33 @@
             [filled : i64 0]
             [total : i64 held]
             ;; The rebuilt block is allocated once at its full length: the
-            ;; old instructions and one MayUseLoan per demanded loan of each
-            ;; use, then written in order.
+            ;; old instructions, the retirements and one MayUseLoan per
+            ;; demanded loan of each use, then written in order.
             (while (< cursor last)
-              (normalize-use-loans!
-                (& state)
-                bits
-                words
-                alt-start
-                alt-count
-                alt-places
-                (array-ref order cursor)
-                (&mut demanded))
               (let
-                [loan : i64 (normalize-next-loan (& demanded) 0 words 0)]
-                (while (>= loan 0)
-                  (set! total (+ total 1))
-                  (set!
-                    loan
-                    (normalize-next-loan (& demanded) 0 words (+ loan 1)))))
+                [used : i64
+                  (array-ref state.use-places (array-ref order cursor))]
+                (if (< used 0)
+                  (when
+                    (array-ref borrowed (- -2 used))
+                    (set! total (+ total 1)))
+                  (begin
+                    (normalize-use-loans!
+                      (& state)
+                      bits
+                      words
+                      alt-start
+                      alt-count
+                      alt-places
+                      (array-ref order cursor)
+                      (&mut demanded))
+                    (let
+                      [loan : i64 (normalize-next-loan (& demanded) 0 words 0)]
+                      (while (>= loan 0)
+                        (set! total (+ total 1))
+                        (set!
+                          loan
+                          (normalize-next-loan (& demanded) 0 words (+ loan 1))))))))
               (set! cursor (+ cursor 1)))
             (set! cursor first)
             (let
@@ -11332,54 +11659,86 @@
                   (let
                     [use : i64 (array-ref order cursor)]
                     [used : i64 (array-ref state.use-places use)]
-                    [through : i64 (array-ref lenders used)]
-                    [loan : i64 -1]
-                    ;; The use's loans: its place's row, or for a reassigned
-                    ;; binding the rows of the value places it reads instead.
-                    (normalize-use-loans!
-                      (& state)
-                      bits
-                      words
-                      alt-start
-                      alt-count
-                      alt-places
-                      use
-                      (&mut demanded))
-                    (set! loan (normalize-next-loan (& demanded) 0 words 0))
-                    (while (>= loan 0)
-                      (let
-                        ;; The root whose value holds the loan.
-                        [holder : i64
-                          (if (and
-                            (>= through 0)
-                            (= (array-ref alt-count use) 0)
-                            (!=
-                              (bit-and
-                                (array-ref
-                                  bits
-                                  (+ (* through words) (/ loan 64)))
-                                (shl 1 (bit-and loan 63)))
-                              0))
-                            through
-                            used)]
-                        (try (normalize-charge! state 1 1 0))
-                        (set!
-                          (array-ref rebuilt filled)
-                          (own.OwnershipInstruction
-                            (own.OwnershipOperation.MayUseLoan
-                              (own.OwnershipLoanId
-                                (typed.typed-body-copy (& state.body.id))
-                                loan)
-                              (normalize-place-id (& state) holder))
-                            (if (< position held)
+                    (cond
+                      ;; The binder's storage ends (Rust's `StorageDead`): a
+                      ;; loan of it still live here conflicts.
+                      [(< used 0)
+                        (when
+                          (array-ref borrowed (- -2 used))
+                          (try (normalize-charge! state 1 1 0))
+                          (set!
+                            (array-ref rebuilt filled)
+                            (own.OwnershipInstruction
+                              (own.OwnershipOperation.Invalidate
+                                (normalize-place-id (& state) (- -2 used)))
                               (own.ownership-source-copy
-                                (& (array-ref old position).source))
-                              (own.ownership-source-copy
-                                (& (array-ref state.body.blocks block).source)))))
-                        (set! filled (+ filled 1)))
-                      (set!
-                        loan
-                        (normalize-next-loan (& demanded) 0 words (+ loan 1))))
+                                (&
+                                  (array-ref state.body.places (- -2 used)).source))))
+                          (normalize-i64s-push!
+                            (&mut state.retired-blocks)
+                            block)
+                          (normalize-i64s-push!
+                            (&mut state.retired-indices)
+                            filled)
+                          (set! filled (+ filled 1)))]
+                      [else
+                        (let
+                          [through : i64 (array-ref lenders used)]
+                          [loan : i64 -1]
+                          ;; The use's loans: its place's row, or for a
+                          ;; reassigned binding the rows of the value places
+                          ;; it reads instead.
+                          (normalize-use-loans!
+                            (& state)
+                            bits
+                            words
+                            alt-start
+                            alt-count
+                            alt-places
+                            use
+                            (&mut demanded))
+                          (set!
+                            loan
+                            (normalize-next-loan (& demanded) 0 words 0))
+                          (while (>= loan 0)
+                            (let
+                              ;; The root whose value holds the loan.
+                              [holder : i64
+                                (if (and
+                                  (>= through 0)
+                                  (= (array-ref alt-count use) 0)
+                                  (!=
+                                    (bit-and
+                                      (array-ref
+                                        bits
+                                        (+ (* through words) (/ loan 64)))
+                                      (shl 1 (bit-and loan 63)))
+                                    0))
+                                  through
+                                  used)]
+                              (try (normalize-charge! state 1 1 0))
+                              (set!
+                                (array-ref rebuilt filled)
+                                (own.OwnershipInstruction
+                                  (own.OwnershipOperation.MayUseLoan
+                                    (own.OwnershipLoanId
+                                      (typed.typed-body-copy (& state.body.id))
+                                      loan)
+                                    (normalize-place-id (& state) holder))
+                                  (if (< position held)
+                                    (own.ownership-source-copy
+                                      (& (array-ref old position).source))
+                                    (own.ownership-source-copy
+                                      (&
+                                        (array-ref state.body.blocks block).source)))))
+                              (set! filled (+ filled 1)))
+                            (set!
+                              loan
+                              (normalize-next-loan
+                                (& demanded)
+                                0
+                                words
+                                (+ loan 1)))))])
                     (set! cursor (+ cursor 1))))
                 ;; The old instruction moves to its new position, bitwise
                 ;; (`old` is never read again).
@@ -11861,6 +12220,239 @@
   (Some OwnershipMoveDiagnostic)
   (No))
 
+;; --- Borrows that outlive their storage (#8890) ----------------------------
+;;
+;; A loan conflict at a retirement (`normalize-retire!`) is a borrow still live
+;; where the storage it borrows ends. It is reported at the borrow, with the
+;; use that needs it: the first instruction past the retirement demanding the
+;; loan. Such a use at a return is the returned value; the exit holder's use
+;; means the loan sits in a signature region, storage the caller keeps, and
+;; the store that put it there is the last use before the retirement.
+(defenum NormalizeEscapeResult
+  (Some OwnershipEscapeDiagnostic)
+  (No))
+
+;; The loan instruction `op` demands (a `MayUseLoan` or `UseLoan` of it), or
+;; -1; `holder` receives the `MayUseLoan`'s holder (-1 otherwise).
+(define (normalize-demanded-loan
+  [op : (& op own.OwnershipOperation)]
+  [holder : (&mut holder i64)]) : i64
+  (match op
+    [(own.OwnershipOperation.MayUseLoan loan held)
+      (set! (deref holder) held.index)
+      loan.index]
+    [(own.OwnershipOperation.UseLoan loan)
+      (set! (deref holder) -1)
+      loan.index]
+    [_ -1]))
+
+;; Whether the instructions of `block` from `index` on are all loan uses and
+;; the block returns: a use there is a use at the return.
+(define (normalize-return-use?
+  [body : (& body own.OwnershipBody)]
+  [block : i64]
+  [index : i64]) : bool
+  (let
+    [instructions : (& body (__tl_dyn-array own.OwnershipInstruction))
+      (& (array-ref body.blocks block).instructions)]
+    [at : i64 index]
+    [holder : i64 -1]
+    (while (< at (array-length instructions))
+      (when
+        (<
+          (normalize-demanded-loan
+            (& (array-ref instructions at).operation)
+            (&mut holder))
+          0)
+        (return false))
+      (set! at (+ at 1)))
+    (match (& (array-ref body.blocks block).terminator)
+      [(own.OwnershipTerminator.Return _) true]
+      [_ false])))
+
+;; The first use of `loan` after position `index` of `block`, along the edges
+;; (`forward?`), or the last one before it against them, by breadth: its block
+;; and instruction, packed as `block * 2^32 + instruction`, and its holder in
+;; `holder`; -1 when there is none. Going backward, the exit holder's uses
+;; (`skip`) are passed over.
+(define (normalize-loan-use-near
+  [state : (& state NormalizeState)]
+  [preds : (& preds NormalizePredecessors)]
+  [block : i64]
+  [index : i64]
+  [loan : i64]
+  [forward? : bool]
+  [skip : i64]
+  [holder : (&mut holder i64)]) : i64
+  (let
+    [body : (& state own.OwnershipBody) (& state.body)]
+    [blocks : i64 (array-length body.blocks)]
+    [visited : (__tl_dyn-array bool) (__tl_make-array bool blocks)]
+    [queue : (__tl_dyn-array i64) (__tl_make-array i64 (+ blocks 1))]
+    [head : i64 0]
+    [tail : i64 1]
+    [first? : bool true]
+    (set! (array-ref queue 0) block)
+    (while (< head tail)
+      (let
+        [current : i64 (array-ref queue head)]
+        [count : i64
+          (array-length (array-ref body.blocks current).instructions)]
+        [at : i64
+          (cond
+            [(and first? forward?) (+ index 1)]
+            [first? (- index 1)]
+            [forward? 0]
+            [else (- count 1)])]
+        (set! head (+ head 1))
+        (set! first? false)
+        (while (and (>= at 0) (< at count))
+          (when
+            (and
+              (=
+                (normalize-demanded-loan
+                  (&
+                    (array-ref (array-ref body.blocks current).instructions at).operation)
+                  holder)
+                loan)
+              (or forward? (!= (deref holder) skip)))
+            (return (+ (* current 4294967296) at)))
+          (set!
+            at
+            (if forward?
+              (+ at 1)
+              (- at 1))))
+        ;; The next blocks: successors forward, predecessors backward.
+        (let
+          [edge : i64
+            (if forward?
+              0
+              (array-ref preds.start current))]
+          [end : i64
+            (if forward?
+              2
+              (array-ref preds.start (+ current 1)))]
+          (while (< edge end)
+            (let
+              [next : i64
+                (if forward?
+                  (own.ownership-successor
+                    (& (array-ref body.blocks current).terminator)
+                    edge)
+                  (array-ref preds.list edge))]
+              (when
+                (and (>= next 0) (< next blocks) (not (array-ref visited next)))
+                (set! (array-ref visited next) true)
+                (set! (array-ref queue tail) next)
+                (set! tail (+ tail 1))))
+            (set! edge (+ edge 1))))))
+    -1))
+
+;; The diagnostic of a loan conflict at a retirement, or No.
+(define (normalize-escape-diagnostic
+  [state : (& state NormalizeState)]
+  [failure : (& failure own.OwnershipFailure)]) : NormalizeEscapeResult
+  (let
+    [body : (& state own.OwnershipBody) (& state.body)]
+    [retired : i64 0]
+    [found? : bool false]
+    (unless
+      (and
+        (match (& failure.kind)
+          [(own.OwnershipFailureKind.Loan) true]
+          [_ false])
+        (>= failure.conflicting-loan 0)
+        (< failure.conflicting-loan (array-length body.loans))
+        (>= failure.block 0)
+        (< failure.block (array-length body.blocks)))
+      (return NormalizeEscapeResult.No))
+    (while (and (not found?) (< retired state.retired-blocks.len))
+      (when
+        (and
+          (= (array-ref state.retired-blocks.items retired) failure.block)
+          (=
+            (array-ref state.retired-indices.items retired)
+            failure.instruction))
+        (set! found? true))
+      (set! retired (+ retired 1)))
+    (unless found? (return NormalizeEscapeResult.No))
+    (let
+      [place : i64
+        (match (&
+          (array-ref
+            (array-ref body.blocks failure.block).instructions
+            failure.instruction).operation)
+          [(own.OwnershipOperation.Invalidate retired-place)
+            retired-place.index]
+          [_ -1])]
+      [loan : i64 failure.conflicting-loan]
+      [preds : NormalizePredecessors (normalize-block-predecessors state)]
+      [holder : i64 -1]
+      [later : i64
+        (normalize-loan-use-near
+          state
+          (& preds)
+          failure.block
+          failure.instruction
+          loan
+          true
+          -1
+          (&mut holder))]
+      [later-block : i64 (/ later 4294967296)]
+      [later-index : i64 (% later 4294967296)]
+      [kind : i64
+        (cond
+          [(< later 0) 3]
+          [(= holder state.exit-holder) 3]
+          [(and
+              (>= holder 0)
+              (normalize-return-use? body later-block (+ later-index 1)))
+            (if (> (normalize-reference-kind state holder) 0)
+              1
+              2)]
+          [else 0])]
+      [store-holder : i64 -1]
+      [store : i64
+        (if (= kind 3)
+          (normalize-loan-use-near
+            state
+            (& preds)
+            failure.block
+            failure.instruction
+            loan
+            false
+            state.exit-holder
+            (&mut store-holder))
+          -1)]
+      (when (< place 0) (return NormalizeEscapeResult.No))
+      (NormalizeEscapeResult.Some
+        (OwnershipEscapeDiagnostic
+          ;; A temporary's binder name is the expansion's own.
+          (if (= (normalize-binder-owner state place) 7)
+            -1
+            (normalize-binder-name state place))
+          (normalize-i64-member? (& state.function-places) place)
+          kind
+          (own.ownership-source-copy (& (array-ref body.loans loan).source))
+          (cond
+            [(and (= kind 3) (>= store 0))
+              (own.ownership-source-copy
+                (&
+                  (array-ref
+                    (array-ref body.blocks (/ store 4294967296)).instructions
+                    (% store 4294967296)).source))]
+            [(= kind 3)
+              (own.ownership-source-copy (& (array-ref body.loans loan).source))]
+            [(> kind 0)
+              (own.ownership-source-copy
+                (& (array-ref body.places holder).source))]
+            [else
+              (own.ownership-source-copy
+                (&
+                  (array-ref
+                    (array-ref body.blocks later-block).instructions
+                    later-index).source))]))))))
+
 (define (normalize-move-diagnostic
   [state : (& state NormalizeState)]
   [failure : (& failure own.OwnershipFailure)]) : NormalizeMoveDiagnosticResult
@@ -12046,16 +12638,12 @@
     (while (< block state.block-count)
       (when
         (normalize-block-returns? (& state) block)
-        (try (normalize-charge! state 1 1 0))
-        (normalize-reserve! state.use-blocks state.use-count i64)
-        (normalize-reserve! state.use-indices state.use-count i64)
-        (normalize-reserve! state.use-places state.use-count i64)
-        (set! (array-ref state.use-blocks state.use-count) block)
-        (set!
-          (array-ref state.use-indices state.use-count)
-          (array-ref state.instruction-counts block))
-        (set! (array-ref state.use-places state.use-count) state.exit-holder)
-        (set! state.use-count (+ state.use-count 1)))
+        (try
+          (normalize-record-use!
+            state
+            block
+            (array-ref state.instruction-counts block)
+            state.exit-holder)))
       (set! block (+ block 1)))
     (NormalizeUnit.Ok unit)))
 
@@ -12554,7 +13142,11 @@
           0
           occurrences
           (__tl_make-array typed.TypedHandle 0)
-          (__tl_make-array NormalizePlaceStep 0))]
+          (__tl_make-array NormalizePlaceStep 0)
+          (normalize-no-i64s)
+          0
+          (normalize-i64s)
+          (normalize-i64s))]
       [_projected : unit (try (normalize-projected! (&mut state) store lease))]
       [result-type : i64
         (try (normalize-type! (&mut state) store lease return-type))]
@@ -12585,7 +13177,8 @@
           [operands : (__tl_dyn-array own.OwnershipPlaceId)
             (__tl_make-array own.OwnershipPlaceId 0)]
           ;; The function's own obligations (`:invalidate` brands)
-          ;; end with its body.
+          ;; end with its body, and so does the storage of its parameters
+          ;; and temporaries.
           (when
             (> state.owner-count 0)
             (let
@@ -12601,6 +13194,7 @@
                         (OwnershipNormalizeFailure.Typed error)))])]
               (try
                 (normalize-exit-owners! (&mut state) value.block 0 5 (& source)))))
+          (try (normalize-retire-function! (&mut state) value.block))
           (try (normalize-charge! (&mut state) 2 2 0))
           (normalize-i64s-push! (&mut state.return-places) value.place)
           (__tl_array-push! operands (normalize-place-id (& state) value.place))
@@ -12673,6 +13267,12 @@
                     (OwnershipNormalizeFailure.Unsupported
                       "ownership normalization: core unsupported shape")))]
               [(NormalizeCoreLimit.No)
+                (match (normalize-escape-diagnostic (& state) (& failure))
+                  [(NormalizeEscapeResult.Some diagnostic)
+                    (return
+                      (OwnershipNormalizeResult.Err
+                        (OwnershipNormalizeFailure.Escaped diagnostic)))]
+                  [(NormalizeEscapeResult.No) unit])
                 (match (normalize-obligation-diagnostic (& state) (& failure))
                   [(NormalizeObligationDiagnosticResult.Some diagnostic)
                     (return

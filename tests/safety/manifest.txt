@@ -293,6 +293,91 @@ mutable_reference_lifetime_field_store_shadow_reject|check-fail|tests/safety/mut
 mutable_reference_lifetime_field_store_shadow_deref_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_deref_reject.tl|-|cannot store reference into longer-lived struct field
 mutable_reference_lifetime_field_store_shadow_whole_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_whole_reject.tl|-|cannot store reference into longer-lived &mut referent
 mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_param_reject.tl|-|cannot store reference into longer-lived struct field
+# Storage that ends before a borrow of it (#8890; Rust's `StorageDead`, E0597
+# and E0515). A borrow of a local or by-value parameter spelled like a caller
+# lifetime passes typing; the ownership graph retires every binder's storage
+# where an edge leaves its scope (a parameter's and a temporary's at the
+# return), and the caller's lifetimes and the result are live at every return,
+# so a loan of that storage stored into caller storage or returned conflicts
+# with its retirement, whatever its spelling. `call_inference_order_ok` stays
+# rejected by order-dependent call inference (Rust accepts it; see its
+# comment), `shadowed_let_result_reject` by typing's `let`-result spelling
+# check (Rust accepts it too), and `pointer_store_same_name_ok` holds no loan.
+caller_lifetime_parameter_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_local_store_same_name_reject|check-fail|tests/safety/caller_lifetime_local_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_alias_store_same_name_reject|check-fail|tests/safety/caller_lifetime_alias_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_call_store_same_name_reject|check-fail|tests/safety/caller_lifetime_call_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_incoming_alias_same_name_ok|check-ok|tests/safety/caller_lifetime_incoming_alias_same_name_ok.tl|-|-
+caller_lifetime_named_storage_borrow_ok|check-ok|tests/safety/caller_lifetime_named_storage_borrow_ok.tl|-|-
+caller_lifetime_parameter_deref_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_deref_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_parameter_tuple_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_tuple_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_parameter_array_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_array_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_parameter_box_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_box_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_parameter_push_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_push_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_parameter_return_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_return_same_name_reject.tl|-|cannot return a reference to parameter `a`
+caller_lifetime_local_aggregate_store_same_name_reject|check-fail|tests/safety/caller_lifetime_local_aggregate_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_nested_shadow_store_reject|check-fail|tests/safety/caller_lifetime_nested_shadow_store_reject.tl|-|`a` does not live long enough
+caller_lifetime_annotated_alias_store_same_name_reject|check-fail|tests/safety/caller_lifetime_annotated_alias_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_match_binder_store_same_name_reject|check-fail|tests/safety/caller_lifetime_match_binder_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_annotation_before_shadow_ok|check-ok|tests/safety/caller_lifetime_annotation_before_shadow_ok.tl|-|-
+caller_lifetime_local_annotation_ok|check-ok|tests/safety/caller_lifetime_local_annotation_ok.tl|-|-
+caller_lifetime_incoming_storage_same_name_ok|check-ok|tests/safety/caller_lifetime_incoming_storage_same_name_ok.tl|-|-
+caller_lifetime_resource_field_store_same_name_reject|check-fail|tests/safety/caller_lifetime_resource_field_store_same_name_reject.tl|-|`h` does not live long enough
+caller_lifetime_tuple_value_store_same_name_reject|check-fail|tests/safety/caller_lifetime_tuple_value_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_global_and_lambda_names_ok|check-ok|tests/safety/caller_lifetime_global_and_lambda_names_ok.tl|-|-
+caller_lifetime_owned_for_item_store_same_name_reject|check-fail|tests/safety/caller_lifetime_owned_for_item_store_same_name_reject.tl|-|`t` does not live long enough
+caller_lifetime_nested_resource_store_same_name_reject|check-fail|tests/safety/caller_lifetime_nested_resource_store_same_name_reject.tl|-|`h` does not live long enough
+caller_lifetime_lambda_param_return_same_name_reject|check-fail|tests/safety/caller_lifetime_lambda_param_return_same_name_reject.tl|-|cannot return a reference to parameter `a`
+caller_lifetime_renamed_body_ok|run-exit|tests/safety/caller_lifetime_renamed_body_ok.tl|6|-
+caller_lifetime_pointer_store_same_name_ok|check-ok|tests/safety/caller_lifetime_pointer_store_same_name_ok.tl|-|-
+caller_lifetime_written_types_ok|check-ok|tests/safety/caller_lifetime_written_types_ok.tl|-|-
+caller_lifetime_shadowed_local_mix_ok|check-ok|tests/safety/caller_lifetime_shadowed_local_mix_ok.tl|-|-
+caller_lifetime_renamed_local_loan_reject|check-fail|tests/safety/caller_lifetime_renamed_local_loan_reject.tl|-|cannot assign to borrowed place `x`
+caller_lifetime_parameter_nested_constructor_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_nested_constructor_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_shadowed_let_result_reject|check-fail|tests/safety/caller_lifetime_shadowed_let_result_reject.tl|-|reference value would escape lexical scope
+caller_lifetime_parameter_slice_store_same_name_reject|check-fail|tests/safety/caller_lifetime_parameter_slice_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_call_literal_args_ok|check-ok|tests/safety/caller_lifetime_call_literal_args_ok.tl|-|-
+caller_lifetime_array_literal_order_ok|check-ok|tests/safety/caller_lifetime_array_literal_order_ok.tl|-|-
+caller_lifetime_constructor_region_flow_ok|check-ok|tests/safety/caller_lifetime_constructor_region_flow_ok.tl|-|-
+caller_lifetime_call_inference_order_ok|check-fail|tests/safety/caller_lifetime_call_inference_order_ok.tl|-|call `put` argument 2 (parameter `m`) type mismatch
+caller_lifetime_constructor_tuple_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_tuple_arg_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_constructor_array_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_array_arg_same_name_reject.tl|-|cannot return a reference to parameter `a`
+caller_lifetime_call_mut_arg_same_name_reject|check-fail|tests/safety/caller_lifetime_call_mut_arg_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_constructor_region_flow_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_region_flow_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_reassigned_alias_store_same_name_reject|check-fail|tests/safety/caller_lifetime_reassigned_alias_store_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_tagged_store_ok|check-ok|tests/safety/caller_lifetime_tagged_store_ok.tl|-|-
+caller_lifetime_nullary_variant_ok|check-ok|tests/safety/caller_lifetime_nullary_variant_ok.tl|-|-
+caller_lifetime_constructor_fixed_lifetime_same_name_reject|check-fail|tests/safety/caller_lifetime_constructor_fixed_lifetime_same_name_reject.tl|-|`a` does not live long enough
+caller_lifetime_array_join_loan_reject|check-fail|tests/safety/caller_lifetime_array_join_loan_reject.tl|-|cannot assign to borrowed place `y`
+# Rust parity for the storage rule. The `&mut` and the result are spelled like
+# the local where typing would otherwise reject the store by name, so the
+# graph decides; the rest are rejected by typing first, with Rust's verdict.
+# `inner_scope_unused_reject` is accepted by Rust (the loan is dead where the
+# inner `x` ends): typing rejects the store by its names, as main does.
+storage_dead_param_store_direct_reject|check-fail|tests/safety/storage_dead_param_store_direct_reject.tl|-|`a` does not live long enough
+storage_dead_param_store_field_reject|check-fail|tests/safety/storage_dead_param_store_field_reject.tl|-|`a` does not live long enough
+storage_dead_param_push_reject|check-fail|tests/safety/storage_dead_param_push_reject.tl|-|`a` does not live long enough
+storage_dead_param_store_box_reject|check-fail|tests/safety/storage_dead_param_store_box_reject.tl|-|`a` does not live long enough
+storage_dead_param_store_nested_reject|check-fail|tests/safety/storage_dead_param_store_nested_reject.tl|-|`a` does not live long enough
+storage_dead_overwrite_param_reject|check-fail|tests/safety/storage_dead_overwrite_param_reject.tl|-|`a` does not live long enough
+storage_dead_by_value_param_return_reject|check-fail|tests/safety/storage_dead_by_value_param_return_reject.tl|-|cannot return a reference to parameter `a`
+storage_dead_return_direct_reject|check-fail|tests/safety/storage_dead_return_direct_reject.tl|-|reference value would escape lexical scope
+storage_dead_return_tuple_reject|check-fail|tests/safety/storage_dead_return_tuple_reject.tl|-|reference value would escape lexical scope
+storage_dead_return_struct_reject|check-fail|tests/safety/storage_dead_return_struct_reject.tl|-|reference value would escape lexical scope
+storage_dead_inner_scope_used_reject|check-fail|tests/safety/storage_dead_inner_scope_used_reject.tl|-|cannot store reference into longer-lived binding
+storage_dead_inner_scope_unused_reject|check-fail|tests/safety/storage_dead_inner_scope_unused_reject.tl|-|cannot store reference into longer-lived binding
+storage_dead_loop_binding_reject|check-fail|tests/safety/storage_dead_loop_binding_reject.tl|-|cannot store reference into longer-lived binding
+storage_dead_caller_places_ok|run-exit|tests/safety/storage_dead_caller_places_ok.tl|42|-
+# Main's loop-edge rows stored borrows of a by-value parameter under its
+# signature lifetime; they now borrow caller storage, and the old program is
+# this row.
+storage_dead_by_value_param_loop_store_reject|check-fail|tests/safety/storage_dead_by_value_param_loop_store_reject.tl|-|`items` does not live long enough
+# Arena regions are typing's: the graph erases them, so typing's store and
+# assignment checks decide a borrow of arena data that outlives its arena,
+# including one whose region is spelled like an outer lifetime.
+region_arena_store_param_array_reject|check-fail|tests/safety/region_arena_store_param_array_reject.tl|-|cannot store reference into longer-lived array
+region_arena_shadow_store_mut_param_reject|check-fail|tests/safety/region_arena_shadow_store_mut_param_reject.tl|-|cannot store reference into longer-lived struct field
+region_arena_shadow_assign_reject|check-fail|tests/safety/region_arena_shadow_assign_reject.tl|-|cannot store reference into longer-lived binding
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is

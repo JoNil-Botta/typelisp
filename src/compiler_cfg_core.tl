@@ -49,7 +49,7 @@
     [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [index : i64 names.len]
     (while (> index 0)
-      (set! index (- index 1))
+      (-= index 1)
       (set!
         env
         (compiler-cfg-bind

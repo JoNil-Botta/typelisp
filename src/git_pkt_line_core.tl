@@ -5,6 +5,7 @@
 ;; network, compression, hashing or filesystem operation. Errors are
 ;; payload-free so no peer-controlled byte reaches a diagnostic; untrusted remote
 ;; text leaves only through `git-pkt-sanitize-text`.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.string)
 
@@ -196,28 +197,26 @@
   (let
     [available : i64 (git-pkt-reader-available (& reader))]
     [length : i64 0]
-    [index : i64 0]
     (when (< available 4) (return (NeedMore)))
     (when
       (< (git-pkt-reader-pending-available (& reader)) 4)
       (git-pkt-reader-merge! reader))
-    (while (< index 4)
+    (for [index (iterator.range 0 4)]
       (let
         [digit : i64
           (git-pkt-hex-value
             (git-pkt-byte (& reader.pending) (+ reader.offset index)))]
         (when (< digit 0) (return (Err InvalidLengthHex)))
-        (set! length (+ (* length 16) digit))
-        (set! index (+ index 1))))
+        (set! length (+ (* length 16) digit))))
     (cond
       [(= length 0)
-        (set! reader.offset (+ reader.offset 4))
+        (+= reader.offset 4)
         (Packet (Flush))]
       [(= length 1)
-        (set! reader.offset (+ reader.offset 4))
+        (+= reader.offset 4)
         (Packet (Delim))]
       [(= length 2)
-        (set! reader.offset (+ reader.offset 4))
+        (+= reader.offset 4)
         (Packet (ResponseEnd))]
       [(= length 3) (Err ReservedLength)]
       [(= length 4) (Err EmptyPacket)]
@@ -233,7 +232,7 @@
               (& reader.pending)
               (+ reader.offset 4)
               (- length 4))]
-          (set! reader.offset (+ reader.offset length))
+          (+= reader.offset length)
           (Packet (Data payload)))])))
 
 ;: The input has ended: any buffered byte belongs to a truncated packet.
@@ -265,7 +264,7 @@
               (+ 48 digit)
               (+ 87 digit))
             : u8)))
-      (set! shift (- shift 4)))))
+      (-= shift 4))))
 
 ;: One data pkt-line carrying `payload` exactly.
 (define (git-pkt-encode-data [payload : (& payload str)]) : ResultGitPktBytes
@@ -328,7 +327,7 @@
         (unless
           (= mapped 32)
           (set! kept (byte_buf.byte-buf-builder-len (& out))))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (let
       [all : String (byte_buf.byte-buf-builder-finish-string (& out))]
       (string.substring (& all) 0 kept))))

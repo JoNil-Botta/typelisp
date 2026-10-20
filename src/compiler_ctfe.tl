@@ -1851,13 +1851,13 @@
 
 (define (ctfe-env-layouts [env : (& env CtfeEnv)]) : CtfeLayoutInfoList
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.layouts))
 
 (define (ctfe-env-reflections [env : (& env CtfeEnv)]) : CtfeReflectInfoList
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.reflections))
 
@@ -1920,7 +1920,7 @@
 
 (define (ctfe-env-source-names [env : (& env CtfeEnv)]) : ci.InternSourceNameSessionHandle
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     metadata.source-names))
 
@@ -2079,7 +2079,7 @@
 ;; when it recorded one, otherwise the written type.
 (define (ctfe-type-literal-type [env : (& env CtfeEnv)] [id : i64]) : ast.AstType
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [metadata : CtfeEnvMetadata (ctfe-env-metadata-read view.metadata)]
     [address : u64 metadata.type-literals]
     (if (= address (cast 0 : u64))
@@ -2197,7 +2197,7 @@
 
 (define (ctfe-env-lookup-id-from [env : (& env CtfeEnv)] [name-id : i64]) : CtfeMaybeValue
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
@@ -2217,7 +2217,7 @@
 
 (define (ctfe-env-lookup-type-id-from [env : (& env CtfeEnv)] [name-id : i64]) : ast.AstMaybeType
   (let
-    [view : CtfeEnv (ctfe-env-shared-view env)]
+    [view : CtfeEnv (deref env)]
     [store : CtfeEnvArena (ctfe-env-arena-read view.arena-store)]
     [index : i64 env.head]
     [searching? : bool true]
@@ -14149,7 +14149,7 @@
       (match (ctfe-env-syntax-pools-live env)
         [(Some pools)
           (ctfe-env-rebase-syntax-pools (ctfe-env-shared-view env) pools)]
-        [(None) (ctfe-env-shared-view env)])]
+        [(None) (deref env)])]
     (match (ctfe-quote-expr
       (owned_view.compiler-owned-reference-shared-view template)
       (& quote-env)

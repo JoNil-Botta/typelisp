@@ -21997,7 +21997,7 @@
   [reg : String]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (if (compiler-backend-float-type? ty)
-    (match (compiler-backend-global-shared-view value)
+    (match value
       [(Global name)
         (Ok
           (str_cat.str-cat
@@ -22015,7 +22015,7 @@
           ty
           reg
           program-index.backend-state)])
-    (match (compiler-backend-global-shared-view value)
+    (match value
       [(Var id)
         (Ok
           (compiler-backend-emit-load-typed-var-to-reg

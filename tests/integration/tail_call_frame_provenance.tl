@@ -169,6 +169,14 @@
 (define (heap-slice [l : (& Lst)] [k : i64]) : i64
   (scrub-slice (slice-view l.slots 0 1) k))
 
+;; A direct projection keeps the heap element's address. Binding the Copy
+;; aggregate to a local instead is covered by heap-copy-field above.
+(define (heap-projected-field [n : i64]) : i64
+  (let
+    [xs : (__tl_dyn-array CopyRec) (__tl_make-array CopyRec 1)]
+    (set! (array-ref xs 0) (CopyRec n 1 2))
+    (scrub-ref (& (array-ref xs 0).x) 7)))
+
 ;; A borrow of a scalar local is a copy in its own heap storage.
 (define (scalar-copy [n : i64]) : i64
   (let
@@ -205,6 +213,10 @@
           (+
             (local-indirect-field scrub-ref 3)
             (+ (shadowed-ref (& v) 4) (heap-copy-field 5))))]
-      (if (and (= frame 45) (= outside 47) (= extra 15))
+      (if (and
+        (= frame 45)
+        (= outside 47)
+        (= extra 15)
+        (= (heap-projected-field 42) 42))
         42
         1))))

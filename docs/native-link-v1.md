@@ -5,7 +5,7 @@ are read through immutable borrows. Builders transfer ownership; validation is
 repeated when a caller presents a changed record. No cached acceptance flag can
 make a subsequent mutation trusted.
 
-The next production consumers are #7367/#7368 and their #7421–#7424 adapters,
+The next production consumers are #7421–#7424, #7368,
 #7099/#7103, and #7266. This foundation does not migrate source/package/CLI
 producers, discover tools, run an external adapter, read object files, resolve
 symbols, or write an image. `build_run_core.SourceToolLinkInputs` is not imported.

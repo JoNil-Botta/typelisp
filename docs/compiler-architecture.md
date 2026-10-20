@@ -21,7 +21,7 @@ session state only within its owner and invalidation contracts.
 
 The pure [native-link v1 contract](native-link-v1.md) owns ordered native input
 events, provenance and resolved profiles. Its admission, canonical codec and
-closed capability rows are the shared boundary for the next #7367/#7368
+closed capability rows are the shared boundary for the next #7421–#7424/#7368
 producers and native-link consumers; operational bindings remain separate.
 
 | Shared fact | Canonical implementation | Consumer obligation |

@@ -1,4 +1,4 @@
-;# Pure admission boundary for #7367/#7368, #7099/#7103 and #7266. No filesystem,
+;# Pure admission boundary for #7421/#7368, #7099/#7103 and #7266. No filesystem,
 ;# environment, process, target writer or discovery service is reachable here.
 (import native_link_manifest_types as n)
 (import native_link_manifest_core as core)

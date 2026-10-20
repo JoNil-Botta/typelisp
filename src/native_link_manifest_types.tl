@@ -1,4 +1,4 @@
-;# Native-link v1 semantic records, consumed next by #7367/#7368 and the
+;# Native-link v1 semantic records, consumed next by #7421/#7368 and the
 ;# object/link pipeline. Operational paths and tools belong to Invocation only.
 ;# Adding a field or variant changes the wire schema and requires a version
 ;# decision, golden update, validation and a named consumer.

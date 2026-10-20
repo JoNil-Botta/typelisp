@@ -1652,15 +1652,18 @@ cannot inherit a parameter pin through a phi or copy. Tail calls have no
 live-after survival constraint, but their argument marshalling must still read
 each source before an argument-register write can destroy it.
 
-Move harvesting carries one `CompilerRegMoveBuilder` through casts,
-destructive ties, copies and phi inputs. Its integer map indexes structural
-hashes into chains of move slots; lookups compare both full-width endpoints.
-Each collision link points to an older slot or -1, so lookup terminates while
-preserving newest-first order. Undirected lookup selects the newer of both
-orientations; a strict duplicate upgrades that same
-newest undirected slot even when admission was directed. Self moves never enter
-the sequence or index. The builder is consumed by each insertion and lives in
-the function scratch arena; coalescing receives only its dense sequence.
+Move harvesting mutably borrows one `CompilerRegMoveBuilder` through casts,
+destructive ties, copies and phi inputs, preserving their existing add order.
+Lists of at most 32 moves use a bounded newest-first scan. The next unique move
+promotes the entire prefix once: its integer map indexes structural hashes into
+chains of move slots, and each subsequent insertion updates that index.
+Lookups compare both full-width endpoints. Each collision link points to an
+older slot or -1, so lookup terminates while preserving newest-first order.
+Undirected lookup selects the newer of both orientations; a strict duplicate
+upgrades that same newest undirected slot even when admission was directed.
+Self moves never enter the sequence or index. The fixed prefix bound and one
+promotion preserve expected linear total construction cost. The builder lives
+in the function scratch arena; coalescing receives only its dense sequence.
 Retained sequence views do not own or consult the mutable builder index.
 
 Eligibility calculation, rematerialization interval selection, stack coloring

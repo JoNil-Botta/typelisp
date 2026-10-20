@@ -6,9 +6,11 @@ undirected duplicate suppression and newest-first strict upgrades.
 list-scan semantics through mixed insertion modes, full-width signed IDs,
 table growth and interleaved builders. `regalloc-move-index-hash-collisions`
 checks real structural-hash collisions, an absent pair at the chain tail and
-strict upgrades through colliding entries. Run these at opt0/1/2, retain the
-dense sequence contract tests, and compare fixed-source compiler, benchmark and CFG
-scaling assembly when changing move indexing.
+strict upgrades through colliding entries. `regalloc-move-index-prefix-promotion`
+pins the exact small-list boundary, one-time promotion, duplicate/self moves
+that must not promote, and strict upgrades across promotion. Run these at
+opt0/1/2, retain the dense sequence contract tests, and compare fixed-source
+compiler, benchmark and CFG scaling assembly when changing move indexing.
 
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes

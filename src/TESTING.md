@@ -1,5 +1,17 @@
 # Selfhost compiler testing
 
+`compiler_optimize_ownership_tests.tl` exercises structural fresh constructors,
+linear helper-result transfers, independent global initializers, descriptor
+path coordinates, rejected escapes/replacements and job-generation isolation.
+Its ordinary LICM fixture asserts actual load motion and independent bounds
+refusals. The `licm_owned_globals`, `licm_owned_globals_bounds` and
+`licm_owned_global_alias` native cases run at opt0/1/2, including zero trips,
+negative/out-of-range indices, owner replacement and the distinct/shared-buffer
+8-versus-68 witness. Empty buffers and an earlier arithmetic trap keep their
+original failure behavior. `licm_owned_external_alias` links a C function that
+aliases globals before the loop without pointer arguments. Preserve the older
+checked-reference alias tests.
+
 `linker_ar_dialect_reader_tests.tl` compares GNU `ar`/`ranlib`, LLVM GNU/64-bit
 and BSD archives against recorded `ar tO` and `nm --print-armap` oracles.
 The internal test runs no external tools. It checks duplicate/empty/byte names,

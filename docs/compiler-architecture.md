@@ -25,6 +25,7 @@ session state only within its owner and invalidation contracts.
 | Source/import identity | [loader](../src/compiler_load.tl) | Reuse its resolver and parsed surface facts; a surface is not a complete expanded or checked program. |
 | Checked expressions and ownership | [typechecker](../src/compiler_typecheck_core.tl), [public entry points](../src/compiler_typecheck_api.tl) | Use context-owned facts; invalidate them when their semantic inputs or owners change. |
 | Shared IR and operands | [IR model](../src/compiler_ir_types.tl) | Extend `compiler-ir-instr-visit-uses`, `compiler-ir-instr-map` and related operand helpers instead of copying full-variant walkers. |
+| Global owning buffers | [optimizer program summaries](../src/compiler_optimize.tl) | Build `OptOwnedGlobals` from complete fresh trees and checked transfers; consume its job-local identities only through LICM's existing memory and readability proofs. |
 | Target predicates | [target cfg builder](../src/compiler_target_cfg_core.tl) | Use the shared target presets and [target dispatch guard](../scripts/check-codegen-target-dispatch.sh). |
 
 Optimizer, backend, driver/CLI and LSP implementations consume shared IR; its

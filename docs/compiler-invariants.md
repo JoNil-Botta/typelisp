@@ -1358,6 +1358,38 @@ Other destinations stay unknown across both scans; entry verification rejects
 duplicate definitions.
 Distinct checked-reference parameter roots still do not imply disjointness.
 
+`OptOwnedGlobals` can establish disjoint scalar buffers belonging to different
+globals. Its authority is the post-inline reachable program: every initializer
+and whole-global replacement must return a fresh allocation tree, or transfer
+one through a uniquely used local result slot. A `StoreOwned` into a fixed
+owning field records a transfer but is insufficient by itself; the descriptor's
+backing allocation and every use must also pass the constructor escape audit.
+Internal helper summaries follow the existing callee-first SCC order. Each
+invocation establishes freshness independently, even when two globals use the
+same initializer. Copies are accepted only as complete, linear transfers into
+fresh storage. Shallow aliases, unknown producers, mixed phis, owner/header
+writes, exposed global addresses and escaping owner pointers reject the proof.
+An unknown foreign writer anywhere in the reachable program also rejects it:
+emitted globals are link-visible, so foreign code can replace one before the
+loop without an address argument. External data declarations conservatively
+reject the table because they may expose an alternative link identity for that
+storage. Known runtime calls use the existing external-write effect proof.
+
+The first slice supports a direct scalar-array descriptor or one fixed-offset
+owning descriptor field. Transfers stay within a block; an inlined replacement
+whose fresh tree crosses blocks is conservatively unproven. The summary is
+built in scratch storage and clones only its job-owned maps out. It carries no
+pooled type IDs or process-global symbol cache. Rebuilding after inlining or a
+batch reset establishes a new set of dense buffer identities. LICM tracks cell,
+descriptor and backing-buffer paths separately, resetting byte coordinates at
+each pointer load. Only the backing-buffer stage receives a `GlobalBuffer`
+root. Distinct positive roots may separate stores, while same-owner writes,
+replacement and unknown calls retain the existing blocking rules. This proof
+grants neither readable extent nor permission to speculate a load; bounds,
+typed-word/header rules, trap order and profitability remain independent.
+`compiler_optimize_ownership_tests.tl` and the `licm_owned_globals*` integration
+cases cover the proof, consumer, unsafe shallow-alias boundary and resets.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before

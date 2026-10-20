@@ -76001,7 +76001,8 @@ return 0" true)
       empty.len-eq-clean
       empty.arg-global
       (opt.OptGlobalModRef true obj-index obj-writes)
-      empty.call-memory)))
+      empty.call-memory
+      empty.owned-globals)))
 
 (define (opt-guard-sink-run
   [name : String]
@@ -80775,6 +80776,7 @@ return 0" true)
         (& params)
         (& types)
         (& (opt_i64_i64_map.with-capacity 1))
+        (& (opt.opt-owned-globals-empty))
         (& blocks))]
     (match (opt.opt-licm-root-env-offset (& state.roots) (& (Var 1)))
       [(LookupFound offset) (= offset 0)]
@@ -80800,6 +80802,7 @@ return 0" true)
         (& params)
         (& types)
         (& (opt_i64_i64_map.with-capacity 1))
+        (& (opt.opt-owned-globals-empty))
         (& blocks))]
     (and
       (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))

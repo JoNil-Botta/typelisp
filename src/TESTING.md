@@ -316,6 +316,13 @@ safety corpus. This accessor is a freestanding Linux ABI primitive.
 
 ## Generated cfg declarations
 
+`source_selected_generated_export.tl` exercises selected aliases of generated
+macros, nested generators and a non-entry importer, with a caller-local shadow
+to check caller-syntax hygiene. Its native row and the public package build
+case run at opt0/1/2 on both hosts; the inline test reaches the same assertions.
+The paired safety cases retain located missing-selection and alias-collision
+errors after provider expansion.
+
 `tests/integration/generated_cfg.tl` constructs conditional syntax in both
 `Decls` and `Module` macros, including nested expansion and inactive missing
 imports. The native integration manifest runs it at the default level and pins

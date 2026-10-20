@@ -172,6 +172,22 @@ stderr empty
 # Generated target predicates survive package preparation, lowering and
 # direct-object/assembly emission (#7812). The root package build derives the
 # checked-in source identity itself: the shared bootstrap stamp is poisoned.
+case selfhost-cli-package-selected-generated-macro
+opt 0 1 2
+file pkg/typelisp.pkg
+(package (name "selected_generated_macro") (version "0.1.0") (kind bin))
+end-file
+sh mkdir -p "{{dir}}/pkg/src"
+sh cp "{{root}}/tests/integration/source_selected_generated_export.tl" "{{dir}}/pkg/src/main.tl"
+sh cp "{{root}}/tests/integration/source_selected_generated_dep.tl" "{{root}}/tests/integration/source_selected_generated_macro_dep.tl" "{{root}}/tests/integration/source_selected_generated_user.tl" "{{dir}}/pkg/src/"
+run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --target {{host-target}} --opt-level {{opt}}
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/pkg/target/release/selected_generated_macro{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
 case selfhost-cli-package
 file pkg/typelisp.pkg
 (package

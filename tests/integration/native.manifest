@@ -910,7 +910,7 @@ float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|
 decls_generated_imports|all|-|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl|-
 decls_generated_import_nested|all|-|tests/integration/decls_generated_import_nested.tl|42|-|-|decls_generated_import_dep.tl|-
 generated_import_alias_scopes|all|-|tests/integration/generated_import_alias_scopes.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl generated_import_alias_other_dep.tl|-
-source_selected_generated_export|all|-|tests/integration/source_selected_generated_export.tl|42|-|-|source_selected_generated_dep.tl source_selected_generated_macro_dep.tl|-
+source_selected_generated_export|all|0,1,2|tests/integration/source_selected_generated_export.tl|42|-|-|source_selected_generated_dep.tl source_selected_generated_macro_dep.tl source_selected_generated_user.tl stdlib/io.tl|-
 test_cli_entry_memory|all|-|src/tests/test_cli_entry_memory_smoke.tl|42|@tests/integration/test_cli_entry_memory.stdout.expected|-|test_cli_core_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|expected-stderr:@tests/integration/test_cli_entry_memory.stderr.expected
 test_cli_entry_state|all|-|src/tests/test_cli_entry_state_smoke.tl|42|-|-|-|-
 c_function_pointer_flow|all|-|tests/integration/c_function_pointer_flow.tl|0|-|-|c_function_pointer_dep.tl benchmarks/c_function_pointer_flow/baseline.c|-

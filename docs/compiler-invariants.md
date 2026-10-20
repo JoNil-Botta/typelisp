@@ -1959,6 +1959,11 @@ check, a failed top-environment build reuses this path-aware validator to
 recover the selected import's canonical diagnostic. Macro setup permits pending
 generator exports; final typechecking requires complete exports. Recovery runs
 only on failure and adds no namespace scan to successful environment builds.
+An append that introduces a `defmacro` replays the existing alias pass over
+the segmented module/import event index before publishing its next context.
+Selected aliases then bind in the ordinary symbol map even when their import
+preceded the generator. Ordinary value/function splices do not replay this
+pass; no pending alias registry or full declaration rescan is needed.
 Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated

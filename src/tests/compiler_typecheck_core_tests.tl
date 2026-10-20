@@ -8742,7 +8742,7 @@
     [ok : bool true]
     (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
     (tc_core.macro-alias-cache-ensure! macro-state)
-    (tc_core.macro-alias-cache-build-segmented! state)
+    (tc_core.macro-alias-cache-build-segmented! state false)
     (while (< index count)
       (set!
         (array-ref segmented index)

@@ -91427,10 +91427,11 @@
 ;; The splice walk will visit the delta itself, so this updates only the
 ;; whole-program facts and name sets that later declarations consult.
 (define (macro-live-prescan-append-decls!
-  [state : TcMacroState]
+  [job-state : TcJobState]
   [decls : ast.AstDeclList]
   [module-id : i64]) : unit
   (let
+    [state : TcMacroState (tc-job-state-macro-state job-state)]
     [expr-bases : i64 (ast.ast-node-pool-active-expr-segment-bases)]
     [delta-has-defmacro : bool (macro-program-has-defmacro? decls)]
     (tc-macro-walk-set!
@@ -91456,6 +91457,11 @@
         (macro-program-has-summary-macro-import? decls)))
     (when
       delta-has-defmacro
+      ;; Symbols and registries already contain the committed delta. Refresh
+      ;; selected aliases before publishing its next expansion context, using
+      ;; the existing module/import events rather than scanning declarations.
+      (macro-alias-cache-ensure! state)
+      (macro-alias-cache-build-segmented! job-state true)
       (tc-macro-walk-set!
         state
         macro-live-prescan-expr-type-names
@@ -103630,10 +103636,24 @@
   [state : TcMacroState]
   [decls : (& decls ast.AstDeclList)]
   [index : i64]
-  [cur-module-id : i64]) : i64
+  [cur-module-id : i64]
+  [refresh-selected? : bool]) : i64
   (match (ast.ast-decl-unwrapped
     (& (array-ref decls.slots (+ decls.offset index))))
     [(Module next-module) next-module]
+    [(Import _ (Spec (ModuleItem item) _ (Some target) (Some alias) _))
+      (when
+        refresh-selected?
+        (tc-macro-walk-set!
+          state
+          macro-live-symbols-value
+          (csym.compiler-symbols-add-selected-item-alias
+            (& (tc-macro-walk-field state macro-live-symbols-value))
+            target
+            item
+            cur-module-id
+            alias)))
+      cur-module-id]
     [(Import _decl-meta (Spec kind _ expected maybe-alias _))
       (if (macro-import-kind-module-alias? kind)
         (match maybe-alias
@@ -103666,7 +103686,7 @@
       (if (macro-decl-list-event-at? decls i)
         (set!
           cur-module-id
-          (macro-alias-cache-index-at! state decls i cur-module-id))
+          (macro-alias-cache-index-at! state decls i cur-module-id false))
         unit))
     cur-module-id))
 
@@ -103702,7 +103722,9 @@
       9
       (macro-decl-list-slots-data-addr decls))))
 
-(define (macro-alias-cache-build-segmented! [job-state : TcJobState]) : unit
+(define (macro-alias-cache-build-segmented!
+  [job-state : TcJobState]
+  [refresh-selected? : bool]) : unit
   (let
     [state : TcMacroState (tc-job-state-macro-state job-state)]
     [count : i64 (macro-segmented-program-decl-count job-state)]
@@ -103722,7 +103744,8 @@
           state
           (& prefix)
           (- (- len 1) (array-ref data.prefix-events event))
-          cur-module-id)))
+          cur-module-id
+          refresh-selected?)))
     (while (> node-address 0)
       (let
         [node : MacroProgramSegmentNodeData
@@ -103741,7 +103764,8 @@
               state
               (& decls)
               (- (array-ref events next-event) decls.offset)
-              cur-module-id))
+              cur-module-id
+              refresh-selected?))
           (+= next-event 1))
         (set! node-address node.next)
         (set! start 0)))
@@ -103900,7 +103924,7 @@
           (= (tc-macro-import-index-control state 5) 1))
         (tc-macro-import-index-control-set! state 3 0)
         (macro-alias-cache-ensure! state)
-        (macro-alias-cache-build-segmented! job-state)))
+        (macro-alias-cache-build-segmented! job-state false)))
     (macro-import-alias-target-cached-id
       state
       decls
@@ -114423,7 +114447,7 @@
                                     [_prescan-delta : unit
                                       (if incremental?
                                         (macro-live-prescan-append-decls!
-                                          macro-state
+                                          walk-state
                                           (tc-global-shared-view expanded)
                                           cur-module-id)
                                         unit)]
@@ -114664,7 +114688,7 @@
                                     unit)
                                   (if incremental?
                                     (macro-live-prescan-append-decls!
-                                      macro-state
+                                      walk-state
                                       (tc-global-shared-view materialized-decls)
                                       cur-module-id)
                                     (begin

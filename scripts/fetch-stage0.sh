@@ -246,10 +246,11 @@ while :; do
     sleep "$FETCH_RETRY_DELAY"
 done
 
-mv "$ASSET_TMP" "$DEST"
+# Publish a ready-to-execute asset so concurrent readers need no repair window.
 if [ "$NEED_EXEC" -eq 1 ]; then
-    chmod +x "$DEST"
+    chmod +x "$ASSET_TMP"
 fi
+mv "$ASSET_TMP" "$DEST"
 
 if [ ! -s "$DEST" ]; then
     echo "stage0 compiler is empty after install: $DEST" >&2

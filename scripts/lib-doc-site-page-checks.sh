@@ -167,8 +167,8 @@ doc_site_check_pages() {
                 else if (index(href, tree) == 1)
                     source_path = substr(href, length(tree) + 1)
                 if (source_path != "") {
-                    sub(/#.*/, "", source_path)
-                    if (!(source_path in source_exists))
+                    sub(/[?#].*/, "", source_path)
+                    if (source_path != "" && !(source_path in source_exists))
                         fail(page_base ": dead repository source link '\''" href "'\'' (missing " source_path ")")
                 }
                 if (index(href, "://") > 0 || href ~ /^\/\// || href ~ /^mailto:/)
@@ -275,7 +275,8 @@ doc_site_page_check_self_test_cases() {
     }
 
     printf '%s\n' \
-        '<a href="https://github.com/JoNil-Botta/typelisp/blob/fixture/docs/template.md#heading">source</a>' \
+        '<a href="https://github.com/JoNil-Botta/typelisp/blob/fixture/docs/template.md?plain=1#heading">source</a>' \
+        '<a href="https://github.com/JoNil-Botta/typelisp/tree/fixture/?plain=1">root</a>' \
         '<a href="https://github.com/JoNil-Botta/typelisp/tree/fixture/src">directory</a>' \
         '<a href="https://example.com/missing.md#heading">external</a>' \
         '<a href="//example.com/missing.md#heading">external</a>' \

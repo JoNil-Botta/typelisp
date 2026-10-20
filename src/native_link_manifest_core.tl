@@ -704,6 +704,14 @@
     [(n.CompilerStartup name)
       (check-id! v (& name) "startup.compiler" event)
       (when
+        (not (string.eq (& name) "typelisp.compiler-startup.v1"))
+        (diagnose!
+          v
+          (InvalidRuntime)
+          "startup.compiler"
+          event
+          "compiler startup requires its dedicated v1 runtime contract"))
+      (when
         (not (profile-helper? p (& name)))
         (diagnose!
           v
@@ -1016,6 +1024,62 @@
         "profile.runtime-identities"
         -1
         "resolved profile must identify its runtime contracts"))
+    (let
+      [required : String
+        (match p.runtime
+          [(n.CompilerFreestanding) "typelisp.runtime.v1"]
+          [(n.GlibcRuntime) "typelisp.glibc-runtime.v1"]
+          [(n.MuslRuntime) "typelisp.musl-runtime.v1"]
+          [(n.MsvcRuntime) "typelisp.msvc-runtime.v1"]
+          [(n.UcrtRuntime) "typelisp.ucrt-runtime.v1"])]
+      (when
+        (not (profile-helper? p (& required)))
+        (diagnose!
+          v
+          (MissingHelper)
+          "profile.runtime-identities"
+          -1
+          "selected runtime family requires its dedicated v1 contract")))
+    (when
+      (and
+        (match p.runtime
+          [(n.CompilerFreestanding) true]
+          [_ false])
+        (not
+          (profile-helper?
+            p
+            (if (= (target-index (& p.target)) 0)
+              "typelisp.linux-syscalls.v1"
+              "typelisp.windows-system-imports.v1"))))
+      (diagnose!
+        v
+        (MissingHelper)
+        "profile.runtime-identities"
+        -1
+        "compiler freestanding runtime requires its platform contract"))
+    (match p.entry
+      [(or (n.CompilerEntry name) (n.RuntimeEntry name) (n.NamedEntry name))
+        (check-name! v (& name) "profile.entry" -1)]
+      [_ unit])
+    (match p.interpreter
+      [(n.ProfileInterpreter)
+        (diagnose!
+          v
+          (ProfileMismatch)
+          "profile.interpreter"
+          -1
+          "resolved profile interpreter cannot refer to itself")]
+      [(n.ExplicitInterpreter path)
+        (path! v m p (& path) "profile.interpreter" -1)
+        (when
+          (!= (target-index (& p.target)) 0)
+          (diagnose!
+            v
+            (InvalidTarget)
+            "profile.interpreter"
+            -1
+            "interpreter is an ELF profile fact"))]
+      [_ unit])
     (for [i (iterator.range 0 (array-length (& p.imports)))]
       (check-name!
         v
@@ -1346,6 +1410,22 @@
   [event : i64]) : unit
   (match control
     [(n.EntryControl entry)
+      (when
+        (and
+          (match m.output
+            [(or (n.FreestandingStaticExecutable) (n.StaticExecutable)
+                 (n.StaticPieExecutable) (n.PieExecutable))
+              true]
+            [_ false])
+          (match entry
+            [(n.NoEntry) true]
+            [_ false]))
+        (diagnose!
+          v
+          (InvalidOutput)
+          "control.entry"
+          event
+          "executable output requires an explicit entry policy"))
       (match entry
         [(or (n.CompilerEntry name) (n.RuntimeEntry name) (n.NamedEntry name))
           (check-name! v (& name) "control.entry" event)]
@@ -1383,6 +1463,22 @@
           event
           "freestanding executable uses compiler _tl_start"))]
     [(n.StartupControl startup)
+      (when
+        (and
+          (match m.output
+            [(n.FreestandingStaticExecutable) true]
+            [_ false])
+          (not
+            (match startup
+              [(n.CompilerStartup name)
+                (string.eq (& name) "typelisp.compiler-startup.v1")]
+              [_ false])))
+        (diagnose!
+          v
+          (InvalidRuntime)
+          "control.startup"
+          event
+          "freestanding executable requires compiler startup"))
       (when
         (and
           (match m.output

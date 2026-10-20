@@ -652,3 +652,94 @@
           (> builtin binding)
           (> event builtin))
         "header, profile binding, reserved builtin and event errors are independently ordered"))))
+
+(test
+  native-link-freestanding-startup-contract-cannot-be-omitted-or-relabeled
+  (let
+    [limits : core.NativeLinkLimits (core.default-limits)]
+    (for [i (iterator.range 0 3)]
+      (let
+        [input : n.NativeLinkSemanticInput (support.sample false)]
+        (set!
+          (array-ref input.manifest.events 1).payload
+          (n.Control
+            (n.StartupControl
+              (match i
+                [0 (n.NoStartup)]
+                [1 (n.CompilerStartup "typelisp.runtime.v1")]
+                [_ (n.CompilerStartup "typelisp.linux-syscalls.v1")]))))
+        (let
+          [validation : core.NativeLinkValidation
+            (core.validate (& input) (& limits))]
+          [located : bool false]
+          (for [j (iterator.range 0 validation.count)]
+            (when
+              (and
+                (=
+                  (array-ref validation.diagnostics j).reason
+                  (core.InvalidRuntime))
+                (= (array-ref validation.diagnostics j).event-ordinal 1))
+              (set! located true)))
+          (test.assert-true
+            (and (not validation.ok) located)
+            "freestanding startup must name the dedicated compiler contract at its event"))))))
+
+(test
+  native-link-sealed-executable-cannot-omit-entry
+  (let
+    [input : n.NativeLinkSemanticInput (support.sealed-sample)]
+    [limits : core.NativeLinkLimits (core.default-limits)]
+    (set!
+      (array-ref input.manifest.events 0).payload
+      (n.Control (n.EntryControl (n.NoEntry))))
+    (let
+      [validation : core.NativeLinkValidation
+        (core.validate (& input) (& limits))]
+      [located : bool false]
+      (for [i (iterator.range 0 validation.count)]
+        (when
+          (and
+            (= (array-ref validation.diagnostics i).reason (core.InvalidOutput))
+            (= (array-ref validation.diagnostics i).event-ordinal 0))
+          (set! located true)))
+      (test.assert-true
+        (and (not validation.ok) located)
+        "sealed CRT executable cannot inherit a hidden entry default"))))
+
+(test
+  native-link-resolved-profile-facts-are-validated-independently
+  (let
+    [limits : core.NativeLinkLimits (core.default-limits)]
+    (for [i (iterator.range 0 3)]
+      (let
+        [input : n.NativeLinkSemanticInput (support.sealed-sample)]
+        (match i
+          [0 (set! input.profile.entry (n.RuntimeEntry ""))]
+          [1 (set! input.profile.interpreter (n.ProfileInterpreter))]
+          [_
+            (set!
+              input.profile.runtime-identities
+              (__tl_make-array
+                "typelisp.runtime.v1"
+                "typelisp.windows-system-imports.v1"))])
+        (support.rebind-profile! (&mut input))
+        (let
+          [validation : core.NativeLinkValidation
+            (core.validate (& input) (& limits))]
+          [field : String
+            (match i
+              [0 "profile.entry"]
+              [1 "profile.interpreter"]
+              [_ "profile.runtime-identities"])]
+          [located : bool false]
+          (for [j (iterator.range 0 validation.count)]
+            (when
+              (and
+                (= (array-ref validation.diagnostics j).event-ordinal -1)
+                (string.eq
+                  (& (array-ref validation.diagnostics j).field)
+                  (& field)))
+              (set! located true)))
+          (test.assert-true
+            (and (not validation.ok) located)
+            "resolved profile defaults and runtime-family contracts cannot remain implicit"))))))

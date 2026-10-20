@@ -47,7 +47,11 @@ contracts, entry/startup/image/interpreter/debug policies, system-import map,
 34 closed capability rows and nine hardening rows. Every capability must occur
 exactly once. Unknown versions, schema/helper identities, duplicate set keys,
 missing runtime contracts and incompatible target/output/debug/CRT policies
-reject. A supported row uses the `Implemented` reason and a known selected
+reject. Each runtime family must select its dedicated v1 runtime contract;
+compiler freestanding profiles also select the platform contract. Resolved
+profile entry names and interpreter paths validate independently of whether
+the chosen output uses those defaults, and a profile interpreter cannot refer
+to itself. A supported row uses the `Implemented` reason and a known selected
 runtime contract. Unsupported rows have a stable non-Implemented reason.
 Hardening states preserve the distinct `Required`, `Off`, `Forbidden` intent.
 V1 has no admitted feature-specific hardening proof: required rows serialize,
@@ -57,7 +61,10 @@ feature contract rather than inferring proof from runtime availability.
 
 The profile file schedule is ordered. A profile input event must match its
 selected file, content identity and position. A CRT startup identifies a file
-in that schedule; `ProfileStartup` requires startup inputs. Non-freestanding
+in that schedule; `ProfileStartup` requires startup inputs. Executables require
+an explicit entry policy. A freestanding executable requires the dedicated
+`typelisp.compiler-startup.v1` contract; another selected runtime helper cannot
+be relabeled as compiler startup. Non-freestanding
 runtime files require exact content identities and a nonzero runtime floor.
 V1 ordered file inputs admit object/archive/shared/import-library kinds. A
 linker script needs a future typed contract rather than an opaque input option.

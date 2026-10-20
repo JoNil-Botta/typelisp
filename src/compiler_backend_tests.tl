@@ -23486,15 +23486,25 @@ f:
           (Windows))]
       (backend.compiler-backend-state-set-scalar-registers-enabled! state true)
       (test.assert-true
-        (asm-ok?
-          (compiler-backend-test-emit-program-with-state
-            state
-            target
-            (& program)
-            (& spans)
-            false)
-          (has "leaq" "movq $1,"))
-        "coalesced branch addresses retain initialized backing storage"))))
+        (match (compiler-backend-test-emit-program-with-state
+          state
+          target
+          (& program)
+          (& spans)
+          false)
+          [(Ok asm)
+            (let
+              [join (compiler-backend-asm-function-body asm "_tl_join")]
+              [loop (compiler-backend-asm-function-body asm "_tl_loop")]
+              (and
+                (asm-has? join "movq $1," "movq $3,")
+                ;; One address formation and the final integer addition.
+                (= (backend.compiler-backend-string-count join "    leaq ") 2)
+                (asm-has? loop "movq $41," "movq $1,")
+                ;; The entry and backedge each materialize their own address.
+                (= (backend.compiler-backend-string-count loop "    leaq ") 2)))]
+          [(Err _) false])
+        "each function retains its backing storage and address setup"))))
 
 (define (compiler-backend-addr-of-register-home-shape-ok?) : bool
   (let

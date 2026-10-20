@@ -236,3 +236,6 @@ end
 
 case|selfhost_linker_elf_object_reader|src/linker_elf_object_reader.tl|assembly|none|direct
 end
+
+case|selfhost_linker_coff_import_reader|src/linker_coff_import_reader.tl|assembly|none|direct
+end

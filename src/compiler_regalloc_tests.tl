@@ -10565,18 +10565,12 @@
   (let
     [types : reg.CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 3)]
     [moves : reg.CompilerRegMoveSeq
-      (reg.compiler-reg-move-builder-finish
-        (reg.compiler-reg-move-list-add
-          (reg.compiler-reg-move-list-add
-            (reg.compiler-reg-move-builder-empty)
-            0
-            2
-            false
-            true)
-          2
-          1
-          false
-          true))]
+      (let
+        [builder : reg.CompilerRegMoveBuilder
+          (reg.compiler-reg-move-builder-empty)]
+        (reg.compiler-reg-move-list-add! (&mut builder) 0 2 false true)
+        (reg.compiler-reg-move-list-add! (&mut builder) 2 1 false true)
+        (reg.compiler-reg-move-builder-finish builder))]
     [index : reg.CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-flat-index)]
     [coalesce : reg.CompilerRegCoalesceMap
@@ -10625,13 +10619,11 @@
   (let
     [types : reg.CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
     [moves : reg.CompilerRegMoveSeq
-      (reg.compiler-reg-move-builder-finish
-        (reg.compiler-reg-move-list-add
-          (reg.compiler-reg-move-builder-empty)
-          0
-          1
-          false
-          true))]
+      (let
+        [builder : reg.CompilerRegMoveBuilder
+          (reg.compiler-reg-move-builder-empty)]
+        (reg.compiler-reg-move-list-add! (&mut builder) 0 1 false true)
+        (reg.compiler-reg-move-builder-finish builder))]
     [index : reg.CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-overlap-index)]
     [coalesce : reg.CompilerRegCoalesceMap
@@ -10658,13 +10650,11 @@
   (let
     [types : reg.CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
     [moves : reg.CompilerRegMoveSeq
-      (reg.compiler-reg-move-builder-finish
-        (reg.compiler-reg-move-list-add
-          (reg.compiler-reg-move-builder-empty)
-          0
-          1
-          false
-          true))]
+      (let
+        [builder : reg.CompilerRegMoveBuilder
+          (reg.compiler-reg-move-builder-empty)]
+        (reg.compiler-reg-move-list-add! (&mut builder) 0 1 false true)
+        (reg.compiler-reg-move-builder-finish builder))]
     [index : reg.CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-segment-index)]
     [coalesce : reg.CompilerRegCoalesceMap
@@ -10691,13 +10681,11 @@
   (let
     [types : reg.CompilerRegVarTypes (compiler-reg-coalesce-test-i64-types 2)]
     [moves : reg.CompilerRegMoveSeq
-      (reg.compiler-reg-move-builder-finish
-        (reg.compiler-reg-move-list-add
-          (reg.compiler-reg-move-builder-empty)
-          0
-          1
-          true
-          true))]
+      (let
+        [builder : reg.CompilerRegMoveBuilder
+          (reg.compiler-reg-move-builder-empty)]
+        (reg.compiler-reg-move-list-add! (&mut builder) 0 1 true true)
+        (reg.compiler-reg-move-builder-finish builder))]
     [index : reg.CompilerRegIntervalIndex
       (compiler-reg-coalesce-test-segment-index)]
     [coalesce : reg.CompilerRegCoalesceMap
@@ -16328,11 +16316,11 @@
         (reg.compiler-reg-move-builder-slot (& builder) 0 1 true)
         -1
         "empty index")
-      (set! builder (reg.compiler-reg-move-list-add builder 0 0 true true))
+      (reg.compiler-reg-move-list-add! (&mut builder) 0 0 true true)
       (test.assert-i64-eq builder.moves.len 0 "self move is ignored")
-      (set! builder (reg.compiler-reg-move-list-add builder 0 1 false false))
-      (set! builder (reg.compiler-reg-move-list-add builder 0 1 false false))
-      (set! builder (reg.compiler-reg-move-list-add builder 1 0 false true))
+      (reg.compiler-reg-move-list-add! (&mut builder) 0 1 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 0 1 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 1 0 false true)
       (test.assert-i64-eq
         builder.moves.len
         1
@@ -16341,8 +16329,8 @@
         (reg.compiler-reg-move-builder-slot (& builder) 1 0 false)
         -1
         "reverse absent as directed")
-      (set! builder (reg.compiler-reg-move-list-add builder 1 0 false false))
-      (set! builder (reg.compiler-reg-move-list-add builder 0 1 true false))
+      (reg.compiler-reg-move-list-add! (&mut builder) 1 0 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 0 1 true false)
       (test.assert-i64-eq
         builder.moves.len
         2
@@ -16353,7 +16341,7 @@
       (test.assert-true
         (array-ref builder.moves.slots 1).strict
         "directed duplicate upgrades newest reverse")
-      (set! builder (reg.compiler-reg-move-list-add builder 0 1 false true))
+      (reg.compiler-reg-move-list-add! (&mut builder) 0 1 false true)
       (test.assert-true
         (array-ref builder.moves.slots 1).strict
         "non-strict duplicate cannot downgrade")
@@ -16410,9 +16398,12 @@
               a)]
           [strict : bool (>= (% i 7) 3)]
           [undirected : bool (= (% i 3) 2)]
-          (set!
-            builder
-            (reg.compiler-reg-move-list-add builder src dst strict undirected))
+          (reg.compiler-reg-move-list-add!
+            (&mut builder)
+            src
+            dst
+            strict
+            undirected)
           (set!
             reference
             (compiler-reg-move-reference-add
@@ -16421,14 +16412,12 @@
               dst
               strict
               undirected))
-          (set!
-            peer
-            (reg.compiler-reg-move-list-add
-              peer
-              dst
-              src
-              (not strict)
-              (not undirected)))
+          (reg.compiler-reg-move-list-add!
+            (&mut peer)
+            dst
+            src
+            (not strict)
+            (not undirected))
           (set!
             peer-reference
             (compiler-reg-move-reference-add
@@ -16458,6 +16447,16 @@
       [builder : reg.CompilerRegMoveBuilder
         (reg.compiler-reg-move-builder-empty)]
       [key : i64 (reg.compiler-reg-move-pair-hash 1 17162)]
+      (let
+        [i : i64 0]
+        (while (< i (reg.compiler-reg-move-builder-small-limit))
+          (reg.compiler-reg-move-list-add!
+            (&mut builder)
+            (+ 100 i)
+            (+ 1000 i)
+            false
+            false)
+          (+= i 1)))
       (test.assert-i64-eq
         key
         (reg.compiler-reg-move-pair-hash 2 1)
@@ -16466,28 +16465,24 @@
         key
         (reg.compiler-reg-move-pair-hash 3 -17160)
         "negative endpoint shares the bucket")
-      (set!
-        builder
-        (reg.compiler-reg-move-list-add builder 1 17162 false false))
-      (set! builder (reg.compiler-reg-move-list-add builder 2 1 false false))
-      (set!
-        builder
-        (reg.compiler-reg-move-list-add builder 3 -17160 false false))
+      (reg.compiler-reg-move-list-add! (&mut builder) 1 17162 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 2 1 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 3 -17160 false false)
       (test.assert-i64-eq
         builder.moves.len
-        3
+        (+ (reg.compiler-reg-move-builder-small-limit) 3)
         "hash collisions do not suppress distinct moves")
       (test.assert-i64-eq
         (reg.compiler-reg-move-builder-slot (& builder) 1 17162 false)
-        0
+        (reg.compiler-reg-move-builder-small-limit)
         "oldest collision slot")
       (test.assert-i64-eq
         (reg.compiler-reg-move-builder-slot (& builder) 2 1 false)
-        1
+        (+ (reg.compiler-reg-move-builder-small-limit) 1)
         "middle collision slot")
       (test.assert-i64-eq
         (reg.compiler-reg-move-builder-slot (& builder) 3 -17160 false)
-        2
+        (+ (reg.compiler-reg-move-builder-small-limit) 2)
         "newest collision slot")
       (test.assert-i64-eq
         key
@@ -16497,24 +16492,101 @@
         (reg.compiler-reg-move-builder-slot (& builder) 4 -34321 false)
         -1
         "absent collision walks through the final link")
-      (set!
-        builder
-        (reg.compiler-reg-move-list-add builder 1 17162 false false))
-      (set! builder (reg.compiler-reg-move-list-add builder 17162 1 true true))
+      (reg.compiler-reg-move-list-add! (&mut builder) 1 17162 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 17162 1 true true)
       (test.assert-i64-eq
         builder.moves.len
-        3
+        (+ (reg.compiler-reg-move-builder-small-limit) 3)
         "colliding directed and reversed undirected duplicates are suppressed")
       (test.assert-true
-        (array-ref builder.moves.slots 0).strict
+        (array-ref
+          builder.moves.slots
+          (+ (reg.compiler-reg-move-builder-small-limit) 0)).strict
         "strict upgrade walks the collision chain")
       (test.assert-true
-        (not (array-ref builder.moves.slots 1).strict)
+        (not
+          (array-ref
+            builder.moves.slots
+            (+ (reg.compiler-reg-move-builder-small-limit) 1)).strict)
         "middle collider keeps strictness")
       (test.assert-true
-        (not (array-ref builder.moves.slots 2).strict)
+        (not
+          (array-ref
+            builder.moves.slots
+            (+ (reg.compiler-reg-move-builder-small-limit) 2)).strict)
         "newest collider keeps strictness")
       (test.assert-i64-eq
         builder.links.len
         builder.moves.len
         "one link per retained move"))))
+
+(cfg
+  test
+  (test
+    regalloc-move-index-prefix-promotion
+    (let
+      [builder : reg.CompilerRegMoveBuilder
+        (reg.compiler-reg-move-builder-empty)]
+      [limit : i64 (reg.compiler-reg-move-builder-small-limit)]
+      [i : i64 0]
+      (while (< i limit)
+        (reg.compiler-reg-move-list-add! (&mut builder) i (+ i 1) false false)
+        (+= i 1))
+      (test.assert-i64-eq builder.moves.len limit "exact short-list boundary")
+      (test.assert-i64-eq
+        builder.index.len
+        0
+        "bounded prefix needs no hash entries")
+      (test.assert-i64-eq builder.links.len 0 "bounded prefix needs no links")
+      (reg.compiler-reg-move-list-add!
+        (&mut builder)
+        (- limit 1)
+        limit
+        true
+        false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 0 0 true true)
+      (test.assert-i64-eq
+        builder.moves.len
+        limit
+        "duplicate and self move do not promote")
+      (test.assert-i64-eq
+        builder.index.len
+        0
+        "strict upgrade stays in the bounded prefix")
+      (reg.compiler-reg-move-list-add!
+        (&mut builder)
+        limit
+        (+ limit 1)
+        false
+        false)
+      (test.assert-i64-eq
+        builder.moves.len
+        (+ limit 1)
+        "new unique move promotes once")
+      (test.assert-true (> builder.index.len 0) "promotion builds buckets")
+      (test.assert-i64-eq
+        builder.links.len
+        builder.moves.len
+        "promotion indexes the whole prefix")
+      (set! i 0)
+      (while (<= i limit)
+        (test.assert-i64-eq
+          (reg.compiler-reg-move-builder-slot (& builder) i (+ i 1) false)
+          i
+          "promotion retains every original slot")
+        (+= i 1))
+      (test.assert-true
+        (array-ref builder.moves.slots (- limit 1)).strict
+        "promotion preserves earlier strict upgrades")
+      (reg.compiler-reg-move-list-add! (&mut builder) 1 0 false false)
+      (reg.compiler-reg-move-list-add! (&mut builder) 0 1 true false)
+      (test.assert-true
+        (not (array-ref builder.moves.slots 0).strict)
+        "old forward remains non-strict after promotion")
+      (test.assert-true
+        (array-ref builder.moves.slots (+ limit 1)).strict
+        "newest reverse gets the strict upgrade")
+      (test.assert-i64-eq
+        builder.links.len
+        builder.moves.len
+        "later insertions retain link alignment"))))

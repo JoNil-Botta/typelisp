@@ -177,6 +177,27 @@
     (set! (array-ref xs 0) (CopyRec n 1 2))
     (scrub-ref (& (array-ref xs 0).x) 7)))
 
+(define global-shared : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+(define global-mutable : (__tl_dyn-array i64)
+  (__tl_make-array i64 1))
+
+(define (global-pair-target
+  [input : (& (__tl_dyn-array i64))]
+  [output : (&mut (__tl_dyn-array i64))]) : i64
+  (set! (array-ref output 0) (array-ref input 0))
+  (scrub-ref (& (array-ref input 0)) 7))
+
+(define (global-pair [n : i64]) : i64
+  (set! (array-ref global-shared 0) n)
+  (global-pair-target (& global-shared) (&mut global-mutable)))
+
+;; A local with a global's spelling must still fail the global-storage proof.
+(define (global-shadow [n : i64]) : i64
+  (let
+    [global-shared : (Array i64 3) (array n 0 0)]
+    (scrub-ref (& (array-ref global-shared 0)) 7)))
+
 ;; A borrow of a scalar local is a copy in its own heap storage.
 (define (scalar-copy [n : i64]) : i64
   (let
@@ -217,6 +238,8 @@
         (= frame 45)
         (= outside 47)
         (= extra 15)
-        (= (heap-projected-field 42) 42))
+        (= (heap-projected-field 42) 42)
+        (= (global-pair 42) 42)
+        (= (global-shadow 42) 42))
         42
         1))))

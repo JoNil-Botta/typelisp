@@ -67394,21 +67394,29 @@
               type-env
               (& (lower-context-expr-get ctx id)))]
           [(Err _) false])
-        (and
-          (lower-tail-call-safe-param-aggregate-arg? ctx state env expr)
-          (match (tc_core.tc-lookup-id type-env name)
-            [(Ok ty)
-              (let
-                [resolved : ast.AstType
-                  (tc_core.tc-type-strip-region
-                    (tc_core.tc-resolve-type ctx ty))]
-                (match (& resolved)
-                  [(or (Ref _ _) (MutRef _ _)) true]
-                  [_
-                    (and
-                      (lower-type-inline-storage? ctx (& resolved))
-                      (not (lower-type-register-resident? ctx resolved)))]))]
-            [(Err _) false])))]
+        (or
+          ;; A typed global binding has no local IR binding. Its storage
+          ;; outlives this frame, including a mutable borrow of that storage.
+          (and
+            (not (sym_i64_env.sym-i64-contains-id env name))
+            (match (tc_core.tc-lookup-id type-env name)
+              [(Ok _) true]
+              [(Err _) false]))
+          (and
+            (lower-tail-call-safe-param-aggregate-arg? ctx state env expr)
+            (match (tc_core.tc-lookup-id type-env name)
+              [(Ok ty)
+                (let
+                  [resolved : ast.AstType
+                    (tc_core.tc-type-strip-region
+                      (tc_core.tc-resolve-type ctx ty))]
+                  (match (& resolved)
+                    [(or (Ref _ _) (MutRef _ _)) true]
+                    [_
+                      (and
+                        (lower-type-inline-storage? ctx (& resolved))
+                        (not (lower-type-register-resident? ctx resolved)))]))]
+              [(Err _) false]))))]
     [(or (StructGet receiver _) (TupleRef receiver _))
       (lower-tail-call-external-place?
         ctx

@@ -1351,7 +1351,8 @@ formal types and `tc-call-effective-arg-expr`, including implicit borrows;
 a scalar field's source type does not reveal that its address is passed.
 References, slices, strings-as-views and inline aggregates require a proof:
 an unchanged parameter, a reference-parameter reborrow, caller-owned
-memory-class parameter storage, or a supported heap projection. A shared
+memory-class parameter storage, a typed global binding without a local IR
+binding, or a supported heap projection. A shared
 borrow of a plain scalar variable is safe because lowering copies it into
 `tl_alloc` storage. Local reference/view aliases, unknown call results and
 Copy aggregates materialized from heap elements do not acquire a proof.

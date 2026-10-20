@@ -1506,6 +1506,12 @@ not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
 in fn _tl_tail_call_frame_provenance_heap_projected_field
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_global_pair
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_global_pair_target$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_global_pair_target$
+in fn _tl_tail_call_frame_provenance_global_shadow
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 in fn _tl_tail_call_frame_provenance_local_indirect_field
 match ^[[:space:]]+call \*
 not-match ^[[:space:]]+jmp \*

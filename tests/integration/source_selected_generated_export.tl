@@ -4,6 +4,8 @@
 ;; module having been seen already, and must not break it afterwards.
 ;; The `lint-allow` lines cover #7865: lint reports a selected import as
 ;; unused even when its bare name is referenced.
+(import source_selected_generated_shadow as unrelated)
+
 ;; lint-allow: unused-import
 (import source_selected_generated_dep.answer)
 (import stdlib.io)
@@ -58,6 +60,7 @@
       (= answer -100)
       (= (renamed-add (+ answer 100)) 42)
       (= (renamed-answer) 42)
+      (= (unrelated.renamed-answer) 7)
       (= (renamed-nested) 42)
       (= (generated-answer) 42)
       (= (dep.generated-answer) 42)

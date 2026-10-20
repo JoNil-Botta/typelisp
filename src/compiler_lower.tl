@@ -28342,7 +28342,7 @@
         (Ok (tc_core.tc-type-without-regions expr-ty)))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(Some ty)
           (Ok
@@ -29534,7 +29534,7 @@
       (lower-materialize-at-expr ctx state (I64 1) expr-ty origin)]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(Some ty) (lower-init-expr ctx state env type-env ty origin expr-ty)]
         [(No)
@@ -30587,7 +30587,7 @@
         (lower-box-get ctx state env type-env inner expected-ty))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(No)
           (lower-init-expr
@@ -36863,7 +36863,7 @@
               type-env
               address
               (ast.ast-maybe-type-from-id-with-pools
-                (tc_core.tc-context-pools ctx)
+                (& (tc_core.tc-context-pools ctx))
                 maybe-ty-id)
               result-ty
               origin)])]

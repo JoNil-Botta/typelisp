@@ -2045,6 +2045,18 @@ Before runtime lowering, `build-package-tlci-capture-exports` records callable
 metadata as canonical TLCI text, sorted macro identities as owned strings, and
 the complete generated transformer source. `TlciNativeMacroCaptures` contains
 AST body and parameter references, so it stays inside that capture operation.
+`TlciNativeSourceContext` supplies the expression/type pools and interner that
+own those references. All source-generation helpers borrow that context;
+rendering reads neither installed pool nor installed intern spellings. The
+context caches its source owner's result-kind and unquote sentinel IDs through
+read-only lookup. A missing sentinel is not a valid negative-ID match. These
+are source syntax identities, independent of the later backend's builtin table.
+Package capture passes the runtime child's driver owners. The standalone image
+builder and serial fixtures freeze their parsed owners at named boundaries.
+They must finish rendering before those owners reset or retire. The producer's
+existing serial rendering scratch and later backend compilation remain serial
+boundaries; this source-owner handoff does not remove the driver bridges still
+tracked by #5754 and #5756.
 Capture runs in a disposable scratch arena: collectors, temporary rendering and
 AST-backed macro captures do not survive it. Only the final metadata text, each
 catalog name, transformer source or diagnostic is copied into the caller owner.

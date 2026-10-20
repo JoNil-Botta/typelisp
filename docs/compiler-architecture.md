@@ -43,6 +43,12 @@ and reusable facts. Job-state isolation remains an ongoing migration in
 [#5756](https://github.com/JoNil-Botta/typelisp/issues/5756). Serial compatibility
 adapters do not make an ambient owner safe for a value from another job.
 
+[Native TLCI source generation](../src/compiler_tlci_native_producer.tl) reads
+captured nodes and names through `TlciNativeSourceContext`. Its source owners
+remain live until canonical transformer text is captured; the
+[package capture boundary](compiler-invariants.md#package-direct-object-routing)
+defines what may cross their retirement.
+
 The [detailed invariants](../docs/compiler-invariants.md) retain the stage-specific
 contracts, canonical APIs and regression witnesses. The
 [executable template registry](../docs/compiler-x64-executable-templates.md)

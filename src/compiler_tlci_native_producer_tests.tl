@@ -4,6 +4,12 @@
 ;; src/tests/comptime_host_smoke.tl, and the gates that compile every stdlib
 ;; macro through both routes cover the end-to-end expansions. Refs #8274.
 (import compiler_tlci_native_producer as producer)
+(import compiler_ast_types as ast)
+(import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
+(import compiler_parse_core as parser)
+(import stdlib.io)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.test)
@@ -14,6 +20,296 @@
   (match (producer.embedded-native-batch-op (& line))
     [(EmbeddedNativeBatchOpSome name tokens) (str_cat.str-cat name tokens)]
     [(EmbeddedNativeBatchOpNone) "none"]))
+
+(defstruct ProducerOwnerFixture
+  (context producer.TlciNativeSourceContext)
+  (names (__tl_dyn-array String))
+  (captures producer.TlciNativeMacroCaptures)
+  (serial-source String)
+  (serial-reasons String))
+
+(define (producer-owner-input [callee : String] [wrapper : String]) : String
+  (str_cat.str-cat
+    "(defmacro (entry [value : Expr]) : Expr `("
+    callee
+    " ,value))\n"
+    "(defmacro (typed [T : type]) : Expr `(init : ("
+    wrapper
+    " ,T)))\n"
+    "(defmacro (unsupported [value : Expr]) : Expr (unknown-source-helper value))\n"))
+
+(define (producer-owner-reasons) : String
+  (string.copy
+    (& (array-ref producer.embedded-stdlib-tlci-native-report-reasons 0))))
+
+;; Setup deliberately follows the serial parse boundary. Only the later pure
+;; generation calls run under a different installed owner.
+(define (producer-owner-fixture [callee : String] [wrapper : String]) : ProducerOwnerFixture
+  (ci.intern-compat-state-install! (& (ci.intern-compat-state-new)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [parse-state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-capture-active))]
+    [source : String (producer-owner-input callee wrapper)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    (match (parser.parse-ast-source-with-cfg-and-pools
+      (& source)
+      (parser.compiler-parse-state-cfgs
+        (& parse-state)
+        (parser.compiler-cfg-empty))
+      (owned_view.compiler-owned-shared-view pools))
+      [(Err message) (io.panic message)]
+      [(Ok program)
+        (match program
+          [(Program declarations)
+            (let
+              [context : producer.TlciNativeSourceContext
+                (producer.tlci-native-source-context-new
+                  pools
+                  (parser.compiler-parse-state-owner
+                    (parser.compiler-parse-state-control-addr (& parse-state))))]
+              [names : (__tl_dyn-array String) (__tl_make-array String 3)]
+              [captures : producer.TlciNativeMacroCaptures
+                (producer.tlci-native-macro-captures-new)]
+              [cursor : ast.AstDeclList (deref declarations)]
+              [index : i64 0]
+              [done : bool false]
+              (while (not done)
+                (match (ast.ast-decl-list-step cursor)
+                  [(Nil) (set! done true)]
+                  [(Cons declaration rest)
+                    (match declaration
+                      [(DefMacro _ name params ret body)
+                        (let
+                          [identity : String
+                            (producer.embedded-stdlib-tlci-identity
+                              (& context)
+                              "owner"
+                              name)]
+                          (set! (array-ref names index) (string.copy identity))
+                          (producer.tlci-native-macro-captures-push!
+                            (&mut captures)
+                            (producer.TlciNativeMacroCapture
+                              identity
+                              params
+                              (producer.embedded-native-macro-result-kind
+                                (& context)
+                                ret)
+                              body))
+                          (set! index (+ index 1)))]
+                      [_ (io.panic "owner fixture must contain three macros")])
+                    (set! cursor rest)]))
+              (unless (= index 3) (io.panic "owner fixture macro count"))
+              (let
+                [generated : String
+                  (producer.embedded-native-source
+                    (& context)
+                    (owned_view.compiler-owned-shared-view names)
+                    (& captures))]
+                (test.assert-i64-eq
+                  (array-ref
+                    producer.embedded-stdlib-tlci-native-report-count
+                    0)
+                  2
+                  "the expression and typed-init entries are native")
+                (ProducerOwnerFixture
+                  context
+                  names
+                  captures
+                  generated
+                  (producer-owner-reasons))))])])))
+
+(define (producer-owner-source [fixture : (& fixture ProducerOwnerFixture)]) : String
+  (producer.embedded-native-source
+    (& fixture.context)
+    (owned_view.compiler-owned-reference-shared-view (& fixture.names))
+    (& fixture.captures)))
+
+(define (producer-owner-annotation [fixture : (& fixture ProducerOwnerFixture)]) : i64
+  (match (producer.embedded-stdlib-tlci-unwrap-expr
+    (& fixture.context)
+    (__tl-project-field (array-ref fixture.captures.slots 1) body))
+    [(Quasiquote template)
+      (match (producer.embedded-stdlib-tlci-unwrap-expr
+        (& fixture.context)
+        template)
+        [(Init annotation) annotation]
+        [_ -1])]
+    [_ -1]))
+
+(define (producer-owner-isolation!) : unit
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [home-interns : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [home-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [home-builtins : cbi.CompilerBuiltinIdsState (cbi.state-capture)]
+    [a : ProducerOwnerFixture (producer-owner-fixture "fnalpha" "Ptr")]
+    [b : ProducerOwnerFixture (producer-owner-fixture "fnbravo" "Box")]
+    [decoy : ProducerOwnerFixture (producer-owner-fixture "fnother" "Slice")]
+    [decoy-id : i64 (ci.intern-active-table-id)]
+    [decoy-generation : i64 (ci.intern-generation)]
+    [decoy-length : i64 (ci.intern-pool-len)]
+    [decoy-expressions : i64
+      (ast.ast-node-pool-context-expr-len decoy.context.pools)]
+    [decoy-types : i64 (ast.ast-node-pool-context-type-len decoy.context.pools)]
+    [round : i64 0]
+    (test.assert-i64-eq
+      (__tl-project-field (array-ref a.captures.slots 0) body)
+      (__tl-project-field (array-ref b.captures.slots 0) body)
+      "expression IDs collide across A and B")
+    (test.assert-i64-eq
+      (__tl-project-field (array-ref a.captures.slots 0) body)
+      (__tl-project-field (array-ref decoy.captures.slots 0) body)
+      "the decoy has the same expression ID")
+    (test.assert-true
+      (>= (producer-owner-annotation (& a)) 0)
+      "typed init has a pooled annotation")
+    (test.assert-i64-eq
+      (producer-owner-annotation (& a))
+      (producer-owner-annotation (& b))
+      "type IDs collide across A and B")
+    (test.assert-i64-eq
+      (producer-owner-annotation (& a))
+      (producer-owner-annotation (& decoy))
+      "the decoy has the same type ID")
+    (test.assert-true
+      (and
+        (match (ast.ast-node-pool-context-type-get
+          a.context.pools
+          (producer-owner-annotation (& a)))
+          [(Ptr _) true]
+          [_ false])
+        (match (ast.ast-node-pool-context-type-get
+          b.context.pools
+          (producer-owner-annotation (& b)))
+          [(Box _) true]
+          [_ false])
+        (match (ast.ast-node-pool-context-type-get
+          decoy.context.pools
+          (producer-owner-annotation (& decoy)))
+          [(Slice _) true]
+          [_ false]))
+      "the colliding type IDs denote different constructors")
+    (test.assert-i64-eq
+      (producer.tlci-native-source-name-id (& a.context.intern-state) "fnalpha")
+      (producer.tlci-native-source-name-id (& b.context.intern-state) "fnbravo")
+      "different source spellings collide numerically across owners")
+    (test.assert-i64-eq
+      (producer.tlci-native-source-name-id (& a.context.intern-state) "fnalpha")
+      (producer.tlci-native-source-name-id
+        (& decoy.context.intern-state)
+        "fnother")
+      "the installed decoy has the same numeric callee ID")
+    (test.assert-true
+      (> (occurrences (& a.serial-source) "fnalpha") 0)
+      "A's serial source contains its own callee")
+    (test.assert-true
+      (not (string.eq a.serial-source b.serial-source))
+      "the fixtures produce distinct source")
+    (while (< round 3)
+      (test.assert-owned-string-eq
+        (producer-owner-source (& a))
+        a.serial-source
+        "A ignores installed expression/type pools and intern names")
+      (test.assert-owned-string-eq
+        (producer-owner-reasons)
+        a.serial-reasons
+        "A's unsupported-body diagnostic is stable")
+      (test.assert-owned-string-eq
+        (producer-owner-source (& b))
+        b.serial-source
+        "B ignores installed expression/type pools and intern names")
+      (test.assert-owned-string-eq
+        (producer-owner-reasons)
+        b.serial-reasons
+        "B's unsupported-body diagnostic is stable")
+      (set! round (+ round 1)))
+    ;; Reset only the retired input owner. Its peer remains a valid source
+    ;; snapshot, and no producer call is allowed to resurrect A's old IDs.
+    (ast.ast-node-pool-context-reset-to!
+      (owned_view.compiler-owned-shared-view a.context.pools)
+      0
+      0)
+    (ci.intern-compat-state-reset! (&mut a.context.intern-state))
+    (test.assert-owned-string-eq
+      (producer-owner-source (& b))
+      b.serial-source
+      "resetting A preserves B's captured source")
+    (test.assert-i64-eq
+      (ci.intern-active-table-id)
+      decoy-id
+      "decoy table unchanged")
+    (test.assert-i64-eq
+      (ci.intern-generation)
+      decoy-generation
+      "decoy generation unchanged")
+    (test.assert-i64-eq
+      (ci.intern-pool-len)
+      decoy-length
+      "decoy intern length unchanged")
+    (test.assert-i64-eq
+      (ast.ast-node-pool-context-expr-len decoy.context.pools)
+      decoy-expressions
+      "decoy expression pool unchanged")
+    (test.assert-i64-eq
+      (ast.ast-node-pool-context-type-len decoy.context.pools)
+      decoy-types
+      "decoy type pool unchanged")
+    (test.assert-owned-string-eq
+      (producer-owner-source (& decoy))
+      decoy.serial-source
+      "the decoy's own source remains intact")
+    (ci.intern-compat-state-install! home-interns)
+    (ast.ast-node-pool-context-install! home-pools)
+    (cbi.state-install! (& home-builtins))))
+
+(test native-source-explicit-owner-isolation (producer-owner-isolation!))
+
+(define (producer-owner-result-kinds!) : unit
+  (let
+    [a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [module-a : i64 (ci.intern-compat-state-intern (&mut a) "Module")]
+    [decls-b : i64 (ci.intern-compat-state-intern (&mut b) "Decls")]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [context-a : producer.TlciNativeSourceContext
+      (producer.tlci-native-source-context-new
+        (owned_view.compiler-owned-shared-view pools)
+        a)]
+    [context-b : producer.TlciNativeSourceContext
+      (producer.tlci-native-source-context-new
+        (owned_view.compiler-owned-shared-view pools)
+        b)]
+    [empty : producer.TlciNativeSourceContext
+      (producer.tlci-native-source-context-new
+        pools
+        (ci.intern-compat-state-new))]
+    (test.assert-i64-eq
+      module-a
+      decls-b
+      "same numeric ID has different result spelling")
+    (test.assert-i64-eq
+      (producer.embedded-native-macro-result-kind (& context-a) (Var module-a))
+      1
+      "Module uses A's interner")
+    (test.assert-i64-eq
+      (producer.embedded-native-macro-result-kind (& context-b) (Var decls-b))
+      2
+      "Decls uses B's interner")
+    (test.assert-i64-eq
+      (producer.embedded-native-macro-result-kind (& empty) (Var -1))
+      0
+      "missing sentinels never match a negative name")))
+
+(test
+  native-source-result-kind-owner-and-missing-sentinels
+  (producer-owner-result-kinds!))
 
 (define (name-arg [escaped : String]) : String
   (str_cat.str-cat

@@ -535,6 +535,9 @@ while_nonunit_first_reject|check-fail|tests/safety/while_nonunit_first_reject.tl
 while_nonunit_macro_reject|check-fail|tests/safety/while_nonunit_macro_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
 while_nonunit_decls_reject|check-fail|tests/safety/while_nonunit_decls_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
 while_empty_splice_reject|check-fail|tests/safety/while_empty_splice_reject.tl|-|typecheck: while requires at least one body expression
+macro_body_splice_non_list_reject|check-fail|tests/safety/macro_body_splice_non_list_reject.tl|-|unquote-splicing expects ExprList
+macro_body_splice_scalar_position_reject|check-fail|tests/safety/macro_body_splice_scalar_position_reject.tl|-|unquote-splicing is only valid in a quasiquote list
+macro_body_splice_unquoted_reject|check-fail|tests/safety/macro_body_splice_unquoted_reject.tl|-|unquote-splicing is only valid inside quasiquote
 while_ignored_result_reject|check-fail|tests/safety/while_ignored_result_reject.tl|-|typecheck: while body must be unit: expected unit, found Outcome
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match

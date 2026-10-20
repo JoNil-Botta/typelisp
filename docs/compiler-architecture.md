@@ -19,6 +19,11 @@ Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
 
+The parser preserves body-sequence list positions through macro expansion,
+including a lone splice in a body stored as one AST expression. The
+[body representation contract](compiler-invariants.md#architecture) records
+the singleton `Begin` rule alongside the `While` body-list contract.
+
 | Shared fact | Canonical implementation | Consumer obligation |
 | --- | --- | --- |
 | Syntax and pooled AST nodes | [parser](../src/compiler_parse_core.tl), [AST model](../src/compiler_ast_types.tl) | Reuse parsing and `ast-expr-child-ids`/`ast-expr-children`; carry the node's owner. |

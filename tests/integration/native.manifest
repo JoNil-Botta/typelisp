@@ -22,6 +22,7 @@
 # suite-members: space-separated smoke drivers the row's source runs.
 packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
+macro_body_splice|all|0,1,2|tests/integration/macro_body_splice.tl|42|-|-|-|stage-stdlib
 ubound_self_call_inbounds|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|6\n|3 3 2 1 1|stdlib/io.tl stdlib/string.tl|-
 ubound_self_call_first_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|0 1 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=0 length=0\n
 ubound_self_call_mid_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 3 2 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=2 length=2\n

@@ -1,5 +1,15 @@
 # Selfhost compiler testing
 
+`compiler-lower-loop-address-exposure` checks that arguments, wrapped callees
+and projected register aggregates are captured before opaque mutation across
+loop backedges. Match bindings have the same rule; shadowed let and match
+bindings, lambda boundaries, reference arguments and read-only tails
+retain their existing no-copy behavior. `loop_address_argument.tl`,
+`loop_address_callee.tl` and `loop_address_snapshots.tl` compare raw-pointer
+effects with explicit snapshots at opt0/1/2 on both hosts, including zero, one
+and multiple iterations and capturing lambdas. The stored mutable-borrow safety
+case retains E0207; these tests do not add stored scalar borrow support.
+
 `backend-forwarded-address-*` tests coalesced copies and same-type casts on
 both targets, phi filtering and cycle scheduling, and final-IR branch loads
 whose address setup must survive. Initialized same-home copies and real swap

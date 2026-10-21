@@ -36,6 +36,7 @@ the singleton `Begin` rule alongside the `While` body-list contract.
 | Syntax and pooled AST nodes | [parser](../src/compiler_parse_core.tl), [AST model](../src/compiler_ast_types.tl) | Reuse parsing and `ast-expr-child-ids`/`ast-expr-children`; carry the node's owner. |
 | Source/import identity | [loader](../src/compiler_load.tl) | Reuse its resolver and parsed surface facts; a surface is not a complete expanded or checked program. |
 | Checked expressions and ownership | [typechecker](../src/compiler_typecheck_core.tl), [public entry points](../src/compiler_typecheck_api.tl) | Use context-owned facts; invalidate them when their semantic inputs or owners change. |
+| Function-local address exposure | [lowering](../src/compiler_lower.tl) | Census expanded source before body emission, distinguish lexical bindings, and seed allocated IR slots; missing or incomplete facts remain conservative under the [snapshot invariant](compiler-invariants.md). |
 | Tail-call argument storage | [lowering](../src/compiler_lower.tl) | Inspect effective arguments against formal types and prove storage survives frame release; preserve the [lowering invariants](compiler-invariants.md). |
 | Shared IR and operands | [IR model](../src/compiler_ir_types.tl) | Extend `compiler-ir-instr-visit-uses`, `compiler-ir-instr-map` and related operand helpers instead of copying full-variant walkers. |
 | Target predicates | [target cfg builder](../src/compiler_target_cfg_core.tl) | Use the shared target presets and [target dispatch guard](../scripts/check-codegen-target-dispatch.sh). |

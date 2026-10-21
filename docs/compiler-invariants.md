@@ -377,6 +377,20 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+Address exposure is a complete function-local source census, not the order in
+which lowering encounters address instructions: an earlier loop iteration can
+expose storage used before that instruction in the next iteration. Existing
+function state owns facts keyed by binding kind, source scope and hygienic name;
+the scan never predicts IR IDs. Parameter, local, pattern and loop binders seed
+the existing address-taken map when their slots are allocated, and scope entry
+seeds only visible bindings. Nested lambdas own separate censuses after capture.
+Ordinary traversal uses the shared AST child schema; binder forms establish
+their lexical environments explicitly. Place classification reuses lowering's
+slot-versus-referent rules. Missing bindings or incomplete facts conservatively
+count as exposed, and incremental marks still cover synthesized storage. This
+keeps shadowed or unrelated bindings and read-only argument tails on their
+existing no-copy path without losing loop-carried exposure.
+
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left
 global reads are materialized before an effectful right operand. Short-circuit

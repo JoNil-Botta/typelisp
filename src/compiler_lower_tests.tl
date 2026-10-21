@@ -1787,6 +1787,7 @@
 
 (define (compiler-lower-loop-exposure-source) : String
   "(defstruct Pair (left i64) (right i64))
+(defenum Choice (Value i64))
 (define (first [a : i64] [_b : i64]) : i64 a)
 (define (first-ref [a : (& i64)] [_b : i64]) : i64 (deref a))
 (define (inc [x : i64]) : i64 (+ x 1))
@@ -1813,11 +1814,23 @@
     (while (< i n)
       (when (= i 1) (set! result (first pair.left (write-99! q))))
       (set! q (unsafe (ptr-addr-of pair.left))) (set! i (+ i 1))) result))
+(define (match-bound [choice : Choice] [q0 : (MutPtr i64)] [n : i64]) : i64
+  (match choice [(Value x)
+    (let [q : (MutPtr i64) q0] [result : i64 0] [i : i64 0]
+      (while (< i n)
+        (when (= i 1) (set! result (first x (write-99! q))))
+        (set! q (unsafe (ptr-addr-of x))) (set! i (+ i 1))) result)]))
 (define (shadowed [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
   (let [result : i64 0] [i : i64 0]
     (while (< i n)
       (when (= i 1) (set! result (first x (write-99! q))))
       (let [x : i64 17] (unsafe (ptr-addr-of x)) unit) (set! i (+ i 1))) result))
+(define (match-shadowed [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
+  (let [choice : Choice (Value 17)] [result : i64 0] [i : i64 0]
+    (while (< i n)
+      (match choice [(Value x) (unsafe (ptr-addr-of x) unit)])
+      (when (= i 1) (set! result (first x (write-99! q))))
+      (set! i (+ i 1))) result))
 (define (unrelated [x : i64] [q : (MutPtr i64)] [n : i64]) : i64
   (let [y : i64 0] [result : i64 0] [i : i64 0]
     (while (< i n)
@@ -1849,7 +1862,8 @@
   (let [y : i64 0] [q : (MutPtr i64) (unsafe (ptr-addr-of y))]
        [g dec] [p : (MutPtr (-> i64 i64)) (unsafe (ptr-addr-of g))]
     (+ (loop-argument 1 q 2) (loop-callee inc p 2) (loop-wrapped inc p 2)
-       (projection q 2) (shadowed 1 q 2) (unrelated 1 q 2)
+       (projection q 2) (match-bound (Value 1) q 2) (shadowed 1 q 2)
+       (match-shadowed 1 q 2) (unrelated 1 q 2)
        (lambda-boundary 1 q 2) (ref-slot (& y) q 2) (ref-unrelated (& y) q 2)
        (readonly-argument 1 y) (readonly-callee inc y))))")
 
@@ -1866,18 +1880,20 @@
       result))
     [(Some functions)
       (let
-        [names : (Array String 9)
+        [names : (Array String 11)
           (array
             "loop-argument"
             "loop-callee"
             "loop-wrapped"
             "projection"
+            "match-bound"
             "shadowed"
+            "match-shadowed"
             "unrelated"
             "lambda-boundary"
             "ref-slot"
             "ref-unrelated")]
-        (for [index (iterator.range 0 9)]
+        (for [index (iterator.range 0 11)]
           (let
             [callee? : bool (or (= index 1) (= index 2))]
             (test.assert-i64-eq
@@ -1889,11 +1905,11 @@
                   "write-99!")
                 (if callee?
                   ""
-                  (if (>= index 7)
+                  (if (>= index 9)
                     "first-ref"
                     "first")))
               ;; Reference call arguments retain their existing borrow path.
-              (if (< index 4)
+              (if (< index 5)
                 1
                 0)
               (string.copy (array-ref names index)))))

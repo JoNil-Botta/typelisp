@@ -9620,7 +9620,7 @@
   (match (compiler-reg-plan-function (compiler-reg-reuse-function))
     [(Plan assignments _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 2)
+        (= (compiler-reg-test-assignment-table-count assignments) 2)
         (reg.compiler-reg-location-register?
           (& (reg.compiler-reg-assignment-lookup assignments 0))
           cabi.compiler-reg-id-r12)
@@ -9632,7 +9632,7 @@
   (match (compiler-reg-plan-function (compiler-reg-f64-reuse-function))
     [(Plan assignments _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 2)
+        (= (compiler-reg-test-assignment-table-count assignments) 2)
         (reg.compiler-reg-location-register?
           (& (reg.compiler-reg-assignment-lookup assignments 0))
           (cabi.compiler-abi-xmm-register-id 2))
@@ -9648,7 +9648,7 @@
       ;; spill. %rbx joined the pool once its fixed scratch role moved under the
       ;; scavenger.
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 7)
+        (= (compiler-reg-test-assignment-table-count assignments) 7)
         (= (compiler-reg-spill-count assignments) 2)
         (reg.compiler-reg-location-register?
           (& (reg.compiler-reg-assignment-lookup assignments 3))
@@ -9664,7 +9664,7 @@
   (match (compiler-reg-plan-function (compiler-reg-f64-overlap-function))
     [(Plan assignments _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 5)
+        (= (compiler-reg-test-assignment-table-count assignments) 5)
         (= (compiler-reg-spill-count assignments) 0)
         (reg.compiler-reg-location-register?
           (& (reg.compiler-reg-assignment-lookup assignments 0))
@@ -9968,7 +9968,7 @@
     (& (compiler-reg-overlap-function)))
     [(Plan assignments _ _ _ _)
       (and
-        (= (reg.compiler-reg-assignment-count assignments) 7)
+        (= (compiler-reg-test-assignment-table-count assignments) 7)
         (= (compiler-reg-spill-count assignments) 0)
         ;; #perf call-spanning-aware partitioning homes the non-call-spanning
         ;; values in the caller-saved pool in candidate order. With %rax/%rsi/%rdi
@@ -10278,6 +10278,51 @@
     (for [index (iterator.range 0 (array-length present))]
       (when (not (= (array-ref present index) 0)) (+= count 1)))
     count))
+
+(define (compiler-reg-assignment-table-empty-ok?) : bool
+  (for [size (iterator.range 0 8)]
+    (let
+      [table : reg.CompilerRegAssignmentTable
+        (reg.compiler-reg-assignment-table-make (- (shl 1 size) 1))]
+      [capacity : i64
+        (array-length (reg.compiler-reg-assignment-table-present table))]
+      (reg.compiler-reg-assignment-table-insert table -1 (Spill 0))
+      (reg.compiler-reg-assignment-table-insert table capacity (Spill 0))
+      (unless (reg.compiler-reg-assignment-table-empty? table) (return false))
+      (for [index (iterator.range 0 capacity)]
+        (reg.compiler-reg-assignment-table-insert table index (Spill 40))
+        (when (reg.compiler-reg-assignment-table-empty? table) (return false))
+        (reg.compiler-reg-assignment-table-insert
+          table
+          index
+          (Register cabi.compiler-reg-id-r12))
+        (when (reg.compiler-reg-assignment-table-empty? table) (return false))
+        (reg.compiler-reg-assignment-table-unassign table index)
+        (reg.compiler-reg-assignment-table-unassign table index)
+        (unless (reg.compiler-reg-assignment-table-empty? table) (return false)))))
+  (let
+    [base : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-insert
+        (reg.compiler-reg-assignment-table-make 32)
+        31
+        (Spill 40))]
+    [copy : reg.CompilerRegAssignmentTable
+      (reg.compiler-reg-assignment-table-copy-with-capacity base 64)]
+    (reg.compiler-reg-assignment-table-unassign base 31)
+    (unless
+      (and
+        (reg.compiler-reg-assignment-table-empty? base)
+        (not (reg.compiler-reg-assignment-table-empty? copy)))
+      (return false))
+    (reg.compiler-reg-assignment-table-overlay! base copy)
+    (reg.compiler-reg-assignment-table-unassign copy 31)
+    (unless
+      (and
+        (not (reg.compiler-reg-assignment-table-empty? base))
+        (reg.compiler-reg-assignment-table-empty? copy))
+      (return false))
+    (reg.compiler-reg-assignment-table-unassign base 31)
+    (reg.compiler-reg-assignment-table-empty? base)))
 
 (define (compiler-reg-dense-assignment-snapshot-ok?) : bool
   (let
@@ -13382,7 +13427,7 @@
     [plan : reg.CompilerRegPlan
       (compiler-reg-plan-function-stack-only (clone func))]
     [assignment-count : i64
-      (reg.compiler-reg-assignment-count
+      (compiler-reg-test-assignment-table-count
         (reg.compiler-reg-plan-assignments (& plan)))]
     [ineligible-count : i64
       (let
@@ -13425,7 +13470,7 @@
     [plan : reg.CompilerRegPlan
       (compiler-reg-plan-function-stack-only (clone func))]
     [assignment-count : i64
-      (reg.compiler-reg-assignment-count
+      (compiler-reg-test-assignment-table-count
         (reg.compiler-reg-plan-assignments (& plan)))]
     [interval-count : i64
       (reg.compiler-reg-interval-seq-count
@@ -14271,6 +14316,7 @@
     (compiler-reg-early-scratch-never-spills-ok?)
     (compiler-reg-early-scratch-exclusion-rehomes-ok?)
     (compiler-reg-dense-lookups-ok?)
+    (compiler-reg-assignment-table-empty-ok?)
     (compiler-reg-dense-assignment-snapshot-ok?)
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-spill-slot-sharing-ok?)
@@ -15008,6 +15054,14 @@
   (compiler-regalloc-scalar-self-test?)
   (compiler-regalloc-storage-self-test?)
   42)
+
+(cfg
+  test
+  (test
+    regalloc-assignment-table-empty
+    (test.assert-true
+      (compiler-reg-assignment-table-empty-ok?)
+      "assignment emptiness follows current presence across mutation and copies")))
 
 (cfg
   test

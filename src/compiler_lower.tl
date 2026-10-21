@@ -20517,110 +20517,123 @@
                             [(Err message)
                               (Err (box (lower-diagnostic message)))]
                             [(Ok nested-fields)
-                              (match (lower-load-inline-value-at-offset
-                                ctx
-                                state
-                                (lower-global-shared-view base)
-                                offset
-                                (lower-global-shared-view resolved))
-                                [(Expr field-state field-value _)
-                                  ;; For a register-resident enum field the
-                                  ;; loaded value IS the tag word; for a memory
-                                  ;; enum it is a pointer to the field, so the
-                                  ;; tag is loaded from offset 0. Dereferencing
-                                  ;; a register-resident tag word would fault
-                                  ;; (it is a small integer, not an address).
-                                  (match (if (lower-type-register-resident?
+                              (let
+                                [field-words : i64
+                                  (lower-type-register-words
                                     ctx
-                                    (lower-global-shared-view resolved))
-                                    (Expr
-                                      field-state
-                                      (lower-global-shared-view field-value)
-                                      (I64))
-                                    (lower-load-at-offset
-                                      field-state
-                                      field-value
-                                      0
-                                      (I64)))
-                                    [(Expr tag-state tag-value _)
-                                      (match (lower-state-alloc-var tag-state)
-                                        [(Alloc eq-alloc eq-var)
-                                          (match (lower-state-fresh-label
-                                            (lower-state-emit
-                                              eq-alloc
-                                              (BinOp
-                                                eq-var
-                                                Eq
-                                                tag-value
-                                                (I64
-                                                  (csym.compiler-registry-handle-child-index
-                                                    handle))
-                                                (I64)))
-                                            "payload_ok")
-                                            [(Label ok-state ok-label)
-                                              (match (lower-bind-variant-payloads
-                                                ctx
-                                                (lower-state-finish-block
-                                                  (lower-state-emit
-                                                    ok-state
-                                                    (Branch
-                                                      (Var eq-var)
-                                                      ok-label
-                                                      fail-label))
-                                                  ok-label)
-                                                env
-                                                type-env
-                                                bind-mode
-                                                field-value
-                                                nested-args
-                                                nested-fields
-                                                mode
-                                                (lower-enum-type-name-id-or
-                                                  resolved
-                                                  -1)
-                                                (lower-enum-type-name-or-empty
-                                                  (lower-global-shared-view
-                                                    resolved))
-                                                nested-name-str
-                                                (lower-variant-handle-name-id-or
+                                    (lower-global-shared-view resolved))]
+                                ;; A borrowed match reads its scrutinee behind a
+                                ;; pointer, and so does the payload walk below.
+                                ;; A two-word register-group enum field would
+                                ;; load as a packed value, so a borrowed match
+                                ;; takes its address instead and reads it like
+                                ;; a memory enum (#8905).
+                                [field-in-place? : bool
+                                  (and (not owned?) (= field-words 2))]
+                                [field-base : ir.CompilerIrValue
+                                  (lower-global-shared-view base)]
+                                (match (if field-in-place?
+                                  (lower-gep-byte state field-base offset)
+                                  (lower-load-inline-value-at-offset
+                                    ctx
+                                    state
+                                    field-base
+                                    offset
+                                    (lower-global-shared-view resolved)))
+                                  [(Expr field-state field-value _)
+                                    ;; For a register-resident enum field the
+                                    ;; loaded value IS the tag word; for a memory
+                                    ;; enum, or a field read in place, it is a
+                                    ;; pointer to the field, so the tag is loaded
+                                    ;; from offset 0. Dereferencing a
+                                    ;; register-resident tag word would fault (it
+                                    ;; is a small integer, not an address).
+                                    (match (if (and
+                                      (> field-words 0)
+                                      (not field-in-place?))
+                                      (Expr
+                                        field-state
+                                        (lower-global-shared-view field-value)
+                                        (I64))
+                                      (lower-load-at-offset
+                                        field-state
+                                        field-value
+                                        0
+                                        (I64)))
+                                      [(Expr tag-state tag-value _)
+                                        (match (lower-state-alloc-var tag-state)
+                                          [(Alloc eq-alloc eq-var)
+                                            (match (lower-state-fresh-label
+                                              (lower-state-emit
+                                                eq-alloc
+                                                (BinOp
+                                                  eq-var
+                                                  Eq
+                                                  tag-value
+                                                  (I64
+                                                    (csym.compiler-registry-handle-child-index
+                                                      handle))
+                                                  (I64)))
+                                              "payload_ok")
+                                              [(Label ok-state ok-label)
+                                                (match (lower-bind-variant-payloads
                                                   ctx
-                                                  handle
-                                                  nested-name)
-                                                0
-                                                8
-                                                fail-label
-                                                ;; nested enum: rare path, so
-                                                ;; computing its group-ness
-                                                ;; once here is cheap.
-                                                (match bind-mode
-                                                  [(Owned)
-                                                    (lower-type-register-group?
-                                                      ctx
-                                                      resolved)]
-                                                  [(Borrowed _) false]))
-                                                [(Ok
-                                                    nested-state
-                                                    nested-env
-                                                    nested-type-env)
-                                                  (lower-bind-variant-payloads
+                                                  (lower-state-finish-block
+                                                    (lower-state-emit
+                                                      ok-state
+                                                      (Branch
+                                                        (Var eq-var)
+                                                        ok-label
+                                                        fail-label))
+                                                    ok-label)
+                                                  env
+                                                  type-env
+                                                  bind-mode
+                                                  field-value
+                                                  nested-args
+                                                  nested-fields
+                                                  mode
+                                                  (lower-enum-type-name-id-or
+                                                    resolved
+                                                    -1)
+                                                  (lower-enum-type-name-or-empty
+                                                    (lower-global-shared-view
+                                                      resolved))
+                                                  nested-name-str
+                                                  (lower-variant-handle-name-id-or
                                                     ctx
-                                                    nested-state
-                                                    nested-env
-                                                    nested-type-env
-                                                    bind-mode
-                                                    base
-                                                    rest-patterns
-                                                    rest-types
-                                                    mode
-                                                    enum-id
-                                                    enum-name
-                                                    variant-name
-                                                    variant-name-id
-                                                    next-index
-                                                    next-cursor
-                                                    fail-label
-                                                    scrut-reg-group?)]
-                                                [(Err message) (Err message)])])])])])])))]))]
+                                                    handle
+                                                    nested-name)
+                                                  0
+                                                  8
+                                                  fail-label
+                                                  ;; An owned two-word field is
+                                                  ;; read as a register group; a
+                                                  ;; borrowed one is read in place.
+                                                  (and owned? (= field-words 2)))
+                                                  [(Ok
+                                                      nested-state
+                                                      nested-env
+                                                      nested-type-env)
+                                                    (lower-bind-variant-payloads
+                                                      ctx
+                                                      nested-state
+                                                      nested-env
+                                                      nested-type-env
+                                                      bind-mode
+                                                      base
+                                                      rest-patterns
+                                                      rest-types
+                                                      mode
+                                                      enum-id
+                                                      enum-name
+                                                      variant-name
+                                                      variant-name-id
+                                                      next-index
+                                                      next-cursor
+                                                      fail-label
+                                                      scrut-reg-group?)]
+                                                  [(Err message) (Err message)])])])])]))])))]))]
               [_
                 (Err
                   (box

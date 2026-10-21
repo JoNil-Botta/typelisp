@@ -9658,16 +9658,16 @@
   [position : i64]) : CompilerIrRepresentationIndex
   (if (>= position (compiler-ir-instr-seq-count instrs))
     index
-    (match (compiler-ir-instr-seq-borrow instrs position)
+    (match (compiler-ir-instr-seq-ref instrs position)
       [(Pack _ words ty)
         (compiler-ir-representation-collect-group-instrs-from
           type-segment-bases
           (compiler-ir-representation-merge-group-type
             type-segment-bases
             index
-            ty
+            (& ty)
             (compiler-ir-value-seq-count words)
-            (compiler-ir-representation-pack-class-mask (& types) words 0 0))
+            (compiler-ir-representation-pack-class-mask (& types) (& words) 0 0))
           types
           instrs
           (+ position 1))]

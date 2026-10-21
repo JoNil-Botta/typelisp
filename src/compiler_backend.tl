@@ -52909,7 +52909,7 @@
   [fuel : i64]) : CompilerBackendCmpFoldWalk
   (if (>= index instrs.len)
     (No)
-    (match (compiler_ir_types.compiler-ir-instr-seq-borrow instrs index)
+    (match (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)
       [(Cast cast-dst cast-src from-ty to-ty)
         (if (or
           (<= fuel 0)

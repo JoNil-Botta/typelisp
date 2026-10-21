@@ -8,6 +8,8 @@ arena before reading the new payloads. Keep the shared `BoxTake` occurrence
 test: its prefix stays owning while its result becomes `BoxGet`. Run these at
 opt0/1/2; restoring allocation for unchanged nodes, suppressing the real read
 rewrite or allocating payloads in the current peer must fail the regressions.
+Unchanged paths check allocator deltas as well as row counts. A mixed Match
+case keeps the earlier arm unchanged while rewriting a later arm.
 
 `linker_coff_import_reader_tests.tl` shares its assertion body with the native
 opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted

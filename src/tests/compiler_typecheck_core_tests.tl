@@ -12437,7 +12437,13 @@
         (let
           [source : i64 (tc-read-test-expr pools kind leaf other type-id)]
           [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+          [allocation-start : i64 (profile.alloc-total)]
           [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
+          [allocated : i64 (- (profile.alloc-total) allocation-start)]
+          (test.assert-i64-eq
+            allocated
+            0
+            "unchanged result reads allocate no payload")
           (test.assert-i64-eq read source "unchanged result path keeps its ID")
           (test.assert-i64-eq
             (ast.ast-node-pool-context-expr-len pools)
@@ -12458,12 +12464,49 @@
                       other
                       (ast.ast-match-arm-list-with-capacity 0))))]))]
         [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+        [allocation-start : i64 (profile.alloc-total)]
         [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
+        [allocated : i64 (- (profile.alloc-total) allocation-start)]
+        (test.assert-i64-eq
+          allocated
+          0
+          "empty result reads allocate no payload")
         (test.assert-i64-eq read source "an empty result sequence is unchanged")
         (test.assert-i64-eq
           (ast.ast-node-pool-context-expr-len pools)
           count
           "empty sequences append no nodes")))
+    (let
+      [arms : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity 2)]
+      [_first : unit
+        (ast.ast-match-arm-list-push
+          (&mut arms)
+          (ast.AstMatchArm.Arm (ast.AstPattern.Wildcard) leaf))]
+      [_last : unit
+        (ast.ast-match-arm-list-push
+          (&mut arms)
+          (ast.AstMatchArm.Arm (ast.AstPattern.Binding 74) other))]
+      [source : i64
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (ast.AstExpr.Match (box (ast.AstMatch.Match other arms))))]
+      [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
+      [children : ast.AstExprList
+        (ast.ast-expr-child-ids (ast.ast-node-pool-context-expr-get pools read))]
+      [original : ast.AstExprList
+        (ast.ast-expr-child-ids
+          (ast.ast-node-pool-context-expr-get pools source))]
+      (test.assert-true
+        (and
+          (!= read source)
+          (= (array-ref children.slots 0) other)
+          (= (array-ref children.slots 1) leaf)
+          (tc-read-test-box-get? pools (array-ref children.slots 2) leaf))
+        "a later changed arm preserves the scrutinee and earlier unchanged arm")
+      (test.assert-i64-eq
+        (array-ref original.slots 2)
+        other
+        "the source arm remains owning"))
     (test.assert-true
       (match (ast.ast-node-pool-context-expr-get pools other)
         [(BoxTake id) (= id leaf)]

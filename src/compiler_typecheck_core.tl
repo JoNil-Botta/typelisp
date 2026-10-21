@@ -71703,6 +71703,27 @@
       [_ args])
     args))
 
+(define (tc-read-value-replace-child-id
+  [pools : (& pools ast.AstNodePoolContext)]
+  [expr-id : i64]
+  [expr : ast.AstExpr]
+  [slot : i64]
+  [next : i64]) : i64
+  (in-arena
+    (arena.Arena pools.owner-arena)
+    (let
+      [children : ast.AstExprList
+        (ast.ast-expr-child-ids
+          (ast.ast-node-pool-context-expr-get pools expr-id))]
+      [at : i64
+        (if (< slot 0)
+          (- children.len 1)
+          slot)]
+      (set! (array-ref children.slots at) next)
+      (ast.ast-node-pool-context-expr-push-borrowed
+        pools
+        (& (ast.ast-expr-with-child-ids expr (& children)))))))
+
 ;; A result read changes BoxTake to BoxGet only on value-producing paths.
 ;; Conditions, initializers, scrutinees, indices and sequence prefixes keep
 ;; their ordinary access. Unchanged paths retain their IDs; changed paths use
@@ -71726,16 +71747,7 @@
             [_
               (if (= next inner)
                 expr-id
-                (in-arena
-                  (arena.Arena pools.owner-arena)
-                  (let
-                    [children : ast.AstExprList
-                      (ast.ast-expr-child-ids
-                        (ast.ast-node-pool-context-expr-get pools expr-id))]
-                    (set! (array-ref children.slots 0) next)
-                    (ast.ast-node-pool-context-expr-push-borrowed
-                      pools
-                      (& (ast.ast-expr-with-child-ids expr (& children)))))))]))]
+                (tc-read-value-replace-child-id pools expr-id expr 0 next))]))]
       [(or (Begin items) (Unsafe items))
         (if (= items.len 0)
           expr-id
@@ -71745,16 +71757,7 @@
             [next : i64 (tc-read-value-expr-id pools old)]
             (if (= next old)
               expr-id
-              (in-arena
-                (arena.Arena pools.owner-arena)
-                (let
-                  [children : ast.AstExprList
-                    (ast.ast-expr-child-ids
-                      (ast.ast-node-pool-context-expr-get pools expr-id))]
-                  (set! (array-ref children.slots last) next)
-                  (ast.ast-node-pool-context-expr-push-borrowed
-                    pools
-                    (& (ast.ast-expr-with-child-ids expr (& children)))))))))]
+              (tc-read-value-replace-child-id pools expr-id expr last next))))]
       [(If _ then-id else-id)
         (let
           [next-then : i64 (tc-read-value-expr-id pools then-id)]
@@ -71779,16 +71782,7 @@
               [next : i64 (tc-read-value-expr-id pools body)]
               (if (= next body)
                 expr-id
-                (in-arena
-                  (arena.Arena pools.owner-arena)
-                  (let
-                    [children : ast.AstExprList
-                      (ast.ast-expr-child-ids
-                        (ast.ast-node-pool-context-expr-get pools expr-id))]
-                    (set! (array-ref children.slots (- children.len 1)) next)
-                    (ast.ast-node-pool-context-expr-push-borrowed
-                      pools
-                      (& (ast.ast-expr-with-child-ids expr (& children))))))))])]
+                (tc-read-value-replace-child-id pools expr-id expr -1 next)))])]
       [(Match payload)
         (match (& (deref payload))
           [(Match _ arms)

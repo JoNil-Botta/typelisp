@@ -30,7 +30,8 @@ Borrow-conflict read normalization carries the source expression ID with its
 pool owner. It changes `BoxTake` to `BoxGet` only along value-producing paths;
 conditions, initializers, scrutinees, indices and sequence prefixes retain
 their ordinary access. An unchanged path keeps its original ID and argument
-list. Changed paths use the canonical AST child schema and allocate new
+list without allocating replacement payloads. Changed paths use the canonical
+AST child schema and allocate new
 payloads in the source pool's owner arena. Shared source occurrences and their
 provenance remain unchanged even when another pool or arena is current.
 

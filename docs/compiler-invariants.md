@@ -1356,8 +1356,11 @@ binding, or a supported heap projection. A shared
 borrow of a plain scalar variable is safe because lowering copies it into
 `tl_alloc` storage. Local reference/view aliases, unknown call results and
 Copy aggregates materialized from heap elements do not acquire a proof.
-Reassignment invalidates the parameter forwarding range for frame-sensitive
-types. Unknown provenance retains an ordinary call and return; borrowed
+Slice-pattern rest views inherit a proven external scrutinee's storage;
+their IR IDs are retained in a persistent set so lowering-state forks do not
+share new facts. Reassignment of a proven frame-sensitive binding invalidates
+both that set and the parameter forwarding range. Unknown provenance retains
+an ordinary call and return; borrowed
 match arms use the same tail-call selection.
 
 Address-exposed register groups own contiguous stack pairs indexed by final

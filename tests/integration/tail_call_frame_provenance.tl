@@ -1,6 +1,6 @@
 ;; A tail call reuses its frame, so an argument may not point into that frame
 ;; (#9183). An argument that is, or holds, a reference or view must come from a
-;; tail parameter, a re-borrowed reference parameter or storage outside the
+;; tail parameter, its slice rest, a reference reborrow or storage outside the
 ;; frame; any other one keeps the call. Each `scrub` callee first fills its own
 ;; frame, so a read through a reference into the caller's abandoned frame sees
 ;; the fill instead of the value.
@@ -155,6 +155,42 @@
 (define (param-field [r : (& Rec)] [k : i64]) : i64
   (scrub-ref (& r.x) k))
 
+;; A rest view keeps the parameter's backing storage, including another rest.
+(define (param-slice-rest [xs : (& xs (Slice i64))] [k : i64]) : i64
+  (match xs
+    [(slice _ & rest)
+      (match rest
+        [(slice _ & tail) (scrub-slice tail k)]
+        [_ 0])]
+    [_ 0]))
+
+;; A sibling arm's proven rest must not authorize a view of a local array.
+(define (sibling-slice-rest
+  [xs : (& xs (Slice i64))]
+  [external : bool]
+  [n : i64]) : i64
+  (if external
+    (match xs
+      [(slice _ & rest) (scrub-slice rest 7)]
+      [_ 0])
+    (let
+      [local : (Array i64 3) (array 0 n 0)]
+      (match (& local)
+        [(slice _ & rest) (scrub-slice rest 7)]))))
+
+(define (walk-slice [xs : (& xs (Slice i64))] [count : i64]) : i64
+  (match xs
+    [(slice) count]
+    [(slice _ & rest) (walk-slice rest (+ count 1))]))
+
+;; Rebinding a derived view invalidates its forwarding fact.
+(define (rebound-slice-rest [xs : (& xs (Slice i64))]) : i64
+  (match xs
+    [(slice _ & rest)
+      (set! rest xs)
+      (scrub-slice rest 7)]
+    [_ 0]))
+
 ;; An element of a dynamic array: heap storage.
 (define (heap-element [l : (& Lst)] [k : i64]) : i64
   (scrub-ref (& (array-ref l.slots 0)) k))
@@ -202,6 +238,8 @@
   (let
     [rec : Rec (Rec 6 "r")]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    [deep : (__tl_dyn-array i64) (__tl_make-array i64 300000)]
+    [sample : (Array i64 3) (array 0 41 42)]
     (set! (array-ref xs 0) 7)
     (let
       [lst : Lst (Lst xs 1)]
@@ -234,6 +272,11 @@
         (= extra 15)
         (= (heap-projected-field 42) 42)
         (= (global-pair 42) 42)
-        (= (global-shadow 42) 42))
+        (= (global-shadow 42) 42)
+        (= (param-slice-rest (slice-view (& sample) 0 3) 7) 42)
+        (= (sibling-slice-rest (slice-view (& sample) 0 3) true 99) 41)
+        (= (sibling-slice-rest (slice-view (& sample) 0 3) false 42) 42)
+        (= (rebound-slice-rest (slice-view (& sample) 0 3)) 0)
+        (= (walk-slice (slice-view deep 0 300000) 0) 300000))
         42
         1))))

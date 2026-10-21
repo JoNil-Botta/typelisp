@@ -1496,6 +1496,18 @@ not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
 in fn _tl_tail_call_frame_provenance_param_field
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_param_slice_rest
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_sibling_slice_rest
+count = 1 ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+count = 1 ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_walk_slice
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_walk_slice$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_walk_slice$
+in fn _tl_tail_call_frame_provenance_rebound_slice_rest
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
 in fn _tl_tail_call_frame_provenance_heap_element
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$

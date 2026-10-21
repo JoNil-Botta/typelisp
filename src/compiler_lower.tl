@@ -1803,6 +1803,9 @@
   ;; Tail-call-safe current function parameter var range: [start, end).
   (tail-param-start i64)
   (tail-param-end i64)
+  ;; Slice-pattern rest views preserve their source's external storage. The
+  ;; persistent set also keeps cloned control-flow states independent.
+  (tail-external-vars LowerIdSet)
   ;; Allocated only when this function enters masked SPMD lowering.
   (masked-load-cache LowerMaybeMaskedLoadCache)
   ;; Attached only while lowering one masked vector loop and its vector tail.
@@ -1873,6 +1876,7 @@
         (LowerRebindGuards.No)
         tail-param-start
         tail-param-end
+        (lower-id-set-empty)
         (No)
         (No)
         (lower_i64_i64_map.with-capacity 1)
@@ -15028,6 +15032,31 @@
     (__tl-project-set-field (__tl-box-place data) tail-param-end 0)
     state))
 
+(define (lower-state-tail-storage-contains? [state : LowerState] [var-id : i64]) : bool
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (or
+      (lower-state-tail-param-range-contains? state var-id)
+      (lower-id-set-contains? (& (deref data).tail-external-vars) var-id))))
+
+(define (lower-state-mark-tail-storage [state : LowerState] [var-id : i64]) : LowerState
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [previous : LowerIdSet
+      (replace! (deref data).tail-external-vars (lower-id-set-empty))]
+    [next : LowerIdSet (lower-id-set-insert previous var-id)]
+    (__tl-project-set-field (__tl-box-place data) tail-external-vars next)
+    state))
+
+(define (lower-state-invalidate-tail-storage [state : LowerState]) : LowerState
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-set-field
+      (__tl-box-place data)
+      tail-external-vars
+      (lower-id-set-empty))
+    (lower-state-clear-tail-param-range state)))
+
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
@@ -20710,7 +20739,8 @@
   [count : i64]
   [rest : ast.AstPattern]
   [rest-ty : ast.AstType]
-  [elem-ty : ast.AstType]) : ResultLowerEnv
+  [elem-ty : ast.AstType]
+  [external-storage : bool]) : ResultLowerEnv
   (let
     [name : i64
       (match rest
@@ -20734,7 +20764,9 @@
                 (lower-global-shared-view rest-ty))
                 [(Expr pack-state (Var rest-var) _)
                   (Ok
-                    pack-state
+                    (if external-storage
+                      (lower-state-mark-tail-storage pack-state rest-var)
+                      pack-state)
                     (sym_i64_env.sym-i64-bind-id env name rest-var)
                     (tc_core.tc-bind-id type-env name rest-ty))]
                 [_
@@ -20848,6 +20880,10 @@
     (lower-global-shared-view scrut-ty))
     [(View lifetime mutable elem-ty array-length)
       (let
+        [external-storage : bool
+          (match (& scrut-value)
+            [(Var id) (lower-state-tail-storage-contains? state id)]
+            [_ false])]
         [count : i64
           (tc_core.tc-slice-pattern-element-count (& items) has-rest)]
         (match (if (>= array-length 0)
@@ -20903,7 +20939,8 @@
                       lifetime
                       mutable
                       (lower-global-shared-view elem-ty))
-                    elem-ty)
+                    elem-ty
+                    external-storage)
                   (Ok elements-state elements-env elements-type-env))]
               [(Err message) (Err message)])]
           [(Err message) (Err message)]))]
@@ -29723,17 +29760,17 @@
                               (let
                                 [assign-state
                                   : LowerState
-                                  ;; A rebound frame-sensitive param may point at
+                                  ;; A rebound frame-sensitive binding may point at
                                   ;; current-frame storage, so its var id no
                                   ;; longer proves tail-call forwarding is safe.
                                   (if (and
-                                    (lower-state-tail-param-range-contains?
+                                    (lower-state-tail-storage-contains?
                                       assign-value-state
                                       id)
                                     (lower-tail-call-frame-sensitive-type?
                                       ctx
                                       target-ty))
-                                    (lower-state-clear-tail-param-range
+                                    (lower-state-invalidate-tail-storage
                                       assign-value-state)
                                     assign-value-state)]
                                 (Ok
@@ -67339,7 +67376,7 @@
             name
             (csym.compiler-symbols-missing-handle))]
         (if (csym.compiler-symbols-handle-found? var-id)
-          (lower-state-tail-param-range-contains? state var-id)
+          (lower-state-tail-storage-contains? state var-id)
           false))]
     [_ false]))
 

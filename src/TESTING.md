@@ -146,6 +146,10 @@ tuple elements, local aliases, call-returned references, shadowed parameters,
 heap aggregate copies and indirect calls at opt0/1/2 on both hosts. Its
 assembly cases retain ordinary calls for unproven storage and tail jumps for
 reference parameters, reborrows, caller-owned projections and heap storage.
+Parameter-derived slice rests keep tail jumps through nested patterns and a
+300,000-element walk. Sibling local-array views and rebound rests retain calls,
+checking that external-storage facts neither leak between arms nor survive a
+reassignment.
 The safety corpus rejects rebinding a reference parameter to a shorter local
 borrow before forwarding it.
 

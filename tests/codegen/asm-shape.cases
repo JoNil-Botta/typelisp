@@ -1530,6 +1530,77 @@ in fn _tl_tail_call_frame_provenance_local_indirect_field
 match ^[[:space:]]+call \*
 not-match ^[[:space:]]+jmp \*
 
+# A self tail call in an arm of a match on a borrowed enum place jumps (#9044):
+# an element through a reference parameter, a field through one, and a two-word
+# enum the match spills to a slot. At opt 2 tailrec makes each walker a loop. A
+# binding that borrows a frame local's aggregate payload keeps its call.
+case tail-borrowed-enum-match
+source tests/integration/tail_borrowed_enum_match.tl
+target linux-x86_64 windows-x86_64
+opt 0 1
+in fn _tl_tail_borrowed_enum_match_walk_borrow
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_walk_borrow$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_walk_borrow$
+in fn _tl_tail_borrowed_enum_match_count_field
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_count_field$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_count_field$
+in fn _tl_tail_borrowed_enum_match_sum_on
+count = 2 ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_sum_on$
+not-match ^[[:space:]]+call _tl_tail_borrowed_enum_match_sum_on$
+
+case tail-borrowed-enum-match-loop
+source tests/integration/tail_borrowed_enum_match.tl
+target linux-x86_64 windows-x86_64
+opt 2
+in fn _tl_tail_borrowed_enum_match_walk_borrow
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_walk_borrow$
+in fn _tl_tail_borrowed_enum_match_count_field
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_count_field$
+in fn _tl_tail_borrowed_enum_match_sum_on
+not-match ^[[:space:]]+(call|jmp) _tl_tail_borrowed_enum_match_sum_on$
+
+case tail-borrowed-enum-match-frame-local
+source tests/integration/tail_borrowed_enum_match.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_tail_borrowed_enum_match_local_shape
+count = 1 ^[[:space:]]+call _tl_tail_borrowed_enum_match_pt_sum$
+not-match ^[[:space:]]+jmp _tl_tail_borrowed_enum_match_pt_sum$
+
+# Borrowed enum arms use the shared frame-provenance check at both low levels.
+# The native manifest exercises these same runtime cases at opt0/1/2.
+case tail-borrowed-enum-frame-provenance
+source tests/integration/tail_call_frame_provenance.tl
+target linux-x86_64 windows-x86_64
+opt 0 1
+in fn _tl_tail_call_frame_provenance_borrowed_enum_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_implicit_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_copy_field
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_call_ref
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_tuple
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_slice
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_nested
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_reassigned
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_borrowed_enum_shadowed
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
+
 case extern-data-memory-symbols
 source tests/integration/extern_data_memory.tl
 target linux-x86_64 windows-x86_64

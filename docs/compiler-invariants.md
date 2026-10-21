@@ -1697,6 +1697,13 @@ and ordered block storage; no returned loop borrows the workspace. Empty,
 acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
 arrays.
 
+Post-SSA rotation's round homes own block, instruction and phi-input containers.
+Their type leaves retain the input function's owner. Phi analysis must borrow
+that existing type rather than create a compound-type container in round
+scratch: the round copier shares those leaves while retiring its old home.
+The compound-phi rotation tests overwrite all retired homes before reading
+every returned type and verifying the carried function/context.
+
 Empty work records initially read one immutable zero-length array descriptor;
 each record replaces both handles before its first element write. The work
 record itself is private, never a shallow view of shared mutable storage. The
@@ -1975,6 +1982,13 @@ check, a failed top-environment build reuses this path-aware validator to
 recover the selected import's canonical diagnostic. Macro setup permits pending
 generator exports; final typechecking requires complete exports. Recovery runs
 only on failure and adds no namespace scan to successful environment builds.
+An append that introduces a `defmacro` replays the existing alias pass over
+the segmented module/import event index before publishing its next context.
+Selected macro aliases then bind in the ordinary symbol map even when their import
+preceded the generator. Their explicit binding replaces a tentative bare macro
+alias from another module; actual import/local collisions still fail namespace
+validation. Ordinary value/function splices do not replay this
+pass; no pending alias registry or full declaration rescan is needed.
 Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
@@ -2061,6 +2075,18 @@ Before runtime lowering, `build-package-tlci-capture-exports` records callable
 metadata as canonical TLCI text, sorted macro identities as owned strings, and
 the complete generated transformer source. `TlciNativeMacroCaptures` contains
 AST body and parameter references, so it stays inside that capture operation.
+`TlciNativeSourceContext` supplies the expression/type pools and interner that
+own those references. All source-generation helpers borrow that context;
+rendering reads neither installed pool nor installed intern spellings. The
+context caches its source owner's result-kind and unquote sentinel IDs through
+read-only lookup. A missing sentinel is not a valid negative-ID match. These
+are source syntax identities, independent of the later backend's builtin table.
+Package capture passes the runtime child's driver owners. The standalone image
+builder and serial fixtures freeze their parsed owners at named boundaries.
+They must finish rendering before those owners reset or retire. The producer's
+existing serial rendering scratch and later backend compilation remain serial
+boundaries; this source-owner handoff does not remove the driver bridges still
+tracked by #5754 and #5756.
 Capture runs in a disposable scratch arena: collectors, temporary rendering and
 AST-backed macro captures do not survive it. Only the final metadata text, each
 catalog name, transformer source or diagnostic is copied into the caller owner.

@@ -9065,7 +9065,7 @@
     [(Some ty) (ast-node-pool-context-type-push pools ty)]))
 
 (define (ast-maybe-type-from-id-with-pools
-  [pools : AstNodePoolContext]
+  [pools : (& pools AstNodePoolContext)]
   [id : i64]) : AstMaybeType
   (if (< id 0)
     (No)

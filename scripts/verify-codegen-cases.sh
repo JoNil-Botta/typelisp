@@ -44,8 +44,8 @@ set -eu
 #                           PATH` expands placeholders in the lines.
 #
 # Every case runs once per target x opt x mode x each variant. SIMD modes that the host
-# cannot execute (scripts/detect-simd-isa.sh) still compile; their run step and
-# the run-output rows (exit, in stdout, in stderr) are skipped.
+# cannot execute natively use pinned Intel SDE for AVX-512 when configured.
+# Without either route, local runs skip run-output rows; CI fails closed.
 #
 # Transcript steps run after the case's action, in order. SHELL is shell text
 # evaluated by this runner (globbing off); {{name}} placeholders in it become
@@ -164,9 +164,8 @@ if [ "$CC_LIST" -eq 0 ]; then
     gate_compiler_absolute
     gate_require_compiler
     CCV_compiler=$COMPILER
-    # A failed probe must not read as "no SIMD": rows that ask for an ISA fail.
-    CC_ISA_ERROR=
-    CC_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh") || CC_ISA_ERROR=1
+    . "$ROOT/scripts/lib-simd-execution.sh"
+    simd_execution_init
 fi
 
 CC_FAILURES=0
@@ -240,14 +239,14 @@ cc_skip() {
 }
 
 cc_isa_runnable() {
-    case "$1" in
-        - | scalar) return 0 ;;
-    esac
-    if [ -n "${CC_ISA_ERROR:-}" ]; then
-        cc_fail "$CC_LINE" "SIMD ISA detection failed; cannot tell whether $1 runs"
-        return 1
-    fi
-    printf '%s\n' "$CC_ISAS" | grep -qx "$1"
+    simd_execution_mode "$1"
+}
+
+# Transcript conditions test the CLI's native host-capability contract,
+# including its unsupported-host diagnostics. SDE does not change that host.
+cc_isa_native() {
+    case "$1" in - | scalar) return 0 ;; esac
+    printf '%s\n' "$SIMDEX_NATIVE_ISAS" | grep -Fx "$1" >/dev/null
 }
 
 # ---------------------------------------------------------------- actions
@@ -272,6 +271,27 @@ cc_run_step() {
     "$@" > "$CV_OUT" 2> "$CV_ERR"
     CV_EXIT=$?
     set -e
+}
+
+cc_execute_program() {
+    simd_execution_record "$CC_CASE [$(cc_variant_name)]" "$CV_MODE"
+    cc_run_step run simd_execute "$CV_MODE" "$1"
+}
+
+# Keep compiler invocations native: emulate the built test executable only.
+cc_compiler_run() {
+    simd_execution_mode "$CV_MODE" || return 1
+    if [ "$SIMDEX_MODE" = sde ]; then
+        CV_BIN="$CV_DIR/program$CCV_exe"
+        # shellcheck disable=SC2086
+        cc_run_step build "$COMPILER" build "$CV_SOURCE" $CV_FLAGS -o "$CV_BIN"
+        cc_require_step build || return 1
+        cc_execute_program "$CV_BIN"
+    else
+        simd_execution_record "$CC_CASE [$(cc_variant_name)]" "$CV_MODE"
+        # shellcheck disable=SC2086
+        cc_run_step run "$COMPILER" run "$CV_SOURCE" $CV_FLAGS
+    fi
 }
 
 cc_require_step() {
@@ -369,10 +389,10 @@ cc_do_action() {
         tl-run)
             if ! cc_isa_runnable "$CV_MODE"; then
                 CV_RAN=0
+                simd_execution_record "$CC_CASE [$(cc_variant_name)]" "$CV_MODE"
                 return 0
             fi
-            # shellcheck disable=SC2086
-            cc_run_step run "$COMPILER" run "$CV_SOURCE" $CV_FLAGS
+            cc_compiler_run || return 1
             ;;
         build | build-run)
             CV_BIN="$CV_DIR/program"
@@ -387,16 +407,18 @@ cc_do_action() {
             [ "$CC_DO" = build-run ] || return 0
             if ! cc_isa_runnable "$CV_MODE"; then
                 CV_RAN=0
+                simd_execution_record "$CC_CASE [$(cc_variant_name)]" "$CV_MODE"
                 return 0
             fi
             [ -x "$CV_BIN" ] || CV_BIN="$CV_BIN.exe"
-            cc_run_step run "$CV_BIN"
+            cc_execute_program "$CV_BIN"
             ;;
         link-run)
             cc_compile ''
             cc_require_step compile || return 1
             if ! cc_isa_runnable "$CV_MODE"; then
                 CV_RAN=0
+                simd_execution_record "$CC_CASE [$(cc_variant_name)]" "$CV_MODE"
                 return 0
             fi
             if [ "$CC_HOST" = linux ]; then
@@ -405,10 +427,9 @@ cc_do_action() {
                 cc_run_step link ld "$CV_DIR/out.o" -o "$CV_DIR/program" -static \
                     -e "$(linux_entry_symbol_for_asm "$CV_ASM")"
                 cc_require_step "GNU ld" || return 1
-                cc_run_step run "$CV_DIR/program"
+                cc_execute_program "$CV_DIR/program"
             else
-                # shellcheck disable=SC2086
-                cc_run_step run "$COMPILER" run "$CV_SOURCE" $CV_FLAGS
+                cc_compiler_run || return 1
             fi
             ;;
         *)
@@ -1045,7 +1066,7 @@ cc_translate() {
         } else if (kw == "if-mode" || kw == "if-host" || kw == "if-isa") {
             close_step()
             depth++
-            s = (kw == "if-mode" ? "cc_mode_is" : kw == "if-host" ? "cc_host_is" : "cc_isa_runnable")
+            s = (kw == "if-mode" ? "cc_mode_is" : kw == "if-host" ? "cc_host_is" : "cc_isa_native")
             body("if " s " \"$(cc_expand " sq(rest) ")\"; then :")
         } else if (kw == "else") {
             if (depth == 0) die("else without if")
@@ -1159,4 +1180,5 @@ if [ "$CC_FAILURES" -ne 0 ]; then
     echo "[codegen-cases] FAILED: $CC_FAILURES failure(s); $CC_ROWS expectation(s) checked, $CC_SKIPPED skipped" >&2
     exit 1
 fi
+simd_execution_summary codegen-cases
 echo "[codegen-cases] passed: $CC_ROWS expectation(s) checked, $CC_SKIPPED skipped"

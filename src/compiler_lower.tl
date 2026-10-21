@@ -28355,7 +28355,7 @@
         (Ok (tc_core.tc-type-without-regions expr-ty)))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(Some ty)
           (Ok
@@ -29547,7 +29547,7 @@
       (lower-materialize-at-expr ctx state (I64 1) expr-ty origin)]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(Some ty) (lower-init-expr ctx state env type-env ty origin expr-ty)]
         [(No)
@@ -30600,7 +30600,7 @@
         (lower-box-get ctx state env type-env inner expected-ty))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(No)
           (lower-init-expr
@@ -36876,7 +36876,7 @@
               type-env
               address
               (ast.ast-maybe-type-from-id-with-pools
-                (tc_core.tc-context-pools ctx)
+                (& (tc_core.tc-context-pools ctx))
                 maybe-ty-id)
               result-ty
               origin)])]
@@ -67355,9 +67355,14 @@
           false))]
     [_ false]))
 
-;; A shared borrow of a by-value aggregate parameter passed in memory points at
-;; storage the caller provided, not at this frame, so it stays valid when a tail
-;; call reuses the frame, exactly like passing the parameter itself.
+;; A borrow of a tail parameter is as safe as passing the parameter itself in
+;; two cases:
+;; - a shared borrow of a by-value aggregate parameter passed in memory points
+;;   at storage the caller provided, not at this frame, so it stays valid when
+;;   a tail call reuses the frame;
+;; - a borrow of a reference parameter is a reborrow: it lowers to that same
+;;   reference (`lower-borrow-var-address`), so the callee receives exactly the
+;;   pointer it would get from the parameter (#9137).
 (define (lower-tail-call-safe-param-borrow-arg?
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -67366,22 +67371,41 @@
   [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan (& expr))
     [(Borrow mutable _ place-box)
-      (and
-        (not mutable)
-        (let
-          [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
-          (and
-            (lower-tail-call-safe-param-aggregate-arg?
-              ctx
-              state
-              env
-              (lower-global-shared-view place))
-            (match (tc_core.tc-expr ctx type-env place)
-              [(Ok ty)
-                (and
-                  (lower-type-inline-storage? ctx (& ty))
-                  (not (lower-type-register-resident? ctx ty)))]
-              [(Err _) false]))))]
+      (let
+        [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
+        (and
+          (lower-tail-call-safe-param-aggregate-arg?
+            ctx
+            state
+            env
+            (lower-global-shared-view place))
+          (or
+            (lower-tail-call-reference-var? ctx type-env (& place))
+            (and
+              (not mutable)
+              (match (tc_core.tc-expr ctx type-env place)
+                [(Ok ty)
+                  (and
+                    (lower-type-inline-storage? ctx (& ty))
+                    (not (lower-type-register-resident? ctx ty)))]
+                [(Err _) false])))))]
+    [_ false]))
+
+;; Whether PLACE is a variable whose declared type is a shared or mutable
+;; reference, the case `lower-borrow-var-address` lowers to the variable's own
+;; value.
+(define (lower-tail-call-reference-var?
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [place : (& place ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan place)
+    [(Var name)
+      (match (tc_core.tc-lookup-id type-env name)
+        [(Ok place-ty)
+          (tc_core.tc-type-reference?
+            (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx place-ty)))]
+        [(Err _) false])]
     [_ false]))
 
 (define (lower-expr-list-contains-unsafe-inline-aggregate?

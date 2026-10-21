@@ -383,7 +383,16 @@ resolve_spmd_observation() {
     tr -d '\r\n' < "$_cm_spmd_base.exit" > "$_cm_spmd_dir/exit"
     printf '\n' >> "$_cm_spmd_dir/exit"
     cp "$_cm_spmd_base.err" "$_cm_spmd_dir/stderr"
+    simd_execution_mode "$_cm_spmd_mode" || fail "SPMD execution route is unavailable"
+    [ -f "$_cm_spmd_base.execution" ] &&
+        [ "$(cat "$_cm_spmd_base.execution")" = "$SIMDEX_MODE" ] ||
+        fail "SPMD execution receipt is missing or differs from the selected route"
     metadata_add "$_cm_spmd_dir" "backend-mode=$_cm_spmd_mode"
+    metadata_add "$_cm_spmd_dir" "execution=$SIMDEX_MODE"
+    if [ "$SIMDEX_MODE" = sde ]; then
+        metadata_add "$_cm_spmd_dir" sde-version=10.13.1
+    fi
+    simd_execution_record "cross-mode reuse $_cm_spmd_tag" "$_cm_spmd_mode"
 }
 
 resolve_coff_observation() {
@@ -662,7 +671,8 @@ native_link_detect_host
 configure_toolchain
 HOST_OS=$NL_HOST_OS
 
-SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh")
+. "$ROOT/scripts/lib-simd-execution.sh"
+simd_execution_init
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/observations"
 APPLICABILITY="$WORKDIR/applicability.tsv"
@@ -678,20 +688,13 @@ case_active() {
     fi
     case "$_cm_active_applicability" in
         required) return 0 ;;
-        isa-avx2)
-            if printf '%s\n' "$SIMD_ISAS" | grep -F -x avx2 >/dev/null; then
-                CASE_ACTIVE_REASON=host-isa-avx2
+        isa-avx2 | isa-avx512)
+            _cm_active_isa=${_cm_active_applicability#isa-}
+            if simd_execution_mode "$_cm_active_isa"; then
+                CASE_ACTIVE_REASON="$_cm_active_isa-$SIMDEX_MODE"
                 return 0
             fi
-            CASE_ACTIVE_REASON=host-isa-avx2-unavailable
-            return 1
-            ;;
-        isa-avx512)
-            if printf '%s\n' "$SIMD_ISAS" | grep -F -x avx512 >/dev/null; then
-                CASE_ACTIVE_REASON=host-isa-avx512
-                return 0
-            fi
-            CASE_ACTIVE_REASON=host-isa-avx512-unavailable
+            CASE_ACTIVE_REASON="$_cm_active_isa-unavailable"
             return 1
             ;;
         *) fail "unknown applicability: $_cm_active_applicability" ;;
@@ -747,4 +750,5 @@ done < "$MANIFEST"
     fi
     fail "no active cases for host=$HOST_OS"
 }
+simd_execution_summary cross-mode-reused-observations
 echo "cross-mode semantic/ABI differential passed (host=$HOST_OS active=$ACTIVE_CASES not-applicable=$NOT_APPLICABLE_CASES applicability=$APPLICABILITY)"

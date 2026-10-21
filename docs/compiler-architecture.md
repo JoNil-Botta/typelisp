@@ -18,6 +18,14 @@ batch and LSP services orchestrate these stages.
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
+Generated macro commits refresh selected aliases through the existing
+module/import event index and symbol map before the next expansion context is
+published; see the [import invariants](compiler-invariants.md#architecture).
+
+The parser preserves body-sequence list positions through macro expansion,
+including a lone splice in a body stored as one AST expression. The
+[body representation contract](compiler-invariants.md#architecture) records
+the singleton `Begin` rule alongside the `While` body-list contract.
 
 | Shared fact | Canonical implementation | Consumer obligation |
 | --- | --- | --- |
@@ -27,6 +35,7 @@ session state only within its owner and invalidation contracts.
 | Shared IR and operands | [IR model](../src/compiler_ir_types.tl) | Extend `compiler-ir-instr-visit-uses`, `compiler-ir-instr-map` and related operand helpers instead of copying full-variant walkers. |
 | Target predicates | [target cfg builder](../src/compiler_target_cfg_core.tl) | Use the shared target presets and [target dispatch guard](../scripts/check-codegen-target-dispatch.sh). |
 | ELF relocatable input syntax | [ELF reader](../src/linker_elf_object_reader.tl) | Preserve the input/content owner, physical IDs and borrowed spans under the [input contract](compiler-invariants.md#elf-relocatable-object-input); #7101 owns admission and linking policy. |
+| AMD64 short import syntax | [COFF import reader](../src/linker_coff_import_reader.tl) | Preserve physical archive member IDs, original spellings and literal IAT symbols under the [import contract](compiler-invariants.md#coff-short-import-input); #7102 owns selection and #7175 owns PE import layout. |
 
 Optimizer, backend, driver/CLI and LSP implementations consume shared IR; its
 supporting import closure must not depend back on them. AST, intern/identity
@@ -42,6 +51,12 @@ and reusable facts. Job-state isolation remains an ongoing migration in
 [#5754](https://github.com/JoNil-Botta/typelisp/issues/5754) and
 [#5756](https://github.com/JoNil-Botta/typelisp/issues/5756). Serial compatibility
 adapters do not make an ambient owner safe for a value from another job.
+
+[Native TLCI source generation](../src/compiler_tlci_native_producer.tl) reads
+captured nodes and names through `TlciNativeSourceContext`. Its source owners
+remain live until canonical transformer text is captured; the
+[package capture boundary](compiler-invariants.md#package-direct-object-routing)
+defines what may cross their retirement.
 
 The [detailed invariants](../docs/compiler-invariants.md) retain the stage-specific
 contracts, canonical APIs and regression witnesses. The

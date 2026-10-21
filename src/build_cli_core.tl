@@ -3152,6 +3152,7 @@
     (BuildPackageTlciMacroCollector catalog captures)))
 
 (define (build-package-tlci-collect-decl-macro!
+  [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [decl : ast.AstDecl]
   [owned-path : String]
   [module : String]
@@ -3170,7 +3171,7 @@
               (if (= (string.string-length module) 0)
                 package-name
                 module)
-              (ci.intern-str name))]
+              (ci.intern-compat-state-str context.intern-state name))]
           (when
             (build-package-tlci-push-macro-name!
               out
@@ -3181,10 +3182,12 @@
                 identity
                 params
                 (compiler_tlci_native_producer.embedded-native-macro-result-kind
+                  context
                   ret)
                 body)))))]
     [(Unsafe inner-box)
       (build-package-tlci-collect-decl-macro!
+        context
         (deref inner-box)
         owned-path
         module
@@ -3194,10 +3197,11 @@
         captures)]
     [(ModuleBody nested-module body-box)
       (build-package-tlci-collect-macros-into!
+        context
         (deref body-box)
         (ast.ast-decl-path-list-new)
         owned-path
-        (ci.intern-str nested-module)
+        (ci.intern-compat-state-str context.intern-state nested-module)
         package-name
         owned-sources
         out
@@ -3228,6 +3232,7 @@
     [(LookupMissing) false]))
 
 (define (build-package-tlci-collect-macros-into!
+  [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [fallback-path : String]
@@ -3256,9 +3261,13 @@
                 decl-path
                 "")]
             (match (owned_view.compiler-owned-shared-view decl)
-              [(Module name) (set! module (ci.intern-str name))]
+              [(Module name)
+                (set!
+                  module
+                  (ci.intern-compat-state-str context.intern-state name))]
               [_
                 (build-package-tlci-collect-decl-macro!
+                  context
                   decl
                   owned-path
                   (owned_view.compiler-owned-shared-view module)
@@ -3272,6 +3281,7 @@
               [(Cons _ path-rest) (set! path-cursor path-rest)]))]))))
 
 (define (build-package-tlci-macro-collector
+  [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [source-set : (& source-set package_source_core.PackageSourceSet)]
   [manifest : load.CompilerPkgManifest]
   [decls : ast.AstDeclList]
@@ -3283,6 +3293,7 @@
     [owned-sources : build_string_i64_map.Map
       (build-package-tlci-source-map source-set.sources)]
     (build-package-tlci-collect-macros-into!
+      context
       decls
       paths
       ""
@@ -3432,6 +3443,7 @@
   (Err String))
 
 (define (build-package-tlci-capture-exports
+  [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
@@ -3441,6 +3453,7 @@
     [home : arena.Arena (arena.current)]
     (with-scratch
       (match (build-package-tlci-collect-exports
+        context
         manifest
         mode
         decls
@@ -3462,6 +3475,7 @@
               (Ok (string.copy metadata) copied (string.copy native-source))))]))))
 
 (define (build-package-tlci-collect-exports
+  [context : (& context compiler_tlci_native_producer.TlciNativeSourceContext)]
   [manifest : load.CompilerPkgManifest]
   [mode : backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
@@ -3477,6 +3491,7 @@
         (owned_view.compiler-owned-shared-view paths))]
     [macro-collector : BuildPackageTlciMacroCollector
       (build-package-tlci-macro-collector
+        context
         source-set
         (owned_view.compiler-owned-shared-view manifest)
         decls
@@ -3491,6 +3506,7 @@
         (if (= (array-length names) 0)
           ""
           (compiler_tlci_native_producer.embedded-native-source
+            context
             names
             (& macro-collector.captures)))))))
 
@@ -5163,8 +5179,15 @@
         (build_run_core.source-tool-target-name target))
       (sym_i64_env.sym-i64-copy seen))
     (let
+      [source-context : compiler_tlci_native_producer.TlciNativeSourceContext
+        (compiler_tlci_native_producer.tlci-native-source-context-new
+          (compiler_driver_core.compiler-driver-state-pool-context
+            (& scope.state))
+          (compiler_driver_core.compiler-driver-state-owned-interns
+            (& scope.state)))]
       [exports : ResultBuildPackageTlciExports
         (build-package-tlci-capture-exports
+          (& source-context)
           manifest
           mode
           (owned_view.compiler-owned-shared-view decls)

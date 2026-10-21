@@ -986,10 +986,13 @@
 (define (compiler-symbols-add-macro-alias-key-id
   [symbols : (& CompilerSymbols)]
   [key-id : i64]
-  [handle : i64]) : CompilerSymbols
+  [handle : i64]
+  [replace-existing? : bool]) : CompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
-      (if (compiler-symbol-map-contains-id? (& macros) key-id)
+      (if (and
+        (not replace-existing?)
+        (compiler-symbol-map-contains-id? (& macros) key-id))
         (CompilerSymbols values types macros decls owner-names decl-count)
         (begin
           (compiler-symbol-map-bind-id! (&mut macros) key-id handle)
@@ -1349,7 +1352,8 @@
       (compiler-symbols-add-macro-alias-key-id
         (& next)
         (compiler-symbol-name-id-key name-id)
-        handle))))
+        handle
+        false))))
 
 (define (compiler-symbols-lookup-value-in-module-id
   [symbols : (& symbols CompilerSymbols)]
@@ -1692,7 +1696,8 @@
       (compiler-symbols-add-macro-alias-key-id
         (& symbols)
         (compiler-symbol-module-key-id-by-id alias-id name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
+        (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index)
+        false)]
     [(Extern decl-meta name _ _ _)
       (compiler-symbols-add-value-alias-key-id
         (& symbols)
@@ -2230,7 +2235,13 @@
         [(None) with-value])]
     (match macro-handle
       [(Some handle)
-        (compiler-symbols-add-macro-alias-key-id (& with-type) alias-key handle)]
+        ;; A selected binding takes precedence over tentative bare aliases
+        ;; from other modules. The loader diagnoses actual name collisions.
+        (compiler-symbols-add-macro-alias-key-id
+          (& with-type)
+          alias-key
+          handle
+          true)]
       [(None) with-type])))
 
 (define (build-compiler-symbol-aliases-list-with-index-offset

@@ -152,6 +152,15 @@ scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe #
 `build-stage0.sh` compiles `src/main.tl` with the seed and links through the
 host toolchain, so a stage0 never depends on its own `build` command.
 
+The serialized publisher uploads a complete private candidate before replacing
+the convenience release. It moves `stage0-latest` to the new commit without
+deleting that tag: delayed GitHub tag-deletion events can make a replacement
+release draft. Publication logs identify each successful tag move or creation.
+A retry can replace a leftover older release or recreate a missing release
+after the tag moves.
+The existing verifier checks the published payload and stable compiler URLs;
+permanent releases remain available during the short release replacement.
+
 The shell and PowerShell fetchers recover when `stage0-latest` returns 404,
 including when GitHub hides it as a draft. They select the newest published
 `stage0-YYYYMMDD-HHMMSS-r<run>` release with the host asset and `SHA256SUMS`,
@@ -201,4 +210,9 @@ link to their exact source line at the recorded source revision, while page
 metadata records the compiler, source, and package identities used for the
 build. The verifier rejects broken links, duplicate anchors/search identities,
 stale page/index identity pairs, missing search records, and an unexpectedly
-large index.
+large index. Guide links resolve relative to their Markdown source directory,
+including `.`/`..` segments. Registered sources link to generated pages and
+retain fragments; other repository paths link to the recorded source revision.
+Heading aliases support fragments such as `#cli` while preserving existing
+`tl-...` anchors and search identities. The verifier also rejects missing
+repository source paths and reports the owning guide.

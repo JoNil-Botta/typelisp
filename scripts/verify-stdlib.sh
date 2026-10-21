@@ -192,6 +192,7 @@ stdlib_manifest() {
 arena.tl
 atomic.tl
 args.tl
+base64.tl
 byte_buf.tl
 byte_buf_core.tl
 byte_le.tl
@@ -293,6 +294,7 @@ stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:shared-equal
 stdlib/tests/vector_live_extent.tl|42|-|-|literal:valid
 stdlib/tests/wire_byte_buf_live_extent.tl|42|-|-|literal:tls-equal-one
 stdlib/tests/byte_buf_core_api.tl|42|-|-
+stdlib/tests/base64_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-

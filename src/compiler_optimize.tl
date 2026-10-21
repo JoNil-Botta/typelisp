@@ -1395,7 +1395,9 @@
           (opt-type-eq type-segment-bases rhs-ty (& (F32))))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
-    [(or (BitAnd) (BitOr) (BitXor) (Shl _) (Shr _)) lhs-ty]
+    [(or (Shl _) (Shr _)) lhs-ty]
+    ;; Bitwise masks use the instruction width, even when a known operand
+    ;; originated in narrower storage.
     [_ (owned_view.compiler-owned-reference-shared-view result-ty)]))
 
 (define (opt-signed-min [ty : (& ty ast.AstType)]) : i64

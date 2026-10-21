@@ -38,6 +38,11 @@ Physical IR storage types are derived separately with regions erased.
 Semantic queries for operands and nested calls therefore receive the same
 brands as the original checked binding. An `in-arena` body also retains its
 source allocation region alongside the runtime restore marker.
+
+Scalar integer bitwise folding normalizes both constants at the declared
+`BinOp` operand width. A known constant's defining type must not truncate a
+wider storage mask or discard the upper fields of a packed aggregate.
+
 Encoded typechecker errors cross the
 lowering boundary through the shared decoder, preserving the producer's code,
 primary span, help and secondary labels.

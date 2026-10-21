@@ -26,6 +26,15 @@ keys must additionally preserve their source/macro or identity contract.
 Do not erase wrappers indiscriminately. Cached segment-base views remain valid
 only within the pool lifetime guaranteed by their caller.
 
+Borrow-conflict read normalization carries the source expression ID with its
+pool owner. It changes `BoxTake` to `BoxGet` only along value-producing paths;
+conditions, initializers, scrutinees, indices and sequence prefixes retain
+their ordinary access. An unchanged path keeps its original ID and argument
+list without allocating replacement payloads. Changed paths use the canonical
+AST child schema and allocate new
+payloads in the source pool's owner arena. Shared source occurrences and their
+provenance remain unchanged even when another pool or arena is current.
+
 A reusable fact identifies its semantic inputs and stays within their lifetime,
 or copies into the destination owner through the canonical API. Invalidate
 dependent facts before reusing changed inputs or retiring their pools. Choose

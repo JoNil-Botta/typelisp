@@ -907,6 +907,13 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 
 ## Coverage layers
 
+`regalloc-assignment-table-empty` checks empty and sparse assignment tables,
+every occupied position through the last slot, ignored out-of-range inserts,
+replacement, repeated unassignment, copying and overlays. Both explicit spills
+and register homes count as assignments. The native register-allocation
+self-test runs the same cases; exercise it at opt0/1/2 when changing presence
+queries or assignment-table mutation.
+
 ### Module-local self-tests
 
 Put small structural checks in the owning module's `*_tests.tl` companion (for

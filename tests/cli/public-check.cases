@@ -128,7 +128,7 @@ stderr not-contains error[E03
 
 case loader-package-duplicate-body
 target linux-x86_64 windows-x86_64
-each sibling nested self
+each sibling nested self branches
 file typelisp.pkg
 (package
   (name "loader_parity")
@@ -144,6 +144,8 @@ file main.tl
     (module helper (define first : i64 1))
     (module helper (define second : i64 2))))
 (cfg self (module helper (module helper (define first : i64 1))))
+(cfg branches (module left (module shared (define first : i64 1))))
+(cfg branches (module right (module shared (define second : i64 2))))
 (define (main) : i64 0)
 end-file
 step plain-check

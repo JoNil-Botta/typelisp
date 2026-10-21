@@ -1140,6 +1140,8 @@
   (module local.helper (define b : i64 2)))"
         "(module local.helper
   (module local.helper (define a : i64 1)))"
+        "(module left (module shared (define a : i64 1)))
+(module right (module shared (define b : i64 2)))"
         "(import missing_9007)")]
     (load.compiler-load-test-mkdir "target/exp")
     (load.compiler-load-test-mkdir (& root))
@@ -1152,11 +1154,11 @@
             (string.int->string index)
             ".tl")]
         [code : String
-          (if (< index 3)
+          (if (< index 4)
             "E0307"
             "E0301")]
         [message : String
-          (if (< index 3)
+          (if (< index 4)
             "compiler-load: duplicate module declaration"
             (str_cat.str-cat
               "compiler-load: cannot read import "

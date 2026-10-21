@@ -5201,36 +5201,24 @@
         path
         "compiler-load: duplicate module declaration"))))
 
-;; Module bodies retain their source-file namespace even when the package
-;; walker leaves them nested. Validate nested bodies at the shared identity
-;; boundary; direct declaration walks use the same predicate before flattening.
-(define (compiler-load-module-body-duplicate?
-  [name : i64]
-  [body : (& ast.AstDeclList)]
-  [rest : (& ast.AstDeclList)]) : bool
-  (when
-    (or
-      (compiler-load-decl-list-has-module-id? body name)
-      (compiler-load-decl-list-has-module-id? rest name))
-    (return true))
-  (let
-    [step : ast.AstDeclListStep (ast.ast-decl-list-step body)]
-    [scanning : bool true]
-    (while scanning
-      (match step
-        [(Nil) (set! scanning false)]
-        [(Cons decl tail)
-          (match decl
-            [(ModuleBody nested-name nested-body)
-              (when
-                (compiler-load-module-body-duplicate?
-                  nested-name
-                  (& (deref nested-body))
-                  (& tail))
-                (return true))]
-            [_ unit])
-          (set! step (ast.ast-decl-list-step (& tail)))]))
-    false))
+;; Body identities share one source-file namespace, including bodies under
+;; different parents. A later flat marker cannot reopen an earlier body.
+;; The set is scratch-owned and never escapes module-identity validation.
+(define (compiler-load-module-bodies-duplicate?
+  [decls : (& decls ast.AstDeclList)]
+  [bodies : (&mut bodies load_i64_i64_map.Map)]) : bool
+  (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+    (match (ast.ast-decl-list-ref-borrowed decls index)
+      [(Module name)
+        (when (load_i64_i64_map.contains? bodies name) (return true))]
+      [(ModuleBody name body)
+        (when (load_i64_i64_map.contains? bodies name) (return true))
+        (load_i64_i64_map.insert-ref! bodies name 1)
+        (when
+          (compiler-load-module-bodies-duplicate? (& (deref body)) bodies)
+          (return true))]
+      [_ unit]))
+  false)
 
 (define (compiler-load-decls-module-id-loop
   [path : String]
@@ -5258,18 +5246,6 @@
                   (CompilerLoadSomeModuleId (ci.intern-str name) name))]
               [(CompilerLoadSomeModuleId _ _)
                 (Err (compiler-load-duplicate-module-diagnostic path))])]
-          [(ModuleBody name body)
-            (if (compiler-load-module-body-duplicate?
-              name
-              (& (deref body))
-              (& rest))
-              (Err (compiler-load-duplicate-module-diagnostic path))
-              (compiler-load-decls-module-id-loop
-                path
-                (& rest)
-                fallback
-                fallback-id
-                found))]
           [_
             (compiler-load-decls-module-id-loop
               path
@@ -5285,24 +5261,38 @@
   (let
     [fallback : String
       (compiler-load-canonical-module-id-from-path (string.copy path))]
-    (compiler-load-decls-module-id-loop
+    (compiler-load-decls-module-id-with-fallback
       path
       decls
       fallback
-      fallback-id
-      CompilerLoadNoModuleId)))
+      fallback-id)))
 
 (define (compiler-load-decls-module-id-with-fallback
   [path : String]
   [decls : (& ast.AstDeclList)]
   [fallback : String]
   [fallback-id : i64]) : ResultCompilerLoadModuleId
-  (compiler-load-decls-module-id-loop
-    path
-    decls
-    fallback
-    fallback-id
-    CompilerLoadNoModuleId))
+  (let
+    [has-body : bool false]
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+      (match (ast.ast-decl-list-ref-borrowed decls index)
+        [(ModuleBody _ _)
+          (set! has-body true)
+          (break)]
+        [_ unit]))
+    (if (and
+      has-body
+      (with-scratch
+        (let
+          [bodies : load_i64_i64_map.Map (load_i64_i64_map.new)]
+          (compiler-load-module-bodies-duplicate? decls (&mut bodies)))))
+      (Err (compiler-load-duplicate-module-diagnostic path))
+      (compiler-load-decls-module-id-loop
+        path
+        decls
+        fallback
+        fallback-id
+        CompilerLoadNoModuleId))))
 
 (define (compiler-load-check-expected-module
   [path : (& str)]
@@ -9639,10 +9629,13 @@
             (let
               [target-module : String (ci.intern-str target-module-id)]
               [body : ast.AstDeclList (deref body-box)]
-              (if (compiler-load-module-body-duplicate?
-                target-module-id
-                (& body)
-                (& rest))
+              (if (or
+                (compiler-load-decl-list-has-module-id?
+                  (& body)
+                  target-module-id)
+                (compiler-load-decl-list-has-module-id?
+                  (& rest)
+                  target-module-id))
                 (Err
                   (compiler-load-duplicate-module-diagnostic
                     (string.copy importer-path)))

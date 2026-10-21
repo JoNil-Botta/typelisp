@@ -2529,7 +2529,7 @@ source context is attached. Resolver helpers keep plain internal messages;
 forwarded parser/typechecker diagnostics retain their own codes and provenance.
 The `E03..` inventory lists every loader conversion, including package imports.
 Ordinary and package loads validate nested module bodies at the shared module
-identity boundary. A repeated body, including one nested inside another body,
+identity boundary. A repeated body, including bodies under different parents,
 reports E0307 at the source-file start before either walker transforms it.
 An unresolved local dotted import retains its candidate path so normal source
 loading reports E0301; dependency declarations control alias routing, while

@@ -1728,7 +1728,7 @@
                   (for [index (iterator.range 0 instrs.len)]
                     (let
                       [instr : ir.CompilerIrInstr
-                        (ir.compiler-ir-array-shared-view instrs.slots index)]
+                        (clone (array-ref instrs.slots index))]
                       [used : i64
                         (if (string.eq consumer "")
                           (match (& instr)
@@ -1753,26 +1753,20 @@
                           (if (array-ref captured used)
                             1
                             0)))
-                      (if (lower-test-instr-call-name?
-                        (ir.compiler-ir-global-shared-view instr)
-                        effect)
+                      (if (lower-test-instr-call-name? (clone instr) effect)
                         (set! effect-seen true)
                         (when
                           (and
                             (not effect-seen)
                             (or
                               (>
-                                (lower-test-instr-copy-mov-count
-                                  (ir.compiler-ir-global-shared-view instr))
+                                (lower-test-instr-copy-mov-count (clone instr))
                                 0)
-                              (>
-                                (lower-test-instr-load-count
-                                  (ir.compiler-ir-global-shared-view instr))
-                                0)
+                              (> (lower-test-instr-load-count (clone instr)) 0)
                               (match (ir.compiler-ir-instr-effect (& instr))
                                 [(Pure)
                                   (ir.compiler-ir-instr-fold-uses
-                                    (ir.compiler-ir-global-shared-view instr)
+                                    (clone instr)
                                     false
                                     lower-test-captured-use?
                                     (& captured))]

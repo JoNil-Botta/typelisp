@@ -32,6 +32,8 @@ GATE_FAIL_PREFIX='spmd-package-calls: '
 . "$ROOT/scripts/lib-gate.sh"
 gate_compiler
 gate_require_compiler
+. "$ROOT/scripts/lib-simd-execution.sh"
+simd_execution_init
 
 PRODUCER="$ROOT/tests/spmd/package_callable"
 CONSUMER="$ROOT/tests/spmd/package_consumer"
@@ -46,8 +48,9 @@ CONSUMER_BIN="$CONSUMER_TARGET/spmd_consumer$EXE_SUFFIX"
 
 run_consumer() {
     mode=$1
+    simd_execution_record spmd-package-consumer "$mode"
     set +e
-    "$CONSUMER_BIN"
+    simd_execute "$mode" "$CONSUMER_BIN"
     code=$?
     set -e
     [ "$code" -eq 42 ] || fail "$mode consumer exited $code, expected 42"
@@ -81,14 +84,14 @@ verify_mode() {
         run_consumer "$mode"
         echo "spmd-package-calls: $mode build/link/run passed"
     else
+        simd_execution_record spmd-package-consumer "$mode"
         echo "spmd-package-calls: $mode build/link passed; execution skipped"
     fi
 }
 
 verify_mode scalar yes
 
-SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" | tr -d '\r')
-if printf '%s\n' "$SIMD_ISAS" | grep -qx avx512; then
+if simd_execution_mode avx512; then
     AVX512_EXECUTE=yes
 else
     AVX512_EXECUTE=no
@@ -105,3 +108,4 @@ for mnemonic in vpminsw vpminuw vpminsb vpminub; do
 done
 grep -E 'vpsrldq \$1,' "$PRODUCER_ASM" >/dev/null \
     || fail "avx512 byte uniform reduction did not collapse the final byte pair"
+simd_execution_summary spmd-package-calls

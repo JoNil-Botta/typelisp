@@ -1355,7 +1355,7 @@
     (owned_view.compiler-owned-shared-view state)
     (/ (cli_svec.len (& entries)) 2))
   (let
-    [image-owner : i64
+    [_image-owner : i64
       (compiler_driver_core.compiler-driver-state-surface-arena (& state))]
     [status : i64
       (compile-cli-run-batch-entries-from
@@ -1371,7 +1371,7 @@
         0)]
     (cfg
       embedded-stdlib-tlci
-      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! image-owner)
+      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! _image-owner)
       unit)
     status))
 
@@ -1569,7 +1569,7 @@
       (compile-cli-batch-persistent-table-storage-ensure!
         (owned_view.compiler-owned-shared-view state)
         (/ (cli_svec.len (& entries)) 4))]
-    [image-owner : i64
+    [_image-owner : i64
       (compiler_driver_core.compiler-driver-state-surface-arena (& state))]
     [status : i64
       (compile-cli-run-windows-batch-entries-from
@@ -1584,7 +1584,7 @@
         (&mut results))]
     (cfg
       embedded-stdlib-tlci
-      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! image-owner)
+      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! _image-owner)
       unit)
     (if (= status 0)
       (compile-cli-write-windows-batch-result-plan result-plan-path (& results))

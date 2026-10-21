@@ -1632,3 +1632,14 @@ contains tl_data_byte(%rip)
 contains plain(%rip)
 in fn _tl_extern_data_places_address
 match ^[[:space:]]+leaq tl_data_word\(%rip\), %r
+
+# The native fixture must execute all three out-of-line forwarding paths.
+case tail-stack-forward-preserves-calls
+source tests/integration/tail_call_stack_forward.tl
+target linux-x86_64 windows-x86_64
+in fn _tl_tail_call_stack_forward_fallback
+count = 1 ^[[:space:]]+call _tl_tail_call_stack_forward_weighted$
+in fn _tl_tail_call_stack_forward_jump
+count = 1 ^[[:space:]]+jmp _tl_tail_call_stack_forward_weighted$
+in fn _tl_tail_call_stack_forward_forward_wide
+count = 1 ^[[:space:]]+call _tl_tail_call_stack_forward_make_wide$

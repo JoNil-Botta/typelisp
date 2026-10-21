@@ -1743,6 +1743,13 @@ dies; its operands therefore participate in the shared escape visitor. Without
 a complete lifetime proof for the packed result, the backing range stays private.
 Packing only values without tracked storage roots does not invalidate a range.
 
+A forwarded `AddrOf` is materialized at its use; suppressing its definition
+does not initialize its nominal register or spill home. Ordinary copies,
+same-type casts and phi copies must therefore materialize it even when source
+and destination have the same allocator home. Parallel-copy scheduling treats
+it as reading no home, and cycle saves must not replace it with the nominal
+home's contents. Address formation still uses the backing local's storage.
+
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it
 without naming it. No pass that forwards values by definition records a copy or

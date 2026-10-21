@@ -8658,19 +8658,16 @@
         sv-parents)
       (CompilerRegCoalesceMap parents))))
 
-(define (compiler-reg-assignment-count
-  [assignments : CompilerRegAssignmentTable]) : i64
+(define (compiler-reg-assignment-table-empty?
+  [assignments : CompilerRegAssignmentTable]) : bool
   (let
     [present : (__tl_dyn-array i64)
       (compiler-reg-assignment-table-present assignments)]
     [index : i64 0]
-    [count : i64 0]
     (while (< index (array-length present))
-      (if (= (array-ref present index) 0)
-        unit
-        (set! count (+ count 1)))
+      (unless (= (array-ref present index) 0) (return false))
       (set! index (+ index 1)))
-    count))
+    true))
 
 (define (compiler-reg-copy-hints-add-move!
   [hints : (&mut hints (__tl_dyn-array i64))]
@@ -29563,7 +29560,7 @@
   ;; Stack-only plans have a genuinely empty table, not a vars-wide table of
   ;; spills. Preserve that representation after coloring: otherwise every
   ;; backend `plan-uses-reg?` query scans a vars-wide all-zero presence array.
-  (if (= (compiler-reg-assignment-count assignments) 0)
+  (if (compiler-reg-assignment-table-empty? assignments)
     (compiler-reg-assignment-table-empty)
     (let
       [present : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
@@ -31100,7 +31097,7 @@
         ;; Preserve a logically empty assignment table through coloring;
         ;; indexed lookup already returns `No` for every variable in it.
         [empty-assignments? : bool
-          (= (compiler-reg-assignment-count assignments) 0)]
+          (compiler-reg-assignment-table-empty? assignments)]
         [assignment-index : CompilerRegAssignmentTable
           (if empty-assignments?
             (compiler-reg-assignment-table-empty)

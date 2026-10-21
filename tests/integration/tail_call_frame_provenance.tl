@@ -69,12 +69,11 @@
     (f r.x 7)))
 
 ;; A shadowing local has a different IR identity from its reference parameter.
-(define (shadowed-ref [r : (& i64)] [n : i64]) : i64
+(define (shadowed-ref [_r : (& i64)] [n : i64]) : i64
   (let
     [local : Rec (Rec n "abc")]
-    (let
-      [r : (& local i64) (& local.x)]
-      (scrub-ref r 7))))
+    [_r : (& local i64) (& local.x)]
+    (scrub-ref _r 7)))
 
 ;; Reading a Copy aggregate out of heap storage copies it into this frame.
 (define (heap-copy-field [n : i64]) : i64
@@ -107,35 +106,31 @@
 (define (local-ref-scrutinee [n : i64]) : i64
   (let
     [e : Holder (H (Rec n "abc"))]
-    (let
-      [r : (& e Holder) (& e)]
-      (match r
-        [(H p) (scrub-ref (& p.x) 7)]
-        [(Nothing) 0]))))
+    [r : (& e Holder) (& e)]
+    (match r
+      [(H p) (scrub-ref (& p.x) 7)]
+      [(Nothing) 0])))
 
 ;; A let-bound reference to a frame-local scalar, passed directly and
 ;; re-borrowed.
 (define (local-ref-direct [n : i64]) : i64
   (let
     [x : i64 n]
-    (let
-      [r : (& x i64) (& x)]
-      (scrub-ref r 7))))
+    [r : (& x i64) (& x)]
+    (scrub-ref r 7)))
 
 (define (local-ref-reborrow [n : i64]) : i64
   (let
     [x : i64 n]
-    (let
-      [r : (& x i64) (& x)]
-      (scrub-ref (& r) 7))))
+    [r : (& x i64) (& x)]
+    (scrub-ref (& r) 7)))
 
 ;; A let-bound slice view of a frame-local array.
 (define (local-slice-view [n : i64]) : i64
   (let
     [a : (Array i64 3) (array n 0 0)]
-    (let
-      [v : (& a (Slice i64)) (slice-view (& a) 0 3)]
-      (scrub-slice v 7))))
+    [v : (& a (Slice i64)) (slice-view (& a) 0 3)]
+    (scrub-slice v 7)))
 
 (define (lst-len [l : (& Lst)] [k : i64]) : i64
   (+ l.len k))
@@ -145,9 +140,8 @@
 (define (local-lst-reborrow [n : i64]) : i64
   (let
     [xs : Lst (Lst (__tl_make-array i64 1) n)]
-    (let
-      [l : (& xs Lst) (& xs)]
-      (lst-len (& l) 0))))
+    [l : (& xs Lst) (& xs)]
+    (lst-len (& l) 0)))
 
 ;; Provenance outside the frame: each stays a tail call.
 ;; A reference parameter passed straight through, and re-borrowed.

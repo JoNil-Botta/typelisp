@@ -2,9 +2,9 @@
 (import (hashmap.hashmap i64 i64) as scalar)
 (import (hashmap.hashmap String i64) as general)
 
-;; Keep the generated value-update helpers reachable after opt2 inlining. The
-;; assembly shape gate verifies that both helpers retain the slot layout and
-;; update only the value field after checking the active state.
+;; Keep both value-update paths reachable after opt2 inlining. The assembly
+;; shape gate checks the inlined scalar path and the general helper: both
+;; retain the slot layout and update only the value after checking its state.
 (define (scalar-update
   [map : (&mut map scalar.Map)]
   [key : i64]

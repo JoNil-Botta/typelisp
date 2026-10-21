@@ -21,6 +21,7 @@
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
 packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
+packed_narrow_bitwise_fold|all|0,1,2|tests/integration/packed_narrow_bitwise_fold.tl|42|-|-|-|-
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
 macro_body_splice|all|0,1,2|tests/integration/macro_body_splice.tl|42|-|-|-|stage-stdlib
 ubound_self_call_inbounds|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|6\n|3 3 2 1 1|stdlib/io.tl stdlib/string.tl|-
@@ -48,6 +49,8 @@ invariant_loop_call_write|all|0,2|tests/integration/invariant_loop_call.tl|0|190
 invariant_loop_call_nested|all|0,2|tests/integration/invariant_loop_call.tl|0|438\n|7|-|stage-stdlib
 invariant_loop_call_varying|all|0,2|tests/integration/invariant_loop_call.tl|0|75\n|8|-|stage-stdlib
 loop_call_addr_taken|all|0,2|tests/integration/loop_call_addr_taken.tl|0|594\n1156\n|-|-|stage-stdlib
+forwarded_addr_loop_argument|all|0,1,2|tests/integration/forwarded_addr_loop_argument.tl|1|-|-|-|-
+forwarded_addr_loop_callee|all|0,1,2|tests/integration/forwarded_addr_loop_callee.tl|42|-|-|-|-
 global_cell_stored_address_loop|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|0 0|-|stage-stdlib
 global_cell_stored_address_alias|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|1 0|-|stage-stdlib
 global_cell_stored_address_raw|all|0,1,2|tests/integration/global_cell_stored_address.tl|42|-|2 0|-|stage-stdlib
@@ -82,6 +85,7 @@ content_bounds_induction|all|-|tests/integration/content_bounds_induction.tl|42|
 content_bounds_induction_abort|all|-|tests/integration/content_bounds_induction_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:35:29: array index out of bounds: index=8 length=8\n
 content_bounds_checked|all|-|tests/integration/content_bounds_checked.tl|42|32\n|8|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|-
 content_bounds_checked_abort|all|-|tests/integration/content_bounds_checked_abort.tl|134|-|8 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:48:35: array index out of bounds: index=8 length=8\n
+borrowed_nested_variant|all|-,0,2|tests/integration/borrowed_nested_variant.tl|36|-|-|-|-
 bounds_group_stack_pair|all|0,2|tests/integration/bounds_group_stack_pair.tl|42|-|2|stdlib/io.tl stdlib/string.tl|-
 bounds_group_stack_pair_first_abort|all|0,2|tests/integration/bounds_group_stack_pair.tl|134|-|0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:31: array index out of bounds: index=-1 length=2\n
 bounds_group_stack_pair_second_abort|all|0,2|tests/integration/bounds_group_stack_pair.tl|134|-|1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:31: array index out of bounds: index=-1 length=2\n
@@ -354,6 +358,7 @@ synth_wrapped_probe_abort|all|-,2|tests/integration/synth_wrapped_probe_abort.tl
 synth_tail_wrapper|all|-|tests/integration/synth_tail_wrapper.tl|42|-|-|-|-
 tail_borrow_param|all|-,0,2|tests/integration/tail_borrow_param.tl|42|-|-|-|-
 tail_reborrow_param|all|-,0,2|tests/integration/tail_reborrow_param.tl|42|-|-|-|-
+tail_call_frame_provenance|all|-,0,2|tests/integration/tail_call_frame_provenance.tl|42|-|-|-|-
 tail_stack_arg_permute|all|-,0,1,2|tests/integration/tail_stack_arg_permute.tl|42|-|-|-|-
 tail_call_parallel_gp_cycles|all|0,1,2|tests/integration/tail_call_parallel_gp_cycles.tl|42|-|-|-|-
 tail_call_parallel_gp_overflow|all|0,1,2|tests/integration/tail_call_parallel_gp_overflow.tl|42|-|-|-|-
@@ -1017,6 +1022,11 @@ store_constructor_exits|all|0,1,2|tests/integration/store_constructor_exits.tl|4
 literal_constructor_exits|all|0,1,2|tests/integration/literal_constructor_exits.tl|42|-|-|stdlib/test.tl|-
 exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|-|-|stdlib/test.tl|-
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
+
+decls_module_scopes|all|0,1,2|tests/integration/decls_module_scopes.tl|42|-|-|decls_generated_import_dep.tl|-
+serialize_module_scopes|all|0,1,2|tests/integration/serialize_module_scopes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl|-
+decls_explicit_module_scopes|all|0,1,2|tests/integration/decls_explicit_module_scopes.tl|42|-|-|-|-
+decls_self_target_scopes|all|0,1,2|tests/integration/decls_self_target_scopes.tl|42|-|-|-|-
 
 linker_elf_object_reader|all|0,1,2|src/tests/linker_elf_object_reader_smoke.tl|42|-|-|linker_elf_object_reader.tl linker_elf_object_reader_tests.tl linker_elf_object_reader_test_dump.tl tests/fixtures/elf-object/clang-O0-g-common.expected tests/fixtures/elf-object/clang-O0-g-common.in tests/fixtures/elf-object/clang-O0-g-no-common.expected tests/fixtures/elf-object/clang-O0-g-no-common.in tests/fixtures/elf-object/clang-O0-gz-common.expected tests/fixtures/elf-object/clang-O0-gz-common.in tests/fixtures/elf-object/clang-O0-gz-no-common.expected tests/fixtures/elf-object/clang-O0-gz-no-common.in tests/fixtures/elf-object/clang-O0-tlsdesc.expected tests/fixtures/elf-object/clang-O0-tlsdesc.in tests/fixtures/elf-object/clang-O2-g-common.expected tests/fixtures/elf-object/clang-O2-g-common.in tests/fixtures/elf-object/clang-O2-g-no-common.expected tests/fixtures/elf-object/clang-O2-g-no-common.in tests/fixtures/elf-object/clang-O2-gz-common.expected tests/fixtures/elf-object/clang-O2-gz-common.in tests/fixtures/elf-object/clang-O2-gz-no-common.expected tests/fixtures/elf-object/clang-O2-gz-no-common.in tests/fixtures/elf-object/clang-O2-tlsdesc.expected tests/fixtures/elf-object/clang-O2-tlsdesc.in tests/fixtures/elf-object/gcc-O0-g-common.expected tests/fixtures/elf-object/gcc-O0-g-common.in tests/fixtures/elf-object/gcc-O0-g-no-common.expected tests/fixtures/elf-object/gcc-O0-g-no-common.in tests/fixtures/elf-object/gcc-O0-gz-common.expected tests/fixtures/elf-object/gcc-O0-gz-common.in tests/fixtures/elf-object/gcc-O0-gz-no-common.expected tests/fixtures/elf-object/gcc-O0-gz-no-common.in tests/fixtures/elf-object/gcc-O0-sframe.expected tests/fixtures/elf-object/gcc-O0-sframe.in tests/fixtures/elf-object/gcc-O0-tlsdesc.expected tests/fixtures/elf-object/gcc-O0-tlsdesc.in tests/fixtures/elf-object/gcc-O2-g-common.expected tests/fixtures/elf-object/gcc-O2-g-common.in tests/fixtures/elf-object/gcc-O2-g-no-common.expected tests/fixtures/elf-object/gcc-O2-g-no-common.in tests/fixtures/elf-object/gcc-O2-gz-common.expected tests/fixtures/elf-object/gcc-O2-gz-common.in tests/fixtures/elf-object/gcc-O2-gz-no-common.expected tests/fixtures/elf-object/gcc-O2-gz-no-common.in tests/fixtures/elf-object/gcc-O2-sframe.expected tests/fixtures/elf-object/gcc-O2-sframe.in tests/fixtures/elf-object/gcc-O2-tlsdesc.expected tests/fixtures/elf-object/gcc-O2-tlsdesc.in tests/fixtures/elf-object/gnu-as-groups.expected tests/fixtures/elf-object/gnu-as-groups.in tests/fixtures/elf-object/typelisp-direct.expected tests/fixtures/elf-object/typelisp-direct.in|-
 

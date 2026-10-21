@@ -6732,6 +6732,65 @@
     (unless (= (opt-cc-check twice) 0) (return (+ 40 (opt-cc-check twice))))
     42))
 
+(define (compiler-optimize-bitwise-width-self-test) : i64
+  (let
+    [input : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%1 = mov -3 : i8
+         %2 = mov -3 : i16
+         %3 = mov -3 : i32
+         %4 = mov 7 : i8
+         %5 = mov -2147483648 : i32
+         %6 = mov -32768 : i16
+         %7 = mov -128 : i8
+         %100 = bit_and %1, 255 : u64
+         %101 = bit_and %2, 65535 : u64
+         %102 = bit_and %3, 4294967295 : u64
+         %103 = bit_and 4294967295, %3 : u64
+         %104 = bit_or %4, 4294967296 : u64
+         %105 = bit_xor %4, 4294967296 : u64
+         %106 = bit_and %3, 0 : u64
+         %107 = bit_and %5, 4294967295 : u64
+         %108 = bit_and %6, 65535 : u64
+         %109 = bit_and %7, 255 : u64
+         %110 = bit_and %3, 255 : u8
+         %111 = bit_and %999, 255 : u64")]
+    [folded : ir.CompilerIrInstrSeq
+      (opt-test-fold-instrs
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (Nil)
+        input)]
+    [expected : (Array i64 10)
+      (array
+        253
+        65533
+        4294967293
+        4294967293
+        4294967303
+        4294967303
+        0
+        2147483648
+        32768
+        128)]
+    (unless (= (opt-count-arith-instr-seq folded) 1) (return 1))
+    (for [index (iterator.range 0 (array-length expected))]
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq folded (+ 100 index) -999)
+          (array-ref expected index))
+        (return (+ 10 index)))
+      (unless
+        (=
+          (opt-mov-dst-type-tag folded (+ 100 index))
+          (ast.ast-type-tag (& (U64))))
+        (return (+ 30 index))))
+    (unless
+      (and
+        (= (opt-mov-dst-i64-value-instr-seq folded 110 -999) 253)
+        (= (opt-mov-dst-type-tag folded 110) (ast.ast-type-tag (& (U8)))))
+      (return 2))
+    42))
+
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : ir.CompilerIrInstrSeq
@@ -51606,6 +51665,153 @@
           (set! (array-ref junk word) -1))))
     (opt.opt-round-regions-leave! (& regions))))
 
+(define (opt-rotate-ssa-compound-siblings [ty : (& ty str)] [reverse? : bool]) : ir.CompilerIrFunction
+  (let
+    [text : String (irt.blocks-text (opt-rotate-ssa-many-siblings-blocks 6))]
+    (for [k (iterator.range 0 6)]
+      (let
+        [header : String (str_cat.str-cat "rr-h" (string.int->string k) ":\n")]
+        [phi : String
+          (str_cat.str-cat
+            "  %"
+            (string.int->string (+ 20 k))
+            " = phi [%19, rr-m"
+            (string.int->string k)
+            "], [%"
+            (string.int->string (+ 20 k))
+            ", rr-l"
+            (string.int->string k)
+            "] : "
+            (string.copy ty)
+            "\n")]
+        (set!
+          text
+          (string.replace
+            text
+            (string.copy (& header))
+            (str_cat.str-cat header phi)))))
+    (when
+      reverse?
+      (for [k (iterator.range 0 6)]
+        (let
+          [next : String
+            (if (= k 5)
+              "rr-exit"
+              (str_cat.str-cat "rr-m" (string.int->string (+ k 1))))]
+          [arms : String
+            (str_cat.str-cat
+              ", rr-b"
+              (string.int->string k)
+              ", "
+              (string.copy (& next)))]
+          (set!
+            text
+            (string.replace
+              text
+              arms
+              (str_cat.str-cat ", " next ", rr-b" (string.int->string k)))))))
+    (Function
+      (opt-test-symbol "rotate_compound")
+      (irt.params (str_cat.str-cat "n=%0:i64, value=%19:" (string.copy ty)))
+      (I64)
+      26
+      (irt.blocks text)
+      Ordinary)))
+
+(define (opt-rotate-ssa-compound-types-ok?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [ty : (& ty str)]) : bool
+  (let
+    [ok? : bool true]
+    (for [k (iterator.range 0 6)]
+      (let
+        [header : i64
+          (ir.compiler-ir-label
+            (& (str_cat.str-cat "rr-h" (string.int->string k))))]
+        [label : i64
+          (if (opt-block-list-has-label?
+            (ir.compiler-ir-block-list-view blocks)
+            header)
+            header
+            (ir.compiler-ir-label
+              (& (str_cat.str-cat "rr-b" (string.int->string k)))))]
+        (match (opt.opt-cfg-find-block blocks label)
+          [(No) (set! ok? false)]
+          [(Some block)
+            (match block
+              [(Block _ instrs)
+                (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+                  [(Phi dst _ actual)
+                    (set!
+                      ok?
+                      (and
+                        ok?
+                        (= dst (+ 20 k))
+                        (string.eq
+                          (ir.compiler-ir-type-render
+                            (irt.ir-text-session)
+                            (ast.ast-node-pool-reader-type-segment-bases)
+                            actual)
+                          ty)))]
+                  [_ (set! ok? false)])])])))
+    ok?))
+
+(define (compiler-optimize-rotate-ssa-compound-types-self-test) : i64
+  (let
+    [types
+      (array
+        "i64"
+        "(Tuple i64 bool)"
+        "(-> i64 (Tuple bool i64))"
+        "(Tuple (-> i64 bool) (Array i64 2))")]
+    [fuels : (Array i64 6) (array 0 1 2 3 6 7)]
+    [outer : i64 (arena.tl_arena_current)]
+    (for [kind (iterator.range 0 4)]
+      (for [orientation (iterator.range 0 2)]
+        (for [fuel-index (iterator.range 0 6)]
+          (let
+            [ty (& (array-ref types kind))]
+            [fuel (array-ref fuels fuel-index)]
+            [func (opt-rotate-ssa-compound-siblings ty (= orientation 1))]
+            [original-blocks (opt.opt-function-blocks func)]
+            [context (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+            (unless
+              (opt.opt-verify-ok?
+                (& (opt.opt-verify-function-with-context func context)))
+              (return 1))
+            (match (opt.opt-rotate-ssa-rounds func context fuel)
+              [(Result result kept-context)
+                (opt-round-regions-test-clobber!)
+                (unless (= (arena.tl_arena_current) outer) (return 2))
+                (unless
+                  (opt-rotate-ssa-compound-types-ok? original-blocks ty)
+                  (return 3))
+                (unless
+                  (opt-rotate-ssa-compound-types-ok?
+                    (& (opt.opt-function-blocks result))
+                    ty)
+                  (return (+ 10 (* kind 10) fuel)))
+                (unless
+                  (=
+                    (opt-rotate-ssa-rotated-count result 6)
+                    (if (> fuel 6)
+                      6
+                      fuel))
+                  (return 4))
+                (unless
+                  (opt.opt-verify-ok?
+                    (&
+                      (opt.opt-verify-function-with-context result kept-context)))
+                  (return 5))])))))
+    42))
+
+(test
+  opt-rotate-ssa-compound-types-survive-round-retirement
+  (test.assert-i64-eq
+    (compiler-optimize-rotate-ssa-compound-types-self-test)
+    42
+    "every carried compound phi type survives repeated home switches, exhausted fuel and retired-storage reuse"))
+
 ;; Bytes the rounds bump in their caller's arena, round regions excluded, or -1
 ;; when they do not hand the caller's arena back.
 (cfg
@@ -69069,6 +69275,13 @@ return 0" true)
     (compiler-optimize-commute-constant-lhs-self-test)
     42
     "a commutative integer op with a literal or global-cell LHS canonicalises to a literal or cell RHS (two cells stay), `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
+
+(test
+  bitwise-declared-width
+  (test.assert-i64-eq
+    (compiler-optimize-bitwise-width-self-test)
+    42
+    "bitwise folds keep the declared width for narrow constants, wide masks and high bits, and retain unknown operands"))
 
 (test
   scalar-shift-count-type-fold

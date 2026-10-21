@@ -1395,7 +1395,9 @@
           (opt-type-eq type-segment-bases rhs-ty (& (F32))))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
-    [(or (BitAnd) (BitOr) (BitXor) (Shl _) (Shr _)) lhs-ty]
+    [(or (Shl _) (Shr _)) lhs-ty]
+    ;; Bitwise masks use the instruction width, even when a known operand
+    ;; originated in narrower storage.
     [_ (owned_view.compiler-owned-reference-shared-view result-ty)]))
 
 (define (opt-signed-min [ty : (& ty ast.AstType)]) : i64
@@ -18895,7 +18897,9 @@
       [_ index])))
 
 ;; Each header phi must carry exactly the two loop-edge inputs {preheader,
-;; latch}; the record keeps (dst, preheader input, latch input, type).
+;; latch}; the record keeps (dst, preheader input, latch input, type). Its type
+;; must share the input owner: round copy-out shares type leaves, so persisting
+;; a new compound-type container here would leave it in retiring round storage.
 (define (opt-rotate-ssa-phi-recs-from
   [phis : (& phis ir.CompilerIrInstrSeq)]
   [preheader : i64]
@@ -18906,13 +18910,13 @@
     (match (opt-rotate-ssa-phi-recs-from phis preheader latch (+ index 1))
       [(No) (No)]
       [(Some recs)
-        (match (ir.compiler-ir-instr-seq-borrow phis index)
+        (match (ir.compiler-ir-instr-seq-ref phis index)
           [(Phi dst inputs ty)
             (match (opt-phi-edge-values (& inputs) preheader latch)
               [(Some pre-value latch-value)
                 (Some
                   (opt-rotate-ssa-phi-recs-cons
-                    (Rec dst pre-value latch-value (ast.ty-node-persist ty))
+                    (Rec dst pre-value latch-value ty)
                     recs))]
               [(No) (No)])]
           [_ (No)])])))

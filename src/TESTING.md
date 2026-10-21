@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`backend-forwarded-address-*` tests coalesced copies and same-type casts on
+both targets, phi filtering and cycle scheduling, and final-IR branch loads
+whose address setup must survive. Initialized same-home copies and real swap
+cycles remain controls. `forwarded_addr_loop_argument.tl` and
+`forwarded_addr_loop_callee.tl` exercise both edges of a loop-carried address
+phi at opt0/1/2 on both hosts; explicit source snapshots isolate these cases
+from the separate lowering and stale-load bugs.
+
 `linker_coff_import_reader_tests.tl` shares its assertion body with the native
 opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
 kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,
@@ -58,6 +66,12 @@ missing sentinels. `compiler_tlci_native_source_owners.tl` runs the same asserti
 through the native corpus at opt0/1/2 on both hosts. Keep full-catalog source
 parity, all native macro entries and existing backend/image gates when changing
 the source-owner boundary.
+
+`compiler-optimize-bitwise-width-self-test` checks narrow constants with wider
+bitwise masks and high bits, commuted operands, minimum signed values, narrow
+results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
+i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
+with smaller memory-storage layouts and zero/positive field values as controls.
 
 `backend-call-conventions` checks every IR call form, C and TypeLisp extern
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
@@ -151,6 +165,19 @@ all three optimization levels on both hosts; keep the mixed-float, stack, null
 and unsafe callable ABI families beside this ordering regression. The
 `compiler-lower-operand-snapshot-shape` lowering test pins that ordinary and
 tail callees are copied only when an argument writes their storage.
+
+`tail_call_frame_provenance.tl` scrubs the callee's frame before reading a
+reference or slice. It covers explicit and implicit field borrows, array and
+tuple elements, local aliases, call-returned references, shadowed parameters,
+heap aggregate copies and indirect calls at opt0/1/2 on both hosts. Its
+assembly cases retain ordinary calls for unproven storage and tail jumps for
+reference parameters, reborrows, caller-owned projections and heap storage.
+Parameter-derived slice rests keep tail jumps through nested patterns and a
+300,000-element walk. Sibling local-array views and rebound rests retain calls,
+checking that external-storage facts neither leak between arms nor survive a
+reassignment.
+The safety corpus rejects rebinding a reference parameter to a shorter local
+borrow before forwarding it.
 
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
@@ -2178,6 +2205,22 @@ expression segment boundaries, including more than two full segments. Run it at
 opt0, opt1 and opt2 alongside the native smoke's row-rewrite, truncation/reuse
 and equal-ID/different-pool cases. Wrapper removal consumes each row before
 reading the next and copies out the leaf without recursive stack growth.
+
+`decls_module_scopes` and `serialize_module_scopes` run at opt0/1/2 on both
+hosts. The former repeats one declaration expansion within two generated
+modules and reimports a generated module. The latter round-trips shared enum
+payloads through separate enclosing serializers and checks distinct struct,
+string and scalar values. `decls_same_scope_incompatible` preserves a located
+incompatible-output diagnostic for one module/canonical expansion identity.
+`decls_explicit_module_scopes` combines local declarations with shared explicit
+modules; `decls_explicit_module_tail_conflict` checks that replayed markers
+still assign subsequent declarations to their explicit owner.
+`decls_self_target_scopes` expands bare and bodied module switches in a module
+that is also their target, in both import orders and with a same-module replay;
+`decls_explicit_target_incompatible` keeps the shared target segment's
+incompatible-output diagnostic across consuming modules.
+The typechecker memo scope test complements its existing owner-isolation,
+collision-probing, scratch-persistence and re-arm allocation checks.
 
 ### ELF64 relocatable input reader
 

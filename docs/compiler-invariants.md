@@ -38,6 +38,11 @@ Physical IR storage types are derived separately with regions erased.
 Semantic queries for operands and nested calls therefore receive the same
 brands as the original checked binding. An `in-arena` body also retains its
 source allocation region alongside the runtime restore marker.
+
+Scalar integer bitwise folding normalizes both constants at the declared
+`BinOp` operand width. A known constant's defining type must not truncate a
+wider storage mask or discard the upper fields of a packed aggregate.
+
 Encoded typechecker errors cross the
 lowering boundary through the shared decoder, preserving the producer's code,
 primary span, help and secondary labels.
@@ -845,6 +850,19 @@ core-macro Clone handoff supplies its explicit
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved
 cfg driver-state smoke guard this boundary.
 
+`Decls` splice admission is keyed by the owning module, output segment and
+expansion identity in the job-owned structural intern session. A compatible
+repeat in one module remains empty; another module still receives its imports
+and local declarations. Explicit module switches split the output into
+segments, each admitted under its actual owner and its marker count; all marker
+rows and the original declaration interleaving are preserved. A consuming
+module that is also an explicit target therefore keeps its local segment apart
+from the target segment. Incompatible output under one owner/segment/identity
+still diagnoses. `decls_module_scopes` and `serialize_module_scopes` exercise
+independent generated modules and shared enum payload serializers, and
+`decls_self_target_scopes` self-targeting consumers; the memo scope and re-arm
+tests cover owner and segment isolation, collision probing and invalidation.
+
 The expansion walk splices each macro's output into a segmented program view
 and continues over it. A splice costs work in its delta and the module it
 expands in, never a rescan of the whole program (#8120). Segment nodes and the
@@ -1345,6 +1363,24 @@ below. Two copies keep the rule true without copying every parameter:
 through it. Raw-pointer writes into an argument stay the unsafe code's
 obligation.
 
+Tail-call selection proves that each effective argument's storage survives
+release of the current frame. Direct and indirect calls use the callee's
+formal types and `tc-call-effective-arg-expr`, including implicit borrows;
+a scalar field's source type does not reveal that its address is passed.
+References, slices, strings-as-views and inline aggregates require a proof:
+an unchanged parameter, a reference-parameter reborrow, caller-owned
+memory-class parameter storage, a typed global binding without a local IR
+binding, or a supported heap projection. A shared
+borrow of a plain scalar variable is safe because lowering copies it into
+`tl_alloc` storage. Local reference/view aliases, unknown call results and
+Copy aggregates materialized from heap elements do not acquire a proof.
+Slice-pattern rest views inherit a proven external scrutinee's storage;
+their IR IDs are retained in a persistent set so lowering-state forks do not
+share new facts. Reassignment of a proven frame-sensitive binding invalidates
+both that set and the parameter forwarding range. Unknown provenance retains
+an ordinary call and return; borrowed
+match arms use the same tail-call selection.
+
 Address-exposed register groups own contiguous stack pairs indexed by final
 variable ID. In a function that exposes any group address, all group second
 words use that canonical pair region; mixing a one-word-stride map with
@@ -1711,6 +1747,13 @@ and ordered block storage; no returned loop borrows the workspace. Empty,
 acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
 arrays.
 
+Post-SSA rotation's round homes own block, instruction and phi-input containers.
+Their type leaves retain the input function's owner. Phi analysis must borrow
+that existing type rather than create a compound-type container in round
+scratch: the round copier shares those leaves while retiring its old home.
+The compound-phi rotation tests overwrite all retired homes before reading
+every returned type and verifying the carried function/context.
+
 Empty work records initially read one immutable zero-length array descriptor;
 each record replaces both handles before its first element write. The work
 record itself is private, never a shallow view of shared mutable storage. The
@@ -1736,6 +1779,13 @@ Inline-storage coloring tracks addresses through its known alias forms. A
 dies; its operands therefore participate in the shared escape visitor. Without
 a complete lifetime proof for the packed result, the backing range stays private.
 Packing only values without tracked storage roots does not invalidate a range.
+
+A forwarded `AddrOf` is materialized at its use; suppressing its definition
+does not initialize its nominal register or spill home. Ordinary copies,
+same-type casts and phi copies must therefore materialize it even when source
+and destination have the same allocator home. Parallel-copy scheduling treats
+it as reading no home, and cycle saves must not replace it with the nominal
+home's contents. Address formation still uses the backing local's storage.
 
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it

@@ -34,20 +34,31 @@
   (c i64)
   (d i64))
 
+;; The tail-recursive callee stays out of line while its wrapper stays a forwarder.
 (define (make-wide [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [k : i64]) : Wide
-  (Wide (+ a k) (+ b e) c d))
+  (if (< k 0)
+    (make-wide a b c d e (+ k 1))
+    (Wide (+ a k) (+ b e) c d)))
 
 (define (forward-wide [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : Wide
   (make-wide a b c d e 0))
 
+;; Mutable function values preserve the forwarding bodies for native execution.
+(define fallback-call : (-> i64 i64 i64 i64 i64 i64 i64)
+  fallback)
+(define jump-call : (-> i64 i64 i64 i64 i64 i64 i64 i64)
+  jump)
+(define wide-call : (-> i64 i64 i64 i64 i64 Wide)
+  forward-wide)
+
 (define (main) : i64
   (let
-    [wide : Wide (forward-wide -3 11 17 23 31)]
-    [zero : i64 (fallback 0 0 0 0 0 0)]
-    [mixed : i64 (fallback -1 2 -3 4 -5 6)]
+    [wide : Wide (wide-call -3 11 17 23 31)]
+    [zero : i64 (fallback-call 0 0 0 0 0 0)]
+    [mixed : i64 (fallback-call -1 2 -3 4 -5 6)]
     (if (and
-      (= (fallback 1 2 3 4 5 6) 2669152)
-      (= (jump 1 2 3 4 5 6 7) 7646008)
+      (= (fallback-call 1 2 3 4 5 6) 2669152)
+      (= (jump-call 1 2 3 4 5 6 7) 7646008)
       (= zero 0)
       (= mixed -2492488)
       (= wide.a -3)

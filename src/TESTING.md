@@ -80,6 +80,8 @@ computed-argument and coalesced-call controls preserve exclusions outside
 simple one-instruction forwarders.
 `tail_call_stack_forward.tl` covers register permutations, duplicate stack
 sources, zero/negative values and hidden aggregate-result pointers at opt0/1/2.
+`tail-stack-forward-preserves-calls` pins its out-of-line fallback, tail jump
+and aggregate-result forwarding at opt2 on both ABIs.
 
 `backend-call-conventions` checks every IR call form, C and TypeLisp extern
 aliases, variadic signatures, private by-value copies and call-fact lifetime.

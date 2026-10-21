@@ -10345,10 +10345,12 @@
       ;; Interleave generated-declaration and generated-module memos.
       (tc_core.macro-generated-decls-memo-put!
         state-a
+        0
         "tc-macro-state-isolation"
         (ast.ast-decl-list-new))
       (tc_core.macro-generated-decls-memo-put!
         state-b
+        0
         "tc-macro-state-isolation"
         (ast.ast-decl-list-new))
       (tc_core.macro-generated-module-memo-put!
@@ -10397,11 +10399,13 @@
           ok
           (match (tc_core.macro-generated-decls-memo-get
             state-a
+            0
             "tc-macro-state-isolation")
             [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
           (match (tc_core.macro-generated-decls-memo-get
             state-b
+            0
             "tc-macro-state-isolation")
             [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
@@ -10635,6 +10639,7 @@
             [_ false])
           (match (tc_core.macro-generated-decls-memo-get
             state-b
+            0
             "tc-macro-state-isolation")
             [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
@@ -11040,9 +11045,13 @@
 ;; The number of decls memoized for `identity`, or -1 when it misses.
 (cfg
   test
-  (define (memo-test-lookup [state : tc_core.TcMacroState] [index : i64]) : i64
+  (define (memo-test-lookup
+    [state : tc_core.TcMacroState]
+    [module-id : i64]
+    [index : i64]) : i64
     (match (tc_core.macro-generated-decls-memo-get
       state
+      module-id
       (memo-test-identity index))
       [(Some decls) (ast.ast-decl-list-len (& decls))]
       [(No) -1])))
@@ -11050,17 +11059,25 @@
 ;; An identity index past 0 whose bucket is identity 0's, so it probes past it.
 (cfg
   test
-  (define (memo-test-colliding-index [state : tc_core.TcMacroState]) : i64
+  (define (memo-test-colliding-index
+    [state : tc_core.TcMacroState]
+    [module-id : i64]) : i64
     (let
       [home : i64
         (tc_core.macro-generated-decls-memo-bucket
           state
-          (tc_core.macro-generated-identity-id state (memo-test-identity 0)))]
+          (tc_core.macro-generated-decls-identity-id
+            state
+            module-id
+            (memo-test-identity 0)))]
       [index : i64 1]
       (while (!=
         (tc_core.macro-generated-decls-memo-bucket
           state
-          (tc_core.macro-generated-identity-id state (memo-test-identity index)))
+          (tc_core.macro-generated-decls-identity-id
+            state
+            module-id
+            (memo-test-identity index)))
         home)
         (+= index 1))
       index)))
@@ -11070,20 +11087,26 @@
   (test
     macro-generated-decls-memo-rearm-clears-only-keys
     (let
+      [module-id : i64 (ci.intern "decls.memo.rearm")]
       [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
       [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
-      [other : i64 (memo-test-colliding-index state)]
+      [other : i64 (memo-test-colliding-index state module-id)]
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity 0)
         (memo-test-decls 1))
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity other)
         (memo-test-decls 2))
-      (test.assert-i64-eq (memo-test-lookup state 0) 1 "home slot entry")
       (test.assert-i64-eq
-        (memo-test-lookup state other)
+        (memo-test-lookup state module-id 0)
+        1
+        "home slot entry")
+      (test.assert-i64-eq
+        (memo-test-lookup state module-id other)
         2
         "an entry that probes past the home slot")
       (tc_core.macro-generated-decls-memo-reset! state)
@@ -11094,9 +11117,12 @@
           (- (profile.alloc-total) before)
           0
           "re-arming the memo allocates nothing"))
-      (test.assert-i64-eq (memo-test-lookup state 0) -1 "no stale home entry")
       (test.assert-i64-eq
-        (memo-test-lookup state other)
+        (memo-test-lookup state module-id 0)
+        -1
+        "no stale home entry")
+      (test.assert-i64-eq
+        (memo-test-lookup state module-id other)
         -1
         "no stale probed entry")
       ;; After the re-arm `other` takes the empty home slot. Identity 0 then
@@ -11104,22 +11130,24 @@
       ;; and must miss rather than return that list.
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity other)
         (memo-test-decls 3))
       (test.assert-i64-eq
-        (memo-test-lookup state other)
+        (memo-test-lookup state module-id other)
         3
         "put/get round-trips after a re-arm")
       (test.assert-i64-eq
-        (memo-test-lookup state 0)
+        (memo-test-lookup state module-id 0)
         -1
         "a key probing past a zeroed slot misses")
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity 0)
         (memo-test-decls 4))
       (test.assert-i64-eq
-        (memo-test-lookup state 0)
+        (memo-test-lookup state module-id 0)
         4
         "the zeroed slot is reused"))))
 
@@ -12639,3 +12667,101 @@
     (ast.ast-node-pool-context-destroy-storage! a)
     (unsafe
       (arena.destroy owner-a))))
+
+(cfg
+  test
+  (test
+    macro-generated-decls-memo-module-scope
+    (let
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
+      [module-a : i64 (ci.intern "decls.memo.scope.a")]
+      [module-b : i64 (ci.intern "decls.memo.scope.b")]
+      [key-a : i64
+        (tc_core.macro-generated-decls-identity-id
+          state
+          module-a
+          "same-expansion")]
+      [key-b : i64
+        (tc_core.macro-generated-decls-identity-id
+          state
+          module-b
+          "same-expansion")]
+      (test.assert-true
+        (!= key-a key-b)
+        "consumer module participates in memo identity")
+      (test.assert-i64-eq
+        key-a
+        (tc_core.macro-generated-decls-identity-id
+          state
+          module-a
+          "same-expansion")
+        "same module identity is stable")
+      (tc_core.macro-generated-decls-memo-put!
+        state
+        module-a
+        "same-expansion"
+        (memo-test-decls 1))
+      (test.assert-true
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-b
+          "same-expansion")
+          [(No) true]
+          [_ false])
+        "other module has no admitted expansion")
+      (tc_core.macro-generated-decls-memo-put!
+        state
+        module-b
+        "same-expansion"
+        (memo-test-decls 2))
+      (test.assert-i64-eq
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-a
+          "same-expansion")
+          [(Some decls) (ast.ast-decl-list-len (& decls))]
+          [_ -1])
+        1
+        "first scope retains its own output")
+      (test.assert-i64-eq
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-b
+          "same-expansion")
+          [(Some decls) (ast.ast-decl-list-len (& decls))]
+          [_ -1])
+        2
+        "second scope retains its own output")
+      (test.assert-true
+        (!=
+          (tc_core.macro-decls-segment-scope state module-a 0)
+          (tc_core.macro-decls-segment-scope state module-a 1))
+        "output segment participates in memo scope")
+      (test.assert-i64-eq
+        (tc_core.macro-decls-segment-scope state module-a 1)
+        (tc_core.macro-decls-segment-scope state module-a 1)
+        "same segment scope is stable")
+      (tc_core.macro-generated-decls-memo-put!
+        state
+        (tc_core.macro-decls-segment-scope state module-a 0)
+        "segment-expansion"
+        (memo-test-decls 1))
+      (test.assert-true
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          (tc_core.macro-decls-segment-scope state module-a 1)
+          "segment-expansion")
+          [(No) true]
+          [_ false])
+        "another segment of the same owner has no admitted output")
+      (tc_core.macro-generated-decls-memo-reset! state)
+      (test.assert-true
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-a
+          "same-expansion")
+          [(No) true]
+          [_ false])
+        "reset invalidates all module admissions")
+      (tc_core.tc-job-state-retire-owned-storage! job))))

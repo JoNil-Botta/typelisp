@@ -126,6 +126,150 @@ stderr contains error[E0103]: parse: if is missing its else branch
 stderr contains broken.tl:1:22
 stderr not-contains error[E03
 
+case loader-package-duplicate-body
+target linux-x86_64 windows-x86_64
+each sibling nested self
+file typelisp.pkg
+(package
+  (name "loader_parity")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "main.tl"))
+end-file
+file main.tl
+(cfg sibling (module helper (define first : i64 1)))
+(cfg sibling (module helper (define second : i64 2)))
+(cfg nested
+  (module outer
+    (module helper (define first : i64 1))
+    (module helper (define second : i64 2))))
+(cfg self (module helper (module helper (define first : i64 1))))
+(define (main) : i64 0)
+end-file
+step plain-check
+run check "{{dir}}/main.tl" --target {{target}} --cfg {{each}}
+exit 1
+stdout empty
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+stderr contains main.tl:1:1
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{target}} --cfg {{each}}
+exit 1
+stdout empty
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+stderr contains main.tl:1:1
+step plain-build
+run build "{{dir}}/main.tl" -o "{{dir}}/plain{{exe}}" --target {{target}} --cfg {{each}}
+exit 1
+stdout empty
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+stderr contains main.tl:1:1
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{target}} --cfg {{each}}
+exit 1
+stdout empty
+stderr contains error[E0307]: compiler-load: duplicate module declaration
+stderr contains main.tl:1:1
+
+case loader-package-missing-module
+target linux-x86_64 windows-x86_64
+each missing_9007 missing_9007.member
+file typelisp.pkg
+(package
+  (name "missing_parity")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "main.tl"))
+end-file
+file -x main.tl
+(import {{each}})
+(define (main) : i64 0)
+end-file
+step plain-check
+run check "{{dir}}/main.tl" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match missing_9007([/\\]member)?\.tl:1:1
+step package-check
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match missing_9007([/\\]member)?\.tl:1:1
+step plain-build
+run build "{{dir}}/main.tl" -o "{{dir}}/plain{{exe}}" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match missing_9007([/\\]member)?\.tl:1:1
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match missing_9007([/\\]member)?\.tl:1:1
+file typelisp.pkg
+(package
+  (name "missing_parity")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "main.tl")
+  (dependencies (known "vendor/known")))
+end-file
+file vendor/known/typelisp.pkg
+(package
+  (name "known")
+  (version "0.1.0")
+  (kind "lib")
+  (entry "lib.tl"))
+end-file
+file vendor/known/lib.tl
+(define answer : i64 42)
+end-file
+step package-with-dependency
+run check --manifest-path "{{dir}}/typelisp.pkg" --target {{target}}
+exit 1
+stdout empty
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match missing_9007([/\\]member)?\.tl:1:1
+
+case loader-package-module-controls
+target -
+file typelisp.pkg
+(package
+  (name "valid_parity")
+  (version "0.1.0")
+  (kind "bin")
+  (entry "main.tl"))
+end-file
+file main.tl
+(module left.helper (define value : i64 20))
+(module right.helper (define value : i64 22))
+(cfg dormant (module left.helper (define extra : i64 1)))
+(define (main) : i64 42)
+end-file
+step plain-check-linux
+run check "{{dir}}/main.tl" --target linux-x86_64
+stderr empty
+step package-check-linux
+run check --manifest-path "{{dir}}/typelisp.pkg" --target linux-x86_64
+stderr empty
+step plain-check-windows
+run check "{{dir}}/main.tl" --target windows-x86_64
+stderr empty
+step package-check-windows
+run check --manifest-path "{{dir}}/typelisp.pkg" --target windows-x86_64
+stderr empty
+step plain-run
+run run "{{dir}}/main.tl"
+exit 42
+stderr empty
+step package-run
+run run --manifest-path "{{dir}}/typelisp.pkg"
+exit 42
+stderr empty
+
 case loader-selected-seen-span
 target linux-x86_64 windows-x86_64
 each p.answer value

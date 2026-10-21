@@ -1128,19 +1128,72 @@
         [_ false])]
     [(Err _) false]))
 
-(define (compiler-load-nested-module-duplicate-ok?) : bool
-  (match (load.compiler-load-source
-    "src/nested_dup.tl"
-    "(module local.helper (define a : i64 1))
+(define (compiler-load-package-diagnostic-parity-ok?) : bool
+  (let
+    [root : String "target/exp/compiler-load-module-parity"]
+    [sources : (__tl_dyn-array String)
+      (__tl_make-array
+        "(module local.helper (define a : i64 1))
 (module local.helper (define b : i64 2))"
-    (sym_i64_env.sym-i64-empty))
-    [(Err diag)
-      (and
-        (compiler-load-error-code? (__tl-box-place diag) "E0307")
-        (string.eq
-          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-          "compiler-load: duplicate module declaration"))]
-    [(Ok _ _) false]))
+        "(module outer
+  (module local.helper (define a : i64 1))
+  (module local.helper (define b : i64 2)))"
+        "(module local.helper
+  (module local.helper (define a : i64 1)))"
+        "(import missing_9007)")]
+    (load.compiler-load-test-mkdir "target/exp")
+    (load.compiler-load-test-mkdir (& root))
+    (for [index (iterator.range 0 (array-length sources))]
+      (let
+        [entry : String
+          (str_cat.str-cat
+            (string.copy (& root))
+            "/entry-"
+            (string.int->string index)
+            ".tl")]
+        [code : String
+          (if (< index 3)
+            "E0307"
+            "E0301")]
+        [message : String
+          (if (< index 3)
+            "compiler-load: duplicate module declaration"
+            (str_cat.str-cat
+              "compiler-load: cannot read import "
+              (string.copy (& root))
+              "/missing_9007.tl"))]
+        (compiler-load-write-file-text
+          (string.copy entry)
+          (string.copy (& (array-ref sources index))))
+        (match (load.compiler-load-file-with-paths-and-roots
+          (& entry)
+          (sym_i64_env.sym-i64-empty)
+          (& (svec.new)))
+          [(Err ordinary-diag)
+            (let
+              [ordinary : cdiag.CompilerDiagnostic (deref ordinary-diag)]
+              (match (compiler-load-package-file-with-paths-and-roots
+                entry
+                (sym_i64_env.sym-i64-empty)
+                (svec.new)
+                (string.copy root)
+                (load.compiler-pkg-deps-empty))
+                [(Err package-diag)
+                  (unless
+                    (and
+                      (compiler-load-error-code? (& ordinary) code)
+                      (string.eq
+                        (cdiag.compiler-diagnostic-message (& ordinary))
+                        message)
+                      (= (cdiag.compiler-diagnostic-line (& ordinary)) 1)
+                      (= (cdiag.compiler-diagnostic-col (& ordinary)) 1)
+                      (compiler-load-diagnostics-eq?
+                        ordinary
+                        (deref package-diag)))
+                    (return false))]
+                [(Ok _ _ _ _) (return false)]))]
+          [(Ok _ _ _ _) (return false)])))
+    true))
 
 (define (compiler-load-seen-module-ok?) : bool
   (match (load.compiler-load-source
@@ -5893,8 +5946,8 @@
     (compiler-load-nested-module-body-ok?)
     (return (io.panic "compiler-load: nested module body smoke mismatch")))
   (unless
-    (compiler-load-nested-module-duplicate-ok?)
-    (return (io.panic "compiler-load: nested module duplicate smoke mismatch")))
+    (compiler-load-package-diagnostic-parity-ok?)
+    (return (io.panic "compiler-load: package diagnostic parity mismatch")))
   (unless
     (compiler-load-seen-module-ok?)
     (return (io.panic "compiler-load: seen module smoke mismatch")))

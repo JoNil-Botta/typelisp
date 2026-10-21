@@ -296,6 +296,10 @@ tests require every published loader code to remain documented.
 for an unknown package alias on both targets. `loader-unpublished-identity-code`
 keeps E0306 out of the public registry and explanations; explicit API identity
 constraints remain tested as E0303 resolution errors.
+The package/plain parity cases exercise sibling, nested and self-repeated
+module bodies through check/build on both targets, plus missing local modules
+with and without dependencies. Distinct bodies and inactive cfg declarations
+remain accepted; explicit unknown `pkg:` include aliases remain E0303.
 
 ## Packed field receivers
 

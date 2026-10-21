@@ -167,6 +167,12 @@ reassignment.
 The safety corpus rejects rebinding a reference parameter to a shorter local
 borrow before forwarding it.
 
+`tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
+in one frame, including register-resident enum spills. Their tail jumps and
+opt2 loops are checked on both targets. The frame-provenance corpus also
+checks borrowed enum arms with scalar/tuple fields, Copy-array slices,
+call-returned references, nested matches, reassignment and shadowing.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the

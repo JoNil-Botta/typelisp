@@ -234,12 +234,114 @@
     [x : i64 n]
     (scrub-ref (& x) 7)))
 
+;; A borrowed enum match can lower its arms in tail position, but payload
+;; references and views still need the same frame-storage proof.
+(defenum CopyHolder
+  (C CopyRec)
+  (Empty))
+
+(defenum TupleHolder
+  (T (Tuple i64 i64))
+  (NoTuple))
+
+(defenum ArrayHolder
+  (A (Array i64 3))
+  (NoArray))
+
+(define (borrowed-enum-field [n : i64]) : i64
+  (let
+    [e : Holder (H (Rec n "local"))]
+    (match (& e)
+      [(H p) (scrub-ref (& p.x) 7)]
+      [(Nothing) 0])))
+
+(define (borrowed-enum-implicit-field [n : i64]) : i64
+  (let
+    [e : Holder (H (Rec n "local"))]
+    (match (& e)
+      [(H p) (scrub-ref p.x 7)]
+      [(Nothing) 0])))
+
+;; The scrutinee is in the heap; its Copy payload is materialized in the frame.
+(define (borrowed-enum-copy-field [items : (& (__tl_dyn-array CopyHolder))]) : i64
+  (match (& (array-ref items 0))
+    [(C p) (scrub-ref (& p.x) 7)]
+    [(Empty) 0]))
+
+(define (borrowed-enum-call-ref [n : i64]) : i64
+  (let
+    [e : Holder (H (Rec n "local"))]
+    (match (& e)
+      [(H p) (scrub-ref (field-ref p) 7)]
+      [(Nothing) 0])))
+
+(define (borrowed-enum-tuple [n : i64]) : i64
+  (let
+    [e : TupleHolder (T (tuple n 1))]
+    (match (& e)
+      [(T p) (scrub-ref (& (tuple-ref p 0)) 7)]
+      [(NoTuple) 0])))
+
+(define (borrowed-enum-slice [n : i64]) : i64
+  (let
+    [e : ArrayHolder (A (array n 1 2))]
+    (match (& e)
+      [(A p) (scrub-slice (slice-view (& p) 0 3) 7)]
+      [(NoArray) 0])))
+
+(define (borrowed-enum-nested [n : i64]) : i64
+  (let
+    [outer : Holder (H (Rec n "outer"))]
+    [inner : Holder (H (Rec 7 "inner"))]
+    (match (& outer)
+      [(H p)
+        (match (& inner)
+          [(H q) (scrub-ref (& p.x) q.x)]
+          [(Nothing) 0])]
+      [(Nothing) 0])))
+
+(define (borrowed-enum-reassigned [n : i64]) : i64
+  (let
+    [e : Holder (H (Rec 0 "old"))]
+    (set! e (H (Rec n "new")))
+    (match (& e)
+      [(H p) (scrub-ref (& p.x) 7)]
+      [(Nothing) 0])))
+
+(define (borrowed-enum-shadowed [_e : (& Holder)] [n : i64]) : i64
+  (let
+    [_e : Holder (H (Rec n "local"))]
+    (match (& _e)
+      [(H p) (scrub-ref (& p.x) 7)]
+      [(Nothing) 0])))
+
+(define (borrowed-match-frame-cases [n : i64]) : bool
+  (let
+    [items : (__tl_dyn-array CopyHolder) (__tl_make-array CopyHolder 1)]
+    [external : Holder (H (Rec 99 "caller"))]
+    (set! (array-ref items 0) (C (CopyRec n 1 2)))
+    (and
+      (= (borrowed-enum-field n) n)
+      (= (borrowed-enum-implicit-field n) n)
+      (= (borrowed-enum-copy-field (& items)) n)
+      (= (borrowed-enum-call-ref n) n)
+      (= (borrowed-enum-tuple n) n)
+      (= (borrowed-enum-slice n) n)
+      (= (borrowed-enum-nested n) n)
+      (= (borrowed-enum-reassigned n) n)
+      (= (borrowed-enum-shadowed (& external) n) n))))
+
 (define (main) : i64
   (let
     [rec : Rec (Rec 6 "r")]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [deep : (__tl_dyn-array i64) (__tl_make-array i64 300000)]
     [sample : (Array i64 3) (array 0 41 42)]
+    [borrowed-samples : (Array i64 4) (array -7 0 42 1234567)]
+    (for [index (iterator.range 0 4)]
+      (unless
+        (borrowed-match-frame-cases (array-ref borrowed-samples index))
+        (return 2)))
     (set! (array-ref xs 0) 7)
     (let
       [lst : Lst (Lst xs 1)]

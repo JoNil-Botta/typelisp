@@ -1380,6 +1380,9 @@ share new facts. Reassignment of a proven frame-sensitive binding invalidates
 both that set and the parameter forwarding range. Unknown provenance retains
 an ordinary call and return; borrowed
 match arms use the same tail-call selection.
+`lower-match-borrowed-enum` shares scrutinee evaluation and payload binding
+between value and tail continuations. A register-resident scrutinee's spill
+remains frame storage; it grants no external-storage proof.
 
 Address-exposed register groups own contiguous stack pairs indexed by final
 variable ID. In a function that exposes any group address, all group second

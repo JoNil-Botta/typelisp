@@ -6732,6 +6732,65 @@
     (unless (= (opt-cc-check twice) 0) (return (+ 40 (opt-cc-check twice))))
     42))
 
+(define (compiler-optimize-bitwise-width-self-test) : i64
+  (let
+    [input : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%1 = mov -3 : i8
+         %2 = mov -3 : i16
+         %3 = mov -3 : i32
+         %4 = mov 7 : i8
+         %5 = mov -2147483648 : i32
+         %6 = mov -32768 : i16
+         %7 = mov -128 : i8
+         %100 = bit_and %1, 255 : u64
+         %101 = bit_and %2, 65535 : u64
+         %102 = bit_and %3, 4294967295 : u64
+         %103 = bit_and 4294967295, %3 : u64
+         %104 = bit_or %4, 4294967296 : u64
+         %105 = bit_xor %4, 4294967296 : u64
+         %106 = bit_and %3, 0 : u64
+         %107 = bit_and %5, 4294967295 : u64
+         %108 = bit_and %6, 65535 : u64
+         %109 = bit_and %7, 255 : u64
+         %110 = bit_and %3, 255 : u8
+         %111 = bit_and %999, 255 : u64")]
+    [folded : ir.CompilerIrInstrSeq
+      (opt-test-fold-instrs
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (Nil)
+        input)]
+    [expected : (Array i64 10)
+      (array
+        253
+        65533
+        4294967293
+        4294967293
+        4294967303
+        4294967303
+        0
+        2147483648
+        32768
+        128)]
+    (unless (= (opt-count-arith-instr-seq folded) 1) (return 1))
+    (for [index (iterator.range 0 (array-length expected))]
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq folded (+ 100 index) -999)
+          (array-ref expected index))
+        (return (+ 10 index)))
+      (unless
+        (=
+          (opt-mov-dst-type-tag folded (+ 100 index))
+          (ast.ast-type-tag (& (U64))))
+        (return (+ 30 index))))
+    (unless
+      (and
+        (= (opt-mov-dst-i64-value-instr-seq folded 110 -999) 253)
+        (= (opt-mov-dst-type-tag folded 110) (ast.ast-type-tag (& (U8)))))
+      (return 2))
+    42))
+
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : ir.CompilerIrInstrSeq
@@ -69216,6 +69275,13 @@ return 0" true)
     (compiler-optimize-commute-constant-lhs-self-test)
     42
     "a commutative integer op with a literal or global-cell LHS canonicalises to a literal or cell RHS (two cells stay), `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
+
+(test
+  bitwise-declared-width
+  (test.assert-i64-eq
+    (compiler-optimize-bitwise-width-self-test)
+    42
+    "bitwise folds keep the declared width for narrow constants, wide masks and high bits, and retain unknown operands"))
 
 (test
   scalar-shift-count-type-fold

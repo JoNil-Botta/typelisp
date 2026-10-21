@@ -16,6 +16,18 @@ resource boundaries and stable normalized/diagnostic dumps. Normal tests run
 neither producer tool. Preserve physical member IDs, original spellings and
 timestamps separately from normalized identity when adding cases.
 
+`regalloc-move-index-direction-and-strictness` pins directed admission,
+undirected duplicate suppression and newest-first strict upgrades.
+`regalloc-move-index-growth-and-reference` compares every slot with the former
+list-scan semantics through mixed insertion modes, full-width signed IDs,
+table growth and interleaved builders. `regalloc-move-index-hash-collisions`
+checks real pair-hash collisions, an absent pair at the chain tail and
+strict upgrades through colliding entries. `regalloc-move-index-prefix-promotion`
+pins the exact small-list boundary, one-time promotion, duplicate/self moves
+that must not promote, and strict upgrades across promotion. Run these at
+opt0/1/2, retain the dense sequence contract tests, and compare fixed-source
+compiler, benchmark and CFG scaling assembly when changing move indexing.
+
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
 and E0218, and carries rich nested frames through a later compiler job. Run it

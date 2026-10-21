@@ -176,6 +176,12 @@ and unsafe callable ABI families beside this ordering regression. The
 `compiler-lower-operand-snapshot-shape` lowering test pins that ordinary and
 tail callees are copied only when an argument writes their storage.
 
+`addr_taken_frame_slots.tl` keeps scalar, narrow, parameter, loop-carried and
+callable-copy storage private while a derived pointer remains live, at opt0/1/2
+on both hosts. `regalloc-stack-only-address-slots` checks the same exclusion
+through IR-text copies and joins. `addr_taken_frame_join.tl` covers the opt0/1
+phi interaction; its independent opt2 load-forwarding defect remains #8514.
+
 `tail_call_frame_provenance.tl` scrubs the callee's frame before reading a
 reference or slice. It covers explicit and implicit field borrows, array and
 tuple elements, local aliases, call-returned references, shadowed parameters,

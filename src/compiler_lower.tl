@@ -35,7 +35,6 @@
 (import stdlib.hashmap)
 (import stdlib.hash)
 (import (hashmap.hashmap i64 i64) as lower_i64_i64_map)
-(import (hashmap.hashmap (Tuple i64 i64 i64) i64) as lower_exposure_map)
 (import (hashmap.hashmap String i64) as lower_spmd_key_map)
 (import stdlib.string)
 (import stdlib.text_buf)
@@ -500,15 +499,23 @@
   (variant-outcomes (__tl_dyn-array LowerVariantArmResolution))
   (next-variant-generation i64))
 
-;; Keys identify a binding's source scope, ordinal and hygienic name. The
-;; census environment maps each currently visible name to its fact ordinal.
-;; Neither a name alone nor a predicted IR variable identifies storage.
+(defstruct LowerExposureBinding
+  (scope i64)
+  (kind i64)
+  (name i64)
+  (exposed i64))
+
+(import stdlib.sort)
+(import (vector.vector LowerExposureBinding) as lower_exposure_vec)
+(import (sort.vec LowerExposureBinding) as lower_exposure_sort)
+
+;; The scan's environment names append-only record ordinals. After scanning,
+;; records are sorted and equal lexical keys are joined before IR IDs are seeded.
 (defstruct LowerAddressExposure
   (ready bool)
   (complete bool)
-  (bindings lower_exposure_map.Map)
-  (scopes lower_i64_i64_map.Map)
-  (exposed (__tl_dyn-array i64)))
+  (bindings lower_exposure_vec.Vec)
+  (scopes lower_i64_i64_map.Map))
 
 (defstruct CompilerLowerFunctionStateData
   (owner-address i64)
@@ -8604,9 +8611,8 @@
         (LowerAddressExposure
           false
           false
-          (lower_exposure_map.with-capacity 0)
-          (lower_i64_i64_map.with-capacity 0)
-          (__tl_make-array i64 0))))
+          (lower_exposure_vec.new)
+          (lower_i64_i64_map.with-capacity 0))))
     (CompilerLowerFunctionState address)))
 
 (define (compiler-lower-function-state-new [owner : CompilerLowerState]) : CompilerLowerFunctionState
@@ -14992,6 +14998,66 @@
       1)
     state))
 
+(define (lower-exposure-binding-less?
+  [left : LowerExposureBinding]
+  [right : LowerExposureBinding]) : bool
+  (cond
+    [(!= left.scope right.scope) (< left.scope right.scope)]
+    [(!= left.kind right.kind) (< left.kind right.kind)]
+    [else (< left.name right.name)]))
+
+(define (lower-exposure-binding-index
+  [bindings : (& bindings lower_exposure_vec.Vec)]
+  [kind : i64]
+  [scope : i64]
+  [name : i64]) : i64
+  (let
+    [key : LowerExposureBinding (LowerExposureBinding scope kind name 0)]
+    [lo : i64 0]
+    [hi : i64 bindings.len]
+    (while (< lo hi)
+      (let
+        [mid : i64 (+ lo (/ (- hi lo) 2))]
+        (if (lower-exposure-binding-less?
+          (clone (array-ref bindings.slots mid))
+          key)
+          (set! lo (+ mid 1))
+          (set! hi mid))))
+    (if (< lo bindings.len)
+      (let
+        [value : LowerExposureBinding (array-ref bindings.slots lo)]
+        (if (and (= value.scope scope) (= value.kind kind) (= value.name name))
+          lo
+          -1))
+      -1)))
+
+(define (lower-exposure-finish!
+  [bindings : (&mut bindings lower_exposure_vec.Vec)]) : unit
+  (lower_exposure_sort.sort! bindings lower-exposure-binding-less?)
+  (let
+    [written : i64 0]
+    (for [index (iterator.range 0 bindings.len)]
+      (let
+        [value : LowerExposureBinding (array-ref bindings.slots index)]
+        [duplicate? : bool
+          (if (> written 0)
+            (let
+              [previous : LowerExposureBinding
+                (array-ref bindings.slots (- written 1))]
+              (and
+                (= value.scope previous.scope)
+                (= value.kind previous.kind)
+                (= value.name previous.name)))
+            false)]
+        (if duplicate?
+          (when
+            (= value.exposed 1)
+            (set! (array-ref bindings.slots (- written 1)).exposed 1))
+          (begin
+            (set! (array-ref bindings.slots written) value)
+            (set! written (+ written 1))))))
+    (set! bindings.len written)))
+
 (define (lower-exposure-bind!
   [scan : (&mut scan LowerExposureScan)]
   [env : sym_i64_env.SymI64Env]
@@ -15015,14 +15081,10 @@
                 -1)))]
         [_ unit]))
     (let
-      [key : (Tuple i64 i64 i64) (tuple kind scope name)]
-      [index : i64
-        (lower_exposure_map.get-value-or (& scan.facts.bindings) key -1)]
-      (when
-        (< index 0)
-        (set! index (array-length scan.facts.exposed))
-        (lower_exposure_map.insert-ref! (&mut scan.facts.bindings) key index)
-        (__tl_array-push! scan.facts.exposed 0))
+      [index : i64 scan.facts.bindings.len]
+      (lower_exposure_vec.push-ref!
+        (&mut scan.facts.bindings)
+        (LowerExposureBinding scope kind name 0))
       (sym_i64_env.sym-i64-bind-id env name index))))
 
 (define (lower-exposure-seed
@@ -15038,16 +15100,13 @@
       (unsafe
         (deref (compiler-lower-function-state-view function-state)).address-exposure)]
     [index : i64
-      (lower_exposure_map.get-value-or
-        (& facts.bindings)
-        (tuple kind scope name)
-        -1)]
+      (lower-exposure-binding-index (& facts.bindings) kind scope name)]
     [exposed : bool
       (or
         (not facts.ready)
         (not facts.complete)
         (< index 0)
-        (!= (array-ref facts.exposed index) 0))]
+        (!= (array-ref facts.bindings.slots index).exposed 0))]
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower_i64_i64_map.insert-ref!
       (&mut (__tl-project-field (__tl-box-place data) address-taken))
@@ -15110,7 +15169,7 @@
                     (lower-ptr-addr-of-storage-value-reference? ctx resolved))
                   (or raw (not reference?)))
                 (lower-type-register-resident? ctx resolved))
-              (set! (array-ref scan.facts.exposed binding) 1)))]
+              (set! (array-ref scan.facts.bindings.slots binding).exposed 1)))]
         [(Err _) (set! scan.facts.complete false)]))))
 
 (define (lower-exposure-walk-id!
@@ -15456,9 +15515,8 @@
         (LowerAddressExposure
           true
           true
-          (lower_exposure_map.with-capacity 8)
-          (lower_i64_i64_map.with-capacity 0)
-          (__tl_make-array i64 0)))]
+          (lower_exposure_vec.new)
+          (lower_i64_i64_map.with-capacity 0)))]
     [source-env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [remaining : sym_i64_env.SymI64Env env]
     [done : bool false]
@@ -15471,6 +15529,7 @@
             (lower-exposure-bind! (&mut scan) source-env 0 -1 name))
           (set! remaining rest)]))
     (lower-exposure-walk! (&mut scan) source-env type-env body)
+    (lower-exposure-finish! (&mut scan.facts.bindings))
     (match scan
       [(LowerExposureScan _ _ facts)
         (unsafe
@@ -15502,9 +15561,13 @@
             [(SymI64ViewBind name var-id rest)
               (when
                 (and
-                  (lower_exposure_map.contains?
-                    (& facts.bindings)
-                    (tuple 0 scope name))
+                  (>=
+                    (lower-exposure-binding-index
+                      (& facts.bindings)
+                      0
+                      scope
+                      name)
+                    0)
                   (= var-id (sym_i64_env.sym-i64-lookup-id-or env name -1)))
                 (begin
                   (lower-exposure-seed state 0 scope name var-id)

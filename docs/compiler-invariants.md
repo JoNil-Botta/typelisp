@@ -1690,6 +1690,12 @@ class's exclusions as well as its live ranges. A blocked outgoing argument
 cannot inherit a parameter pin through a phi or copy. Tail calls have no
 live-after survival constraint, but their argument marshalling must still read
 each source before an argument-register write can destroy it.
+A one-instruction all-GP tail forwarder shares ordinary calls' bounded
+overflow eligibility: it has no other locals to displace from register homes.
+The fallback marshals into outgoing stack slots; a true tail jump marshals into
+incoming slots before restoring callee-saved homes. Both store register-sourced
+stack arguments before the parallel register move. Indirect calls, mixed-class
+arguments and register groups retain their existing restrictions.
 
 Move harvesting mutably borrows one `CompilerRegMoveBuilder` through casts,
 destructive ties, copies and phi inputs, preserving their existing add order.

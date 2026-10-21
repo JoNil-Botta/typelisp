@@ -1,0 +1,69 @@
+;; Register permutations and duplicate sources cross the GP stack boundary.
+(define (weighted
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [g : i64]) : i64
+  (+
+    a
+    (+
+      (* 11 b)
+      (+
+        (* 121 c)
+        (+ (* 1331 d) (+ (* 14641 e) (+ (* 161051 f) (* 1771561 g))))))))
+
+(define (fallback [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) : i64
+  (weighted b a d c f e a))
+
+(define (jump
+  [a : i64]
+  [b : i64]
+  [c : i64]
+  [d : i64]
+  [e : i64]
+  [f : i64]
+  [g : i64]) : i64
+  (weighted g a f b e c d))
+
+(defstruct Wide
+  (a i64)
+  (b i64)
+  (c i64)
+  (d i64))
+
+;; The tail-recursive callee stays out of line while its wrapper stays a forwarder.
+(define (make-wide [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [k : i64]) : Wide
+  (if (< k 0)
+    (make-wide a b c d e (+ k 1))
+    (Wide (+ a k) (+ b e) c d)))
+
+(define (forward-wide [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : Wide
+  (make-wide a b c d e 0))
+
+;; Mutable function values preserve the forwarding bodies for native execution.
+(define fallback-call : (-> i64 i64 i64 i64 i64 i64 i64)
+  fallback)
+(define jump-call : (-> i64 i64 i64 i64 i64 i64 i64 i64)
+  jump)
+(define wide-call : (-> i64 i64 i64 i64 i64 Wide)
+  forward-wide)
+
+(define (main) : i64
+  (let
+    [wide : Wide (wide-call -3 11 17 23 31)]
+    [zero : i64 (fallback-call 0 0 0 0 0 0)]
+    [mixed : i64 (fallback-call -1 2 -3 4 -5 6)]
+    (if (and
+      (= (fallback-call 1 2 3 4 5 6) 2669152)
+      (= (jump-call 1 2 3 4 5 6 7) 7646008)
+      (= zero 0)
+      (= mixed -2492488)
+      (= wide.a -3)
+      (= wide.b 42)
+      (= wide.c 17)
+      (= wide.d 23))
+      42
+      1)))

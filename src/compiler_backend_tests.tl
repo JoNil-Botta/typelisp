@@ -13667,6 +13667,64 @@ f:
           backend-state)
         (has "    je 1f\n    bsrq ")))))
 
+(define (compiler-backend-tail-stack-forward-program) : ir.CompilerIrProgram
+  (irt.program
+    "function @leaf(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64) -> i64 vars 7 {
+     entry:
+       return %6
+     }
+     function @tail(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> i64 vars 6 {
+     entry:
+       tailcall leaf(%0, %1, %2, %3, %4, %5, %0) : i64
+     }
+     function @jumper(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64) -> i64 vars 7 {
+     entry:
+       tailcall leaf(%1, %0, %3, %2, %5, %4, %0) : i64
+     }
+     function @plain(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> i64 vars 7 {
+     entry:
+       %6 = call leaf(%0, %1, %2, %3, %4, %5, %0) : i64
+       return %6
+     }"))
+
+(test
+  backend-tail-stack-forward-registers
+  (for [abi (iterator.range 0 2)]
+    (let
+      [state
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
+      [program (compiler-backend-tail-stack-forward-program)]
+      [spans (ir.compiler-source-spans-empty)]
+      [target : backend.CompilerBackendTarget
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      (backend.compiler-backend-state-set-scalar-registers-enabled! state true)
+      (test.assert-true
+        (match (compiler-backend-test-emit-program-with-state
+          state
+          target
+          (& program)
+          (& spans)
+          false)
+          [(Ok asm)
+            (let
+              [tail (compiler-backend-asm-function-body asm "_tl_tail")]
+              [plain (compiler-backend-asm-function-body asm "_tl_plain")]
+              [jumper (compiler-backend-asm-function-body asm "_tl_jumper")]
+              (and
+                (not (string.eq tail ""))
+                (not (string.eq plain ""))
+                (asm-has? tail "    call _tl_leaf\n")
+                (asm-has? jumper "    jmp _tl_leaf\n")
+                (asm-lacks? jumper "    call ")
+                (<=
+                  (backend.compiler-backend-string-count tail "    movq ")
+                  (backend.compiler-backend-string-count plain "    movq "))))]
+          [(Err _) false])
+        "a stack tail fallback needs no more argument moves than an ordinary call"))))
+
 (define (compiler-backend-call-return-program) : ir.CompilerIrProgram
   (Program
     (ir.compiler-ir-global-seq-empty)

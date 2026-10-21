@@ -11460,6 +11460,113 @@
       ") : i64
        }")))
 
+(define (compiler-reg-tail-stack-forward-function [tail? : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @stack_forward(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> i64 vars 7 {
+       entry:
+         "
+      (if tail?
+        "tailcall leaf(%1, %0, %3, %2, %5, %4, %0) : i64"
+        "%6 = call leaf(%1, %0, %3, %2, %5, %4, %0) : i64
+         return %6")
+      "
+       }")))
+
+(test
+  regalloc-tail-stack-forward-homes
+  (for [abi (iterator.range 0 2)]
+    (let
+      [target : cabi.CompilerRegTargetAbi
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      [tail-plan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          target
+          (& (compiler-reg-tail-stack-forward-function true)))]
+      [call-plan
+        (reg.compiler-reg-plan-function-scalar-for-abi
+          target
+          (& (compiler-reg-tail-stack-forward-function false)))]
+      (match tail-plan
+        [(Plan tail-homes tail-blocked _ _ _)
+          (match call-plan
+            [(Plan call-homes _ _ _ _)
+              (for [var (iterator.range 0 4)]
+                (test.assert-false
+                  (live.compiler-live-set-contains? tail-blocked var)
+                  "stack tail arguments retain ordinary-call eligibility")
+                (test.assert-true
+                  (match (reg.compiler-reg-assignment-lookup tail-homes var)
+                    [(Some tail-home)
+                      (match (reg.compiler-reg-assignment-lookup call-homes var)
+                        [(Some call-home)
+                          (reg.compiler-reg-location-eq?
+                            (& tail-home)
+                            (& call-home))]
+                        [(No) false])]
+                    [(No) false])
+                  "stack tail forwarders preserve the ordinary-call register homes"))])]))))
+
+(define (compiler-reg-tail-overflow-function [count : i64]) : ir.CompilerIrFunction
+  (let
+    [args : String "%0"]
+    [i : i64 1]
+    (while (< i count)
+      (set! args (str_cat.str-cat args ", 0"))
+      (set! i (+ i 1)))
+    (irt.func
+      (str_cat.str-cat
+        "function @overflow(a=%0:i64) -> i64 vars 1 {
+         entry:
+           tailcall leaf("
+        args
+        ") : i64
+         }"))))
+
+(test
+  regalloc-tail-stack-overflow-boundary
+  (for [abi (iterator.range 0 2)]
+    (let
+      [target : cabi.CompilerRegTargetAbi
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      [limit : i64
+        (* 2 (cabi.compiler-abi-gp-arg-register-count target (Internal)))]
+      (for [extra (iterator.range 0 2)]
+        (match (reg.compiler-reg-plan-function-scalar-for-abi
+          target
+          (& (compiler-reg-tail-overflow-function (+ limit extra))))
+          [(Plan _ blocked _ _ _)
+            (test.assert-true
+              (= (live.compiler-live-set-contains? blocked 0) (= extra 1))
+              "the tail GP overflow limit includes its boundary and rejects the next argument")])))))
+
+(test
+  regalloc-computed-tail-stack-arguments
+  (for [abi (iterator.range 0 2)]
+    (let
+      [target : cabi.CompilerRegTargetAbi
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      [func
+        (irt.func
+          "function @computed(a=%0:i64) -> i64 vars 2 {
+           entry:
+             %1 = add %0, 1 : i64
+             tailcall leaf(%0, %1, 0, 0, 0, 0, 0) : i64
+           }")]
+      (match (reg.compiler-reg-plan-function-scalar-for-abi target (& func))
+        [(Plan _ blocked _ _ _)
+          (test.assert-true
+            (and
+              (live.compiler-live-set-contains? blocked 0)
+              (live.compiler-live-set-contains? blocked 1))
+            "computed tail arguments retain the existing pressure restrictions")]))))
+
 (define (compiler-reg-call-arg-stack-home?
   [home : reg.CompilerRegMaybeLocation]) : bool
   (match home
@@ -11482,8 +11589,8 @@
         (& (compiler-reg-coalesced-tail-args-function "%4, %3")))
         [(Plan parallel _ _ _ _)
           (and
-            ;; The aliases inherit call-argument exclusions, and the roots'
-            ;; preassigned parameter homes must respect those exclusions too.
+            ;; Overflow in a branching function retains argument exclusions.
+            ;; Aliases and their roots must respect them too.
             (compiler-reg-call-arg-stack-home?
               (reg.compiler-reg-assignment-lookup blocked 0))
             (compiler-reg-call-arg-stack-home?

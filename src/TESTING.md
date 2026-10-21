@@ -73,6 +73,16 @@ results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
 i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
 with smaller memory-storage layouts and zero/positive field values as controls.
 
+`regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
+compare stack tail fallbacks with ordinary calls on both ABIs. The overflow
+boundary test checks twice each GP window and one argument beyond it; the
+computed-argument and coalesced-call controls preserve exclusions outside
+simple one-instruction forwarders.
+`tail_call_stack_forward.tl` covers register permutations, duplicate stack
+sources, zero/negative values and hidden aggregate-result pointers at opt0/1/2.
+`tail-stack-forward-preserves-calls` pins its out-of-line fallback, tail jump
+and aggregate-result forwarding at opt2 on both ABIs.
+
 `backend-call-conventions` checks every IR call form, C and TypeLisp extern
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
 `backend-call-convention-facts-parity` compares all convention-dependent ABI

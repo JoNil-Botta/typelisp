@@ -6052,11 +6052,12 @@
 ;; callee-saved home. So the overflow may be at most as wide as the register
 ;; window itself.
 ;;
-;; The rule is only for the call kinds whose emitter reaches the stack-first
-;; path with the whole argument list in hand -- the direct `Call`. Indirect and
-;; tail shapes keep the arity-bounded rule: their emitters interleave a
-;; closure/callee load or an epilogue with the marshalling, so the stack-first
-;; soundness argument does not cover them.
+;; Direct calls and direct tail calls both marshal the whole argument list
+;; before control transfer. A tail fallback uses the ordinary outgoing area;
+;; a tail jump uses the incoming area and finishes marshalling before restoring
+;; callee-saved registers. Both resolve register hazards with the same parallel
+;; move and store register-sourced stack args first. Indirect shapes retain the
+;; arity bound because they load the closure/callee after marshalling.
 (define (compiler-reg-call-gp-overflow-from?
   [type-segment-bases : i64]
   [args : (& ir.CompilerIrCallArgs)]
@@ -6308,7 +6309,8 @@
   [instrs : (& ir.CompilerIrInstrSeq)]
   [set : live.CompilerLiveI64Set]
   [types : CompilerRegVarTypes]
-  [target-abi : cabi.CompilerRegTargetAbi]) : live.CompilerLiveI64Set
+  [target-abi : cabi.CompilerRegTargetAbi]
+  [single-block? : bool]) : live.CompilerLiveI64Set
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
@@ -6364,20 +6366,14 @@
               target-abi
               (compiler-reg-call-instr-convention (& (array-ref slots index)))
               false)]
-          ;; Tail calls (M-G2a): the true tail-jump path marshals args FIRST
-          ;; (compiler-backend-emit-tail-call routes a gp-parallel shape --
-          ;; tail-stack-count 0, target always an in-program function, so
-          ;; never c-abi -- through the same conflict-checked
-          ;; compiler-backend-emit-call-args as direct calls) and only THEN
-          ;; emits the epilogue (compiler-backend-tail-jump-tail: CSR
-          ;; restores + leave + jmp). CSR-homed sources are read before
-          ;; their restore overwrites them; the arg registers are all
-          ;; caller-saved on both ABIs, so the restores never touch
-          ;; marshalled args; register-only marshalling writes no frame
-          ;; slot the restores read. So a gp-parallel tail call
-          ;; disqualifies NO arg vars, exactly like a gp-parallel direct
-          ;; call. Register groups retain the all-memory rule; eligible float
-          ;; args use the same exact-target-or-demote contract as direct calls.
+          ;; Direct tail calls use the ordinary stack-first marshaller on
+          ;; fallback, and its IncomingStackArgArea form for a true tail jump.
+          ;; The latter runs before CSR restores + leave + jmp: all GP argument
+          ;; registers are caller-saved, and incoming stack slots do not overlap
+          ;; the saved-register area. Register groups retain the all-memory rule;
+          ;; floats keep the exact-target-or-demote contract. Overflow is
+          ;; profitable here only for a one-instruction forwarding function:
+          ;; there are no other locals whose homes its arguments can displace.
           [(TailCall _ args _)
             (compiler-reg-call-arg-vars-unless-gp-parallel
               type-segment-bases
@@ -6387,7 +6383,7 @@
               0
               target-abi
               (compiler-reg-call-instr-convention (& (array-ref slots index)))
-              false)]
+              (and single-block? (= count 1)))]
           ;; Indirect tail calls marshal at base 1 (closure env reserved in
           ;; ABI arg-register 0). The backend's base-aware parallel move can
           ;; safely marshal register-homed GP user args, but the closure
@@ -6444,7 +6440,8 @@
                   (& instrs)
                   out
                   types
-                  target-abi))])
+                  target-abi
+                  (= count 1)))])
           (set! i (+ i 1)))
         out)]))
 

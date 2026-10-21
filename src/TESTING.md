@@ -55,6 +55,12 @@ through the native corpus at opt0/1/2 on both hosts. Keep full-catalog source
 parity, all native macro entries and existing backend/image gates when changing
 the source-owner boundary.
 
+`compiler-optimize-bitwise-width-self-test` checks narrow constants with wider
+bitwise masks and high bits, commuted operands, minimum signed values, narrow
+results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
+i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
+with smaller memory-storage layouts and zero/positive field values as controls.
+
 `backend-call-conventions` checks every IR call form, C and TypeLisp extern
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
 `backend-call-convention-facts-parity` compares all convention-dependent ABI
@@ -147,6 +153,19 @@ all three optimization levels on both hosts; keep the mixed-float, stack, null
 and unsafe callable ABI families beside this ordering regression. The
 `compiler-lower-operand-snapshot-shape` lowering test pins that ordinary and
 tail callees are copied only when an argument writes their storage.
+
+`tail_call_frame_provenance.tl` scrubs the callee's frame before reading a
+reference or slice. It covers explicit and implicit field borrows, array and
+tuple elements, local aliases, call-returned references, shadowed parameters,
+heap aggregate copies and indirect calls at opt0/1/2 on both hosts. Its
+assembly cases retain ordinary calls for unproven storage and tail jumps for
+reference parameters, reborrows, caller-owned projections and heap storage.
+Parameter-derived slice rests keep tail jumps through nested patterns and a
+300,000-element walk. Sibling local-array views and rebound rests retain calls,
+checking that external-storage facts neither leak between arms nor survive a
+reassignment.
+The safety corpus rejects rebinding a reference parameter to a shorter local
+borrow before forwarding it.
 
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI

@@ -1824,6 +1824,10 @@ constant fact naming such a var, as destination or source.
   its copy environment (#7973).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
+- Stack-only and scalar register plans both use
+  `compiler-reg-ineligible-memory`: an `AddrOf` source keeps a private frame
+  slot despite its direct-use interval ending. Inline `Alloc` ranges retain
+  the separate storage-lifetime proof used by inline-storage coloring.
 
 #8190 tracks making this one pass-wide rule with an adversarial matrix.
 

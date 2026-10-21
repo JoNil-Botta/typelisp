@@ -1363,6 +1363,24 @@ below. Two copies keep the rule true without copying every parameter:
 through it. Raw-pointer writes into an argument stay the unsafe code's
 obligation.
 
+Tail-call selection proves that each effective argument's storage survives
+release of the current frame. Direct and indirect calls use the callee's
+formal types and `tc-call-effective-arg-expr`, including implicit borrows;
+a scalar field's source type does not reveal that its address is passed.
+References, slices, strings-as-views and inline aggregates require a proof:
+an unchanged parameter, a reference-parameter reborrow, caller-owned
+memory-class parameter storage, a typed global binding without a local IR
+binding, or a supported heap projection. A shared
+borrow of a plain scalar variable is safe because lowering copies it into
+`tl_alloc` storage. Local reference/view aliases, unknown call results and
+Copy aggregates materialized from heap elements do not acquire a proof.
+Slice-pattern rest views inherit a proven external scrutinee's storage;
+their IR IDs are retained in a persistent set so lowering-state forks do not
+share new facts. Reassignment of a proven frame-sensitive binding invalidates
+both that set and the parameter forwarding range. Unknown provenance retains
+an ordinary call and return; borrowed
+match arms use the same tail-call selection.
+
 Address-exposed register groups own contiguous stack pairs indexed by final
 variable ID. In a function that exposes any group address, all group second
 words use that canonical pair region; mixing a one-word-stride map with

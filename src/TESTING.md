@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`compiler-ast-span-forwarding` runs the compaction fixtures with source-span
+consumption enabled: empty input, bitmap and pool-segment boundaries, shared
+expressions, reordered canonical/ReSpan views, destination reuse and spans read
+after source destruction. Nonconsuming cases preserve source provenance. Test
+builds poison the consumed source's shared span-base table so later reads
+through any context view fail; full compiler and corpus builds with `--cfg test`
+exercise the finalization-to-retirement boundary.
+
 `backend-forwarded-address-*` tests coalesced copies and same-type casts on
 both targets, phi filtering and cycle scheduling, and final-IR branch loads
 whose address setup must survive. Initialized same-home copies and real swap

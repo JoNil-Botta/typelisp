@@ -143,6 +143,9 @@ done
     >"$WORKDIR/structural-after-ssa.stdout" 2>"$WORKDIR/structural-after-ssa.stderr"
 grep -F 'after ssa @' "$WORKDIR/structural-after-ssa.ir" >/dev/null
 
+TYPELISP_BIN="$COMPILER" CODEGEN_CASES_WORKDIR="$WORKDIR/singleton-cells" \
+    "$ROOT/scripts/verify-codegen-cases.sh" tests/codegen/singleton-cell-read.cases
+
 # DCE-2: `dce_late` closes the level-2 pass list, so an omission there is
 # invisible unless the trace is asked for the slot by name -- the pipeline
 # still reports every pass above it. A level-2 compile must observe the slot

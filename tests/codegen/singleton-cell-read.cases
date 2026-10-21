@@ -1,0 +1,84 @@
+# Lowering has the same representation proof on both targets and opt levels.
+source tests/golden/singleton_cell_read.tl
+target linux-x86_64 windows-x86_64
+opt 0 2
+args --dump-ir --verify-ir
+
+case representation
+in asm
+narrow ranges:^function @.*admit[-_]~^}
+count = 12 ^function @
+not-match = (alloc|addr_of|gep|load) |store_ptr
+count = 2 = bitcast
+
+# Eliminating the cell must retain the actual borrowed object's load.
+in asm
+narrow ranges:^function @.*outer[-_]read\(~^}
+count = 1 = load
+not-match = (alloc|addr_of|gep) |store_ptr
+
+in asm
+narrow ranges:^function @.*fallback[-_](slice|mut[-_]slice|bytes)\(~^}
+count = 6 = load
+in asm
+narrow ranges:^function @.*fallback[-_](narrow|partial|wide)\(~^}
+count = 3 = load
+
+# Each excluded representation/shape retains its own cell store and load.
+case fallback
+each slice mut-slice bytes word pair padded function narrow partial wide wide-result many offset saved
+in asm
+narrow ranges:^function @.*::fallback-{{each}}\(~^}
+count = 1 ^function @
+count >= 1 = alloc \(Array
+count = 1 = addr_of
+count >= 1 store_ptr
+count >= 1 = load
+
+# The unoptimized zero-sized read remains a cell, with no stored bytes.
+case unit
+opt 0
+in asm
+narrow ranges:^function @.*::fallback-unit\(~^}
+count = 1 ^function @
+count = 1 = alloc \(Array unit 1\)
+count = 1 = load .* : unit
+not-contains store_ptr
+
+case unit-optimized
+opt 2
+in asm
+narrow ranges:^function @.*::fallback-unit\(~^}
+count = 1 ^function @
+not-contains = load
+
+# The fold runs after the ordinary unsafe and lifetime boundaries.
+case unsafe-required
+do none
+target linux-x86_64 windows-x86_64
+opt 0 2
+args --stdlib-root {{root}}/stdlib
+file unsafe-required.tl
+(define (main) : i64
+  (ptr-read (ptr-cast (__tl_array-data (array 42)) : (Ptr i64))))
+end-file
+run compile "{{dir}}/unsafe-required.tl" --opt-level {{opt}} --target {{target}} -o "{{dir}}/invalid.s"
+exit nonzero
+stderr contains unsafe
+
+case lifetime-required
+do none
+target linux-x86_64 windows-x86_64
+opt 0 2
+args --stdlib-root {{root}}/stdlib
+file lifetime-required.tl
+(define (main) : i64
+  (let [reference (let [value : i64 42] (& value))]
+    (unsafe
+      (ptr-read
+        (ptr-read
+          (ptr-cast (__tl_array-data (array reference)) : (Ptr (Ptr i64))))))))
+end-file
+run compile "{{dir}}/lifetime-required.tl" --opt-level {{opt}} --target {{target}} -o "{{dir}}/invalid.s"
+exit nonzero
+stderr contains error[E0205]

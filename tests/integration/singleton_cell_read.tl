@@ -19,11 +19,7 @@
   value)
 
 (define (make-items) : (__tl_dyn-array i64)
-  (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (set! (array-ref items 0) 20)
-    (set! (array-ref items 1) 22)
-    items))
+  (__tl_make-array (ann 20 : i64) 22))
 
 (define (write-word [ptr : (MutPtr i64)] [value : i64] [depth : i64]) : i64
   (if (> depth 0)

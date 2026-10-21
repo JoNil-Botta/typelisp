@@ -377,6 +377,24 @@ pass that on, so the arguments after them are not scanned again. Memory-class
 aggregates pass their storage address and follow the by-value aggregate rules
 instead.
 
+<a id="singleton-cell-reads"></a>
+
+`lower-ptr-read` folds the checked expression
+`PtrRead(PtrCast(ArrayData(Array([value])), type))` through transparent source
+wrappers. The immediate cell has one element at offset zero, and no observer
+or intervening write can access its address. Both stored and loaded types must
+resolve to initialized eight-byte scalar, raw-pointer, thin-reference or owning
+handle representations. Fat references, function descriptors, inline aggregates,
+register groups, other widths and unresolved layouts retain ordinary lowering.
+Equal size alone is insufficient.
+
+The operand executes once. Integer/pointer casts preserve the stored word;
+floating reinterpretation uses the existing bitcast path. A fresh materialized
+result preserves the original load's snapshot before later local/global writes.
+Any enclosing pointee read remains a load. Earlier checking still owns unsafe,
+ownership and lifetime admission. Cross-target opt0/opt2 IR controls and native
+opt0/opt1/opt2 alias, order and float-bit fixtures pin these obligations.
+
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left
 global reads are materialized before an effectful right operand. Short-circuit

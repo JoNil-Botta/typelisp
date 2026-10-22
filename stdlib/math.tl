@@ -405,6 +405,8 @@
     0xbc8e37bae43be3ed
     0x3c77893b4d91cd9d
     0x3c5305c14160cc89))
+
+;: Exponent-adjusted scale words shared by the binary64 and binary32 exponentials.
 (define math-exp-f64-scale-bits : (Array u64 128)
   (math-bits-array
     0x3ff0000000000000
@@ -785,6 +787,8 @@
     0x3fe79baa679725c2
     0x3fe77907f2170657
     0x3fe756cadbd6130c))
+
+;: Binary64 logarithm payload words for the binary64 log table centers.
 (define math-log-f64-logc-bits : (Array u64 128)
   (math-bits-array
     0xbfd7cc7f79e69000
@@ -915,6 +919,8 @@
     0x3fd377266dec1800
     0x3fd3d54ffbaf3000
     0x3fd432eee32fe000))
+
+;: High binary64 words of the split binary64 log table centers.
 (define math-log-f64-chi-bits : (Array u64 128)
   (math-bits-array
     0x3fe61000014fb66b
@@ -1045,6 +1051,8 @@
     0x3ff5b00003c93e92
     0x3ff5d0001d4919bc
     0x3ff5efffe7b87a89))
+
+;: Low binary64 words of the split binary64 log table centers.
 (define math-log-f64-clo-bits : (Array u64 128)
   (math-bits-array
     0x3c7e026c91425b3c
@@ -1195,6 +1203,8 @@
     0x3fe9c2d163a1aa2d
     0x3fe886e6037841ed
     0x3fe767dcf5534862))
+
+;: Binary64 logarithm payload words for the binary32 log table centers.
 (define math-log-f32-logc-bits : (Array u64 16)
   (math-bits-array
     0xbfd57bf7808caade
@@ -1520,6 +1530,8 @@
     0x3fe7000000000000
     0x3fe6e00000000000
     0x3fe6c00000000000))
+
+;: Binary64 logarithm payload words for the binary64 power table centers.
 (define math-pow-f64-logc-bits : (Array u64 128)
   (math-bits-array
     0xbfd62c82f2b9c800
@@ -1650,6 +1662,8 @@
     0x3fd522ae0738a000
     0x3fd57bf753c8d000
     0x3fd5d5bddf596000))
+
+;: Exact low correction words for the binary64 power table logarithms.
 (define math-pow-f64-logctail-bits : (Array u64 128)
   (math-bits-array
     0x3cfab42428375680
@@ -2089,6 +2103,8 @@
     0x3fe9c2d163a1aa2d
     0x3fe886e6037841ed
     0x3fe767dcf5534862))
+
+;: Binary64 logarithm payload words for the binary32 power table centers.
 (define math-pow-f32-logc-bits : (Array u64 16)
   (math-bits-array
     0xbfdefec65b963019
@@ -2316,6 +2332,7 @@
 ;; The complete 66-limb fdlibm 2/pi table and eight non-overlapping pi/2
 ;; pieces stay exact. Finite binary64 exponents bound jv by 41; the reducer
 ;; guards its negative prefix and uses a 20-slot local convolution window.
+;: Exact 24-bit 2/pi limbs used by trigonometric argument reduction.
 (define math-trig-two-over-pi-limbs : (Array u64 66)
   (math-bits-array
     0x0000000000a2f983
@@ -2384,6 +2401,8 @@
     0x000000000073a8c9
     0x000000000060e27b
     0x0000000000c08c6b))
+
+;: Exact binary64 words for eight non-overlapping pi/2 reduction pieces.
 (define math-trig-pi-over-two-piece-bits : (Array u64 8)
   (math-bits-array
     0x3ff921fb40000000

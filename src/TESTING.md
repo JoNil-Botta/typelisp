@@ -2293,3 +2293,23 @@ reports LLVM availability. Generation is oracle-only; follow
 for versions/options. Repository-rooted `tests/fixtures/...` manifest
 dependencies preserve their relative location when smoke sources and companions
 are staged; absolute/parent-traversal dependencies remain invalid.
+
+### Standalone backend source imports
+
+`compiler_backend_source_tests.tl` checks the public source helpers with
+qualified stdlib functions/types, declaration/expression macros, selected and
+wildcard imports, and both target cfg presets. Its assertion body also runs
+inside `compiler-backend-self-test`. Request tests carry explicit roots/user
+cfg names through successes and failures and pin caller paths/import labels.
+Nested jobs retain a published AST prefix, source name, builtin IDs, intern
+generation and enclosing load-session owner.
+
+The four `backend_source_import_*` fixtures run in the native corpus at
+opt0/1/2 on both hosts. `stage2-backend-source-import-context` additionally
+builds a test-only source-helper driver and compares executable exit42 and
+empty output through assembly, serialized raw objects and the ordinary CLI.
+The required gate performs12 route checks per host. The allocation fixture
+keeps assembly/CLI execution plus an explicit object-eligibility exclusion;
+it must not execute an unadmitted raw image with #8317's placeholder runtime
+symbols. The shared native-link helper links serialized objects with the same
+entry, libraries and flags as its assembly path.

@@ -5185,6 +5185,40 @@
       cfgs
       pools)))
 
+;; The executable prefix is one ordered runtime/macro load. Driver and
+;; in-memory source jobs must use the same paths, cfgs and module columns.
+(define (compiler-load-executable-prelude
+  [load-state : CompilerLoadSessionState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
+    (owned_view.compiler-owned-shared-view load-state)
+    (& (compiler-load-runtime-prelude-path-shared-view))
+    (sym_i64_env.sym-i64-empty)
+    (& stdlib-roots)
+    cfgs
+    pools)
+    [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
+      (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+        load-state
+        runtime-seen
+        (& stdlib-roots)
+        cfgs
+        pools)
+        [(Ok macro-decls macro-paths macro-modules macro-seen)
+          (Ok
+            (compiler-load-decl-list-append (& runtime-decls) (& macro-decls))
+            (compiler-load-decl-path-list-append
+              (& runtime-paths)
+              (& macro-paths))
+            (compiler-load-decl-module-list-append
+              (& runtime-modules)
+              (& macro-modules))
+            macro-seen)]
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
+
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
     [(Ok decls _ _ seen) (Ok decls seen)]
@@ -9941,7 +9975,21 @@
                                         (& after-modules))
                                       rest-seen))))]
                             [(Err diag) (Err diag)]))]
-                      [(Err diag) (Err diag)]))]
+                      [(Err diag)
+                        (let
+                          [origin : cdiag.CompilerDiagnostic
+                            (cdiag.compiler-diagnostic-from-ast-span
+                              importer-path
+                              (__tl-box-place span)
+                              "")]
+                          (Err
+                            (box
+                              (cdiag.compiler-diagnostic-with-secondary
+                                (__tl-box-place diag)
+                                (cdiag.compiler-diagnostic-primary-span
+                                  (& origin))
+                                (cdiag.CompilerDiagnosticSomeString
+                                  "imported here")))))]))]
                 [(Err message)
                   (Err
                     (box

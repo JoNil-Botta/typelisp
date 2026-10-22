@@ -8,11 +8,13 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck_core as tc_core)
+(import compiler_typecheck_api as tc_api)
 (import compiler_symbols as csym)
 (import compiler_specialize as spec)
 (import compiler_parse_core as parser)
 (import compiler_load as load)
 (import compiler_cfg_core as cfg_core)
+(import compiler_target_cfg_core as target_cfg)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import compiler_ir_types as ir)
@@ -2317,7 +2319,13 @@
 
 (defstruct CompilerLowerRequest
   (mode CompilerLowerMode)
-  (pointer-proof pointer_proof.PointerProofRequest))
+  (pointer-proof pointer_proof.PointerProofRequest)
+  (stdlib-roots svec.Vec)
+  (cfg-names svec.Vec)
+  (in-session bool))
+
+(define (compiler-lower-request [mode : CompilerLowerMode]) : CompilerLowerRequest
+  (CompilerLowerRequest mode Disabled (svec.new) (svec.new) false))
 
 ;; Consumers of semantic evidence accept this checked boundary, not an ordinary
 ;; ResultCompilerLower. Its program is immutable until analysis finishes.
@@ -2331,16 +2339,18 @@
 
 (define (compiler-lower-state-use-request!
   [state : CompilerLowerState]
-  [request : CompilerLowerRequest]) : unit
-  (compiler-lower-state-set-pointer-proof-request! state request.pointer-proof))
+  [request : (& request CompilerLowerRequest)]) : unit
+  (compiler-lower-state-set-pointer-proof-request!
+    state
+    (clone request.pointer-proof)))
 
 (define (lower-compiler-pointer-proof-result
-  [request : CompilerLowerRequest]
+  [request : (& request CompilerLowerRequest)]
   [result : ResultCompilerLower]) : ResultCompilerLowerPointerProof
   (match result
     [(Err diagnostic) (Err diagnostic)]
     [(Ok program spans lower-state)
-      (match request.pointer-proof
+      (match (clone request.pointer-proof)
         [(Disabled)
           (Err
             (box
@@ -74484,21 +74494,39 @@
   (cbi.compiler-builtin-initialize-for-parse!)
   (cfg_core.compiler-cfg-empty))
 
-(define (lower-source-load [src : (& str)]) : load.ResultCompilerLoadWithPaths
+(define (lower-source-load
+  [path : (& str)]
+  [src : (& str)]
+  [context : tc_api.TypecheckRequest]) : load.ResultCompilerLoadWithPaths
   (let
-    [stdlib-roots : svec.Vec (svec.new)]
-    [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
-    (match (load.compiler-load-core-macro-prelude-with-roots-cfg
-      (sym_i64_env.sym-i64-empty)
-      (& stdlib-roots)
-      cfgs)
+    [inline-runtime : bool
+      (match context.program
+        [(ast.Program decls)
+          (lower-source-decls-define-module? (& (deref decls)) "stdlib.runtime")])]
+    [prelude : load.ResultCompilerLoadWithPaths
+      (if inline-runtime
+        (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+          (lower-global-shared-view context.load-state)
+          (sym_i64_env.sym-i64-empty)
+          (& context.stdlib-roots)
+          (lower-global-shared-view context.cfgs)
+          (lower-global-shared-view context.pools))
+        (load.compiler-load-executable-prelude
+          (lower-global-shared-view context.load-state)
+          (lower-global-shared-view context.stdlib-roots)
+          (lower-global-shared-view context.cfgs)
+          (lower-global-shared-view context.pools)))]
+    (match prelude
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
-        (match (load.compiler-load-source-with-paths-and-roots-cfg
-          ""
+        (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+          (lower-global-shared-view context.load-state)
+          path
           src
           prelude-seen
-          (& stdlib-roots)
-          cfgs)
+          (& context.stdlib-roots)
+          (ast.AstMaybeModuleName.No)
+          (lower-global-shared-view context.cfgs)
+          (lower-global-shared-view context.pools))
           [(Ok entry-decls entry-paths entry-modules seen)
             (Ok
               (load.compiler-load-decl-list-append
@@ -74518,7 +74546,7 @@
   [kind : ast.AstImportKind]
   [path : (& str)]) : bool
   (match kind
-    [(Module)
+    [(or (Module) (ModuleAll) (ModuleItem _))
       (load.compiler-load-stdlib-import?
         (load.compiler-load-dotted-module-path path))]
     [_ false]))
@@ -74528,9 +74556,7 @@
   [kind : ast.AstImportKind]
   [path : String]) : bool
   (if (lower-source-stdlib-import-kind? kind path)
-    (match kind
-      [(Module) (not (lower-source-decls-define-module? all-decls path))]
-      [_ true])
+    (not (lower-source-decls-define-module? all-decls path))
     false))
 
 (define (lower-source-call-head-import?
@@ -74622,61 +74648,148 @@
           (lower-global-shared-view decls)
           decls))]))
 
+(define (lower-source-request-cfgs [request : (& request CompilerLowerRequest)]) : sym_i64_env.SymI64Env
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (target_cfg.compiler-target-user-cfgs (& request.cfg-names))]
+    (match (lower-mode-abi (clone request.mode))
+      [(Linux) (target_cfg.compiler-target-cfgs (target_cfg.Linux) cfgs)]
+      [(Windows) (target_cfg.compiler-target-cfgs (target_cfg.Windows) cfgs)]
+      [_ cfgs])))
+
+;; Imported declarations and their paths must share the same logical-module
+;; column. The private request owners isolate aliases and CTFE state while
+;; source nodes and names remain in the caller's installed pools/interner.
+(define (lower-source-context
+  [lower-state : CompilerLowerState]
+  [path : String]
+  [src : (& str)]
+  [request : (& request CompilerLowerRequest)]
+  [context : tc_api.TypecheckRequest]
+  [load-imports : bool]) : ResultCompilerLower
+  (load.compiler-load-session-state-program-cache-disable!
+    (lower-global-shared-view context.load-state))
+  (tc_core.tc-job-state-set-parser-control!
+    context.job-state
+    (parser.compiler-parse-control-from-cfg context.cfgs))
+  (tc_core.tc-macro-state-bind-source-names!
+    (tc_core.tc-job-state-macro-state context.job-state)
+    (ci.intern-source-name-session-capture-active-handle))
+  (let
+    [loaded : load.ResultCompilerLoadWithPaths
+      (if load-imports
+        (lower-source-load (& path) src (lower-global-shared-view context))
+        (match context.program
+          [(ast.Program decls)
+            (load.ResultCompilerLoadWithPaths.Ok
+              (deref decls)
+              (lower-global-shared-view context.paths)
+              (ast.ast-decl-module-list-new)
+              (sym_i64_env.sym-i64-empty))]))]
+    [result : ResultCompilerLower
+      (match loaded
+        [(Ok decls paths modules _)
+          (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+            lower-state
+            (lower-global-shared-view context.load-state)
+            (lower-global-shared-view context.prefix-cache)
+            context.job-state
+            path
+            (ast.ast-program decls)
+            (ast.ast-decl-path-list-with-modules paths (& modules))
+            (clone request.mode)
+            (lower-global-shared-view context.stdlib-roots)
+            (lower-global-shared-view context.cfgs)
+            (lower-global-shared-view context.cache-scope)
+            (lower-global-shared-view context.pools)
+            (ci.intern-source-name-session-capture-active-handle)
+            (ci.intern-compat-state-capture-active)
+            (cbi.state-capture))]
+        [(Err diagnostic) (Err diagnostic)])]
+    ;; No checked context escapes this boundary: successful IR and spans own
+    ;; their escaped data, and failures already live in the caller's arena.
+    (tc_core.tc-job-state-retire-owned-storage! context.job-state)
+    (tc_core.tc-prefix-snapshot-cache-clear-for-state! (& context.prefix-cache))
+    (load.compiler-load-session-state-dotted-path-cache-reset!
+      (lower-global-shared-view context.load-state))
+    (load.compiler-load-session-state-release-stdlib-proofs!
+      (& context.load-state))
+    result))
+
+(define (lower-source-request
+  [lower-state : CompilerLowerState]
+  [path : String]
+  [src : (& str)]
+  [request : (& request CompilerLowerRequest)]
+  [package-name : String]) : ResultCompilerLower
+  (when
+    (and (not request.in-session) (lower-resetting-entry-in-live-session?))
+    (return
+      (lower-resetting-entry-live-session-error
+        "lower-compiler-source-with-path-mode"
+        path)))
+  (unless
+    request.in-session
+    (lower-reset-file-state!)
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (ci.intern-reset!)
+    (lower-reset-intern-owned-state!)
+    (cbi.compiler-builtin-reset!))
+  (compiler-lower-state-reset! lower-state)
+  (compiler-lower-state-set-spmd-package! lower-state package-name)
+  (let
+    [cfgs : sym_i64_env.SymI64Env (lower-source-request-cfgs request)]
+    (match (parser.parse-ast-source-diagnostic-with-cfg
+      (clone path)
+      src
+      (lower-global-shared-view cfgs))
+      [(Ok program)
+        (let
+          [load-imports : bool
+            (lower-source-program-needs-loader?
+              (lower-global-shared-view program))]
+          (if (or load-imports request.in-session)
+            (lower-source-context
+              lower-state
+              (lower-global-shared-view path)
+              src
+              request
+              (tc_api.TypecheckRequest
+                (load.compiler-load-standalone-session-state-new)
+                (tc_core.tc-prefix-snapshot-cache-state-new)
+                (tc_core.tc-job-state-new)
+                program
+                (ast.ast-decl-path-list-new)
+                (clone request.stdlib-roots)
+                cfgs
+                (load.compiler-load-prelude-cache-key
+                  "typecheck-prefix-lower"
+                  (& request.stdlib-roots)
+                  cfgs)
+                (ast.ast-node-pool-context-capture-active)
+                (ci.intern-compat-state-capture-active)
+                (tc_core.TcSemanticObserver 0))
+              load-imports)
+            (lower-compiler-program-with-path-mode-and-state
+              lower-state
+              path
+              program
+              (clone request.mode))))]
+      [(Err diagnostic) (Err diagnostic)])))
+
 (define (lower-compiler-source-with-path-mode-package-and-state
   [lower-state : CompilerLowerState]
   [path : String]
   [src : (& str)]
   [mode : CompilerLowerMode]
   [package-name : String]) : ResultCompilerLower
-  (when
-    (lower-resetting-entry-in-live-session?)
-    (return
-      (lower-resetting-entry-live-session-error
-        "lower-compiler-source-with-path-mode"
-        path)))
-  ;; Each standalone single-source compile (smoke self-tests, emit-source,
-  ;; check tools) runs in a fresh arena, so interned name strings from a
-  ;; previous compile are freed. Reset the persistent intern table here so a
-  ;; later compile never probes a dangling key. The multi-file driver compiles
-  ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
-  (lower-reset-file-state!)
-  (compiler-lower-state-reset! lower-state)
-  (compiler-lower-state-set-spmd-package! lower-state package-name)
-  (tc_core.compiler-typecheck-reset-file-state!)
-  (ci.intern-reset!)
-  (lower-reset-intern-owned-state!)
-  (cbi.compiler-builtin-reset!)
-  (match (parser.parse-ast-source src)
-    [(Ok program)
-      (if (lower-source-program-needs-loader?
-        (lower-global-shared-view program))
-        (let
-          [stdlib-roots : svec.Vec (svec.new)]
-          [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
-          (match (lower-source-load src)
-            [(Ok decls paths _ _)
-              (lower-compiler-program-with-decl-paths-mode-cache-and-state
-                lower-state
-                path
-                (ast.ast-program decls)
-                paths
-                mode
-                (lower-global-shared-view stdlib-roots)
-                cfgs
-                (load.compiler-load-prelude-cache-key
-                  "typecheck-prefix-lower"
-                  (& stdlib-roots)
-                  cfgs))]
-            [(Err diag) (Err diag)]))
-        (lower-compiler-program-with-path-mode-and-state
-          lower-state
-          path
-          program
-          mode))]
-    [(Err message)
-      (Err
-        (box
-          (lower-diagnostic-with-fallback-path (lower-diagnostic message) path)))]))
+  (lower-source-request
+    lower-state
+    path
+    src
+    (& (compiler-lower-request mode))
+    package-name))
 
 (define (lower-compiler-source-with-path-mode-and-state
   [lower-state : CompilerLowerState]
@@ -74706,11 +74819,11 @@
 (define (lower-compiler-source-with-request
   [path : String]
   [src : String]
-  [request : CompilerLowerRequest]) : ResultCompilerLower
+  [request : (& request CompilerLowerRequest)]) : ResultCompilerLower
   (let
     [state : CompilerLowerState (compiler-lower-state-new)]
     (compiler-lower-state-use-request! state request)
-    (match request.pointer-proof
+    (match (clone request.pointer-proof)
       [(Disabled) unit]
       [(Requested input)
         (let
@@ -74728,14 +74841,10 @@
             (lower-global-shared-view path)))])
     (let
       [result : ResultCompilerLower
-        (lower-compiler-source-with-path-mode-and-state
-          state
-          path
-          src
-          request.mode)]
+        (lower-source-request state path src request "")]
       (match (& result)
         [(Err _)
-          (match request.pointer-proof
+          (match (clone request.pointer-proof)
             [(Requested input)
               (pointer_proof.pointer-proof-input-fail!
                 input

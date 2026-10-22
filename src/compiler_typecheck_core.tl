@@ -32609,16 +32609,6 @@
          (SpmdReduce _) (SpmdScan _) (SpmdCompact _) (ForeachActive _ _))
       (tc-scoped-storage-census-swap! state true)
       true]
-    [(PtrAddrOf _)
-      (tc-scoped-storage-address-swap! state true)
-      false]
-    [(Borrow mutable _ _)
-      (when
-        mutable
-        (let
-          [_prior : bool (tc-scoped-storage-address-swap! state true)]
-          unit))
-      false]
     [_ false]))
 
 (define (tc-expr-with-expected-or-actual-core
@@ -52722,6 +52712,11 @@
   [lifetime : ast.AstBorrowLifetime]
   [place-expr : ast.AstExpr]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (when
+    mutable
+    (let
+      [_prior : bool (tc-scoped-storage-address-swap! env.abi-pad true)]
+      unit))
   (match (tc-borrow-place ctx expr-bases env (tc-global-shared-view place-expr))
     [(Ok place)
       (if (and mutable (not allow-mut-by-value-borrow))
@@ -58753,6 +58748,7 @@
   [env : TcTypeEnv]
   [place : ast.AstExpr]) : ResultTcType
   (let
+    [_address : bool (tc-scoped-storage-address-swap! env.abi-pad true)]
     [_ (try (tc-require-unsafe ctx env "ptr-addr-of"))]
     [ty : ast.AstType (try (tc-ptr-addr-of-place ctx env place))]
     [resolved : ast.AstType (tc-resolve-type ctx ty)]

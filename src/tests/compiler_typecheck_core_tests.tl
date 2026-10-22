@@ -12796,32 +12796,65 @@
 (test
   tc-storage-address-notes
   (let
-    [state : tc_core.TcTypeEnvScopedState
-      (tc_core.tc-type-env-scoped-state-new (arena.tl_arena_current))]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools)]
+    [name : i64 (ci.intern "address-note")]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-enter-unsafe
+        (tc_core.tc-bind-id
+          (tc_core.tc-empty-env-with-job-state
+            (tc_core.tc-context-job-state ctx))
+          name
+          (I64)))]
     (for [scenario (iterator.range 0 5)]
       (let
-        [node : ast.AstExpr
-          (cond
-            [(= scenario 0) (PtrAddrOf 0)]
-            [(= scenario 1) (Borrow true -1 0)]
-            [(= scenario 2) (Borrow false -1 0)]
-            [(= scenario 3) (Literal (ast.ast-lit-int 0))]
-            [else (While 0 (ast.ast-expr-list-new))])]
         [_address : bool
-          (tc_core.tc-scoped-storage-address-swap! state.address false)]
+          (tc_core.tc-scoped-storage-address-swap! env.abi-pad false)]
         [_census : bool
-          (tc_core.tc-scoped-storage-census-swap! state.address false)]
-        [scoped? : bool
-          (tc_core.tc-expr-scoped-bindings? state.address (& node))]
+          (tc_core.tc-scoped-storage-census-swap! env.abi-pad false)]
+        [result : tc_core.ResultTcType
+          (cond
+            [(= scenario 0) (tc_core.tc-ptr-addr-of-expr ctx env (Var name))]
+            [(or (= scenario 1) (= scenario 2))
+              (tc_core.tc-borrow-expr-with-policy
+                ctx
+                (tc_core.tc-context-expr-bases ctx)
+                env
+                (= scenario 1)
+                ast.AstBorrowLifetime.Inferred
+                (Var name)
+                true)]
+            [(= scenario 3)
+              (tc_core.tc-expr ctx env (Literal (ast.ast-lit-int 0)))]
+            [else
+              (let
+                [_scoped : bool
+                  (tc_core.tc-expr-scoped-bindings?
+                    env.abi-pad
+                    (& (ast.AstExpr.While 0 (ast.ast-expr-list-new))))]
+                (tc_core.ResultTcType.Ok (Unit)))])]
         [address? : bool
-          (tc_core.tc-scoped-storage-address-swap! state.address false)]
+          (tc_core.tc-scoped-storage-address-swap! env.abi-pad false)]
         [census? : bool
-          (tc_core.tc-scoped-storage-census-swap! state.address false)]
+          (tc_core.tc-scoped-storage-census-swap! env.abi-pad false)]
+        (test.assert-true
+          (match result
+            [(Ok _) true]
+            [_ false])
+          "address-note fixtures retain accepted typing")
         (test.assert-true
           (= address? (< scenario 2))
           "raw addresses and mutable borrows need exposure; immutable borrows and reads do not")
         (test.assert-true
-          (and (= scoped? (= scenario 4)) (= census? (= scenario 4)))
+          (= census? (= scenario 4))
           "address notes preserve the existing scoped-binding dispatch")))
     (test.assert-true
       (tc_core.tc-scoped-storage-address-swap! 0 false)

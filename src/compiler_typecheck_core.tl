@@ -71692,131 +71692,140 @@
       (tc-context-expr-get ctx func-id))
       [(MoveResultReadAccess)
         (let
-          [out : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
-          (ast.ast-expr-list-push
-            (&mut out)
-            (tc-read-value-expr-id
-              (tc-context-expr-bases ctx)
-              (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))))
-          out)]
+          [source : i64 (ast.ast-expr-list-get (& args) 0 0)]
+          [read : i64 (tc-read-value-expr-id (& (tc-context-pools ctx)) source)]
+          (if (= read source)
+            args
+            (let
+              [out : ast.AstExprList (ast.ast-expr-list-with-capacity 1)]
+              (ast.ast-expr-list-push (&mut out) read)
+              out)))]
       [_ args])
     args))
 
-;; The borrow-conflict walk needs non-consuming deref nodes for clone inputs;
-;; the move walk carries the same demand as `MoveResultReadAccess`, and both
-;; forward it through exactly these forms (SPEC 7.6). Only value-producing
-;; paths inherit the read: conditions, initializers, scrutinees, call arguments,
-;; sequence prefixes and data-pointer operands keep their ordinary rules. Never
-;; mutate or mark a shared node.
-(define (tc-read-value-expr-id [expr-bases : i64] [expr : ast.AstExpr]) : i64
-  (match (tc-global-shared-view expr)
-    [(Spanned inner-box span)
-      (ast.ast-expr-spanned
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases inner-box))
-        span)]
-    [(Ann inner-box ty-id)
-      (ast.ast-expr-ann-id
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases inner-box))
-        ty-id)]
-    [(Cast inner-box ty-id)
-      (ast.ast-expr-cast-id
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases inner-box))
-        ty-id)]
-    [(MacroExpansion inner-box provenance name)
-      (ast.ast-expr-macro-expansion
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases inner-box))
-        provenance
-        name)]
-    [(or (Begin items) (Unsafe items))
-      (let
-        [out : ast.AstExprList (ast.ast-expr-list-with-capacity items.len)]
-        (for [index (iterator.range 0 items.len)]
+(define (tc-read-value-replace-child-id
+  [pools : (& pools ast.AstNodePoolContext)]
+  [expr-id : i64]
+  [expr : ast.AstExpr]
+  [slot : i64]
+  [next : i64]) : i64
+  (in-arena
+    (arena.Arena pools.owner-arena)
+    (let
+      [children : ast.AstExprList
+        (ast.ast-expr-child-ids
+          (ast.ast-node-pool-context-expr-get pools expr-id))]
+      [at : i64
+        (if (< slot 0)
+          (- children.len 1)
+          slot)]
+      (set! (array-ref children.slots at) next)
+      (ast.ast-node-pool-context-expr-push-borrowed
+        pools
+        (& (ast.ast-expr-with-child-ids expr (& children)))))))
+
+;; A result read changes BoxTake to BoxGet only on value-producing paths.
+;; Conditions, initializers, scrutinees, indices and sequence prefixes keep
+;; their ordinary access. Unchanged paths retain their IDs; changed paths use
+;; the owner's child schema without mutating a shared source occurrence.
+(define (tc-read-value-expr-id
+  [pools : (& pools ast.AstNodePoolContext)]
+  [expr-id : i64]) : i64
+  (let
+    [expr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools expr-id)]
+    (match (tc-global-shared-view expr)
+      [(or (Spanned inner _) (Ann inner _) (Cast inner _)
+           (MacroExpansion inner _ _) (StructGet inner _) (TupleRef inner _)
+           (ArrayRef inner _) (BoxGet inner) (BoxTake inner))
+        (let
+          [next : i64 (tc-read-value-expr-id pools inner)]
+          (match (& expr)
+            [(BoxTake _)
+              (ast.ast-node-pool-context-expr-push-borrowed
+                pools
+                (& (ast.AstExpr.BoxGet next)))]
+            [_
+              (if (= next inner)
+                expr-id
+                (tc-read-value-replace-child-id pools expr-id expr 0 next))]))]
+      [(or (Begin items) (Unsafe items))
+        (if (= items.len 0)
+          expr-id
           (let
-            [id : i64 (ast.ast-expr-list-get (& items) index 0)]
-            (ast.ast-expr-list-push
-              (&mut out)
-              (if (= index (- items.len 1))
-                (tc-read-value-expr-id
-                  expr-bases
-                  (ast.ast-expr-segment-bases-get expr-bases id))
-                id))))
-        (ast.ast-node-push
-          (match expr
-            [(Unsafe _) (Unsafe out)]
-            [_ (Begin out)])))]
-    [(If condition then-box else-box)
-      (ast.ast-expr-if
-        condition
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases then-box))
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases else-box)))]
-    [(Let payload)
-      (match (& (deref payload))
-        [(Let bindings body)
-          (let
-            [out : ast.AstLetBindingList
-              (ast.ast-let-binding-list-with-capacity bindings.len)]
-            (ast.ast-let-binding-list-append-from (&mut out) bindings 0)
-            (ast.ast-expr-let
-              out
-              (tc-read-value-expr-id
-                expr-bases
-                (ast.ast-expr-segment-bases-get expr-bases body))))])]
-    [(Match payload)
-      (match (& (deref payload))
-        [(Match scrutinee arms)
-          (let
-            [out : ast.AstMatchArmList
-              (ast.ast-match-arm-list-with-capacity arms.len)]
-            (for [index (iterator.range 0 arms.len)]
-              (match (ast.ast-match-arm-list-get
-                arms
-                index
-                (ast.ast-match-arm-fallback))
-                [(Arm pattern body)
-                  (ast.ast-match-arm-list-push
-                    (&mut out)
-                    (ast.AstMatchArm.Arm
-                      pattern
-                      (tc-read-value-expr-id
-                        expr-bases
-                        (ast.ast-expr-segment-bases-get expr-bases body))))]))
-            (ast.ast-expr-match scrutinee out))])]
-    [(StructGet receiver-box field)
-      (ast.ast-expr-struct-get-id
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box))
-        field)]
-    [(TupleRef receiver-box index)
-      (ast.ast-expr-tuple-ref
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box))
-        index)]
-    [(ArrayRef receiver-box index-box)
-      (ast.ast-expr-array-ref
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box))
-        index-box)]
-    [(or (BoxGet receiver-box) (BoxTake receiver-box))
-      (ast.ast-expr-box-get
-        (tc-read-value-expr-id
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases receiver-box)))]
-    [_ (ast.ast-node-push expr)]))
+            [last : i64 (- items.len 1)]
+            [old : i64 (ast.ast-expr-list-get (& items) last 0)]
+            [next : i64 (tc-read-value-expr-id pools old)]
+            (if (= next old)
+              expr-id
+              (tc-read-value-replace-child-id pools expr-id expr last next))))]
+      [(If _ then-id else-id)
+        (let
+          [next-then : i64 (tc-read-value-expr-id pools then-id)]
+          [next-else : i64 (tc-read-value-expr-id pools else-id)]
+          (if (and (= next-then then-id) (= next-else else-id))
+            expr-id
+            (in-arena
+              (arena.Arena pools.owner-arena)
+              (let
+                [children : ast.AstExprList
+                  (ast.ast-expr-child-ids
+                    (ast.ast-node-pool-context-expr-get pools expr-id))]
+                (set! (array-ref children.slots 1) next-then)
+                (set! (array-ref children.slots 2) next-else)
+                (ast.ast-node-pool-context-expr-push-borrowed
+                  pools
+                  (& (ast.ast-expr-with-child-ids expr (& children))))))))]
+      [(Let payload)
+        (match (& (deref payload))
+          [(Let _ body)
+            (let
+              [next : i64 (tc-read-value-expr-id pools body)]
+              (if (= next body)
+                expr-id
+                (tc-read-value-replace-child-id pools expr-id expr -1 next)))])]
+      [(Match payload)
+        (match (& (deref payload))
+          [(Match _ arms)
+            (let
+              [index : i64 0]
+              [first : i64 -1]
+              [first-body : i64 -1]
+              (while (and (< index arms.len) (< first 0))
+                (match (ast.ast-match-arm-list-get
+                  arms
+                  index
+                  (ast.ast-match-arm-fallback))
+                  [(Arm _ body)
+                    (let
+                      [next : i64 (tc-read-value-expr-id pools body)]
+                      (when
+                        (!= next body)
+                        (set! first index)
+                        (set! first-body next)))])
+                (+= index 1))
+              (if (< first 0)
+                expr-id
+                (in-arena
+                  (arena.Arena pools.owner-arena)
+                  (let
+                    [children : ast.AstExprList
+                      (ast.ast-expr-child-ids
+                        (ast.ast-node-pool-context-expr-get pools expr-id))]
+                    ;; Child zero is the scrutinee; only arm bodies inherit
+                    ;; the result read. Pattern children remain unchanged.
+                    (set! (array-ref children.slots (+ first 1)) first-body)
+                    (while (< index arms.len)
+                      (let
+                        [slot : i64 (+ index 1)]
+                        [body : i64 (array-ref children.slots slot)]
+                        (set!
+                          (array-ref children.slots slot)
+                          (tc-read-value-expr-id pools body)))
+                      (+= index 1))
+                    (ast.ast-node-pool-context-expr-push-borrowed
+                      pools
+                      (& (ast.ast-expr-with-child-ids expr (& children))))))))])]
+      [_ expr-id])))
 
 ;; The `deref` operand at the root of a field and tuple-element projection
 ;; chain such as `(deref b).leaf.w`, or -1 when the chain has no `deref` root.
@@ -84363,8 +84372,9 @@
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
   [borrow-expr : ast.AstExpr]
-  [place : ast.AstExpr]) : TcBorrowCheckResult
+  [place-id : i64]) : TcBorrowCheckResult
   (let
+    [place : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases place-id)]
     [borrowed0
       (try
         (tc-borrow-check-place-read-conflict
@@ -84382,7 +84392,7 @@
           env
           (tc-global-shared-view locals)
           borrowed0
-          (tc-read-value-expr-id expr-bases (tc-global-shared-view place))))]
+          (tc-read-value-expr-id (& (tc-context-pools ctx)) place-id)))]
     [reserved-place
       (try (tc-borrow-place ctx expr-bases env (tc-global-shared-view place)))]
     ;; Reading the place's receivers must not let a reservation write through
@@ -84523,48 +84533,45 @@
               (tc-call-mutable-ref-formal? ctx (tc-global-shared-view raw-ty))
               ;; A borrowed temporary reserves no place.
               (not (tc-borrow-operand-id-temporary? expr-bases place-box)))
-              (let
-                [place : ast.AstExpr
-                  (ast.ast-expr-segment-bases-get expr-bases place-box)]
-                (match (tc-borrow-check-reserve-two-phase-mut-call-arg
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  scoped-borrowed
-                  effective-head
-                  place)
-                  [(Ok borrowed1)
-                    (tc-borrow-check-call-args-two-phase-with-types-at
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      (tc-borrow-check-remove-pending-markers
-                        borrowed1
-                        pending-scope-id)
-                      true
-                      call-expr
-                      pending-scope-id
-                      exprs
-                      types
-                      foreign-boundary
-                      (+ index 1))]
-                  [(Err message)
-                    (tc-borrow-check-call-args-two-phase-retry-after-prune
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      borrowed
-                      reserved
-                      call-expr
-                      pending-scope-id
-                      exprs
-                      types
-                      foreign-boundary
-                      index
-                      message)]))
+              (match (tc-borrow-check-reserve-two-phase-mut-call-arg
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                scoped-borrowed
+                effective-head
+                place-box)
+                [(Ok borrowed1)
+                  (tc-borrow-check-call-args-two-phase-with-types-at
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    (tc-borrow-check-remove-pending-markers
+                      borrowed1
+                      pending-scope-id)
+                    true
+                    call-expr
+                    pending-scope-id
+                    exprs
+                    types
+                    foreign-boundary
+                    (+ index 1))]
+                [(Err message)
+                  (tc-borrow-check-call-args-two-phase-retry-after-prune
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    borrowed
+                    reserved
+                    call-expr
+                    pending-scope-id
+                    exprs
+                    types
+                    foreign-boundary
+                    index
+                    message)])
               (match (tc-borrow-check-effective-arg-with-type
                 ctx
                 expr-bases
@@ -88245,7 +88252,7 @@
               (tc-global-shared-view locals)
               borrowed
               (tc-global-shared-view expr)
-              (tc-global-shared-view place)))]
+              place-box))]
         [rhs-borrowed
           (try
             (tc-borrow-check-expr-id
@@ -88539,7 +88546,7 @@
           [read-inner : ast.AstExpr
             (ast.ast-expr-segment-bases-get
               expr-bases
-              (tc-read-value-expr-id expr-bases (tc-global-shared-view inner)))]
+              (tc-read-value-expr-id (& (tc-context-pools ctx)) inner-box))]
           (if (= (tc-moved-len borrowed) 0)
             (let
               [borrowed1

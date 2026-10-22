@@ -963,6 +963,18 @@
             [_ false])]
         [_ false])]))
 
+(cfg
+  test
+  (define (compiler-ast-test-first-span-base
+    [pools : (& pools ast.AstNodePoolContext)]) : i64
+    (unsafe
+      (ptr-read
+        (int->ptr
+          (__tl-project-field
+            (ast.ast-expr-pool-cell-read pools.expr-pool)
+            span-slot-segment-bases)
+          : (Ptr i64))))))
+
 (define (compiler-ast-program-compaction-smoke? [consume-source-spans? : bool]) : bool
   (let
     [source-pools : ast.AstNodePoolContext
@@ -1033,6 +1045,8 @@
         (Literal (ast.ast-lit-int 1234)))]
     [dest-decoy-ty : i64
       (ast.ast-node-pool-context-type-push dest-pools (Bool))]
+    [_source-span-base : i64
+      (cfg test (compiler-ast-test-first-span-base (& source-pools)) 0)]
     [compacted : ast.AstProgramCompaction
       (ast.ast-program-compact-with-pools
         source-pools
@@ -1073,7 +1087,22 @@
                       [_ false])]
                   [_ false])])]
           (ast.ast-node-pool-context-install! active-before)
-          (and shape-ok installed-ok))])))
+          (and
+            shape-ok
+            installed-ok
+            (cfg
+              test
+              (and
+                (!= _source-span-base 0)
+                (=
+                  (compiler-ast-test-first-span-base (& source-pools))
+                  (if consume-source-spans?
+                    0
+                    _source-span-base)))
+              true)
+            (if consume-source-spans?
+              true
+              (ast.ast-node-pool-context-expr-span-oracle-ok? source-pools))))])))
 
 (define (compiler-ast-generated-key-decl
   [name : String]
@@ -2932,6 +2961,7 @@
 
 (define (compiler-ast-span-forwarding-smoke?) : bool
   (and
+    (compiler-ast-program-compaction-smoke? false)
     (compiler-ast-program-compaction-smoke? true)
     (compiler-ast-canonical-reserve-row? 0 0 0 64 true)
     (compiler-ast-canonical-reserve-row? 31 31 0 64 true)

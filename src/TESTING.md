@@ -7,8 +7,9 @@ bindings, lambda boundaries, reference arguments and read-only tails
 retain their existing no-copy behavior. Cached parameter, local and shadowed
 bindings cross type-environment compaction. `compiler-storage-exposure-*`
 checks full-width lexical keys under forced hash collisions, nested frames,
-failed/incomplete checks, scope ownership and stale identities after a checker-job
-reset. The core ownership regression retains an environment across checker
+failed/incomplete checks, scope ownership, nested collection suspension and
+stale identities or suspension tokens after a checker-job reset. The core
+ownership regression retains an environment across checker
 jobs and reset generations. Acyclic raw-pointer argument/callee cases verify
 that sequential address marks still force the required snapshots. The
 completeness table distinguishes missing, complete-empty, incomplete, ambiguous

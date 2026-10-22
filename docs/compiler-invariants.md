@@ -389,8 +389,11 @@ actual exposure keys survive function scratch. Cache compaction preserves identi
 original binding spine. Checker ownership and reset generations guard every
 identity read. Unknown storage roots or stale identities invalidate the frame.
 Nested lambdas record their private capture slots in separate frames; auxiliary
-capability queries suspend collection instead of attributing nested storage to
-the caller.
+capability queries suspend collection, including nested lambda checks, instead
+of attributing nested storage to the caller. Suspension tokens belong to one
+checker generation; a reset prevents an older token from restoring a frame.
+Parameter metadata annotates the ordinary bound environment, preserving its
+resolved types and lifetime markers without creating another binding layer.
 
 A successfully completed, complete frame makes an absent exposure key a proven
 negative. An unavailable or incomplete frame never supplies that proof. The

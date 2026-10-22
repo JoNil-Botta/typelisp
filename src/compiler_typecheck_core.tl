@@ -70982,7 +70982,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]
-  [body : i64]) : TcTypeEnv
+  [body : i64]) : unit
   (let
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
@@ -70990,26 +70990,14 @@
       (tc-checked-let-binding-fact-state-data
         (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))).current-declaration-ordinal]
     [_ : i64 (storage_exposure.storage-exposure-enter! facts ordinal body)]
-    [out : TcTypeEnv env]
+    ;; Both callers supply the ordinary environment that already binds these
+    ;; parameters. Metadata must preserve its resolved types and lifetime markers.
     (for [index (iterator.range 0 (ast.ast-param-list-len params))]
       (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name ty _)
-          (set!
-            out
-            (tc-storage-register!
-              ctx
-              (tc-type-env-bind-node
-                out
-                name
-                (match (tc-lookup-id env name)
-                  [(Ok bound) bound]
-                  [(Err _)
-                    (storage_exposure.storage-exposure-incomplete! facts)
-                    (tc-type-strip-invalidate (tc-resolve-type ctx ty))]))
-              0
-              -1
-              name))]))
-    out))
+        [(Param name _ _)
+          (let
+            [_registered : TcTypeEnv (tc-storage-register! ctx env 0 -1 name)]
+            unit)]))))
 
 (define (tc-storage-expose!
   [ctx : TcContext]
@@ -74283,7 +74271,7 @@
               (tc-body-storage-exposure (tc-context-body-state ctx))]
             [previous-storage : i64
               (storage_exposure.storage-exposure-current storage)]
-            [lambda-source-env : TcTypeEnv
+            [_source-entry : unit
               (tc-storage-enter! ctx lambda-env (& params) body-box)]
             [lambda-writes-mark : i64
               (tc-body-param-writes-mark (tc-context-body-state ctx))]
@@ -74291,7 +74279,7 @@
               (tc-move-check-expr-id
                 ctx
                 expr-bases
-                lambda-source-env
+                lambda-env
                 (tc-global-shared-view lambda-locals)
                 (tc-moved-empty)
                 (tc-param-storage-seed-params
@@ -76027,15 +76015,9 @@
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [previous : i64 (storage_exposure.storage-exposure-current facts)]
-    [source-env : TcTypeEnv (tc-storage-enter! ctx env params body-id)]
+    [_source-entry : unit (tc-storage-enter! ctx env params body-id)]
     [result : ResultTcUnit
-      (tc-move-check-body-id-impl
-        ctx
-        expr-bases
-        source-env
-        params
-        body-id
-        return-ty)]
+      (tc-move-check-body-id-impl ctx expr-bases env params body-id return-ty)]
     (storage_exposure.storage-exposure-leave!
       facts
       previous
@@ -77253,10 +77235,11 @@
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     ;; Capability inference revisits a lambda's body from its definition env;
     ;; it must not attribute that nested body's storage to its caller.
-    [previous : i64 (storage_exposure.storage-exposure-current-swap! facts -1)]
+    [suspension : storage_exposure.StorageExposureSuspension
+      (storage_exposure.storage-exposure-suspend! facts)]
     [capability : i64
       (tc-lambda-call-capability-with-locals-impl ctx env locals params body-id)]
-    [_ : i64 (storage_exposure.storage-exposure-current-swap! facts previous)]
+    [_ : unit (storage_exposure.storage-exposure-resume! facts suspension)]
     capability))
 
 (define (tc-lambda-call-capability-with-locals-impl
@@ -117432,7 +117415,7 @@
                     (match (tc-move-check-body-id
                       ctx
                       (tc-context-expr-bases ctx)
-                      env
+                      comparison-env
                       registered-params
                       body-box
                       resolved-ret)

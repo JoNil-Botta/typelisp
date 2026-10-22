@@ -12515,8 +12515,7 @@
     [previous-a : i64 (storage_exposure.storage-exposure-enter! source-a 0 1)]
     [_annotate : tc_core.TcTypeEnv
       (tc_core.tc-storage-register! ctx-a env 0 -1 name)]
-    [_enter-b : tc_core.TcTypeEnv
-      (tc_core.tc-storage-enter! ctx-b env (& params) 2)]
+    [_enter-b : unit (tc_core.tc-storage-enter! ctx-b env (& params) 2)]
     [frame-b : i64 (storage_exposure.storage-exposure-current source-b)]
     (tc_core.tc-storage-expose! ctx-b env (Var name) true)
     (test.assert-i64-eq

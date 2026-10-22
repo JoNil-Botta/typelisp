@@ -15083,6 +15083,11 @@
           1)))
     state))
 
+(define (lower-exposure-scopes? [state : LowerState]) : bool
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (>= (deref data).address-exposure-mode 2)))
+
 (define (lower-exposure-enter-scope!
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
@@ -29054,7 +29059,10 @@
   (match (lower-global-shared-view expr)
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
-        [_scope : unit (lower-exposure-enter-scope! state env inner-box)]
+        [_scope : unit
+          (when
+            (lower-exposure-scopes? state)
+            (lower-exposure-enter-scope! state env inner-box))]
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-origin ctx state env type-env inner origin))]
     [(Literal lit)
@@ -29711,7 +29719,10 @@
   (match expr
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
       (let
-        [_scope : unit (lower-exposure-enter-scope! state env inner-box)]
+        [_scope : unit
+          (when
+            (lower-exposure-scopes? state)
+            (lower-exposure-enter-scope! state env inner-box))]
         [inner : ast.AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-expr-with-type ctx state env type-env inner origin expr-ty))]
     [(Literal lit)
@@ -30726,7 +30737,9 @@
   [origin : ast.AstExpr]) : ResultLowerExpr
   (match (lower-global-shared-view expr)
     [(or (Spanned inner-box _) (MacroExpansion inner-box _ _))
-      (lower-exposure-enter-scope! state env inner-box)
+      (when
+        (lower-exposure-scopes? state)
+        (lower-exposure-enter-scope! state env inner-box))
       (lower-expr-expected
         ctx
         state
@@ -68290,7 +68303,9 @@
   [sret-var : i64]) : ResultLowerState
   (match (lower-global-shared-view expr)
     [(or (Spanned inner-box _) (Ann inner-box _))
-      (lower-exposure-enter-scope! state env inner-box)
+      (when
+        (lower-exposure-scopes? state)
+        (lower-exposure-enter-scope! state env inner-box))
       (lower-tail-expr
         ctx
         state

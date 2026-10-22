@@ -174,3 +174,48 @@
       (exposure.storage-exposure-frame facts 1 2)
       -1
       "reset retires frame owners")))
+
+(test
+  compiler-storage-exposure-suspends-nested-queries
+  (let
+    [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
+    [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
+    [frame : i64 (exposure.storage-exposure-current facts)]
+    [outer : exposure.StorageExposureSuspension
+      (exposure.storage-exposure-suspend! facts)]
+    [_entry : i64 (exposure.storage-exposure-enter! facts 1 3)]
+    [inner : exposure.StorageExposureSuspension
+      (exposure.storage-exposure-suspend! facts)]
+    [_nested : i64 (exposure.storage-exposure-enter! facts 1 4)]
+    (test.assert-i64-eq
+      (exposure.storage-exposure-frame facts 1 3)
+      -1
+      "suspended queries create no frames")
+    (test.assert-i64-eq
+      (exposure.storage-exposure-frame facts 1 4)
+      -1
+      "nested queries remain suspended")
+    (exposure.storage-exposure-resume! facts inner)
+    (test.assert-i64-eq
+      (exposure.storage-exposure-current facts)
+      -1
+      "inner resume preserves outer suspension")
+    (exposure.storage-exposure-resume! facts outer)
+    (test.assert-i64-eq
+      (exposure.storage-exposure-current facts)
+      frame
+      "outer resume restores its frame")
+    (exposure.storage-exposure-leave! facts previous true)
+    (let
+      [stale : exposure.StorageExposureSuspension
+        (exposure.storage-exposure-suspend! facts)]
+      (exposure.storage-exposure-reset! facts)
+      (let
+        [previous : i64 (exposure.storage-exposure-enter! facts 1 5)]
+        [current : i64 (exposure.storage-exposure-current facts)]
+        (exposure.storage-exposure-resume! facts stale)
+        (test.assert-i64-eq
+          (exposure.storage-exposure-current facts)
+          current
+          "stale resume cannot alter a new generation")
+        (exposure.storage-exposure-leave! facts previous true)))))

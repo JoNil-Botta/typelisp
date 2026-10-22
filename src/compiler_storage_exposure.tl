@@ -16,6 +16,7 @@
   (current i64)
   (base i64)
   (generation i64)
+  (suspension-depth i64)
   (arena i64))
 
 (defstruct StorageExposure
@@ -41,6 +42,7 @@
           -1
           0
           0
+          0
           (arena.tl_arena_current)))]
     (StorageExposure
       (unsafe
@@ -60,18 +62,41 @@
       (set! (deref data).by-body (index_map.with-capacity 0))
       (set! (deref data).by-hash (index_map.with-capacity 0))
       (set! (deref data).current -1)
+      (set! (deref data).suspension-depth 0)
       (set! (deref data).arena (arena.tl_arena_current)))))
 
 (define (storage-exposure-current [state : StorageExposure]) : i64
   (unsafe
     (deref (storage-exposure-ptr state)).current))
 
-(define (storage-exposure-current-swap! [state : StorageExposure] [next : i64]) : i64
+(defstruct StorageExposureSuspension
+  (frame i64)
+  (generation i64))
+
+(define (storage-exposure-suspend! [state : StorageExposure]) : StorageExposureSuspension
   (let
-    [previous : i64 (storage-exposure-current state)]
+    [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
+    [token : StorageExposureSuspension
+      (unsafe
+        (StorageExposureSuspension (deref data).current (deref data).generation))]
     (unsafe
-      (set! (deref (storage-exposure-ptr state)).current next))
-    previous))
+      (set! (deref data).current -1)
+      (set! (deref data).suspension-depth (+ (deref data).suspension-depth 1)))
+    token))
+
+(define (storage-exposure-resume!
+  [state : StorageExposure]
+  [token : StorageExposureSuspension]) : unit
+  (let
+    [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
+    ;; A retired generation cannot restore one of its frame indices.
+    (unsafe
+      (when
+        (and
+          (= token.generation (deref data).generation)
+          (> (deref data).suspension-depth 0))
+        (set! (deref data).suspension-depth (- (deref data).suspension-depth 1))
+        (set! (deref data).current token.frame)))))
 
 (define (storage-exposure-frame-field
   [state : StorageExposure]
@@ -112,6 +137,10 @@
   [state : StorageExposure]
   [declaration : i64]
   [body : i64]) : i64
+  (when
+    (unsafe
+      (> (deref (storage-exposure-ptr state)).suspension-depth 0))
+    (return (storage-exposure-current state)))
   (let
     [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
     [previous : i64

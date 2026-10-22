@@ -73349,6 +73349,17 @@
 
 ;; A loop body entered from the non-loop walker; its `break`s belong to this
 ;; loop, so its frame keeps them out of an enclosing loop's collection.
+(define (tc-storage-loop-enter! [ctx : TcContext]) : unit
+  ;; Only a loop can revisit an earlier evaluation after later exposure.
+  ;; Straight-line bodies retain sequential address tracking in lowering.
+  (let
+    [storage : storage_exposure.StorageExposure
+      (tc-body-storage-exposure (tc-context-body-state ctx))]
+    [frame : i64 (storage_exposure.storage-exposure-current storage)]
+    (when
+      (>= frame 0)
+      (storage_exposure.storage-exposure-index-frame! storage frame))))
+
 (define (tc-move-check-loop-body
   [ctx : TcContext]
   [expr-bases : i64]
@@ -73358,6 +73369,7 @@
   [outer-loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [body : ast.AstExpr]) : TcMoveLoopResult
+  (tc-storage-loop-enter! ctx)
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
     [outer : TcMoveBreakCollection
@@ -73812,314 +73824,280 @@
               (tc-move-out-of-deref-help))]
           (when (> (string.string-length message) 0) (return (Err message))))]
       [(Err _) unit]))
-  (let
-    [bare : ast.AstExpr
-      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
-    ;; Only a loop can revisit an earlier evaluation after later exposure.
-    ;; Straight-line bodies retain incremental address tracking in lowering.
-    (when
-      (match (& bare)
-        [(or (While _ _) (Foreach _) (ForeachActive _ _) (SpmdReduce _)
-             (SpmdScan _) (SpmdCompact _))
-          true]
-        [_ false])
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
+    ;; Source/macro wrappers are removed above; keep their variants exhaustive.
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _)
+         (Unary _ inner-box))
+      (tc-move-check-expr-id
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        inner-box)]
+    [(ForOwnedState payload)
       (let
-        [storage : storage_exposure.StorageExposure
-          (tc-body-storage-exposure (tc-context-body-state ctx))]
-        [frame : i64 (storage_exposure.storage-exposure-current storage)]
-        (when
-          (>= frame 0)
-          (storage_exposure.storage-exposure-index-frame! storage frame))))
-    (match bare
-      ;; Source/macro wrappers are removed above; keep their variants exhaustive.
-      [(or (Spanned inner-box _) (MacroExpansion inner-box _ _)
-           (Unary _ inner-box))
-        (tc-move-check-expr-id
-          ctx
-          expr-bases
-          env
-          locals
-          loop-carried
-          moved
-          inner-box)]
-      [(ForOwnedState payload)
-        (let
-          [source-name-id : i64
-            (ast.ast-for-owned-state-source-name (& payload))]
-          [index-name-id : i64 (ast.ast-for-owned-state-index-name (& payload))]
-          [source-id : i64 (ast.ast-for-owned-state-source (& payload))]
-          [body-id : i64 (ast.ast-for-owned-state-body (& payload))]
-          [source-name : i64 (tc-for-owned-name-id expr-bases source-name-id)]
-          [index-name : i64 (tc-for-owned-name-id expr-bases index-name-id)]
-          (if (or (< source-name 0) (< index-name 0))
-            (Err "typecheck: invalid internal scalar for owned-array state")
-            (let
-              [moved1
-                (try
-                  (tc-move-check-expr-id
+        [source-name-id : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name-id : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [source-id : i64 (ast.ast-for-owned-state-source (& payload))]
+        [body-id : i64 (ast.ast-for-owned-state-body (& payload))]
+        [source-name : i64 (tc-for-owned-name-id expr-bases source-name-id)]
+        [index-name : i64 (tc-for-owned-name-id expr-bases index-name-id)]
+        (if (or (< source-name 0) (< index-name 0))
+          (Err "typecheck: invalid internal scalar for owned-array state")
+          (let
+            [moved1
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved
+                  source-id))]
+            [source-ty
+              (try
+                (tc-body-type-fact-expr-id
+                  "move.for_owned_source"
+                  ctx
+                  env
+                  source-id))]
+            [moved2
+              (try
+                (tc-move-after-bind-known-type-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved1
+                  source-id
+                  (tc-global-shared-view source-ty)))]
+            [moved3
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  (tc-storage-bind-id
                     ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    source-id))]
-              [source-ty
-                (try
-                  (tc-body-type-fact-expr-id
-                    "move.for_owned_source"
-                    ctx
-                    env
-                    source-id))]
-              [moved2
-                (try
-                  (tc-move-after-bind-known-type-id
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved1
-                    source-id
-                    (tc-global-shared-view source-ty)))]
-              [moved3
-                (try
-                  (tc-move-check-expr-id
-                    ctx
-                    expr-bases
-                    (tc-storage-bind-id
-                      ctx
-                      (tc-storage-bind-id ctx env source-name source-ty body-id)
-                      index-name
-                      (I64)
-                      body-id)
-                    (tc-moved-add (tc-moved-add locals source-name) index-name)
-                    (tc-moved-remove-root-state
-                      (tc-moved-remove-root-state
-                        loop-carried
-                        source-name
-                        false)
-                      index-name
-                      false)
-                    (tc-moved-remove-root-state
-                      (tc-moved-remove-root-state moved2 source-name false)
-                      index-name
-                      false)
-                    body-id))]
-              (Ok
-                (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state moved3 source-name false)
-                  index-name
-                  false)))))]
-      [(ForOwnedStep payload)
-        (let
-          [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
-          [index-id : i64 (ast.ast-for-owned-step-index-name (& payload))]
-          [binding-id : i64 (ast.ast-for-owned-step-binding-name (& payload))]
-          [done-id : i64 (ast.ast-for-owned-step-done-name (& payload))]
-          [body-id : i64 (ast.ast-for-owned-step-body (& payload))]
-          [binding-name : i64 (tc-for-owned-name-id expr-bases binding-id)]
-          (if (< binding-name 0)
-            (Err "typecheck: invalid internal scalar for item binding")
-            (let
-              [moved1
-                (try
-                  (tc-move-check-expr-id
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    source-id))]
-              [moved2
-                (try
-                  (tc-move-check-expr-id
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved1
-                    index-id))]
-              [moved3
-                (try
-                  (tc-move-check-expr-id
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved2
-                    done-id))]
-              [source-ty
-                (try
-                  (tc-body-type-fact-expr-id
-                    "move.for_owned_step_source"
-                    ctx
-                    env
-                    source-id))]
-              (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
-                [(Array elem-id _)
-                  (let
-                    [moved4
-                      (try
-                        (tc-move-check-expr-id
+                    (tc-storage-bind-id ctx env source-name source-ty body-id)
+                    index-name
+                    (I64)
+                    body-id)
+                  (tc-moved-add (tc-moved-add locals source-name) index-name)
+                  (tc-moved-remove-root-state
+                    (tc-moved-remove-root-state loop-carried source-name false)
+                    index-name
+                    false)
+                  (tc-moved-remove-root-state
+                    (tc-moved-remove-root-state moved2 source-name false)
+                    index-name
+                    false)
+                  body-id))]
+            (Ok
+              (tc-moved-remove-root-state
+                (tc-moved-remove-root-state moved3 source-name false)
+                index-name
+                false)))))]
+    [(ForOwnedStep payload)
+      (let
+        [source-id : i64 (ast.ast-for-owned-step-source-name (& payload))]
+        [index-id : i64 (ast.ast-for-owned-step-index-name (& payload))]
+        [binding-id : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [done-id : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [body-id : i64 (ast.ast-for-owned-step-body (& payload))]
+        [binding-name : i64 (tc-for-owned-name-id expr-bases binding-id)]
+        (if (< binding-name 0)
+          (Err "typecheck: invalid internal scalar for item binding")
+          (let
+            [moved1
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved
+                  source-id))]
+            [moved2
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved1
+                  index-id))]
+            [moved3
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved2
+                  done-id))]
+            [source-ty
+              (try
+                (tc-body-type-fact-expr-id
+                  "move.for_owned_step_source"
+                  ctx
+                  env
+                  source-id))]
+            (match (tc-type-strip-region (tc-resolve-type ctx source-ty))
+              [(Array elem-id _)
+                (let
+                  [moved4
+                    (try
+                      (tc-move-check-expr-id
+                        ctx
+                        expr-bases
+                        (tc-storage-bind-id
                           ctx
-                          expr-bases
-                          (tc-storage-bind-id
-                            ctx
-                            env
-                            binding-name
-                            (tc-context-type-get ctx elem-id)
-                            body-id)
-                          (tc-moved-add locals binding-name)
-                          (tc-moved-remove-root-state
-                            loop-carried
-                            binding-name
-                            false)
-                          (tc-moved-remove-root-state moved3 binding-name false)
-                          body-id))]
-                    (Ok (tc-moved-remove-root-state moved4 binding-name false)))]
-                [_
-                  (Err
-                    "typecheck: scalar for owned step requires fixed-array state")]))))]
-      [(or (Literal _) (TypeLiteral _) (Init _) (Comptime _) (Quote _)
-           (Quasiquote _) (Unquote _) (UnquoteSplicing _) (PtrNull _)
-           (BinaryData _) (SpmdProgramIndex) (SpmdProgramCount) (ProgramArgc)
-           (ProgramArgv) (ProgramEnvp))
-        (Ok moved)]
-      [(Var name)
-        (let
-          [name-text : String
-            (tc-hygiene-name-text-id-for-session
-              (tc-context-structural-session ctx)
-              name)]
-          (if (tc-dotted-place-name-id? ctx env name)
-            (let
-              [virtual-id
-                (try
-                  (tc-dotted-local-field-expr-id-after-check
-                    (tc-context-structural-session ctx)
-                    name))]
-              (tc-move-check-expr-id
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                virtual-id))
-            (if (tc-moved-contains? moved name)
-              (tc-move-rich-use-conflict-result
-                expr-bases
-                (tc-moved-conflict moved name)
-                (tc-global-shared-view name-text)
-                expr
-                name-text)
-              (Ok moved))))]
-      [(Binary op left-box right-box)
-        (let
-          [moved1
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                (ast.ast-expr-segment-bases-get expr-bases left-box)
-                (MovePlaceReadAccess)))]
-          ;; The right operand of `and` / `or` may be skipped, so it must
-          ;; leave every obligated local as it found it.
-          [short-circuit? : bool
-            (and
-              (tc-move-let-obligations-possible?)
-              (match op
-                [(or (And) (Or)) true]
-                [_ false]))]
-          [before : TcMovedSet
-            (if short-circuit?
-              (tc-moved-clone (& moved1))
-              (tc-moved-empty))]
-          [moved2
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                loop-carried
-                moved1
-                (ast.ast-expr-segment-bases-get expr-bases right-box)
-                (MovePlaceReadAccess)))]
-          (if (and
-            short-circuit?
-            (not (tc-move-arm-diverges? ctx expr-bases right-box)))
-            (let
+                          env
+                          binding-name
+                          (tc-context-type-get ctx elem-id)
+                          body-id)
+                        (tc-moved-add locals binding-name)
+                        (tc-moved-remove-root-state
+                          loop-carried
+                          binding-name
+                          false)
+                        (tc-moved-remove-root-state moved3 binding-name false)
+                        body-id))]
+                  (Ok (tc-moved-remove-root-state moved4 binding-name false)))]
               [_
-                (try
-                  (tc-move-check-obligations-agree
-                    expr-bases
-                    locals
-                    before
-                    (ast.ast-expr-segment-bases-get expr-bases right-box)
-                    (tc-global-shared-view moved2)
-                    (ast.ast-expr-segment-bases-get expr-bases right-box)
-                    "through this operand"))]
-              (Ok moved2))
-            (Ok moved2)))]
-      [(Call func-box args)
-        (let
-          [func : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases func-box)]
-          [slice-kind : TcSliceViewCallKind
-            (tc-slice-view-call-kind ctx env (tc-global-shared-view func))]
-          (if (= slice-kind TcSliceViewCallKind.None)
-            (let
-              [moved1
-                (try
-                  (tc-move-check-expr-id
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    func-box))]
-              (match (tc-move-call-param-types-id-with-facts
-                "move.call_func"
-                ctx
-                env
-                func-box)
-                [(Ok params)
-                  (match (tc-call-extern-abi ctx (tc-global-shared-view func))
-                    [(Some abi)
-                      (if (tc-call-dynamic-c-varargs-abi?
-                        (tc-global-shared-view abi))
-                        (let
-                          [expanded-params
-                            (try
-                              (tc-call-extern-varargs-params
-                                ctx
-                                env
-                                (tc-global-shared-view func)
-                                (tc-global-shared-view args)
-                                params
-                                abi))]
-                          (tc-move-check-call-args-with-types
-                            ctx
-                            expr-bases
-                            env
-                            locals
-                            loop-carried
-                            moved1
-                            expr
-                            func
-                            args
-                            expanded-params
-                            true))
+                (Err
+                  "typecheck: scalar for owned step requires fixed-array state")]))))]
+    [(or (Literal _) (TypeLiteral _) (Init _) (Comptime _) (Quote _)
+         (Quasiquote _) (Unquote _) (UnquoteSplicing _) (PtrNull _)
+         (BinaryData _) (SpmdProgramIndex) (SpmdProgramCount) (ProgramArgc)
+         (ProgramArgv) (ProgramEnvp))
+      (Ok moved)]
+    [(Var name)
+      (let
+        [name-text : String
+          (tc-hygiene-name-text-id-for-session
+            (tc-context-structural-session ctx)
+            name)]
+        (if (tc-dotted-place-name-id? ctx env name)
+          (let
+            [virtual-id
+              (try
+                (tc-dotted-local-field-expr-id-after-check
+                  (tc-context-structural-session ctx)
+                  name))]
+            (tc-move-check-expr-id
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              virtual-id))
+          (if (tc-moved-contains? moved name)
+            (tc-move-rich-use-conflict-result
+              expr-bases
+              (tc-moved-conflict moved name)
+              (tc-global-shared-view name-text)
+              expr
+              name-text)
+            (Ok moved))))]
+    [(Binary op left-box right-box)
+      (let
+        [moved1
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              (ast.ast-expr-segment-bases-get expr-bases left-box)
+              (MovePlaceReadAccess)))]
+        ;; The right operand of `and` / `or` may be skipped, so it must
+        ;; leave every obligated local as it found it.
+        [short-circuit? : bool
+          (and
+            (tc-move-let-obligations-possible?)
+            (match op
+              [(or (And) (Or)) true]
+              [_ false]))]
+        [before : TcMovedSet
+          (if short-circuit?
+            (tc-moved-clone (& moved1))
+            (tc-moved-empty))]
+        [moved2
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              loop-carried
+              moved1
+              (ast.ast-expr-segment-bases-get expr-bases right-box)
+              (MovePlaceReadAccess)))]
+        (if (and
+          short-circuit?
+          (not (tc-move-arm-diverges? ctx expr-bases right-box)))
+          (let
+            [_
+              (try
+                (tc-move-check-obligations-agree
+                  expr-bases
+                  locals
+                  before
+                  (ast.ast-expr-segment-bases-get expr-bases right-box)
+                  (tc-global-shared-view moved2)
+                  (ast.ast-expr-segment-bases-get expr-bases right-box)
+                  "through this operand"))]
+            (Ok moved2))
+          (Ok moved2)))]
+    [(Call func-box args)
+      (let
+        [func : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases func-box)]
+        [slice-kind : TcSliceViewCallKind
+          (tc-slice-view-call-kind ctx env (tc-global-shared-view func))]
+        (if (= slice-kind TcSliceViewCallKind.None)
+          (let
+            [moved1
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved
+                  func-box))]
+            (match (tc-move-call-param-types-id-with-facts
+              "move.call_func"
+              ctx
+              env
+              func-box)
+              [(Ok params)
+                (match (tc-call-extern-abi ctx (tc-global-shared-view func))
+                  [(Some abi)
+                    (if (tc-call-dynamic-c-varargs-abi?
+                      (tc-global-shared-view abi))
+                      (let
+                        [expanded-params
+                          (try
+                            (tc-call-extern-varargs-params
+                              ctx
+                              env
+                              (tc-global-shared-view func)
+                              (tc-global-shared-view args)
+                              params
+                              abi))]
                         (tc-move-check-call-args-with-types
                           ctx
                           expr-bases
@@ -74130,9 +74108,8 @@
                           expr
                           func
                           args
-                          params
-                          true))]
-                    [(No)
+                          expanded-params
+                          true))
                       (tc-move-check-call-args-with-types
                         ctx
                         expr-bases
@@ -74144,62 +74121,609 @@
                         func
                         args
                         params
-                        false)])]
-                [(Err _)
-                  (let
-                    [moved-args
-                      (try
-                        (tc-move-check-exprs-at
-                          ctx
-                          expr-bases
-                          env
-                          (tc-global-shared-view locals)
-                          (tc-global-shared-view loop-carried)
-                          moved1
-                          (& args)
-                          0
-                          (tc-call-read-access
-                            expr-bases
-                            ctx
-                            env
-                            (tc-global-shared-view func))))]
-                    (tc-move-check-safe-arena-call-effects
+                        true))]
+                  [(No)
+                    (tc-move-check-call-args-with-types
                       ctx
                       expr-bases
                       env
                       locals
                       loop-carried
-                      moved-args
+                      moved1
+                      expr
                       func
                       args
-                      expr))]))
-            (tc-move-check-slice-view-call
+                      params
+                      false)])]
+              [(Err _)
+                (let
+                  [moved-args
+                    (try
+                      (tc-move-check-exprs-at
+                        ctx
+                        expr-bases
+                        env
+                        (tc-global-shared-view locals)
+                        (tc-global-shared-view loop-carried)
+                        moved1
+                        (& args)
+                        0
+                        (tc-call-read-access
+                          expr-bases
+                          ctx
+                          env
+                          (tc-global-shared-view func))))]
+                  (tc-move-check-safe-arena-call-effects
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved-args
+                    func
+                    args
+                    expr))]))
+          (tc-move-check-slice-view-call
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            expr
+            slice-kind
+            args)))]
+    [(or (Begin items) (Unsafe items))
+      (tc-move-check-exprs-at
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (& items)
+        0
+        (tc-move-result-access access))]
+    [(or (BracketClause items) (WithRegion _ items) (WithScratch items)
+         (Syscall items))
+      (tc-move-check-exprs ctx expr-bases env locals loop-carried moved items)]
+    [(If cond-box then-branch-box else-branch-box)
+      (let
+        [movedc
+          (try
+            (tc-move-check-expr-id
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              cond-box))]
+        [movedt
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone loop-carried)
+              (tc-moved-clone movedc)
+              (ast.ast-expr-segment-bases-get expr-bases then-branch-box)
+              (tc-move-result-access access)))]
+        [movede
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              (tc-moved-clone locals)
+              (tc-moved-clone loop-carried)
+              (tc-moved-clone movedc)
+              (ast.ast-expr-segment-bases-get expr-bases else-branch-box)
+              (tc-move-result-access access)))]
+        ;; Both arms kept the entry facts, so their union is either
+        ;; of them and no arm needs a divergence summary.
+        (if (and
+          (tc-moved-same-facts?
+            (& movedt)
+            (& movedc)
+            (tc-global-shared-view movedt.paths)
+            (tc-global-shared-view movedc.paths))
+          (tc-moved-same-facts?
+            (& movede)
+            (& movedc)
+            (tc-global-shared-view movede.paths)
+            (tc-global-shared-view movedc.paths)))
+          (Ok movedt)
+          (let
+            [_
+              (try
+                (tc-move-check-if-obligations
+                  ctx
+                  expr-bases
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view movedt)
+                  then-branch-box
+                  (tc-global-shared-view movede)
+                  else-branch-box))]
+            (Ok
+              (tc-move-join-if
+                ctx
+                expr-bases
+                movedc
+                movedt
+                then-branch-box
+                movede
+                else-branch-box)))))]
+    [(Let let-box)
+      (match (ast.ast-let-box-shared-view let-box)
+        [(Let bindings body-box)
+          (tc-move-check-let-bindings
+            ctx
+            expr-bases
+            env
+            (tc-moved-clone locals)
+            (tc-moved-clone loop-carried)
+            moved
+            bindings
+            body-box
+            (tc-move-result-access access))])]
+    [(Lambda lambda-box)
+      (match (ast.ast-lambda-box-shared-view lambda-box)
+        [(Lambda params maybe-ret body-box)
+          (let
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
+            [lambda-locals : TcMovedSet
+              (tc-move-params-locals
+                params
+                ;; A lambda's exits leave its own scopes, not the caller's.
+                ;; Capture locals preserve closure facts without carrying the
+                ;; caller's obligation, owner-count or loop-depth markers.
+                (if (tc-move-owners-in-scope? (tc-global-shared-view locals))
+                  (tc-lambda-capture-locals
+                    expr-bases
+                    env
+                    (tc-global-shared-view locals)
+                    (tc-global-shared-view params)
+                    (tc-global-shared-view body))
+                  (tc-moved-clone locals)))]
+            [storage : storage_exposure.StorageExposure
+              (tc-body-storage-exposure (tc-context-body-state ctx))]
+            [previous-storage : i64
+              (storage_exposure.storage-exposure-current storage)]
+            [lambda-source-env : TcTypeEnv
+              (tc-storage-enter!
+                ctx
+                lambda-env
+                (& params)
+                (& lambda-locals)
+                body-box)]
+            [lambda-writes-mark : i64
+              (tc-body-param-writes-mark (tc-context-body-state ctx))]
+            [lambda-result : TcMoveResult
+              (tc-move-check-expr-id
+                ctx
+                expr-bases
+                lambda-source-env
+                (tc-global-shared-view lambda-locals)
+                (tc-moved-empty)
+                (tc-param-storage-seed-params
+                  ctx
+                  lambda-env
+                  params
+                  (tc-moved-clone moved))
+                body-box)]
+            [_ : unit
+              (storage_exposure.storage-exposure-leave!
+                storage
+                previous-storage
+                (match (& lambda-result)
+                  [(Ok _) true]
+                  [_ false]))]
+            [lambda-moved (try lambda-result)]
+            [_
+              (tc-body-param-write-fact-record!
+                (tc-context-body-state ctx)
+                body-box
+                lambda-writes-mark
+                (& params))]
+            [result-check : TcMoveResult
+              (match (tc-move-check-invalidate-body-end
+                ctx
+                expr-bases
+                (tc-global-shared-view lambda-locals)
+                (tc-global-shared-view lambda-moved)
+                body-box)
+                [(Err message) (Err message)]
+                [(Ok)
+                  (match maybe-ret
+                    [(Some ret)
+                      (tc-move-check-global-result
+                        ctx
+                        expr-bases
+                        lambda-env
+                        lambda-locals
+                        lambda-moved
+                        (tc-global-shared-view body)
+                        ret)]
+                    [(No)
+                      (match (tc-body-type-fact-expr-id
+                        "move.lambda_result"
+                        ctx
+                        lambda-env
+                        body-box)
+                        [(Ok body-ty)
+                          (tc-move-check-global-result
+                            ctx
+                            expr-bases
+                            lambda-env
+                            lambda-locals
+                            lambda-moved
+                            (tc-global-shared-view body)
+                            body-ty)]
+                        [(Err _) (Ok lambda-moved)])])])]
+            [_ (try result-check)]
+            (tc-move-check-lambda-owner-captures
               ctx
               expr-bases
               env
               locals
               loop-carried
               moved
-              expr
-              slice-kind
-              args)))]
-      [(or (Begin items) (Unsafe items))
-        (tc-move-check-exprs-at
-          ctx
+              params
+              body))])]
+    [(SpmdCompact compact-box)
+      (tc-storage-loop-enter! ctx)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep-env : TcTypeEnv
+              (tc-storage-bind-id
+                ctx
+                env
+                index
+                (tc-resolve-type ctx index-ty)
+                body-box)]
+            [body-env : TcTypeEnv
+              (tc-storage-bind-id
+                ctx
+                keep-env
+                slot
+                (tc-resolve-type ctx slot-ty)
+                body-box)]
+            [keep-locals : TcMovedSet
+              (tc-moved-add (tc-moved-clone locals) index)]
+            [body-locals : TcMovedSet
+              (tc-moved-add (tc-moved-clone keep-locals) slot)]
+            [outer-moved
+              (try
+                (tc-move-check-exprs
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  (tc-global-shared-view loop-carried)
+                  moved
+                  (ast.ast-expr-cons
+                    start-box
+                    (&
+                      (ast.ast-expr-cons
+                        end-box
+                        (&
+                          (ast.ast-expr-cons
+                            init-box
+                            (& (ast.ast-expr-list-new)))))))))]
+            [keep-moved
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  keep-env
+                  keep-locals
+                  (tc-global-shared-view loop-carried)
+                  outer-moved
+                  keep-box))]
+            [_
+              (try
+                (tc-move-check-expr-id
+                  ctx
+                  expr-bases
+                  body-env
+                  body-locals
+                  loop-carried
+                  (tc-global-shared-view keep-moved)
+                  body-box))]
+            (Ok keep-moved))])]
+    [(Tuple exprs)
+      (match (tc-body-type-fact-expr-list-types
+        "move.tuple_list"
+        ctx
+        env
+        (tc-global-shared-view exprs))
+        [(Ok types)
+          (tc-move-check-aggregate-exprs-with-types
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs
+            types)]
+        [(Err _)
+          (tc-move-check-exprs
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs)])]
+    [(TupleRef inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (tc-move-projection-receiver
+            ctx
+            env
+            expr-bases
+            (& expr)
+            (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+        [moved1
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              inner
+              (tc-move-receiver-access access)))]
+        (match (tc-move-tuple-element-path
           expr-bases
-          env
-          locals
-          loop-carried
-          moved
-          (& items)
-          0
-          (tc-move-result-access access))]
-      [(or (BracketClause items) (WithRegion _ items) (WithScratch items)
-           (Syscall items))
-        (tc-move-check-exprs ctx expr-bases env locals loop-carried moved items)]
-      [(If cond-box then-branch-box else-branch-box)
+          (tc-global-shared-view expr))
+          [(Some path)
+            (match (tc-moved-path-exact-conflict
+              (tc-global-shared-view moved1)
+              path)
+              [(Some key origin-id)
+                (tc-move-rich-use-conflict-result
+                  expr-bases
+                  (Some key origin-id)
+                  (tc-move-path-render path)
+                  expr
+                  (tc-move-path-render path))]
+              [No (Ok moved1)])]
+          [(No) (Ok moved1)]))]
+    [(Array exprs)
+      (match (tc-body-type-fact-expr-list-types
+        "move.array_list"
+        ctx
+        env
+        (tc-global-shared-view exprs))
+        [(Ok types)
+          (tc-move-check-exprs-with-types
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs
+            types)]
+        [(Err _)
+          (tc-move-check-exprs
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs)])]
+    [(DynArray exprs)
+      (match (tc-body-type-fact-expr-list-types
+        "move.dyn_array_list"
+        ctx
+        env
+        (tc-global-shared-view exprs))
+        [(Ok types)
+          (tc-move-check-exprs-with-types
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs
+            types)]
+        [(Err _)
+          (tc-move-check-exprs
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            exprs)])]
+    [(or (Ann inner-box _) (Cast inner-box _))
+      (tc-move-check-expr-access
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        access)]
+    [(BoxGet inner-box)
+      (tc-move-check-expr-access
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        (tc-move-receiver-access access))]
+    ;; Data pointers observe their operand's storage in every context; like
+    ;; `tc-read-value-expr-id`, they do not forward a result read (SPEC 7.6).
+    [(or (StringData inner-box) (ArrayData inner-box))
+      (tc-move-check-expr-access
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (ast.ast-expr-segment-bases-get expr-bases inner-box)
+        (MovePlaceReadAccess))]
+    [(or (FixedMakeArray _ inner-box) (MakeArray _ inner-box) (Box inner-box)
+         (PtrNullCheck inner-box) (PtrRead inner-box) (PtrCast inner-box _)
+         (PtrToInt inner-box) (IntToPtr inner-box _))
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
+    [(ArrayRef array-box index-box)
+      (let
+        [array : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases array-box)]
+        [index : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases index-box)]
+        [moved1
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              array
+              (tc-move-receiver-access access)))]
+        [moved2
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved1
+              index))]
+        (match (tc-move-array-element-path
+          expr-bases
+          (tc-global-shared-view expr))
+          [(Some path)
+            (match (tc-moved-path-exact-conflict
+              (tc-global-shared-view moved2)
+              path)
+              [(Some key origin-id)
+                (tc-move-rich-use-conflict-result
+                  expr-bases
+                  (Some key origin-id)
+                  (tc-move-path-render path)
+                  expr
+                  (tc-move-path-render path))]
+              [No (Ok moved2)])]
+          [(No) (Ok moved2)]))]
+    [(ArraySet array-box index-box value-box)
+      (let
+        [_
+          (try
+            (tc-move-foreign-global-place-check
+              ctx
+              expr-bases
+              (tc-global-shared-view locals)
+              array-box
+              "assign to an element of"))]
         (let
-          [movedc
+          [array : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases array-box)]
+          [index : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases index-box)]
+          [value : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases value-box)]
+          [_
+            (tc-param-storage-note-array-write
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view moved)
+              (tc-global-shared-view array))]
+          (let
+            [moved1
+              (try
+                (tc-move-check-expr-access
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved
+                  (tc-global-shared-view array)
+                  (MovePlaceReadAccess)))]
+            [moved2
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved1
+                  (tc-global-shared-view index)))]
+            [_
+              (try
+                (tc-move-check-cleanup-overwrite
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view moved2)
+                  (ArrayRef array-box index-box)))]
+            [moved3
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  loop-carried
+                  moved2
+                  value))]
+            (Ok
+              (tc-move-reinitialize-array-set-path
+                expr-bases
+                locals
+                moved3
+                array
+                index)))))]
+    [(ArrayTake array-box live-box index-box)
+      (let
+        [_
+          (try
+            (tc-move-foreign-global-place-check
+              ctx
+              expr-bases
+              (tc-global-shared-view locals)
+              array-box
+              "take an element of"))]
+        ;; The legacy lower scan conservatively classified ArrayTake as an
+        ;; early-exit body through its unknown-node fallback.
+        (tc-body-early-exit-note! (tc-context-body-state ctx))
+        (let
+          [moved1
             (try
               (tc-move-check-expr-id
                 ctx
@@ -74208,1396 +74732,124 @@
                 (tc-global-shared-view locals)
                 (tc-global-shared-view loop-carried)
                 moved
-                cond-box))]
-          [movedt
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                (tc-moved-clone locals)
-                (tc-moved-clone loop-carried)
-                (tc-moved-clone movedc)
-                (ast.ast-expr-segment-bases-get expr-bases then-branch-box)
-                (tc-move-result-access access)))]
-          [movede
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                (tc-moved-clone locals)
-                (tc-moved-clone loop-carried)
-                (tc-moved-clone movedc)
-                (ast.ast-expr-segment-bases-get expr-bases else-branch-box)
-                (tc-move-result-access access)))]
-          ;; Both arms kept the entry facts, so their union is either
-          ;; of them and no arm needs a divergence summary.
-          (if (and
-            (tc-moved-same-facts?
-              (& movedt)
-              (& movedc)
-              (tc-global-shared-view movedt.paths)
-              (tc-global-shared-view movedc.paths))
-            (tc-moved-same-facts?
-              (& movede)
-              (& movedc)
-              (tc-global-shared-view movede.paths)
-              (tc-global-shared-view movedc.paths)))
-            (Ok movedt)
-            (let
-              [_
-                (try
-                  (tc-move-check-if-obligations
-                    ctx
-                    expr-bases
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view movedt)
-                    then-branch-box
-                    (tc-global-shared-view movede)
-                    else-branch-box))]
-              (Ok
-                (tc-move-join-if
-                  ctx
-                  expr-bases
-                  movedc
-                  movedt
-                  then-branch-box
-                  movede
-                  else-branch-box)))))]
-      [(Let let-box)
-        (match (ast.ast-let-box-shared-view let-box)
-          [(Let bindings body-box)
-            (tc-move-check-let-bindings
-              ctx
-              expr-bases
-              env
-              (tc-moved-clone locals)
-              (tc-moved-clone loop-carried)
-              moved
-              bindings
-              body-box
-              (tc-move-result-access access))])]
-      [(Lambda lambda-box)
-        (match (ast.ast-lambda-box-shared-view lambda-box)
-          [(Lambda params maybe-ret body-box)
-            (let
-              [body : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases body-box)]
-              [lambda-env : TcTypeEnv (tc-bind-params ctx env params)]
-              [lambda-locals : TcMovedSet
-                (tc-move-params-locals
-                  params
-                  ;; A lambda's exits leave its own scopes, not the caller's.
-                  ;; Capture locals preserve closure facts without carrying the
-                  ;; caller's obligation, owner-count or loop-depth markers.
-                  (if (tc-move-owners-in-scope? (tc-global-shared-view locals))
-                    (tc-lambda-capture-locals
-                      expr-bases
-                      env
-                      (tc-global-shared-view locals)
-                      (tc-global-shared-view params)
-                      (tc-global-shared-view body))
-                    (tc-moved-clone locals)))]
-              [storage : storage_exposure.StorageExposure
-                (tc-body-storage-exposure (tc-context-body-state ctx))]
-              [previous-storage : i64
-                (storage_exposure.storage-exposure-current storage)]
-              [lambda-source-env : TcTypeEnv
-                (tc-storage-enter!
-                  ctx
-                  lambda-env
-                  (& params)
-                  (& lambda-locals)
-                  body-box)]
-              [lambda-writes-mark : i64
-                (tc-body-param-writes-mark (tc-context-body-state ctx))]
-              [lambda-result : TcMoveResult
-                (tc-move-check-expr-id
-                  ctx
-                  expr-bases
-                  lambda-source-env
-                  (tc-global-shared-view lambda-locals)
-                  (tc-moved-empty)
-                  (tc-param-storage-seed-params
-                    ctx
-                    lambda-env
-                    params
-                    (tc-moved-clone moved))
-                  body-box)]
-              [_ : unit
-                (storage_exposure.storage-exposure-leave!
-                  storage
-                  previous-storage
-                  (match (& lambda-result)
-                    [(Ok _) true]
-                    [_ false]))]
-              [lambda-moved (try lambda-result)]
-              [_
-                (tc-body-param-write-fact-record!
-                  (tc-context-body-state ctx)
-                  body-box
-                  lambda-writes-mark
-                  (& params))]
-              [result-check : TcMoveResult
-                (match (tc-move-check-invalidate-body-end
-                  ctx
-                  expr-bases
-                  (tc-global-shared-view lambda-locals)
-                  (tc-global-shared-view lambda-moved)
-                  body-box)
-                  [(Err message) (Err message)]
-                  [(Ok)
-                    (match maybe-ret
-                      [(Some ret)
-                        (tc-move-check-global-result
-                          ctx
-                          expr-bases
-                          lambda-env
-                          lambda-locals
-                          lambda-moved
-                          (tc-global-shared-view body)
-                          ret)]
-                      [(No)
-                        (match (tc-body-type-fact-expr-id
-                          "move.lambda_result"
-                          ctx
-                          lambda-env
-                          body-box)
-                          [(Ok body-ty)
-                            (tc-move-check-global-result
-                              ctx
-                              expr-bases
-                              lambda-env
-                              lambda-locals
-                              lambda-moved
-                              (tc-global-shared-view body)
-                              body-ty)]
-                          [(Err _) (Ok lambda-moved)])])])]
-              [_ (try result-check)]
-              (tc-move-check-lambda-owner-captures
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                params
-                body))])]
-      [(SpmdCompact compact-box)
-        (match (ast.ast-spmd-compact-box-shared-view compact-box)
-          [(Compact
-              index
-              index-ty
-              start-box
-              end-box
-              slot
-              slot-ty
-              init-box
-              keep-box
-              body-box)
-            (let
-              [keep-env : TcTypeEnv
-                (tc-storage-bind-id
-                  ctx
-                  env
-                  index
-                  (tc-resolve-type ctx index-ty)
-                  body-box)]
-              [body-env : TcTypeEnv
-                (tc-storage-bind-id
-                  ctx
-                  keep-env
-                  slot
-                  (tc-resolve-type ctx slot-ty)
-                  body-box)]
-              [keep-locals : TcMovedSet
-                (tc-moved-add (tc-moved-clone locals) index)]
-              [body-locals : TcMovedSet
-                (tc-moved-add (tc-moved-clone keep-locals) slot)]
-              [outer-moved
-                (try
-                  (tc-move-check-exprs
-                    ctx
-                    expr-bases
-                    env
-                    locals
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    (ast.ast-expr-cons
-                      start-box
-                      (&
-                        (ast.ast-expr-cons
-                          end-box
-                          (&
-                            (ast.ast-expr-cons
-                              init-box
-                              (& (ast.ast-expr-list-new)))))))))]
-              [keep-moved
-                (try
-                  (tc-move-check-expr-id
-                    ctx
-                    expr-bases
-                    keep-env
-                    keep-locals
-                    (tc-global-shared-view loop-carried)
-                    outer-moved
-                    keep-box))]
-              [_
-                (try
-                  (tc-move-check-expr-id
-                    ctx
-                    expr-bases
-                    body-env
-                    body-locals
-                    loop-carried
-                    (tc-global-shared-view keep-moved)
-                    body-box))]
-              (Ok keep-moved))])]
-      [(Tuple exprs)
-        (match (tc-body-type-fact-expr-list-types
-          "move.tuple_list"
-          ctx
-          env
-          (tc-global-shared-view exprs))
-          [(Ok types)
-            (tc-move-check-aggregate-exprs-with-types
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              exprs
-              types)]
-          [(Err _)
-            (tc-move-check-exprs
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              exprs)])]
-      [(TupleRef inner-box _)
-        (let
-          [inner : ast.AstExpr
-            (tc-move-projection-receiver
-              ctx
-              env
-              expr-bases
-              (& expr)
-              (ast.ast-expr-segment-bases-get expr-bases inner-box))]
-          [moved1
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                inner
-                (tc-move-receiver-access access)))]
-          (match (tc-move-tuple-element-path
-            expr-bases
-            (tc-global-shared-view expr))
-            [(Some path)
-              (match (tc-moved-path-exact-conflict
-                (tc-global-shared-view moved1)
-                path)
-                [(Some key origin-id)
-                  (tc-move-rich-use-conflict-result
-                    expr-bases
-                    (Some key origin-id)
-                    (tc-move-path-render path)
-                    expr
-                    (tc-move-path-render path))]
-                [No (Ok moved1)])]
-            [(No) (Ok moved1)]))]
-      [(Array exprs)
-        (match (tc-body-type-fact-expr-list-types
-          "move.array_list"
-          ctx
-          env
-          (tc-global-shared-view exprs))
-          [(Ok types)
-            (tc-move-check-exprs-with-types
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              exprs
-              types)]
-          [(Err _)
-            (tc-move-check-exprs
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              exprs)])]
-      [(DynArray exprs)
-        (match (tc-body-type-fact-expr-list-types
-          "move.dyn_array_list"
-          ctx
-          env
-          (tc-global-shared-view exprs))
-          [(Ok types)
-            (tc-move-check-exprs-with-types
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              exprs
-              types)]
-          [(Err _)
-            (tc-move-check-exprs
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              exprs)])]
-      [(or (Ann inner-box _) (Cast inner-box _))
-        (tc-move-check-expr-access
-          ctx
-          expr-bases
-          env
-          locals
-          loop-carried
-          moved
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)
-          access)]
-      [(BoxGet inner-box)
-        (tc-move-check-expr-access
-          ctx
-          expr-bases
-          env
-          locals
-          loop-carried
-          moved
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)
-          (tc-move-receiver-access access))]
-      ;; Data pointers observe their operand's storage in every context; like
-      ;; `tc-read-value-expr-id`, they do not forward a result read (SPEC 7.6).
-      [(or (StringData inner-box) (ArrayData inner-box))
-        (tc-move-check-expr-access
-          ctx
-          expr-bases
-          env
-          locals
-          loop-carried
-          moved
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)
-          (MovePlaceReadAccess))]
-      [(or (FixedMakeArray _ inner-box) (MakeArray _ inner-box) (Box inner-box)
-           (PtrNullCheck inner-box) (PtrRead inner-box) (PtrCast inner-box _)
-           (PtrToInt inner-box) (IntToPtr inner-box _))
-        (let
-          [inner : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved
-            inner))]
-      [(ArrayRef array-box index-box)
-        (let
-          [array : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases array-box)]
-          [index : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases index-box)]
-          [moved1
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                array
-                (tc-move-receiver-access access)))]
+                array-box))]
           [moved2
             (try
-              (tc-move-check-expr
+              (tc-move-check-expr-id
                 ctx
                 expr-bases
                 env
-                locals
-                loop-carried
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
                 moved1
-                index))]
-          (match (tc-move-array-element-path
+                live-box))]
+          (tc-move-check-expr-id
+            ctx
             expr-bases
-            (tc-global-shared-view expr))
-            [(Some path)
-              (match (tc-moved-path-exact-conflict
-                (tc-global-shared-view moved2)
-                path)
-                [(Some key origin-id)
-                  (tc-move-rich-use-conflict-result
-                    expr-bases
-                    (Some key origin-id)
-                    (tc-move-path-render path)
-                    expr
-                    (tc-move-path-render path))]
-                [No (Ok moved2)])]
-            [(No) (Ok moved2)]))]
-      [(ArraySet array-box index-box value-box)
+            env
+            locals
+            loop-carried
+            moved2
+            index-box)))]
+    [(Replace place-box replacement-box)
+      (let
+        [_
+          (try
+            (tc-move-foreign-global-place-check
+              ctx
+              expr-bases
+              (tc-global-shared-view locals)
+              place-box
+              "replace a place in"))]
         (let
+          [place : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases place-box)]
+          [replacement : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
           [_
-            (try
-              (tc-move-foreign-global-place-check
-                ctx
-                expr-bases
-                (tc-global-shared-view locals)
-                array-box
-                "assign to an element of"))]
-          (let
-            [array : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases array-box)]
-            [index : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases index-box)]
-            [value : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases value-box)]
-            [_
-              (tc-param-storage-note-array-write
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view moved)
-                (tc-global-shared-view array))]
-            (let
-              [moved1
-                (try
-                  (tc-move-check-expr-access
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    (tc-global-shared-view array)
-                    (MovePlaceReadAccess)))]
-              [moved2
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved1
-                    (tc-global-shared-view index)))]
-              [_
-                (try
-                  (tc-move-check-cleanup-overwrite
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view moved2)
-                    (ArrayRef array-box index-box)))]
-              [moved3
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    loop-carried
-                    moved2
-                    value))]
-              (Ok
-                (tc-move-reinitialize-array-set-path
-                  expr-bases
-                  locals
-                  moved3
-                  array
-                  index)))))]
-      [(ArrayTake array-box live-box index-box)
-        (let
-          [_
-            (try
-              (tc-move-foreign-global-place-check
-                ctx
-                expr-bases
-                (tc-global-shared-view locals)
-                array-box
-                "take an element of"))]
-          ;; The legacy lower scan conservatively classified ArrayTake as an
-          ;; early-exit body through its unknown-node fallback.
-          (tc-body-early-exit-note! (tc-context-body-state ctx))
-          (let
-            [moved1
-              (try
-                (tc-move-check-expr-id
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view loop-carried)
-                  moved
-                  array-box))]
-            [moved2
-              (try
-                (tc-move-check-expr-id
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view loop-carried)
-                  moved1
-                  live-box))]
-            (tc-move-check-expr-id
+            (tc-param-storage-note-write
               ctx
               expr-bases
               env
-              locals
-              loop-carried
-              moved2
-              index-box)))]
-      [(Replace place-box replacement-box)
-        (let
-          [_
+              (tc-global-shared-view moved)
+              (tc-global-shared-view place))]
+          [moved0
             (try
-              (tc-move-foreign-global-place-check
-                ctx
-                expr-bases
-                (tc-global-shared-view locals)
-                place-box
-                "replace a place in"))]
-          (let
-            [place : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases place-box)]
-            [replacement : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
-            [_
-              (tc-param-storage-note-write
+              (tc-move-check-replace-global-source
                 ctx
                 expr-bases
                 env
-                (tc-global-shared-view moved)
-                (tc-global-shared-view place))]
-            [moved0
-              (try
-                (tc-move-check-replace-global-source
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  moved
-                  (tc-global-shared-view place)))]
-            [initialized
-              (try
-                (tc-move-check-replace-place-initialized
-                  expr-bases
-                  (tc-global-shared-view locals)
-                  moved0
-                  (tc-global-shared-view place)))]
-            [moved1
-              (try
-                (tc-move-check-borrow-place
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view loop-carried)
-                  initialized
-                  (tc-global-shared-view place)))]
-            [moved2
-              (try
-                (tc-move-check-expr-id
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view loop-carried)
-                  moved1
-                  replacement-box))]
-            [place-ty
-              (try
-                (tc-replace-place-value-type
-                  ctx
-                  env
-                  (tc-global-shared-view place)))]
-            [moved3
-              (try
-                (tc-move-after-move-only-value
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  loop-carried
-                  moved2
-                  replacement
-                  place-ty))]
-            (Ok
-              (tc-move-reinitialize-place-path expr-bases locals moved3 place))))]
-      [(StructSet receiver-box field value-box)
-        (let
-          [_
+                (tc-global-shared-view locals)
+                moved
+                (tc-global-shared-view place)))]
+          [initialized
             (try
-              (tc-move-foreign-global-place-check
-                ctx
+              (tc-move-check-replace-place-initialized
                 expr-bases
                 (tc-global-shared-view locals)
-                receiver-box
-                "assign to part of"))]
-          (let
-            [receiver : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
-            [value : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases value-box)]
-            [_
-              (tc-param-storage-note-write
+                moved0
+                (tc-global-shared-view place)))]
+          [moved1
+            (try
+              (tc-move-check-borrow-place
                 ctx
                 expr-bases
                 env
-                (tc-global-shared-view moved)
-                (tc-global-shared-view receiver))]
-            (let
-              [moved1
-                (try
-                  (tc-move-check-expr-access
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    (tc-global-shared-view receiver)
-                    (MovePlaceReadAccess)))]
-              [_
-                (try
-                  (tc-move-check-cleanup-overwrite
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view moved1)
-                    (if (ast.ast-tuple-set-field-id? field)
-                      (TupleRef
-                        receiver-box
-                        (ast.ast-tuple-set-index-from-field-id field))
-                      (StructGet receiver-box field))))]
-              [moved2
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    loop-carried
-                    moved1
-                    value))]
-              (Ok
-                (tc-move-reinitialize-struct-set-path
-                  expr-bases
-                  locals
-                  moved2
-                  receiver
-                  field)))))]
-      [(ArrayPush array-box value-box)
-        (let
-          [_
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
+                initialized
+                (tc-global-shared-view place)))]
+          [moved2
             (try
-              (tc-move-foreign-global-place-check
+              (tc-move-check-expr-id
                 ctx
                 expr-bases
+                env
                 (tc-global-shared-view locals)
-                array-box
-                "push onto"))]
-          [array : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases array-box)]
+                (tc-global-shared-view loop-carried)
+                moved1
+                replacement-box))]
+          [place-ty
+            (try
+              (tc-replace-place-value-type
+                ctx
+                env
+                (tc-global-shared-view place)))]
+          [moved3
+            (try
+              (tc-move-after-move-only-value
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                loop-carried
+                moved2
+                replacement
+                place-ty))]
+          (Ok (tc-move-reinitialize-place-path expr-bases locals moved3 place))))]
+    [(StructSet receiver-box field value-box)
+      (let
+        [_
+          (try
+            (tc-move-foreign-global-place-check
+              ctx
+              expr-bases
+              (tc-global-shared-view locals)
+              receiver-box
+              "assign to part of"))]
+        (let
+          [receiver : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
           [value : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases value-box)]
-          [moved1
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                array
-                (MovePlaceReadAccess)))]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            value))]
-      [(StringRef str-box index-box)
-        (let
-          [str : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases str-box)]
-          [index : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases index-box)]
-          [moved1
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                str
-                (MovePlaceReadAccess)))]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            index))]
-      [(While cond-box body-box)
-        (let
-          [cond : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-          [body : ast.AstExpr (Begin body-box)]
-          [movedc
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                cond))]
-          [body-loop-carried : TcMovedSet
-            (tc-moved-union locals (tc-moved-clone loop-carried))]
-          (match (tc-move-check-loop-body
-            ctx
-            expr-bases
-            env
-            (tc-move-enter-loop-body (tc-moved-clone locals))
-            body-loop-carried
-            loop-carried
-            (tc-moved-clone movedc)
-            (tc-global-shared-view body))
-            [(Ok _ _ body-breaks? body-break-box)
-              (if body-breaks?
-                (tc-move-join-loop-exit
-                  expr-bases
-                  locals
-                  movedc
-                  (tc-moved-set-box-shared-view body-break-box)
-                  body)
-                (Ok movedc))]
-            [(Err message) (Err message)]))]
-      [(Set name rhs-box)
-        (let
           [_
-            (try
-              (tc-move-foreign-global-set-check
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                name
-                rhs-box
-                expr))]
-          [rhs : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
-          (if (tc-dotted-place-name-id? ctx env name)
-            (let
-              [virtual-id
-                (try
-                  (tc-dotted-local-field-set-expr-id-after-check
-                    expr-bases
-                    (tc-context-structural-session ctx)
-                    name
-                    rhs-box))]
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                (ast.ast-expr-segment-bases-get expr-bases virtual-id)))
-            (let
-              [_
-                (try
-                  (tc-move-check-cleanup-overwrite
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view moved)
-                    (Var name)))]
-              (let
-                [moved1
-                  (try
-                    (tc-move-check-expr-id
-                      ctx
-                      expr-bases
-                      env
-                      (tc-global-shared-view locals)
-                      (tc-moved-remove-root-state
-                        (tc-global-shared-view loop-carried)
-                        name
-                        false)
-                      moved
-                      rhs-box))]
-                [_
-                  (try
-                    (tc-move-check-closure-assignment-facts
-                      ctx
-                      expr-bases
-                      env
-                      (tc-global-shared-view locals)
-                      name
-                      (tc-global-shared-view rhs)))]
-                [moved2
-                  (try
-                    (tc-move-after-bind-id
-                      ctx
-                      expr-bases
-                      env
-                      locals
-                      loop-carried
-                      moved1
-                      rhs-box))]
-                (match (tc-lookup-id env name)
-                  [(Ok binding-ty)
-                    (Ok
-                      (tc-move-rebind-lambda-owner-dependencies
-                        expr-bases
-                        env
-                        (tc-param-storage-rebind-from-init
-                          ctx
-                          expr-bases
-                          env
-                          moved2
-                          name
-                          binding-ty
-                          (tc-global-shared-view rhs))
-                        name
-                        rhs))]
-                  [(Err _) (Ok (tc-moved-remove-root-state moved2 name false))])))))]
-      [(Borrow mutable _ inner-box)
-        (when
-          mutable
-          (tc-storage-expose!
-            ctx
-            env
-            (& locals)
-            (ast.ast-expr-segment-bases-get expr-bases inner-box)
-            false))
-        (let
-          [inner : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-          (if (tc-borrow-operand-temporary?
-            expr-bases
-            (tc-global-shared-view inner))
-            (tc-move-check-temporary-borrow-operand
+            (tc-param-storage-note-write
               ctx
               expr-bases
               env
-              locals
-              loop-carried
-              moved
-              inner-box)
-            (tc-move-check-place-borrow
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              mutable
-              inner-box
-              inner)))]
-      [(Match match-box)
-        (match (ast.ast-match-box-shared-view match-box)
-          [(Match scrut-box arms)
-            (let
-              [scrut : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases scrut-box)]
-              [moveds
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    (tc-global-shared-view scrut)))]
-              (match (tc-body-type-fact-expr-id
-                "move.match_scrutinee"
-                ctx
-                env
-                scrut-box)
-                [(Ok scrut-ty)
-                  (let
-                    [moveds1
-                      (try
-                        (tc-move-check-global-result
-                          ctx
-                          expr-bases
-                          env
-                          (tc-global-shared-view locals)
-                          moveds
-                          (tc-global-shared-view scrut)
-                          (tc-global-shared-view scrut-ty)))]
-                    (tc-move-check-arms
-                      ctx
-                      expr-bases
-                      env
-                      (tc-global-shared-view locals)
-                      loop-carried
-                      (tc-move-after-match-scrutinee
-                        ctx
-                        expr-bases
-                        locals
-                        (tc-global-shared-view moveds1)
-                        (tc-global-shared-view scrut)
-                        (tc-global-shared-view scrut-ty))
-                      (tc-param-storage-origin-id
-                        ctx
-                        expr-bases
-                        env
-                        moveds1
-                        scrut)
-                      scrut-ty
-                      arms
-                      (tc-move-result-access access)))]
-                [(Err _)
-                  (tc-move-check-arms
-                    ctx
-                    expr-bases
-                    env
-                    locals
-                    loop-carried
-                    (tc-global-shared-view moveds)
-                    (tc-param-storage-origin-id ctx expr-bases env moveds scrut)
-                    (Unit)
-                    arms
-                    (tc-move-result-access access))]))])]
-      [(Foreach fe-box)
-        (match (__tl-box-place fe-box)
-          [(Foreach index index-ty start-box end-box body-box)
-            (let
-              [start : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases start-box)]
-              [end : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases end-box)]
-              [body : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases body-box)]
-              [moved1
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    start))]
-              [moved2
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved1
-                    end))]
-              [body-loop-carried : TcMovedSet
-                (tc-moved-union locals (tc-moved-clone loop-carried))]
-              (match (tc-move-check-loop-body
-                ctx
-                expr-bases
-                (tc-storage-bind-id
-                  ctx
-                  env
-                  index
-                  (tc-resolve-type ctx index-ty)
-                  body-box)
-                (tc-moved-add
-                  (tc-move-enter-loop-body (tc-moved-clone locals))
-                  index)
-                (tc-moved-remove-root-state body-loop-carried index false)
-                (tc-moved-remove-root-state loop-carried index false)
-                (tc-moved-clone moved2)
-                body)
-                [(Ok _ _ breaks? break-moved-box)
-                  (if breaks?
-                    (tc-move-join-loop-exit
-                      expr-bases
-                      locals
-                      moved2
-                      (tc-moved-set-box-shared-view break-moved-box)
-                      (ast.ast-expr-segment-bases-get expr-bases body-box))
-                    (Ok moved2))]
-                [(Err message) (Err message)]))]
-          [(Foreach2
-              outer
-              outer-ty
-              a-box
-              b-box
-              inner
-              inner-ty
-              c-box
-              d-box
-              body-box)
-            (let
-              [moved1
-                (try
-                  (tc-move-check-expr-pair
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    (ast.ast-expr-segment-bases-get expr-bases a-box)
-                    (ast.ast-expr-segment-bases-get expr-bases b-box)))]
-              [moved2
-                (try
-                  (tc-move-check-expr-pair
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved1
-                    (ast.ast-expr-segment-bases-get expr-bases c-box)
-                    (ast.ast-expr-segment-bases-get expr-bases d-box)))]
-              [body-loop-carried : TcMovedSet
-                (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state
-                    (tc-moved-union locals (tc-moved-clone loop-carried))
-                    outer
-                    false)
-                  inner
-                  false)]
-              (match (tc-move-check-loop-body
-                ctx
-                expr-bases
-                (tc-storage-bind-id
-                  ctx
-                  (tc-storage-bind-id
-                    ctx
-                    env
-                    outer
-                    (tc-resolve-type ctx outer-ty)
-                    body-box)
-                  inner
-                  (tc-resolve-type ctx inner-ty)
-                  body-box)
-                (tc-moved-add
-                  (tc-moved-add
-                    (tc-move-enter-loop-body (tc-moved-clone locals))
-                    outer)
-                  inner)
-                body-loop-carried
-                (tc-moved-remove-root-state
-                  (tc-moved-remove-root-state loop-carried outer false)
-                  inner
-                  false)
-                (tc-moved-clone moved2)
-                (ast.ast-expr-segment-bases-get expr-bases body-box))
-                [(Ok _ _ breaks? break-moved-box)
-                  (if breaks?
-                    (tc-move-join-loop-exit
-                      expr-bases
-                      locals
-                      moved2
-                      (tc-moved-set-box-shared-view break-moved-box)
-                      (ast.ast-expr-segment-bases-get expr-bases body-box))
-                    (Ok moved2))]
-                [(Err message) (Err message)]))])]
-      [(SpmdReduce reduce-box)
-        (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
-          [(Reduce _ _ _ a-box b-box c-box d-box)
-            (let
-              [a : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases a-box)]
-              [b : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases b-box)]
-              [c : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases c-box)]
-              [d : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases d-box)]
-              [m1
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    a))]
-              [m2
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    m1
-                    b))]
-              [m3
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    m2
-                    c))]
-              (tc-move-check-expr ctx expr-bases env locals loop-carried m3 d))])]
-      [(SpmdScan scan-box)
-        (match (ast.ast-spmd-scan-box-shared-view scan-box)
-          [(Scan
-              _
-              index
-              index-ty
-              start-box
-              end-box
-              prefix
-              prefix-ty
-              init-box
-              value-box
-              body-box)
-            (let
-              [start : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases start-box)]
-              [end : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases end-box)]
-              [init : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases init-box)]
-              [value : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases value-box)]
-              [body : ast.AstExpr
-                (ast.ast-expr-segment-bases-get expr-bases body-box)]
-              [m1
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    moved
-                    start))]
-              [m2
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    m1
-                    end))]
-              [m3
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view locals)
-                    (tc-global-shared-view loop-carried)
-                    m2
-                    init))]
-              [m4
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    (tc-storage-bind-id
-                      ctx
-                      env
-                      index
-                      (tc-resolve-type ctx (tc-global-shared-view index-ty))
-                      body-box)
-                    (tc-moved-add (tc-moved-clone locals) index)
-                    (tc-global-shared-view loop-carried)
-                    m3
-                    value))]
-              [scan-env : TcTypeEnv
-                (tc-storage-bind-id
-                  ctx
-                  (tc-storage-bind-id
-                    ctx
-                    env
-                    index
-                    (tc-resolve-type ctx index-ty)
-                    body-box)
-                  prefix
-                  (tc-resolve-type ctx prefix-ty)
-                  body-box)]
-              [scan-locals : TcMovedSet
-                (tc-moved-add
-                  (tc-moved-add (tc-moved-clone locals) index)
-                  prefix)]
-              [_
-                (try
-                  (tc-move-check-expr
-                    ctx
-                    expr-bases
-                    scan-env
-                    scan-locals
-                    loop-carried
-                    (tc-global-shared-view m4)
-                    body))]
-              (Ok m4))])]
-      [(or (SpmdBroadcast value-box lane-box) (SpmdShuffle value-box lane-box))
-        (let
-          [value : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases value-box)]
-          [lane : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases lane-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                value))]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            lane))]
-      [(StructGet inner-box _)
-        (let
-          [inner : ast.AstExpr
-            (tc-move-projection-receiver
-              ctx
-              env
-              expr-bases
-              (& expr)
-              (tc-move-located-view expr-bases (& expr) inner-box))]
-          [moved1
-            (try
-              (tc-move-check-expr-access
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                inner
-                (tc-move-receiver-access access)))]
-          (match (tc-move-struct-field-path
-            expr-bases
-            (tc-global-shared-view expr))
-            [(Some path)
-              (match (tc-moved-path-exact-conflict
-                (tc-global-shared-view moved1)
-                path)
-                [(Some key origin-id)
-                  (tc-move-rich-use-conflict-result
-                    expr-bases
-                    (Some key origin-id)
-                    (tc-move-path-render path)
-                    expr
-                    (tc-move-path-render path))]
-                [No (Ok moved1)])]
-            [(No) (Ok moved1)]))]
-      [(WithEscape scratch-box exprs)
-        (let
-          [scratch : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                scratch))]
-          (tc-move-check-exprs
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            exprs))]
-      [(InArena arena-box exprs)
-        (let
-          [arena : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases arena-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                arena))]
-          (tc-move-check-exprs
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            exprs))]
-      [(WithResource wr-box)
-        (match (ast.ast-with-resource-box-shared-view wr-box)
-          [(WithResource bindings exprs)
-            (tc-move-check-resource-bindings
-              ctx
-              expr-bases
-              env
-              locals
-              loop-carried
-              moved
-              bindings
-              exprs
-              expr)])]
-      [(BoxTake inner-box)
-        (if (match access
-          [(MoveResultReadAccess) true]
-          [_ false])
-          (tc-move-check-expr-access
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved
-            (ast.ast-expr-segment-bases-get expr-bases inner-box)
-            (MoveResultReadAccess))
+              (tc-global-shared-view moved)
+              (tc-global-shared-view receiver))]
           (let
-            [inner : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases inner-box)]
             [moved1
               (try
                 (tc-move-check-expr-access
@@ -75607,77 +74859,7 @@
                   (tc-global-shared-view locals)
                   (tc-global-shared-view loop-carried)
                   moved
-                  (tc-move-projection-receiver
-                    ctx
-                    env
-                    expr-bases
-                    (& expr)
-                    (tc-global-shared-view inner))
-                  (MovePlaceReadAccess)))]
-            (match (tc-expr ctx env (tc-global-shared-view expr))
-              [(Ok result-ty)
-                (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))
-                  (match (tc-expr ctx env (tc-global-shared-view inner))
-                    [(Ok receiver-ty)
-                      (match (tc-type-strip-region
-                        (tc-resolve-type
-                          ctx
-                          (tc-global-shared-view receiver-ty)))
-                        [(Box _)
-                          (tc-move-after-consuming-value
-                            ctx
-                            expr-bases
-                            env
-                            locals
-                            loop-carried
-                            moved1
-                            inner
-                            receiver-ty)]
-                        [(Ref _ _)
-                          (Err
-                            (tc-move-out-of-reference-message
-                              expr-bases
-                              expr
-                              result-ty
-                              1
-                              (tc-move-out-of-deref-help)))]
-                        [(MutRef _ _)
-                          (Err
-                            (tc-move-out-of-reference-message
-                              expr-bases
-                              expr
-                              result-ty
-                              2
-                              (tc-move-out-of-deref-help)))]
-                        [_ (Ok moved1)])]
-                    [(Err _) (Ok moved1)])
-                  (Ok moved1))]
-              [(Err _) (Ok moved1)])))]
-      [(BoxSet box-box value-box)
-        (let
-          [_
-            (try
-              (tc-move-foreign-global-place-check
-                ctx
-                expr-bases
-                (tc-global-shared-view locals)
-                box-box
-                "assign through"))]
-          (let
-            [box-expr : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases box-box)]
-            [_value : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases value-box)]
-            [moved1
-              (try
-                (tc-move-check-expr-access
-                  ctx
-                  expr-bases
-                  env
-                  (tc-global-shared-view locals)
-                  (tc-global-shared-view loop-carried)
-                  moved
-                  box-expr
+                  (tc-global-shared-view receiver)
                   (MovePlaceReadAccess)))]
             [_
               (try
@@ -75686,59 +74868,306 @@
                   expr-bases
                   env
                   (tc-global-shared-view moved1)
-                  (BoxTake box-box)))]
+                  (if (ast.ast-tuple-set-field-id? field)
+                    (TupleRef
+                      receiver-box
+                      (ast.ast-tuple-set-index-from-field-id field))
+                    (StructGet receiver-box field))))]
             [moved2
               (try
-                (tc-move-check-expr-id
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  loop-carried
+                  moved1
+                  value))]
+            (Ok
+              (tc-move-reinitialize-struct-set-path
+                expr-bases
+                locals
+                moved2
+                receiver
+                field)))))]
+    [(ArrayPush array-box value-box)
+      (let
+        [_
+          (try
+            (tc-move-foreign-global-place-check
+              ctx
+              expr-bases
+              (tc-global-shared-view locals)
+              array-box
+              "push onto"))]
+        [array : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases array-box)]
+        [value : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        [moved1
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              array
+              (MovePlaceReadAccess)))]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 value))]
+    [(StringRef str-box index-box)
+      (let
+        [str : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases str-box)]
+        [index : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases index-box)]
+        [moved1
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              str
+              (MovePlaceReadAccess)))]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 index))]
+    [(While cond-box body-box)
+      (let
+        [cond : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
+        [body : ast.AstExpr (Begin body-box)]
+        [movedc
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              cond))]
+        [body-loop-carried : TcMovedSet
+          (tc-moved-union locals (tc-moved-clone loop-carried))]
+        (match (tc-move-check-loop-body
+          ctx
+          expr-bases
+          env
+          (tc-move-enter-loop-body (tc-moved-clone locals))
+          body-loop-carried
+          loop-carried
+          (tc-moved-clone movedc)
+          (tc-global-shared-view body))
+          [(Ok _ _ body-breaks? body-break-box)
+            (if body-breaks?
+              (tc-move-join-loop-exit
+                expr-bases
+                locals
+                movedc
+                (tc-moved-set-box-shared-view body-break-box)
+                body)
+              (Ok movedc))]
+          [(Err message) (Err message)]))]
+    [(Set name rhs-box)
+      (let
+        [_
+          (try
+            (tc-move-foreign-global-set-check
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              name
+              rhs-box
+              expr))]
+        [rhs : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases rhs-box)]
+        (if (tc-dotted-place-name-id? ctx env name)
+          (let
+            [virtual-id
+              (try
+                (tc-dotted-local-field-set-expr-id-after-check
+                  expr-bases
+                  (tc-context-structural-session ctx)
+                  name
+                  rhs-box))]
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              (ast.ast-expr-segment-bases-get expr-bases virtual-id)))
+          (let
+            [_
+              (try
+                (tc-move-check-cleanup-overwrite
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view moved)
+                  (Var name)))]
+            (let
+              [moved1
+                (try
+                  (tc-move-check-expr-id
+                    ctx
+                    expr-bases
+                    env
+                    (tc-global-shared-view locals)
+                    (tc-moved-remove-root-state
+                      (tc-global-shared-view loop-carried)
+                      name
+                      false)
+                    moved
+                    rhs-box))]
+              [_
+                (try
+                  (tc-move-check-closure-assignment-facts
+                    ctx
+                    expr-bases
+                    env
+                    (tc-global-shared-view locals)
+                    name
+                    (tc-global-shared-view rhs)))]
+              [moved2
+                (try
+                  (tc-move-after-bind-id
+                    ctx
+                    expr-bases
+                    env
+                    locals
+                    loop-carried
+                    moved1
+                    rhs-box))]
+              (match (tc-lookup-id env name)
+                [(Ok binding-ty)
+                  (Ok
+                    (tc-move-rebind-lambda-owner-dependencies
+                      expr-bases
+                      env
+                      (tc-param-storage-rebind-from-init
+                        ctx
+                        expr-bases
+                        env
+                        moved2
+                        name
+                        binding-ty
+                        (tc-global-shared-view rhs))
+                      name
+                      rhs))]
+                [(Err _) (Ok (tc-moved-remove-root-state moved2 name false))])))))]
+    [(Borrow mutable _ inner-box)
+      (when
+        mutable
+        (tc-storage-expose!
+          ctx
+          env
+          (& locals)
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)
+          false))
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (if (tc-borrow-operand-temporary?
+          expr-bases
+          (tc-global-shared-view inner))
+          (tc-move-check-temporary-borrow-operand
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            inner-box)
+          (tc-move-check-place-borrow
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            mutable
+            inner-box
+            inner)))]
+    [(Match match-box)
+      (match (ast.ast-match-box-shared-view match-box)
+        [(Match scrut-box arms)
+          (let
+            [scrut : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases scrut-box)]
+            [moveds
+              (try
+                (tc-move-check-expr
                   ctx
                   expr-bases
                   env
                   (tc-global-shared-view locals)
                   (tc-global-shared-view loop-carried)
-                  moved1
-                  value-box))]
-            (Ok
-              (try
-                (tc-move-after-bind-id
+                  moved
+                  (tc-global-shared-view scrut)))]
+            (match (tc-body-type-fact-expr-id
+              "move.match_scrutinee"
+              ctx
+              env
+              scrut-box)
+              [(Ok scrut-ty)
+                (let
+                  [moveds1
+                    (try
+                      (tc-move-check-global-result
+                        ctx
+                        expr-bases
+                        env
+                        (tc-global-shared-view locals)
+                        moveds
+                        (tc-global-shared-view scrut)
+                        (tc-global-shared-view scrut-ty)))]
+                  (tc-move-check-arms
+                    ctx
+                    expr-bases
+                    env
+                    (tc-global-shared-view locals)
+                    loop-carried
+                    (tc-move-after-match-scrutinee
+                      ctx
+                      expr-bases
+                      locals
+                      (tc-global-shared-view moveds1)
+                      (tc-global-shared-view scrut)
+                      (tc-global-shared-view scrut-ty))
+                    (tc-param-storage-origin-id
+                      ctx
+                      expr-bases
+                      env
+                      moveds1
+                      scrut)
+                    scrut-ty
+                    arms
+                    (tc-move-result-access access)))]
+              [(Err _)
+                (tc-move-check-arms
                   ctx
                   expr-bases
                   env
                   locals
                   loop-carried
-                  moved2
-                  value-box)))))]
-      ;; The CTFE evaluator consumes this subtree before the runtime body exists.
-      ;; Its source operands therefore cannot move runtime locals.
-      ;; No early-exit fact: those only stop lowering from forwarding a caller's
-      ;; sret slot into this body, and a try error exit builds its Err in that
-      ;; slot (`lower-return-result-err`).
-      [(Try inner-box)
-        (let
-          [inner : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                loop-carried
-                moved
-                inner))]
-          (tc-move-check-obligations-exit
-            expr-bases
-            locals
-            -1
-            moved1
-            (tc-global-shared-view expr)
-            "before this try can propagate an error"))]
-      [(Return inner-box)
-        (let
-          [inner : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-          (tc-body-early-exit-note! (tc-context-body-state ctx))
+                  (tc-global-shared-view moveds)
+                  (tc-param-storage-origin-id ctx expr-bases env moveds scrut)
+                  (Unit)
+                  arms
+                  (tc-move-result-access access))]))])]
+    [(Foreach fe-box)
+      (match (__tl-box-place fe-box)
+        [(Foreach index index-ty start-box end-box body-box)
           (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
             [moved1
               (try
                 (tc-move-check-expr
@@ -75746,221 +75175,723 @@
                   expr-bases
                   env
                   (tc-global-shared-view locals)
-                  ;; Returning cannot reach a loop backedge, even when generated
-                  ;; scopes hide this node from the loop-aware outer walker.
-                  (tc-moved-empty)
+                  (tc-global-shared-view loop-carried)
                   moved
-                  (tc-global-shared-view inner)))]
+                  start))]
             [moved2
               (try
-                (match (tc-current-return-type env)
-                  [(Ok return-ty)
-                    (tc-move-after-consuming-value
-                      ctx
-                      expr-bases
-                      env
-                      (tc-global-shared-view locals)
-                      (tc-moved-empty)
-                      moved1
-                      (tc-global-shared-view inner)
-                      return-ty)]
-                  [(Err _) (TcMoveResult.Ok moved1)]))]
-            (tc-move-check-obligations-exit
-              expr-bases
-              (tc-global-shared-view locals)
-              -1
-              (tc-move-discharge-direct ctx expr-bases locals moved2 inner-box)
-              (tc-global-shared-view expr)
-              "before this return")))]
-      ;; Its moved set is the break state of the loop it leaves; the loop walker
-      ;; collects it when the `break` sits inside a form it has no arm for.
-      [(Break)
-        (tc-body-early-exit-note! (tc-context-body-state ctx))
-        (let
-          [moved1
-            (try
-              (tc-move-check-obligations-exit
-                expr-bases
-                (tc-global-shared-view locals)
-                (tc-move-loop-depth locals)
-                moved
-                (tc-global-shared-view expr)
-                "before this break leaves its loop"))]
-          (tc-body-move-loop-exit-note!
-            (tc-context-body-state ctx)
-            (& moved1)
-            true)
-          (Ok moved1))]
-      [(Continue)
-        (tc-body-early-exit-note! (tc-context-body-state ctx))
-        (tc-body-move-loop-exit-note!
-          (tc-context-body-state ctx)
-          (& moved)
-          false)
-        (tc-move-check-obligations-exit
-          expr-bases
-          (tc-global-shared-view locals)
-          (tc-move-loop-depth locals)
-          moved
-          (tc-global-shared-view expr)
-          "before this continue leaves its loop iteration")]
-      [(PtrAddrOf place-box)
-        (tc-storage-expose!
-          ctx
-          env
-          (& locals)
-          (ast.ast-expr-segment-bases-get expr-bases place-box)
-          true)
-        (let
-          [place : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases place-box)]
-          (tc-move-check-ptr-addr-of-place
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved
-            place
-            expr))]
-      [(PtrWrite ptr-box value-box)
-        (let
-          [ptr : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-          [value : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases value-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                ptr))]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            value))]
-      [(PtrOffset ptr-box offset-box)
-        (let
-          [ptr : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-          [offset : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases offset-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                ptr))]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            offset))]
-      [(StringFromBytes ptr-box len-box)
-        (let
-          [ptr : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
-          [len : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases len-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                ptr))]
-          (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 len))]
-      [(or (CpuIdEax leaf-box subleaf-box) (CpuIdEbx leaf-box subleaf-box)
-           (CpuIdEcx leaf-box subleaf-box) (CpuIdEdx leaf-box subleaf-box))
-        (let
-          [leaf : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
-          [subleaf : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
-          [moved1
-            (try
-              (tc-move-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                (tc-global-shared-view loop-carried)
-                moved
-                leaf))]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved1
-            subleaf))]
-      [(Xgetbv index-box)
-        (let
-          [index : ast.AstExpr
-            (ast.ast-expr-segment-bases-get expr-bases index-box)]
-          (tc-move-check-expr
-            ctx
-            expr-bases
-            env
-            locals
-            loop-carried
-            moved
-            index))]
-      ;; A foreach-active body runs once per active lane, so it is a loop body:
-      ;; a value moved in it must not be one the next lane still needs.
-      [(ForeachActive lane body-box)
-        (let
-          [body-loop-carried : TcMovedSet
-            (tc-moved-union locals (tc-moved-clone loop-carried))]
-          (match (tc-move-check-loop-body
-            ctx
-            expr-bases
-            (tc-storage-bind-id ctx env lane (I64) body-box)
-            (tc-moved-add
-              (tc-move-enter-loop-body (tc-moved-clone locals))
-              lane)
-            (tc-moved-remove-root-state body-loop-carried lane false)
-            (tc-moved-remove-root-state loop-carried lane false)
-            (tc-moved-clone moved)
-            (ast.ast-expr-segment-bases-get expr-bases body-box))
-            [(Ok _ _ breaks? break-moved-box)
-              (if breaks?
-                (tc-move-join-loop-exit
+                (tc-move-check-expr
+                  ctx
                   expr-bases
-                  locals
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved1
+                  end))]
+            [body-loop-carried : TcMovedSet
+              (tc-moved-union locals (tc-moved-clone loop-carried))]
+            (match (tc-move-check-loop-body
+              ctx
+              expr-bases
+              (tc-storage-bind-id
+                ctx
+                env
+                index
+                (tc-resolve-type ctx index-ty)
+                body-box)
+              (tc-moved-add
+                (tc-move-enter-loop-body (tc-moved-clone locals))
+                index)
+              (tc-moved-remove-root-state body-loop-carried index false)
+              (tc-moved-remove-root-state loop-carried index false)
+              (tc-moved-clone moved2)
+              body)
+              [(Ok _ _ breaks? break-moved-box)
+                (if breaks?
+                  (tc-move-join-loop-exit
+                    expr-bases
+                    locals
+                    moved2
+                    (tc-moved-set-box-shared-view break-moved-box)
+                    (ast.ast-expr-segment-bases-get expr-bases body-box))
+                  (Ok moved2))]
+              [(Err message) (Err message)]))]
+        [(Foreach2
+            outer
+            outer-ty
+            a-box
+            b-box
+            inner
+            inner-ty
+            c-box
+            d-box
+            body-box)
+          (let
+            [moved1
+              (try
+                (tc-move-check-expr-pair
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
                   moved
-                  (tc-moved-set-box-shared-view break-moved-box)
-                  (ast.ast-expr-segment-bases-get expr-bases body-box))
-                (Ok moved))]
-            [(Err message) (Err message)]))]
-      [(LaneValue value-box)
-        (tc-move-check-expr
+                  (ast.ast-expr-segment-bases-get expr-bases a-box)
+                  (ast.ast-expr-segment-bases-get expr-bases b-box)))]
+            [moved2
+              (try
+                (tc-move-check-expr-pair
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved1
+                  (ast.ast-expr-segment-bases-get expr-bases c-box)
+                  (ast.ast-expr-segment-bases-get expr-bases d-box)))]
+            [body-loop-carried : TcMovedSet
+              (tc-moved-remove-root-state
+                (tc-moved-remove-root-state
+                  (tc-moved-union locals (tc-moved-clone loop-carried))
+                  outer
+                  false)
+                inner
+                false)]
+            (match (tc-move-check-loop-body
+              ctx
+              expr-bases
+              (tc-storage-bind-id
+                ctx
+                (tc-storage-bind-id
+                  ctx
+                  env
+                  outer
+                  (tc-resolve-type ctx outer-ty)
+                  body-box)
+                inner
+                (tc-resolve-type ctx inner-ty)
+                body-box)
+              (tc-moved-add
+                (tc-moved-add
+                  (tc-move-enter-loop-body (tc-moved-clone locals))
+                  outer)
+                inner)
+              body-loop-carried
+              (tc-moved-remove-root-state
+                (tc-moved-remove-root-state loop-carried outer false)
+                inner
+                false)
+              (tc-moved-clone moved2)
+              (ast.ast-expr-segment-bases-get expr-bases body-box))
+              [(Ok _ _ breaks? break-moved-box)
+                (if breaks?
+                  (tc-move-join-loop-exit
+                    expr-bases
+                    locals
+                    moved2
+                    (tc-moved-set-box-shared-view break-moved-box)
+                    (ast.ast-expr-segment-bases-get expr-bases body-box))
+                  (Ok moved2))]
+              [(Err message) (Err message)]))])]
+    [(SpmdReduce reduce-box)
+      (tc-storage-loop-enter! ctx)
+      (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
+        [(Reduce _ _ _ a-box b-box c-box d-box)
+          (let
+            [a : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases a-box)]
+            [b : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases b-box)]
+            [c : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases c-box)]
+            [d : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases d-box)]
+            [m1
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved
+                  a))]
+            [m2
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  m1
+                  b))]
+            [m3
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  m2
+                  c))]
+            (tc-move-check-expr ctx expr-bases env locals loop-carried m3 d))])]
+    [(SpmdScan scan-box)
+      (tc-storage-loop-enter! ctx)
+      (match (ast.ast-spmd-scan-box-shared-view scan-box)
+        [(Scan
+            _
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [start : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases start-box)]
+            [end : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases end-box)]
+            [init : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases init-box)]
+            [value : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases value-box)]
+            [body : ast.AstExpr
+              (ast.ast-expr-segment-bases-get expr-bases body-box)]
+            [m1
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  moved
+                  start))]
+            [m2
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  m1
+                  end))]
+            [m3
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  (tc-global-shared-view loop-carried)
+                  m2
+                  init))]
+            [m4
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  (tc-storage-bind-id
+                    ctx
+                    env
+                    index
+                    (tc-resolve-type ctx (tc-global-shared-view index-ty))
+                    body-box)
+                  (tc-moved-add (tc-moved-clone locals) index)
+                  (tc-global-shared-view loop-carried)
+                  m3
+                  value))]
+            [scan-env : TcTypeEnv
+              (tc-storage-bind-id
+                ctx
+                (tc-storage-bind-id
+                  ctx
+                  env
+                  index
+                  (tc-resolve-type ctx index-ty)
+                  body-box)
+                prefix
+                (tc-resolve-type ctx prefix-ty)
+                body-box)]
+            [scan-locals : TcMovedSet
+              (tc-moved-add (tc-moved-add (tc-moved-clone locals) index) prefix)]
+            [_
+              (try
+                (tc-move-check-expr
+                  ctx
+                  expr-bases
+                  scan-env
+                  scan-locals
+                  loop-carried
+                  (tc-global-shared-view m4)
+                  body))]
+            (Ok m4))])]
+    [(or (SpmdBroadcast value-box lane-box) (SpmdShuffle value-box lane-box))
+      (let
+        [value : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        [lane : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases lane-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              value))]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 lane))]
+    [(StructGet inner-box _)
+      (let
+        [inner : ast.AstExpr
+          (tc-move-projection-receiver
+            ctx
+            env
+            expr-bases
+            (& expr)
+            (tc-move-located-view expr-bases (& expr) inner-box))]
+        [moved1
+          (try
+            (tc-move-check-expr-access
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              inner
+              (tc-move-receiver-access access)))]
+        (match (tc-move-struct-field-path
+          expr-bases
+          (tc-global-shared-view expr))
+          [(Some path)
+            (match (tc-moved-path-exact-conflict
+              (tc-global-shared-view moved1)
+              path)
+              [(Some key origin-id)
+                (tc-move-rich-use-conflict-result
+                  expr-bases
+                  (Some key origin-id)
+                  (tc-move-path-render path)
+                  expr
+                  (tc-move-path-render path))]
+              [No (Ok moved1)])]
+          [(No) (Ok moved1)]))]
+    [(WithEscape scratch-box exprs)
+      (let
+        [scratch : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases scratch-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              scratch))]
+        (tc-move-check-exprs
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved1
+          exprs))]
+    [(InArena arena-box exprs)
+      (let
+        [arena : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases arena-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              arena))]
+        (tc-move-check-exprs
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved1
+          exprs))]
+    [(WithResource wr-box)
+      (match (ast.ast-with-resource-box-shared-view wr-box)
+        [(WithResource bindings exprs)
+          (tc-move-check-resource-bindings
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            bindings
+            exprs
+            expr)])]
+    [(BoxTake inner-box)
+      (if (match access
+        [(MoveResultReadAccess) true]
+        [_ false])
+        (tc-move-check-expr-access
           ctx
           expr-bases
           env
           locals
           loop-carried
           moved
-          (ast.ast-expr-segment-bases-get expr-bases value-box))])))
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)
+          (MoveResultReadAccess))
+        (let
+          [inner : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+          [moved1
+            (try
+              (tc-move-check-expr-access
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
+                moved
+                (tc-move-projection-receiver
+                  ctx
+                  env
+                  expr-bases
+                  (& expr)
+                  (tc-global-shared-view inner))
+                (MovePlaceReadAccess)))]
+          (match (tc-expr ctx env (tc-global-shared-view expr))
+            [(Ok result-ty)
+              (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))
+                (match (tc-expr ctx env (tc-global-shared-view inner))
+                  [(Ok receiver-ty)
+                    (match (tc-type-strip-region
+                      (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+                      [(Box _)
+                        (tc-move-after-consuming-value
+                          ctx
+                          expr-bases
+                          env
+                          locals
+                          loop-carried
+                          moved1
+                          inner
+                          receiver-ty)]
+                      [(Ref _ _)
+                        (Err
+                          (tc-move-out-of-reference-message
+                            expr-bases
+                            expr
+                            result-ty
+                            1
+                            (tc-move-out-of-deref-help)))]
+                      [(MutRef _ _)
+                        (Err
+                          (tc-move-out-of-reference-message
+                            expr-bases
+                            expr
+                            result-ty
+                            2
+                            (tc-move-out-of-deref-help)))]
+                      [_ (Ok moved1)])]
+                  [(Err _) (Ok moved1)])
+                (Ok moved1))]
+            [(Err _) (Ok moved1)])))]
+    [(BoxSet box-box value-box)
+      (let
+        [_
+          (try
+            (tc-move-foreign-global-place-check
+              ctx
+              expr-bases
+              (tc-global-shared-view locals)
+              box-box
+              "assign through"))]
+        (let
+          [box-expr : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases box-box)]
+          [_value : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases value-box)]
+          [moved1
+            (try
+              (tc-move-check-expr-access
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
+                moved
+                box-expr
+                (MovePlaceReadAccess)))]
+          [_
+            (try
+              (tc-move-check-cleanup-overwrite
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view moved1)
+                (BoxTake box-box)))]
+          [moved2
+            (try
+              (tc-move-check-expr-id
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
+                moved1
+                value-box))]
+          (Ok
+            (try
+              (tc-move-after-bind-id
+                ctx
+                expr-bases
+                env
+                locals
+                loop-carried
+                moved2
+                value-box)))))]
+    ;; The CTFE evaluator consumes this subtree before the runtime body exists.
+    ;; Its source operands therefore cannot move runtime locals.
+    ;; No early-exit fact: those only stop lowering from forwarding a caller's
+    ;; sret slot into this body, and a try error exit builds its Err in that
+    ;; slot (`lower-return-result-err`).
+    [(Try inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              loop-carried
+              moved
+              inner))]
+        (tc-move-check-obligations-exit
+          expr-bases
+          locals
+          -1
+          moved1
+          (tc-global-shared-view expr)
+          "before this try can propagate an error"))]
+    [(Return inner-box)
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (tc-body-early-exit-note! (tc-context-body-state ctx))
+        (let
+          [moved1
+            (try
+              (tc-move-check-expr
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                ;; Returning cannot reach a loop backedge, even when generated
+                ;; scopes hide this node from the loop-aware outer walker.
+                (tc-moved-empty)
+                moved
+                (tc-global-shared-view inner)))]
+          [moved2
+            (try
+              (match (tc-current-return-type env)
+                [(Ok return-ty)
+                  (tc-move-after-consuming-value
+                    ctx
+                    expr-bases
+                    env
+                    (tc-global-shared-view locals)
+                    (tc-moved-empty)
+                    moved1
+                    (tc-global-shared-view inner)
+                    return-ty)]
+                [(Err _) (TcMoveResult.Ok moved1)]))]
+          (tc-move-check-obligations-exit
+            expr-bases
+            (tc-global-shared-view locals)
+            -1
+            (tc-move-discharge-direct ctx expr-bases locals moved2 inner-box)
+            (tc-global-shared-view expr)
+            "before this return")))]
+    ;; Its moved set is the break state of the loop it leaves; the loop walker
+    ;; collects it when the `break` sits inside a form it has no arm for.
+    [(Break)
+      (tc-body-early-exit-note! (tc-context-body-state ctx))
+      (let
+        [moved1
+          (try
+            (tc-move-check-obligations-exit
+              expr-bases
+              (tc-global-shared-view locals)
+              (tc-move-loop-depth locals)
+              moved
+              (tc-global-shared-view expr)
+              "before this break leaves its loop"))]
+        (tc-body-move-loop-exit-note!
+          (tc-context-body-state ctx)
+          (& moved1)
+          true)
+        (Ok moved1))]
+    [(Continue)
+      (tc-body-early-exit-note! (tc-context-body-state ctx))
+      (tc-body-move-loop-exit-note! (tc-context-body-state ctx) (& moved) false)
+      (tc-move-check-obligations-exit
+        expr-bases
+        (tc-global-shared-view locals)
+        (tc-move-loop-depth locals)
+        moved
+        (tc-global-shared-view expr)
+        "before this continue leaves its loop iteration")]
+    [(PtrAddrOf place-box)
+      (tc-storage-expose!
+        ctx
+        env
+        (& locals)
+        (ast.ast-expr-segment-bases-get expr-bases place-box)
+        true)
+      (let
+        [place : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases place-box)]
+        (tc-move-check-ptr-addr-of-place
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          place
+          expr))]
+    [(PtrWrite ptr-box value-box)
+      (let
+        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
+        [value : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases value-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              ptr))]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 value))]
+    [(PtrOffset ptr-box offset-box)
+      (let
+        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
+        [offset : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases offset-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              ptr))]
+        (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved1
+          offset))]
+    [(StringFromBytes ptr-box len-box)
+      (let
+        [ptr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases ptr-box)]
+        [len : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases len-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              ptr))]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 len))]
+    [(or (CpuIdEax leaf-box subleaf-box) (CpuIdEbx leaf-box subleaf-box)
+         (CpuIdEcx leaf-box subleaf-box) (CpuIdEdx leaf-box subleaf-box))
+      (let
+        [leaf : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases leaf-box)]
+        [subleaf : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases subleaf-box)]
+        [moved1
+          (try
+            (tc-move-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              (tc-global-shared-view loop-carried)
+              moved
+              leaf))]
+        (tc-move-check-expr
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved1
+          subleaf))]
+    [(Xgetbv index-box)
+      (let
+        [index : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases index-box)]
+        (tc-move-check-expr ctx expr-bases env locals loop-carried moved index))]
+    ;; A foreach-active body runs once per active lane, so it is a loop body:
+    ;; a value moved in it must not be one the next lane still needs.
+    [(ForeachActive lane body-box)
+      (let
+        [body-loop-carried : TcMovedSet
+          (tc-moved-union locals (tc-moved-clone loop-carried))]
+        (match (tc-move-check-loop-body
+          ctx
+          expr-bases
+          (tc-storage-bind-id ctx env lane (I64) body-box)
+          (tc-moved-add (tc-move-enter-loop-body (tc-moved-clone locals)) lane)
+          (tc-moved-remove-root-state body-loop-carried lane false)
+          (tc-moved-remove-root-state loop-carried lane false)
+          (tc-moved-clone moved)
+          (ast.ast-expr-segment-bases-get expr-bases body-box))
+          [(Ok _ _ breaks? break-moved-box)
+            (if breaks?
+              (tc-move-join-loop-exit
+                expr-bases
+                locals
+                moved
+                (tc-moved-set-box-shared-view break-moved-box)
+                (ast.ast-expr-segment-bases-get expr-bases body-box))
+              (Ok moved))]
+          [(Err message) (Err message)]))]
+    [(LaneValue value-box)
+      (tc-move-check-expr
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        moved
+        (ast.ast-expr-segment-bases-get expr-bases value-box))]))
 
 (define (tc-move-check-place-borrow
   [ctx : TcContext]

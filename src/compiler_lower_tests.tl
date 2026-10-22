@@ -1887,6 +1887,12 @@
     (while (< i n)
       (when (= i 1) (set! result (first-ref x (write-99! q))))
       (set! q (unsafe (ptr-addr-of y))) (set! i (+ i 1))) result))
+(define (acyclic-argument [x : i64]) : i64
+  (let [q : (MutPtr i64) (unsafe (ptr-addr-of x))]
+    (first x (write-99! q))))
+(define (acyclic-callee [f : (-> i64 i64)]) : i64
+  (let [p : (MutPtr (-> i64 i64)) (unsafe (ptr-addr-of f))]
+    (f (write-dec! p))))
 (define (readonly-argument [x : i64] [y : i64]) : i64
   (let [result (first x (+ y 1))] (unsafe (ptr-addr-of x)) result))
 (define (readonly-callee [f : (-> i64 i64)] [y : i64]) : i64
@@ -1899,6 +1905,7 @@
        (match-shadowed 1 q 2) (unrelated 1 q 2)
        (lambda-boundary 1 q 2) (ref-slot (& y) q 2) (ref-unrelated (& y) q 2)
        (cached-param 1 q 2) (cached-local 1 q 2) (cached-shadow 1 q 2)
+       (acyclic-argument 1) (acyclic-callee inc)
        (readonly-argument 1 y) (readonly-callee inc y))))"
     (compiler-lower-cached-exposure-source)))
 
@@ -1915,7 +1922,7 @@
       result))
     [(Some functions)
       (let
-        [names : (Array String 14)
+        [names : (Array String 16)
           (array
             "loop-argument"
             "loop-callee"
@@ -1930,10 +1937,12 @@
             "ref-unrelated"
             "cached-param"
             "cached-local"
-            "cached-shadow")]
-        (for [index (iterator.range 0 14)]
+            "cached-shadow"
+            "acyclic-argument"
+            "acyclic-callee")]
+        (for [index (iterator.range 0 16)]
           (let
-            [callee? : bool (or (= index 1) (= index 2))]
+            [callee? : bool (or (= index 1) (= index 2) (= index 15))]
             (test.assert-i64-eq
               (lower-test-snapshot-before-effect
                 functions
@@ -1947,7 +1956,7 @@
                     "first-ref"
                     "first")))
               ;; Reference call arguments retain their existing borrow path.
-              (if (or (< index 5) (= index 11) (= index 12))
+              (if (or (< index 5) (= index 11) (= index 12) (>= index 14))
                 1
                 0)
               (string.copy (array-ref names index)))))

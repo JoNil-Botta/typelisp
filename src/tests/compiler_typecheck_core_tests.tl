@@ -7487,6 +7487,47 @@
         survives-other-owner-destroy?
         b-reset?))))
 
+(test
+  spmd-helper-stack-parent-snapshots
+  (let
+    [state : tc_core.TcSpmdTraversalState (tc_core.tc-spmd-traversal-state-new)]
+    [parents : (__tl_dyn-array tc_core.TcNameIdList)
+      (__tl_make-array tc_core.TcNameIdList 17)]
+    [depth : i64 17]
+    (for [index (iterator.range 0 depth)]
+      (set!
+        (array-ref parents index)
+        (tc_core.tc-spmd-inline-helper-stack-push-for-state!
+          state
+          (+ 100 index)))
+      (test.assert-i64-eq
+        (tc_core.tc-name-id-list-len (array-ref parents index))
+        index
+        "push returns the unmodified parent at every representation boundary"))
+    (while (> depth 0)
+      (-= depth 1)
+      (tc_core.tc-spmd-inline-helper-stack-restore-for-state!
+        state
+        (array-ref parents depth))
+      (test.assert-i64-eq
+        (tc_core.tc-name-id-list-len
+          (tc_core.tc-spmd-inline-helper-stack-for-state state))
+        depth
+        "later growth leaves every saved parent intact")
+      (test.assert-true
+        (not
+          (tc_core.tc-spmd-inline-helper-stack-contains-for-state?
+            state
+            (+ 100 depth)))
+        "a completed sibling is no longer active")
+      (when
+        (> depth 0)
+        (test.assert-true
+          (tc_core.tc-spmd-inline-helper-stack-contains-for-state?
+            state
+            (+ 99 depth))
+          "the caller remains active while its child returns")))))
+
 (cfg
   test
   (test

@@ -1239,6 +1239,11 @@ file-result cleanup and terminal retirement clear all header views before
 destroying the payload. A different job or scratch arena may be current during
 allocation or cleanup without becoming the owner.
 
+The SPMD helper recursion stack tracks active bodies, not completed calls.
+Push materializes an immutable parent snapshot before publishing the child;
+success and error paths restore that parent. Dense stack nodes belong to the
+compiler job arena and remain valid across function scratch rewinds.
+
 A value that is a pure function of intern ids is not cached at all: a stdlib comptime syntax type is recognised by decomposing
 the structural module key of its canonical id, and comptime helper prefixes are
 compared with the builtin ids directly. Generation-stamped mirrors of such

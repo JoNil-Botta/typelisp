@@ -1,5 +1,11 @@
 # Selfhost compiler testing
 
+`spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
+restoration without leaving completed siblings active. The existing traversal
+isolation test preserves job/scratch ownership. `spmd_inline_helper_composition.tl`
+compares composed arguments, repeated callees, imported bodies and masked tails
+with ordinary calls; safety rows keep direct and mutual recursion rejected.
+
 `git-object-tree-linear-names` and `git_object_smoke` check canonical Git tree
 order, separated file/directory duplicates in both object-ID formats, and
 exhaustive short sequences against the former all-pairs duplicate rule. Exact

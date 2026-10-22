@@ -7,7 +7,7 @@
   compiler-storage-exposure-lexical-keys
   (let
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
-    [previous : i64 (exposure.storage-exposure-enter! facts 3 9)]
+    [previous : i64 (exposure.storage-exposure-enter! facts 3 9 false)]
     [frame : i64 (exposure.storage-exposure-current facts)]
     (for [name (array (cast 7 : i64) -9223372036854775808 9223372036854775807)]
       (for [scope (iterator.range 0 3)]
@@ -51,9 +51,9 @@
   compiler-storage-exposure-nested-and-incomplete
   (let
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
-    [outside : i64 (exposure.storage-exposure-enter! facts 3 9)]
+    [outside : i64 (exposure.storage-exposure-enter! facts 3 9 false)]
     [outer-frame : i64 (exposure.storage-exposure-current facts)]
-    [previous : i64 (exposure.storage-exposure-enter! facts 3 10)]
+    [previous : i64 (exposure.storage-exposure-enter! facts 3 10 false)]
     [inner-frame : i64 (exposure.storage-exposure-current facts)]
     (exposure.storage-exposure-record! facts 0 -1 7 0)
     (exposure.storage-exposure-leave! facts previous true)
@@ -77,20 +77,20 @@
       (not (exposure.storage-exposure-ready? facts outer-frame))
       "missing evidence cannot prove privacy")
     (let
-      [previous : i64 (exposure.storage-exposure-enter! facts 3 9)]
+      [previous : i64 (exposure.storage-exposure-enter! facts 3 9 false)]
       (exposure.storage-exposure-leave! facts previous true)
       (test.assert-true
         (not (exposure.storage-exposure-ready? facts outer-frame))
         "repeated checking cannot erase incomplete evidence"))
     (let
-      [previous : i64 (exposure.storage-exposure-enter! facts 4 9)]
+      [previous : i64 (exposure.storage-exposure-enter! facts 4 9 false)]
       [failed : i64 (exposure.storage-exposure-current facts)]
       (exposure.storage-exposure-leave! facts previous false)
       (test.assert-true
         (not (exposure.storage-exposure-ready? facts failed))
         "failed check stays conservative"))
     (let
-      [previous : i64 (exposure.storage-exposure-enter! facts 3 -1)]
+      [previous : i64 (exposure.storage-exposure-enter! facts 3 -1 false)]
       (test.assert-i64-eq
         (exposure.storage-exposure-current facts)
         -1
@@ -106,13 +106,13 @@
   (let
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
     [generation : i64 (exposure.storage-exposure-generation facts)]
-    [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
+    [previous : i64 (exposure.storage-exposure-enter! facts 1 2 false)]
     [outer-frame : i64 (exposure.storage-exposure-current facts)]
     [_outer : unit (exposure.storage-exposure-record! facts 0 5 7 0)]
     [outer-binding : i64
       (exposure.storage-exposure-find facts outer-frame 0 5 7 0)]
     (let
-      [outer : i64 (exposure.storage-exposure-enter! facts 1 3)]
+      [outer : i64 (exposure.storage-exposure-enter! facts 1 3 false)]
       [inner-frame : i64 (exposure.storage-exposure-current facts)]
       [_inner : unit (exposure.storage-exposure-record! facts 0 5 8 0)]
       [inner-binding : i64
@@ -150,14 +150,14 @@
   compiler-storage-exposure-suspends-nested-queries
   (let
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
-    [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
+    [previous : i64 (exposure.storage-exposure-enter! facts 1 2 false)]
     [frame : i64 (exposure.storage-exposure-current facts)]
     [outer : exposure.StorageExposureSuspension
       (exposure.storage-exposure-suspend! facts)]
-    [_entry : i64 (exposure.storage-exposure-enter! facts 1 3)]
+    [_entry : i64 (exposure.storage-exposure-enter! facts 1 3 false)]
     [inner : exposure.StorageExposureSuspension
       (exposure.storage-exposure-suspend! facts)]
-    [_nested : i64 (exposure.storage-exposure-enter! facts 1 4)]
+    [_nested : i64 (exposure.storage-exposure-enter! facts 1 4 false)]
     (test.assert-i64-eq
       (exposure.storage-exposure-frame facts 1 3)
       -1
@@ -182,13 +182,33 @@
         (exposure.storage-exposure-suspend! facts)]
       (exposure.storage-exposure-reset! facts)
       (let
-        [previous : i64 (exposure.storage-exposure-enter! facts 1 5)]
+        [previous : i64 (exposure.storage-exposure-enter! facts 1 5 false)]
         [current : i64 (exposure.storage-exposure-current facts)]
         (exposure.storage-exposure-resume! facts stale)
         (test.assert-i64-eq
           (exposure.storage-exposure-current facts)
           current
           "stale resume cannot alter a new generation")
+        (exposure.storage-exposure-leave! facts previous true)))
+    (for [body (array (cast 0 : i64) 99 9223372036854775805)]
+      (let
+        [previous : i64 (exposure.storage-exposure-enter! facts 1 body true)]
+        [suspended : exposure.StorageExposureSuspension
+          (exposure.storage-exposure-suspend! facts)]
+        [_nested : i64 (exposure.storage-exposure-enter! facts 1 100 true)]
+        (test.assert-i64-eq
+          (exposure.storage-exposure-acyclic-body facts)
+          -1
+          "suspension hides an acyclic scope from nested checks")
+        (exposure.storage-exposure-resume! facts suspended)
+        (test.assert-i64-eq
+          (exposure.storage-exposure-acyclic-body facts)
+          body
+          "resumption restores the exact acyclic source identity")
+        (test.assert-i64-eq
+          (exposure.storage-exposure-frame facts 1 body)
+          -1
+          "acyclic entry allocates no binding census")
         (exposure.storage-exposure-leave! facts previous true)))))
 
 ;; No capability escapes the rewound arena; only its numeric stamp is retained.
@@ -225,7 +245,7 @@
     [_exhaust : unit
       (unsafe
         (set! (deref (exposure.storage-exposure-ptr facts)).generation -1))]
-    [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
+    [previous : i64 (exposure.storage-exposure-enter! facts 1 2 false)]
     [frame : i64 (exposure.storage-exposure-current facts)]
     (test.assert-i64-eq
       (exposure.storage-exposure-generation-successor 9223372036854775806)

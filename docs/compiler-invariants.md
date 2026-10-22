@@ -405,6 +405,8 @@ job-owned numeric bitset, bounded by the source pool and reset with the other
 body facts. Move entry skips binding collection only for that proof. An
 unexpected loop or capture clears it and invalidates any older body frames
 before lowering, so a partial census never supplies negative evidence.
+Acyclic body identity travels in the existing entry/suspension token; nested
+queries cannot lose the fact that binding collection was omitted.
 
 A successfully completed, complete frame makes an absent exposure key a proven
 negative. An unavailable or incomplete frame never supplies that proof. The

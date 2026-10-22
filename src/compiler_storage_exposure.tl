@@ -13,6 +13,7 @@
   (bindings words.Vec)
   (by-body index_map.Map)
   (by-hash index_map.Map)
+  ;; Nonnegative frame, -1 inactive, or -2-body for a checked acyclic scope.
   (current i64)
   (generation i64)
   (suspension-depth i64)
@@ -110,6 +111,13 @@
         (set! (deref data).suspension-depth (- (deref data).suspension-depth 1))
         (set! (deref data).current token.frame)))))
 
+(define (storage-exposure-acyclic-body [state : StorageExposure]) : i64
+  (let
+    [current : i64 (storage-exposure-current state)]
+    (if (<= current -2)
+      (- 0 (+ current 2))
+      -1)))
+
 (define (storage-exposure-frame-field
   [state : StorageExposure]
   [frame : i64]
@@ -148,13 +156,22 @@
 (define (storage-exposure-enter!
   [state : StorageExposure]
   [declaration : i64]
-  [body : i64]) : i64
+  [body : i64]
+  [acyclic? : bool]) : i64
   (when
     (unsafe
       (let
         [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
         (or (> (deref data).suspension-depth 0) (< (deref data).generation 0))))
     (return (storage-exposure-current state)))
+  (when
+    (and acyclic? (>= body 0) (<= body 9223372036854775805))
+    (let
+      [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
+      [previous : i64 (storage-exposure-current state)]
+      (unsafe
+        (set! (deref data).current (- -2 body)))
+      (return previous)))
   (let
     [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
     [previous : i64

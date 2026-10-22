@@ -25763,7 +25763,7 @@
         (tc_core.tc-job-state-checked-let-binding-facts
           (tc_core.tc-context-job-state ctx))).current-declaration-ordinal]
     [previous : i64
-      (storage_exposure.storage-exposure-enter! facts ordinal body-id)]
+      (storage_exposure.storage-exposure-enter! facts ordinal body-id false)]
     [writes : bool (lower-expr-writes? ctx type-env body -1 body-id)]
     [_leave : unit
       (storage_exposure.storage-exposure-leave! facts previous true)]

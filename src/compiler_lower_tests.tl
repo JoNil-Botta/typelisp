@@ -1997,7 +1997,7 @@
         (> scenario 0)
         (let
           [previous : i64
-            (storage_exposure.storage-exposure-enter! facts -1 body)]
+            (storage_exposure.storage-exposure-enter! facts -1 body false)]
           [frame : i64 (storage_exposure.storage-exposure-current facts)]
           (when
             (= scenario 2)
@@ -2056,7 +2056,7 @@
           (= scenario 5)
           (let
             [previous : i64
-              (storage_exposure.storage-exposure-enter! facts -1 body)]
+              (storage_exposure.storage-exposure-enter! facts -1 body false)]
             (storage_exposure.storage-exposure-incomplete! facts)
             (storage_exposure.storage-exposure-leave! facts previous true)))
         (let
@@ -2084,12 +2084,14 @@
         (tc_core.tc-body-early-exit-facts-start-with-limit!
           body-state
           (ast.ast-node-pool-context-expr-len pools))]
-      [earlier : i64 (storage_exposure.storage-exposure-enter! facts -1 body)]
+      [earlier : i64
+        (storage_exposure.storage-exposure-enter! facts -1 body false)]
       [_complete : unit
         (storage_exposure.storage-exposure-leave! facts earlier true)]
       [_proof : unit
         (tc_core.tc-body-storage-acyclic-set! body-state body true)]
-      [previous : i64 (tc_core.tc-body-storage-body-swap! body-state body)]
+      [previous : i64
+        (storage_exposure.storage-exposure-enter! facts -1 body true)]
       (lower.lower-exposure-prepare! ctx state body)
       (test.assert-true
         (not (lower.lower-state-address-taken-var? state 1))
@@ -2102,8 +2104,7 @@
       (test.assert-true
         (not (tc_core.tc-body-storage-acyclic? body-state 9223372036854775807))
         "unrecordable source identities remain conservative")
-      (tc_core.tc-body-storage-body-swap! body-state previous)
-      unit)))
+      (storage_exposure.storage-exposure-leave! facts previous true))))
 
 (test
   compiler-lower-loop-address-exposure

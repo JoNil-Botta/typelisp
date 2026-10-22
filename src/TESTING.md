@@ -14,6 +14,7 @@ failed/incomplete checks, scope ownership, nested collection suspension and
 stale identities or suspension tokens after a checker-job reset. A rewound
 arena reuses an owner's address without reusing its generation; exhaustion
 leaves facts unavailable. The core
+Suspension also restores acyclic source identities at the token range boundaries.
 ownership regression retains an environment across checker
 jobs and reset generations. Acyclic raw-pointer argument/callee cases verify
 that sequential address marks still force the required snapshots. The

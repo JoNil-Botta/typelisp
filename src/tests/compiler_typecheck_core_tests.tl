@@ -12749,7 +12749,8 @@
     [params : ast.AstParamList (ast.ast-param-list-new)]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id (tc_core.tc-empty-env) name (I64))]
-    [previous-a : i64 (storage_exposure.storage-exposure-enter! source-a 0 1)]
+    [previous-a : i64
+      (storage_exposure.storage-exposure-enter! source-a 0 1 false)]
     [_annotate : tc_core.TcTypeEnv
       (tc_core.tc-storage-register! ctx-a env 0 -1 name)]
     [_enter-b : unit (tc_core.tc-storage-enter! ctx-b env (& params) 2)]
@@ -12782,7 +12783,8 @@
     ;; Its descriptor remains readable but cannot name a new-generation frame.
     (storage_exposure.storage-exposure-reset! source-a)
     (let
-      [previous : i64 (storage_exposure.storage-exposure-enter! source-a 0 3)]
+      [previous : i64
+        (storage_exposure.storage-exposure-enter! source-a 0 3 false)]
       [frame : i64 (storage_exposure.storage-exposure-current source-a)]
       (tc_core.tc-storage-expose! ctx-a env (& locals) (Var name) true)
       (test.assert-i64-eq

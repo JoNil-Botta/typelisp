@@ -212,6 +212,14 @@ The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the
 bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47).
+
+`compiler-driver-retained-image-owner` in `compiler_driver_smoke_tests.tl`
+checks embedded-image retention, nonpositive and nested owners, forgetting a
+borrowed owner, and reuse after the previous owner is destroyed. Run it at
+opt0, opt1 and opt2. The native-route stress and stdlib identity differential
+gates retain their complete native/source batches, mapping lifecycles,
+source-mutation fallbacks and failing-entry diagnostics.
+
 The gate table, the gate/tool classification and the canonical script entry
 points are documented in [`../scripts/README.md`](../scripts/README.md); the
 user-facing `typelisp test`/`doc --test` behaviour, the stage0 workflow and the

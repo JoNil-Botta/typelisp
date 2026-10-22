@@ -15,6 +15,10 @@ Lowering produces typed three-address IR, optimization transforms that IR,
 and the backend emits native code for the selected target. CLI, package,
 batch and LSP services orchestrate these stages.
 
+Multi-entry compile batches may retain immutable embedded-image bytes in the
+driver's surface arena under the [batch lifetime contract](compiler-invariants.md#architecture).
+Per-entry source admission and native mappings remain independent.
+
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.

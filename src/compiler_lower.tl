@@ -15083,10 +15083,12 @@
           1)))
     state))
 
-(define (lower-exposure-scopes? [state : LowerState]) : bool
-  (let
-    [data : (Box LowerStateData) (lower-state-box state)]
-    (>= (deref data).address-exposure-mode 2)))
+(defmacro (lower-exposure-scopes? [state : Expr]) : Expr
+  `(>=
+    (__tl-project-field
+      (__tl-box-place (lower-state-box ,state))
+      address-exposure-mode)
+    2))
 
 (define (lower-exposure-enter-scope!
   [state : LowerState]
@@ -25684,6 +25686,13 @@
         [any? : bool (< root 0)]
         [found : bool
           (match (lower-global-shared-view expr)
+            [(PtrAddrOf _)
+              (when
+                (and any? (>= body-id 0))
+                (storage_exposure.storage-exposure-incomplete!
+                  (tc_core.tc-body-storage-exposure
+                    (tc_core.tc-context-body-state ctx))))
+              false]
             [(or (StructSet _ _ _) (ArraySet _ _ _) (BoxSet _ _) (Replace _ _)
                  (PtrWrite _ _))
               any?]
@@ -25691,6 +25700,12 @@
               (and any? (tc_core.tc-dotted-local-field-name-id? type-env name))]
             [(Borrow mutable _ place-box)
               (let
+                [_exposure : unit
+                  (when
+                    (and any? mutable (>= body-id 0))
+                    (storage_exposure.storage-exposure-incomplete!
+                      (tc_core.tc-body-storage-exposure
+                        (tc_core.tc-context-body-state ctx))))]
                 [place-root : i64
                   (if mutable
                     (tc_core.tc-storage-place-root
@@ -25735,6 +25750,28 @@
             (set! found true))
           (set! index (+ index 1)))
         found)]))
+
+;; The existing whole-body write scan also proves address absence for bodies
+;; without checked facts. Any potential address makes that proof unavailable;
+;; no spelling-based exposure facts are inferred from this untyped walk.
+(define (lower-unrecorded-body-writes?
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [body : ast.AstExpr]
+  [body-id : i64]) : bool
+  (let
+    [facts : storage_exposure.StorageExposure
+      (tc_core.tc-body-storage-exposure (tc_core.tc-context-body-state ctx))]
+    [ordinal : i64
+      (tc_core.tc-checked-let-binding-fact-state-data
+        (tc_core.tc-job-state-checked-let-binding-facts
+          (tc_core.tc-context-job-state ctx))).current-declaration-ordinal]
+    [previous : i64
+      (storage_exposure.storage-exposure-enter! facts ordinal body-id)]
+    [writes : bool (lower-expr-writes? ctx type-env body -1 body-id)]
+    [_leave : unit
+      (storage_exposure.storage-exposure-leave! facts previous true)]
+    writes))
 
 ;; A by-value memory-class struct or enum argument is passed as the address of
 ;; its place, and the callee reads that storage for the whole call (#7901). The
@@ -68690,21 +68727,20 @@
           (match (lower-global-shared-view written)
             [(Known body _) body]
             [(Unknown body) body])]
-        [_exposure : unit (lower-exposure-prepare! ctx bound-state body-id)]
         ;; Bit i for parameter i, every bit (-1) for a body with an unrecorded
         ;; write.
         [mask : i64
           (match written
             [(Known _ known) known]
             [(Unknown _)
-              (if (lower-expr-writes?
+              (if (lower-unrecorded-body-writes?
                 ctx
                 bound-type-env
                 (lower-global-shared-view origin)
-                -1
                 body-id)
                 -1
                 0)])]
+        [_exposure : unit (lower-exposure-prepare! ctx bound-state body-id)]
         [index : i64
           (if (= mask 0)
             (ast.ast-param-list-len params)

@@ -2006,7 +2006,49 @@
             (lower.lower-state-address-taken-mark state 0)]
           (test.assert-true
             (lower.lower-state-address-taken-var? state 0)
-            "incremental marks remain visible with a complete empty census"))))))
+            "incremental marks remain visible with a complete empty census"))))
+    (let
+      [address : i64
+        (ast.ast-node-pool-context-expr-push pools (PtrAddrOf body))]
+      [borrow : i64
+        (ast.ast-node-pool-context-expr-push pools (Borrow true -1 body))]
+      [lambda-body : i64
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (Lambda
+            (box (ast.AstLambda.Lambda (ast.ast-param-list-new) (No) address))))]
+      [write : i64
+        (ast.ast-node-pool-context-expr-push pools (PtrWrite body body))]
+      [bodies : (Array i64 7)
+        (array body address borrow lambda-body -1 body write)]
+      (for [scenario (iterator.range 0 7)]
+        (storage_exposure.storage-exposure-reset! facts)
+        (when
+          (= scenario 5)
+          (let
+            [previous : i64
+              (storage_exposure.storage-exposure-enter! facts -1 body)]
+            (storage_exposure.storage-exposure-incomplete! facts)
+            (storage_exposure.storage-exposure-leave! facts previous true)))
+        (let
+          [id : i64 (array-ref bodies scenario)]
+          [origin : ast.AstExpr
+            (ast.ast-node-pool-context-expr-get
+              pools
+              (if (< id 0)
+                body
+                id))]
+          (test.assert-true
+            (=
+              (lower.lower-unrecorded-body-writes? ctx env origin id)
+              (or (= scenario 2) (= scenario 6)))
+            "address-absence proof preserves the existing write result")
+          (lower.lower-exposure-prepare! ctx state id)
+          (test.assert-true
+            (=
+              (lower.lower-state-address-taken-var? state 1)
+              (or (= scenario 1) (= scenario 2) (= scenario 4) (= scenario 5)))
+            "only a complete address-free fallback walk proves privacy"))))))
 
 (test
   compiler-lower-loop-address-exposure

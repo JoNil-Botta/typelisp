@@ -401,7 +401,11 @@ checker accounts for every potentially exposed slot, including through its
 separate loop-scope walk, before lowering emits any body instructions. No IR
 variable numbers are predicted and no scratch AST/type payload is retained.
 Generated functions and dispatch variants select their own declaration/body
-identities; synthesized bodies without facts remain conservative.
+identities. For an unrecorded body, the existing whole-body write scan can
+prove a complete empty exposure set: every raw address or mutable borrow
+invalidates that proof, and nested lambda bodies remain separate. The scan
+does not infer lexical identities. Missing or incomplete evidence stays
+conservative, including bodies without a source ID.
 
 Lowering seeds its existing address-taken map as parameter, local, pattern and
 loop slots are allocated. Scope entry visits only the exposed source bindings

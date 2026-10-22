@@ -1004,6 +1004,11 @@ Current examples include:
 Test-only helpers belong in these companions (or under `src/tests/`), not in
 the production modules they exercise.
 
+`compiler-field-type-indexed-bounds` checks first, middle and last fields of
+different types, empty field storage, signed index extremes and a registry
+handle whose child is past the owning struct. The symbol smoke runs the same
+checks alongside lifetime-bearing fields and shifted declaration owners.
+
 Prefer small hand-built fixtures and deterministic structural assertions over
 large golden strings. A runnable self-test returns `42` on success. Failures
 should be specific enough to identify the broken layer; using `panic` with a

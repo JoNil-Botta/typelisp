@@ -9,9 +9,11 @@ with ordinary calls; safety rows keep direct and mutual recursion rejected.
 `compiler_spmd_intrinsic_tests.tl` covers ordinary intrinsic visibility,
 shadowing, masked operands and arity/type/name failures inside `foreach`.
 The SPMD math corpus compares abs/bitcast/copy-sign, square-root and transitive
-exponential helpers with ordinary calls. The public-check helper transcript
-pins a callee error and both caller frames across targets, modes and opt levels;
-macro diagnostic transport remains a regression control.
+exponential helpers with ordinary calls. The public-check helper transcripts
+pin typecheck and unsupported-intrinsic callee errors with both caller frames
+across targets, modes and opt levels. The lowering fixture calls its `foreach`
+function from `main`, keeping the rejected body live through declaration pruning.
+Macro diagnostic transport remains a regression control.
 
 `tc-dotted-alias-variant-source-name-boundary` checks absent source names,
 sentinels, the source-table boundary and structural pair/triple/fresh-local IDs

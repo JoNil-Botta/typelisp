@@ -42940,6 +42940,7 @@
             ctx
             expr-bases
             caller-name-id
+            -1
             name-id
             origin
             body
@@ -42965,13 +42966,18 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [caller-name-id : i64]
+  [fallback-path-id : i64]
   [name-id : i64]
   [origin : ast.AstExpr]
   [body : ast.AstExpr]
   [message : String]) : String
   (tc-framed-error
     (tc-spmd-framed-error-prefix)
-    (tc-spmd-helper-source-path-id ctx caller-name-id)
+    (let
+      [path-id : i64 (tc-spmd-helper-source-path-id ctx caller-name-id)]
+      (if (< path-id 0)
+        fallback-path-id
+        path-id))
     (match (tc-expr-maybe-span expr-bases origin)
       [(Some span) span]
       [(No) (ast.ast-source-span 1 1 1 1)])
@@ -43466,6 +43472,7 @@
             ctx
             expr-bases
             caller-name-id
+            -1
             name-id
             origin
             body

@@ -63,6 +63,43 @@ stderr contains in SPMD helper `middle/through` called here
 stderr not-contains unbound name
 stderr not-contains caller.tl:3:3
 
+case compile-spmd-intrinsic-physical-locations
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+mode avx2 avx512
+each f32 f64
+file -x provider.tl
+(define (root [value : {{each}}]) : {{each}}
+  (__tl_float_sqrt value))
+end-file
+file -x middle.tl
+(import provider)
+(define (through [value : {{each}}]) : {{each}}
+  (provider.root value))
+end-file
+file -x caller.tl
+(import middle)
+(define (fill [xs : (& xs (__tl_dyn-array {{each}}))] [out : (&mut out (__tl_dyn-array {{each}}))]) : unit
+  (foreach ([i : i64 0 3])
+    (set! (array-ref out i) (middle.through (array-ref xs i)))))
+(define (main) : i64
+  (let [xs : (__tl_dyn-array {{each}}) (__tl_make-array {{each}} 3)]
+       [out : (__tl_dyn-array {{each}}) (__tl_make-array {{each}} 3)]
+    (fill (& xs) (&mut out))
+    0))
+end-file
+run compile "{{dir}}/caller.tl" --target {{target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0214]: lower: SPMD numeric intrinsic '__tl_float_sqrt' from {{each}} to {{each}} is unsupported in private helper context
+stderr contains provider.tl:2:3
+stderr contains middle.tl:3:4
+stderr contains caller.tl:4:30
+stderr contains in SPMD helper `provider/root` called here
+stderr contains in SPMD helper `middle/through` called here
+stderr not-contains unbound name
+stderr not-contains caller.tl:2:3
+
 case loader-error-codes
 target linux-x86_64 windows-x86_64
 each check compile

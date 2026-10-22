@@ -44387,14 +44387,9 @@
                     (lower-global-shared-view index-ty))
                   (FusedReduction)
                   value)
-                  [(Some origin decision)
+                  [(Some origin decision message)
                     (lower-spmd-select! state (Rejected) (NumericPolicy) 1)
-                    (Err
-                      (box
-                        (lower-diagnostic-at-expr
-                          ctx
-                          origin
-                          (lower-spmd-numeric-failure-message decision))))]
+                    (Err (box (lower-diagnostic-at-expr ctx origin message)))]
                   [(No)
                     (lower-spmd-select! state (CompilerFallback) reason 1)
                     (lower-spmd-reduce-scaffold
@@ -48574,9 +48569,10 @@
         [(or (Imported _ _ _ _ _) (No)) false])]
     [(Err _) false]))
 
+;; Preserve the leaf location and helper frames while numeric admission unwinds.
 (defenum LowerMaybeSpmdNumericFailure
   (No)
-  (Some ast.AstExpr spmd_numeric.CompilerSpmdNumericDecision))
+  (Some ast.AstExpr spmd_numeric.CompilerSpmdNumericDecision String))
 
 (define (lower-spmd-numeric-failure-in-expr-list-at
   [ctx : tc_core.TcContext]
@@ -48595,7 +48591,7 @@
       type-env
       numeric-context
       (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      [(Some origin decision) (return (Some origin decision))]
+      [(Some origin decision message) (return (Some origin decision message))]
       [(No) unit]))
   (No))
 
@@ -48640,7 +48636,7 @@
           type-env
           numeric-context
           (lower-context-expr-get ctx init-box))
-          [(Some origin decision) (Some origin decision)]
+          [(Some origin decision message) (Some origin decision message)]
           [(No)
             (match (tc_core.tc-expr
               ctx
@@ -48705,7 +48701,7 @@
     type-env
     numeric-context
     first)
-    [(Some origin decision) (Some origin decision)]
+    [(Some origin decision message) (Some origin decision message)]
     [(No)
       (lower-spmd-numeric-failure
         ctx
@@ -48753,7 +48749,10 @@
                 (not
                   (spmd_numeric.compiler-spmd-numeric-decision-supported?
                     decision)))
-                (Some origin decision)
+                (Some
+                  origin
+                  decision
+                  (lower-spmd-numeric-failure-message decision))
                 (lower-spmd-numeric-failure-first
                   ctx
                   function-state
@@ -48807,7 +48806,10 @@
                   (not
                     (spmd_numeric.compiler-spmd-numeric-decision-supported?
                       decision)))
-                  (Some origin decision)
+                  (Some
+                    origin
+                    decision
+                    (lower-spmd-numeric-failure-message decision))
                   (lower-spmd-numeric-failure
                     ctx
                     function-state
@@ -48847,7 +48849,7 @@
         type-env
         numeric-context
         (lower-context-expr-get ctx value-box))
-        [(Some found decision) (Some found decision)]
+        [(Some found decision message) (Some found decision message)]
         [(No)
           (lower-spmd-numeric-failure-first
             ctx
@@ -48869,7 +48871,7 @@
           type-env
           masked
           (lower-context-expr-get ctx condition-box))
-          [(Some found decision) (Some found decision)]
+          [(Some found decision message) (Some found decision message)]
           [(No)
             (lower-spmd-numeric-failure-first
               ctx
@@ -48910,7 +48912,7 @@
             type-env
             numeric-context
             bindings)
-            [(Some found decision) (Some found decision)]
+            [(Some found decision message) (Some found decision message)]
             [(No)
               (lower-spmd-numeric-failure
                 ctx
@@ -48944,15 +48946,19 @@
                   [(Ok source)
                     (match (tc_core.tc-expr ctx type-env (clone origin))
                       [(Ok destination)
-                        (return
-                          (Some
-                            origin
+                        (let
+                          [decision : spmd_numeric.CompilerSpmdNumericDecision
                             (spmd_numeric.compiler-spmd-numeric-intrinsic-decision
                               source
                               destination
                               numeric-context
                               (lower-spmd-numeric-backend mode)
-                              name)))]
+                              name)]
+                          (return
+                            (Some
+                              origin
+                              decision
+                              (lower-spmd-numeric-failure-message decision))))]
                       [(Err _) unit])]
                   [(Err _) unit]))]
             [_ unit]))
@@ -48962,7 +48968,7 @@
           env
           type-env
           (lower-id-set-empty)
-          func)
+          (clone func))
           [(Ok helper)
             (match helper
               [(Some name params _ body)
@@ -48983,6 +48989,10 @@
                     [previous : LowerIdSet
                       (compiler-lower-function-state-inline-helper-stack
                         function-state)]
+                    [caller-handle : i64
+                      (if (= previous.len 0)
+                        (csym.compiler-symbols-missing-handle)
+                        (array-ref previous.slots (- previous.len 1)))]
                     [helper-context : spmd_numeric.CompilerSpmdNumericContext
                       (if (lower-spmd-helper-out-of-line?
                         ctx
@@ -49018,12 +49028,39 @@
                       function-state
                       previous)
                     (match result
-                      [(Some found decision)
-                        (Some
-                          (match decision.operation
-                            [(Intrinsic _) origin]
-                            [_ found])
-                          decision)]
+                      [(Some found decision message)
+                        (let
+                          [symbols (tc_core.tc-context-symbols ctx)]
+                          [caller-id : i64
+                            (if (csym.compiler-symbols-handle-found?
+                              caller-handle)
+                              (csym.compiler-symbols-owner-id-at-index-or
+                                symbols
+                                (csym.compiler-symbol-handle-index
+                                  caller-handle)
+                                -1)
+                              -1)]
+                          [callee-id : i64
+                            (csym.compiler-symbols-owner-id-at-index-or
+                              symbols
+                              (csym.compiler-symbol-handle-index name)
+                              -1)]
+                          (Some
+                            (clone found)
+                            decision
+                            (tc_core.tc-spmd-helper-error
+                              ctx
+                              (tc_core.tc-context-expr-bases ctx)
+                              caller-id
+                              (compiler-lower-state-current-source-path-id
+                                (compiler-lower-function-state-owner
+                                  function-state))
+                              callee-id
+                              func
+                              found
+                              (if (tc_core.tc-encoded-error? message)
+                                message
+                                (tc_core.tc-kind-message (Spmd) message)))))]
                       [(No)
                         (lower-spmd-numeric-failure-in-expr-list
                           ctx
@@ -61234,12 +61271,12 @@
                     (tc_core.tc-bind-id type-env index-id (clone index-ty))
                     (DirectMap)
                     diagnostic-body)
-                    [(Some origin decision)
+                    [(Some origin decision message)
                       (lower-foreach-plan-rejected
                         ctx
                         origin
                         (NumericPolicy)
-                        (lower-spmd-numeric-failure-message decision))]
+                        message)]
                     [(No)
                       (cond
                         [facts.varying-while
@@ -62710,7 +62747,7 @@
       (tc_core.tc-bind-id type-env index-id (lower-global-shared-view index-ty))
       (DirectMap)
       (lower-global-shared-view body))
-      [(Some origin decision)
+      [(Some origin decision message)
         (match decision.context
           [(PrivateHelper)
             (lower-spmd-select!
@@ -62732,12 +62769,7 @@
                 start-value
                 end-value
                 body)
-              (Err
-                (box
-                  (lower-diagnostic-at-expr
-                    ctx
-                    origin
-                    (lower-spmd-numeric-failure-message decision)))))]
+              (Err (box (lower-diagnostic-at-expr ctx origin message))))]
           [_
             (lower-foreach-lowered-after-numeric-admission
               ctx

@@ -506,9 +506,10 @@ rules. Private intrinsic spellings retain their definition module during helper
 lowering, including under caller shadows; bodies containing them keep a helper
 boundary rather than substituting those spellings into the caller. Scalar
 lowering preserves ordinary calls. SIMD admission reports a typed unsupported
-intrinsic at the call site until the numeric policy supplies its strategy.
-Errors from a rechecked helper retain their physical callee path/span and wrap
-each caller boundary using the same diagnostic transport as macro frames.
+intrinsic until the numeric policy supplies its strategy. Typecheck and numeric
+admission errors retain their physical callee path/span and wrap each caller
+boundary using the same diagnostic transport as macro frames. The lowerer's
+current source path supplies the root caller when the helper stack is empty.
 
 `compiler_spmd_logical_gang.tl` owns numeric native widths and checked logical
 gang geometry. It reuses the numeric policy's closed backend/lane enums; ABI

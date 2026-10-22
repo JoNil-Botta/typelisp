@@ -214,6 +214,18 @@ spmd_mode_expected_compile_diagnostic() {
         tests/spmd/inline_helper_shadow_i64.tl:avx2 | tests/spmd/inline_helper_shadow_i64.tl:avx512)
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
             ;;
+        tests/integration/spmd_stdlib_math_abs.tl:avx2 | tests/integration/spmd_stdlib_math_abs.tl:avx512 | tests/integration/spmd_stdlib_math_sqrt.tl:avx2 | tests/integration/spmd_stdlib_math_sqrt.tl:avx512)
+            _backend=AVX2
+            [ "$_mode" = avx2 ] || _backend=AVX-512
+            _intrinsic=__tl_float_from_bits
+            _source=u64
+            _destination=f64
+            if [ "$_prog" = tests/integration/spmd_stdlib_math_sqrt.tl ]; then
+                _intrinsic=__tl_float_sqrt
+                _source=f64
+            fi
+            printf '%s\n' "lower: SPMD numeric intrinsic '$_intrinsic' from $_source to $_destination is unsupported in private helper context for $_backend backend; this intrinsic has no implemented SIMD strategy; use scalar backend"
+            ;;
         tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
             printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
             ;;

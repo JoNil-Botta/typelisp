@@ -2578,7 +2578,13 @@ a discrepancy is an error, and absent headers never trigger a fallback.
 The ancillary section directory is internal; it is not a complete ET_REL model.
 
 DT_HASH nchain or checked GNU bucket/terminated-chain walks establish the
-symbol count; both must agree when present. Validation checks reachability,
+symbol count; both agree when GNU chains encode a count. An empty GNU hash can have
+symoffset=1 despite a longer undefined-symbol prefix. A checked SysV count or
+the unique dynamic-symbol section supplies that total; its virtual address
+still maps through PT_LOAD. Without either, UnsupportedMetadata reports
+GNU-empty-symbol-count rather than assuming dynstr adjacency. chain-count
+retains the empty/nonempty distinction while symbol-count is complete for
+every accepted model. Validation checks reachability,
 chain ownership, bucket/name hashes and GNU bloom bits. The shared
 linker_elf_dynamic.tl owns dynamic tag classification and the GNU byte hash;
 the existing GNU-version codec remains the single SysV name-hash owner.

@@ -1,12 +1,12 @@
 # Checked ELF shared-object inputs
 
-These eight ELF64/LSB/x86-64 inputs are data fixtures; tests never load or
+These ten ELF64/LSB/x86-64 inputs are data fixtures; tests never load or
 execute them. Six small DSOs were built with GCC 16.2.1 and Clang 23.1.3,
 GNU ld 2.47, and each of SysV-only, GNU-only and both hash styles. They define
 default/non-default API versions, a weak definition, protected visibility,
 TLS and IFUNC; they need libc.so.6 at GLIBC_2.2.5, and retain soname and loader
-flags. This is the small glibc-style definition/need shape. The seventh input
-removes only the section-table locator from the GCC/both image. The eighth
+flags. This is the small glibc-style definition/need shape. Another input
+removes only the section-table locator from the GCC/both image. The final input
 is actual musl 1.2.5 libc.so, built from its pinned upstream release.
 
 The producer source and complete compiler/linker options are in
@@ -22,7 +22,7 @@ symbol, Versym, Verdef/Verdaux parent and Verneed/Vernaux record that tool
 exposes, preserving duplicate rows and physical symbol/version offsets.
 scripts/verify-elf-dso-reader-oracle.sh normalizes the live tool output and
 compares both the checked golden and the reader's projection. The required
-Linux gate runs all eight producers. The same checked bytes and goldens run
+Linux gate runs all ten producers. The same checked bytes and goldens run
 without external tools in inline and native opt0/1/2 tests on both hosts.
 
 GNU readelf -V omits version records when section headers are absent, even
@@ -38,3 +38,9 @@ against an independent linear wire scan; malformed mutations, resource
 boundaries and a complete minimal-file truncation corpus are generated in the
 TypeLisp tests. The fixture sources are project-owned, except the musl image,
 whose upstream notices are retained alongside it.
+
+Two additional GCC DSOs contain only undefined dynamic symbols and an empty
+GNU hash, with/without SysV hash. GNU symoffset is one despite six symbols.
+The reader uses a checked SysV or section count; native tests also strip each
+image. A sectionless GNU-only empty hash has no encoded total count and returns
+UnsupportedMetadata at GNU-empty-symbol-count instead of guessing a boundary.

@@ -30,6 +30,14 @@ for producer in gcc clang; do
             -o "$OUT/$producer-$hash.in"
     done
 done
+cat > "$OUT/empty.c" <<'C'
+extern int puts(const char *);
+__attribute__((visibility("hidden"))) int hidden_api(void) { return puts("hidden"); }
+C
+for hash in gnu both; do
+    gcc -fPIC -shared -O2 -g0 -Wl,--build-id=none,--hash-style="$hash" \
+        "$OUT/empty.c" -o "$OUT/gcc-empty-$hash.in"
+done
 cp "$OUT/gcc-both.in" "$OUT/no-sections.in"
 dd if=/dev/zero of="$OUT/no-sections.in" bs=1 seek=40 count=8 conv=notrunc 2>/dev/null
 dd if=/dev/zero of="$OUT/no-sections.in" bs=1 seek=58 count=6 conv=notrunc 2>/dev/null

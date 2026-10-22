@@ -2283,7 +2283,7 @@ are staged; absolute/parent-traversal dependencies remain invalid.
 
 linker_elf_dso_reader_tests.tl shares self-test with
 src/tests/linker_elf_dso_reader_smoke.tl at opt0/1/2 on Linux and Windows.
-Eight embedded GCC/Clang/musl snapshots cover both hash formats, GNU versions,
+Ten embedded GCC/Clang/musl snapshots cover both hash formats, GNU versions,
 weak/protected/TLS/IFUNC definitions, loader flags, needed libraries and a
 sectionless DSO. Recorded readelf projections check every exposed record.
 The sectionless case also checks unchanged payload bytes and complete version
@@ -2301,3 +2301,7 @@ stage2-elf-dso-reader-oracle is an additional required Linux gate using live
 readelf -W -D -s --dynamic --version-info. Existing gates remain unchanged.
 Its sectionless limitation and producer regeneration instructions are in
 tests/fixtures/elf-dso/README.md. Normal/native tests invoke no external tool.
+
+The empty-GNU-hash controls retain every undefined symbol using a SysV or
+checked section count. Removing both count sources yields explicit unsupported
+metadata. Do not infer symbol count from the distance to dynstr.

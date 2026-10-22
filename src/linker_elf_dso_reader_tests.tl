@@ -42,6 +42,18 @@
   no-sections-oracle
   "../tests/fixtures/elf-dso/no-sections.expected")
 
+(include-bin empty-gnu "../tests/fixtures/elf-dso/gcc-empty-gnu.in")
+
+(include-bin empty-both "../tests/fixtures/elf-dso/gcc-empty-both.in")
+
+(include-bin
+  empty-gnu-oracle
+  "../tests/fixtures/elf-dso/gcc-empty-gnu.expected")
+
+(include-bin
+  empty-both-oracle
+  "../tests/fixtures/elf-dso/gcc-empty-both.expected")
+
 (define (request) : dso.DsoReadRequest
   (dso.DsoReadRequest
     (elf.ElfIdentity (cast 41 : u64) (cast 7 : u64))
@@ -858,6 +870,54 @@
             "section-zero-size"
             (+ object.header.section-offset 32)))])))
 
+(define (empty-gnu-tests) : unit
+  (assert-fixture (& empty-gnu) (& empty-gnu-oracle) true)
+  (assert-fixture (& empty-both) (& empty-both-oracle) true)
+  (lookup-fixture (& empty-gnu))
+  (lookup-fixture (& empty-both))
+  (let
+    [req : dso.DsoReadRequest (request)]
+    (match (dso.read-dso (& empty-gnu) (& req))
+      [(ReadFailed _)
+        (test.assert-true false "empty GNU table with section count")]
+      [(ReadDso object)
+        (test.assert-i64-eq
+          object.gnu.chain-count
+          0
+          "empty GNU hash contains no chains")
+        (test.assert-true
+          (> object.gnu.symbol-count object.gnu.symbol-offset)
+          "undefined prefix exceeds GNU symoffset")
+        (test.assert-i64-eq
+          object.gnu.symbol-count
+          (array-length object.symbols)
+          "complete symbol count")
+        (let
+          [data : (__tl_dyn-array u8) (clone empty-gnu)]
+          (le.set-u64! (&mut data) 40 0)
+          (le.set-u16! (&mut data) 58 0)
+          (le.set-u16! (&mut data) 60 0)
+          (le.set-u16! (&mut data) 62 0)
+          (assert-error
+            (& data)
+            "GNU-empty-symbol-count"
+            (+ object.gnu.span.offset 4))
+          (test.assert-true
+            (match (dso.read-dso (& data) (& req))
+              [(ReadFailed error)
+                (match error.kind
+                  [(UnsupportedMetadata) true]
+                  [_ false])]
+              [_ false])
+            "ambiguous total count is explicit unsupported metadata"))])
+    (let
+      [data : (__tl_dyn-array u8) (clone empty-both)]
+      (le.set-u64! (&mut data) 40 0)
+      (le.set-u16! (&mut data) 58 0)
+      (le.set-u16! (&mut data) 60 0)
+      (le.set-u16! (&mut data) 62 0)
+      (assert-fixture (& data) (& empty-both-oracle) true))))
+
 (define (self-test) : i64
   (producer-tests)
   (lookup-tests)
@@ -869,6 +929,7 @@
   (chain-and-pointer-tests)
   (mutation-corpus-tests)
   (numbering-and-empty-tests)
+  (empty-gnu-tests)
   42)
 
 (test elf-dso-producer-records (producer-tests))
@@ -892,3 +953,5 @@
 (test elf-dso-finite-hostile-wire-corpus (mutation-corpus-tests))
 
 (test elf-dso-extended-numbering-and-empty-loads (numbering-and-empty-tests))
+
+(test elf-dso-empty-gnu-hash-undefined-count-and-ambiguity (empty-gnu-tests))

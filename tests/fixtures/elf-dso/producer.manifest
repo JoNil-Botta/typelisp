@@ -19,6 +19,8 @@ c631655545a9a9836b051d69db4aa5a6c0583124b2fa9b5137e3511dac4b887d  tests/fixtures
 26bf54daf8cc26604a2b215a269f42b4499b430c985ba46c80ae4d4e1ade1a45  tests/fixtures/elf-dso/clang-gnu.in
 8f99be86e77d8c7517eea70e229f1201630894781c465e6e2850a90a8a54f214  tests/fixtures/elf-dso/clang-sysv.in
 2e80399f55ad828b5b842ca3059d494bbeac067c7def05431d83f544f4d30286  tests/fixtures/elf-dso/gcc-both.in
+0cdab771fef477c3921f9668e44749a362585b8f8d1d3e5964a083649e32491e  tests/fixtures/elf-dso/gcc-empty-both.in
+b03fd76094b7fa2a0199e10b966764a35c386062aeef2470b929327e25dc6a77  tests/fixtures/elf-dso/gcc-empty-gnu.in
 df3d29f4ba4bd2e0baaec82e5e58244c864c83bf9f5260e2ea4d8a0a2f4bfa04  tests/fixtures/elf-dso/gcc-gnu.in
 ad47b427ee977921a4d98bccec28a4d8e4837cc884ed016f31e077ab7dd62caa  tests/fixtures/elf-dso/gcc-sysv.in
 dacd98ef4c2f45b9574c04b7c299d912b0902398e21529c5993a62a879a720e9  tests/fixtures/elf-dso/musl-1.2.5.in
@@ -27,6 +29,8 @@ b199bde524bdb21fc8f96b569a815a02726d02ca802b42698d02897ccb8085dd  tests/fixtures
 e799c65b25b1dbdbaf0d9fef418b02bf46f73a976b6f5f81f46d191b967840d7  tests/fixtures/elf-dso/clang-gnu.expected
 bb69205daea5de7e5eadebd1bec9643d0bade00f8d5e91fd704b9e3a5cd967aa  tests/fixtures/elf-dso/clang-sysv.expected
 f20aa938c262ccf233111a15ff3957770118ee5ca26b419518e5537a8539145a  tests/fixtures/elf-dso/gcc-both.expected
+e1e08e36d5fea8e8920723441a89a54433f80aa32d4d05b78238874fdee23376  tests/fixtures/elf-dso/gcc-empty-both.expected
+7da96a2c44df6d639b03b6d8fb2a7c1936cbc6138b0bb18e633f93ff8d1eda3c  tests/fixtures/elf-dso/gcc-empty-gnu.expected
 03aeb1919470cff1edb6457aeb81b8c106514a24b857c756b93e0f685ad02e2d  tests/fixtures/elf-dso/gcc-gnu.expected
 7a9cd99179fdd4b5a919d0f61491618165f3d91c640fbe247cff4d72044cfcad  tests/fixtures/elf-dso/gcc-sysv.expected
 0069b10e7e0082dc5e59b709eb6e9af05ebfd2669a2a4ce02dd2f7d7e74e68f5  tests/fixtures/elf-dso/musl-1.2.5.expected

@@ -38,6 +38,7 @@
 (defenum DsoErrorKind
   (NotElf)
   (InvalidInput)
+  (UnsupportedMetadata)
   (ResourceLimit))
 
 ;; Field names are fixed literals; hostile input cannot allocate diagnostics.
@@ -73,10 +74,11 @@
   (bloom-shift i64)
   (bucket-offset i64)
   (chain-offset i64)
-  (symbol-count i64))
+  (symbol-count i64)
+  (chain-count i64))
 
 (define (empty-hash) : DsoHash
-  (DsoHash (elf.ElfSpan 0 0) 0 0 0 0 0 0 0))
+  (DsoHash (elf.ElfSpan 0 0) 0 0 0 0 0 0 0 0))
 
 (defenum DsoVersions
   (Unversioned)
@@ -301,9 +303,12 @@
             [gnu : DsoHash
               (read-hash! data (& segments) (& entries) true (&mut check))]
             [count : i64
-              (if (> sysv.span.size 0)
-                sysv.symbol-count
-                gnu.symbol-count)]
+              (complete-symbol-count!
+                (& sections)
+                (& entries)
+                (& sysv)
+                (&mut gnu)
+                (&mut check))]
             (require!
               (&mut check)
               (> strings.size 0)
@@ -1398,8 +1403,68 @@
                 shift
                 bucket-at
                 chain-at
-                count))))))
+                count
+                (if gnu
+                  (- count second)
+                  count)))))))
     out))
+
+;; GNU ld writes symoffset=1 for an empty hash even when undefined symbols
+;; follow the null row. An empty GNU table is not a total-symbol-count oracle.
+(define (complete-symbol-count!
+  [sections : (& s (__tl_dyn-array elf.ElfSection))]
+  [entries : (& e (__tl_dyn-array DsoDynamic))]
+  [sysv : (& h DsoHash)]
+  [gnu : (&mut g DsoHash)]
+  [check : (&mut c DsoCheck)]) : i64
+  (let
+    [count : i64
+      (if (> sysv.span.size 0)
+        sysv.symbol-count
+        gnu.symbol-count)]
+    (when
+      (and (> gnu.span.size 0) (= gnu.chain-count 0))
+      (when
+        (= sysv.span.size 0)
+        (let
+          [found : i64 0]
+          [i : i64 0]
+          (while (and check.ok (< i (array-length sections)))
+            (charge! check 1 (array-ref sections i).id.offset)
+            (let
+              [section : (& s elf.ElfSection) (& (array-ref sections i))]
+              (when
+                (= section.section-type 11)
+                (set! found (+ found 1))
+                (require! check (= found 1) "duplicate-dynamic-section" 40)
+                (charge! check (array-length entries) section.id.offset)
+                (unless check.ok (return count))
+                (require!
+                  check
+                  (and
+                    (= section.entry-size (cast 24 : u64))
+                    (= (% section.size (cast 24 : u64)) (cast 0 : u64))
+                    (= section.address (tag-value entries dynamic.dt-symtab)))
+                  "section-dynamic-disagreement"
+                  (+ section.id.offset 24))
+                (set! count (cast (/ section.size (cast 24 : u64)) : i64))))
+            (set! i (+ i 1)))
+          (require! check (<= found 1) "duplicate-dynamic-section" 40)
+          (when
+            (and check.ok (= found 0))
+            (require!
+              check
+              false
+              "GNU-empty-symbol-count"
+              (+ gnu.span.offset 4))
+            (set! check.error.kind (UnsupportedMetadata)))))
+      (require!
+        check
+        (>= count gnu.symbol-offset)
+        "hash-symbol-count"
+        (+ gnu.span.offset 4))
+      (set! gnu.symbol-count count))
+    count))
 
 (define (read-symbols!
   [data : (& b (__tl_dyn-array u8))]
@@ -1605,7 +1670,9 @@
     (let
       [i : i64
         (if gnu
-          hash.symbol-offset
+          (if (= hash.chain-count 0)
+            hash.symbol-count
+            hash.symbol-offset)
           1)]
       (while (and check.ok (< i hash.symbol-count))
         (charge! check 1 hash.span.offset)

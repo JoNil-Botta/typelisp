@@ -1245,6 +1245,12 @@ compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that
 still await migration are tracked in #4960.
 
+Dotted enum-alias fallback reads spelling metadata only for source-name IDs.
+An unresolved structural symbol key is already a semantic identity; it cannot
+be reinterpreted as an index into source spelling tables. Both alias-key and
+variant-handle fallbacks reject IDs outside that table's domain before reading
+leading segments or dotted tails.
+
 Each compile and each `compile --batch` entry resets the interner. Those resets
 cost what the compile used, not the tables' capacity (#8520).
 - **Hash maps.** The source and generated maps log every slot an insert fills.

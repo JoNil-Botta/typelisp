@@ -56218,6 +56218,11 @@
   [ctx : TcContext]
   [_variant-name : String]
   [variant-name-id : i64]) : option_i64.Option
+  ;; Alias spelling metadata exists only for source names. Structural symbol
+  ;; keys have already been resolved and must not index the source-name pool.
+  (when
+    (or (< variant-name-id 0) (>= variant-name-id (ci.intern-capacity)))
+    (return None))
   (let
     [alias-id : i64 (ci.intern-leading-dot-id variant-name-id)]
     [tail-id : i64 (ci.intern-dotted-tail-id variant-name-id)]
@@ -56282,6 +56287,9 @@
   [ctx : TcContext]
   [_variant-name : (& _variant-name str)]
   [variant-name-id : i64]) : option_i64.Option
+  (when
+    (or (< variant-name-id 0) (>= variant-name-id (ci.intern-capacity)))
+    (return None))
   (match (tc-dotted-alias-variant-key-id ctx "" variant-name-id)
     [(Some key-id)
       (csym.compiler-registries-lookup-variant-key-id

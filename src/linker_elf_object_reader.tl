@@ -366,9 +366,10 @@
     (= value (cast 0 : u64))
     (= (bit-and value (- value (cast 1 : u64))) (cast 0 : u64))))
 
-(define (read-header
+(define (check-ident!
   [data : (& b (__tl_dyn-array u8))]
-  [check : (&mut c ElfCheck)]) : ElfHeaderResult
+  [check : (&mut c ElfCheck)]
+  [object-type : i64]) : unit
   (let
     [length : i64 (array-length data)]
     (require! check (valid-limits? (& check.limits)) (InvalidLimits) 0)
@@ -376,7 +377,7 @@
     (require! check (<= length check.limits.max-input-bytes) (InputLimit) 0)
     (require! check (bytes.range-present? length 0 64) (BadRange) length)
     (charge! check 64 0)
-    (unless check.ok (return (HeaderFailed (clone check.error))))
+    (unless check.ok (return unit))
     (require! check (= (le.byte-le-at data 0) 127) (BadHeader) 0)
     (require! check (= (le.byte-le-at data 1) 69) (BadHeader) 1)
     (require! check (= (le.byte-le-at data 2) 76) (BadHeader) 2)
@@ -389,9 +390,21 @@
       (or (= (le.byte-le-at data 7) 0) (= (le.byte-le-at data 7) 3))
       (UnsupportedOsAbi)
       7)
-    (require! check (= (le.read-u16 data 16) 1) (UnsupportedObjectType) 16)
+    (require!
+      check
+      (= (le.read-u16 data 16) object-type)
+      (UnsupportedObjectType)
+      16)
     (require! check (= (le.read-u16 data 18) 62) (UnsupportedMachine) 18)
-    (require! check (= (le.read-u32 data 20) 1) (UnsupportedVersion) 20)
+    (require! check (= (le.read-u32 data 20) 1) (UnsupportedVersion) 20)))
+
+(define (read-header
+  [data : (& b (__tl_dyn-array u8))]
+  [check : (&mut c ElfCheck)]) : ElfHeaderResult
+  (check-ident! data check 1)
+  (unless check.ok (return (HeaderFailed (clone check.error))))
+  (let
+    [length : i64 (array-length data)]
     (require!
       check
       (= (word data 32) (cast 0 : u64))

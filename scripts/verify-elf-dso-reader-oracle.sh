@@ -36,7 +36,7 @@ mode=="dynamic" && $1 ~ /^0x/ {
  else value=number($3)
  print "D",tag,value;next
 }
-mode=="symbols" && $1 ~ /^[0-9]+:$/ {idx=$1;sub(/:$/,"",idx);print "Y",idx+0,hx($2),$3+0,$4,$5,$6,$7,$8;next}
+mode=="symbols" && $1 ~ /^[0-9]+:$/ {idx=$1;sub(/:$/,"",idx);print "Y",idx+0,hx($2),$3+0,$4,$5,$6,$7,"["$8"]";next}
 mode=="versym" && $1 ~ /^[0-9a-f]+:$/ {
  start=$1;sub(/:$/,"",start);start=hex(start)
  line=$0;sub(/^[^:]*:/,"",line);gsub(/\([^)]*\)/,"",line);n=split(line,a,/ +/);j=0
@@ -63,11 +63,14 @@ for fixture in "$ROOT"/tests/fixtures/elf-dso/*.in; do
         # resolves every symbol version. Native tests additionally compare the
         # complete version model with the byte-identical sectionful producer.
         "$WORK/oracle" "$fixture" --no-version-records > "$WORK/$name.actual"
+        "$WORK/oracle" "tests/fixtures/elf-dso/$name.in" --no-version-records > "$WORK/$name.relative"
     else
         "$WORK/oracle" "$fixture" > "$WORK/$name.actual"
+        "$WORK/oracle" "tests/fixtures/elf-dso/$name.in" > "$WORK/$name.relative"
     fi
     diff -u "$ROOT/tests/fixtures/elf-dso/$name.expected" "$WORK/$name.expected"
     diff -u "$WORK/$name.expected" "$WORK/$name.actual"
+    diff -u "$WORK/$name.actual" "$WORK/$name.relative"
     count=$((count + 1))
 done
 [ "$count" -eq 8 ] || { echo "ELF DSO oracle: expected all 8 producers" >&2; exit 1; }

@@ -36,6 +36,7 @@ dd if=/dev/zero of="$OUT/no-sections.in" bs=1 seek=58 count=6 conv=notrunc 2>/de
 if [ -n "${MUSL_LIBC:-}" ]; then
     cp "$MUSL_LIBC" "$OUT/musl-1.2.5.in"
 fi
+chmod 644 "$OUT"/*.in
 readelf --version > "$OUT/readelf.version"
 ld --version > "$OUT/ld.version"
 for fixture in "$OUT"/*.in; do

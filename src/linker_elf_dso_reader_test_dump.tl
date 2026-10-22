@@ -87,7 +87,7 @@
         (text.append!
           out
           (format.format
-            "Y\t{}\t{:x}\t{}\t{}\t{}\t{}\t{}\t{}\n"
+            "Y\t{}\t{:x}\t{}\t{}\t{}\t{}\t{}\t[{}]\n"
             i
             symbol.value
             symbol.size

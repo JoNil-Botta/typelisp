@@ -62,6 +62,8 @@ and reusable facts. Job-state isolation remains an ongoing migration in
 [#5754](https://github.com/JoNil-Botta/typelisp/issues/5754) and
 [#5756](https://github.com/JoNil-Botta/typelisp/issues/5756). Serial compatibility
 adapters do not make an ambient owner safe for a value from another job.
+Borrow-conflict read forms retain unchanged source IDs and build changed
+payloads in that same owner, under the linked expression/fact contract.
 
 Lifetime diagnostics and IR rendering share the validated syntax-name boundary
 with explicit macro-spelling policy; see the [rendering invariants](compiler-invariants.md#architecture).

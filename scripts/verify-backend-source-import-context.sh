@@ -47,7 +47,7 @@ check_cli() {
 }
 
 for fixture in payload aliases wildcard; do
-    source="tests/integration/backend_source_import_$fixture.tl"
+    source="tests/fixtures/backend_source_import_$fixture.tl"
     check_assembly "$fixture-asm" "$source"
     "$DRIVER" "$NL_HOST_OS" object "$source" "$WORK/$fixture-object.$NL_OBJ_EXT"
     link_native_object "$fixture-object" "$WORK/$fixture-object.$NL_OBJ_EXT" \
@@ -58,7 +58,7 @@ done
 
 # Raw source-helper images do not certify complete runtime bodies (#8317).
 # Keep the allocation fixture's assembly/CLI behaviour and positive exclusion.
-source=tests/integration/backend_source_import_str_cat.tl
+source=tests/fixtures/backend_source_import_str_cat.tl
 check_assembly str-cat-asm "$source"
 check_cli str-cat-cli "$source"
 status=0

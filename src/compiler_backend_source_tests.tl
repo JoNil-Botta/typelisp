@@ -15,10 +15,10 @@
 (import stdlib.vector)
 (import (vector.vector String) as strings)
 
-(include-str payload-source "../tests/integration/backend_source_import_payload.tl")
-(include-str aliases-source "../tests/integration/backend_source_import_aliases.tl")
-(include-str wildcard-source "../tests/integration/backend_source_import_wildcard.tl")
-(include-str concat-source "../tests/integration/backend_source_import_str_cat.tl")
+(include-str payload-source "../tests/fixtures/backend_source_import_payload.tl")
+(include-str aliases-source "../tests/fixtures/backend_source_import_aliases.tl")
+(include-str wildcard-source "../tests/fixtures/backend_source_import_wildcard.tl")
+(include-str concat-source "../tests/fixtures/backend_source_import_str_cat.tl")
 
 (define (release-result [result : lower.ResultCompilerLower]) : bool
   (match result

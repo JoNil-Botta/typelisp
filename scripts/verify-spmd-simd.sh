@@ -138,6 +138,7 @@ tests/spmd/native_slice_multi_output_i64.tl
 tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
 tests/spmd/inline_helper_f64.tl
+tests/spmd/inline_helper_composition.tl
 tests/spmd/private_helper_i64.tl
 tests/spmd/private_helper_f64.tl
 tests/spmd/private_helper_bool.tl

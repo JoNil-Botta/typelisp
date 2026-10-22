@@ -1,5 +1,11 @@
 # Selfhost compiler testing
 
+`spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
+restoration without leaving completed siblings active. The existing traversal
+isolation test preserves job/scratch ownership. `inline_helper_composition.tl`
+compares composed arguments, repeated callees, imported bodies and masked tails
+with ordinary calls; safety rows keep direct and mutual recursion rejected.
+
 `tc-dotted-alias-variant-source-name-boundary` checks absent source names,
 sentinels, the source-table boundary and structural pair/triple/fresh-local IDs
 through both alias fallbacks. A missing structural variable must retain E0201.

@@ -4441,14 +4441,6 @@
     TcSpmdTraversalStateData)
   (tc-state-cell-view state.address TcSpmdTraversalStateData))
 
-(define (tc-spmd-traversal-state-data [state : TcSpmdTraversalState]) : TcSpmdTraversalStateData
-  (tc-state-cell-read state.address TcSpmdTraversalStateData))
-
-(define (tc-spmd-traversal-state-data-set!
-  [state : TcSpmdTraversalState]
-  [data : TcSpmdTraversalStateData]) : unit
-  (tc-state-cell-write! state.address TcSpmdTraversalStateData data))
-
 ;; Lazy import aliases and their summary-use counters are mutable, intern-owned
 ;; typecheck state. Keep one lazily allocated table per compiler job so a reset
 ;; or lookup in one job cannot observe or clear another job's aliases.
@@ -42590,17 +42582,19 @@
   [state : TcSpmdTraversalState]
   [name-id : i64]) : TcNameIdList
   (let
-    [data : TcSpmdTraversalStateData (tc-spmd-traversal-state-data state)]
-    [previous : TcNameIdList data.inline-helper-stack]
+    [previous : TcNameIdList (tc-spmd-inline-helper-stack-for-state state)]
+    [owner : i64
+      (unsafe
+        (deref (tc-spmd-traversal-state-view state)).owner-arena)]
     ;; The first two names create the persistent dense spine. Allocate that
     ;; store in the compiler job's arena even if traversal currently runs in
-    ;; a disposable function scratch arena.
-    (set!
-      data.inline-helper-stack
+    ;; a disposable function scratch arena. Materialize the parent before
+    ;; publishing the child so the saved stack cannot alias a mutated field.
+    [next : TcNameIdList
       (in-arena
-        (arena.Arena data.owner-arena)
-        (tc-name-id-list-add previous name-id)))
-    (tc-spmd-traversal-state-data-set! state data)
+        (arena.Arena owner)
+        (tc-name-id-list-add (tc-global-shared-view previous) name-id))]
+    (tc-spmd-inline-helper-stack-restore-for-state! state next)
     previous))
 
 (define (tc-spmd-inline-helper-stack-contains-for-state?

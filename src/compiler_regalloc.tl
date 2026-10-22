@@ -25181,6 +25181,7 @@
                       var-id)]
                   (if (and
                     (= root var-id)
+                    (not (live.compiler-live-set-contains? blocked root))
                     (compiler-reg-param-pin-clobber-free?
                       eff-index
                       call-points

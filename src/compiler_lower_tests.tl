@@ -1794,7 +1794,22 @@
             (if (= variant 1)
               "local"
               "shadow"))
-          " [x : i64] [q : (MutPtr i64)] [n : i64]) : i64 (let "
+          " [x : i64] [q : (MutPtr i64)] [n : i64] "))
+      (when
+        (= variant 0)
+        (for [index (iterator.range 0 40)]
+          (set!
+            source
+            (str_cat.str-cat
+              source
+              "[arg"
+              (string.int->string index)
+              " : i64] "))))
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          ") : i64 (let "
           (if (= variant 1)
             "[x : i64 1] "
             "")))
@@ -1816,7 +1831,14 @@
             "(let [x : i64 17] (unsafe (ptr-addr-of x)) unit) "
             "(set! q (unsafe (ptr-addr-of x))) ")
           "(set! i (+ i 1))) result))\n")))
-    source))
+    (set!
+      source
+      (str_cat.str-cat
+        source
+        "(define (cached-param-call [q : (MutPtr i64)]) : i64 (cached-param 1 q 2 "))
+    (for [_index (iterator.range 0 40)]
+      (set! source (str_cat.str-cat source "0 ")))
+    (str_cat.str-cat source "))")))
 
 (define (compiler-lower-loop-exposure-source) : String
   (str_cat.str-cat
@@ -1905,7 +1927,7 @@
        (projection q 2) (match-bound (Value 1) q 2) (shadowed 1 q 2)
        (match-shadowed 1 q 2) (unrelated 1 q 2)
        (lambda-boundary 1 q 2) (ref-slot (& y) q 2) (ref-unrelated (& y) q 2)
-       (cached-param 1 q 2) (cached-local 1 q 2) (cached-shadow 1 q 2)
+       (cached-param-call q) (cached-local 1 q 2) (cached-shadow 1 q 2)
        (acyclic-argument 1) (acyclic-callee inc)
        (readonly-argument 1 y) (readonly-callee inc y))))"
     (compiler-lower-cached-exposure-source)))

@@ -70930,18 +70930,16 @@
   (scope i64)
   (generation i64))
 
-(define (tc-storage-register!
+(define (tc-storage-identity
   [ctx : TcContext]
   [env : TcTypeEnv]
   [kind : i64]
-  [scope : i64]
-  [name : i64]) : TcTypeEnv
+  [scope : i64]) : i64
   (let
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [frame : i64 (storage_exposure.storage-exposure-current facts)]
-    (when
-      (storage_exposure.storage-exposure-complete? facts frame)
+    (if (storage_exposure.storage-exposure-complete? facts frame)
       (let
         [descriptor : (Box TcStorageBindingIdentity)
           (in-arena
@@ -70952,18 +70950,39 @@
                 kind
                 scope
                 (storage_exposure.storage-exposure-generation facts))))]
-        [identity : i64
-          (unsafe
-            (cast
-              (ptr-read (ptr-cast (ptr-addr-of descriptor) : (Ptr u64)))
-              : i64))]
-        [head : i64 (tc-storage-binding-node env name)]
-        (if (>= head 0)
-          (unsafe
-            (set!
-              (deref (int->ptr (cast head : u64) : (MutPtr TcTypeEnvBinding))).storage-source
-              identity))
-          (storage_exposure.storage-exposure-incomplete! facts))))
+        (unsafe
+          (cast
+            (ptr-read (ptr-cast (ptr-addr-of descriptor) : (Ptr u64)))
+            : i64)))
+      -1)))
+
+(define (tc-storage-annotate!
+  [facts : storage_exposure.StorageExposure]
+  [head : i64]
+  [identity : i64]) : unit
+  (when
+    (> identity 0)
+    (if (>= head 0)
+      (unsafe
+        (set!
+          (deref (int->ptr (cast head : u64) : (MutPtr TcTypeEnvBinding))).storage-source
+          identity))
+      (storage_exposure.storage-exposure-incomplete! facts))))
+
+(define (tc-storage-register!
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [kind : i64]
+  [scope : i64]
+  [name : i64]) : TcTypeEnv
+  (let
+    [identity : i64 (tc-storage-identity ctx env kind scope)]
+    (when
+      (> identity 0)
+      (tc-storage-annotate!
+        (tc-body-storage-exposure (tc-context-body-state ctx))
+        (tc-storage-binding-node env name)
+        identity))
     env))
 
 (define (tc-storage-bind-id
@@ -70986,14 +71005,30 @@
       (tc-checked-let-binding-fact-state-data
         (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))).current-declaration-ordinal]
     [_ : i64 (storage_exposure.storage-exposure-enter! facts ordinal body)]
-    ;; Both callers supply the ordinary environment that already binds these
-    ;; parameters. Metadata must preserve its resolved types and lifetime markers.
-    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name _ _)
-          (let
-            [_registered : TcTypeEnv (tc-storage-register! ctx env 0 -1 name)]
-            unit)]))))
+    [count : i64 (ast.ast-param-list-len params)]
+    ;; Parameter nodes form the ordinary environment's newest binding prefix.
+    ;; Visit that prefix once, retaining resolved types and lifetime markers.
+    (when
+      (> count 0)
+      (let
+        [identity : i64 (tc-storage-identity ctx env 0 -1)]
+        [remaining : TcTypeEnv env]
+        (when
+          (> identity 0)
+          (for [offset (iterator.range 0 count)]
+            (match (array-ref params.slots (- count (+ offset 1)))
+              [(Param name _ _)
+                (let
+                  [head : i64 (tc-storage-binding-node remaining name)]
+                  (tc-storage-annotate! facts head identity)
+                  (when (< head 0) (return unit))
+                  (set!
+                    remaining
+                    (TcTypeEnv
+                      env.store
+                      (tc-type-env-binding-parent-at
+                        (tc-type-env-binding-ptr env.store head))
+                      env.abi-pad)))])))))))
 
 (define (tc-storage-expose!
   [ctx : TcContext]
@@ -71084,19 +71119,21 @@
   [env : TcTypeEnv]
   [scope : i64]
   [names : TcNameIdList]) : unit
-  (let
-    [remaining : TcNameIdList names]
-    (while (not (tc-name-id-list-empty? remaining))
-      (let
-        [_registered : TcTypeEnv
-          (tc-storage-register!
-            ctx
-            env
-            0
-            scope
-            (tc-name-id-list-head remaining))]
-        unit)
-      (set! remaining (tc-name-id-list-rest remaining)))))
+  (unless
+    (tc-name-id-list-empty? names)
+    (let
+      [facts : storage_exposure.StorageExposure
+        (tc-body-storage-exposure (tc-context-body-state ctx))]
+      [identity : i64 (tc-storage-identity ctx env 0 scope)]
+      [remaining : TcNameIdList names]
+      (when
+        (> identity 0)
+        (while (not (tc-name-id-list-empty? remaining))
+          (tc-storage-annotate!
+            facts
+            (tc-storage-binding-node env (tc-name-id-list-head remaining))
+            identity)
+          (set! remaining (tc-name-id-list-rest remaining)))))))
 
 (define (tc-move-check-let-bindings
   [ctx : TcContext]

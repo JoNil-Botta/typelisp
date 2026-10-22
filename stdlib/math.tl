@@ -247,6 +247,28 @@
             unit))))
     (* y (stdlib.math.f32-from-bits (shl (cast (+ 127 n) : u32) 23)))))
 
+;: A table word must stay literal so its array needs no startup initializer.
+(defmacro (math-bits-word [value : comptime.Expr]) : comptime.Expr
+  (match value
+    [(comptime.Expr.Int _) value]
+    [_
+      (comptime.comptime-error
+        "math-bits-array: expected a raw integer word literal")]))
+
+;: Build a scalar data initializer; reject expressions that would allocate it.
+(defmacro (math-bits-array [values : comptime.Expr ...]) : comptime.Expr
+  (let
+    [words : comptime.ExprList (comptime.expr-list-empty)]
+    [index : i64 (- (comptime.expr-list-length values) 1)]
+    (while (>= index 0)
+      (set!
+        words
+        (comptime.expr-list-cons
+          `(stdlib.math.math-bits-word ,(comptime.expr-list-nth values index))
+          words))
+      (set! index (- index 1)))
+    `(array ,@words)))
+
 ;; The exponential implementation below follows musl `exp`/`expf` and their
 ;; data tables at revision b306b16af15c89a04d8e0c55cac2dadbeb39c083.
 ;; Read-only scalar arrays retain the exact IEEE-754 and scale words without
@@ -254,7 +276,7 @@
 ;; scale. Payloads and operation order are part of the stated error bounds.
 ;: Exact tail payloads and adjusted scale words from musl exp_data.c.
 (define math-exp-f64-tail-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0x0000000000000000
     0x3c9b3b4f1a88bf6e
     0xbc7160139cd8dc5d
@@ -384,7 +406,7 @@
     0x3c77893b4d91cd9d
     0x3c5305c14160cc89))
 (define math-exp-f64-scale-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0x3ff0000000000000
     0x3feff63da9fb3335
     0x3fefec9a3e778061
@@ -634,7 +656,7 @@
 ;; remains fixed, including the separate head and tail compensation.
 ;: Exact binary64 logarithm interval payloads from musl log_data.c.
 (define math-log-f64-invc-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0x3ff734f0c3e0de9f
     0x3ff713786a2ce91f
     0x3ff6f26008fab5a0
@@ -764,7 +786,7 @@
     0x3fe77907f2170657
     0x3fe756cadbd6130c))
 (define math-log-f64-logc-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0xbfd7cc7f79e69000
     0xbfd76feec20d0000
     0xbfd713e31351e000
@@ -894,7 +916,7 @@
     0x3fd3d54ffbaf3000
     0x3fd432eee32fe000))
 (define math-log-f64-chi-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0x3fe61000014fb66b
     0x3fe63000034db495
     0x3fe650000d94d478
@@ -1024,7 +1046,7 @@
     0x3ff5d0001d4919bc
     0x3ff5efffe7b87a89))
 (define math-log-f64-clo-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0x3c7e026c91425b3c
     0x3c8dbfea48005d41
     0x3c8e7fa786d6a5b7
@@ -1156,7 +1178,7 @@
 
 ;: Exact binary32 logarithm interval payloads, evaluated as binary64.
 (define math-log-f32-invc-bits : (Array u64 16)
-  (array
+  (math-bits-array
     0x3ff661ec79f8f3be
     0x3ff571ed4aaf883d
     0x3ff49539f0f010b0
@@ -1174,7 +1196,7 @@
     0x3fe886e6037841ed
     0x3fe767dcf5534862))
 (define math-log-f32-logc-bits : (Array u64 16)
-  (array
+  (math-bits-array
     0xbfd57bf7808caade
     0xbfd2bef0a7c06ddb
     0xbfd01eae7f513a67
@@ -1369,7 +1391,7 @@
 ;; the exp/log ports above.
 ;: Exact binary64 pow logarithm interval payloads from musl pow_data.c.
 (define math-pow-f64-invc-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0x3ff6a00000000000
     0x3ff6800000000000
     0x3ff6600000000000
@@ -1499,7 +1521,7 @@
     0x3fe6e00000000000
     0x3fe6c00000000000))
 (define math-pow-f64-logc-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0xbfd62c82f2b9c800
     0xbfd5d1bdbf580800
     0xbfd5767717455800
@@ -1629,7 +1651,7 @@
     0x3fd57bf753c8d000
     0x3fd5d5bddf596000))
 (define math-pow-f64-logctail-bits : (Array u64 128)
-  (array
+  (math-bits-array
     0x3cfab42428375680
     0xbd1ca508d8e0f720
     0xbd2362a4d5b6506d
@@ -2050,7 +2072,7 @@
 
 ;: Exact binary32 pow log2 interval payloads, evaluated as binary64.
 (define math-pow-f32-invc-bits : (Array u64 16)
-  (array
+  (math-bits-array
     0x3ff661ec79f8f3be
     0x3ff571ed4aaf883d
     0x3ff49539f0f010b0
@@ -2068,7 +2090,7 @@
     0x3fe886e6037841ed
     0x3fe767dcf5534862))
 (define math-pow-f32-logc-bits : (Array u64 16)
-  (array
+  (math-bits-array
     0xbfdefec65b963019
     0xbfdb0b6832d4fca4
     0xbfd7418b0a1fb77b
@@ -2295,7 +2317,7 @@
 ;; pieces stay exact. Finite binary64 exponents bound jv by 41; the reducer
 ;; guards its negative prefix and uses a 20-slot local convolution window.
 (define math-trig-two-over-pi-limbs : (Array u64 66)
-  (array
+  (math-bits-array
     0x0000000000a2f983
     0x00000000006e4e44
     0x00000000001529fc
@@ -2363,7 +2385,7 @@
     0x000000000060e27b
     0x0000000000c08c6b))
 (define math-trig-pi-over-two-piece-bits : (Array u64 8)
-  (array
+  (math-bits-array
     0x3ff921fb40000000
     0x3e74442d00000000
     0x3cf8469880000000

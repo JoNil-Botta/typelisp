@@ -2,10 +2,13 @@
 
 `stdlib_math_table_payloads.tl` hashes every word of the 15 private math tables
 in little-endian order against independent SHA-256 pins at opt0/1/2. Its length
-checks cover all 1,290 words; the existing exp fixture also retains its 128
-individual tail-payload comparisons. Math codegen cases require static table
-definitions and reads while retaining allocation, external-call and instruction
-exclusions.
+checks cover all 1,290 words and empty/zero/max-word construction; the existing
+exp fixture also retains its 128 individual tail-payload comparisons. The
+`math-table-literal-errors` CLI case rejects floating literals and runtime
+values in the literal-only array helper. Its two native transformer identities
+replace the old row/table builders without lowering the native-entry floor.
+Math codegen cases require static table definitions and reads while retaining
+allocation, external-call and instruction exclusions.
 
 `spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
 restoration without leaving completed siblings active. The existing traversal

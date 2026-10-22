@@ -8,6 +8,11 @@
 (import stdlib.iterator)
 (import stdlib.string)
 
+(define empty-words : (Array u64 0)
+  (math.math-bits-array))
+(define boundary-words : (Array u64 2)
+  (math.math-bits-array 0 0xffffffffffffffff))
+
 (define (payload-digest-matches? [data : (& data bytes)] [expected : String]) : bool
   (match (sha.digest data)
     [(sha.Sha256FinalizeOk digest)
@@ -32,6 +37,9 @@
 
 (define (main) : i64
   (if (and
+    (= (array-length empty-words) 0)
+    (= (array-ref boundary-words 0) (cast 0 : u64))
+    (= (array-ref boundary-words 1) (cast 0xffffffffffffffff : u64))
     (table-payload?
       math.math-exp-f64-tail-bits
       128

@@ -8813,6 +8813,18 @@
         (lower-spmd-inline-helper-from-decl ctx handle inner))]
     [_ (Ok (No))]))
 
+(define (lower-spmd-helper-context [ctx : tc_core.TcContext] [handle : i64]) : tc_core.TcContext
+  (let
+    [module-id : i64
+      (csym.compiler-symbols-owner-module-id-at-index-or
+        (tc_core.tc-context-symbols ctx)
+        (csym.compiler-symbol-handle-index handle)
+        (tc_core.tc-context-module-id ctx))]
+    (tc_core.tc-context-with-module-id
+      ctx
+      (tc_core.tc-spmd-inline-helper-module module-id)
+      module-id)))
+
 (define (lower-spmd-inline-helper-lookup
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
@@ -9311,7 +9323,37 @@
 (define (lower-spmd-helper-out-of-line?
   [ctx : tc_core.TcContext]
   [body : ast.AstExpr]) : bool
-  (> (lower-spmd-inline-expr-cost ctx body) lower-spmd-inline-node-limit))
+  (or
+    (>
+      (lower-spmd-inline-expr-cost ctx (lower-global-shared-view body))
+      lower-spmd-inline-node-limit)
+    (lower-spmd-helper-has-private-intrinsic? ctx body)))
+
+(define (lower-spmd-helper-has-private-intrinsic?
+  [ctx : tc_core.TcContext]
+  [body : ast.AstExpr]) : bool
+  ;; A private spelling is interpreted in its definition's module. Retaining
+  ;; that function boundary prevents caller-owned shadows capturing the call.
+  (match (lower-global-shared-view body)
+    [(Call func _)
+      (match (ast.ast-expr-unspan-with-segment-bases
+        (tc_core.tc-context-expr-bases ctx)
+        (& (lower-context-expr-get ctx func)))
+        [(Var name)
+          (when (cbi.compiler-builtin-private-intrinsic-id? name) (return true))]
+        [_ unit])]
+    [_ unit])
+  (let
+    [children : ast.AstExprList (ast.ast-expr-child-ids body)]
+    (for [index (iterator.range 0 children.len)]
+      (when
+        (lower-spmd-helper-has-private-intrinsic?
+          ctx
+          (lower-context-expr-get
+            ctx
+            (ast.ast-expr-list-get (& children) index 0)))
+        (return true))))
+  false)
 
 (define (lower-spmd-preserve-call
   [ctx : tc_core.TcContext]
@@ -37235,7 +37277,7 @@
         (lower-global-shared-view func))
         [(Ok helper)
           (match helper
-            [(Some _ params ret body)
+            [(Some helper-handle params ret body)
               (if (and
                 (lower-spmd-helper-out-of-line?
                   ctx
@@ -37294,9 +37336,15 @@
                                 func
                                 args)
                               0)]
+                          [helper-ctx : tc_core.TcContext
+                            (lower-spmd-helper-context ctx helper-handle)]
                           (match (lower-spmd-specialized-helper-function
-                            ctx
-                            type-env
+                            helper-ctx
+                            (tc_core.tc-spmd-inline-helper-env
+                              helper-ctx
+                              type-env
+                              (tc_core.tc-context-module helper-ctx)
+                              (tc_core.tc-context-module-id helper-ctx))
                             (lower-state-type-cache named-state)
                             helper-function-state
                             hidden-name
@@ -47768,8 +47816,8 @@
   [probe : LowerSpmdCallProbe]
   [expr : ast.AstExpr]) : bool
   (match expr
-    [(or (Spanned inner-box _) (Ann inner-box _) (Cast inner-box _)
-         (Unary _ inner-box))
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _) (Ann inner-box _)
+         (Cast inner-box _) (Unary _ inner-box))
       (lower-spmd-expr-has-call?
         ctx
         function-state
@@ -47805,11 +47853,21 @@
                 env
                 type-env
                 (lower-id-set-empty)
-                func)
+                (lower-global-shared-view func))
                 [(Ok helper)
                   (match helper
                     [(Some _ _ _ body)
-                      (lower-spmd-helper-out-of-line? ctx body)]
+                      (or
+                        (lower-spmd-helper-out-of-line?
+                          ctx
+                          (lower-global-shared-view body))
+                        (lower-spmd-call-target-has?
+                          ctx
+                          function-state
+                          env
+                          type-env
+                          probe
+                          (lower-global-shared-view func)))]
                     [(Imported _ _ _ _ _) true]
                     [(No) false])]
                 [(Err _) false])]
@@ -47824,11 +47882,12 @@
                       func))
                   0)
                 (lower-atomic-pointer-func? type-env func)
-                (lower-vector-call-target-has-atomic?
+                (lower-spmd-call-target-has?
                   ctx
                   function-state
                   env
                   type-env
+                  probe
                   (lower-global-shared-view func))
                 (lower-spmd-expr-has-call?
                   ctx
@@ -48465,11 +48524,12 @@
         unit]))
   false)
 
-(define (lower-vector-call-target-has-atomic?
+(define (lower-spmd-call-target-has?
   [ctx : tc_core.TcContext]
   [function-state : CompilerLowerFunctionState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [probe : LowerSpmdCallProbe]
   [func : ast.AstExpr]) : bool
   (match (lower-spmd-inline-helper-lookup
     ctx
@@ -48490,6 +48550,8 @@
               [previous : LowerIdSet
                 (compiler-lower-function-state-inline-helper-stack
                   function-state)]
+              [helper-ctx : tc_core.TcContext
+                (lower-spmd-helper-context ctx name)]
               [result : bool false]
               (compiler-lower-function-state-inline-helper-stack-set!
                 function-state
@@ -48497,11 +48559,15 @@
               (set!
                 result
                 (lower-spmd-expr-has-call?
-                  ctx
+                  helper-ctx
                   function-state
                   env
-                  type-env
-                  (Atomic)
+                  (tc_core.tc-spmd-inline-helper-env
+                    helper-ctx
+                    type-env
+                    (tc_core.tc-context-module helper-ctx)
+                    (tc_core.tc-context-module-id helper-ctx))
+                  probe
                   body))
               (compiler-lower-function-state-inline-helper-stack-set!
                 function-state
@@ -48753,7 +48819,8 @@
                     numeric-context
                     inner)))]
             [(Err _) (No)])))]
-    [(or (Ann inner-box _) (Unary _ inner-box) (Set _ inner-box))
+    [(or (Spanned inner-box _) (MacroExpansion inner-box _ _) (Ann inner-box _)
+         (Unary _ inner-box) (Set _ inner-box))
       (lower-spmd-numeric-failure
         ctx
         function-state
@@ -48858,6 +48925,42 @@
     [(Call func-box args)
       (let
         [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
+        (when
+          (and
+            (= args.len 1)
+            (tc_core.tc-spmd-private-intrinsic-call? ctx type-env (& func)))
+          (match (ast.ast-expr-unspan-with-segment-bases
+            (tc_core.tc-context-expr-bases ctx)
+            (& func))
+            [(Var name)
+              (when
+                (or
+                  (cbi.compiler-builtin-typecheck-float-sqrt-id? name)
+                  (cbi.compiler-builtin-typecheck-float-bitcast-id? name))
+                (match (tc_core.tc-expr
+                  ctx
+                  type-env
+                  (lower-context-expr-get
+                    ctx
+                    (ast.ast-expr-list-get (& args) 0 0)))
+                  [(Ok source)
+                    (match (tc_core.tc-expr
+                      ctx
+                      type-env
+                      (lower-global-shared-view origin))
+                      [(Ok destination)
+                        (return
+                          (Some
+                            origin
+                            (spmd_numeric.compiler-spmd-numeric-intrinsic-decision
+                              source
+                              destination
+                              numeric-context
+                              (lower-spmd-numeric-backend mode)
+                              name)))]
+                      [(Err _) unit])]
+                  [(Err _) unit]))]
+            [_ unit]))
         (match (lower-spmd-inline-helper-lookup
           ctx
           function-state
@@ -48891,6 +48994,8 @@
                         (lower-global-shared-view body))
                         (PrivateHelper)
                         (InlineHelper))]
+                    [helper-ctx : tc_core.TcContext
+                      (lower-spmd-helper-context ctx name)]
                     [result : LowerMaybeSpmdNumericFailure (No)]
                     (compiler-lower-function-state-inline-helper-stack-set!
                       function-state
@@ -48900,18 +49005,30 @@
                     (set!
                       result
                       (lower-spmd-numeric-failure
-                        ctx
+                        helper-ctx
                         function-state
                         mode
                         env
-                        (tc_core.tc-bind-params ctx type-env params)
+                        (tc_core.tc-bind-params
+                          helper-ctx
+                          (tc_core.tc-spmd-inline-helper-env
+                            helper-ctx
+                            type-env
+                            (tc_core.tc-context-module helper-ctx)
+                            (tc_core.tc-context-module-id helper-ctx))
+                          params)
                         helper-context
                         body))
                     (compiler-lower-function-state-inline-helper-stack-set!
                       function-state
                       previous)
                     (match result
-                      [(Some found decision) (Some found decision)]
+                      [(Some found decision)
+                        (Some
+                          (match decision.operation
+                            [(Intrinsic _) origin]
+                            [_ found])
+                          decision)]
                       [(No)
                         (lower-spmd-numeric-failure-in-expr-list
                           ctx
@@ -48981,6 +49098,8 @@
           "operation '"
           (spmd_numeric.compiler-spmd-numeric-operation-name op)
           "'")]
+      [(Intrinsic name)
+        (str_cat.str-cat "intrinsic '" (tc_core.tc-env-key-name-text name) "'")]
       [(Conversion) "conversion"])
     " from "
     (spmd_numeric.compiler-spmd-numeric-lane-name decision.source)
@@ -59535,9 +59654,15 @@
                                 (lower-state-owner named-state)
                                 (compiler-lower-function-state-inline-helper-stack
                                   (lower-state-function-state named-state)))]
+                            [helper-ctx : tc_core.TcContext
+                              (lower-spmd-helper-context ctx name)]
                             (match (lower-spmd-specialized-helper-function
-                              ctx
-                              type-env
+                              helper-ctx
+                              (tc_core.tc-spmd-inline-helper-env
+                                helper-ctx
+                                type-env
+                                (tc_core.tc-context-module helper-ctx)
+                                (tc_core.tc-context-module-id helper-ctx))
                               (lower-state-type-cache named-state)
                               helper-function-state
                               private-name

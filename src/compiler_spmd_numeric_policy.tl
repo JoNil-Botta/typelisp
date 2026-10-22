@@ -38,7 +38,8 @@
 
 (defenum CompilerSpmdNumericOperation
   (Binary ast.AstBinOp)
-  (Conversion))
+  (Conversion)
+  (Intrinsic i64))
 
 (defenum CompilerSpmdNumericStrategy
   (ScalarReference)
@@ -262,6 +263,22 @@
       true]
     [(Unsupported) false]))
 
+(define (compiler-spmd-numeric-intrinsic-decision
+  [source-ty : ast.AstType]
+  [destination-ty : ast.AstType]
+  [context : CompilerSpmdNumericContext]
+  [backend : CompilerSpmdNumericBackend]
+  [name : i64]) : CompilerSpmdNumericDecision
+  (CompilerSpmdNumericDecision
+    (compiler-spmd-numeric-lane source-ty)
+    (compiler-spmd-numeric-lane destination-ty)
+    context
+    backend
+    (Intrinsic name)
+    (match backend
+      [(Scalar) (ScalarReference)]
+      [(or (Avx2) (Avx512)) (Unsupported)])))
+
 (define (compiler-spmd-numeric-operation-name [op : ast.AstBinOp]) : String
   (match op
     [(Add) "+"]
@@ -320,6 +337,8 @@
 (define (compiler-spmd-numeric-limitation
   [decision : CompilerSpmdNumericDecision]) : String
   (match decision.operation
+    [(Intrinsic _)
+      "this intrinsic has no implemented SIMD strategy; use scalar backend"]
     [(Conversion)
       "SIMD cross-lane conversion has no implemented strategy; use scalar backend"]
     [(Binary op)

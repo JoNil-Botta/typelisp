@@ -317,9 +317,6 @@
     [index : i64 (storage-exposure-index state identity)]
     (if (>= index 0)
       (begin
-        (storage-exposure-index-frame!
-          state
-          (storage-exposure-binding-field state index 0))
         (unsafe
           (set!
             (array-ref

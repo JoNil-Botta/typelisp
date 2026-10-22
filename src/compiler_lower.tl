@@ -15052,7 +15052,7 @@
             6)
           1))]
     [index : i64
-      (if ready
+      (if exposes
         (storage_exposure.storage-exposure-find
           facts.source
           facts.frame
@@ -15064,15 +15064,16 @@
     [exposed : bool
       (or
         (not ready)
-        (< index 0)
         (and
           exposes
-          (!=
-            (storage_exposure.storage-exposure-binding-field
-              facts.source
-              index
-              4)
-            0)))]
+          (or
+            (< index 0)
+            (!=
+              (storage_exposure.storage-exposure-binding-field
+                facts.source
+                index
+                4)
+              0))))]
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower_i64_i64_map.insert-ref!
       (&mut (__tl-project-field (__tl-box-place data) address-taken))
@@ -15103,32 +15104,47 @@
     (when
       (>= scope 0)
       (let
-        [remaining : sym_i64_env.SymI64Env env]
-        [done : bool false]
-        (while (not done)
-          (match (sym_i64_env.sym-i64-view remaining)
-            [(SymI64ViewNil) (set! done true)]
-            [(SymI64ViewBind name var-id rest)
+        [binding : i64
+          (storage_exposure.storage-exposure-frame-field
+            facts.source
+            facts.frame
+            2)]
+        ;; Visit the source binders in this scope, rather than querying every
+        ;; outer environment name against all the function's descriptors.
+        (while (>= binding 0)
+          (when
+            (and
+              (=
+                (storage_exposure.storage-exposure-binding-field
+                  facts.source
+                  binding
+                  1)
+                0)
+              (=
+                (storage_exposure.storage-exposure-binding-field
+                  facts.source
+                  binding
+                  2)
+                scope))
+            (let
+              [name : i64
+                (storage_exposure.storage-exposure-binding-field
+                  facts.source
+                  binding
+                  3)]
+              [var-id : i64 (sym_i64_env.sym-i64-lookup-id-or env name -1)]
               (when
-                (and
-                  (>=
-                    (storage_exposure.storage-exposure-find
-                      facts.source
-                      facts.frame
-                      0
-                      scope
-                      name
-                      (storage_exposure.storage-exposure-key
-                        facts.frame
-                        0
-                        scope
-                        name))
-                    0)
-                  (= var-id (sym_i64_env.sym-i64-lookup-id-or env name -1)))
-                (begin
-                  (lower-exposure-seed state 0 scope name var-id)
-                  unit))
-              (set! remaining rest)]))))))
+                (>= var-id 0)
+                (let
+                  [_seed : LowerState
+                    (lower-exposure-seed state 0 scope name var-id)]
+                  unit))))
+          (set!
+            binding
+            (storage_exposure.storage-exposure-binding-field
+              facts.source
+              binding
+              6)))))))
 
 (define (lower-state-deferred-copy? [state : LowerState] [var-id : i64]) : bool
   (let

@@ -9,6 +9,7 @@
     [previous : i64 (exposure.storage-exposure-enter! facts 3 9)]
     [frame : i64 (exposure.storage-exposure-current facts)]
     [first : i64 -1]
+    (exposure.storage-exposure-index-frame! facts frame)
     (for [name (array (cast 7 : i64) -9223372036854775808 9223372036854775807)]
       (for [scope (iterator.range 0 3)]
         (for [kind (iterator.range -1 3)]
@@ -144,8 +145,13 @@
     (exposure.storage-exposure-mark! facts first)
     (test.assert-i64-eq
       (exposure.storage-exposure-frame-field facts frame 6)
+      0
+      "straight-line exposure needs no index")
+    (exposure.storage-exposure-index-frame! facts frame)
+    (test.assert-i64-eq
+      (exposure.storage-exposure-frame-field facts frame 6)
       1
-      "first exposure promotes the frame")
+      "loop entry promotes the frame")
     (test.assert-i64-eq
       (exposure.storage-exposure-find facts frame 0 -1 7 0)
       (exposure.storage-exposure-index facts first)

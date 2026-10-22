@@ -384,23 +384,28 @@ The existing move walk records lexical bindings and address operations while
 its type environment is available, including its separate loop-scope walk.
 Checker-job state owns numeric facts keyed by declaration, function body,
 binding kind, source scope and hygienic name; no scratch AST/type payload or
-predicted IR ID is retained. Type-environment bindings carry source identities;
+predicted IR ID is retained. Type-environment bindings carry checker-owned source identities;
 cache compaction preserves them through the original binding spine. Unknown
 identities invalidate the frame, and reset generations cannot reuse old IDs.
 Nested lambdas own capture slots in separate frames; auxiliary capability
 queries suspend collection instead of attributing a nested body to its caller.
-Only successfully completed, complete frames prove a source slot private.
-Binding descriptors are append-only until the first slot exposure builds that
-frame’s sparse index; exact membership and exposure joins are preserved before
-and after promotion. Missing keys remain conservative in both representations.
+Only successfully completed, complete frames are consumed. A checked body with
+no loop initializes source bindings as private and uses lowering's sequential
+address marks: there is no backedge that can revisit an earlier evaluation.
+At a loop, the checker promotes the frame's descriptors into a sparse index;
+already-recorded exposure and duplicate keys join monotonically. Looping frames
+require exact lexical membership, and missing or incomplete evidence remains
+conservative. The facts describe the checked body, before generated functions
+and dispatch variants select their own declaration/body identities.
 
 Lowering seeds its existing address-taken map as parameter, local, pattern and
-loop slots are allocated, and scope entry seeds only visible bindings. Shared
-place and representation classifiers distinguish the variable slot from the
-object its value references. Missing bindings, synthetic bodies or incomplete
-facts conservatively count as exposed; incremental marks still cover generated
-storage. Shadowed or unrelated bindings and read-only argument tails retain
-their existing no-copy behavior without losing loop-carried exposure.
+loop slots are allocated. Scope entry visits the source descriptors for that
+scope and resolves only the nearest visible binding. Shared place and
+representation classifiers distinguish the variable slot from the object its
+value references. Synthetic bodies without facts remain conservative, and
+incremental marks still cover generated storage. Shadowed or unrelated bindings
+and read-only argument tails retain their existing no-copy behavior without
+losing loop-carried exposure.
 
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left

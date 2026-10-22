@@ -27,6 +27,8 @@ byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|1
 
 # Defined safe-code areas that should remain accepted.
 bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
+spmd_helper_direct_recursion_reject|check-fail|tests/safety/spmd_helper_direct_recursion_reject.tl|-|recursive SPMD helper call is not supported
+spmd_helper_mutual_recursion_reject|check-fail|tests/safety/spmd_helper_mutual_recursion_reject.tl|-|recursive SPMD helper call is not supported
 reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
 free_name_scan_macro_binding_ok|run-exit|tests/safety/free_name_scan_macro_binding_ok.tl|42|-

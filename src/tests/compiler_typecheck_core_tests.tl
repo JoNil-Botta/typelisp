@@ -2731,6 +2731,243 @@
     CleanupOwner))
 
 (test
+  tc-lifetime-render-validates-syntax-owner
+  (let
+    [previous : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [left : ci.InternCompatState (ci.intern-compat-state-new)]
+    [right : ci.InternCompatState (ci.intern-compat-state-new)]
+    [source : i64 (ci.intern-compat-state-intern (&mut left) "shadowed")]
+    [required : i64 (ci.intern-compat-state-intern (&mut left) "keep")]
+    [other : i64 (ci.intern-compat-state-intern (&mut right) "other")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state (& left)))]
+    [foreign-session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-handle-from-state (& right)))]
+    [definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        session
+        source
+        source)]
+    [local : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          session
+          definition
+          0
+          source))]
+    [foreign-definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        foreign-session
+        other
+        other)]
+    [foreign : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          foreign-session
+          foreign-definition
+          0
+          other))]
+    [template : i64
+      (cis.intern-template-source-identity-raw
+        (cis.intern-structural-session-template-source-identity session source))]
+    [fresh : i64
+      (cis.intern-fresh-local-identity-raw
+        (cis.intern-structural-session-fresh-local-identity
+          session
+          1125899906842624
+          source))]
+    [invalid : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-key
+          session
+          (ci.intern-structural-kind-macro-local)
+          (cis.intern-macro-definition-identity-raw foreign-definition)
+          0
+          source))]
+    [invalid-source : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-key
+          session
+          (ci.intern-structural-kind-macro-local)
+          (cis.intern-macro-definition-identity-raw definition)
+          0
+          (ci.intern-capacity)))]
+    [_install : unit (ci.intern-compat-state-install! (& left))]
+    [names : (__tl_dyn-array i64)
+      (__tl_make-array
+        source
+        local
+        template
+        fresh
+        foreign
+        invalid
+        invalid-source
+        (cis.intern-macro-definition-identity-raw definition)
+        -2)]
+    [expected : (__tl_dyn-array String)
+      (__tl_make-array
+        "shadowed"
+        "shadowed"
+        "shadowed"
+        "shadowed"
+        (str_cat.str-cat "<id:" (string.int->string foreign) ">")
+        (str_cat.str-cat "<id:" (string.int->string invalid) ">")
+        (str_cat.str-cat "<id:" (string.int->string invalid-source) ">")
+        (str_cat.str-cat
+          "<id:"
+          (string.int->string
+            (cis.intern-macro-definition-identity-raw definition))
+          ">")
+        "<id:-2>")]
+    [want : ast.AstType (ast.ast-ty-ref required (& (I64)))]
+    [got : ast.AstType (ast.ast-ty-ref local (& (I64)))]
+    [nested : ast.AstType (ast.ast-ty-mut-ref local (& (I64)))]
+    [details : (__tl_dyn-array String)
+      (__tl_make-array
+        (tc_core.tc-lifetime-coercion-outlives-detail local required)
+        (tc_core.tc-lifetime-coercion-invariant-detail
+          "mutable reference referent type"
+          want
+          got)
+        (tc_core.tc-lifetime-coercion-variance-detail
+          "function parameter/result variance"
+          (ast.ast-ty-ref required (& (I64)))
+          (ast.ast-ty-ref local (& (I64))))
+        (tc_core.tc-type-render (ast.ast-ty-ref required (& nested))))]
+    [expected-details : (__tl_dyn-array String)
+      (__tl_make-array
+        (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
+          "; source lifetime `shadowed` does not outlive required lifetime `keep`")
+        "; source lifetime `shadowed` cannot satisfy required lifetime `keep` because mutable reference referent type is invariant"
+        "; source lifetime `shadowed` cannot satisfy required lifetime `keep` because function parameter/result variance failed"
+        "(& keep (&mut shadowed i64))")]
+    [same-slot? : bool
+      (=
+        (bit-and local (ci.intern-structural-key-index-mask))
+        (bit-and foreign (ci.intern-structural-key-index-mask)))]
+    [records : (__tl_dyn-array (__tl_dyn-array i64))
+      (__tl_make-array
+        (__tl_make-array
+          (ci.intern-structural-kind-macro-global)
+          0
+          9
+          source
+          source)
+        (__tl_make-array
+          (ci.intern-structural-kind-macro-global)
+          1
+          9
+          source
+          source)
+        (__tl_make-array (ci.intern-structural-kind-macro-global) 2 9 source -1)
+        (__tl_make-array
+          (ci.intern-structural-kind-template-source)
+          1
+          0
+          source
+          -1)
+        (__tl_make-array
+          (ci.intern-structural-kind-template-source)
+          0
+          1
+          source
+          -1)
+        (__tl_make-array (ci.intern-structural-kind-fresh-local) -1 0 source -1)
+        (__tl_make-array (ci.intern-structural-kind-fresh-local) 0 1 source -1)
+        (__tl_make-array
+          (ci.intern-structural-kind-macro-local)
+          template
+          0
+          source
+          -1))]
+    [record-actual : (__tl_dyn-array String)
+      (__tl_make-array String (array-length records))]
+    [record-expected : (__tl_dyn-array String)
+      (__tl_make-array String (array-length records))]
+    (for [index (iterator.range 0 (array-length records))]
+      (let
+        [row : (& records (__tl_dyn-array i64)) (& (array-ref records index))]
+        [raw : i64
+          (cis.intern-structural-key-raw
+            (cis.intern-structural-session-key
+              session
+              (array-ref row 0)
+              (array-ref row 1)
+              (array-ref row 2)
+              (array-ref row 3)))]
+        (set!
+          (array-ref record-actual index)
+          (tc_core.tc-lifetime-name-render raw))
+        (set!
+          (array-ref record-expected index)
+          (if (= (array-ref row 4) source)
+            "shadowed"
+            (str_cat.str-cat "<id:" (string.int->string raw) ">")))))
+    (let
+      [actual : (__tl_dyn-array String)
+        (__tl_make-array String (array-length names))]
+      (for [index (iterator.range 0 (array-length names))]
+        (set!
+          (array-ref actual index)
+          (tc_core.tc-lifetime-name-render (array-ref names index))))
+      (ci.intern-compat-state-reset! (&mut left))
+      (let
+        [replacement : i64
+          (ci.intern-compat-state-intern (&mut left) "replacement")]
+        [next-session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state (& left)))]
+        [next-definition : cis.InternMacroDefinitionIdentity
+          (cis.intern-structural-session-macro-definition-identity
+            next-session
+            replacement
+            replacement)]
+        [next-local : i64
+          (cis.intern-macro-local-identity-raw
+            (cis.intern-structural-session-macro-local-identity
+              next-session
+              next-definition
+              0
+              replacement))]
+        [stale : String (tc_core.tc-lifetime-name-render local)]
+        [current : String (tc_core.tc-lifetime-name-render next-local)]
+        [expected-stale : String
+          (str_cat.str-cat "<id:" (string.int->string local) ">")]
+        [reused-slot? : bool
+          (=
+            (bit-and local (ci.intern-structural-key-index-mask))
+            (bit-and next-local (ci.intern-structural-key-index-mask)))]
+        (ci.intern-compat-state-install! (& previous))
+        (test.assert-true same-slot? "foreign identity reuses the same slot")
+        (test.assert-true reused-slot? "reset identity reuses the same slot")
+        (for [index (iterator.range 0 (array-length records))]
+          (test.assert-string-eq
+            (& (array-ref record-actual index))
+            (& (array-ref record-expected index))
+            "compatibility rendering validates syntax record components"))
+        (for [index (iterator.range 0 (array-length names))]
+          (test.assert-string-eq
+            (& (array-ref actual index))
+            (& (array-ref expected index))
+            "lifetime spelling requires a valid syntax owner and definition"))
+        (for [index (iterator.range 0 (array-length details))]
+          (test.assert-string-eq
+            (& (array-ref details index))
+            (& (array-ref expected-details index))
+            "lifetime coercion details render the source spelling"))
+        (test.assert-string-eq
+          (& stale)
+          (& expected-stale)
+          "stale lifetime cannot alias a reused slot")
+        (test.assert-string-eq
+          (& current)
+          "replacement"
+          "current lifetime retains its own spelling")))))
+
+(test
   tc-type-render-hides-elaborated-lifetimes
   (let
     [hidden : i64 (tc_core.tc-elided-lifetime-name 0)]
@@ -10345,10 +10582,12 @@
       ;; Interleave generated-declaration and generated-module memos.
       (tc_core.macro-generated-decls-memo-put!
         state-a
+        0
         "tc-macro-state-isolation"
         (ast.ast-decl-list-new))
       (tc_core.macro-generated-decls-memo-put!
         state-b
+        0
         "tc-macro-state-isolation"
         (ast.ast-decl-list-new))
       (tc_core.macro-generated-module-memo-put!
@@ -10397,11 +10636,13 @@
           ok
           (match (tc_core.macro-generated-decls-memo-get
             state-a
+            0
             "tc-macro-state-isolation")
             [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
           (match (tc_core.macro-generated-decls-memo-get
             state-b
+            0
             "tc-macro-state-isolation")
             [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
@@ -10635,6 +10876,7 @@
             [_ false])
           (match (tc_core.macro-generated-decls-memo-get
             state-b
+            0
             "tc-macro-state-isolation")
             [(Some decls) (= (ast.ast-decl-list-len (& decls)) 0)]
             [_ false])
@@ -11040,9 +11282,13 @@
 ;; The number of decls memoized for `identity`, or -1 when it misses.
 (cfg
   test
-  (define (memo-test-lookup [state : tc_core.TcMacroState] [index : i64]) : i64
+  (define (memo-test-lookup
+    [state : tc_core.TcMacroState]
+    [module-id : i64]
+    [index : i64]) : i64
     (match (tc_core.macro-generated-decls-memo-get
       state
+      module-id
       (memo-test-identity index))
       [(Some decls) (ast.ast-decl-list-len (& decls))]
       [(No) -1])))
@@ -11050,17 +11296,25 @@
 ;; An identity index past 0 whose bucket is identity 0's, so it probes past it.
 (cfg
   test
-  (define (memo-test-colliding-index [state : tc_core.TcMacroState]) : i64
+  (define (memo-test-colliding-index
+    [state : tc_core.TcMacroState]
+    [module-id : i64]) : i64
     (let
       [home : i64
         (tc_core.macro-generated-decls-memo-bucket
           state
-          (tc_core.macro-generated-identity-id state (memo-test-identity 0)))]
+          (tc_core.macro-generated-decls-identity-id
+            state
+            module-id
+            (memo-test-identity 0)))]
       [index : i64 1]
       (while (!=
         (tc_core.macro-generated-decls-memo-bucket
           state
-          (tc_core.macro-generated-identity-id state (memo-test-identity index)))
+          (tc_core.macro-generated-decls-identity-id
+            state
+            module-id
+            (memo-test-identity index)))
         home)
         (+= index 1))
       index)))
@@ -11070,20 +11324,26 @@
   (test
     macro-generated-decls-memo-rearm-clears-only-keys
     (let
+      [module-id : i64 (ci.intern "decls.memo.rearm")]
       [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
       [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
-      [other : i64 (memo-test-colliding-index state)]
+      [other : i64 (memo-test-colliding-index state module-id)]
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity 0)
         (memo-test-decls 1))
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity other)
         (memo-test-decls 2))
-      (test.assert-i64-eq (memo-test-lookup state 0) 1 "home slot entry")
       (test.assert-i64-eq
-        (memo-test-lookup state other)
+        (memo-test-lookup state module-id 0)
+        1
+        "home slot entry")
+      (test.assert-i64-eq
+        (memo-test-lookup state module-id other)
         2
         "an entry that probes past the home slot")
       (tc_core.macro-generated-decls-memo-reset! state)
@@ -11094,9 +11354,12 @@
           (- (profile.alloc-total) before)
           0
           "re-arming the memo allocates nothing"))
-      (test.assert-i64-eq (memo-test-lookup state 0) -1 "no stale home entry")
       (test.assert-i64-eq
-        (memo-test-lookup state other)
+        (memo-test-lookup state module-id 0)
+        -1
+        "no stale home entry")
+      (test.assert-i64-eq
+        (memo-test-lookup state module-id other)
         -1
         "no stale probed entry")
       ;; After the re-arm `other` takes the empty home slot. Identity 0 then
@@ -11104,22 +11367,24 @@
       ;; and must miss rather than return that list.
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity other)
         (memo-test-decls 3))
       (test.assert-i64-eq
-        (memo-test-lookup state other)
+        (memo-test-lookup state module-id other)
         3
         "put/get round-trips after a re-arm")
       (test.assert-i64-eq
-        (memo-test-lookup state 0)
+        (memo-test-lookup state module-id 0)
         -1
         "a key probing past a zeroed slot misses")
       (tc_core.macro-generated-decls-memo-put!
         state
+        module-id
         (memo-test-identity 0)
         (memo-test-decls 4))
       (test.assert-i64-eq
-        (memo-test-lookup state 0)
+        (memo-test-lookup state module-id 0)
         4
         "the zeroed slot is reused"))))
 
@@ -12349,3 +12614,101 @@
         [_ false])
       "a shared AST node remains owning in the prefix and read-only in the tail")
     (ast.ast-node-pool-context-install! saved)))
+
+(cfg
+  test
+  (test
+    macro-generated-decls-memo-module-scope
+    (let
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
+      [module-a : i64 (ci.intern "decls.memo.scope.a")]
+      [module-b : i64 (ci.intern "decls.memo.scope.b")]
+      [key-a : i64
+        (tc_core.macro-generated-decls-identity-id
+          state
+          module-a
+          "same-expansion")]
+      [key-b : i64
+        (tc_core.macro-generated-decls-identity-id
+          state
+          module-b
+          "same-expansion")]
+      (test.assert-true
+        (!= key-a key-b)
+        "consumer module participates in memo identity")
+      (test.assert-i64-eq
+        key-a
+        (tc_core.macro-generated-decls-identity-id
+          state
+          module-a
+          "same-expansion")
+        "same module identity is stable")
+      (tc_core.macro-generated-decls-memo-put!
+        state
+        module-a
+        "same-expansion"
+        (memo-test-decls 1))
+      (test.assert-true
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-b
+          "same-expansion")
+          [(No) true]
+          [_ false])
+        "other module has no admitted expansion")
+      (tc_core.macro-generated-decls-memo-put!
+        state
+        module-b
+        "same-expansion"
+        (memo-test-decls 2))
+      (test.assert-i64-eq
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-a
+          "same-expansion")
+          [(Some decls) (ast.ast-decl-list-len (& decls))]
+          [_ -1])
+        1
+        "first scope retains its own output")
+      (test.assert-i64-eq
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-b
+          "same-expansion")
+          [(Some decls) (ast.ast-decl-list-len (& decls))]
+          [_ -1])
+        2
+        "second scope retains its own output")
+      (test.assert-true
+        (!=
+          (tc_core.macro-decls-segment-scope state module-a 0)
+          (tc_core.macro-decls-segment-scope state module-a 1))
+        "output segment participates in memo scope")
+      (test.assert-i64-eq
+        (tc_core.macro-decls-segment-scope state module-a 1)
+        (tc_core.macro-decls-segment-scope state module-a 1)
+        "same segment scope is stable")
+      (tc_core.macro-generated-decls-memo-put!
+        state
+        (tc_core.macro-decls-segment-scope state module-a 0)
+        "segment-expansion"
+        (memo-test-decls 1))
+      (test.assert-true
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          (tc_core.macro-decls-segment-scope state module-a 1)
+          "segment-expansion")
+          [(No) true]
+          [_ false])
+        "another segment of the same owner has no admitted output")
+      (tc_core.macro-generated-decls-memo-reset! state)
+      (test.assert-true
+        (match (tc_core.macro-generated-decls-memo-get
+          state
+          module-a
+          "same-expansion")
+          [(No) true]
+          [_ false])
+        "reset invalidates all module admissions")
+      (tc_core.tc-job-state-retire-owned-storage! job))))

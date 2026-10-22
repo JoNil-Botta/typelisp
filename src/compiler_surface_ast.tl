@@ -1513,7 +1513,8 @@
           dest-pools
           (&
             (ast.ast-program
-              (owned_view.compiler-owned-reference-shared-view decls))))]
+              (owned_view.compiler-owned-reference-shared-view decls)))
+          false)]
       [context : codec.SurfaceAstWriteContext
         (codec.surface-ast-write-context-new
           structural-session

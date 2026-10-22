@@ -41,6 +41,9 @@
 (import compiler_ir_types as ir)
 (import compiler_optimize as opt)
 (import compiler_driver_core)
+(cfg
+  embedded-stdlib-tlci
+  (import compiler_embedded_stdlib_tlci as embedded_tlci))
 (import compiler_typecheck_core as tc_core)
 (import compiler_windows_coff_core)
 (import doc_test)
@@ -1298,7 +1301,8 @@
 ;; entry so that persistent compiler infrastructure is part of the batch
 ;; baseline instead of being misattributed as leaked entry state.
 (define (compile-cli-batch-persistent-table-storage-ensure!
-  [state : compiler_driver_core.CompilerDriverState]) : unit
+  [state : compiler_driver_core.CompilerDriverState]
+  [entry-count : i64]) : unit
   (let
     [backend-state : backend.CompilerBackendState
       (compiler_driver_core.compiler-driver-state-backend state)]
@@ -1323,7 +1327,19 @@
     (tc_core.tc-agg-layout-cache-table-storage-ensure-for-job! typecheck-state)
     (tc_core.macro-unqualified-import-cache-storage-ensure!
       (tc_core.tc-job-state-macro-state
-        (compiler_driver_core.compiler-driver-state-typecheck state)))))
+        (compiler_driver_core.compiler-driver-state-typecheck state)))
+    ;; The decoded image is fixed batch infrastructure too. Initialize its
+    ;; bytes before entry 0; admission and mapping still require each entry's
+    ;; fresh source proofs.
+    (when
+      (> entry-count 1)
+      (cfg
+        embedded-stdlib-tlci
+        (begin
+          (embedded_tlci.compiler-embedded-stdlib-tlci-surface-bytes
+            (compiler_driver_core.compiler-driver-state-surface-arena state))
+          unit)
+        unit))))
 
 (define (compile-cli-run-batch-entries
   [state : compiler_driver_core.CompilerDriverState]
@@ -1335,18 +1351,28 @@
   [backend-mode : backend.CompilerBackendMode]
   [opt-level : i64]) : i64
   (compile-cli-batch-persistent-table-storage-ensure!
-    (owned_view.compiler-owned-shared-view state))
-  (compile-cli-run-batch-entries-from
-    state
-    (& entries)
-    0
-    has-target
-    target
-    stdlib-roots
-    cfgs
-    backend-mode
-    opt-level
-    0))
+    (owned_view.compiler-owned-shared-view state)
+    (/ (cli_svec.len (& entries)) 2))
+  (let
+    [_image-owner : i64
+      (compiler_driver_core.compiler-driver-state-surface-arena (& state))]
+    [status : i64
+      (compile-cli-run-batch-entries-from
+        state
+        (& entries)
+        0
+        has-target
+        target
+        stdlib-roots
+        cfgs
+        backend-mode
+        opt-level
+        0)]
+    (cfg
+      embedded-stdlib-tlci
+      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! _image-owner)
+      unit)
+    status))
 
 (define (compile-cli-run-windows-batch-entries-from
   [state : compiler_driver_core.CompilerDriverState]
@@ -1540,7 +1566,10 @@
     [results : cli_svec.Vec (cli_svec.new)]
     [_tables : unit
       (compile-cli-batch-persistent-table-storage-ensure!
-        (owned_view.compiler-owned-shared-view state))]
+        (owned_view.compiler-owned-shared-view state)
+        (/ (cli_svec.len (& entries)) 4))]
+    [_image-owner : i64
+      (compiler_driver_core.compiler-driver-state-surface-arena (& state))]
     [status : i64
       (compile-cli-run-windows-batch-entries-from
         state
@@ -1552,6 +1581,10 @@
         opt-level
         0
         (&mut results))]
+    (cfg
+      embedded-stdlib-tlci
+      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! _image-owner)
+      unit)
     (if (= status 0)
       (compile-cli-write-windows-batch-result-plan result-plan-path (& results))
       status)))

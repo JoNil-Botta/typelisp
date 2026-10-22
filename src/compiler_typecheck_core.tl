@@ -8347,9 +8347,9 @@
               "this argument carries an arena region that the parameter does not accept")]
           [(No) message])])))
 
-;; Ordinary lifetime names stay on the direct intern lookup. Legacy diagnostics
-;; without a TcContext may render fresh/template identities only from the
-;; validated active owner; malformed and foreign ids take the total fallback.
+;; Ordinary lifetime names stay on the direct intern lookup. Diagnostics without
+;; a TcContext decode syntax identities through the validated installed owner;
+;; malformed and foreign ids take the total fallback.
 (defmacro (tc-lifetime-name-render [name : comptime.Expr]) : comptime.Expr
   `(let
     [lifetime-name-id : i64 ,name]
@@ -8357,8 +8357,8 @@
       (ci.intern-str lifetime-name-id)
       (let
         [source-name-id : i64
-          (ci.intern-active-syntax-source-name-id-or lifetime-name-id -1)]
-        (if (>= source-name-id 0)
+          (ci.intern-active-syntax-source-name-id-or lifetime-name-id true -1)]
+        (if (ci.intern-renderable-id? source-name-id)
           (ci.intern-str source-name-id)
           (str_cat.str-cat "<id:" (string.int->string lifetime-name-id) ">"))))))
 
@@ -26987,9 +26987,9 @@
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
     "; source lifetime `"
-    (ci.intern-str source)
+    (tc-lifetime-name-render source)
     "` does not outlive required lifetime `"
-    (ci.intern-str required)
+    (tc-lifetime-name-render required)
     "`"))
 
 (define (tc-lifetime-coercion-invariant-detail
@@ -27007,9 +27007,9 @@
       (str_cat.str-cat "; " label " is invariant")
       (str_cat.str-cat
         "; source lifetime `"
-        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head source-lifetimes))
         "` cannot satisfy required lifetime `"
-        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head required-lifetimes))
         "` because "
         label
         " is invariant"))))
@@ -27071,9 +27071,9 @@
       (str_cat.str-cat "; " label " failed")
       (str_cat.str-cat
         "; source lifetime `"
-        (ci.intern-str (tc-name-id-list-head source-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head source-lifetimes))
         "` cannot satisfy required lifetime `"
-        (ci.intern-str (tc-name-id-list-head required-lifetimes))
+        (tc-lifetime-name-render (tc-name-id-list-head required-lifetimes))
         "` because "
         label
         " failed"))))
@@ -27110,9 +27110,9 @@
                 (str_cat.str-cat
                   (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
                   "; required lifetime `"
-                  (ci.intern-str required)
+                  (tc-lifetime-name-render required)
                   "` does not outlive source lifetime `"
-                  (ci.intern-str source)
+                  (tc-lifetime-name-render source)
                   "` for contravariant lifetime parameter "
                   (string.int->string (+ index 1))
                   " of `"
@@ -27121,9 +27121,9 @@
             [(TcVarianceInvariant)
               (str_cat.str-cat
                 "; source lifetime `"
-                (ci.intern-str source)
+                (tc-lifetime-name-render source)
                 "` cannot satisfy required lifetime `"
-                (ci.intern-str required)
+                (tc-lifetime-name-render required)
                 "` because lifetime parameter "
                 (string.int->string (+ index 1))
                 " of `"
@@ -94220,12 +94220,12 @@
 
 (define (macro-paths-for-decls
   [state : TcMacroState]
-  [decls : ast.AstDeclList]
+  [decls : (& decls ast.AstDeclList)]
   [path : String]) : ast.AstDeclPathList
   (let
     [out : ast.AstDeclPathList
-      (ast.ast-decl-path-list-with-capacity (ast.ast-decl-list-len (& decls)))]
-    [count : i64 (ast.ast-decl-list-len (& decls))]
+      (ast.ast-decl-path-list-with-capacity (ast.ast-decl-list-len decls))]
+    [count : i64 (ast.ast-decl-list-len decls)]
     (for [index (iterator.range 0 count)]
       (ast.ast-decl-path-list-push-with-owner-and-provenance-id
         (&mut out)
@@ -94761,8 +94761,8 @@
         fuel)]
     [(Err diag) (Err diag)]))
 
-(define (macro-decls-generated-key [identity : String]) : String
-  (str_cat.str-cat "decls:" identity))
+(define (macro-decls-generated-key [identity : (& str)]) : String
+  (str_cat.str-cat "decls:" (string.copy identity)))
 
 (define (macro-generated-meta
   [generator : String]
@@ -95479,7 +95479,8 @@
 ;; splice with a structurally identical payload contributes nothing (and skips
 ;; the context rebuild entirely); an incompatible payload errors exactly like
 ;; gen-register-generated-decl. Same lifecycle as the module memo: reset per
-;; program, self-clears on intern-generation change.
+;; program, self-clears on intern-generation change. Admission is scoped by
+;; the owning module and output segment as well as the expansion identity.
 (defstruct TcMacroGeneratedDeclsStateData
   (capacity i64)
   (keys (__tl_dyn-array i64))
@@ -95583,11 +95584,41 @@
         (deref (tc-macro-generated-decls-state-view state)).capacity)
       1)))
 
+;; Decls output is installed in the module that owns it: the consuming module,
+;; or the module named by the latest `(module ...)` marker. Admission is per
+;; marker-delimited output segment, scoped by that owner and the segment's
+;; index. Segment 0 precedes the first marker and is also the scope of
+;; marker-free output. A replay in the same consuming module reproduces every
+;; scope, so it deduplicates and an incompatible payload still diagnoses. A
+;; consuming module that is also an explicit target keeps its local segment
+;; apart from the target segment, and imports in another module still get
+;; their local alias rows. Keys belong to this job's structural owner.
+(define (macro-decls-segment-scope
+  [state : TcMacroState]
+  [owner : i64]
+  [segment : i64]) : i64
+  (cis.intern-structural-key-raw
+    (cis.intern-structural-session-composite-pair-key
+      (tc-macro-state-structural-session state)
+      owner
+      segment)))
+
+(define (macro-generated-decls-identity-id
+  [state : TcMacroState]
+  [scope : i64]
+  [identity : (& str)]) : i64
+  (cis.intern-structural-key-raw
+    (cis.intern-structural-session-composite-pair-key
+      (tc-macro-state-structural-session state)
+      scope
+      (macro-generated-identity-id state identity))))
+
 (define (macro-generated-decls-memo-get
   [state : TcMacroState]
+  [scope : i64]
   [identity : (& str)]) : MacroMaybeSpliceDecls
   (let
-    [identity-id : i64 (macro-generated-identity-id state identity)]
+    [identity-id : i64 (macro-generated-decls-identity-id state scope identity)]
     [_ensure : unit (macro-generated-decls-memo-ensure! state)]
     [memo : (Ptr TcMacroGeneratedDeclsStateData)
       (tc-macro-generated-decls-state-view state)]
@@ -95620,10 +95651,11 @@
 
 (define (macro-generated-decls-memo-put!
   [state : TcMacroState]
-  [identity : String]
+  [scope : i64]
+  [identity : (& str)]
   [decls : ast.AstDeclList]) : unit
   (let
-    [identity-id : i64 (macro-generated-identity-id state identity)]
+    [identity-id : i64 (macro-generated-decls-identity-id state scope identity)]
     ;; R3-P2b: see macro-generated-module-memo-put!.
     [_escape : unit
       (macro-decl-generation-escape-note! state 2 (+ identity-id 1))]
@@ -95891,7 +95923,8 @@
                     (set! done true)))])]))
       equal)))
 
-(define (macro-generated-decls-splice-first-item [decls : ast.AstDeclList]) : String
+(define (macro-generated-decls-splice-first-item
+  [decls : (& decls ast.AstDeclList)]) : String
   (match (ast.ast-decl-list-step decls)
     [(Nil) ""]
     [(Cons decl _)
@@ -95904,28 +95937,31 @@
 ;; and spliced; a structurally identical repeat contributes an empty splice; an
 ;; incompatible repeat errors with the same diagnostic gen-normalize's registry
 ;; would produce.
-(define (macro-decls-splice-with-memo
+(defenum MacroDeclsSpliceAdmission
+  (SpliceAdmission bool)
+  (SpliceAdmissionError (Box cdiag.CompilerDiagnostic)))
+
+(define (macro-decls-splice-admit
   [expr-bases : i64]
   [state : TcMacroState]
-  [identity : String]
-  [wrapped : ast.AstDeclList]
-  [decl-path : String]
-  [call-expr : ast.AstExpr]) : ResultMacroDeclExpansion
-  (match (macro-generated-decls-memo-get state identity)
+  [scope : i64]
+  [identity : (& str)]
+  [wrapped : (& wrapped ast.AstDeclList)]
+  [call-expr : (& call ast.AstExpr)]) : MacroDeclsSpliceAdmission
+  (match (macro-generated-decls-memo-get state scope identity)
     [(No)
       (macro-generated-decls-memo-put!
         state
+        scope
         identity
-        (tc-global-shared-view wrapped))
-      (Ok
-        (tc-global-shared-view wrapped)
-        (macro-paths-for-decls state wrapped decl-path))]
+        (owned_view.compiler-owned-reference-shared-view wrapped))
+      (SpliceAdmission true)]
     [(Some existing)
       (if (macro-generated-decls-splice-equal?
         existing
-        (tc-global-shared-view wrapped))
-        (Ok (ast.ast-decl-list-new) (ast.ast-decl-path-list-new))
-        (Err
+        (owned_view.compiler-owned-reference-shared-view wrapped))
+        (SpliceAdmission false)
+        (SpliceAdmissionError
           (let
             [diag : cdiag.CompilerDiagnostic
               (spec.gen-incompatible-diag
@@ -95934,12 +95970,138 @@
             [located : cdiag.CompilerDiagnostic
               (tc-expr-diag
                 expr-bases
-                call-expr
+                (owned_view.compiler-owned-reference-shared-view call-expr)
                 (cdiag.compiler-diagnostic-typecheck-error-text (& diag)))]
             (box
               (cdiag.compiler-diagnostic-with-primary-span
                 (& diag)
                 (cdiag.compiler-diagnostic-primary-span located))))))]))
+
+(defstruct MacroDeclsSpliceGroup
+  (owner i64)
+  (segment i64)
+  (decls ast.AstDeclList)
+  (emit bool))
+
+;; Flattened output may switch to an explicit module and later return to a
+;; previous one. Admit each nonempty segment between markers in its own scope,
+;; then retain the original interleaving. Groups are created in segment order,
+;; and both passes number segments by counting markers from 0. Module markers
+;; remain even for an empty replay: they also determine the owner of
+;; declarations following the splice.
+(define (macro-decls-splice-scoped-modules
+  [expr-bases : i64]
+  [state : TcMacroState]
+  [module-id : i64]
+  [identity : String]
+  [wrapped : ast.AstDeclList]
+  [decl-path : String]
+  [call-expr : ast.AstExpr]) : ResultMacroDeclExpansion
+  (let
+    [count : i64 (ast.ast-decl-list-len (& wrapped))]
+    [groups : (__tl_dyn-array MacroDeclsSpliceGroup)
+      (__tl_make-array MacroDeclsSpliceGroup count)]
+    [group-count : i64 0]
+    [current : i64 module-id]
+    [segment : i64 0]
+    (for [i (iterator.range 0 count)]
+      (let
+        [next : i64 (ast.ast-decl-list-module-id-at (& wrapped) i -2)]
+        (if (!= next -2)
+          (begin
+            (set! current next)
+            (+= segment 1))
+          (begin
+            (when
+              (or
+                (= group-count 0)
+                (!= (array-ref groups (- group-count 1)).segment segment))
+              (set!
+                (array-ref groups group-count)
+                (MacroDeclsSpliceGroup
+                  current
+                  segment
+                  (ast.ast-decl-list-new)
+                  false))
+              (+= group-count 1))
+            (ast.ast-decl-list-push-from
+              (&mut (array-ref groups (- group-count 1)).decls)
+              (& wrapped.slots)
+              (+ wrapped.offset i))))))
+    (for [i (iterator.range 0 group-count)]
+      (let
+        [group (& (array-ref groups i))]
+        (match (macro-decls-splice-admit
+          expr-bases
+          state
+          (macro-decls-segment-scope state group.owner group.segment)
+          (& identity)
+          (& group.decls)
+          (& call-expr))
+          [(SpliceAdmissionError diag) (return (Err diag))]
+          [(SpliceAdmission admitted) (set! (array-ref groups i).emit admitted)])))
+    (let
+      [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
+      [index : i64 -1]
+      (set! segment 0)
+      (for [i (iterator.range 0 count)]
+        (if (!= (ast.ast-decl-list-module-id-at (& wrapped) i -2) -2)
+          (begin
+            (+= segment 1)
+            (ast.ast-decl-list-push-from
+              (&mut out)
+              (& wrapped.slots)
+              (+ wrapped.offset i)))
+          (begin
+            (when
+              (or (< index 0) (!= (array-ref groups index).segment segment))
+              (+= index 1))
+            (when
+              (array-ref groups index).emit
+              (ast.ast-decl-list-push-from
+                (&mut out)
+                (& wrapped.slots)
+                (+ wrapped.offset i))))))
+      (let
+        [paths : ast.AstDeclPathList
+          (macro-paths-for-decls state (& out) decl-path)]
+        (Ok out paths)))))
+
+(define (macro-decls-splice-with-memo
+  [expr-bases : i64]
+  [state : TcMacroState]
+  [module-id : i64]
+  [identity : String]
+  [wrapped : ast.AstDeclList]
+  [decl-path : String]
+  [call-expr : ast.AstExpr]) : ResultMacroDeclExpansion
+  (for [i (iterator.range 0 (ast.ast-decl-list-len (& wrapped)))]
+    (when
+      (!= (ast.ast-decl-list-module-id-at (& wrapped) i -2) -2)
+      (return
+        (macro-decls-splice-scoped-modules
+          expr-bases
+          state
+          module-id
+          identity
+          wrapped
+          decl-path
+          call-expr))))
+  (match (macro-decls-splice-admit
+    expr-bases
+    state
+    (macro-decls-segment-scope state module-id 0)
+    (& identity)
+    (& wrapped)
+    (& call-expr))
+    [(SpliceAdmissionError diag) (Err diag)]
+    [(SpliceAdmission admitted)
+      (if admitted
+        (let
+          [paths : ast.AstDeclPathList
+            (macro-paths-for-decls state (& wrapped) decl-path)]
+          (Ok wrapped paths))
+        (Ok (ast.ast-decl-list-new) (ast.ast-decl-path-list-new)))]))
 
 (define (macro-decl-generated? [decl : (& ast.AstDecl)]) : bool
   (match (ast.ast-decl-generated-meta decl)
@@ -110793,12 +110955,12 @@
   [state : TcMacroState]
   [decl : ast.AstDecl]
   [path : String]) : ResultMacroDeclExpansion
-  (Ok
-    (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))
-    (macro-paths-for-decls
-      state
-      (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))
-      path)))
+  (let
+    [expanded : ast.AstDeclList
+      (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))]
+    [paths : ast.AstDeclPathList
+      (macro-paths-for-decls state (& expanded) path)]
+    (Ok expanded paths)))
 
 (define (tc-macro-module-env-cache-storage-ensure! [state : TcMacroState]) : unit
   (let
@@ -111859,6 +112021,7 @@
                                             (macro-decls-splice-with-memo
                                               (tc-context-expr-bases call-ctx)
                                               (tc-context-macro-state call-ctx)
+                                              module-id
                                               identity
                                               wrapped
                                               decl-path

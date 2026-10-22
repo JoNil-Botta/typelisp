@@ -863,6 +863,73 @@
           [(or (Ok _) (Err _)) false]))]
     [(None) false]))
 
+(define (compiler-registries-field-indexed-bounds-ok?) : bool
+  (match (build-compiler-symbols-from-source
+    "(defstruct Mixed (flag bool) (scale f64) (count i64))")
+    [(Ok symbols)
+      (match (csym.compiler-symbols-decl-at-index symbols 0)
+        [(Ok (DefStruct _ _ _ _ fields))
+          (let
+            [tags
+              (array
+                (ast.ast-type-tag (& (Bool)))
+                (ast.ast-type-tag (& (F64)))
+                (ast.ast-type-tag (& (I64))))]
+            [index : i64 0]
+            (while (< index (array-length tags))
+              (unless
+                (=
+                  (compiler-type-result-tag-score
+                    (csym.compiler-registries-struct-field-type-indexed
+                      symbols
+                      (csym.compiler-registry-make-handle
+                        (csym.compiler-symbol-kind-struct-field)
+                        0
+                        index))
+                    (array-ref tags index))
+                  1)
+                (return false))
+              (+= index 1))
+            (let
+              [invalid-indices : (Array i64 4)
+                (array -9223372036854775808 -1 3 9223372036854775807)]
+              [invalid : i64 0]
+              (while (< invalid (array-length invalid-indices))
+                (match (csym.compiler-field-type-at-index
+                  (& fields)
+                  (array-ref invalid-indices invalid))
+                  [(Err message)
+                    (unless
+                      (string.eq message "symbols: field index not found")
+                      (return false))]
+                  [_ (return false)])
+                (+= invalid 1)))
+            (and
+              (match (csym.compiler-field-type-at-index
+                (& (ast.ast-field-def-list-with-capacity 0))
+                0)
+                [(Err message)
+                  (string.eq message "symbols: field index not found")]
+                [_ false])
+              (match (csym.compiler-registries-struct-field-type-indexed
+                symbols
+                (csym.compiler-registry-make-handle
+                  (csym.compiler-symbol-kind-struct-field)
+                  0
+                  (- (csym.compiler-registry-child-stride) 1)))
+                [(Err message)
+                  (string.eq message "symbols: field index not found")]
+                [_ false])))]
+        [_ false])]
+    [(Err _) false]))
+
+(test
+  compiler-field-type-indexed-bounds
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless
+    (compiler-registries-field-indexed-bounds-ok?)
+    (io.panic "symbols: indexed field type bounds failed")))
+
 (define (compiler-registries-lifetime-field-indexed-ok?) : bool
   (match (parser.parse-ast-source
     "(defenum NotStruct (None))
@@ -2351,6 +2418,7 @@
                     (compiler-registry-large-owner-handle-ok?)
                     (compiler-registry-shift-map-full-ok?)
                     (compiler-registries-incremental-splice-ok?)
+                    (compiler-registries-field-indexed-bounds-ok?)
                     (compiler-registries-lifetime-field-indexed-ok?)
                     (compiler-symbols-append-splice-ok?)
                     (compiler-symbols-append-external-macro-alias-ok?)

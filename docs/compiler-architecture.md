@@ -15,9 +15,17 @@ Lowering produces typed three-address IR, optimization transforms that IR,
 and the backend emits native code for the selected target. CLI, package,
 batch and LSP services orchestrate these stages.
 
+Multi-entry compile batches may retain immutable embedded-image bytes in the
+driver's surface arena under the [batch lifetime contract](compiler-invariants.md#architecture).
+Per-entry source admission and native mappings remain independent.
+
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
+Declaration-macro splice deduplication also includes the owning module;
+its scope and regression witnesses are recorded in the
+[detailed macro invariants](compiler-invariants.md#architecture).
+
 Generated macro commits refresh selected aliases through the existing
 module/import event index and symbol map before the next expansion context is
 published; see the [import invariants](compiler-invariants.md#architecture).
@@ -32,6 +40,7 @@ the singleton `Begin` rule alongside the `While` body-list contract.
 | Syntax and pooled AST nodes | [parser](../src/compiler_parse_core.tl), [AST model](../src/compiler_ast_types.tl) | Reuse parsing and `ast-expr-child-ids`/`ast-expr-children`; carry the node's owner. |
 | Source/import identity | [loader](../src/compiler_load.tl) | Reuse its resolver and parsed surface facts; a surface is not a complete expanded or checked program. |
 | Checked expressions and ownership | [typechecker](../src/compiler_typecheck_core.tl), [public entry points](../src/compiler_typecheck_api.tl) | Use context-owned facts; invalidate them when their semantic inputs or owners change. |
+| Tail-call argument storage | [lowering](../src/compiler_lower.tl) | Inspect effective arguments against formal types and prove storage survives frame release; preserve the [lowering invariants](compiler-invariants.md). |
 | Shared IR and operands | [IR model](../src/compiler_ir_types.tl) | Extend `compiler-ir-instr-visit-uses`, `compiler-ir-instr-map` and related operand helpers instead of copying full-variant walkers. |
 | Target predicates | [target cfg builder](../src/compiler_target_cfg_core.tl) | Use the shared target presets and [target dispatch guard](../scripts/check-codegen-target-dispatch.sh). |
 | ELF relocatable input syntax | [ELF reader](../src/linker_elf_object_reader.tl) | Preserve the input/content owner, physical IDs and borrowed spans under the [input contract](compiler-invariants.md#elf-relocatable-object-input); #7101 owns admission and linking policy. |
@@ -51,6 +60,9 @@ and reusable facts. Job-state isolation remains an ongoing migration in
 [#5754](https://github.com/JoNil-Botta/typelisp/issues/5754) and
 [#5756](https://github.com/JoNil-Botta/typelisp/issues/5756). Serial compatibility
 adapters do not make an ambient owner safe for a value from another job.
+
+Lifetime diagnostics and IR rendering share the validated syntax-name boundary
+with explicit macro-spelling policy; see the [rendering invariants](compiler-invariants.md#architecture).
 
 [Native TLCI source generation](../src/compiler_tlci_native_producer.tl) reads
 captured nodes and names through `TlciNativeSourceContext`. Its source owners

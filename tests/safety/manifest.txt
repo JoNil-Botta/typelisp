@@ -380,6 +380,7 @@ hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nomina
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|error[E0210]: typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& left-life str), found (& right-life str); source lifetime `right-life` does not outlive required lifetime `left-life`
+tail_ref_param_local_rebind_reject|check-fail|tests/safety/tail_ref_param_local_rebind_reject.tl|-|error[E0210]: typecheck: assignment type mismatch
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
@@ -445,6 +446,8 @@ byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_r
 byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_after_immut_reject.tl|-|cannot mutably borrow borrowed place `buf`
 byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot read mutably borrowed place `buf`
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
+macro_local_lifetime_coercion_reject|check-fail|tests/safety/macro_local_lifetime_coercion_reject.tl|-|source lifetime `shadowed` does not outlive required lifetime `keep`
+macro_local_lifetime_incoming_ok|run-exit|tests/safety/macro_local_lifetime_incoming_ok.tl|42|-
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|typecheck: ptr-read requires unsafe context
 fs_raw_metadata_safe_reject|check-fail|tests/safety/fs_raw_metadata_safe_reject.tl|-|fs/metadata-read-i64-at requires unsafe context
 fs_raw_directory_alias_safe_reject|check-fail|tests/safety/fs_raw_directory_alias_safe_reject.tl|-|disk/c-string-byte requires unsafe context
@@ -1609,3 +1612,8 @@ macro_diagnostic_division|check-fail|tests/safety/macro_diagnostic_division.tl|-
 macro_diagnostic_fuel|check-fail|tests/safety/macro_diagnostic_fuel.tl|-|error[E0507]:
 macro_table_cycle_reject|check-fail|tests/safety/macro_table_cycle/main.tl|-|error[E0501]: typecheck: missing macro
 macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.tl|-|-
+
+# Same canonical Decls identity in one module must retain collision checks.
+decls_same_scope_incompatible|check-fail|tests/safety/decls_same_scope_incompatible.tl|-|has incompatible payload
+decls_explicit_module_tail_conflict|check-fail|tests/safety/decls_explicit_module_tail_conflict.tl|-|duplicate value declaration generated.decls_explicit_global/value
+decls_explicit_target_incompatible|check-fail|tests/safety/decls_explicit_target_incompatible.tl|-|duplicate generated key for answer has incompatible payload

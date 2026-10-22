@@ -6732,6 +6732,65 @@
     (unless (= (opt-cc-check twice) 0) (return (+ 40 (opt-cc-check twice))))
     42))
 
+(define (compiler-optimize-bitwise-width-self-test) : i64
+  (let
+    [input : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%1 = mov -3 : i8
+         %2 = mov -3 : i16
+         %3 = mov -3 : i32
+         %4 = mov 7 : i8
+         %5 = mov -2147483648 : i32
+         %6 = mov -32768 : i16
+         %7 = mov -128 : i8
+         %100 = bit_and %1, 255 : u64
+         %101 = bit_and %2, 65535 : u64
+         %102 = bit_and %3, 4294967295 : u64
+         %103 = bit_and 4294967295, %3 : u64
+         %104 = bit_or %4, 4294967296 : u64
+         %105 = bit_xor %4, 4294967296 : u64
+         %106 = bit_and %3, 0 : u64
+         %107 = bit_and %5, 4294967295 : u64
+         %108 = bit_and %6, 65535 : u64
+         %109 = bit_and %7, 255 : u64
+         %110 = bit_and %3, 255 : u8
+         %111 = bit_and %999, 255 : u64")]
+    [folded : ir.CompilerIrInstrSeq
+      (opt-test-fold-instrs
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (Nil)
+        input)]
+    [expected : (Array i64 10)
+      (array
+        253
+        65533
+        4294967293
+        4294967293
+        4294967303
+        4294967303
+        0
+        2147483648
+        32768
+        128)]
+    (unless (= (opt-count-arith-instr-seq folded) 1) (return 1))
+    (for [index (iterator.range 0 (array-length expected))]
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq folded (+ 100 index) -999)
+          (array-ref expected index))
+        (return (+ 10 index)))
+      (unless
+        (=
+          (opt-mov-dst-type-tag folded (+ 100 index))
+          (ast.ast-type-tag (& (U64))))
+        (return (+ 30 index))))
+    (unless
+      (and
+        (= (opt-mov-dst-i64-value-instr-seq folded 110 -999) 253)
+        (= (opt-mov-dst-type-tag folded 110) (ast.ast-type-tag (& (U8)))))
+      (return 2))
+    42))
+
 (define (compiler-optimize-typed-fold-self-test) : i64
   (let
     [pos : ir.CompilerIrInstrSeq
@@ -69218,6 +69277,13 @@ return 0" true)
     "a commutative integer op with a literal or global-cell LHS canonicalises to a literal or cell RHS (two cells stay), `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
 
 (test
+  bitwise-declared-width
+  (test.assert-i64-eq
+    (compiler-optimize-bitwise-width-self-test)
+    42
+    "bitwise folds keep the declared width for narrow constants, wide masks and high bits, and retain unknown operands"))
+
+(test
   scalar-shift-count-type-fold
   (test.assert-i64-eq
     (compiler-optimize-typed-fold-self-test)
@@ -75008,6 +75074,122 @@ return 0" true)
           cells)
         (opt-t22-blocks (opt-t22-global-arg-instrs symbols callee arg)))]
     (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
+
+;; An implicit runtime helper has a parameter-write summary but no installed
+;; cell/storage row. Its no-reentry fallback cannot account for an explicit
+;; global destination, even when both global tables are built.
+(define (opt-t22-runtime-global-loads [callee : i64] [mode : i64]) : i64
+  (let
+    [symbols (opt-t22-cell-symbols)]
+    [target : ir.CompilerIrValue
+      (if (= mode 5)
+        (GlobalAddr symbols.g)
+        (Global
+          (if (= mode 1)
+            symbols.h
+            symbols.g)))]
+    [args : ir.CompilerIrCallArgs
+      (cond
+        [(= mode 3) (Nil)]
+        [(= callee cbi.compiler-builtin-id-tl-array-zero)
+          (Two
+            target
+            (I64
+              (if (= mode 2)
+                0
+                8)))]
+        [else
+          (ir.compiler-ir-call-args-from-seq
+            (&
+              (ir.compiler-ir-value-seq3
+                target
+                (I64
+                  (if (= mode 2)
+                    0
+                    1))
+                (I64 0))))])]
+    [instrs
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Gep 2 (Global symbols.g) (I64 0) (I64))
+        (irt.instr "%3 = load %2 : i64")
+        (ir.CompilerIrInstr.Call 4 callee args (Unit))
+        (ir.CompilerIrInstr.Gep 5 (Global symbols.g) (I64 0) (I64))
+        (irt.instr "%6 = load %5 : i64")
+        (irt.instr "return %6"))]
+    [functions
+      (ir.compiler-ir-function-seq1
+        (&
+          (opt-call-memory-test-function
+            symbols.caller
+            (ir.compiler-ir-param-seq-empty)
+            (opt-test-instr-seq-copy (clone instrs)))))]
+    [globals (opt-t22-storage-globals symbols)]
+    [cells
+      (opt-test-global-obj-attach
+        (opt-t22-storage-globals symbols)
+        (& functions)
+        16
+        (opt.opt-global-cell-summary-build
+          (opt-t22-type-bases)
+          (& globals)
+          (& functions)))]
+    [blocks
+      (begin
+        (when (= mode 6) (set! cells.mod-ref.built? false))
+        (when (= mode 7) (set! cells.obj-mod-ref.built? false))
+        (opt-t22-run
+          (ir.compiler-ir-param-seq-empty)
+          (opt.opt-call-memory-build (opt-t22-type-bases) (& functions) 16)
+          (if (= mode 4)
+            (opt.opt-global-cell-summary-empty)
+            cells)
+          (opt-t22-blocks instrs)))]
+    (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
+
+(test
+  load-cse-runtime-global-argument-needs-installed-row
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [callees
+      (ir.compiler-ir-value-seq3
+        (Global cbi.compiler-builtin-id-tl-array-zero)
+        (Global cbi.compiler-builtin-id-tl-array-fill8)
+        (Global cbi.compiler-builtin-id-tl-mem-fill8))]
+    (for [at (iterator.range 0 3)]
+      (match (ir.compiler-ir-value-seq-borrow (& callees) at)
+        [(Global callee)
+          (for [mode (iterator.range 0 8)]
+            (test.assert-i64-eq
+              (opt-t22-runtime-global-loads callee mode)
+              2
+              "implicit fills cannot skip a global argument without an installed mod/ref row"))]
+        [_ (test.assert-true false "fixture callee identity")]))))
+
+(test
+  global-mod-ref-installed-zero-row
+  (let
+    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [name cbi.compiler-builtin-id-tl-mem-fill8]
+    [row
+      (opt.OptGlobalModRef
+        true
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1))]
+    (test.assert-i64-eq
+      (opt.opt-global-mod-ref-call-mask (& row) name)
+      0
+      "the no-reentry fallback has no implicit global writes")
+    (test.assert-true
+      (not (opt.opt-global-mod-ref-has-row? (& row) name))
+      "a built table alone does not contain a callee row")
+    (opt_i64_i64_map.insert-ref! (&mut row.writes) name 0)
+    (test.assert-true
+      (opt.opt-global-mod-ref-has-row? (& row) name)
+      "an installed zero write set is still a row")
+    (set! row.built? false)
+    (test.assert-true
+      (not (opt.opt-global-mod-ref-has-row? (& row) name))
+      "an unavailable table supplies no row proof")))
 
 ;; --- (c) MF-5 (ii): the width rule for constant globals ---------------------
 ;;

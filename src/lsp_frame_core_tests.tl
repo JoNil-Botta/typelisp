@@ -5,7 +5,6 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.json)
-(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as lsp_svec)

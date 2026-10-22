@@ -1,5 +1,28 @@
 # Selfhost compiler testing
 
+`load-cse-runtime-global-argument-needs-installed-row` covers all seeded fill
+helpers with same/different global destinations, global addresses, zero counts,
+missing arguments, absent tables and cells-only/object-only availability.
+`global-mod-ref-installed-zero-row` distinguishes a missing row from an installed
+empty write set and an unavailable table. Keep the T2-2
+same-global rejection and unrelated-global forwarding controls beside them.
+
+`compiler-ast-span-forwarding` runs the compaction fixtures with source-span
+consumption enabled: empty input, bitmap and pool-segment boundaries, shared
+expressions, reordered canonical/ReSpan views, destination reuse and spans read
+after source destruction. Nonconsuming cases preserve source provenance. Test
+builds poison the consumed source's shared span-base table so later reads
+through any context view fail; full compiler and corpus builds with `--cfg test`
+exercise the finalization-to-retirement boundary.
+
+`backend-forwarded-address-*` tests coalesced copies and same-type casts on
+both targets, phi filtering and cycle scheduling, and final-IR branch loads
+whose address setup must survive. Initialized same-home copies and real swap
+cycles remain controls. `forwarded_addr_loop_argument.tl` and
+`forwarded_addr_loop_callee.tl` exercise both edges of a loop-carried address
+phi at opt0/1/2 on both hosts; explicit source snapshots isolate these cases
+from the separate lowering and stale-load bugs.
+
 `linker_coff_import_reader_tests.tl` shares its assertion body with the native
 opt0/1/2 smoke. It checks LLVM and Microsoft SDK member fixtures, all admitted
 kind/name modes, literal IAT names, hint/ordinal boundaries, byte round trips,
@@ -7,6 +30,18 @@ every truncated prefix, malformed strings/headers, bigobj classification,
 resource boundaries and stable normalized/diagnostic dumps. Normal tests run
 neither producer tool. Preserve physical member IDs, original spellings and
 timestamps separately from normalized identity when adding cases.
+
+`regalloc-move-index-direction-and-strictness` pins directed admission,
+undirected duplicate suppression and newest-first strict upgrades.
+`regalloc-move-index-growth-and-reference` compares every slot with the former
+list-scan semantics through mixed insertion modes, full-width signed IDs,
+table growth and interleaved builders. `regalloc-move-index-hash-collisions`
+checks real pair-hash collisions, an absent pair at the chain tail and
+strict upgrades through colliding entries. `regalloc-move-index-prefix-promotion`
+pins the exact small-list boundary, one-time promotion, duplicate/self moves
+that must not promote, and strict upgrades across promotion. Run these at
+opt0/1/2, retain the dense sequence contract tests, and compare fixed-source
+compiler, benchmark and CFG scaling assembly when changing move indexing.
 
 `compiler_macro_diagnostics.tl` checks macro namespace, operand/output, depth,
 author-error, evaluation and fuel codes, preserves nested parse/typecheck codes
@@ -46,6 +81,22 @@ missing sentinels. `compiler_tlci_native_source_owners.tl` runs the same asserti
 through the native corpus at opt0/1/2 on both hosts. Keep full-catalog source
 parity, all native macro entries and existing backend/image gates when changing
 the source-owner boundary.
+
+`compiler-optimize-bitwise-width-self-test` checks narrow constants with wider
+bitwise masks and high bits, commuted operands, minimum signed values, narrow
+results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
+i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
+with smaller memory-storage layouts and zero/positive field values as controls.
+
+`regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
+compare stack tail fallbacks with ordinary calls on both ABIs. The overflow
+boundary test checks twice each GP window and one argument beyond it; the
+computed-argument and coalesced-call controls preserve exclusions outside
+simple one-instruction forwarders.
+`tail_call_stack_forward.tl` covers register permutations, duplicate stack
+sources, zero/negative values and hidden aggregate-result pointers at opt0/1/2.
+`tail-stack-forward-preserves-calls` pins its out-of-line fallback, tail jump
+and aggregate-result forwarding at opt2 on both ABIs.
 
 `backend-call-conventions` checks every IR call form, C and TypeLisp extern
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
@@ -140,10 +191,43 @@ and unsafe callable ABI families beside this ordering regression. The
 `compiler-lower-operand-snapshot-shape` lowering test pins that ordinary and
 tail callees are copied only when an argument writes their storage.
 
+`addr_taken_frame_slots.tl` keeps scalar, narrow, parameter, loop-carried and
+callable-copy storage private while a derived pointer remains live, at opt0/1/2
+on both hosts. `regalloc-stack-only-address-slots` checks the same exclusion
+through IR-text copies and joins. `addr_taken_frame_join.tl` covers the opt0/1
+phi interaction; its independent opt2 load-forwarding defect remains #8514.
+
+`tail_call_frame_provenance.tl` scrubs the callee's frame before reading a
+reference or slice. It covers explicit and implicit field borrows, array and
+tuple elements, local aliases, call-returned references, shadowed parameters,
+heap aggregate copies and indirect calls at opt0/1/2 on both hosts. Its
+assembly cases retain ordinary calls for unproven storage and tail jumps for
+reference parameters, reborrows, caller-owned projections and heap storage.
+Parameter-derived slice rests keep tail jumps through nested patterns and a
+300,000-element walk. Sibling local-array views and rebound rests retain calls,
+checking that external-storage facts neither leak between arms nor survive a
+reassignment.
+The safety corpus rejects rebinding a reference parameter to a shorter local
+borrow before forwarding it.
+
+`tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
+in one frame, including register-resident enum spills. Their tail jumps and
+opt2 loops are checked on both targets. The frame-provenance corpus also
+checks borrowed enum arms with scalar/tuple fields, Copy-array slices,
+call-returned references, nested matches, reassignment and shadowing.
+
 The broader work is tracked by the parity umbrella
 [#641](https://github.com/JoNil-Botta/typelisp/issues/641), the selfhost CI
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the
 bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47).
+
+`compiler-driver-retained-image-owner` in `compiler_driver_smoke_tests.tl`
+checks embedded-image retention, nonpositive and nested owners, forgetting a
+borrowed owner, and reuse after the previous owner is destroyed. Run it at
+opt0, opt1 and opt2. The native-route stress and stdlib identity differential
+gates retain their complete native/source batches, mapping lifecycles,
+source-mutation fallbacks and failing-entry diagnostics.
+
 The gate table, the gate/tool classification and the canonical script entry
 points are documented in [`../scripts/README.md`](../scripts/README.md); the
 user-facing `typelisp test`/`doc --test` behaviour, the stage0 workflow and the
@@ -899,6 +983,13 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 
 ## Coverage layers
 
+`regalloc-assignment-table-empty` checks empty and sparse assignment tables,
+every occupied position through the last slot, ignored out-of-range inserts,
+replacement, repeated unassignment, copying and overlays. Both explicit spills
+and register homes count as assignments. The native register-allocation
+self-test runs the same cases; exercise it at opt0/1/2 when changing presence
+queries or assignment-table mutation.
+
 ### Module-local self-tests
 
 Put small structural checks in the owning module's `*_tests.tl` companion (for
@@ -920,6 +1011,11 @@ Current examples include:
 
 Test-only helpers belong in these companions (or under `src/tests/`), not in
 the production modules they exercise.
+
+`compiler-field-type-indexed-bounds` checks first, middle and last fields of
+different types, empty field storage, signed index extremes and a registry
+handle whose child is past the owning struct. The symbol smoke runs the same
+checks alongside lifetime-bearing fields and shifted declaration owners.
 
 Prefer small hand-built fixtures and deterministic structural assertions over
 large golden strings. A runnable self-test returns `42` on success. Failures
@@ -2166,6 +2262,22 @@ expression segment boundaries, including more than two full segments. Run it at
 opt0, opt1 and opt2 alongside the native smoke's row-rewrite, truncation/reuse
 and equal-ID/different-pool cases. Wrapper removal consumes each row before
 reading the next and copies out the leaf without recursive stack growth.
+
+`decls_module_scopes` and `serialize_module_scopes` run at opt0/1/2 on both
+hosts. The former repeats one declaration expansion within two generated
+modules and reimports a generated module. The latter round-trips shared enum
+payloads through separate enclosing serializers and checks distinct struct,
+string and scalar values. `decls_same_scope_incompatible` preserves a located
+incompatible-output diagnostic for one module/canonical expansion identity.
+`decls_explicit_module_scopes` combines local declarations with shared explicit
+modules; `decls_explicit_module_tail_conflict` checks that replayed markers
+still assign subsequent declarations to their explicit owner.
+`decls_self_target_scopes` expands bare and bodied module switches in a module
+that is also their target, in both import orders and with a same-module replay;
+`decls_explicit_target_incompatible` keeps the shared target segment's
+incompatible-output diagnostic across consuming modules.
+The typechecker memo scope test complements its existing owner-isolation,
+collision-probing, scratch-persistence and re-arm allocation checks.
 
 ### ELF64 relocatable input reader
 

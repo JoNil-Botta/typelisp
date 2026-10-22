@@ -1,7 +1,6 @@
 ;; compiler_backend.tl - Selfhost CompilerIrProgram -> x86_64 .s emitter.
 (import stdlib.iterator)
 (import stdlib.io)
-(import stdlib.iterator)
 (import stdlib.env)
 (cfg compile-profile (import stdlib.profile))
 (cfg compile-profile (import compiler_profile_counters as counters))
@@ -13984,7 +13983,7 @@
       (compiler-backend-state-function-state backend-state)]
     ;; An empty plan homes nothing, whatever the installed mask describes; this
     ;; keeps out-of-emission callers correct.
-    (if (= (compiler_regalloc.compiler-reg-assignment-count assignments) 0)
+    (if (compiler_regalloc.compiler-reg-assignment-table-empty? assignments)
       false
       (if (compiler-backend-function-state-bool?
         function-state
@@ -15225,7 +15224,7 @@
         (<= prefix-count (compiler_ir_types.compiler-ir-block-seq-count seq))
         (or
           (not incoming?)
-          (if (= (compiler_regalloc.compiler-reg-assignment-count selected) 0)
+          (if (compiler_regalloc.compiler-reg-assignment-table-empty? selected)
             (= (compiler_ir_types.compiler-ir-param-seq-count params) 0)
             true)))]
     [function-state : CompilerBackendFunctionState
@@ -28934,10 +28933,6 @@
                                           result-ty
                                           backend-state)))))]))))])]))))))))
 
-(define (compiler-backend-empty-assignments?
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]) : bool
-  (= (compiler_regalloc.compiler-reg-assignment-count assignments) 0))
-
 (define (compiler-backend-commutative-binop?
   [op : (& op compiler_ir_types.CompilerIrBinOp)]) : bool
   (match op
@@ -28953,7 +28948,7 @@
   [rhs : (& compiler_ir_types.CompilerIrValue)]
   [ty : (& ty compiler_ast_types.AstType)]) : bool
   (and
-    (compiler-backend-empty-assignments? assignments)
+    (compiler_regalloc.compiler-reg-assignment-table-empty? assignments)
     (not (compiler-backend-compare-op? op))
     (not (compiler-backend-binop-f64? types global-types lhs rhs ty))))
 
@@ -41766,7 +41761,11 @@
   [src : compiler_ir_types.CompilerIrValue]) : bool
   (match src
     [(Var src-var)
-      (compiler-backend-vars-same-home? backend-state assignments dst src-var)]
+      ;; A forwarded address is recomputed at its use; its nominal allocator
+      ;; home was never initialized by the suppressed AddrOf definition.
+      (and
+        (< (compiler-backend-forwarded-addr-of-src backend-state src-var) 0)
+        (compiler-backend-vars-same-home? backend-state assignments dst src-var))]
     [_ false]))
 
 (define (compiler-backend-phi-same-home?
@@ -41785,7 +41784,11 @@
     [(Value value)
       (match value
         [(Var found)
-          (compiler-backend-vars-same-home? backend-state assignments found dst)]
+          (compiler-backend-value-same-home?
+            backend-state
+            assignments
+            dst
+            (Var found))]
         [_ false])]
     [(Temp _) false]))
 
@@ -41835,10 +41838,15 @@
     [(Value value)
       (match value
         [(Var found)
-          (compiler-backend-var-parallel-resource0
-            backend-state
-            assignments
-            found)]
+          ;; Materializing an address reads no contents of its nominal home.
+          (if (>=
+            (compiler-backend-forwarded-addr-of-src backend-state found)
+            0)
+            0
+            (compiler-backend-var-parallel-resource0
+              backend-state
+              assignments
+              found))]
         [_ 0])]
     [(Temp _) 0]))
 
@@ -41850,10 +41858,14 @@
     [(Value value)
       (match value
         [(Var found)
-          (compiler-backend-var-parallel-resource1
-            backend-state
-            assignments
-            found)]
+          (if (>=
+            (compiler-backend-forwarded-addr-of-src backend-state found)
+            0)
+            0
+            (compiler-backend-var-parallel-resource1
+              backend-state
+              assignments
+              found))]
         [_ 0])]
     [(Temp _) 0]))
 
@@ -41950,11 +41962,11 @@
     [(Value value)
       (match value
         [(Var found)
-          (if (compiler-backend-vars-same-home?
+          (if (compiler-backend-value-same-home?
             backend-state
             assignments
-            found
-            dst)
+            dst
+            (Var found))
             (Temp loc)
             source)]
         [_ source])]

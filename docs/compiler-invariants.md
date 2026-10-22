@@ -398,15 +398,17 @@ checker generation; a reset prevents an older token from restoring a frame.
 Parameter metadata annotates the ordinary bound environment, preserving its
 resolved types and lifetime markers without creating another binding layer.
 
-The existing typing dispatch separately records bodies without loops or nested
-lambdas. Those bodies need only incremental address marks: a later expression
-cannot execute before an earlier read through a backedge. The proof is a
-job-owned numeric bitset, bounded by the source pool and reset with the other
-body facts. Move entry skips binding collection only for that proof. An
-unexpected loop or capture clears it and invalidates any older body frames
-before lowering, so a partial census never supplies negative evidence.
-Acyclic body identity travels in the existing entry/suspension token; nested
-queries cannot lose the fact that binding collection was omitted.
+The existing typing dispatch records two sufficient proofs for omitting binding
+collection: no loops/nested captures, or no raw-address/mutable-borrow operations
+anywhere in the body, including nested lambdas. The former retains incremental
+address marks; the latter proves a complete empty exposure set even with loops.
+Successful checks record these alternatives in two bits per source body, bounded
+by the pool and reset with the other body facts. Move checking permits addresses
+under the first proof and loops/captures under the second. An unexpected event
+clears the proof and invalidates older body frames before lowering. The entry
+and suspension token remembers the omitted body's identity even if a nested
+query already cleared its proof, so partial collection never supplies negative
+evidence. Unknown source identities and unsupported proof values stay unavailable.
 
 A successfully completed, complete frame makes an absent exposure key a proven
 negative. An unavailable or incomplete frame never supplies that proof. The

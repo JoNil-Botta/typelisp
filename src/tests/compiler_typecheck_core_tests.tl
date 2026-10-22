@@ -12792,3 +12792,37 @@
         0
         "retired descriptors cannot become current evidence")
       (storage_exposure.storage-exposure-leave! source-a previous true))))
+
+(test
+  tc-storage-address-notes
+  (let
+    [state : tc_core.TcTypeEnvScopedState
+      (tc_core.tc-type-env-scoped-state-new (arena.tl_arena_current))]
+    (for [scenario (iterator.range 0 5)]
+      (let
+        [node : ast.AstExpr
+          (cond
+            [(= scenario 0) (PtrAddrOf 0)]
+            [(= scenario 1) (Borrow true -1 0)]
+            [(= scenario 2) (Borrow false -1 0)]
+            [(= scenario 3) (Literal (ast.ast-lit-int 0))]
+            [else (While 0 (ast.ast-expr-list-new))])]
+        [_address : bool
+          (tc_core.tc-scoped-storage-address-swap! state.address false)]
+        [_census : bool
+          (tc_core.tc-scoped-storage-census-swap! state.address false)]
+        [scoped? : bool
+          (tc_core.tc-expr-scoped-bindings? state.address (& node))]
+        [address? : bool
+          (tc_core.tc-scoped-storage-address-swap! state.address false)]
+        [census? : bool
+          (tc_core.tc-scoped-storage-census-swap! state.address false)]
+        (test.assert-true
+          (= address? (< scenario 2))
+          "raw addresses and mutable borrows need exposure; immutable borrows and reads do not")
+        (test.assert-true
+          (and (= scoped? (= scenario 4)) (= census? (= scenario 4)))
+          "address notes preserve the existing scoped-binding dispatch")))
+    (test.assert-true
+      (tc_core.tc-scoped-storage-address-swap! 0 false)
+      "an unavailable scoped owner cannot prove address absence")))

@@ -243,8 +243,10 @@
   (let
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
     [_exhaust : unit
-      (unsafe
-        (set! (deref (exposure.storage-exposure-ptr facts)).generation -1))]
+      (let
+        [data : (Box exposure.StorageExposureData)
+          (exposure.storage-exposure-box facts)]
+        (__tl-project-set-field (__tl-box-place data) generation -1))]
     [previous : i64 (exposure.storage-exposure-enter! facts 1 2 false)]
     [frame : i64 (exposure.storage-exposure-current facts)]
     (test.assert-i64-eq

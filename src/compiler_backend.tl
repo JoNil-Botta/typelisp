@@ -5,13 +5,10 @@
 (cfg compile-profile (import stdlib.profile))
 (cfg compile-profile (import compiler_profile_counters as counters))
 (cfg compile-profile-summary (import compiler_profile_summary as cps))
-(import sym_i64_env)
 (import compiler_lower)
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_typecheck_core)
-(import compiler_cfg_core)
-(import compiler_parse_core)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic)
 (import compiler_optimize)
@@ -92255,27 +92252,6 @@ tl_shared_object_init:
     emit-entry
     false))
 
-(define (compiler-backend-target-cfgs [target : CompilerBackendTarget]) : sym_i64_env.SymI64Env
-  (match target
-    [(CompilerBackendTarget.Linux)
-      (compiler_cfg_core.compiler-cfg-enable
-        (compiler_cfg_core.compiler-cfg-enable
-          (compiler_cfg_core.compiler-cfg-enable
-            (compiler_cfg_core.compiler-cfg-enable
-              (compiler_cfg_core.compiler-cfg-empty)
-              "linux")
-            "unix")
-          "target-linux")
-        "os-linux")]
-    [(CompilerBackendTarget.Windows)
-      (compiler_cfg_core.compiler-cfg-enable
-        (compiler_cfg_core.compiler-cfg-enable
-          (compiler_cfg_core.compiler-cfg-enable
-            (compiler_cfg_core.compiler-cfg-empty)
-            "windows")
-          "target-windows")
-        "os-windows")]))
-
 (define (compiler-backend-lower-mode-for-target
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]) : compiler_lower.CompilerLowerMode
@@ -92308,39 +92284,31 @@ tl_shared_object_init:
       (compiler_lower.lower-resetting-entry-live-session-error
         "compiler-backend-lower-source-for-target"
         "<source>")))
-  (ci.intern-reset!)
-  (compiler_lower.lower-reset-intern-owned-state!)
-  (cbi.compiler-builtin-reset!)
   (let
-    [program
-      (try
-        (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
-          "<source>"
-          (& src)
-          (compiler-backend-target-cfgs target)))]
-    (compiler_lower.lower-compiler-program-with-path-mode
+    [request : compiler_lower.CompilerLowerRequest
+      (compiler_lower.compiler-lower-request
+        (compiler-backend-lower-mode-for-target target (Scalar)))]
+    (set! request.executable true)
+    (compiler_lower.lower-compiler-source-with-request
       "<source>"
-      program
-      (compiler-backend-lower-mode-for-target target (Scalar)))))
+      src
+      (& request))))
 
-;; Session-additive variant for compiles nested inside a live build session:
-;; interning, builtin ids, and typecheck caches stay untouched so the
-;; enclosing session's id-keyed state remains valid. The tool-grade entry
-;; above resets those globals and must never run mid-session.
+;; Additive jobs share the enclosing node/name owners and use private import
+;; and typecheck request state; they never reset the enclosing session.
 (define (compiler-backend-lower-source-for-target-in-session
   [src : String]
   [target : CompilerBackendTarget]) : compiler_lower.ResultCompilerLower
   (let
-    [program
-      (try
-        (compiler_parse_core.parse-ast-source-diagnostic-with-cfg
-          "<source>"
-          (& src)
-          (compiler-backend-target-cfgs target)))]
-    (compiler_lower.lower-compiler-program-with-path-mode
+    [request : compiler_lower.CompilerLowerRequest
+      (compiler_lower.compiler-lower-request
+        (compiler-backend-lower-mode-for-target target (Scalar)))]
+    (set! request.in-session true)
+    (set! request.executable true)
+    (compiler_lower.lower-compiler-source-with-request
       "<source>"
-      program
-      (compiler-backend-lower-mode-for-target target (Scalar)))))
+      src
+      (& request))))
 
 (define (compiler-backend-emit-source [src : String]) : ResultCompilerBackend
   (match (compiler_lower.lower-compiler-source src)

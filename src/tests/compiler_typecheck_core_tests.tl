@@ -1004,6 +1004,46 @@
     pools))
 
 (test
+  tc-dotted-alias-variant-source-name-boundary
+  (let
+    [owner : i64 (ci.intern "variant-boundary-owner")]
+    [name : i64 (ci.intern "missing.variant")]
+    [session : cis.InternStructuralSessionHandle
+      (cis.intern-structural-session-handle-from-source-names
+        (ci.intern-source-name-session-capture-active-handle))]
+    [pair : i64 (csym.compiler-composite-pair-key-id owner name)]
+    [triple : i64 (csym.compiler-composite-triple-key-id owner name name)]
+    [fresh : i64
+      (cis.intern-fresh-local-identity-raw
+        (cis.intern-structural-session-fresh-local-identity session 17 name))]
+    [ids : (Array i64 6) (array -1 (ci.intern-capacity) pair triple fresh name)]
+    [ctx : tc_core.TcContext
+      (macro-prepare-test-ctx (ast.ast-node-pool-context-capture-active))]
+    (for [index (iterator.range 0 (array-length ids))]
+      (let
+        [id : i64 (array-ref ids index)]
+        (test.assert-true
+          (match (tc_core.tc-dotted-alias-variant-key-id ctx "" id)
+            [(None) true]
+            [_ false])
+          "an absent alias key never indexes metadata with a structural id")
+        (test.assert-true
+          (match (tc_core.tc-dotted-alias-variant-handle ctx "" id)
+            [(None) true]
+            [_ false])
+          "the variant handle fallback preserves the source-name boundary")))
+    (test.assert-true
+      (match (tc_core.tc-expr ctx (tc_core.tc-empty-env) (Var pair))
+        [(Err message)
+          (let
+            [diag : cdiag.CompilerDiagnostic (tc_core.tc-diag-at-start message)]
+            (string.eq
+              (cdiag.compiler-diagnostic-code-or-empty (& diag))
+              "E0201"))]
+        [_ false])
+      "a missing structural variable reports an unbound-name diagnostic")))
+
+(test
   tc-poison-module-env-cache-identity-and-suffix
   (let
     [saved-poison-observed : bool tc_core.tc-poison-observed]

@@ -1,5 +1,9 @@
 # Selfhost compiler testing
 
+`tc-dotted-alias-variant-source-name-boundary` checks absent source names,
+sentinels, the source-table boundary and structural pair/triple/fresh-local IDs
+through both alias fallbacks. A missing structural variable must retain E0201.
+
 `load-cse-runtime-global-argument-needs-installed-row` covers all seeded fill
 helpers with same/different global destinations, global addresses, zero counts,
 missing arguments, absent tables and cells-only/object-only availability.

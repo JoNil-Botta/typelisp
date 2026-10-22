@@ -3200,7 +3200,8 @@
       (match (opt.opt-prune-unreachable-program
         (ir.compiler-ir-global-seq-empty)
         (owned_view.compiler-owned-shared-view out)
-        (& (ir.compiler-ir-extern-seq-empty)))
+        (& (ir.compiler-ir-extern-seq-empty))
+        false)
         [(Program _ functions) functions])]
     ;; The stage output still holds the pruned bodies, whose chunk the carry
     ;; releases, so read it first.
@@ -13418,6 +13419,112 @@
   (if (compiler-optimize-global-dce-ok?)
     42
     1))
+
+;; IR text supplies the references; only the zero-length static payloads need
+;; construction, because the textual format does not encode StaticArray bytes.
+(define (opt-static-array-test-program [with-main? : bool]) : ir.CompilerIrProgram
+  (match (irt.program
+    (str_cat.str-cat
+      "global @unused : (Array u64 0) = unit
+       global @direct : (Array u64 0) = unit
+       global @dead_body_only : (Array u64 0) = unit
+       global @aliased : (Array u64 0) = unit
+       global @initializer_only : (Array u64 0) = unit
+       global @opaque_argument : (Array u64 0) = unit
+       global @unused_scalar : i64 = 7
+       global @alias : (Ptr (Array u64 0)) = &@aliased
+       global @runtime : i64 = runtime-init@init
+       function @"
+      (if with-main?
+        "main"
+        "entry")
+      "() -> i64 vars 2 {
+       entry:
+         %0 = mov @direct : (Array u64 0)
+         %1 = call opaque(&@opaque_argument) : i64
+         return 42
+       }
+       function @dead() -> i64 vars 1 {
+       entry:
+         %0 = mov &@dead_body_only : (Ptr (Array u64 0))
+         return 0
+       }
+       function @init() -> i64 vars 1 {
+       entry:
+         %0 = mov &@initializer_only : (Ptr (Array u64 0))
+         return 0
+       }"))
+    [(Program globals functions externs)
+      (let
+        [builder (ir.compiler-ir-global-builder-with-capacity globals.len)]
+        (for [index (iterator.range 0 globals.len)]
+          (match (ir.compiler-ir-global-seq-ref (& globals) index)
+            [(Global name ty value)
+              (let
+                [static?
+                  (match (& ty)
+                    [(Array _ _) true]
+                    [_ false])]
+                (opt-test-global-builder-push!
+                  (&mut builder)
+                  name
+                  ty
+                  (if static?
+                    (StaticArray "")
+                    value)))]))
+        (Program
+          (ir.compiler-ir-global-builder-to-seq builder)
+          functions
+          externs))]))
+
+(test
+  static-array-opt0-retained-roots
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [names
+      (array
+        "direct"
+        "dead_body_only"
+        "aliased"
+        "initializer_only"
+        "opaque_argument"
+        "unused_scalar"
+        "alias"
+        "runtime")]
+    (for [variant (iterator.range 0 2)]
+      (let
+        [with-main? (= variant 0)]
+        [input (opt-static-array-test-program with-main?)]
+        [expected (clone (opt-program-functions (& input)))]
+        [actual (opt-test-optimize-program-with-level input 0)]
+        [functions (opt-program-functions (& actual))]
+        [globals (opt-program-globals actual)]
+        (test.assert-i64-eq
+          globals.len
+          (if with-main?
+            8
+            9)
+          "only unused static data in a complete program is removed")
+        (test.assert-true
+          (= (opt-global-list-defines? (& globals) "unused") (not with-main?))
+          "an incomplete package conservatively keeps all static data")
+        (for [index (iterator.range 0 (array-length names))]
+          (test.assert-true
+            (opt-global-list-defines?
+              (& globals)
+              (clone (array-ref names index)))
+            (clone (array-ref names index))))
+        (test.assert-i64-eq
+          functions.len
+          expected.len
+          "opt0 keeps every function")
+        (for [index (iterator.range 0 functions.len)]
+          (test.assert-true
+            (opt.opt-function-eq
+              bases
+              (ir.compiler-ir-function-seq-borrow (& functions) index)
+              (ir.compiler-ir-function-seq-borrow (& expected) index))
+            "opt0 leaves every retained function body unchanged"))))))
 
 (defstruct OptCallgraphTestSymbols
   (main i64)

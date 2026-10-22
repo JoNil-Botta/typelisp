@@ -796,17 +796,41 @@
       ,fallback)))
 
 ;; Compatibility renderers that do not retain a compile-owned session may
-;; still display the two syntax identities minted by the currently installed
+;; still display syntax identities minted by the currently installed
 ;; interner. The encoded owner prefix and live table length validate `raw`
 ;; before the component lane is read, so a foreign or stale identity never
-;; aliases the active table. Semantic compiler paths use an explicit
+;; aliases the active table. Macro locals also require a live definition from
+;; that owner. Diagnostic callers opt into macro spellings; the owner-less IR
+;; adapter keeps macro names opaque. Semantic compiler paths use an explicit
 ;; InternStructuralSessionHandle instead.
-(define (intern-active-syntax-source-name-id-or [raw : i64] [fallback : i64]) : i64
+(define (intern-active-syntax-source-name-id-or
+  [raw : i64]
+  [macro-names? : bool]
+  [fallback : i64]) : i64
   (let
     [kind : i64 (intern-active-structural-record-kind-or raw -1)]
-    (if (or
-      (= kind (intern-structural-kind-template-source))
-      (= kind (intern-structural-kind-fresh-local)))
+    [valid? : bool
+      (cond
+        [(= kind (intern-structural-kind-template-source))
+          (and
+            (= (intern-composite-left-id-unchecked raw) 0)
+            (= (intern-composite-middle-id-unchecked raw) 0))]
+        [(= kind (intern-structural-kind-fresh-local))
+          (and
+            (>= (intern-composite-left-id-unchecked raw) 0)
+            (= (intern-composite-middle-id-unchecked raw) 0))]
+        [(and macro-names? (= kind (intern-structural-kind-macro-global)))
+          (let
+            [role : i64 (intern-composite-left-id-unchecked raw)]
+            (or (= role 0) (= role 1)))]
+        [(and macro-names? (= kind (intern-structural-kind-macro-local)))
+          (=
+            (intern-active-structural-record-kind-or
+              (intern-composite-left-id-unchecked raw)
+              -1)
+            (intern-structural-kind-macro-definition))]
+        [else false])]
+    (if valid?
       (let
         [source-name-id : i64 (intern-composite-right-id-unchecked raw)]
         (if (intern-renderable-id? source-name-id)

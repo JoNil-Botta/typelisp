@@ -706,6 +706,7 @@ core_string_length|all|-|tests/integration/core_string_length.tl|42|-|-|stdlib/s
 stdlib_math_ieee|all|-|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl|-
 float_exponent_literals|all|-|tests/integration/float_exponent_literals.tl|42|-|-|stdlib/math.tl|-
 private_intrinsic_provenance|all|-|tests/integration/private_intrinsic_provenance.tl|42|-|-|private_intrinsic_provenance_provider.tl private_intrinsic_provenance_shadow_provider.tl|-
+stdlib_math_table_payloads|all|0,1,2|tests/integration/stdlib_math_table_payloads.tl|42|-|-|stdlib/math.tl stdlib/byte_buf.tl stdlib/crypto_sha256.tl stdlib/iterator.tl stdlib/string.tl|-
 stdlib_math_exp|all|-|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl|-
 stdlib_math_log|all|-|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl|-
 stdlib_math_pow|all|-|tests/integration/stdlib_math_pow.tl|0|-|-|stdlib/math.tl|-

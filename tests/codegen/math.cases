@@ -107,7 +107,11 @@ case exp
 source {{work}}/exp_codegen.tl
 contains tl_test_math_exp_f64
 contains tl_test_math_exp_f32
-contains math_exp_f64_table_entry
+match ^_?tl_.*math_exp_f64_tail_bits:
+match ^_?tl_.*math_exp_f64_scale_bits:
+contains math_exp_f64_tail_bits(%rip)
+contains math_exp_f64_scale_bits(%rip)
+not-match math_exp_f64_table_entry
 # no startup or runtime allocation, no external exp, no x87/FMA instructions
 not-match global_init.*math_exp|call[[:space:]]+.*tl_alloc
 not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?expf?([[:space:]]|$)
@@ -117,7 +121,19 @@ case log
 source {{work}}/log_codegen.tl
 contains tl_test_math_log_f64
 contains tl_test_math_log_f32
-contains math_log_f64_table_entry
+match ^_?tl_.*math_log_f64_invc_bits:
+match ^_?tl_.*math_log_f64_logc_bits:
+match ^_?tl_.*math_log_f64_chi_bits:
+match ^_?tl_.*math_log_f64_clo_bits:
+match ^_?tl_.*math_log_f32_invc_bits:
+match ^_?tl_.*math_log_f32_logc_bits:
+contains math_log_f64_invc_bits(%rip)
+contains math_log_f64_logc_bits(%rip)
+contains math_log_f64_chi_bits(%rip)
+contains math_log_f64_clo_bits(%rip)
+contains math_log_f32_invc_bits(%rip)
+contains math_log_f32_logc_bits(%rip)
+not-match math_log_f64_table_entry
 not-match global_init.*math_log|call[[:space:]]+.*tl_alloc
 not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?logf?([[:space:]]|$)
 not-match-i ^[[:space:]]*(fyl2x|fyl2xp1|fldln2|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]
@@ -126,17 +142,29 @@ case pow
 source {{work}}/pow_codegen.tl
 contains tl_test_math_pow_f64
 contains tl_test_math_pow_f32
-contains math_pow_f64_table_entry
-# math-powf-table-entry returns a two-word register group, which the multiblock
-# inliner takes since #8555: its musl powf_data.c rows appear inline as
-# constants (interval 1's invc bits) instead of behind a helper symbol.
-contains $4608715057657776189
+match ^_?tl_.*math_pow_f64_invc_bits:
+match ^_?tl_.*math_pow_f64_logc_bits:
+match ^_?tl_.*math_pow_f64_logctail_bits:
+match ^_?tl_.*math_pow_f32_invc_bits:
+match ^_?tl_.*math_pow_f32_logc_bits:
+contains math_pow_f64_invc_bits(%rip)
+contains math_pow_f64_logc_bits(%rip)
+contains math_pow_f64_logctail_bits(%rip)
+contains math_pow_f32_invc_bits(%rip)
+contains math_pow_f32_logc_bits(%rip)
+# Interval 1's invc word (4608715057657776189), in little-endian static data.
+contains 61,136,175,74,237,113,245,63
+not-match math_pow_f64_table_entry|math_powf_table_entry
 not-match global_init.*math_pow|call[[:space:]]+.*tl_alloc
 not-match-i ^[[:space:]]*\.(extern|globl?)[[:space:]]+_?powf?([[:space:]]|$)
 not-match-i ^[[:space:]]*(fyl2x|fyl2xp1|f2xm1|fscale|v?fmadd[a-z0-9]*|v?fmsub[a-z0-9]*|v?fnmadd[a-z0-9]*|v?fnmsub[a-z0-9]*)[[:space:]]
 
 case trig
 source {{work}}/trig_codegen.tl
+match ^_?tl_.*math_trig_two_over_pi_limbs:
+match ^_?tl_.*math_trig_pi_over_two_piece_bits:
+contains math_trig_two_over_pi_limbs(%rip)
+contains math_trig_pi_over_two_piece_bits(%rip)
 # The public wrappers inline into main at opt2, so every trig KERNEL must be
 # both defined and reached (a call or a tail jump) on each target.
 match ^_?tl_.*math_trig_kernel_sin_f64:

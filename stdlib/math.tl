@@ -247,208 +247,272 @@
             unit))))
     (* y (stdlib.math.f32-from-bits (shl (cast (+ 127 n) : u32) 23)))))
 
-;; The musl data tables below are written as `math-bits-table` rows. The macros
-;; expand them into exactly the `cond` chain they replace, so each table stays
-;; an in-code compare chain rather than a heap-allocated module-global array.
-;: Internal: build one table entry from a `(row field ...)` row.
-;:
-;: An integer field is a raw `u64` word; any other field is a binary64 decimal
-;: whose bits the private bitcast intrinsic folds to an integer constant,
-;: exactly as a literal `(f64-to-bits x)` call lowers. Any other operand
-;: shape is passed to `constructor` unchanged.
-(defmacro (math-bits-row [constructor : comptime.Expr] [row : comptime.Expr]) : comptime.Expr
-  (match row
-    [(comptime.Expr.Call _ row-fields)
-      (let
-        [fields : comptime.ExprList (comptime.expr-list-empty)]
-        [field-index : i64 (- (comptime.expr-list-length row-fields) 1)]
-        ;; Prepend back to front so the fields stay in source order.
-        (while (>= field-index 0)
-          (let
-            [field : comptime.Expr
-              (comptime.expr-list-nth row-fields field-index)]
-            (match field
-              [(comptime.Expr.Int _)
-                (set! fields (comptime.expr-list-cons field fields))]
-              [_
-                (set!
-                  fields
-                  (comptime.expr-list-cons `(__tl_float_to_bits ,field) fields))])
-            (set! field-index (- field-index 1))))
-        `(,constructor ,@fields))]
-    [_ `(,constructor ,row)]))
-
-;: Internal: expand constant table rows into an `index` lookup chain.
-;:
-;: Row `i` becomes `[(= index i) (constructor field ...)]` and the chain ends in
-;: `[else fallback]`, the same `if` chain `cond` produces.
-(defmacro (math-bits-table
-  [index : comptime.Expr]
-  [constructor : comptime.Expr]
-  [fallback : comptime.Expr]
-  [rows : comptime.Expr ...]) : comptime.Expr
-  (let
-    [out : comptime.Expr fallback]
-    [row-index : i64 (- (comptime.expr-list-length rows) 1)]
-    ;; Build the chain from the last row outwards, as `cond` folds its arms.
-    (while (>= row-index 0)
-      (set!
-        out
-        `(if (= ,index ,(comptime.expr-int row-index))
-          (stdlib.math.math-bits-row
-            ,constructor
-            ,(comptime.expr-list-nth rows row-index))
-          ,out))
-      (set! row-index (- row-index 1)))
-    out))
-
 ;; The exponential implementation below follows musl `exp`/`expf` and their
 ;; data tables at revision b306b16af15c89a04d8e0c55cac2dadbeb39c083.
-;; Tail corrections are shortest decimals folded to exact IEEE-754 payloads.
-;; Adjusted scales stay raw integer words for exponent arithmetic; payloads and
-;; operation order remain fixed because both are part of the stated bounds.
-;: Internal exact tail payload and adjusted scale bits for one binary64 entry.
-(defstruct MathExpF64TableEntry
-  (tail-bits u64)
-  (scale-bits u64))
-
-;: Return {tail payload, adjusted 2^(index/128) bits} from musl exp_data.c.
-;:
-;: Tails stay in the `u64` ABI and are read with `f64-from-bits`; scales remain
-;: raw words. In-code storage avoids a global; binary32 reuses every fourth row.
-(define (math-exp-f64-table-entry [index : i64]) : MathExpF64TableEntry
-  (math-bits-table
-    index
-    MathExpF64TableEntry
-    (MathExpF64TableEntry 0 0)
-    (row 0.0 0x3ff0000000000000)
-    (row 9.447885451727066e-17 0x3feff63da9fb3335)
-    (row -1.507066976926039e-17 0x3fefec9a3e778061)
-    (row -5.679155082825012e-17 0x3fefe315e86e7f85)
-    (row 4.9997448722726326e-17 0x3fefd9b0d3158574)
-    (row -4.823683599994895e-17 0x3fefd06b29ddf6de)
-    (row 7.357846871247418e-18 0x3fefc74518759bc8)
-    (row 5.773230223741951e-17 0x3fefbe3ecac6f383)
-    (row 8.189317638195515e-17 0x3fefb5586cf9890f)
-    (row 5.326891139980878e-17 0x3fefac922b7247f7)
-    (row 1.6665881442326747e-18 0x3fefa3ec32d3d1a2)
-    (row -1.128113245461828e-17 0x3fef9b66affed31b)
-    (row -7.402825309426177e-17 0x3fef9301d0125b51)
-    (row -3.578659767309563e-18 0x3fef8abdc06c31cc)
-    (row -6.170654745608695e-17 0x3fef829aaea92de0)
-    (row 2.919139999949279e-17 0x3fef7a98c8a58e51)
-    (row -2.7939114859515733e-17 0x3fef72b83c7d517b)
-    (row -5.399285355184285e-17 0x3fef6af9388c8dea)
-    (row 4.776959425256223e-17 0x3fef635beb6fcb75)
-    (row -7.927701432338473e-17 0x3fef5be084045cd4)
-    (row 9.341710609905046e-17 0x3fef54873168b9aa)
-    (row -5.534520675707472e-17 0x3fef4d5022fcd91d)
-    (row 4.585670326662351e-17 0x3fef463b88628cd6)
-    (row 2.8582430411116143e-17 0x3fef3f49917ddc96)
-    (row 7.826573258636076e-17 0x3fef387a6e756238)
-    (row 4.053626906769216e-17 0x3fef31ce4fb2a63f)
-    (row 2.823784425951061e-17 0x3fef2b4565e27cdd)
-    (row -7.882802262487991e-17 0x3fef24dfe1f56381)
-    (row 3.2904726646008416e-17 0x3fef1e9df51fdee1)
-    (row -1.5792094703347882e-18 0x3fef187fd0dad990)
-    (row 4.721368121170128e-17 0x3fef1285a6e4030b)
-    (row 1.3045277096919659e-17 0x3fef0cafa93e2f56)
-    (row 3.3484623336251524e-17 0x3fef06fe0a31b715)
-    (row 3.8611199774925664e-17 0x3fef0170fc4cd831)
-    (row 5.527550048505249e-17 0x3feefc08b26416ff)
-    (row -3.927184172445234e-17 0x3feef6c55f929ff1)
-    (row -6.346552106729483e-17 0x3feef1a7373aa9cb)
-    (row -8.684417614865944e-17 0x3feeecae6d05d866)
-    (row -1.5456342819397733e-17 0x3feee7db34e59ff7)
-    (row -8.70763476495455e-17 0x3feee32dc313a8e5)
-    (row 3.750854201303127e-17 0x3feedea64c123422)
-    (row -6.616854503526488e-17 0x3feeda4504ac801c)
-    (row -5.346099009198751e-18 0x3feed60a21f72e2a)
-    (row -2.443726321015018e-17 0x3feed1f5d950a897)
-    (row 2.1023049675215714e-18 0x3feece086061892d)
-    (row 7.771067937501065e-17 0x3feeca41ed1d0057)
-    (row 1.3357510088834541e-17 0x3feec6a2b5c13cd0)
-    (row 6.938291696959204e-17 0x3feec32af0d7d3de)
-    (row 1.9572585293112036e-17 0x3feebfdad5362a27)
-    (row 6.632256961675804e-17 0x3feebcb299fddd0d)
-    (row -5.478069123926778e-17 0x3feeb9b2769d2ca7)
-    (row -4.140839310392624e-17 0x3feeb6daa2cf6642)
-    (row -2.1571477251208752e-17 0x3feeb42b569d4f82)
-    (row -3.8287766552120535e-17 0x3feeb1a4ca5d920f)
-    (row 6.663804589232195e-17 0x3feeaf4736b527da)
-    (row 2.3936187400285282e-17 0x3feead12d497c7fd)
-    (row 5.68648095791174e-17 0x3feeab07dd485429)
-    (row 1.1264523354521684e-18 0x3feea9268a5946b7)
-    (row 7.007875046906994e-17 0x3feea76f15ad2148)
-    (row -5.0119214278381254e-17 0x3feea5e1b976dc09)
-    (row -4.8923067513522756e-17 0x3feea47eb03a5585)
-    (row -3.5260089953269434e-17 0x3feea34634ccc320)
-    (row -6.872303720902018e-17 0x3feea23882552225)
-    (row 5.001446664133532e-18 0x3feea155d44ca973)
-    (row -6.835808657661922e-17 0x3feea09e667f3bcd)
-    (row -1.1307344092910212e-17 0x3feea012750bdabf)
-    (row -8.416011634717156e-18 0x3fee9fb23c651a2f)
-    (row -2.9247977035436566e-17 0x3fee9f7df9519484)
-    (row -2.092304381843353e-17 0x3fee9f75e8ec5f74)
-    (row -3.9778645875427124e-17 0x3fee9f9a48a58174)
-    (row -3.833464968654295e-17 0x3fee9feb564267c9)
-    (row 5.763611164480894e-17 0x3feea0694fde5d3f)
-    (row -2.3591094770850053e-17 0x3feea11473eb0187)
-    (row 7.260074661098575e-17 0x3feea1ed0130c132)
-    (row 9.50689710108796e-18 0x3feea2f336cf4e62)
-    (row -4.272956133839906e-17 0x3feea427543e1a12)
-    (row -6.735219232374683e-17 0x3feea589994cce13)
-    (row -2.8396044410430936e-17 0x3feea71a4623c7ad)
-    (row -7.226635472101257e-17 0x3feea8d99b4492ed)
-    (row 5.786121003395918e-17 0x3feeaac7d98a6699)
-    (row 5.1548301170786783e-17 0x3feeace5422aa0db)
-    (row -9.416257568878152e-18 0x3feeaf3216b5448c)
-    (row 2.4253985766689806e-17 0x3feeb1ae99157736)
-    (row -6.604314051707707e-17 0x3feeb45b0b91ffc6)
-    (row -6.432131775424189e-18 0x3feeb737b0cdc5e5)
-    (row -1.2204007601863921e-17 0x3feeba44cbc8520f)
-    (row -6.336161863401293e-17 0x3feebd829fde4e50)
-    (row -3.7800879246373815e-17 0x3feec0f170ca07ba)
-    (row 1.5341410053603723e-17 0x3feec49182a3f090)
-    (row 1.2932855580427452e-17 0x3feec86319e32323)
-    (row -4.123367330661149e-17 0x3feecc667b5de565)
-    (row 4.703083974463456e-17 0x3feed09bec4a2d33)
-    (row -6.152602891550265e-17 0x3feed503b23e255d)
-    (row 5.827849326195279e-17 0x3feed99e1330b358)
-    (row 3.540948262646183e-17 0x3feede6b5579fdbf)
-    (row -3.2741571320938764e-17 0x3feee36bbfd3f37a)
-    (row 4.875160526227062e-17 0x3feee89f995ad3ad)
-    (row -5.718569790077838e-17 0x3feeee07298db666)
-    (row -4.719539664590972e-18 0x3feef3a2b84f15fb)
-    (row -5.773451958805706e-17 0x3feef9728de5593a)
-    (row -1.0772487078934056e-17 0x3feeff76f2fb5e47)
-    (row -6.221808618533911e-17 0x3fef05b030a1064a)
-    (row 1.821405440362259e-17 0x3fef0c1e904bc1d2)
-    (row -6.155536546227639e-17 0x3fef12c25bd71e09)
-    (row 1.685487290628973e-17 0x3fef199bdd85529c)
-    (row 5.3581249177694816e-17 0x3fef20ab5fffd07a)
-    (row 3.621615935336894e-17 0x3fef27f12e57d14b)
-    (row 8.588379527574144e-18 0x3fef2f6d9406e7b5)
-    (row 1.01562190116415e-17 0x3fef3720dcef9069)
-    (row -2.869134889187244e-17 0x3fef3f0b555dc3fa)
-    (row -5.495118966122005e-17 0x3fef472d4a07897c)
-    (row -5.56965572431627e-17 0x3fef4f87080d89f2)
-    (row 1.790126907604513e-17 0x3fef5818dcfba487)
-    (row -3.2211766346200164e-17 0x3fef60e316c98398)
-    (row 5.265370768556274e-17 0x3fef69e603db3285)
-    (row 3.5089866402403033e-17 0x3fef7321f301b460)
-    (row -3.266924100901318e-17 0x3fef7c97337b9b5f)
-    (row -4.3657593008079375e-17 0x3fef864614f5a129)
-    (row 1.7963932659833022e-17 0x3fef902ee78b3ff6)
-    (row 3.4300925275214166e-17 0x3fef9a51fbc74c83)
-    (row -5.545065618639427e-17 0x3fefa4afa2a490da)
-    (row -5.149009745457733e-17 0x3fefaf482d8e67f1)
-    (row 5.336805878514151e-17 0x3fefba1bee615a27)
-    (row 3.498978661192973e-17 0x3fefc52b376bba97)
-    (row 4.5784915277060095e-17 0x3fefd0765b6e4540)
-    (row -5.241934575393899e-17 0x3fefdbfdad9cbe14)
-    (row 2.0414278897578303e-17 0x3fefe7c1819e90d8)
-    (row 4.124842848606488e-18 0x3feff3c22b8f71f1)))
+;; Read-only scalar arrays retain the exact IEEE-754 and scale words without
+;; startup allocation or aggregate entry results. Binary32 reuses every fourth
+;; scale. Payloads and operation order are part of the stated error bounds.
+;: Exact tail payloads and adjusted scale words from musl exp_data.c.
+(define math-exp-f64-tail-bits : (Array u64 128)
+  (array
+    0x0000000000000000
+    0x3c9b3b4f1a88bf6e
+    0xbc7160139cd8dc5d
+    0xbc905e7a108766d1
+    0x3c8cd2523567f613
+    0xbc8bce8023f98efa
+    0x3c60f74e61e6c861
+    0x3c90a3e45b33d399
+    0x3c979aa65d837b6d
+    0x3c8eb51a92fdeffc
+    0x3c3ebe3d702f9cd1
+    0xbc6a033489906e0b
+    0xbc9556522a2fbd0e
+    0xbc5080ef8c4eea55
+    0xbc91c923b9d5f416
+    0x3c80d3e3e95c55af
+    0xbc801b15eaa59348
+    0xbc8f1ff055de323d
+    0x3c8b898c3f1353bf
+    0xbc96d99c7611eb26
+    0x3c9aecf73e3a2f60
+    0xbc8fe782cb86389d
+    0x3c8a6f4144a6c38d
+    0x3c807a05b0e4047d
+    0x3c968efde3a8a894
+    0x3c875e18f274487d
+    0x3c80472b981fe7f2
+    0xbc96b87b3f71085e
+    0x3c82f7e16d09ab31
+    0xbc3d219b1a6fbffa
+    0x3c8b3782720c0ab4
+    0x3c6e149289cecb8f
+    0x3c834d754db0abb6
+    0x3c864201e2ac744c
+    0x3c8fdd395dd3f84a
+    0xbc86a3803b8e5b04
+    0xbc924aedcc4b5068
+    0xbc9907f81b512d8e
+    0xbc71d1e83e9436d2
+    0xbc991919b3ce1b15
+    0x3c859f48a72a4c6d
+    0xbc9312607a28698a
+    0xbc58a78f4817895b
+    0xbc7c2c9b67499a1b
+    0x3c4363ed60c2ac11
+    0x3c9666093b0664ef
+    0x3c6ecce1daa10379
+    0x3c93ff8e3f0f1230
+    0x3c7690cebb7aafb0
+    0x3c931dbdeb54e077
+    0xbc8f94340071a38e
+    0xbc87deccdc93a349
+    0xbc78dec6bd0f385f
+    0xbc861246ec7b5cf6
+    0x3c93350518fdd78e
+    0x3c7b98b72f8a9b05
+    0x3c9063e1e21c5409
+    0x3c34c7855019c6ea
+    0x3c9432e62b64c035
+    0xbc8ce44a6199769f
+    0xbc8c33c53bef4da8
+    0xbc845378892be9ae
+    0xbc93cedd78565858
+    0x3c5710aa807e1964
+    0xbc93b3efbf5e2228
+    0xbc6a12ad8734b982
+    0xbc6367efb86da9ee
+    0xbc80dc3d54e08851
+    0xbc781f647e5a3ecf
+    0xbc86ee4ac08b7db0
+    0xbc8619321e55e68a
+    0x3c909ccb5e09d4d3
+    0xbc7b32dcb94da51d
+    0x3c94ecfd5467c06b
+    0x3c65ebe1abd66c55
+    0xbc88a1c52fb3cf42
+    0xbc9369b6f13b3734
+    0xbc805e843a19ff1e
+    0xbc94d450d872576e
+    0x3c90ad675b0e8a00
+    0x3c8db72fc1f0eab4
+    0xbc65b6609cc5e7ff
+    0x3c7bf68359f35f44
+    0xbc93091fa71e3d83
+    0xbc5da9b88b6c1e29
+    0xbc6c23f97c90b959
+    0xbc92434322f4f9aa
+    0xbc85ca6cd7668e4b
+    0x3c71affc2b91ce27
+    0x3c6dd235e10a73bb
+    0xbc87c50422622263
+    0x3c8b1c86e3e231d5
+    0xbc91bbd1d3bcbb15
+    0x3c90cc319cee31d2
+    0x3c8469846e735ab3
+    0xbc82dfcd978e9db4
+    0x3c8c1a7792cb3387
+    0xbc907b8f4ad1d9fa
+    0xbc55c3d956dcaeba
+    0xbc90a40e3da6f640
+    0xbc68d6f438ad9334
+    0xbc91eee26b588a35
+    0x3c74ffd70a5fddcd
+    0xbc91bdfbfa9298ac
+    0x3c736eae30af0cb3
+    0x3c8ee3325c9ffd94
+    0x3c84e08fd10959ac
+    0x3c63cdaf384e1a67
+    0x3c676b2c6c921968
+    0xbc808a1883ccb5d2
+    0xbc8fad5d3ffffa6f
+    0xbc900dae3875a949
+    0x3c74a385a63d07a7
+    0xbc82919e2040220f
+    0x3c8e5a50d5c192ac
+    0x3c843a59ac016b4b
+    0xbc82d52107b43e1f
+    0xbc892ab93b470dc9
+    0x3c74b604603a88d3
+    0x3c83c5ec519d7271
+    0xbc8ff7128fd391f0
+    0xbc8dae98e223747d
+    0x3c8ec3bc41aa2008
+    0x3c842b94c3a9eb32
+    0x3c8a64a931d185ee
+    0xbc8e37bae43be3ed
+    0x3c77893b4d91cd9d
+    0x3c5305c14160cc89))
+(define math-exp-f64-scale-bits : (Array u64 128)
+  (array
+    0x3ff0000000000000
+    0x3feff63da9fb3335
+    0x3fefec9a3e778061
+    0x3fefe315e86e7f85
+    0x3fefd9b0d3158574
+    0x3fefd06b29ddf6de
+    0x3fefc74518759bc8
+    0x3fefbe3ecac6f383
+    0x3fefb5586cf9890f
+    0x3fefac922b7247f7
+    0x3fefa3ec32d3d1a2
+    0x3fef9b66affed31b
+    0x3fef9301d0125b51
+    0x3fef8abdc06c31cc
+    0x3fef829aaea92de0
+    0x3fef7a98c8a58e51
+    0x3fef72b83c7d517b
+    0x3fef6af9388c8dea
+    0x3fef635beb6fcb75
+    0x3fef5be084045cd4
+    0x3fef54873168b9aa
+    0x3fef4d5022fcd91d
+    0x3fef463b88628cd6
+    0x3fef3f49917ddc96
+    0x3fef387a6e756238
+    0x3fef31ce4fb2a63f
+    0x3fef2b4565e27cdd
+    0x3fef24dfe1f56381
+    0x3fef1e9df51fdee1
+    0x3fef187fd0dad990
+    0x3fef1285a6e4030b
+    0x3fef0cafa93e2f56
+    0x3fef06fe0a31b715
+    0x3fef0170fc4cd831
+    0x3feefc08b26416ff
+    0x3feef6c55f929ff1
+    0x3feef1a7373aa9cb
+    0x3feeecae6d05d866
+    0x3feee7db34e59ff7
+    0x3feee32dc313a8e5
+    0x3feedea64c123422
+    0x3feeda4504ac801c
+    0x3feed60a21f72e2a
+    0x3feed1f5d950a897
+    0x3feece086061892d
+    0x3feeca41ed1d0057
+    0x3feec6a2b5c13cd0
+    0x3feec32af0d7d3de
+    0x3feebfdad5362a27
+    0x3feebcb299fddd0d
+    0x3feeb9b2769d2ca7
+    0x3feeb6daa2cf6642
+    0x3feeb42b569d4f82
+    0x3feeb1a4ca5d920f
+    0x3feeaf4736b527da
+    0x3feead12d497c7fd
+    0x3feeab07dd485429
+    0x3feea9268a5946b7
+    0x3feea76f15ad2148
+    0x3feea5e1b976dc09
+    0x3feea47eb03a5585
+    0x3feea34634ccc320
+    0x3feea23882552225
+    0x3feea155d44ca973
+    0x3feea09e667f3bcd
+    0x3feea012750bdabf
+    0x3fee9fb23c651a2f
+    0x3fee9f7df9519484
+    0x3fee9f75e8ec5f74
+    0x3fee9f9a48a58174
+    0x3fee9feb564267c9
+    0x3feea0694fde5d3f
+    0x3feea11473eb0187
+    0x3feea1ed0130c132
+    0x3feea2f336cf4e62
+    0x3feea427543e1a12
+    0x3feea589994cce13
+    0x3feea71a4623c7ad
+    0x3feea8d99b4492ed
+    0x3feeaac7d98a6699
+    0x3feeace5422aa0db
+    0x3feeaf3216b5448c
+    0x3feeb1ae99157736
+    0x3feeb45b0b91ffc6
+    0x3feeb737b0cdc5e5
+    0x3feeba44cbc8520f
+    0x3feebd829fde4e50
+    0x3feec0f170ca07ba
+    0x3feec49182a3f090
+    0x3feec86319e32323
+    0x3feecc667b5de565
+    0x3feed09bec4a2d33
+    0x3feed503b23e255d
+    0x3feed99e1330b358
+    0x3feede6b5579fdbf
+    0x3feee36bbfd3f37a
+    0x3feee89f995ad3ad
+    0x3feeee07298db666
+    0x3feef3a2b84f15fb
+    0x3feef9728de5593a
+    0x3feeff76f2fb5e47
+    0x3fef05b030a1064a
+    0x3fef0c1e904bc1d2
+    0x3fef12c25bd71e09
+    0x3fef199bdd85529c
+    0x3fef20ab5fffd07a
+    0x3fef27f12e57d14b
+    0x3fef2f6d9406e7b5
+    0x3fef3720dcef9069
+    0x3fef3f0b555dc3fa
+    0x3fef472d4a07897c
+    0x3fef4f87080d89f2
+    0x3fef5818dcfba487
+    0x3fef60e316c98398
+    0x3fef69e603db3285
+    0x3fef7321f301b460
+    0x3fef7c97337b9b5f
+    0x3fef864614f5a129
+    0x3fef902ee78b3ff6
+    0x3fef9a51fbc74c83
+    0x3fefa4afa2a490da
+    0x3fefaf482d8e67f1
+    0x3fefba1bee615a27
+    0x3fefc52b376bba97
+    0x3fefd0765b6e4540
+    0x3fefdbfdad9cbe14
+    0x3fefe7c1819e90d8
+    0x3feff3c22b8f71f1))
 
 ;: Complete a binary64 result whose table scale may overflow or underflow.
 (define (math-exp-f64-special [tmp : f64] [scale-bits : u64] [k-bits : u64]) : f64
@@ -498,10 +562,11 @@
             (+
               (+ value (* k -0.0054152123481117087))
               (* k -1.2864023111638346e-14))]
-          [index : i64 (cast (% k-bits (cast 128 : u64)) : i64)]
-          [entry : MathExpF64TableEntry (math-exp-f64-table-entry index)]
-          [scale-bits : u64 (+ entry.scale-bits (shl k-bits 45))]
-          [tail : f64 (stdlib.math.f64-from-bits entry.tail-bits)]
+          [index : i64 (cast (bit-and k-bits (cast 127 : u64)) : i64)]
+          [scale-bits : u64
+            (+ (array-ref math-exp-f64-scale-bits index) (shl k-bits 45))]
+          [tail : f64
+            (stdlib.math.f64-from-bits (array-ref math-exp-f64-tail-bits index))]
           [r2 : f64 (* r r)]
           [tmp : f64
             (+
@@ -524,9 +589,9 @@
     [k-bits : u64 (stdlib.math.f64-to-bits rounded)]
     [k : f64 (- rounded 6755399441055744.0)]
     [r : f64 (- z k)]
-    [entry : MathExpF64TableEntry
-      (math-exp-f64-table-entry (* (cast (% k-bits (cast 32 : u64)) : i64) 4))]
-    [scale-bits : u64 (+ entry.scale-bits (shl k-bits 47))]
+    [index : i64 (* (cast (bit-and k-bits (cast 31 : u64)) : i64) 4)]
+    [scale-bits : u64
+      (+ (array-ref math-exp-f64-scale-bits index) (shl k-bits 47))]
     [scale : f64 (stdlib.math.f64-from-bits scale-bits)]
     [p : f64 (+ (* 1.6938359250920212e-06 r) 0.00023459809789509004)]
     [r2 : f64 (* r r)]
@@ -565,689 +630,567 @@
 
 ;; The logarithm implementation below follows musl log/logf and their data
 ;; tables at revision b306b16af15c89a04d8e0c55cac2dadbeb39c083.
-;; Table fields remain exact IEEE-754 u64 bit patterns; readable decimal
-;; initializers fold through `f64-to-bits`. Reduction order remains fixed.
-;: Internal binary64 logarithm reduction constants for one table interval.
-(defstruct MathLogF64TableEntry
-  (invc-bits u64)
-  (logc-bits u64)
-  (chi-bits u64)
-  (clo-bits u64))
+;; Per-field arrays retain exact IEEE-754 u64 payloads. Reduction order
+;; remains fixed, including the separate head and tail compensation.
+;: Exact binary64 logarithm interval payloads from musl log_data.c.
+(define math-log-f64-invc-bits : (Array u64 128)
+  (array
+    0x3ff734f0c3e0de9f
+    0x3ff713786a2ce91f
+    0x3ff6f26008fab5a0
+    0x3ff6d1a61f138c7d
+    0x3ff6b1490bc5b4d1
+    0x3ff69147332f0cba
+    0x3ff6719f18224223
+    0x3ff6524f99a51ed9
+    0x3ff63356aa8f24c4
+    0x3ff614b36b9ddc14
+    0x3ff5f66452c65c4c
+    0x3ff5d867b5912c4f
+    0x3ff5babccb5b90de
+    0x3ff59d61f2d91a78
+    0x3ff5805612465687
+    0x3ff56397cee76bd3
+    0x3ff54725e2a77f93
+    0x3ff52aff42064583
+    0x3ff50f22dbb2bddf
+    0x3ff4f38f4734ded7
+    0x3ff4d843cfde2840
+    0x3ff4bd3ec078a3c8
+    0x3ff4a27fc3e0258a
+    0x3ff4880524d48434
+    0x3ff46dce1b192d0b
+    0x3ff453d9d3391854
+    0x3ff43a2744b4845a
+    0x3ff420b54115f8fb
+    0x3ff40782da3ef4b1
+    0x3ff3ee8f5d57fe8f
+    0x3ff3d5d9a00b4ce9
+    0x3ff3bd60c010c12b
+    0x3ff3a5242b75dab8
+    0x3ff38d22cd9fd002
+    0x3ff3755bc5847a1c
+    0x3ff35dce49ad36e2
+    0x3ff34679984dd440
+    0x3ff32f5cceffcb24
+    0x3ff3187775a10d49
+    0x3ff301c8373e3990
+    0x3ff2eb4ebb95f841
+    0x3ff2d50a0219a9d1
+    0x3ff2bef9a8b7fd2a
+    0x3ff2a91c7a0c1bab
+    0x3ff293726014b530
+    0x3ff27dfa5757a1f5
+    0x3ff268b39b1d3bbf
+    0x3ff2539d838ff5bd
+    0x3ff23eb7aac9083b
+    0x3ff22a012ba940b6
+    0x3ff2157996cc4132
+    0x3ff201201dd2fc9b
+    0x3ff1ecf4494d480b
+    0x3ff1d8f5528f6569
+    0x3ff1c52311577e7c
+    0x3ff1b17c74cb26e9
+    0x3ff19e010c2c1ab6
+    0x3ff18ab07bb670bd
+    0x3ff1778a25efbcb6
+    0x3ff1648d354c31da
+    0x3ff151b990275fdd
+    0x3ff13f0ea432d24c
+    0x3ff12c8b7210f9da
+    0x3ff11a3028ecb531
+    0x3ff107fbda8434af
+    0x3ff0f5ee0f4e6bb3
+    0x3ff0e4065d2a9fce
+    0x3ff0d244632ca521
+    0x3ff0c0a77ce2981a
+    0x3ff0af2f83c636d1
+    0x3ff09ddb98a01339
+    0x3ff08cabaf52e7df
+    0x3ff07b9f2f4e28fb
+    0x3ff06ab58c358f19
+    0x3ff059eea5ecf92c
+    0x3ff04949cdd12c90
+    0x3ff038c6c6f0ada9
+    0x3ff02865137932a9
+    0x3ff0182427ea7348
+    0x3ff008040614b195
+    0x3fefe01ff726fa1a
+    0x3fefa11cc261ea74
+    0x3fef6310b081992e
+    0x3fef25f63ceeadcd
+    0x3feee9c8039113e7
+    0x3feeae8078cbb1ab
+    0x3fee741aa29d0c9b
+    0x3fee3a91830a99b5
+    0x3fee01e009609a56
+    0x3fedca01e577bb98
+    0x3fed92f20b7c9103
+    0x3fed5cac66fb5cce
+    0x3fed272caa5ede9d
+    0x3fecf26e3e6b2ccd
+    0x3fecbe6da2a77902
+    0x3fec8b266d37086d
+    0x3fec5894bd5d5804
+    0x3fec26b533bb9f8c
+    0x3febf583eeece73f
+    0x3febc4fd75db96c1
+    0x3feb951e0c864a28
+    0x3feb65e2c5ef3e2c
+    0x3feb374867c9888b
+    0x3feb094b211d304a
+    0x3feadbe885f2ef7e
+    0x3feaaf1d31603da2
+    0x3fea82e63fd358a7
+    0x3fea5740ef09738b
+    0x3fea2c2a90ab4b27
+    0x3fea01a01393f2d1
+    0x3fe9d79f24db3c1b
+    0x3fe9ae2505c7b190
+    0x3fe9852ef297ce2f
+    0x3fe95cbaeea44b75
+    0x3fe934c69de74838
+    0x3fe90d4f2f6752e6
+    0x3fe8e6528effd79d
+    0x3fe8bfce9fcc007c
+    0x3fe899c0dabec30e
+    0x3fe87427aa2317fb
+    0x3fe84f00acb39a08
+    0x3fe82a49e8653e55
+    0x3fe8060195f40260
+    0x3fe7e22563e0a329
+    0x3fe7beb377dcb5ad
+    0x3fe79baa679725c2
+    0x3fe77907f2170657
+    0x3fe756cadbd6130c))
+(define math-log-f64-logc-bits : (Array u64 128)
+  (array
+    0xbfd7cc7f79e69000
+    0xbfd76feec20d0000
+    0xbfd713e31351e000
+    0xbfd6b85b38287800
+    0xbfd65d5590807800
+    0xbfd602d076180000
+    0xbfd5a8ca86909000
+    0xbfd54f4356035000
+    0xbfd4f637c36b4000
+    0xbfd49da7fda85000
+    0xbfd445923989a800
+    0xbfd3edf439b0b800
+    0xbfd396ce448f7000
+    0xbfd3401e17bda000
+    0xbfd2e9e2ef468000
+    0xbfd2941b3830e000
+    0xbfd23ec58cda8800
+    0xbfd1e9e129279000
+    0xbfd1956d2b48f800
+    0xbfd141679ab9f800
+    0xbfd0edd094ef9800
+    0xbfd09aa518db1000
+    0xbfd047e65263b800
+    0xbfcfeb224586f000
+    0xbfcf474a7517b000
+    0xbfcea4443d103000
+    0xbfce020d44e9b000
+    0xbfcd60a22977f000
+    0xbfccc00104959000
+    0xbfcc202956891000
+    0xbfcb81178d811000
+    0xbfcae2c9ccd3d000
+    0xbfca45402e129000
+    0xbfc9a877681df000
+    0xbfc90c6d69483000
+    0xbfc87120a645c000
+    0xbfc7d68fb4143000
+    0xbfc73cb83c627000
+    0xbfc6a39a9b376000
+    0xbfc60b3154b7a000
+    0xbfc5737d76243000
+    0xbfc4dc7b8fc23000
+    0xbfc4462c51d20000
+    0xbfc3b08abc830000
+    0xbfc31b996b490000
+    0xbfc2875490a44000
+    0xbfc1f3b9f879a000
+    0xbfc160c8252ca000
+    0xbfc0ce7f57f72000
+    0xbfc03cdc49fea000
+    0xbfbf57bdbc4b8000
+    0xbfbe370896404000
+    0xbfbd17983ef94000
+    0xbfbbf9674ed8a000
+    0xbfbadc79202f6000
+    0xbfb9c0c3e7288000
+    0xbfb8a646b372c000
+    0xbfb78d01b3ac0000
+    0xbfb674f145380000
+    0xbfb55e0e6d878000
+    0xbfb4485cdea1e000
+    0xbfb333d94d6aa000
+    0xbfb22079f8c56000
+    0xbfb10e4698622000
+    0xbfaffa6c6ad20000
+    0xbfadda8d4a774000
+    0xbfabbcece4850000
+    0xbfa9a1894012c000
+    0xbfa788583302c000
+    0xbfa5715e67d68000
+    0xbfa35c8a49658000
+    0xbfa149e364154000
+    0xbf9e72c082eb8000
+    0xbf9a55f152528000
+    0xbf963d62cf818000
+    0xbf9228fb8caa0000
+    0xbf8c317b20f90000
+    0xbf8419355daa0000
+    0xbf781203c2ec0000
+    0xbf60040979240000
+    0x3f6feff384900000
+    0x3f87dc41353d0000
+    0x3f93cea3c4c28000
+    0x3f9b9fc114890000
+    0x3fa1b0d8ce110000
+    0x3fa58a5bd001c000
+    0x3fa95c8340d88000
+    0x3fad276aef578000
+    0x3fb07598e598c000
+    0x3fb253f5e30d2000
+    0x3fb42edd8b380000
+    0x3fb606598757c000
+    0x3fb7da76356a0000
+    0x3fb9ab434e1c6000
+    0x3fbb78c7bb0d6000
+    0x3fbd431332e72000
+    0x3fbf0a3171de6000
+    0x3fc067152b914000
+    0x3fc147858292b000
+    0x3fc2266ecdca3000
+    0x3fc303d7a6c55000
+    0x3fc3dfc33c331000
+    0x3fc4ba366b7a8000
+    0x3fc5933928d1f000
+    0x3fc66acd2418f000
+    0x3fc740f8ec669000
+    0x3fc815c0f51af000
+    0x3fc8e92954f68000
+    0x3fc9bb3602f84000
+    0x3fca8bed1c2c0000
+    0x3fcb5b515c01d000
+    0x3fcc2967ccbcc000
+    0x3fccf635d5486000
+    0x3fcdc1bd3446c000
+    0x3fce8c01b8cfe000
+    0x3fcf5509c0179000
+    0x3fd00e6c121fb800
+    0x3fd071b80e93d000
+    0x3fd0d46b9e867000
+    0x3fd13687334bd000
+    0x3fd1980d67234800
+    0x3fd1f8ffe0cc8000
+    0x3fd2595fd7636800
+    0x3fd2b9300914a800
+    0x3fd3187210436000
+    0x3fd377266dec1800
+    0x3fd3d54ffbaf3000
+    0x3fd432eee32fe000))
+(define math-log-f64-chi-bits : (Array u64 128)
+  (array
+    0x3fe61000014fb66b
+    0x3fe63000034db495
+    0x3fe650000d94d478
+    0x3fe67000074e6fad
+    0x3fe68ffffedf0fae
+    0x3fe6b0000763c5bc
+    0x3fe6d0001e5cc1f6
+    0x3fe6efffeb05f63e
+    0x3fe710000e869780
+    0x3fe72ffffc67e912
+    0x3fe74fffdf81116a
+    0x3fe770000f679c90
+    0x3fe78ffffa7ec835
+    0x3fe7affffe20c2e6
+    0x3fe7cfffed3fc900
+    0x3fe7efffe9261a76
+    0x3fe81000049ca3e8
+    0x3fe8300017932c8f
+    0x3fe850000633739c
+    0x3fe87000204289c6
+    0x3fe88fffebf57904
+    0x3fe8b00022bc04df
+    0x3fe8cfffe50c1b8a
+    0x3fe8effffc918e43
+    0x3fe910001efa5fc7
+    0x3fe9300013467bb9
+    0x3fe94fffe6ee076f
+    0x3fe96fffde3c12d1
+    0x3fe98ffff4458a0d
+    0x3fe9afffdd982e3e
+    0x3fe9cfffed49fb66
+    0x3fe9f00020f19c51
+    0x3fea10001145b006
+    0x3fea300007bbf6fa
+    0x3fea500010971d79
+    0x3fea70001df52e48
+    0x3fea90001c593352
+    0x3feab0002a4f3e4b
+    0x3feacfffd7ae1ed1
+    0x3feaefffee510478
+    0x3feb0fffdb650d5b
+    0x3feb2ffffeaaca57
+    0x3feb4fffd995badc
+    0x3feb7000249e659c
+    0x3feb8ffff9871640
+    0x3febafffd204cb4f
+    0x3febcfffd2415c45
+    0x3febeffff86309df
+    0x3fec0fffe1b57653
+    0x3fec2ffff1fa57e3
+    0x3fec4fffdcbfe424
+    0x3fec6fffed54b9f7
+    0x3fec8fffeb998fd5
+    0x3fecb0002125219a
+    0x3feccfffdd94469c
+    0x3fecefffeafdc476
+    0x3fed1000169af82b
+    0x3fed30000d0ff71d
+    0x3fed4fffea790fc4
+    0x3fed70002edc87e5
+    0x3fed900021dc82aa
+    0x3fedafffd86b0283
+    0x3fedd000296c4739
+    0x3fedefffe54490f5
+    0x3fee0fffcdabf694
+    0x3fee2fffdb52c8dd
+    0x3fee4ffff24216ef
+    0x3fee6fffe88a5e11
+    0x3fee9000119eff0d
+    0x3feeafffdfa51744
+    0x3feed0001a127fa1
+    0x3feef00007babcc4
+    0x3fef0ffff57a8d02
+    0x3fef30001ee58ac7
+    0x3fef4ffff5823494
+    0x3fef6ffffca94c6b
+    0x3fef8fffe1f9c441
+    0x3fefafffd2e0e37e
+    0x3fefd0001c77e49e
+    0x3fefeffff7e0c331
+    0x3ff00ffff465606e
+    0x3ff02ffff3867a58
+    0x3ff04ffffdfc0d17
+    0x3ff0700003cd4d82
+    0x3ff08ffff9f2cbe8
+    0x3ff0b000010cda65
+    0x3ff0d00001a4d338
+    0x3ff0effffadafdfd
+    0x3ff110000bbafd96
+    0x3ff12ffffae5f45d
+    0x3ff150000dd59ad9
+    0x3ff170000f21559a
+    0x3ff18ffffc275426
+    0x3ff1b000123d3c59
+    0x3ff1cffff8299eb7
+    0x3ff1effff48ad400
+    0x3ff210000c8b86a4
+    0x3ff2300003854303
+    0x3ff24fffffbcf684
+    0x3ff26ffff52921d9
+    0x3ff2900014933a3c
+    0x3ff2b00014556313
+    0x3ff2cfffebfe523b
+    0x3ff2f0000bb8ad96
+    0x3ff30ffffb7ae2af
+    0x3ff32ffffeac5f7f
+    0x3ff350000ca66756
+    0x3ff3700011fbf721
+    0x3ff38ffff9592fb9
+    0x3ff3b00004ddd242
+    0x3ff3cffff5b2c957
+    0x3ff3efffeab0b418
+    0x3ff410001532aff4
+    0x3ff4300017478b29
+    0x3ff44fffe795b463
+    0x3ff46fffe80475e0
+    0x3ff48fffef6fc1e7
+    0x3ff4afffe5bea704
+    0x3ff4d000171027de
+    0x3ff4f0000ff03ee2
+    0x3ff5100012dc4bd1
+    0x3ff530001605277a
+    0x3ff54fffecdb704c
+    0x3ff56fffef5f54a9
+    0x3ff5900017e61012
+    0x3ff5b00003c93e92
+    0x3ff5d0001d4919bc
+    0x3ff5efffe7b87a89))
+(define math-log-f64-clo-bits : (Array u64 128)
+  (array
+    0x3c7e026c91425b3c
+    0x3c8dbfea48005d41
+    0x3c8e7fa786d6a5b7
+    0x3c61fcea6b54254c
+    0xbc7c7e274c590efd
+    0xbc8ac16848dcda01
+    0x3c833f1c9d499311
+    0xbc7e80041ae22d53
+    0x3c7bff6671097952
+    0x3c8c00e226bd8724
+    0xbc6e02916ef101d2
+    0xbc67fc71cd549c74
+    0x3c81bec19ef50483
+    0xbc707e1729cc6465
+    0xbc808072087b8b1c
+    0x3c8dc0286d9df9ae
+    0x3c897fd251e54c33
+    0xbc8afee9b630f381
+    0x3c89bfbf6b6535bc
+    0xbc8bbf65f3117b75
+    0xbc89006ea23dcb57
+    0xbc7d00df38e04b0a
+    0xbc88007146ff9f05
+    0x3c83817bd07a7038
+    0x3c893e9176dfb403
+    0x3c7f804e4b980276
+    0xbc8f7ef0d9ff622e
+    0xbc7082aa962638ba
+    0xbc87801b9164a8ef
+    0xbc8740e08a5a9337
+    0x3c3fce08c19be000
+    0xbc8a3faa27885b0a
+    0x3c74ff489958da56
+    0x3c8cbeab8a2b6d18
+    0x3c88fecadd787930
+    0xbc8f41763dd8abdb
+    0xbc8ebf0284c27612
+    0xbc69fd043cff3f5f
+    0xbc823ee7129070b4
+    0x3c6a063ee00edea3
+    0x3c5a06c8381f0ab9
+    0xbc79011e74233c1d
+    0xbc79ff1068862a9f
+    0x3c8aff45d0864f3e
+    0x3c7cfe7796c2c3f9
+    0xbc63ff27eef22bc4
+    0xbc6cffb7ee3bea21
+    0xbc814103972e0b5c
+    0x3c8bc16494b76a19
+    0xbc64feef8d30c6ed
+    0xbc843f68bcec4775
+    0x3c847ea3f053e0ec
+    0x3c7383068df992f1
+    0xbc68fd8e64180e04
+    0x3c8e7ebe1cc7ea72
+    0x3c8ebe39ad9f88fe
+    0x3c757d91a8b95a71
+    0x3c89c1906970c7da
+    0xbc580e37c558fe0c
+    0xbc7f80d64dc10f44
+    0xbc747c8f94fd5c5c
+    0x3c8c7f1dc521617e
+    0x3c88019eb2ffb153
+    0x3c6e00d2c652cc89
+    0xbc7f8340202d69d2
+    0x3c7b00c1ca1b0864
+    0x3c72ffa8b094ab51
+    0xbc57f673b1efbe59
+    0xbc84808d5e0bc801
+    0x3c780006d54320b5
+    0xbc5002f860565c92
+    0xbc8540445d35e611
+    0xbc4ffb3139ef9105
+    0x3c8a81acf2731155
+    0x3c8a3f41d4d7c743
+    0xbc6202f41c987875
+    0x3c777dd1f477e74b
+    0xbc6f01199a7ca331
+    0x3c7181ee4bceacb1
+    0xbc6e05370170875a
+    0xbc8a7ead491c0ada
+    0xbc977f69c3fcb2e0
+    0x3c97bffe34cb945b
+    0x3c820083c0e456cb
+    0xbc6dffdfbe37751a
+    0xbc913f7faee626eb
+    0x3c807dfa79489ff7
+    0xbc77040570d66bc0
+    0x3c8e80d4846d0b62
+    0x3c9dbffa64fd36ef
+    0x3c9a0077701250ae
+    0x3c8dfdf9e2e3deee
+    0x3c910030dc3b7273
+    0x3c997f7980030188
+    0xbc65f932ab9f8c67
+    0x3c937fbf9da75beb
+    0x3c9f806b91fd5b22
+    0x3c93ffc2eb9fbf33
+    0x3c7601e77e2e2e72
+    0x3c7ffcbb767f0c61
+    0xbc7202ca3c02412b
+    0xbc92808233f21f02
+    0xbc88ff7e384fdcf2
+    0xbc85ff51503041c5
+    0xbc810071885e289d
+    0xbc91ff5d3fb7b715
+    0x3c957f82228b82bd
+    0x3c8000bac40dd5cc
+    0xbc943f9d2db2a751
+    0x3c857f6b707638e1
+    0x3c7a023a10bf1231
+    0x3c987f6d66b152b0
+    0x3c67f8375f198524
+    0x3c8301e672dc5143
+    0x3c89ff69b8b2895a
+    0xbc95c0b19bc2f254
+    0x3c9b4009f23a2a72
+    0xbc94ffb7bf0d7d45
+    0xbc99c06471dc6a3d
+    0x3c977f890b85531c
+    0x3c6004657166a436
+    0xbc96bfcece233209
+    0xbc8902720505a1d7
+    0x3c9bbfe60ec96412
+    0x3c887ec581afef90
+    0xbc9f41080abf0cc0
+    0xbc98812afb254729
+    0xbc947eb780ed6904))
 
-;: Return the exact musl binary64 logarithm constants for interval index.
-(define (math-log-f64-table-entry [index : i64]) : MathLogF64TableEntry
-  (math-bits-table
-    index
-    MathLogF64TableEntry
-    (MathLogF64TableEntry 0 0 0 0)
-    (row
-      1.4504249240398293
-      -0.37185656456335892
-      0.68945312744263043
-      2.6029065281053499e-17)
-    (row
-      1.4422535083272761
-      -0.36620682668944937
-      0.69335938115331663
-      5.1607448519931415e-17)
-    (row
-      1.4341736174350004
-      -0.36058880697919449
-      0.69726565029726739
-      5.2906724148878689e-17)
-    (row
-      1.4261838163299949
-      -0.35500221714198688
-      0.70117188860921476
-      7.8010306348060135e-18)
-    (row
-      1.4182825527052965
-      -0.34944666968829097
-      0.70507812289769389
-      -2.471355337688684e-17)
-    (row
-      1.4104682921759335
-      -0.34392177136032842
-      0.7089843887644558
-      -4.6413389636862956e-17)
-    (row
-      1.4027396147468003
-      -0.33842719212611883
-      0.71289068155425528
-      3.3387408065940366e-17)
-    (row
-      1.3950954438932313
-      -0.33296283149434203
-      0.71679683592783028
-      -2.6454587338050098e-17)
-    (row
-      1.3875338232485754
-      -0.32752794345742586
-      0.7207031520563163
-      2.4284096334522285e-17)
-    (row
-      1.3800539211058593
-      -0.32212257167088865
-      0.72460936830546729
-      4.8578243503198198e-17)
-    (row
-      1.3726542695419708
-      -0.3167462884799761
-      0.72851556447180355
-      -1.3014776598894487e-17)
-    (row
-      1.3653332798446802
-      -0.3113985598928366
-      0.73242190369355065
-      -1.0402317671225898e-17)
-    (row
-      1.358090204587874
-      -0.30607945151655258
-      0.73632811474658999
-      3.0782914274674313e-17)
-    (row
-      1.3509234892132138
-      -0.30078842466764399
-      0.74023437151307969
-      -1.4304998976623033e-17)
-    (row
-      1.3438320840699889
-      -0.29552529684769979
-      0.74414059007384026
-      -2.8625955785571303e-17)
-    (row
-      1.3368146974742003
-      -0.29028969275850613
-      0.74804683243640002
-      5.1609093535635645e-17)
-    (row
-      1.3298701146777361
-      -0.28508127932775551
-      0.75195313359028848
-      4.423423949536319e-17)
-    (row
-      1.3229973391611061
-      -0.27989987391470095
-      0.75585941891167063
-      -4.6830167620995081e-17)
-    (row
-      1.316195352741367
-      -0.27474526621870154
-      0.75976563655023055
-      4.4667420075147718e-17)
-    (row
-      1.3094628125672239
-      -0.26961698637012432
-      0.76367193508877373
-      -4.8134498775190266e-17)
-    (row
-      1.3027990455471041
-      -0.26451506180308115
-      0.76757808767050095
-      -4.3371015350542286e-17)
-    (row
-      1.2962024229438942
-      -0.25943877627673828
-      0.77148443969795355
-      -2.5156444722517071e-17)
-    (row
-      1.2896726275815547
-      -0.25438840909816918
-      0.77539057479667517
-      -4.163636184961329e-17)
-    (row
-      1.2832080305745537
-      -0.24936321635129843
-      0.77929686860847658
-      3.3837161384165165e-17)
-    (row
-      1.276807885983376
-      -0.24436312405975968
-      0.78320318270106604
-      4.3792065650567583e-17)
-    (row
-      1.2704714060687552
-      -0.23938801747897287
-      0.78710941090309128
-      2.7322930976146396e-17)
-    (row
-      1.2641976054949482
-      -0.23443761696705678
-      0.79101557830311531
-      -5.4636612253640457e-17)
-    (row
-      1.2579853575148821
-      -0.22951151871518505
-      0.79492181210715718
-      -1.4320502634189868e-17)
-    (row
-      1.2518337750655457
-      -0.2246094963439873
-      0.79882810315422292
-      -4.0766731402809024e-17)
-    (row
-      1.2457421919097305
-      -0.21973149037705753
-      0.80273431091467962
-      -4.0338264352540086e-17)
-    (row
-      1.2397094966625508
-      -0.2148770752847895
-      0.80664059014803224
-      1.7241428071650815e-18)
-    (row
-      1.2337348463589233
-      -0.21004602910363701
-      0.81054693636259334
-      -4.5534218930924523e-17)
-    (row
-      1.2278176973028803
-      -0.20523836373934046
-      0.8144531571720115
-      1.8212169205891421e-17)
-    (row
-      1.2219570190618474
-      -0.20045368751368642
-      0.81835938940613961
-      4.9864288025894273e-17)
-    (row
-      1.2161519732977757
-      -0.1956917537758045
-      0.82226565590182965
-      4.3359904167266887e-17)
-    (row
-      1.2104018095009725
-      -0.19095237845203883
-      0.82617193080063434
-      -5.4220014716611272e-17)
-    (row
-      1.204705805718973
-      -0.18623539250290833
-      0.83007817780308302
-      -5.3336037289290352e-17)
-    (row
-      1.1990631185441964
-      -0.18154051731551135
-      0.83398445380766739
-      -1.1270648442682386e-17)
-    (row
-      1.1934733004462308
-      -0.17686779574319189
-      0.83789054989844136
-      -3.1651267348003982e-17)
-    (row
-      1.1879350812847385
-      -0.17221657406412305
-      0.84179684206186689
-      1.1286283062565865e-17)
-    (row
-      1.1824481322833125
-      -0.16758697765942543
-      0.84570305681738078
-      5.643595964448442e-18)
-    (row
-      1.1770114976921955
-      -0.16297859687290384
-      0.84960937251737334
-      -2.1687834632368187e-17)
-    (row
-      1.1716248121809465
-      -0.15839151377804228
-      0.85351555344626773
-      -2.2548234217914977e-17)
-    (row
-      1.1662869231674715
-      -0.15382513241456763
-      0.85742194320771459
-      4.6832605563531392e-17)
-    (row
-      1.1609977486762766
-      -0.14927976358922024
-      0.86132811294437062
-      2.5148296884122795e-17)
-    (row
-      1.1557563220795803
-      -0.14475495398119165
-      0.86523428935320534
-      -8.6721875709494672e-18)
-    (row
-      1.1505619105480347
-      -0.14025044090817573
-      0.86914053979388284
-      -1.2576268285559751e-17)
-    (row
-      1.1454138888505974
-      -0.13576604666855019
-      0.87304686081943916
-      -2.9930851265147998e-17)
-    (row
-      1.1403118773746559
-      -0.1313018016355727
-      0.87695306857831168
-      4.8148015076816437e-17)
-    (row
-      1.1352550225747513
-      -0.12685731518763532
-      0.88085934888181006
-      -9.1054953361102193e-18)
-    (row
-      1.1302429094831266
-      -0.12243257376712791
-      0.88476555934096668
-      -3.5124146516207661e-17)
-    (row
-      1.1252747693068048
-      -0.11802724521862729
-      0.88867184022620804
-      3.5552618153740227e-17)
-    (row
-      1.1203501571039876
-      -0.11364127671663482
-      0.89257808700176133
-      1.692380503540994e-17)
-    (row
-      1.1154683327680124
-      -0.10927434611278386
-      0.89648443673745537
-      -1.0837881791715702e-17)
-    (row
-      1.1106291463292157
-      -0.10492665324943573
-      0.90039056088626834
-      5.2900545724138363e-17)
-    (row
-      1.1058315813301596
-      -0.10059761422644442
-      0.90429683586820775
-      5.3330721088784517e-17)
-    (row
-      1.1010752177696026
-      -0.096287173090559008
-      0.90820316710574411
-      1.8640040753232978e-17)
-    (row
-      1.0963597137952512
-      -0.091995340695575578
-      0.91210939933054969
-      4.4679728320540751e-17)
-    (row
-      1.0916844827550398
-      -0.087721900366886985
-      0.91601558490264567
-      -5.2162134195850327e-18)
-    (row
-      1.0870487291277784
-      -0.083466436138678546
-      0.91992196228624989
-      -2.7324731032846873e-17)
-    (row
-      1.082452357388312
-      -0.079229168275446682
-      0.9238281880717143
-      -1.7769263393434193e-17)
-    (row
-      1.0778948225025884
-      -0.075009900475038194
-      0.92773430127279288
-      4.9433630808174411e-17)
-    (row
-      1.0733751731601076
-      -0.070808051333528965
-      0.93164070215627881
-      4.164434042024055e-17)
-    (row
-      1.068893585073351
-      -0.06662408085151128
-      0.93554682520746602
-      1.3011820859795741e-17)
-    (row
-      1.0644491706655506
-      -0.062457454719151428
-      0.93945303125629431
-      -2.7332907838481398e-17)
-    (row
-      1.0600414846328305
-      -0.058308043804231602
-      0.94335930668446688
-      2.3421331708032919e-17)
-    (row
-      1.0556701316181605
-      -0.05417576112313327
-      0.94726559940383293
-      1.6478717480487438e-17)
-    (row
-      1.0513347505569259
-      -0.050060547896805474
-      0.9511718313032721
-      -5.1960829013149901e-18)
-    (row
-      1.0470347288442157
-      -0.045962101199052086
-      0.95507815782181782
-      -3.5565573220578997e-17)
-    (row
-      1.0427699229652954
-      -0.041880560088657148
-      0.95898431473390433
-      2.0816772146458738e-17)
-    (row
-      1.0385395013738175
-      -0.037815400561839851
-      0.96289067356336855
-      -3.4719628261468409e-18)
-    (row
-      1.0343434189403451
-      -0.033766847579158821
-      0.9667968893972092
-      -3.6864683447264197e-17)
-    (row
-      1.0301811073173315
-      -0.029734619131772888
-      0.97070310540257787
-      -3.4674108076868834e-18)
-    (row
-      1.026052043621297
-      -0.025718470239212365
-      0.97460943254949306
-      4.5981526247743919e-17)
-    (row
-      1.0219561082336197
-      -0.021718543925430822
-      0.97851560545827221
-      4.5531457523925683e-17)
-    (row
-      1.0178926505784922
-      -0.017734461269810708
-      0.98242186878122817
-      -7.8112591694189783e-18)
-    (row
-      1.0138614436244586
-      -0.013766252464051831
-      0.98632806907529169
-      2.0375615178047467e-17)
-    (row
-      1.0098620186501341
-      -0.0098137063225749444
-      0.99023429095460336
-      -1.344597043422914e-17)
-    (row
-      1.0058938559734134
-      -0.005876555150052809
-      0.99414067802640083
-      1.5185372369505401e-17)
-    (row
-      1.0019569623501401
-      -0.0019550499938532084
-      0.99804685987155584
-      -1.301926039598001e-17)
-    (row
-      0.99610899230885086
-      0.0038985973556009412
-      1.0039062067717412
-      -4.5961206417449733e-17)
-    (row
-      0.98841703381852009
-      0.011650571286395461
-      1.0117187035281372
-      -8.1524050026653492e-17)
-    (row
-      0.98084291910052968
-      0.019342955478919066
-      1.0195312424919558
-      8.2399270147578115e-17)
-    (row
-      0.97338401699874455
-      0.026976601484648199
-      1.0273437641634193
-      3.1228510053270453e-17)
-    (row
-      0.96603775688765559
-      0.034552359728422744
-      1.0351562274561221
-      -1.3010212611128995e-17)
-    (row
-      0.95880149453073693
-      0.042071217671832528
-      1.0429687539123276
-      -5.9841166886334577e-17)
-    (row
-      0.95167285690731107
-      0.049533940950141186
-      1.0507812561238108
-      2.8609238548223351e-17)
-    (row
-      0.9446494635965822
-      0.056941358295944156
-      1.0585937308350133
-      -1.9962944508904598e-17)
-    (row
-      0.93772889930262227
-      0.064294391683461072
-      1.0664062936992642
-      5.2914691303090992e-17)
-    (row
-      0.93090910737906807
-      0.071593635494650698
-      1.0742187309945372
-      1.0321575006732523e-16)
-    (row
-      0.92418768161272202
-      0.078840109337761533
-      1.0820313015371339
-      9.0211943734191189e-17)
-    (row
-      0.91756267655991919
-      0.086034389059705063
-      1.0898438063644336
-      5.2027989923579528e-17)
-    (row
-      0.91103204036240337
-      0.093177211800139048
-      1.0976562356711468
-      5.8983184825007853e-17)
-    (row
-      0.90459358397620238
-      0.10026951462748457
-      1.1054688179463226
-      8.8463776906532518e-17)
-    (row
-      0.89824563759228249
-      0.10731170956330516
-      1.113281220803328
-      -9.5294559652125745e-18)
-    (row
-      0.89198609667825013
-      0.11430473320717738
-      1.1210937073167315
-      6.7650807093777866e-17)
-    (row
-      0.88581311211851288
-      0.12124928503033061
-      1.1289062967338532
-      1.0929327370933015e-16)
-    (row
-      0.87972507576067605
-      0.12814583422959913
-      1.1367187631150848
-      6.9385705512305156e-17)
-    (row
-      0.87372013726346853
-      0.13499516368517561
-      1.1445312490244826
-      1.908841015045148e-17)
-    (row
-      0.86779664057822725
-      0.1417978768189414
-      1.1523437096203593
-      2.7744504138979832e-17)
-    (row
-      0.86195280500607385
-      0.14855476039031146
-      1.1601563266482477
-      -1.5621964097491672e-17)
-    (row
-      0.85618723544206921
-      0.15526619376589679
-      1.1679688257483505
-      -6.4191661495975e-17)
-    (row
-      0.85049839278168926
-      0.16193275688146969
-      1.1757811754697645
-      -4.3364651650592681e-17)
-    (row
-      0.84488445727903039
-      0.16855539792220497
-      1.1835937936656129
-      -3.8159292551356396e-17)
-    (row
-      0.83934427415759649
-      0.1751343179947753
-      1.1914062331617676
-      -2.94933042768015e-17)
-    (row
-      0.83387622493494384
-      0.1816702989864325
-      1.1992187450577771
-      -6.2441429163513478e-17)
-    (row
-      0.82847893205577783
-      0.18816387146023317
-      1.2070312971249755
-      7.4586446226274127e-17)
-    (row
-      0.82315108000658321
-      0.1946155228479256
-      1.2148438169965134
-      2.7760519266147807e-17)
-    (row
-      0.81789139037787073
-      0.20102572579389744
-      1.2226562252208011
-      -7.0251069210796655e-17)
-    (row
-      0.81269840072453736
-      0.20739520907955011
-      1.2304687681290862
-      3.7292622364618835e-17)
-    (row
-      0.80757100294602269
-      0.21372429840596396
-      1.2382812116234925
-      2.2558949940652082e-17)
-    (row
-      0.80250788811604146
-      0.22001359459818559
-      1.2460936706149877
-      8.4993689444006646e-17)
-    (row
-      0.79750773793643315
-      0.22626374162859975
-      1.2539063289686938
-      1.039515474644361e-17)
-    (row
-      0.79256960496637296
-      0.23247494747693054
-      1.2617188367227732
-      3.2972622232754989e-17)
-    (row
-      0.78769236412541144
-      0.23864766620658884
-      1.2695311590462317
-      4.5098832535941547e-17)
-    (row
-      0.78287467249409981
-      0.24478265647405806
-      1.2773436606579409
-      -7.546987371769545e-17)
-    (row
-      0.77811553887908114
-      0.25088025827324145
-      1.2851561882963496
-      9.4542955988181837e-17)
-    (row
-      0.77341395578697769
-      0.25694085525105947
-      1.2929686521915196
-      -7.2854560911974897e-17)
-    (row
-      0.76876871799149327
-      0.26296511155101143
-      1.3007813359167737
-      -8.9343576514628023e-17)
-    (row
-      0.76417906980418537
-      0.26895313271893428
-      1.3085938093753886
-      8.1525705945810205e-17)
-    (row
-      0.75964387636923991
-      0.27490553924610595
-      1.3164063202609564
-      6.9463414607658815e-18)
-    (row
-      0.75516219510786675
-      0.28082272484789428
-      1.3242188320313901
-      -7.8927313807216758e-17)
-    (row
-      0.7507331780216866
-      0.28670497926725602
-      1.3320311786874468
-      -4.3384657500713545e-17)
-    (row
-      0.74635571963617509
-      0.29255295645509705
-      1.3398436880573092
-      9.6275779545987923e-17)
-    (row
-      0.74202893648696533
-      0.29836703861428759
-      1.3476563390295309
-      4.2492400590204517e-17)
-    (row
-      0.73775215370658764
-      0.30414734587282055
-      1.3554687641043626
-      -1.0843419551446047e-16)
-    (row
-      0.73352429660026075
-      0.30989455774829366
-      1.3632813590971713
-      -8.5017278247202501e-17)
-    (row
-      0.72934477745784099
-      0.31560871301871884
-      1.3710936595522603
-      -7.1106272061629222e-17)))
-
-;: Internal binary32 logarithm reduction constants, evaluated as binary64.
-(defstruct MathLogF32TableEntry
-  (invc-bits u64)
-  (logc-bits u64))
-
-;: Return the exact musl binary32 logarithm constants for interval index.
-(define (math-log-f32-table-entry [index : i64]) : MathLogF32TableEntry
-  (math-bits-table
-    index
-    MathLogF32TableEntry
-    (MathLogF32TableEntry 0 0)
-    (row 1.3989071621465281 -0.33569133332882284)
-    (row 1.3403141896637998 -0.29290405637740741)
-    (row 1.286432210124115 -0.25187265809373688)
-    (row 1.2367150214269895 -0.21245868807117255)
-    (row 1.1906977166711752 -0.17453945183745634)
-    (row 1.1479821020556429 -0.1380057072319758)
-    (row 1.1082251448272158 -0.10275976698545139)
-    (row 1.0711297413057381 -0.068713924470205245)
-    (row 1.0364372789772831 -0.035789138739822798)
-    (row 1.0 0.0)
-    (row 0.9492859795739057 0.052045177429294959)
-    (row 0.89510494286090037 0.11081431298787942)
-    (row 0.84768216203511026 0.16524952236951429)
-    (row 0.80503148516920009 0.21687389031699977)
-    (row 0.7664671008843108 0.26596350281213971)
-    (row 0.73142860331632797 0.31275566640735569)))
+;: Exact binary32 logarithm interval payloads, evaluated as binary64.
+(define math-log-f32-invc-bits : (Array u64 16)
+  (array
+    0x3ff661ec79f8f3be
+    0x3ff571ed4aaf883d
+    0x3ff49539f0f010b0
+    0x3ff3c995b0b80385
+    0x3ff30d190c8864a5
+    0x3ff25e227b0b8ea0
+    0x3ff1bb4a4a1a343f
+    0x3ff12358f08ae5ba
+    0x3ff0953f419900a7
+    0x3ff0000000000000
+    0x3fee608cfd9a47ac
+    0x3feca4b31f026aa0
+    0x3feb2036576afce6
+    0x3fe9c2d163a1aa2d
+    0x3fe886e6037841ed
+    0x3fe767dcf5534862))
+(define math-log-f32-logc-bits : (Array u64 16)
+  (array
+    0xbfd57bf7808caade
+    0xbfd2bef0a7c06ddb
+    0xbfd01eae7f513a67
+    0xbfcb31d8a68224e9
+    0xbfc6574f0ac07758
+    0xbfc1aa2bc79c8100
+    0xbfba4e76ce8c0e5e
+    0xbfb1973c5a611ccc
+    0xbfa252f438e10c1e
+    0x0000000000000000
+    0x3faaa5aa5df25984
+    0x3fbc5e53aa362eb4
+    0x3fc526e57720db08
+    0x3fcbc2860d224770
+    0x3fd1058bc8a07ee1
+    0x3fd4043057b6ee09))
 
 ;: Evaluate the compensated binary64 logarithm path for values close to one.
 (define (math-log-f64-near-one [value : f64]) : f64
@@ -1300,11 +1243,14 @@
     [k : i64 (shr (cast tmp : i64) 52)]
     [reduced-bits : u64
       (- normalized-bits (bit-and tmp (cast 0xfff0000000000000 : u64)))]
-    [entry : MathLogF64TableEntry (math-log-f64-table-entry index)]
-    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
-    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
-    [chi : f64 (stdlib.math.f64-from-bits entry.chi-bits)]
-    [clo : f64 (stdlib.math.f64-from-bits entry.clo-bits)]
+    [invc : f64
+      (stdlib.math.f64-from-bits (array-ref math-log-f64-invc-bits index))]
+    [logc : f64
+      (stdlib.math.f64-from-bits (array-ref math-log-f64-logc-bits index))]
+    [chi : f64
+      (stdlib.math.f64-from-bits (array-ref math-log-f64-chi-bits index))]
+    [clo : f64
+      (stdlib.math.f64-from-bits (array-ref math-log-f64-clo-bits index))]
     [z : f64 (stdlib.math.f64-from-bits reduced-bits)]
     [r : f64 (* (- (- z chi) clo) invc)]
     [kd : f64 (cast k : f64)]
@@ -1363,9 +1309,10 @@
     [k : i64 (cast (shr (cast tmp : i32) 23) : i64)]
     [reduced-bits : u32
       (- normalized-bits (bit-and tmp (cast 0xff800000 : u32)))]
-    [entry : MathLogF32TableEntry (math-log-f32-table-entry index)]
-    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
-    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
+    [invc : f64
+      (stdlib.math.f64-from-bits (array-ref math-log-f32-invc-bits index))]
+    [logc : f64
+      (stdlib.math.f64-from-bits (array-ref math-log-f32-logc-bits index))]
     [z : f64 (cast (stdlib.math.f32-from-bits reduced-bits) : f64)]
     [r : f64 (- (* z invc) 1.0)]
     [y0 : f64 (+ logc (* (cast k : f64) 0.69314718055994529))]
@@ -1420,146 +1367,397 @@
 ;; the `WANT_ROUNDING`/`WANT_ERRNO`/`opt_barrier`/`force_eval` machinery and
 ;; the `issignaling_inline` special cases are outside the contract, mirroring
 ;; the exp/log ports above.
-;: Internal binary64 pow logarithm constants for one table interval.
-(defstruct MathPowLogF64TableEntry
-  (invc-bits u64)
-  (logc-bits u64)
-  (logctail-bits u64))
-
-;: Return the exact musl pow_data.c constants for interval index.
-(define (math-pow-f64-table-entry [index : i64]) : MathPowLogF64TableEntry
-  (math-bits-table
-    index
-    MathPowLogF64TableEntry
-    (MathPowLogF64TableEntry 0 0 0)
-    (row 1.4140625 -0.3464667673462145 5.929407345889625e-15)
-    (row 1.40625 -0.34092658697056777 -2.544157440035963e-14)
-    (row 1.3984375 -0.3353555419211034 -3.443525940775045e-14)
-    (row 1.390625 -0.3297532863724655 -2.500123826022799e-15)
-    (row 1.3828125 -0.32411946865420305 -8.929337133850617e-15)
-    (row 1.375 -0.31845373111855224 1.7625431312172662e-14)
-    (row 1.3671875 -0.31275571000389846 1.5688303180062087e-15)
-    (row 1.359375 -0.3070250352949415 2.9655274673691784e-14)
-    (row 1.3515625 -0.3012613305781997 3.7923164802093147e-14)
-    (row 1.34375 -0.2954642128938758 3.993416384387844e-14)
-    (row 1.3359375 -0.28963329258306203 1.9352855826489123e-14)
-    (row 1.3359375 -0.28963329258306203 1.9352855826489123e-14)
-    (row 1.328125 -0.28376817313062475 -1.9852665484979036e-14)
-    (row 1.3203125 -0.27786845100342816 -2.814323765595281e-14)
-    (row 1.3125 -0.2719337154836694 2.7643769993528702e-14)
-    (row 1.3046875 -0.2659635484970977 -4.025092402293806e-14)
-    (row 1.296875 -0.25995752443691345 -1.2621729398885316e-14)
-    (row 1.2890625 -0.25391520998095984 -3.600176732637335e-15)
-    (row 1.2890625 -0.25391520998095984 -3.600176732637335e-15)
-    (row 1.28125 -0.2478361639045943 1.3029797173308663e-14)
-    (row 1.2734375 -0.2417199368871934 4.8230289429940886e-14)
-    (row 1.265625 -0.23556607131274632 -2.0592242769647135e-14)
-    (row 1.2578125 -0.22937410106487732 3.149265065191484e-14)
-    (row 1.25 -0.22314355131425145 4.169796584527195e-14)
-    (row 1.25 -0.22314355131425145 4.169796584527195e-14)
-    (row 1.2421875 -0.21687393830063684 2.2477465222466186e-14)
-    (row 1.234375 -0.21056476910735 3.6507188831790577e-16)
-    (row 1.2265625 -0.2042155414286526 -3.827767260205414e-14)
-    (row 1.2265625 -0.2042155414286526 -3.827767260205414e-14)
-    (row 1.21875 -0.19782574332987224 -4.7641388950792196e-14)
-    (row 1.2109375 -0.19139485299967873 4.9278276214647115e-14)
-    (row 1.203125 -0.18492233849406148 4.9485167661250996e-14)
-    (row 1.203125 -0.18492233849406148 4.9485167661250996e-14)
-    (row 1.1953125 -0.1784076574728033 -1.5003333854266542e-14)
-    (row 1.1875 -0.17185025692663203 -2.7194441649495324e-14)
-    (row 1.1875 -0.17185025692663203 -2.7194441649495324e-14)
-    (row 1.1796875 -0.1652495728952772 -2.99659267292569e-14)
-    (row 1.171875 -0.15860503017665906 2.0472357800461955e-14)
-    (row 1.171875 -0.15860503017665906 2.0472357800461955e-14)
-    (row 1.1640625 -0.15191604202584585 3.879296723063646e-15)
-    (row 1.15625 -0.1451820098444614 -3.6506824353335045e-14)
-    (row 1.1484375 -0.13840232285906495 -5.4183331379008994e-14)
-    (row 1.1484375 -0.13840232285906495 -5.4183331379008994e-14)
-    (row 1.140625 -0.131576357788731 1.1729485484531301e-14)
-    (row 1.140625 -0.131576357788731 1.1729485484531301e-14)
-    (row 1.1328125 -0.12470347850091912 -3.811763084710266e-14)
-    (row 1.125 -0.11778303565643 4.654729747598445e-14)
-    (row 1.125 -0.11778303565643 4.654729747598445e-14)
-    (row 1.1171875 -0.11081436634026431 -2.5799991283069902e-14)
-    (row 1.109375 -0.10379679368168127 3.7700471749674615e-14)
-    (row 1.109375 -0.10379679368168127 3.7700471749674615e-14)
-    (row 1.1015625 -0.09672962645856842 1.7306161136093256e-14)
-    (row 1.1015625 -0.09672962645856842 1.7306161136093256e-14)
-    (row 1.09375 -0.089612158689647 -4.012913552726574e-14)
-    (row 1.0859375 -0.08244366921110213 2.7541708360737882e-14)
-    (row 1.0859375 -0.08244366921110213 2.7541708360737882e-14)
-    (row 1.078125 -0.07522342123763792 5.0396178134370583e-14)
-    (row 1.078125 -0.07522342123763792 5.0396178134370583e-14)
-    (row 1.0703125 -0.06795066190852594 1.8195060030168815e-14)
-    (row 1.0625 -0.06062462181648698 5.213620639136504e-14)
-    (row 1.0625 -0.06062462181648698 5.213620639136504e-14)
-    (row 1.0546875 -0.053244514518837605 2.532168943117445e-14)
-    (row 1.0546875 -0.053244514518837605 2.532168943117445e-14)
-    (row 1.046875 -0.045809536031242715 -5.148849572685811e-14)
-    (row 1.046875 -0.045809536031242715 -5.148849572685811e-14)
-    (row 1.0390625 -0.038318864302141264 4.6652946995830086e-15)
-    (row 1.0390625 -0.038318864302141264 4.6652946995830086e-15)
-    (row 1.03125 -0.03077165866670839 -4.529814257790929e-14)
-    (row 1.03125 -0.03077165866670839 -4.529814257790929e-14)
-    (row 1.0234375 -0.023167059281490765 -4.361324067851568e-14)
-    (row 1.015625 -0.015504186535963527 -1.7274567499706107e-15)
-    (row 1.015625 -0.015504186535963527 -1.7274567499706107e-15)
-    (row 1.0078125 -0.0077821404420319595 -2.298941004620351e-14)
-    (row 1.0078125 -0.0077821404420319595 -2.298941004620351e-14)
-    (row 1.0 0.0 0.0)
-    (row 1.0 0.0 0.0)
-    (row 0.9921875 0.007843177461040796 -1.4902732911301337e-14)
-    (row 0.984375 0.01574835696817445 -3.527980389655325e-14)
-    (row 0.9765625 0.023716526617363343 -4.730054772033249e-14)
-    (row 0.96875 0.03174869831457272 7.580310369375161e-15)
-    (row 0.9609375 0.039845908547249564 -4.9893776716773285e-14)
-    (row 0.953125 0.048009219186383234 -2.262629393030674e-14)
-    (row 0.9453125 0.056239718322899535 -2.345674491018699e-14)
-    (row 0.94140625 0.06038051098892083 -1.3352588834854848e-14)
-    (row 0.93359375 0.06871389254808946 -3.765296820388875e-14)
-    (row 0.92578125 0.07711730334438016 5.1128335719851986e-14)
-    (row 0.91796875 0.08559193033545398 -5.046674438470119e-14)
-    (row 0.9140625 0.08985632912185793 3.1218748807418837e-15)
-    (row 0.90625 0.09844007281321865 3.3871241029241416e-14)
-    (row 0.8984375 0.10709813555638448 -1.7376727386423858e-14)
-    (row 0.89453125 0.11145544092528326 3.957125899799804e-14)
-    (row 0.88671875 0.12022742699821265 -5.2849453521890294e-14)
-    (row 0.8828125 0.12464244520731427 -3.767012502308738e-14)
-    (row 0.875 0.13353139262449076 3.1859736349078334e-14)
-    (row 0.87109375 0.13800567301939282 5.0900642926060466e-14)
-    (row 0.86328125 0.14701474296180095 8.710783796122478e-15)
-    (row 0.859375 0.15154989812720032 6.157896229122976e-16)
-    (row 0.8515625 0.16068238169043525 3.821577743916796e-14)
-    (row 0.84765625 0.16528009093906348 3.9440046718453496e-14)
-    (row 0.83984375 0.17453941635187675 2.2924522154618074e-14)
-    (row 0.8359375 0.17920142945774842 -3.742530094732263e-14)
-    (row 0.83203125 0.18388527877016259 -2.5223102140407338e-14)
-    (row 0.82421875 0.1933193110035063 -1.0320443688698849e-14)
-    (row 0.8203125 0.19806991376208316 1.0634128304268335e-14)
-    (row 0.8125 0.20763936477828793 -4.3425422595242564e-14)
-    (row 0.80859375 0.21245865121420593 -1.2527395755711364e-14)
-    (row 0.8046875 0.21730127569003344 -5.204008743405884e-14)
-    (row 0.80078125 0.22216746534115828 -3.979844515951702e-15)
-    (row 0.79296875 0.2319714654378231 -4.7955860343296286e-14)
-    (row 0.7890625 0.2369097470783572 5.015686013791602e-16)
-    (row 0.78515625 0.24187253642048745 -7.252318953240293e-16)
-    (row 0.78125 0.2468600779315011 2.4688324156011588e-14)
-    (row 0.7734375 0.2569104137850218 5.465121253624792e-15)
-    (row 0.76953125 0.26197371574153294 4.102651071698446e-14)
-    (row 0.765625 0.2670627852490952 -4.996736502345936e-14)
-    (row 0.76171875 0.27217788591576664 4.903580708156347e-14)
-    (row 0.7578125 0.27731928541618345 5.089628039500759e-14)
-    (row 0.75390625 0.28248725557466514 1.1782016386565151e-14)
-    (row 0.74609375 0.29290401643288533 4.727452940514406e-14)
-    (row 0.7421875 0.29815337231912054 -4.4204083338755686e-14)
-    (row 0.73828125 0.3034304294199046 1.548345993498083e-14)
-    (row 0.734375 0.30873548164959175 2.1522127491642888e-14)
-    (row 0.73046875 0.3140688276249648 1.1054030169005386e-14)
-    (row 0.7265625 0.31943077076641657 -5.534326352070679e-14)
-    (row 0.72265625 0.3248216194012912 -5.351646604259541e-14)
-    (row 0.71875 0.33024168687052224 5.4612144489920215e-14)
-    (row 0.71484375 0.3356912916381134 2.8136969901227338e-14)
-    (row 0.7109375 0.3411707574027787 -1.156568624616423e-14)))
+;: Exact binary64 pow logarithm interval payloads from musl pow_data.c.
+(define math-pow-f64-invc-bits : (Array u64 128)
+  (array
+    0x3ff6a00000000000
+    0x3ff6800000000000
+    0x3ff6600000000000
+    0x3ff6400000000000
+    0x3ff6200000000000
+    0x3ff6000000000000
+    0x3ff5e00000000000
+    0x3ff5c00000000000
+    0x3ff5a00000000000
+    0x3ff5800000000000
+    0x3ff5600000000000
+    0x3ff5600000000000
+    0x3ff5400000000000
+    0x3ff5200000000000
+    0x3ff5000000000000
+    0x3ff4e00000000000
+    0x3ff4c00000000000
+    0x3ff4a00000000000
+    0x3ff4a00000000000
+    0x3ff4800000000000
+    0x3ff4600000000000
+    0x3ff4400000000000
+    0x3ff4200000000000
+    0x3ff4000000000000
+    0x3ff4000000000000
+    0x3ff3e00000000000
+    0x3ff3c00000000000
+    0x3ff3a00000000000
+    0x3ff3a00000000000
+    0x3ff3800000000000
+    0x3ff3600000000000
+    0x3ff3400000000000
+    0x3ff3400000000000
+    0x3ff3200000000000
+    0x3ff3000000000000
+    0x3ff3000000000000
+    0x3ff2e00000000000
+    0x3ff2c00000000000
+    0x3ff2c00000000000
+    0x3ff2a00000000000
+    0x3ff2800000000000
+    0x3ff2600000000000
+    0x3ff2600000000000
+    0x3ff2400000000000
+    0x3ff2400000000000
+    0x3ff2200000000000
+    0x3ff2000000000000
+    0x3ff2000000000000
+    0x3ff1e00000000000
+    0x3ff1c00000000000
+    0x3ff1c00000000000
+    0x3ff1a00000000000
+    0x3ff1a00000000000
+    0x3ff1800000000000
+    0x3ff1600000000000
+    0x3ff1600000000000
+    0x3ff1400000000000
+    0x3ff1400000000000
+    0x3ff1200000000000
+    0x3ff1000000000000
+    0x3ff1000000000000
+    0x3ff0e00000000000
+    0x3ff0e00000000000
+    0x3ff0c00000000000
+    0x3ff0c00000000000
+    0x3ff0a00000000000
+    0x3ff0a00000000000
+    0x3ff0800000000000
+    0x3ff0800000000000
+    0x3ff0600000000000
+    0x3ff0400000000000
+    0x3ff0400000000000
+    0x3ff0200000000000
+    0x3ff0200000000000
+    0x3ff0000000000000
+    0x3ff0000000000000
+    0x3fefc00000000000
+    0x3fef800000000000
+    0x3fef400000000000
+    0x3fef000000000000
+    0x3feec00000000000
+    0x3fee800000000000
+    0x3fee400000000000
+    0x3fee200000000000
+    0x3fede00000000000
+    0x3feda00000000000
+    0x3fed600000000000
+    0x3fed400000000000
+    0x3fed000000000000
+    0x3fecc00000000000
+    0x3feca00000000000
+    0x3fec600000000000
+    0x3fec400000000000
+    0x3fec000000000000
+    0x3febe00000000000
+    0x3feba00000000000
+    0x3feb800000000000
+    0x3feb400000000000
+    0x3feb200000000000
+    0x3feae00000000000
+    0x3feac00000000000
+    0x3feaa00000000000
+    0x3fea600000000000
+    0x3fea400000000000
+    0x3fea000000000000
+    0x3fe9e00000000000
+    0x3fe9c00000000000
+    0x3fe9a00000000000
+    0x3fe9600000000000
+    0x3fe9400000000000
+    0x3fe9200000000000
+    0x3fe9000000000000
+    0x3fe8c00000000000
+    0x3fe8a00000000000
+    0x3fe8800000000000
+    0x3fe8600000000000
+    0x3fe8400000000000
+    0x3fe8200000000000
+    0x3fe7e00000000000
+    0x3fe7c00000000000
+    0x3fe7a00000000000
+    0x3fe7800000000000
+    0x3fe7600000000000
+    0x3fe7400000000000
+    0x3fe7200000000000
+    0x3fe7000000000000
+    0x3fe6e00000000000
+    0x3fe6c00000000000))
+(define math-pow-f64-logc-bits : (Array u64 128)
+  (array
+    0xbfd62c82f2b9c800
+    0xbfd5d1bdbf580800
+    0xbfd5767717455800
+    0xbfd51aad872df800
+    0xbfd4be5f95777800
+    0xbfd4618bc21c6000
+    0xbfd404308686a800
+    0xbfd3a64c55694800
+    0xbfd347dd9a988000
+    0xbfd2e8e2bae12000
+    0xbfd2895a13de8800
+    0xbfd2895a13de8800
+    0xbfd22941fbcf7800
+    0xbfd1c898c1699800
+    0xbfd1675cababa800
+    0xbfd1058bf9ae4800
+    0xbfd0a324e2739000
+    0xbfd0402594b4d000
+    0xbfd0402594b4d000
+    0xbfcfb9186d5e4000
+    0xbfcef0adcbdc6000
+    0xbfce27076e2af000
+    0xbfcd5c216b4fc000
+    0xbfcc8ff7c79aa000
+    0xbfcc8ff7c79aa000
+    0xbfcbc286742d9000
+    0xbfcaf3c94e80c000
+    0xbfca23bc1fe2b000
+    0xbfca23bc1fe2b000
+    0xbfc9525a9cf45000
+    0xbfc87fa06520d000
+    0xbfc7ab890210e000
+    0xbfc7ab890210e000
+    0xbfc6d60fe719d000
+    0xbfc5ff3070a79000
+    0xbfc5ff3070a79000
+    0xbfc526e5e3a1b000
+    0xbfc44d2b6ccb8000
+    0xbfc44d2b6ccb8000
+    0xbfc371fc201e9000
+    0xbfc29552f81ff000
+    0xbfc1b72ad52f6000
+    0xbfc1b72ad52f6000
+    0xbfc0d77e7cd09000
+    0xbfc0d77e7cd09000
+    0xbfbfec9131dbe000
+    0xbfbe27076e2b0000
+    0xbfbe27076e2b0000
+    0xbfbc5e548f5bc000
+    0xbfba926d3a4ae000
+    0xbfba926d3a4ae000
+    0xbfb8c345d631a000
+    0xbfb8c345d631a000
+    0xbfb6f0d28ae56000
+    0xbfb51b073f062000
+    0xbfb51b073f062000
+    0xbfb341d7961be000
+    0xbfb341d7961be000
+    0xbfb16536eea38000
+    0xbfaf0a30c0118000
+    0xbfaf0a30c0118000
+    0xbfab42dd71198000
+    0xbfab42dd71198000
+    0xbfa77458f632c000
+    0xbfa77458f632c000
+    0xbfa39e87b9fec000
+    0xbfa39e87b9fec000
+    0xbf9f829b0e780000
+    0xbf9f829b0e780000
+    0xbf97b91b07d58000
+    0xbf8fc0a8b0fc0000
+    0xbf8fc0a8b0fc0000
+    0xbf7fe02a6b100000
+    0xbf7fe02a6b100000
+    0x0000000000000000
+    0x0000000000000000
+    0x3f80101575890000
+    0x3f90205658938000
+    0x3f98492528c90000
+    0x3fa0415d89e74000
+    0x3fa466aed42e0000
+    0x3fa894aa149fc000
+    0x3faccb73cdddc000
+    0x3faeea31c006c000
+    0x3fb1973bd1466000
+    0x3fb3bdf5a7d1e000
+    0x3fb5e95a4d97a000
+    0x3fb700d30aeac000
+    0x3fb9335e5d594000
+    0x3fbb6ac88dad6000
+    0x3fbc885801bc4000
+    0x3fbec739830a2000
+    0x3fbfe89139dbe000
+    0x3fc1178e8227e000
+    0x3fc1aa2b7e23f000
+    0x3fc2d1610c868000
+    0x3fc365fcb0159000
+    0x3fc4913d8333b000
+    0x3fc527e5e4a1b000
+    0x3fc6574ebe8c1000
+    0x3fc6f0128b757000
+    0x3fc7898d85445000
+    0x3fc8beafeb390000
+    0x3fc95a5adcf70000
+    0x3fca93ed3c8ae000
+    0x3fcb31d8575bd000
+    0x3fcbd087383be000
+    0x3fcc6ffbc6f01000
+    0x3fcdb13db0d49000
+    0x3fce530effe71000
+    0x3fcef5ade4dd0000
+    0x3fcf991c6cb3b000
+    0x3fd07138604d5800
+    0x3fd0c42d67616000
+    0x3fd1178e8227e800
+    0x3fd16b5ccbacf800
+    0x3fd1bf99635a6800
+    0x3fd214456d0eb800
+    0x3fd2bef07cdc9000
+    0x3fd314f1e1d36000
+    0x3fd36b6776be1000
+    0x3fd3c25277333000
+    0x3fd419b423d5e800
+    0x3fd4718dc271c800
+    0x3fd4c9e09e173000
+    0x3fd522ae0738a000
+    0x3fd57bf753c8d000
+    0x3fd5d5bddf596000))
+(define math-pow-f64-logctail-bits : (Array u64 128)
+  (array
+    0x3cfab42428375680
+    0xbd1ca508d8e0f720
+    0xbd2362a4d5b6506d
+    0xbce684e49eb067d5
+    0xbd041b6993293ee0
+    0x3d13d82f484c84cc
+    0x3cdc42f3ed820b3a
+    0x3d20b1c686519460
+    0x3d25594dd4c58092
+    0x3d267b1e99b72bd8
+    0x3d15ca14b6cfb03f
+    0x3d15ca14b6cfb03f
+    0xbd165a242853da76
+    0xbd1fafbc68e75404
+    0x3d1f1fc63382a8f0
+    0xbd26a8c4fd055a66
+    0xbd0c6bee7ef4030e
+    0xbcf036b89ef42d7f
+    0xbcf036b89ef42d7f
+    0x3d0d572aab993c87
+    0x3d2b26b79c86af24
+    0xbd172f4f543fff10
+    0x3d21ba91bbca681b
+    0x3d27794f689f8434
+    0x3d27794f689f8434
+    0x3d194eb0318bb78f
+    0x3cba4e633fcd9066
+    0xbd258c64dc46c1ea
+    0xbd258c64dc46c1ea
+    0xbd2ad1d904c1d4e3
+    0x3d2bbdbf7fdbfa09
+    0x3d2bdb9072534a58
+    0x3d2bdb9072534a58
+    0xbd10e46aa3b2e266
+    0xbd1e9e439f105039
+    0xbd1e9e439f105039
+    0xbd20de8b90075b8f
+    0x3d170cc16135783c
+    0x3d170cc16135783c
+    0x3cf178864d27543a
+    0xbd248d301771c408
+    0xbd2e80a41811a396
+    0xbd2e80a41811a396
+    0x3d0a699688e85bf4
+    0x3d0a699688e85bf4
+    0xbd2575545ca333f2
+    0x3d2a342c2af0003c
+    0x3d2a342c2af0003c
+    0xbd1d0c57585fbe06
+    0x3d253935e85baac8
+    0x3d253935e85baac8
+    0x3d137c294d2f5668
+    0x3d137c294d2f5668
+    0xbd269737c93373da
+    0x3d1f025b61c65e57
+    0x3d1f025b61c65e57
+    0x3d2c5edaccf913df
+    0x3d2c5edaccf913df
+    0x3d147c5e768fa309
+    0x3d2d599e83368e91
+    0x3d2d599e83368e91
+    0x3d1c827ae5d6704c
+    0x3d1c827ae5d6704c
+    0xbd2cfc4634f2a1ee
+    0xbd2cfc4634f2a1ee
+    0x3cf502b7f526feaa
+    0x3cf502b7f526feaa
+    0xbd2980267c7e09e4
+    0xbd2980267c7e09e4
+    0xbd288d5493faa639
+    0xbcdf1e7cf6d3a69c
+    0xbcdf1e7cf6d3a69c
+    0xbd19e23f0dda40e4
+    0xbd19e23f0dda40e4
+    0x0000000000000000
+    0x0000000000000000
+    0xbd10c76b999d2be8
+    0xbd23dc5b06e2f7d2
+    0xbd2aa0ba325a0c34
+    0x3d0111c05cf1d753
+    0xbd2c167375bdfd28
+    0xbd197995d05a267d
+    0xbd1a68f247d82807
+    0xbd0e113e4fc93b7b
+    0xbd25325d560d9e9b
+    0x3d2cc85ea5db4ed7
+    0xbd2c69063c5d1d1e
+    0x3cec1e8da99ded32
+    0x3d23115c3abd47da
+    0xbd1390802bf768e5
+    0x3d2646d1c65aacd3
+    0xbd2dc068afe645e0
+    0xbd2534d64fa10afd
+    0x3d21ef78ce2d07f2
+    0x3d2ca78e44389934
+    0x3d039d6ccb81b4a1
+    0x3cc62fa8234b7289
+    0x3d25837954fdb678
+    0x3d2633e8e5697dc7
+    0x3d19cf8b2c3c2e78
+    0xbd25118de59c21e1
+    0xbd1c661070914305
+    0xbd073d54aae92cd1
+    0x3d07f22858a0ff6f
+    0xbd28724350562169
+    0xbd0c358d4eace1aa
+    0xbd2d4bc4595412b6
+    0xbcf1ec72c5962bd2
+    0xbd2aff2af715b035
+    0x3cc212276041f430
+    0xbcca211565bb8e11
+    0x3d1bcbecca0cdf30
+    0x3cf89cdb16ed4e91
+    0x3d27188b163ceae9
+    0xbd2c210e63a5f01c
+    0x3d2b9acdf7a51681
+    0x3d2ca6ed5147bdb7
+    0x3d0a87deba46baea
+    0x3d2a9cfa4a5004f4
+    0xbd28e27ad3213cb8
+    0x3d116ecdb0f177c8
+    0x3d183b54b606bd5c
+    0x3d08e436ec90e09d
+    0xbd2f27ce0967d675
+    0xbd2e20891b0ad8a4
+    0x3d2ebe708164c759
+    0x3d1fadedee5d40ef
+    0xbd0a0b2a08a465dc))
 
 ;: Internal binary64 pow logarithm result: rounded value plus a tail holding
 ;: about fifteen extra bits of precision, mirroring `log_inline`'s out-param.
@@ -1575,15 +1773,17 @@
 (define (math-pow-f64-log [ix : u64]) : MathPowLogF64Result
   (let
     [tmp : u64 (- ix (cast 0x3fe6955500000000 : u64))]
-    [index : i64 (cast (% (shr tmp 45) (cast 128 : u64)) : i64)]
+    [index : i64 (cast (bit-and (shr tmp 45) (cast 127 : u64)) : i64)]
     [k : i64 (shr (cast tmp : i64) 52)]
     [iz : u64 (- ix (bit-and tmp (cast 0xfff0000000000000 : u64)))]
     [z : f64 (stdlib.math.f64-from-bits iz)]
     [kd : f64 (cast k : f64)]
-    [entry : MathPowLogF64TableEntry (math-pow-f64-table-entry index)]
-    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
-    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
-    [logctail : f64 (stdlib.math.f64-from-bits entry.logctail-bits)]
+    [invc : f64
+      (stdlib.math.f64-from-bits (array-ref math-pow-f64-invc-bits index))]
+    [logc : f64
+      (stdlib.math.f64-from-bits (array-ref math-pow-f64-logc-bits index))]
+    [logctail : f64
+      (stdlib.math.f64-from-bits (array-ref math-pow-f64-logctail-bits index))]
     [zhi : f64
       (stdlib.math.f64-from-bits
         (bit-and (+ iz (cast 0x80000000 : u64)) (cast 0xffffffff00000000 : u64)))]
@@ -1669,11 +1869,11 @@
       (+
         (+ (+ x (* k -0.0054152123481117087)) (* k -1.2864023111638346e-14))
         xtail)]
-    [entry : MathExpF64TableEntry
-      (math-exp-f64-table-entry (cast (% k-bits (cast 128 : u64)) : i64))]
+    [index : i64 (cast (bit-and k-bits (cast 127 : u64)) : i64)]
     [top : u64 (shl (+ k-bits sign-bias) 45)]
-    [tail : f64 (stdlib.math.f64-from-bits entry.tail-bits)]
-    [sbits : u64 (+ entry.scale-bits top)]
+    [tail : f64
+      (stdlib.math.f64-from-bits (array-ref math-exp-f64-tail-bits index))]
+    [sbits : u64 (+ (array-ref math-exp-f64-scale-bits index) top)]
     [r2 : f64 (* r r)]
     [tmp : f64
       (+
@@ -1687,7 +1887,7 @@
 
 ;: Compute sign*exp(x+xtail) for the binary64 pow reduction, where the sign
 ;: bias is 0 or 0x40000 (musl SIGN_BIAS, 0x800 << EXP_TABLE_BITS). Mirrors
-;: musl pow.c `exp_inline`, reusing the shared `__exp_data` table accessor.
+;: musl pow.c `exp_inline`, reusing the shared `__exp_data` field arrays.
 (define (math-pow-f64-exp [x : f64] [xtail : f64] [sign-bias : u64]) : f64
   (let
     [abstop : u64
@@ -1848,34 +2048,43 @@
                 (math-pow-f64-main ix y iy sign-bias))))])
       (math-pow-f64-main ix y iy sign-bias))))
 
-;: Internal binary32 pow log2 constants for one table interval. The upstream
-;: powf_data.c entries are doubles, so the fields stay in the `u64` ABI.
-(defstruct MathPowLogF32TableEntry
-  (invc-bits u64)
-  (logc-bits u64))
-
-;: Return the exact musl powf_data.c constants for interval index.
-(define (math-powf-table-entry [index : i64]) : MathPowLogF32TableEntry
-  (math-bits-table
-    index
-    MathPowLogF32TableEntry
-    (MathPowLogF32TableEntry 0 0)
-    (row 1.398907162146528 -0.48430022186289673)
-    (row 1.3403141896637998 -0.42257122959194704)
-    (row 1.286432210124115 -0.3633754347673556)
-    (row 1.2367150214269895 -0.30651309567405577)
-    (row 1.1906977166711752 -0.25180720160537634)
-    (row 1.1479821020556429 -0.19910014943794563)
-    (row 1.1082251448272158 -0.14825100623281615)
-    (row 1.0711297413057381 -0.09913323807318392)
-    (row 1.036437278977283 -0.051632812977629436)
-    (row 1.0 0.0)
-    (row 0.9492859795739057 0.07508531937943004)
-    (row 0.8951049428609004 0.15987125980713107)
-    (row 0.8476821620351103 0.2384046664317681)
-    (row 0.8050314851692001 0.31288288605863257)
-    (row 0.7664671008843108 0.38370422656453185)
-    (row 0.731428603316328 0.451211048935815)))
+;: Exact binary32 pow log2 interval payloads, evaluated as binary64.
+(define math-pow-f32-invc-bits : (Array u64 16)
+  (array
+    0x3ff661ec79f8f3be
+    0x3ff571ed4aaf883d
+    0x3ff49539f0f010b0
+    0x3ff3c995b0b80385
+    0x3ff30d190c8864a5
+    0x3ff25e227b0b8ea0
+    0x3ff1bb4a4a1a343f
+    0x3ff12358f08ae5ba
+    0x3ff0953f419900a7
+    0x3ff0000000000000
+    0x3fee608cfd9a47ac
+    0x3feca4b31f026aa0
+    0x3feb2036576afce6
+    0x3fe9c2d163a1aa2d
+    0x3fe886e6037841ed
+    0x3fe767dcf5534862))
+(define math-pow-f32-logc-bits : (Array u64 16)
+  (array
+    0xbfdefec65b963019
+    0xbfdb0b6832d4fca4
+    0xbfd7418b0a1fb77b
+    0xbfd39de91a6dcf7b
+    0xbfd01d9bf3f2b631
+    0xbfc97c1d1b3b7af0
+    0xbfc2f9e393af3c9f
+    0xbfb960cbbf788d5c
+    0xbfaa6f9db6475fce
+    0x0000000000000000
+    0x3fb338ca9f24f53d
+    0x3fc476a9543891ba
+    0x3fce840b4ac4e4d2
+    0x3fd40645f0c6651c
+    0x3fd88e9c2c1b9ff8
+    0x3fdce0a44eb17bcc))
 
 ;: Evaluate log2(x) in binary64 for the binary32 pow reduction; `ix` is the
 ;: bit pattern of a positive finite binary32 x, pre-normalized with the sign
@@ -1885,13 +2094,14 @@
 (define (math-powf-log2 [ix : u32]) : f64
   (let
     [tmp : u32 (- ix (cast 0x3f330000 : u32))]
-    [index : i64 (cast (% (shr tmp 19) (cast 16 : u32)) : i64)]
+    [index : i64 (cast (bit-and (shr tmp 19) (cast 15 : u32)) : i64)]
     [top : u32 (bit-and tmp (cast 0xff800000 : u32))]
     [iz : u32 (- ix top)]
     [k : i64 (cast (shr (cast top : i32) 23) : i64)]
-    [entry : MathPowLogF32TableEntry (math-powf-table-entry index)]
-    [invc : f64 (stdlib.math.f64-from-bits entry.invc-bits)]
-    [logc : f64 (stdlib.math.f64-from-bits entry.logc-bits)]
+    [invc : f64
+      (stdlib.math.f64-from-bits (array-ref math-pow-f32-invc-bits index))]
+    [logc : f64
+      (stdlib.math.f64-from-bits (array-ref math-pow-f32-logc-bits index))]
     [z : f64 (cast (stdlib.math.f32-from-bits iz) : f64)]
     [r : f64 (- (* z invc) 1.0)]
     [y0 : f64 (+ logc (cast k : f64))]
@@ -1909,17 +2119,16 @@
 ;: __exp2f_data.shift_scaled (0x1.8p+47) and the polynomial is the unscaled
 ;: __exp2f_data.poly. The 32-entry `__exp2f_data.tab` is every fourth
 ;: `__exp_data` scale row (verified against exp2f_data.c, the same reuse the
-;: f32-exp port relies on), so the shared accessor supplies the scale bits.
+;: f32-exp port relies on), so both read the same scale-word array.
 (define (math-powf-exp2 [xd : f64] [sign-bias : u32]) : f32
   (let
     [rounded : f64 (+ xd 211106232532992.0)]
     [ki : u64 (stdlib.math.f64-to-bits rounded)]
     [kd : f64 (- rounded 211106232532992.0)]
     [r : f64 (- xd kd)]
-    [entry : MathExpF64TableEntry
-      (math-exp-f64-table-entry (* (cast (% ki (cast 32 : u64)) : i64) 4))]
+    [index : i64 (* (cast (bit-and ki (cast 31 : u64)) : i64) 4)]
     [ski : u64 (+ ki (cast sign-bias : u64))]
-    [t : u64 (+ entry.scale-bits (shl ski 47))]
+    [t : u64 (+ (array-ref math-exp-f64-scale-bits index) (shl ski 47))]
     [s : f64 (stdlib.math.f64-from-bits t)]
     [z : f64 (+ (* 0.055503615593415351 r) 0.2402284522445722)]
     [r2 : f64 (* r r)]
@@ -2082,95 +2291,87 @@
   (hi f64)
   (lo f64))
 
-;; 1,584 binary digits (396 hexadecimal digits) of 2/pi, split into 24-bit
-;; limbs. Binary64 needs at most limb 46 for its largest finite exponent; the
-;; complete 66-limb fdlibm double table is retained so reducer recomputation
-;; always has headroom. A lookup function keeps the constants in code instead
-;; of creating a heap-allocated module-global array during startup.
-;: Return one exact 24-bit limb of the internal 2/pi reduction table.
-(define (math-trig-two-over-pi-limb [index : i64]) : u32
-  (cond
-    [(= index 0) 0xA2F983]
-    [(= index 1) 0x6E4E44]
-    [(= index 2) 0x1529FC]
-    [(= index 3) 0x2757D1]
-    [(= index 4) 0xF534DD]
-    [(= index 5) 0xC0DB62]
-    [(= index 6) 0x95993C]
-    [(= index 7) 0x439041]
-    [(= index 8) 0xFE5163]
-    [(= index 9) 0xABDEBB]
-    [(= index 10) 0xC561B7]
-    [(= index 11) 0x246E3A]
-    [(= index 12) 0x424DD2]
-    [(= index 13) 0xE00649]
-    [(= index 14) 0x2EEA09]
-    [(= index 15) 0xD1921C]
-    [(= index 16) 0xFE1DEB]
-    [(= index 17) 0x1CB129]
-    [(= index 18) 0xA73EE8]
-    [(= index 19) 0x8235F5]
-    [(= index 20) 0x2EBB44]
-    [(= index 21) 0x84E99C]
-    [(= index 22) 0x7026B4]
-    [(= index 23) 0x5F7E41]
-    [(= index 24) 0x3991D6]
-    [(= index 25) 0x398353]
-    [(= index 26) 0x39F49C]
-    [(= index 27) 0x845F8B]
-    [(= index 28) 0xBDF928]
-    [(= index 29) 0x3B1FF8]
-    [(= index 30) 0x97FFDE]
-    [(= index 31) 0x05980F]
-    [(= index 32) 0xEF2F11]
-    [(= index 33) 0x8B5A0A]
-    [(= index 34) 0x6D1F6D]
-    [(= index 35) 0x367ECF]
-    [(= index 36) 0x27CB09]
-    [(= index 37) 0xB74F46]
-    [(= index 38) 0x3F669E]
-    [(= index 39) 0x5FEA2D]
-    [(= index 40) 0x7527BA]
-    [(= index 41) 0xC7EBE5]
-    [(= index 42) 0xF17B3D]
-    [(= index 43) 0x0739F7]
-    [(= index 44) 0x8A5292]
-    [(= index 45) 0xEA6BFB]
-    [(= index 46) 0x5FB11F]
-    [(= index 47) 0x8D5D08]
-    [(= index 48) 0x560330]
-    [(= index 49) 0x46FC7B]
-    [(= index 50) 0x6BABF0]
-    [(= index 51) 0xCFBC20]
-    [(= index 52) 0x9AF436]
-    [(= index 53) 0x1DA9E3]
-    [(= index 54) 0x91615E]
-    [(= index 55) 0xE61B08]
-    [(= index 56) 0x659985]
-    [(= index 57) 0x5F14A0]
-    [(= index 58) 0x68408D]
-    [(= index 59) 0xFFD880]
-    [(= index 60) 0x4D7327]
-    [(= index 61) 0x310606]
-    [(= index 62) 0x1556CA]
-    [(= index 63) 0x73A8C9]
-    [(= index 64) 0x60E27B]
-    [(= index 65) 0xC08C6B]
-    [else 0]))
-
-;; pi/2 split into non-overlapping 24-bit pieces. As above, the lookup avoids
-;; startup allocation for a global fixed array.
-;: Return one exact non-overlapping piece of the internal pi/2 table.
-(define (math-trig-pi-over-two-piece [index : i64]) : f64
-  (cond
-    [(= index 0) 1.5707962512969971]
-    [(= index 1) 7.5497894158615964e-08]
-    [(= index 2) 5.3903025299577648e-15]
-    [(= index 3) 3.2820034158079129e-22]
-    [(= index 4) 1.2706557530806761e-29]
-    [(= index 5) 1.2293330898111133e-36]
-    [(= index 6) 2.7337005381646456e-44]
-    [else 2.1674168387780482e-51]))
+;; The complete 66-limb fdlibm 2/pi table and eight non-overlapping pi/2
+;; pieces stay exact. Finite binary64 exponents bound jv by 41; the reducer
+;; guards its negative prefix and uses a 20-slot local convolution window.
+(define math-trig-two-over-pi-limbs : (Array u64 66)
+  (array
+    0x0000000000a2f983
+    0x00000000006e4e44
+    0x00000000001529fc
+    0x00000000002757d1
+    0x0000000000f534dd
+    0x0000000000c0db62
+    0x000000000095993c
+    0x0000000000439041
+    0x0000000000fe5163
+    0x0000000000abdebb
+    0x0000000000c561b7
+    0x0000000000246e3a
+    0x0000000000424dd2
+    0x0000000000e00649
+    0x00000000002eea09
+    0x0000000000d1921c
+    0x0000000000fe1deb
+    0x00000000001cb129
+    0x0000000000a73ee8
+    0x00000000008235f5
+    0x00000000002ebb44
+    0x000000000084e99c
+    0x00000000007026b4
+    0x00000000005f7e41
+    0x00000000003991d6
+    0x0000000000398353
+    0x000000000039f49c
+    0x0000000000845f8b
+    0x0000000000bdf928
+    0x00000000003b1ff8
+    0x000000000097ffde
+    0x000000000005980f
+    0x0000000000ef2f11
+    0x00000000008b5a0a
+    0x00000000006d1f6d
+    0x0000000000367ecf
+    0x000000000027cb09
+    0x0000000000b74f46
+    0x00000000003f669e
+    0x00000000005fea2d
+    0x00000000007527ba
+    0x0000000000c7ebe5
+    0x0000000000f17b3d
+    0x00000000000739f7
+    0x00000000008a5292
+    0x0000000000ea6bfb
+    0x00000000005fb11f
+    0x00000000008d5d08
+    0x0000000000560330
+    0x000000000046fc7b
+    0x00000000006babf0
+    0x0000000000cfbc20
+    0x00000000009af436
+    0x00000000001da9e3
+    0x000000000091615e
+    0x0000000000e61b08
+    0x0000000000659985
+    0x00000000005f14a0
+    0x000000000068408d
+    0x0000000000ffd880
+    0x00000000004d7327
+    0x0000000000310606
+    0x00000000001556ca
+    0x000000000073a8c9
+    0x000000000060e27b
+    0x0000000000c08c6b))
+(define math-trig-pi-over-two-piece-bits : (Array u64 8)
+  (array
+    0x3ff921fb40000000
+    0x3e74442d00000000
+    0x3cf8469880000000
+    0x3b78cc5160000000
+    0x39f01b8380000000
+    0x387a252040000000
+    0x36e3822280000000
+    0x3569f31d00000000))
 
 ;: Return one limb from the decomposed reducer input.
 (define (math-trig-input-limb [index : i64] [x0 : f64] [x1 : f64] [x2 : f64]) : f64
@@ -2229,7 +2430,7 @@
         (array-ref f i)
         (if (< j 0)
           0.0
-          (cast (math-trig-two-over-pi-limb j) : f64)))
+          (cast (array-ref math-trig-two-over-pi-limbs j) : f64)))
       (set! i (+ i 1))
       (set! j (+ j 1)))
     ;; q is the local convolution of the significand and 2/pi limbs.
@@ -2324,7 +2525,7 @@
           (while (<= i (+ jz k))
             (set!
               (array-ref f (+ jx i))
-              (cast (math-trig-two-over-pi-limb (+ jv i)) : f64))
+              (cast (array-ref math-trig-two-over-pi-limbs (+ jv i)) : f64))
             (set! fw 0.0)
             (set! j 0)
             (while (<= j jx)
@@ -2373,7 +2574,12 @@
       (while (and (<= k jp) (<= k (- jz i)))
         (set!
           fw
-          (+ fw (* (math-trig-pi-over-two-piece k) (array-ref q (+ i k)))))
+          (+
+            fw
+            (*
+              (stdlib.math.f64-from-bits
+                (array-ref math-trig-pi-over-two-piece-bits k))
+              (array-ref q (+ i k)))))
         (set! k (+ k 1)))
       (set! (array-ref fq (- jz i)) fw)
       (set! i (- i 1)))

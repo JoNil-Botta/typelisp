@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`stdlib_math_table_payloads.tl` hashes every word of the 15 private math tables
+in little-endian order against independent SHA-256 pins at opt0/1/2. Its length
+checks cover all 1,290 words; the existing exp fixture also retains its 128
+individual tail-payload comparisons. Math codegen cases require static table
+definitions and reads while retaining allocation, external-call and instruction
+exclusions.
+
 `spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
 restoration without leaving completed siblings active. The existing traversal
 isolation test preserves job/scratch ownership. `spmd_inline_helper_composition.tl`

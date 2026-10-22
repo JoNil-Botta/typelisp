@@ -75075,6 +75075,119 @@ return 0" true)
         (opt-t22-blocks (opt-t22-global-arg-instrs symbols callee arg)))]
     (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
 
+;; An implicit runtime helper has a parameter-write summary but no installed
+;; cell/storage row. Its no-reentry fallback cannot account for an explicit
+;; global destination, even when both global tables are built.
+(define (opt-t22-runtime-global-loads [callee : i64] [mode : i64]) : i64
+  (let
+    [symbols (opt-t22-cell-symbols)]
+    [target : ir.CompilerIrValue
+      (if (= mode 5)
+        (GlobalAddr symbols.g)
+        (Global
+          (if (= mode 1)
+            symbols.h
+            symbols.g)))]
+    [args : ir.CompilerIrCallArgs
+      (cond
+        [(= mode 3) (Nil)]
+        [(= callee cbi.compiler-builtin-id-tl-array-zero)
+          (Two
+            target
+            (I64
+              (if (= mode 2)
+                0
+                8)))]
+        [else
+          (ir.compiler-ir-call-args-from-seq
+            (&
+              (ir.compiler-ir-value-seq3
+                target
+                (I64
+                  (if (= mode 2)
+                    0
+                    1))
+                (I64 0))))])]
+    [instrs
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Gep 2 (Global symbols.g) (I64 0) (I64))
+        (irt.instr "%3 = load %2 : i64")
+        (ir.CompilerIrInstr.Call 4 callee args (Unit))
+        (ir.CompilerIrInstr.Gep 5 (Global symbols.g) (I64 0) (I64))
+        (irt.instr "%6 = load %5 : i64")
+        (irt.instr "return %6"))]
+    [functions
+      (ir.compiler-ir-function-seq1
+        (&
+          (opt-call-memory-test-function
+            symbols.caller
+            (ir.compiler-ir-param-seq-empty)
+            (opt-test-instr-seq-copy (clone instrs)))))]
+    [globals (opt-t22-storage-globals symbols)]
+    [cells
+      (opt-test-global-obj-attach
+        (opt-t22-storage-globals symbols)
+        (& functions)
+        16
+        (opt.opt-global-cell-summary-build
+          (opt-t22-type-bases)
+          (& globals)
+          (& functions)))]
+    [blocks
+      (opt-t22-run
+        (ir.compiler-ir-param-seq-empty)
+        (opt.opt-call-memory-build (opt-t22-type-bases) (& functions) 16)
+        (if (= mode 4)
+          (opt.opt-global-cell-summary-empty)
+          cells)
+        (opt-t22-blocks instrs))]
+    (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
+
+(test
+  load-cse-runtime-global-argument-needs-installed-row
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [callees
+      (ir.compiler-ir-value-seq3
+        (Global cbi.compiler-builtin-id-tl-array-zero)
+        (Global cbi.compiler-builtin-id-tl-array-fill8)
+        (Global cbi.compiler-builtin-id-tl-mem-fill8))]
+    (for [at (iterator.range 0 3)]
+      (match (ir.compiler-ir-value-seq-borrow (& callees) at)
+        [(Global callee)
+          (for [mode (iterator.range 0 6)]
+            (test.assert-i64-eq
+              (opt-t22-runtime-global-loads callee mode)
+              2
+              "implicit fills cannot skip a global argument without an installed mod/ref row"))]
+        [_ (test.assert-true false "fixture callee identity")]))))
+
+(test
+  global-mod-ref-installed-zero-row
+  (let
+    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [name cbi.compiler-builtin-id-tl-mem-fill8]
+    [row
+      (opt.OptGlobalModRef
+        true
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1))]
+    (test.assert-i64-eq
+      (opt.opt-global-mod-ref-call-mask (& row) name)
+      0
+      "the no-reentry fallback has no implicit global writes")
+    (test.assert-true
+      (not (opt.opt-global-mod-ref-has-row? (& row) name))
+      "a built table alone does not contain a callee row")
+    (opt_i64_i64_map.insert-ref! (&mut row.writes) name 0)
+    (test.assert-true
+      (opt.opt-global-mod-ref-has-row? (& row) name)
+      "an installed zero write set is still a row")
+    (set! row.built? false)
+    (test.assert-true
+      (not (opt.opt-global-mod-ref-has-row? (& row) name))
+      "an unavailable table supplies no row proof")))
+
 ;; --- (c) MF-5 (ii): the width rule for constant globals ---------------------
 ;;
 ;; REFUSED, see the note above opt-const-globals-imm32-fits?: the allocator

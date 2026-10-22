@@ -1,5 +1,11 @@
 # Selfhost compiler testing
 
+`load-cse-runtime-global-argument-needs-installed-row` covers all seeded fill
+helpers with same/different global destinations, global addresses, zero counts,
+missing arguments and absent tables. `global-mod-ref-installed-zero-row` distinguishes a missing
+row from an installed empty write set and an unavailable table. Keep the T2-2
+same-global rejection and unrelated-global forwarding controls beside them.
+
 `backend-forwarded-address-*` tests coalesced copies and same-type casts on
 both targets, phi filtering and cycle scheduling, and final-IR branch loads
 whose address setup must survive. Initialized same-home copies and real swap

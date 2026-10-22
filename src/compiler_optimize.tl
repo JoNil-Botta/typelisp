@@ -118108,6 +118108,18 @@
       [(LookupFound mask) mask]
       [(LookupMissing) (opt-external-call-write-mask name)])))
 
+;; A no-reentry external fallback excludes implicit writes to private globals;
+;; it does not describe writes through an explicit global argument. Only an
+;; installed function/extern row accounts for that argument's storage.
+(define (opt-global-mod-ref-has-row?
+  [mod-ref : (& mod-ref OptGlobalModRef)]
+  [name : i64]) : bool
+  (and
+    mod-ref.built?
+    (opt_i64_i64_map.contains?
+      (& mod-ref.writes)
+      (ir.compiler-ir-symbol-id name))))
+
 ;; The cells a `Store name` writes: exactly name's, when there is a table.
 (define (opt-global-mod-ref-instr-store-mask
   [mod-ref : (& mod-ref OptGlobalModRef)]
@@ -129400,9 +129412,10 @@
         [obj-known? : bool (not (opt-global-mod-ref-any? obj-row))]
         ;; Does this call write through a parameter whose ARGUMENT is a global,
         ;; AND do both rows resolve? Those positions are the ones the storage
-        ;; row names and the root-keyed filter cannot describe -- but only a
-        ;; program that carries both tables can name them, so everything else
-        ;; keeps the pre-IAG-2 path exactly, including every level below 2.
+        ;; row names and the root-keyed filter cannot describe. Both tables
+        ;; must be known and the callee must have an installed row: an implicit
+        ;; runtime helper's external fallback does not describe the argument.
+        ;; Everything else keeps the root-keyed filter, including levels below 2.
         [global-args? : bool
           (and
             cells-known?
@@ -129411,7 +129424,11 @@
               (& call-memory)
               (ir.compiler-ir-symbol-id name))
               [(LookupFound summary)
-                (opt-load-call-global-arg-writes? summary args)]
+                (and
+                  (opt-load-call-global-arg-writes? summary args)
+                  (or
+                    (opt-global-mod-ref-has-row? mod-ref name)
+                    (opt-global-mod-ref-has-row? obj name)))]
               [(LookupMissing) false]))]
         [filtered : OptLoadTable
           (match (opt_i64_i64_map.get

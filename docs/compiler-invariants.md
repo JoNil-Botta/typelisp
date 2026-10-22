@@ -1434,6 +1434,13 @@ analysis consume this same address set. Any address-taken global prevents the
 per-global no-write table from being built: a pointer-writing call may reach
 that cell even when it has no direct `Store` instruction naming the global.
 
+Load-CSE may replace a global argument's parameter-root filter with named
+cell/storage filtering only when the callee has an installed mod/ref row and
+both write sets are known. A runtime helper's no-reentry fallback excludes
+implicit private-global writes; it does not account for a global passed as an
+explicit writable destination. Without a row, that argument keeps the ordinary
+root filter, including its conservative unknown-root invalidation.
+
 GEP use splitting may re-evaluate only stable literals, addresses and
 single-definition variables. `Global` and `RuntimeGlobal` are implicit mutable
 reads, so a GEP containing either operand retains its original capture point

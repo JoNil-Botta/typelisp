@@ -353,6 +353,215 @@
         (git-object-test-tree-error?
           (git_object.git-object-decode-tree (Sha1) "100644 x" (& limits)))))))
 
+;; The comparison budget makes the work bound observable without a test-only
+;; counter in the decoder. A one-below budget must fail with the limit error.
+(define (git-object-test-tree-budget?
+  [body : (& body str)]
+  [count : i64]
+  [comparisons : i64]) : bool
+  (let
+    [limits : git_object.GitObjectLimits
+      (git_object.GitObjectLimits
+        (string.string-length body)
+        32
+        count
+        comparisons
+        32
+        8
+        16)]
+    [ok : bool
+      (match (git_object.git-object-decode-tree (Sha1) body (& limits))
+        [(Ok tree)
+          (let
+            [index : i64 0]
+            [valid : bool (= (array-length tree.entries) count)]
+            (while (< index (array-length tree.entries))
+              (unless
+                (string.eq
+                  (& (array-ref tree.entries index).id.hex)
+                  "3131313131313131313131313131313131313131")
+                (set! valid false))
+              (set! index (+ index 1)))
+            valid)]
+        [_ false])]
+    (when
+      (> comparisons 0)
+      (set! limits.max-name-comparisons (- comparisons 1))
+      (unless
+        (match (git_object.git-object-decode-tree (Sha1) body (& limits))
+          [(Err message)
+            (string.eq
+              message
+              "git object: tree name comparison limit exceeded")]
+          [_ false])
+        (set! ok false)))
+    (set! limits.max-name-comparisons -1)
+    (unless
+      (match (git_object.git-object-decode-tree (Sha1) body (& limits))
+        [(Err message) (string.eq message "git object: invalid limits")]
+        [_ false])
+      (set! ok false))
+    ok))
+
+(define (git-object-test-tree-scaling?) : bool
+  (let
+    [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
+    [index : i64 0]
+    (while (< index 10000)
+      (git-object-test-append-tree-entry!
+        (&mut out)
+        "100644"
+        (string.int->string (+ 100000 index))
+        "11111111111111111111")
+      (set! index (+ index 1)))
+    (git-object-test-tree-budget?
+      (byte_buf.byte-buf-builder-finish-string (& out))
+      10000
+      9999)))
+
+(define (git-object-test-tree-prefixes?) : bool
+  (let
+    [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
+    [prefixes : (__tl_dyn-array String) (__tl_make-array String 0)]
+    [name : String "foo"]
+    [index : i64 0]
+    ;; Growing prefixes keep every candidate alive; the later directory
+    ;; names pop one candidate and retain its parent at each depth.
+    (while (< index 128)
+      (__tl_array-push!
+        prefixes
+        (string.substring (& name) 0 (string.string-length (& name))))
+      (git-object-test-append-tree-entry!
+        (&mut out)
+        "100644"
+        (string.substring (& name) 0 (string.string-length (& name)))
+        "11111111111111111111")
+      (set! name (str_cat.str-cat name "!"))
+      (set! index (+ index 1)))
+    (set! index 126)
+    (while (>= index 0)
+      (git-object-test-append-tree-entry!
+        (&mut out)
+        "40000"
+        (str_cat.str-cat
+          (string.substring
+            (array-ref prefixes index)
+            0
+            (string.string-length (array-ref prefixes index)))
+          "#")
+        "11111111111111111111")
+      (set! index (- index 1)))
+    (git-object-test-tree-budget?
+      (byte_buf.byte-buf-builder-finish-string (& out))
+      255
+      381)))
+
+;; Small exhaustive sequences compare the new look-back with the former
+;; all-pairs duplicate rule, independently of the candidate stack.
+(define (git-object-test-tree-name-oracle? [sequence : i64]) : bool
+  (let
+    [names : (Array String 6) (array "a" "a!" "a!!" "a-" "a." "b")]
+    [codes : (Array i64 3)
+      (array (/ sequence 144) (% (/ sequence 12) 12) (% sequence 12))]
+    [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
+    [expected : bool true]
+    [index : i64 0]
+    [limits : git_object.GitObjectLimits (git-object-test-limits)]
+    (while (< index 3)
+      (let
+        [code : i64 (array-ref codes index)]
+        [name : String
+          (string.substring
+            (array-ref names (/ code 2))
+            0
+            (string.string-length (array-ref names (/ code 2))))]
+        [tree : bool (= (% code 2) 1)]
+        [prior : i64 0]
+        (while (< prior index)
+          (when
+            (string.eq name (array-ref names (/ (array-ref codes prior) 2)))
+            (set! expected false))
+          (set! prior (+ prior 1)))
+        (when
+          (> index 0)
+          (let
+            [previous : i64 (array-ref codes (- index 1))]
+            (when
+              (>=
+                (git_object.git-object-tree-name-compare
+                  (array-ref names (/ previous 2))
+                  (= (% previous 2) 1)
+                  name
+                  tree)
+                0)
+              (set! expected false))))
+        (git-object-test-append-tree-entry!
+          (&mut out)
+          (if tree
+            "40000"
+            "100644")
+          name
+          "11111111111111111111"))
+      (set! index (+ index 1)))
+    (=
+      expected
+      (match (git_object.git-object-decode-tree
+        (Sha1)
+        (byte_buf.byte-buf-builder-finish-string (& out))
+        (& limits))
+        [(Ok _) true]
+        [_ false]))))
+
+(define (git-object-test-tree-name-sequences?) : bool
+  (let
+    [sequence : i64 0]
+    (while (< sequence 1728)
+      (unless
+        (with-arena sequence-arena (git-object-test-tree-name-oracle? sequence))
+        (return false))
+      (set! sequence (+ sequence 1)))
+    true))
+
+(define (git-object-test-tree-separated-duplicates?
+  [format : git_object.GitObjectFormat]) : bool
+  (let
+    [modes : (Array String 4) (array "100644" "100755" "120000" "160000")]
+    [names : (Array String 4) (array "foo" "foo-bar" "foo.bar" "foo")]
+    [binary : String
+      (string.substring
+        "11111111111111111111111111111111"
+        0
+        (git_object.git-object-id-bytes format))]
+    [limits : git_object.GitObjectLimits (git-object-test-limits)]
+    [mode-index : i64 0]
+    (while (< mode-index 4)
+      (let
+        [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
+        [index : i64 0]
+        (while (< index 4)
+          (git-object-test-append-tree-entry!
+            (&mut out)
+            (if (= index 3)
+              "40000"
+              (string.substring (array-ref modes mode-index) 0 6))
+            (string.substring
+              (array-ref names index)
+              0
+              (string.string-length (array-ref names index)))
+            (& binary))
+          (set! index (+ index 1)))
+        (unless
+          (match (git_object.git-object-decode-tree
+            format
+            (byte_buf.byte-buf-builder-finish-string (& out))
+            (& limits))
+            [(Err message)
+              (string.eq message "git object: duplicate tree name")]
+            [_ false])
+          (return false)))
+      (set! mode-index (+ mode-index 1)))
+    true))
+
 (define (git-object-test-tag-body [hex : (& hex str)]) : String
   (str_cat.str-cat
     "object "
@@ -1047,6 +1256,18 @@
       (git-object-test-tree?)
       (git-object-test-tag?))
     "git object: decode fixture mismatch"))
+
+(test
+  git-object-tree-linear-names
+  (git-object-test-require
+    (and
+      (git-object-test-tree-budget? "" 0 0)
+      (git-object-test-tree-scaling?)
+      (git-object-test-tree-prefixes?)
+      (git-object-test-tree-name-sequences?)
+      (git-object-test-tree-separated-duplicates? (Sha1))
+      (git-object-test-tree-separated-duplicates? (Sha256)))
+    "git object: linear tree-name validation mismatch"))
 
 (test
   git-object-refs-and-resolution

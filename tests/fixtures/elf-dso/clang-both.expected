@@ -1,0 +1,64 @@
+D	1	[libc.so.6]
+D	e	[libfixture.so]
+D	c	1000
+D	d	1158
+D	19	3d90
+D	1b	8
+D	1a	3d98
+D	1c	8
+D	4	238
+D	6ffffef5	288
+D	5	420
+D	6	2d0
+D	a	b2
+D	b	18
+D	3	3fc0
+D	2	18
+D	14	7
+D	17	618
+D	7	570
+D	8	a8
+D	9	18
+D	6ffffffc	4f0
+D	6ffffffd	3
+D	1e	8
+D	6ffffffb	9
+D	6ffffffe	550
+D	6fffffff	1
+D	6ffffff0	4d2
+D	6ffffff9	3
+D	0	0
+Y	0	0	0	NOTYPE	LOCAL	DEFAULT	UND	[]
+Y	1	0	0	NOTYPE	WEAK	DEFAULT	UND	[_ITM_deregisterTMCloneTable]
+Y	2	0	0	FUNC	GLOBAL	DEFAULT	UND	[puts@GLIBC_2.2.5]
+Y	3	0	0	NOTYPE	WEAK	DEFAULT	UND	[__gmon_start__]
+Y	4	0	0	NOTYPE	WEAK	DEFAULT	UND	[_ITM_registerTMCloneTable]
+Y	5	0	0	FUNC	WEAK	DEFAULT	UND	[__cxa_finalize@GLIBC_2.2.5]
+Y	6	1120	19	FUNC	GLOBAL	DEFAULT	12	[api@@TL_2]
+Y	7	1110	4	FUNC	GLOBAL	DEFAULT	12	[api@TL_1]
+Y	8	1140	6	FUNC	GLOBAL	PROTECTED	12	[protected_api@@TL_1]
+Y	9	1138	6	FUNC	WEAK	DEFAULT	12	[weak_api@@TL_1]
+Y	10	0	0	OBJECT	GLOBAL	DEFAULT	ABS	[TL_1]
+Y	11	1148	8	IFUNC	GLOBAL	DEFAULT	12	[ifunc_api@@TL_1]
+Y	12	0	0	OBJECT	GLOBAL	DEFAULT	ABS	[TL_2]
+Y	13	0	4	TLS	GLOBAL	DEFAULT	17	[tls_slot@@TL_1]
+VS	0	0
+VS	1	0
+VS	2	4
+VS	3	0
+VS	4	0
+VS	5	4
+VS	6	3
+VS	7	32770
+VS	8	2
+VS	9	2
+VS	10	2
+VS	11	2
+VS	12	3
+VS	13	2
+VD	0	1	1	1	libfixture.so
+VD	1c	0	2	1	TL_1
+VD	38	0	3	2	TL_2
+VP	54	1	TL_1
+VN	0	1	libc.so.6
+VA	10	0	4	GLIBC_2.2.5

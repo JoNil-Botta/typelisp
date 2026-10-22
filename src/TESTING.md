@@ -2334,3 +2334,33 @@ reports LLVM availability. Generation is oracle-only; follow
 for versions/options. Repository-rooted `tests/fixtures/...` manifest
 dependencies preserve their relative location when smoke sources and companions
 are staged; absolute/parent-traversal dependencies remain invalid.
+
+### ELF64 shared-object metadata reader
+
+linker_elf_dso_reader_tests.tl shares self-test with
+src/tests/linker_elf_dso_reader_smoke.tl at opt0/1/2 on Linux and Windows.
+Eleven embedded GCC/Clang/musl/GNU-as snapshots cover both hash formats,
+GNU versions, weak/protected/TLS/IFUNC definitions, loader flags, needed
+libraries and a sectionless DSO. Recorded readelf projections check every
+exposed record.
+The sectionless case also checks unchanged payload bytes and complete version
+model parity with its independently checked sectionful producer.
+The zero-address dynstr producer accepts unrelated unallocated string tables;
+marking either table allocated must report its contradictory source field.
+
+Keep own-hash versus independent linear-wire lookup checks, explicit/default
+versions, absent versions, NUL-containing queries, missing hash tables,
+physical provenance, all caller resource boundaries, every minimal-file
+prefix, targeted pointer/hash/version/section corruptions and the finite
+hostile wire corpus. Extended numbering and empty load segments are controls.
+Run the smoke separately with --cfg compile-profile: its positive allocation
+counter control makes the borrowed-payload allocation comparison meaningful.
+
+stage2-elf-dso-reader-oracle is an additional required Linux gate using live
+readelf -W -D -s --dynamic --version-info. Existing gates remain unchanged.
+Its sectionless limitation and producer regeneration instructions are in
+tests/fixtures/elf-dso/README.md. Normal/native tests invoke no external tool.
+
+The empty-GNU-hash controls retain every undefined symbol using a SysV or
+checked section count. Removing both count sources yields explicit unsupported
+metadata. Do not infer symbol count from the distance to dynstr.

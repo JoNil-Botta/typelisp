@@ -385,8 +385,7 @@ its type environment is available, including its separate loop-scope walk.
 Checker-job state owns a complete set of exposed lexical keys: declaration,
 function body, binding kind, source scope and hygienic name. Binding identities
 contain only numeric data and share their type-environment store's arena; only
-actual exposure keys and the pattern/loop binders needed for scope-entry seeds
-survive function scratch. Cache compaction preserves identities through its
+actual exposure keys survive function scratch. Cache compaction preserves identities through its
 original binding spine. Checker ownership and reset generations guard every
 identity read. Unknown storage roots or stale identities invalidate the frame.
 Nested lambdas record their private capture slots in separate frames; auxiliary
@@ -402,8 +401,10 @@ Generated functions and dispatch variants select their own declaration/body
 identities; synthesized bodies without facts remain conservative.
 
 Lowering seeds its existing address-taken map as parameter, local, pattern and
-loop slots are allocated. Scope entry visits the source descriptors for that
-scope and resolves only the nearest visible binding. Shared place and
+loop slots are allocated. Scope entry visits only the exposed source bindings
+in that scope and resolves the nearest visible binding. The map keeps positive
+marks; a cached function mode distinguishes a complete empty set from unavailable
+facts. Ambiguous or unmapped source scopes take the conservative mode. Shared place and
 representation classifiers distinguish a variable slot from the object its
 value references. Incremental marks still cover generated storage. Shadowed or
 unrelated bindings and read-only argument tails retain their existing no-copy

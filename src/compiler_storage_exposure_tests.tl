@@ -130,41 +130,47 @@
       (exposure.storage-exposure-leave! facts previous true))))
 
 (test
-  compiler-storage-exposure-scope-owners-and-generations
+  compiler-storage-exposure-frame-links-and-generations
   (let
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
     [generation : i64 (exposure.storage-exposure-generation facts)]
     [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
     [outer-frame : i64 (exposure.storage-exposure-current facts)]
-    (exposure.storage-exposure-scope-bind! facts 5 7)
+    [outer-binding : i64 (exposure.storage-exposure-bind! facts 0 5 7 0)]
+    (exposure.storage-exposure-mark! facts outer-binding)
     (let
       [outer : i64 (exposure.storage-exposure-enter! facts 1 3)]
       [inner-frame : i64 (exposure.storage-exposure-current facts)]
-      (exposure.storage-exposure-scope-bind! facts 5 8)
-      (let
-        [inner : i64
-          (exposure.storage-exposure-frame-field facts inner-frame 2)]
-        [outer : i64
-          (exposure.storage-exposure-frame-field facts outer-frame 2)]
-        (test.assert-i64-eq
-          (exposure.storage-exposure-scope-field facts inner 1)
-          8
-          "nested scope owns its binders")
-        (test.assert-i64-eq
-          (exposure.storage-exposure-scope-field facts outer 1)
-          7
-          "outer binder survives nesting")
-        (test.assert-i64-eq
-          (exposure.storage-exposure-scope-field facts inner 2)
-          -1
-          "scope links stay inside their frame"))
+      [inner-binding : i64 (exposure.storage-exposure-bind! facts 0 5 8 0)]
+      (exposure.storage-exposure-mark! facts inner-binding)
+      (test.assert-i64-eq
+        (exposure.storage-exposure-frame-field facts outer-frame 2)
+        (exposure.storage-exposure-index facts outer-binding)
+        "outer frame keeps its own exposure list")
+      (test.assert-i64-eq
+        (exposure.storage-exposure-frame-field facts inner-frame 2)
+        (exposure.storage-exposure-index facts inner-binding)
+        "nested frame keeps its own exposure list")
+      (test.assert-i64-eq
+        (exposure.storage-exposure-binding-field
+          facts
+          (exposure.storage-exposure-index facts inner-binding)
+          6)
+        -1
+        "frame links do not cross a function boundary")
       (exposure.storage-exposure-leave! facts outer true))
     (exposure.storage-exposure-leave! facts previous true)
     (exposure.storage-exposure-reset! facts)
     (test.assert-true
       (!= (exposure.storage-exposure-generation facts) generation)
-      "even an empty exposure set changes generation")
+      "reset changes generation")
+    (let
+      [empty-generation : i64 (exposure.storage-exposure-generation facts)]
+      (exposure.storage-exposure-reset! facts)
+      (test.assert-true
+        (!= (exposure.storage-exposure-generation facts) empty-generation)
+        "an empty set also advances the generation"))
     (test.assert-i64-eq
       (exposure.storage-exposure-frame facts 1 2)
       -1
-      "reset retires scope owners")))
+      "reset retires frame owners")))

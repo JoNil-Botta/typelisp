@@ -1826,7 +1826,10 @@
   ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
   ;; (every root) until lower-bind-source-params sets it.
   (mut-borrow-scope i64)
-  (spmd-sites LowerMaybeSpmdSites))
+  (spmd-sites LowerMaybeSpmdSites)
+  ;; -1: unavailable census; 0: complete empty set; 1: source exposures;
+  ;; 2: source exposures with pattern/loop scope seeds. Maps keep positive marks.
+  (address-exposure-mode i64))
 
 ;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
 ;; every holder already shared the one cell through the box, and the explicit
@@ -1889,7 +1892,8 @@
         (lower_i64_i64_map.with-capacity 1)
         -1
         -1
-        (No)))))
+        (No)
+        -1))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
 ;; builders deliberately fork from a shared snapshot; clone only at those
@@ -14964,12 +14968,11 @@
 (define (lower-state-address-taken-var? [state : LowerState] [var-id : i64]) : bool
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (!=
-      (lower_i64_i64_map.get-value-or
+    (or
+      (< (deref data).address-exposure-mode 0)
+      (lower_i64_i64_map.contains?
         (& (__tl-project-field (__tl-box-place data) address-taken))
-        var-id
-        1)
-      0)))
+        var-id))))
 
 (define (lower-state-address-taken-mark [state : LowerState] [var-id : i64]) : LowerState
   (let
@@ -14992,32 +14995,50 @@
         (tc_core.tc-job-state-checked-let-binding-facts
           (tc_core.tc-context-job-state ctx))).current-declaration-ordinal]
     [frame : i64 (storage_exposure.storage-exposure-frame source ordinal body)]
-    [scopes : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 0)]
-    [binding : i64
-      (if (>= frame 0)
+    [ready : bool (storage_exposure.storage-exposure-ready? source frame)]
+    [first : i64
+      (if ready
         (storage_exposure.storage-exposure-frame-field source frame 2)
         -1)]
+    [binding : i64 first]
+    [scopes : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 0)]
     (while (>= binding 0)
       (let
         [scope : i64
-          (storage_exposure.storage-exposure-scope-field source binding 0)]
+          (storage_exposure.storage-exposure-binding-field source binding 2)]
         (when
-          (>= scope 0)
+          (and
+            (>= scope 0)
+            (=
+              (storage_exposure.storage-exposure-binding-field source binding 1)
+              0)
+            (=
+              (storage_exposure.storage-exposure-binding-field source binding 4)
+              1))
           (match (lower-context-expr-get ctx scope)
             [(or (Spanned inner _) (MacroExpansion inner _ _))
               (let
                 [old : i64
                   (lower_i64_i64_map.get-value-or (& scopes) inner scope)]
-                (lower_i64_i64_map.insert-ref!
-                  (&mut scopes)
-                  inner
-                  (if (= old scope)
-                    scope
-                    -1)))]
-            [_ unit])))
+                (when (!= old scope) (set! ready false))
+                (lower_i64_i64_map.insert-ref! (&mut scopes) inner scope))]
+            ;; A generated or ambiguous scope without this seed seam cannot
+            ;; establish private slots from source facts.
+            [_ (set! ready false)])))
       (set!
         binding
-        (storage_exposure.storage-exposure-scope-field source binding 2)))
+        (storage_exposure.storage-exposure-binding-field source binding 6)))
+    (let
+      [data : (Box LowerStateData) (lower-state-box state)]
+      (set!
+        (deref data).address-exposure-mode
+        (if ready
+          (if (> scopes.len 0)
+            2
+            (if (>= first 0)
+              1
+              0))
+          -1)))
     (unsafe
       (set!
         (deref
@@ -15031,48 +15052,35 @@
   [name : i64]
   [var-id : i64]) : LowerState
   (let
-    [function-state : CompilerLowerFunctionState
-      (lower-state-function-state state)]
-    [facts : LowerAddressExposure
-      (unsafe
-        (deref (compiler-lower-function-state-view function-state)).address-exposure)]
-    [ready : bool
-      (storage_exposure.storage-exposure-ready? facts.source facts.frame)]
-    [index : i64
-      (if ready
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (when (<= (deref data).address-exposure-mode 0) (return state))
+    (let
+      [facts : LowerAddressExposure
+        (unsafe
+          (deref
+            (compiler-lower-function-state-view
+              (lower-state-function-state state))).address-exposure)]
+      [index : i64
         (storage_exposure.storage-exposure-find
           facts.source
           facts.frame
           kind
           scope
           name
-          (storage_exposure.storage-exposure-key facts.frame kind scope name))
-        -1)]
-    [exposed : bool
-      (or
-        (not ready)
+          (storage_exposure.storage-exposure-key facts.frame kind scope name))]
+      (when
         (and
           (>= index 0)
-          (!=
+          (=
             (storage_exposure.storage-exposure-binding-field
               facts.source
               index
               4)
-            0)))]
-    [data : (Box LowerStateData) (lower-state-box state)]
-    (lower_i64_i64_map.insert-ref!
-      (&mut (__tl-project-field (__tl-box-place data) address-taken))
-      var-id
-      (if (or
-        exposed
-        (=
-          (lower_i64_i64_map.get-value-or
-            (& (__tl-project-field (__tl-box-place data) address-taken))
-            var-id
-            0)
-          1))
-        1
-        0))
+            1))
+        (lower_i64_i64_map.insert-ref!
+          (&mut (__tl-project-field (__tl-box-place data) address-taken))
+          var-id
+          1)))
     state))
 
 (define (lower-exposure-enter-scope!
@@ -15080,49 +15088,60 @@
   [env : sym_i64_env.SymI64Env]
   [inner-id : i64]) : unit
   (let
-    [facts : LowerAddressExposure
-      (unsafe
-        (deref
-          (compiler-lower-function-state-view
-            (lower-state-function-state state))).address-exposure)]
-    [scope : i64 (lower_i64_i64_map.get-value-or (& facts.scopes) inner-id -1)]
-    (when
-      (>= scope 0)
-      (let
-        [binding : i64
-          (storage_exposure.storage-exposure-frame-field
-            facts.source
-            facts.frame
-            2)]
-        ;; Visit the source binders in this scope, rather than querying every
-        ;; outer environment name against all the function's descriptors.
-        (while (>= binding 0)
-          (when
-            (=
-              (storage_exposure.storage-exposure-scope-field
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (when (< (deref data).address-exposure-mode 2) (return unit))
+    (let
+      [facts : LowerAddressExposure
+        (unsafe
+          (deref
+            (compiler-lower-function-state-view
+              (lower-state-function-state state))).address-exposure)]
+      [scope : i64
+        (lower_i64_i64_map.get-value-or (& facts.scopes) inner-id -1)]
+      (when
+        (>= scope 0)
+        (let
+          [binding : i64
+            (storage_exposure.storage-exposure-frame-field
+              facts.source
+              facts.frame
+              2)]
+          (while (>= binding 0)
+            (when
+              (and
+                (=
+                  (storage_exposure.storage-exposure-binding-field
+                    facts.source
+                    binding
+                    2)
+                  scope)
+                (=
+                  (storage_exposure.storage-exposure-binding-field
+                    facts.source
+                    binding
+                    1)
+                  0))
+              (let
+                [name : i64
+                  (storage_exposure.storage-exposure-binding-field
+                    facts.source
+                    binding
+                    3)]
+                [var-id : i64 (sym_i64_env.sym-i64-lookup-id-or env name -1)]
+                (if (>= var-id 0)
+                  (let
+                    [_seed : LowerState
+                      (lower-exposure-seed state 0 scope name var-id)]
+                    unit)
+                  (let
+                    [missing : (Box LowerStateData) (lower-state-box state)]
+                    (set! (deref missing).address-exposure-mode -1)))))
+            (set!
+              binding
+              (storage_exposure.storage-exposure-binding-field
                 facts.source
                 binding
-                0)
-              scope)
-            (let
-              [name : i64
-                (storage_exposure.storage-exposure-scope-field
-                  facts.source
-                  binding
-                  1)]
-              [var-id : i64 (sym_i64_env.sym-i64-lookup-id-or env name -1)]
-              (when
-                (>= var-id 0)
-                (let
-                  [_seed : LowerState
-                    (lower-exposure-seed state 0 scope name var-id)]
-                  unit))))
-          (set!
-            binding
-            (storage_exposure.storage-exposure-scope-field
-              facts.source
-              binding
-              2)))))))
+                6))))))))
 
 (define (lower-state-deferred-copy? [state : LowerState] [var-id : i64]) : bool
   (let

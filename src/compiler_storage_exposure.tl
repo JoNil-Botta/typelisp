@@ -7,11 +7,10 @@
 (import (hashmap.hashmap i64 i64) as index_map)
 
 (defstruct StorageExposureData
-  ;; Frame: declaration, body, first scope binder, next same-body frame,
-  ;; complete, ready. Exposure: frame, kind, scope, name, exposed, next hash.
+  ;; Frame: declaration, body, first binding, next same-body frame, complete,
+  ;; ready. Binding: frame, kind, scope, name, exposed, next hash, next frame.
   (frames words.Vec)
   (bindings words.Vec)
-  (scopes words.Vec)
   (by-body index_map.Map)
   (by-hash index_map.Map)
   (current i64)
@@ -37,7 +36,6 @@
         (StorageExposureData
           (storage-exposure-empty-words)
           (storage-exposure-empty-words)
-          (storage-exposure-empty-words)
           (index_map.with-capacity 0)
           (index_map.with-capacity 0)
           -1
@@ -55,10 +53,9 @@
       ;; IDs from a retired generation cannot select a new record at its index.
       (set!
         (deref data).base
-        (+ (deref data).base (/ (deref data).bindings.len 6)))
+        (+ (deref data).base (/ (deref data).bindings.len 7)))
       (set! (deref data).frames (storage-exposure-empty-words))
       (set! (deref data).bindings (storage-exposure-empty-words))
-      (set! (deref data).scopes (storage-exposure-empty-words))
       (set! (deref data).generation (+ (deref data).generation 1))
       (set! (deref data).by-body (index_map.with-capacity 0))
       (set! (deref data).by-hash (index_map.with-capacity 0))
@@ -92,7 +89,7 @@
   (unsafe
     (array-ref
       (deref (storage-exposure-ptr state)).bindings.slots
-      (+ (* binding 6) field))))
+      (+ (* binding 7) field))))
 
 (define (storage-exposure-frame
   [state : StorageExposure]
@@ -232,14 +229,17 @@
     (when
       (and (>= frame 0) (< index 0))
       (unsafe
-        (set! index (/ bindings.len 6))
+        (set! index (/ bindings.len 7))
         (in-arena
           (arena.Arena (deref data).arena)
           (let
             [next-hash : i64 (index_map.get-value-or (& by-hash) hash -1)]
-            (for [word (array frame kind scope name (cast 0 : i64) next-hash)]
+            [next-frame : i64 (storage-exposure-frame-field state frame 2)]
+            (for [word
+              (array frame kind scope name (cast 0 : i64) next-hash next-frame)]
               (words.push-ref! (&mut bindings) word))
-            (index_map.insert-ref! (&mut by-hash) hash index)))))
+            (index_map.insert-ref! (&mut by-hash) hash index)
+            (set! (array-ref (deref data).frames.slots (+ (* frame 6) 2)) index)))))
     (unsafe
       (set! (deref data).bindings bindings)
       (set! (deref data).by-hash by-hash))
@@ -257,7 +257,7 @@
     (if (and
       (>= index 0)
       (unsafe
-        (< index (/ (deref data).bindings.len 6))))
+        (< index (/ (deref data).bindings.len 7))))
       index
       -1)))
 
@@ -269,7 +269,7 @@
         (set!
           (array-ref
             (deref (storage-exposure-ptr state)).bindings.slots
-            (+ (* index 6) 4))
+            (+ (* index 7) 4))
           1))
       (storage-exposure-incomplete! state))))
 
@@ -284,38 +284,3 @@
   [name : i64]) : i64
   ;; This is a bucket hint; lookup compares every full-width field.
   (bit-xor (bit-xor (* frame 16777619) (* scope 131)) (bit-xor kind name)))
-
-;; Only pattern/loop binders need a later scope-entry seed. Parameters, lets
-;; and resource bindings have explicit allocation seams in lowering.
-(define (storage-exposure-scope-bind!
-  [state : StorageExposure]
-  [scope : i64]
-  [name : i64]) : unit
-  (let
-    [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
-    [frame : i64 (storage-exposure-current state)]
-    [scopes : words.Vec
-      (unsafe
-        (deref data).scopes)]
-    (when
-      (>= frame 0)
-      (unsafe
-        (in-arena
-          (arena.Arena (deref data).arena)
-          (let
-            [index : i64 (/ scopes.len 3)]
-            [next : i64 (storage-exposure-frame-field state frame 2)]
-            (words.push-ref! (&mut scopes) scope)
-            (words.push-ref! (&mut scopes) name)
-            (words.push-ref! (&mut scopes) next)
-            (set! (array-ref (deref data).frames.slots (+ (* frame 6) 2)) index)))
-        (set! (deref data).scopes scopes)))))
-
-(define (storage-exposure-scope-field
-  [state : StorageExposure]
-  [index : i64]
-  [field : i64]) : i64
-  (unsafe
-    (array-ref
-      (deref (storage-exposure-ptr state)).scopes.slots
-      (+ (* index 3) field))))

@@ -70958,10 +70958,6 @@
             (cast
               (ptr-read (ptr-cast (ptr-addr-of descriptor) : (Ptr u64)))
               : i64))]
-        [_scope : unit
-          (when
-            (and (= kind 0) (>= scope 0))
-            (storage_exposure.storage-exposure-scope-bind! facts scope name))]
         [head : i64 (tc-storage-binding-node env name)]
         (if (>= head 0)
           (unsafe

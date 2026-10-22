@@ -10,7 +10,9 @@ checks full-width lexical keys under forced hash collisions, nested frames,
 failed/incomplete checks, scope ownership and stale identities after a checker-job
 reset. The core ownership regression retains an environment across checker
 jobs and reset generations. Acyclic raw-pointer argument/callee cases verify
-that sequential address marks still force the required snapshots. `loop_address_argument.tl`,
+that sequential address marks still force the required snapshots. The
+completeness table distinguishes missing, complete-empty, incomplete, ambiguous
+and unmapped scope facts, and checks that incremental marks remain effective. `loop_address_argument.tl`,
 `loop_address_callee.tl` and `loop_address_snapshots.tl` compare raw-pointer
 effects with explicit snapshots at opt0/1/2 on both hosts, including zero, one
 and multiple iterations and capturing lambdas. The stored mutable-borrow safety

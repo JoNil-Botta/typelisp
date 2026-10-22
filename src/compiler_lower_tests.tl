@@ -1,6 +1,7 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import stdlib.iterator)
 (import compiler_lower as lower)
+(import compiler_storage_exposure as storage_exposure)
 (import compiler_optimize as optimize)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -1908,6 +1909,104 @@
        (acyclic-argument 1) (acyclic-callee inc)
        (readonly-argument 1 y) (readonly-callee inc y))))"
     (compiler-lower-cached-exposure-source)))
+
+(test
+  compiler-lower-exposure-completeness
+  (let
+    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        0
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        job)]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [env : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+    [state : lower.LowerState
+      (lower.lower-state-new
+        2
+        0
+        0
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-instr-builder-new)
+        (ir.compiler-ir-block-builder-new)
+        (ir.compiler-ir-function-builder-new)
+        (ci.intern "exposure-completeness")
+        (box (ir.compiler-source-spans-empty))
+        (lower.lower-name-cache-from-env owner Nil)
+        (lower.lower-type-cache-from-env owner env)
+        (lower.compiler-lower-function-state-new owner)
+        (lower.CompilerLowerMode.Scalar)
+        (lower_i64_i64_map.with-capacity 0)
+        0
+        2)]
+    [facts : storage_exposure.StorageExposure
+      (tc_core.tc-body-storage-exposure (tc_core.tc-context-body-state ctx))]
+    [body : i64 (ast.ast-node-pool-context-expr-push pools (Literal (Unit)))]
+    [first : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Spanned body (ast.ast-source-span 1 1 1 2)))]
+    [second : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Spanned body (ast.ast-source-span 2 1 2 2)))]
+    [name : i64 (ci.intern "exposure-scope-binder")]
+    (for [scenario (iterator.range 0 5)]
+      (storage_exposure.storage-exposure-reset! facts)
+      ;; Missing, complete empty, incomplete, ambiguous, and unwrapped scope.
+      (when
+        (> scenario 0)
+        (let
+          [previous : i64
+            (storage_exposure.storage-exposure-enter! facts -1 body)]
+          [frame : i64 (storage_exposure.storage-exposure-current facts)]
+          (when
+            (= scenario 2)
+            (storage_exposure.storage-exposure-incomplete! facts))
+          (when
+            (>= scenario 3)
+            (for [index
+              (iterator.range
+                0
+                (if (= scenario 3)
+                  2
+                  1))]
+              (let
+                [scope : i64
+                  (if (= scenario 4)
+                    body
+                    (if (= index 0)
+                      first
+                      second))]
+                [exposure : i64
+                  (storage_exposure.storage-exposure-bind!
+                    facts
+                    0
+                    scope
+                    name
+                    (storage_exposure.storage-exposure-key frame 0 scope name))]
+                (storage_exposure.storage-exposure-mark! facts exposure))))
+          (storage_exposure.storage-exposure-leave! facts previous true)))
+      (lower.lower-exposure-prepare! ctx state body)
+      (test.assert-true
+        (= (lower.lower-state-address-taken-var? state 1) (!= scenario 1))
+        "only a complete usable census proves an unmarked slot private")
+      (when
+        (= scenario 1)
+        (let
+          [_marked : lower.LowerState
+            (lower.lower-state-address-taken-mark state 0)]
+          (test.assert-true
+            (lower.lower-state-address-taken-var? state 0)
+            "incremental marks remain visible with a complete empty census"))))))
 
 (test
   compiler-lower-loop-address-exposure

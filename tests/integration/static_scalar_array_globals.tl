@@ -5,7 +5,7 @@
 ;; Several of these small arrays crash under the startup-initializer route
 ;; (#8488), which constant tables no longer take.
 (import stdlib.math)
-(import static_scalar_array_unused_provider as _unused_tables)
+(import static_scalar_array_unused_provider as unused_tables)
 
 (define bytes8 : (Array u8 8)
   (array 0 1 127 128 200 254 255 7))
@@ -268,7 +268,13 @@
         failed))
     (set!
       failed
-      (check (and (= (array-ref one 0) 42) (= (wide-sum) 8128)) 8 failed))
+      (check
+        (and
+          (= (array-ref one 0) 42)
+          (= (wide-sum) 8128)
+          (= unused_tables.marker 42))
+        8
+        failed))
     ;; Writes land in this global's own storage only, not in its twin's.
     (set! (array-ref mutable 0) 10)
     (bump! (&mut mutable))

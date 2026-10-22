@@ -1,4 +1,6 @@
 ;; Importing this module without using a table must emit no table storage.
+(define marker : i64
+  42)
 (define empty : (Array i64 0)
   (array))
 

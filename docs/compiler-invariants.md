@@ -382,30 +382,32 @@ order in which lowering encounters address instructions: an earlier loop
 iteration can expose storage used before that instruction in the next iteration.
 The existing move walk records lexical bindings and address operations while
 its type environment is available, including its separate loop-scope walk.
-Checker-job state owns numeric facts keyed by declaration, function body,
-binding kind, source scope and hygienic name; no scratch AST/type payload or
-predicted IR ID is retained. Type-environment bindings carry checker-owned source identities;
-cache compaction preserves them through the original binding spine. Unknown
-identities invalidate the frame, and reset generations cannot reuse old IDs.
-Nested lambdas own capture slots in separate frames; auxiliary capability
-queries suspend collection instead of attributing a nested body to its caller.
-Only successfully completed, complete frames are consumed. A checked body with
-no loop initializes source bindings as private and uses lowering's sequential
-address marks: there is no backedge that can revisit an earlier evaluation.
-At a loop, the checker promotes the frame's descriptors into a sparse index;
-already-recorded exposure and duplicate keys join monotonically. Looping frames
-require exact lexical membership, and missing or incomplete evidence remains
-conservative. The facts describe the checked body, before generated functions
-and dispatch variants select their own declaration/body identities.
+Checker-job state owns a complete set of exposed lexical keys: declaration,
+function body, binding kind, source scope and hygienic name. Binding identities
+contain only numeric data and share their type-environment store's arena; only
+actual exposure keys and the pattern/loop binders needed for scope-entry seeds
+survive function scratch. Cache compaction preserves identities through its
+original binding spine. Checker ownership and reset generations guard every
+identity read. Unknown storage roots or stale identities invalidate the frame.
+Nested lambdas record their private capture slots in separate frames; auxiliary
+capability queries suspend collection instead of attributing nested storage to
+the caller.
+
+A successfully completed, complete frame makes an absent exposure key a proven
+negative. An unavailable or incomplete frame never supplies that proof. The
+checker accounts for every potentially exposed slot, including through its
+separate loop-scope walk, before lowering emits any body instructions. No IR
+variable numbers are predicted and no scratch AST/type payload is retained.
+Generated functions and dispatch variants select their own declaration/body
+identities; synthesized bodies without facts remain conservative.
 
 Lowering seeds its existing address-taken map as parameter, local, pattern and
 loop slots are allocated. Scope entry visits the source descriptors for that
 scope and resolves only the nearest visible binding. Shared place and
-representation classifiers distinguish the variable slot from the object its
-value references. Synthetic bodies without facts remain conservative, and
-incremental marks still cover generated storage. Shadowed or unrelated bindings
-and read-only argument tails retain their existing no-copy behavior without
-losing loop-carried exposure.
+representation classifiers distinguish a variable slot from the object its
+value references. Incremental marks still cover generated storage. Shadowed or
+unrelated bindings and read-only argument tails retain their existing no-copy
+behavior without losing loop-carried exposure.
 
 Binary operators use the same snapshot helper and storage-write scan with a
 single pending right operand, without allocating an argument list. Their left

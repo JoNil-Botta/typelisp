@@ -12510,17 +12510,15 @@
       (tc_core.tc-body-storage-exposure (tc_core.tc-context-body-state ctx-b))]
     [name : i64 (ci.intern "foreign-storage-source")]
     [params : ast.AstParamList (ast.ast-param-list-new)]
-    [locals : tc_core.TcMovedSet
-      (tc_core.tc-moved-add (tc_core.tc-moved-empty) name)]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id (tc_core.tc-empty-env) name (I64))]
     [previous-a : i64 (storage_exposure.storage-exposure-enter! source-a 0 1)]
     [_annotate : tc_core.TcTypeEnv
       (tc_core.tc-storage-register! ctx-a env 0 -1 name)]
     [_enter-b : tc_core.TcTypeEnv
-      (tc_core.tc-storage-enter! ctx-b env (& params) (& locals) 2)]
+      (tc_core.tc-storage-enter! ctx-b env (& params) 2)]
     [frame-b : i64 (storage_exposure.storage-exposure-current source-b)]
-    (tc_core.tc-storage-expose! ctx-b env (& locals) (Var name) true)
+    (tc_core.tc-storage-expose! ctx-b env (Var name) true)
     (test.assert-i64-eq
       (storage_exposure.storage-exposure-frame-field source-b frame-b 4)
       0
@@ -12529,8 +12527,36 @@
     (test.assert-true
       (not (storage_exposure.storage-exposure-ready? source-b frame-b))
       "foreign evidence remains conservative")
-    (test.assert-i64-eq
-      (storage_exposure.storage-exposure-binding-field source-a 0 4)
-      0
-      "the original checker is unchanged")
-    (storage_exposure.storage-exposure-leave! source-a previous-a true)))
+    (let
+      [index : i64
+        (storage_exposure.storage-exposure-find
+          source-a
+          (storage_exposure.storage-exposure-current source-a)
+          0
+          -1
+          name
+          (storage_exposure.storage-exposure-key
+            (storage_exposure.storage-exposure-current source-a)
+            0
+            -1
+            name))]
+      (test.assert-true
+        (or
+          (< index 0)
+          (=
+            (storage_exposure.storage-exposure-binding-field source-a index 4)
+            0))
+        "the original checker is unchanged"))
+    (storage_exposure.storage-exposure-leave! source-a previous-a true)
+    ;; Retain a binding in its owner arena while retiring its checker's facts.
+    ;; Its descriptor remains readable but cannot name a new-generation frame.
+    (storage_exposure.storage-exposure-reset! source-a)
+    (let
+      [previous : i64 (storage_exposure.storage-exposure-enter! source-a 0 3)]
+      [frame : i64 (storage_exposure.storage-exposure-current source-a)]
+      (tc_core.tc-storage-expose! ctx-a env (Var name) true)
+      (test.assert-i64-eq
+        (storage_exposure.storage-exposure-frame-field source-a frame 4)
+        0
+        "retired descriptors cannot become current evidence")
+      (storage_exposure.storage-exposure-leave! source-a previous true))))

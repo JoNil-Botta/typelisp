@@ -70925,6 +70925,12 @@
             i64))))
     -1))
 
+(defstruct TcStorageBindingIdentity
+  (frame i64)
+  (kind i64)
+  (scope i64)
+  (generation i64))
+
 (define (tc-storage-register!
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -70938,13 +70944,24 @@
     (when
       (>= frame 0)
       (let
+        [descriptor : (Box TcStorageBindingIdentity)
+          (in-arena
+            (arena.Arena (tc-chain-store-owner env.store))
+            (box
+              (TcStorageBindingIdentity
+                frame
+                kind
+                scope
+                (storage_exposure.storage-exposure-generation facts))))]
         [identity : i64
-          (storage_exposure.storage-exposure-bind!
-            facts
-            kind
-            scope
-            name
-            (storage_exposure.storage-exposure-key frame kind scope name))]
+          (unsafe
+            (cast
+              (ptr-read (ptr-cast (ptr-addr-of descriptor) : (Ptr u64)))
+              : i64))]
+        [_scope : unit
+          (when
+            (and (= kind 0) (>= scope 0))
+            (storage_exposure.storage-exposure-scope-bind! facts scope name))]
         [head : i64 (tc-storage-binding-node env name)]
         (if (>= head 0)
           (unsafe
@@ -70969,7 +70986,6 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : (& params ast.AstParamList)]
-  [locals : (& locals TcMovedSet)]
   [body : i64]) : TcTypeEnv
   (let
     [facts : storage_exposure.StorageExposure
@@ -70979,33 +70995,6 @@
         (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))).current-declaration-ordinal]
     [_ : i64 (storage_exposure.storage-exposure-enter! facts ordinal body)]
     [out : TcTypeEnv env]
-    ;; Captures have private slots in the nested function; their facts must
-    ;; never mark the enclosing function's source binding.
-    (let
-      [cursor : i64 0]
-      [remaining : i64 (tc_i64_i64_map.len (& locals.roots))]
-      (while (> remaining 0)
-        (set! cursor (tc_i64_i64_map.next-occupied (& locals.roots) cursor))
-        (match (tc_i64_i64_map.entry-at (& locals.roots) cursor)
-          [(EntrySome name _)
-            (when
-              (>= name 0)
-              (let
-                [_identity : i64
-                  (storage_exposure.storage-exposure-bind!
-                    facts
-                    0
-                    -1
-                    name
-                    (storage_exposure.storage-exposure-key
-                      (storage_exposure.storage-exposure-current facts)
-                      0
-                      -1
-                      name))]
-                unit))]
-          [_ unit])
-        (+= cursor 1)
-        (-= remaining 1)))
     (for [index (iterator.range 0 (ast.ast-param-list-len params))]
       (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
         [(Param name ty _)
@@ -71029,19 +71018,18 @@
 (define (tc-storage-expose!
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [locals : (& locals TcMovedSet)]
   [place : ast.AstExpr]
   [raw : bool]) : unit
   (let
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [frame : i64 (storage_exposure.storage-exposure-current facts)]
-    [root : i64 (tc-storage-place-root ctx env (clone place))]
+    [root : i64
+      (if (>= frame 0)
+        (tc-storage-place-root ctx env (clone place))
+        -1)]
     (when
-      (and
-        (>= frame 0)
-        (>= root 0)
-        (tc_i64_i64_map.contains? (& locals.roots) root))
+      (and (>= frame 0) (>= root 0))
       (match (tc-lookup-id env root)
         [(Ok ty)
           (let
@@ -71075,27 +71063,45 @@
                       (deref
                         (int->ptr (cast head : u64) : (Ptr TcTypeEnvBinding))).storage-source)
                     -1)]
-                [index : i64
-                  (storage_exposure.storage-exposure-index facts identity)]
-                (if (and
-                  (>= index 0)
-                  (=
-                    (storage_exposure.storage-exposure-binding-field
-                      facts
-                      index
-                      0)
-                    frame))
-                  (storage_exposure.storage-exposure-mark! facts identity)
-                  (if (>= index 0)
-                    (storage_exposure.storage-exposure-mark!
-                      facts
-                      (storage_exposure.storage-exposure-bind!
-                        facts
-                        0
-                        -1
-                        root
-                        (storage_exposure.storage-exposure-key frame 0 -1 root)))
-                    (storage_exposure.storage-exposure-incomplete! facts))))))]
+                (if (>= identity 0)
+                  (let
+                    [descriptor : (Ptr TcStorageBindingIdentity)
+                      (unsafe
+                        (int->ptr
+                          (cast identity : u64)
+                          : (Ptr TcStorageBindingIdentity)))]
+                    (if (unsafe
+                      (=
+                        (deref descriptor).generation
+                        (storage_exposure.storage-exposure-generation facts)))
+                      (let
+                        [same-frame : bool
+                          (unsafe
+                            (= (deref descriptor).frame frame))]
+                        [kind : i64
+                          (if same-frame
+                            (unsafe
+                              (deref descriptor).kind)
+                            0)]
+                        [scope : i64
+                          (if same-frame
+                            (unsafe
+                              (deref descriptor).scope)
+                            -1)]
+                        [exposure : i64
+                          (storage_exposure.storage-exposure-bind!
+                            facts
+                            kind
+                            scope
+                            root
+                            (storage_exposure.storage-exposure-key
+                              frame
+                              kind
+                              scope
+                              root))]
+                        (storage_exposure.storage-exposure-mark! facts exposure))
+                      (storage_exposure.storage-exposure-incomplete! facts)))
+                  (storage_exposure.storage-exposure-incomplete! facts)))))]
         [(Err _) (storage_exposure.storage-exposure-incomplete! facts)]))))
 
 (define (tc-storage-register-names!
@@ -73349,17 +73355,6 @@
 
 ;; A loop body entered from the non-loop walker; its `break`s belong to this
 ;; loop, so its frame keeps them out of an enclosing loop's collection.
-(define (tc-storage-loop-enter! [ctx : TcContext]) : unit
-  ;; Only a loop can revisit an earlier evaluation after later exposure.
-  ;; Straight-line bodies retain sequential address tracking in lowering.
-  (let
-    [storage : storage_exposure.StorageExposure
-      (tc-body-storage-exposure (tc-context-body-state ctx))]
-    [frame : i64 (storage_exposure.storage-exposure-current storage)]
-    (when
-      (>= frame 0)
-      (storage_exposure.storage-exposure-index-frame! storage frame))))
-
 (define (tc-move-check-loop-body
   [ctx : TcContext]
   [expr-bases : i64]
@@ -73369,7 +73364,6 @@
   [outer-loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [body : ast.AstExpr]) : TcMoveLoopResult
-  (tc-storage-loop-enter! ctx)
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
     [outer : TcMoveBreakCollection
@@ -74294,12 +74288,7 @@
             [previous-storage : i64
               (storage_exposure.storage-exposure-current storage)]
             [lambda-source-env : TcTypeEnv
-              (tc-storage-enter!
-                ctx
-                lambda-env
-                (& params)
-                (& lambda-locals)
-                body-box)]
+              (tc-storage-enter! ctx lambda-env (& params) body-box)]
             [lambda-writes-mark : i64
               (tc-body-param-writes-mark (tc-context-body-state ctx))]
             [lambda-result : TcMoveResult
@@ -74375,7 +74364,6 @@
               params
               body))])]
     [(SpmdCompact compact-box)
-      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-compact-box-shared-view compact-box)
         [(Compact
             index
@@ -75064,7 +75052,6 @@
         (tc-storage-expose!
           ctx
           env
-          (& locals)
           (ast.ast-expr-segment-bases-get expr-bases inner-box)
           false))
       (let
@@ -75294,7 +75281,6 @@
                   (Ok moved2))]
               [(Err message) (Err message)]))])]
     [(SpmdReduce reduce-box)
-      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
         [(Reduce _ _ _ a-box b-box c-box d-box)
           (let
@@ -75334,7 +75320,6 @@
                   c))]
             (tc-move-check-expr ctx expr-bases env locals loop-carried m3 d))])]
     [(SpmdScan scan-box)
-      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-scan-box-shared-view scan-box)
         [(Scan
             _
@@ -75759,7 +75744,6 @@
       (tc-storage-expose!
         ctx
         env
-        (& locals)
         (ast.ast-expr-segment-bases-get expr-bases place-box)
         true)
       (let
@@ -76047,9 +76031,7 @@
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [previous : i64 (storage_exposure.storage-exposure-current facts)]
-    [no-captures : TcMovedSet (tc-moved-empty)]
-    [source-env : TcTypeEnv
-      (tc-storage-enter! ctx env params (& no-captures) body-id)]
+    [source-env : TcTypeEnv (tc-storage-enter! ctx env params body-id)]
     [result : ResultTcUnit
       (tc-move-check-body-id-impl
         ctx

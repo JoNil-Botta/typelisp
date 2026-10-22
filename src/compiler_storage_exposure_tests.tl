@@ -9,7 +9,6 @@
     [previous : i64 (exposure.storage-exposure-enter! facts 3 9)]
     [frame : i64 (exposure.storage-exposure-current facts)]
     [first : i64 -1]
-    (exposure.storage-exposure-index-frame! facts frame)
     (for [name (array (cast 7 : i64) -9223372036854775808 9223372036854775807)]
       (for [scope (iterator.range 0 3)]
         (for [kind (iterator.range -1 3)]
@@ -131,37 +130,41 @@
       (exposure.storage-exposure-leave! facts previous true))))
 
 (test
-  compiler-storage-exposure-lazy-index-joins
+  compiler-storage-exposure-scope-owners-and-generations
   (let
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
+    [generation : i64 (exposure.storage-exposure-generation facts)]
     [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
-    [frame : i64 (exposure.storage-exposure-current facts)]
-    [first : i64 (exposure.storage-exposure-bind! facts 0 -1 7 0)]
-    [second : i64 (exposure.storage-exposure-bind! facts 0 -1 7 0)]
+    [outer-frame : i64 (exposure.storage-exposure-current facts)]
+    (exposure.storage-exposure-scope-bind! facts 5 7)
+    (let
+      [outer : i64 (exposure.storage-exposure-enter! facts 1 3)]
+      [inner-frame : i64 (exposure.storage-exposure-current facts)]
+      (exposure.storage-exposure-scope-bind! facts 5 8)
+      (let
+        [inner : i64
+          (exposure.storage-exposure-frame-field facts inner-frame 2)]
+        [outer : i64
+          (exposure.storage-exposure-frame-field facts outer-frame 2)]
+        (test.assert-i64-eq
+          (exposure.storage-exposure-scope-field facts inner 1)
+          8
+          "nested scope owns its binders")
+        (test.assert-i64-eq
+          (exposure.storage-exposure-scope-field facts outer 1)
+          7
+          "outer binder survives nesting")
+        (test.assert-i64-eq
+          (exposure.storage-exposure-scope-field facts inner 2)
+          -1
+          "scope links stay inside their frame"))
+      (exposure.storage-exposure-leave! facts outer true))
+    (exposure.storage-exposure-leave! facts previous true)
+    (exposure.storage-exposure-reset! facts)
+    (test.assert-true
+      (!= (exposure.storage-exposure-generation facts) generation)
+      "even an empty exposure set changes generation")
     (test.assert-i64-eq
-      (exposure.storage-exposure-frame-field facts frame 6)
-      0
-      "no index before any exposure")
-    (exposure.storage-exposure-mark! facts first)
-    (test.assert-i64-eq
-      (exposure.storage-exposure-frame-field facts frame 6)
-      0
-      "straight-line exposure needs no index")
-    (exposure.storage-exposure-index-frame! facts frame)
-    (test.assert-i64-eq
-      (exposure.storage-exposure-frame-field facts frame 6)
-      1
-      "loop entry promotes the frame")
-    (test.assert-i64-eq
-      (exposure.storage-exposure-find facts frame 0 -1 7 0)
-      (exposure.storage-exposure-index facts first)
-      "promotion joins a marked older duplicate")
-    (exposure.storage-exposure-mark! facts second)
-    (test.assert-i64-eq
-      (exposure.storage-exposure-binding-field
-        facts
-        (exposure.storage-exposure-find facts frame 0 -1 7 0)
-        4)
-      1
-      "duplicate exposure remains visible")
-    (exposure.storage-exposure-leave! facts previous true)))
+      (exposure.storage-exposure-frame facts 1 2)
+      -1
+      "reset retires scope owners")))

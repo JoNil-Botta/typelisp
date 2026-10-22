@@ -15000,13 +15000,9 @@
     (while (>= binding 0)
       (let
         [scope : i64
-          (storage_exposure.storage-exposure-binding-field source binding 2)]
+          (storage_exposure.storage-exposure-scope-field source binding 0)]
         (when
-          (and
-            (=
-              (storage_exposure.storage-exposure-binding-field source binding 1)
-              0)
-            (>= scope 0))
+          (>= scope 0)
           (match (lower-context-expr-get ctx scope)
             [(or (Spanned inner _) (MacroExpansion inner _ _))
               (let
@@ -15021,7 +15017,7 @@
             [_ unit])))
       (set!
         binding
-        (storage_exposure.storage-exposure-binding-field source binding 6)))
+        (storage_exposure.storage-exposure-scope-field source binding 2)))
     (unsafe
       (set!
         (deref
@@ -15042,17 +15038,8 @@
         (deref (compiler-lower-function-state-view function-state)).address-exposure)]
     [ready : bool
       (storage_exposure.storage-exposure-ready? facts.source facts.frame)]
-    [exposes : bool
-      (and
-        ready
-        (=
-          (storage_exposure.storage-exposure-frame-field
-            facts.source
-            facts.frame
-            6)
-          1))]
     [index : i64
-      (if exposes
+      (if ready
         (storage_exposure.storage-exposure-find
           facts.source
           facts.frame
@@ -15065,15 +15052,13 @@
       (or
         (not ready)
         (and
-          exposes
-          (or
-            (< index 0)
-            (!=
-              (storage_exposure.storage-exposure-binding-field
-                facts.source
-                index
-                4)
-              0))))]
+          (>= index 0)
+          (!=
+            (storage_exposure.storage-exposure-binding-field
+              facts.source
+              index
+              4)
+            0)))]
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower_i64_i64_map.insert-ref!
       (&mut (__tl-project-field (__tl-box-place data) address-taken))
@@ -15113,25 +15098,18 @@
         ;; outer environment name against all the function's descriptors.
         (while (>= binding 0)
           (when
-            (and
-              (=
-                (storage_exposure.storage-exposure-binding-field
-                  facts.source
-                  binding
-                  1)
+            (=
+              (storage_exposure.storage-exposure-scope-field
+                facts.source
+                binding
                 0)
-              (=
-                (storage_exposure.storage-exposure-binding-field
-                  facts.source
-                  binding
-                  2)
-                scope))
+              scope)
             (let
               [name : i64
-                (storage_exposure.storage-exposure-binding-field
+                (storage_exposure.storage-exposure-scope-field
                   facts.source
                   binding
-                  3)]
+                  1)]
               [var-id : i64 (sym_i64_env.sym-i64-lookup-id-or env name -1)]
               (when
                 (>= var-id 0)
@@ -15141,10 +15119,10 @@
                   unit))))
           (set!
             binding
-            (storage_exposure.storage-exposure-binding-field
+            (storage_exposure.storage-exposure-scope-field
               facts.source
               binding
-              6)))))))
+              2)))))))
 
 (define (lower-state-deferred-copy? [state : LowerState] [var-id : i64]) : bool
   (let

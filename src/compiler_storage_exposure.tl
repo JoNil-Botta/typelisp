@@ -7,16 +7,16 @@
 (import (hashmap.hashmap i64 i64) as index_map)
 
 (defstruct StorageExposureData
-  ;; Frame: declaration, body, first binding, next same-body frame, complete,
-  ;; ready, indexed. Binding: frame, kind, scope, name, exposed, hash/link,
-  ;; next frame binding. Before indexing, hash/link retains the bucket hint;
-  ;; promotion replaces it with the collision link. Repeated keys join by OR.
+  ;; Frame: declaration, body, first scope binder, next same-body frame,
+  ;; complete, ready. Exposure: frame, kind, scope, name, exposed, next hash.
   (frames words.Vec)
   (bindings words.Vec)
+  (scopes words.Vec)
   (by-body index_map.Map)
   (by-hash index_map.Map)
   (current i64)
   (base i64)
+  (generation i64)
   (arena i64))
 
 (defstruct StorageExposure
@@ -37,9 +37,11 @@
         (StorageExposureData
           (storage-exposure-empty-words)
           (storage-exposure-empty-words)
+          (storage-exposure-empty-words)
           (index_map.with-capacity 0)
           (index_map.with-capacity 0)
           -1
+          0
           0
           (arena.tl_arena_current)))]
     (StorageExposure
@@ -53,9 +55,11 @@
       ;; IDs from a retired generation cannot select a new record at its index.
       (set!
         (deref data).base
-        (+ (deref data).base (/ (deref data).bindings.len 7)))
+        (+ (deref data).base (/ (deref data).bindings.len 6)))
       (set! (deref data).frames (storage-exposure-empty-words))
       (set! (deref data).bindings (storage-exposure-empty-words))
+      (set! (deref data).scopes (storage-exposure-empty-words))
+      (set! (deref data).generation (+ (deref data).generation 1))
       (set! (deref data).by-body (index_map.with-capacity 0))
       (set! (deref data).by-hash (index_map.with-capacity 0))
       (set! (deref data).current -1)
@@ -79,7 +83,7 @@
   (unsafe
     (array-ref
       (deref (storage-exposure-ptr state)).frames.slots
-      (+ (* frame 7) field))))
+      (+ (* frame 6) field))))
 
 (define (storage-exposure-binding-field
   [state : StorageExposure]
@@ -88,7 +92,7 @@
   (unsafe
     (array-ref
       (deref (storage-exposure-ptr state)).bindings.slots
-      (+ (* binding 7) field))))
+      (+ (* binding 6) field))))
 
 (define (storage-exposure-frame
   [state : StorageExposure]
@@ -129,12 +133,12 @@
     (when
       (and (>= body 0) (< frame 0))
       (unsafe
-        (set! frame (/ frames.len 7))
+        (set! frame (/ frames.len 6))
         (in-arena
           (arena.Arena (deref data).arena)
           (let
             [next : i64 (index_map.get-value-or (& by-body) body -1)]
-            (for [word (array declaration body -1 next 1 0 0)]
+            (for [word (array declaration body -1 next 1 0)]
               (words.push-ref! (&mut frames) word))
             (index_map.insert-ref! (&mut by-body) body frame)))))
     (unsafe
@@ -143,7 +147,7 @@
       (set! (deref data).current frame)
       (when
         (>= frame 0)
-        (set! (array-ref (deref data).frames.slots (+ (* frame 7) 5)) 0)))
+        (set! (array-ref (deref data).frames.slots (+ (* frame 6) 5)) 0)))
     previous))
 
 (define (storage-exposure-incomplete! [state : StorageExposure]) : unit
@@ -155,7 +159,7 @@
         (set!
           (array-ref
             (deref (storage-exposure-ptr state)).frames.slots
-            (+ (* frame 7) 4))
+            (+ (* frame 6) 4))
           0)))))
 
 (define (storage-exposure-leave!
@@ -171,7 +175,7 @@
         (set!
           (array-ref
             (deref (storage-exposure-ptr state)).frames.slots
-            (+ (* frame 7) 5))
+            (+ (* frame 6) 5))
           1))
       (set! (deref (storage-exposure-ptr state)).current previous))))
 
@@ -194,12 +198,7 @@
     [by-hash : index_map.Map
       (unsafe
         (deref data).by-hash)]
-    [indexed : bool (= (storage-exposure-frame-field state frame 6) 1)]
-    [index : i64
-      (if indexed
-        (index_map.get-value-or (& by-hash) hash -1)
-        (storage-exposure-frame-field state frame 2))]
-    [found : i64 -1]
+    [index : i64 (index_map.get-value-or (& by-hash) hash -1)]
     (while (>= index 0)
       (when
         (and
@@ -207,19 +206,9 @@
           (= (storage-exposure-binding-field state index 1) kind)
           (= (storage-exposure-binding-field state index 2) scope)
           (= (storage-exposure-binding-field state index 3) name))
-        (when
-          (= (storage-exposure-binding-field state index 4) 1)
-          (return index))
-        (set! found index))
-      (set!
-        index
-        (storage-exposure-binding-field
-          state
-          index
-          (if indexed
-            5
-            6))))
-    found))
+        (return index))
+      (set! index (storage-exposure-binding-field state index 5)))
+    -1))
 
 (define (storage-exposure-bind!
   [state : StorageExposure]
@@ -236,29 +225,21 @@
     [by-hash : index_map.Map
       (unsafe
         (deref data).by-hash)]
-    [indexed : bool
-      (and (>= frame 0) (= (storage-exposure-frame-field state frame 6) 1))]
     [index : i64
-      (if indexed
+      (if (>= frame 0)
         (storage-exposure-find state frame kind scope name hash)
         -1)]
     (when
       (and (>= frame 0) (< index 0))
       (unsafe
-        (set! index (/ bindings.len 7))
+        (set! index (/ bindings.len 6))
         (in-arena
           (arena.Arena (deref data).arena)
           (let
-            [next-hash : i64
-              (if indexed
-                (index_map.get-value-or (& by-hash) hash -1)
-                hash)]
-            [next-frame : i64 (storage-exposure-frame-field state frame 2)]
-            (for [word
-              (array frame kind scope name (cast 0 : i64) next-hash next-frame)]
+            [next-hash : i64 (index_map.get-value-or (& by-hash) hash -1)]
+            (for [word (array frame kind scope name (cast 0 : i64) next-hash)]
               (words.push-ref! (&mut bindings) word))
-            (when indexed (index_map.insert-ref! (&mut by-hash) hash index))
-            (set! (array-ref (deref data).frames.slots (+ (* frame 7) 2)) index)))))
+            (index_map.insert-ref! (&mut by-hash) hash index)))))
     (unsafe
       (set! (deref data).bindings bindings)
       (set! (deref data).by-hash by-hash))
@@ -276,51 +257,65 @@
     (if (and
       (>= index 0)
       (unsafe
-        (< index (/ (deref data).bindings.len 7))))
+        (< index (/ (deref data).bindings.len 6))))
       index
       -1)))
+
+(define (storage-exposure-mark! [state : StorageExposure] [identity : i64]) : unit
+  (let
+    [index : i64 (storage-exposure-index state identity)]
+    (if (>= index 0)
+      (unsafe
+        (set!
+          (array-ref
+            (deref (storage-exposure-ptr state)).bindings.slots
+            (+ (* index 6) 4))
+          1))
+      (storage-exposure-incomplete! state))))
+
+(define (storage-exposure-generation [state : StorageExposure]) : i64
+  (unsafe
+    (deref (storage-exposure-ptr state)).generation))
 
 (define (storage-exposure-key
   [frame : i64]
   [kind : i64]
   [scope : i64]
   [name : i64]) : i64
-  ;; A bucket hint only; every full-width field is compared on lookup.
+  ;; This is a bucket hint; lookup compares every full-width field.
   (bit-xor (bit-xor (* frame 16777619) (* scope 131)) (bit-xor kind name)))
 
-(define (storage-exposure-index-frame! [state : StorageExposure] [frame : i64]) : unit
-  (when
-    (= (storage-exposure-frame-field state frame 6) 0)
-    (let
-      [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
-      [by-hash : index_map.Map
-        (unsafe
-          (deref data).by-hash)]
-      [binding : i64 (storage-exposure-frame-field state frame 2)]
+;; Only pattern/loop binders need a later scope-entry seed. Parameters, lets
+;; and resource bindings have explicit allocation seams in lowering.
+(define (storage-exposure-scope-bind!
+  [state : StorageExposure]
+  [scope : i64]
+  [name : i64]) : unit
+  (let
+    [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
+    [frame : i64 (storage-exposure-current state)]
+    [scopes : words.Vec
+      (unsafe
+        (deref data).scopes)]
+    (when
+      (>= frame 0)
       (unsafe
         (in-arena
           (arena.Arena (deref data).arena)
-          (while (>= binding 0)
-            (let
-              [hash : i64 (storage-exposure-binding-field state binding 5)]
-              [next : i64 (index_map.get-value-or (& by-hash) hash -1)]
-              (set!
-                (array-ref (deref data).bindings.slots (+ (* binding 7) 5))
-                next)
-              (index_map.insert-ref! (&mut by-hash) hash binding))
-            (set! binding (storage-exposure-binding-field state binding 6))))
-        (set! (deref data).by-hash by-hash)
-        (set! (array-ref (deref data).frames.slots (+ (* frame 7) 6)) 1)))))
+          (let
+            [index : i64 (/ scopes.len 3)]
+            [next : i64 (storage-exposure-frame-field state frame 2)]
+            (words.push-ref! (&mut scopes) scope)
+            (words.push-ref! (&mut scopes) name)
+            (words.push-ref! (&mut scopes) next)
+            (set! (array-ref (deref data).frames.slots (+ (* frame 6) 2)) index)))
+        (set! (deref data).scopes scopes)))))
 
-(define (storage-exposure-mark! [state : StorageExposure] [identity : i64]) : unit
-  (let
-    [index : i64 (storage-exposure-index state identity)]
-    (if (>= index 0)
-      (begin
-        (unsafe
-          (set!
-            (array-ref
-              (deref (storage-exposure-ptr state)).bindings.slots
-              (+ (* index 7) 4))
-            1)))
-      (storage-exposure-incomplete! state))))
+(define (storage-exposure-scope-field
+  [state : StorageExposure]
+  [index : i64]
+  [field : i64]) : i64
+  (unsafe
+    (array-ref
+      (deref (storage-exposure-ptr state)).scopes.slots
+      (+ (* index 3) field))))

@@ -5,6 +5,7 @@
 ;; Several of these small arrays crash under the startup-initializer route
 ;; (#8488), which constant tables no longer take.
 (import stdlib.math)
+(import static_scalar_array_unused_provider as _unused_tables)
 
 (define bytes8 : (Array u8 8)
   (array 0 1 127 128 200 254 255 7))
@@ -32,8 +33,6 @@
   (array 'a' 'z' '0'))
 (define one : (Array i64 1)
   (array 42))
-(define empty : (Array i64 0)
-  (array))
 (define wide : (Array u16 128)
   (array
     0

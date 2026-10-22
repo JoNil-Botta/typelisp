@@ -1219,6 +1219,10 @@ A global's IR initializer takes one of three forms:
     `(Array T N)` value.
   - The direct-object encoder has no static-array record, so such programs
     take the assembly path.
+  - Reachability removes an unused `StaticArray` even at opt0. At that level
+    every emitted function body and retained global initializer is a root;
+    all other globals and all functions remain unchanged. A program without
+    `main` conservatively retains all data for its unknown external callers.
 
 Migrated mutable typecheck caches, indexes and traversal state belong to the
 compiler job's `TcJobState`, so resetting or destroying one job cannot disturb

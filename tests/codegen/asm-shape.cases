@@ -7,6 +7,21 @@
 
 args --stdlib-root {{root}}/stdlib --stdlib-root {{root}}/src
 
+# Effect-free static arrays disappear at every level, including opt0. Used,
+# mutated and address-taken tables retain independent writable storage.
+case static-array-reachability
+source tests/integration/static_scalar_array_globals.tl
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+assemble
+not-contains _tl_static_scalar_array_unused_provider_empty:
+not-contains _tl_static_scalar_array_unused_provider_unused_one:
+not-contains _tl_static_scalar_array_unused_provider_unused_eight:
+not-contains _tl_static_scalar_array_unused_provider_unused_wide:
+contains _tl_static_scalar_array_globals_mutable:
+contains _tl_static_scalar_array_globals_twin:
+contains _tl_static_scalar_array_globals_wide:
+
 case binary-interval-search
 source tests/integration/bce_binary_interval.tl
 in fn _tl_bce_binary_interval_search_div

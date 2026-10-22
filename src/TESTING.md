@@ -1991,6 +1991,14 @@ Everything is evaluated with sh/grep/awk, never with the compiler under test.
 Each CI gate runs one file, or one case of it with `--only`; every file's
 header names its gate.
 
+The `static-array-reachability` row in `asm-shape.cases` checks omission of
+imported unused 0-, 1-, 8- and 128-element static arrays at opt0/1/2 for both
+targets.
+The same native integration fixture verifies exact element bits, mutation,
+borrowed writes and independent storage. `static-array-opt0-retained-roots`
+checks retained function bodies, global aliases, runtime initializers, opaque
+call arguments and conservative retention without `main` at the IR boundary.
+
 Use this layer when a native integration fixture can still return the right
 exit code while silently falling back to slow codegen: `asm-shape.cases` pins
 the opt2 regalloc/backend/optimizer shapes of the integration fixtures,

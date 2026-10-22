@@ -100,8 +100,7 @@
   (ty ast.AstType)
   (parent i64)
   ;; Checker-job storage identity; -1 outside a recorded source binding.
-  (storage-source i64)
-  (storage-owner u64))
+  (storage-source i64))
 
 ;; The four chain fields lead the record so the structural top-env index can
 ;; read them with fixed word offsets (0..3) without materializing the whole
@@ -8805,7 +8804,7 @@
     [index : i64
       (tc-type-env-store-push-binding!
         store-handle
-        (TcTypeEnvBinding name-id ty env.head -1 0))]
+        (TcTypeEnvBinding name-id ty env.head -1))]
     (TcTypeEnv store-handle index env.abi-pad)))
 
 (define (tc-type-env-cache-node [env : TcTypeEnv] [cache : TcTypeEnvCache]) : TcTypeEnv
@@ -70926,6 +70925,7 @@
     -1))
 
 (defstruct TcStorageBindingIdentity
+  (owner u64)
   (frame i64)
   (kind i64)
   (scope i64)
@@ -70942,13 +70942,14 @@
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [frame : i64 (storage_exposure.storage-exposure-current facts)]
     (when
-      (>= frame 0)
+      (storage_exposure.storage-exposure-complete? facts frame)
       (let
         [descriptor : (Box TcStorageBindingIdentity)
           (in-arena
             (arena.Arena (tc-chain-store-owner env.store))
             (box
               (TcStorageBindingIdentity
+                facts.address
                 frame
                 kind
                 scope
@@ -70963,10 +70964,7 @@
           (unsafe
             (set!
               (deref (int->ptr (cast head : u64) : (MutPtr TcTypeEnvBinding))).storage-source
-              identity)
-            (set!
-              (deref (int->ptr (cast head : u64) : (MutPtr TcTypeEnvBinding))).storage-owner
-              facts.address))
+              identity))
           (storage_exposure.storage-exposure-incomplete! facts))))
     env))
 
@@ -71009,7 +71007,7 @@
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [frame : i64 (storage_exposure.storage-exposure-current facts)]
     [root : i64
-      (if (>= frame 0)
+      (if (storage_exposure.storage-exposure-complete? facts frame)
         (tc-storage-place-root ctx env (clone place))
         -1)]
     (when
@@ -71036,28 +71034,27 @@
               (let
                 [head : i64 (tc-storage-binding-node env root)]
                 [identity : i64
-                  (if (and
-                    (>= head 0)
-                    (=
-                      (unsafe
-                        (deref
-                          (int->ptr (cast head : u64) : (Ptr TcTypeEnvBinding))).storage-owner)
-                      facts.address))
+                  (if (>= head 0)
                     (unsafe
                       (deref
                         (int->ptr (cast head : u64) : (Ptr TcTypeEnvBinding))).storage-source)
                     -1)]
-                (if (>= identity 0)
+                (if (> identity 0)
                   (let
                     [descriptor : (Ptr TcStorageBindingIdentity)
                       (unsafe
                         (int->ptr
                           (cast identity : u64)
                           : (Ptr TcStorageBindingIdentity)))]
+                    ;; The descriptor shares the binding store's arena, so it
+                    ;; remains readable even after its checker retires. Check
+                    ;; both owner and generation before interpreting its key.
                     (if (unsafe
-                      (=
-                        (deref descriptor).generation
-                        (storage_exposure.storage-exposure-generation facts)))
+                      (and
+                        (= (deref descriptor).owner facts.address)
+                        (=
+                          (deref descriptor).generation
+                          (storage_exposure.storage-exposure-generation facts))))
                       (let
                         [same-frame : bool
                           (unsafe

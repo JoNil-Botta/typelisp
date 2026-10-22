@@ -3666,7 +3666,6 @@
     (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
     (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
     (= (comptime (offset-of (type TcTypeEnvBinding) storage-source)) 40)
-    (= (comptime (offset-of (type TcTypeEnvBinding) storage-owner)) 48)
     (= (comptime (offset-of (type TcTypeEnvStore) bindings)) 0)
     (= (comptime (offset-of (type TcTypeEnvStore) binding-capacity)) 8)
     (= (comptime (offset-of (type TcTypeEnvStore) binding-len)) 16)
@@ -12776,13 +12775,7 @@
             0
             -1
             name))]
-      (test.assert-true
-        (or
-          (< index 0)
-          (=
-            (storage_exposure.storage-exposure-binding-field source-a index 4)
-            0))
-        "the original checker is unchanged"))
+      (test.assert-true (< index 0) "the original checker is unchanged"))
     (storage_exposure.storage-exposure-leave! source-a previous-a true)
     ;; Retain a binding in its owner arena while retiring its checker's facts.
     ;; Its descriptor remains readable but cannot name a new-generation frame.

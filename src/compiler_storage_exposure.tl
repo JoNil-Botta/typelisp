@@ -199,10 +199,12 @@
           1))
       (set! (deref (storage-exposure-ptr state)).current previous))))
 
+(define (storage-exposure-complete? [state : StorageExposure] [frame : i64]) : bool
+  (and (>= frame 0) (= (storage-exposure-frame-field state frame 4) 1)))
+
 (define (storage-exposure-ready? [state : StorageExposure] [frame : i64]) : bool
   (and
-    (>= frame 0)
-    (= (storage-exposure-frame-field state frame 4) 1)
+    (storage-exposure-complete? state frame)
     (= (storage-exposure-frame-field state frame 5) 1)))
 
 (define (storage-exposure-find

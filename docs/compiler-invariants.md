@@ -2571,6 +2571,12 @@ Loader-owned failures enter `compiler-diagnostic-load` with a typed cause when
 source context is attached. Resolver helpers keep plain internal messages;
 forwarded parser/typechecker diagnostics retain their own codes and provenance.
 The `E03..` inventory lists every loader conversion, including package imports.
+Ordinary and package loads validate nested module bodies at the shared module
+identity boundary. A repeated body, including bodies under different parents,
+reports E0307 at the source-file start before either walker transforms it.
+An unresolved local dotted import retains its candidate path so normal source
+loading reports E0301; dependency declarations control alias routing, while
+an unknown explicit `pkg:` include alias remains an E0303 resolution failure.
 
 ## Async process ownership
 

@@ -978,7 +978,12 @@ and protected-node journal operation with ordinary rewrites, but retains the
 existing provenance slots and span records. Registering those wrappers again
 would duplicate per-use re-span records. Semantic rewrites still use the
 span-updating setter, and whole-program compaction rebuilds provenance for its
-new ids.
+new ids. Only final macro compaction may consume source span slots as forwarding
+IDs, with a separate visited bitmap. Its child/declaration walk reconstructs
+canonical and ReSpan records from the wrappers before the source is retired;
+subsequent path copies and cache clearing read no source spans. Other compaction
+callers preserve source provenance. Test builds poison the consumed source's
+shared span-base table so reads through any context view fail.
 
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
 inline records: function entries (symbol, path id, span; 32 bytes) and

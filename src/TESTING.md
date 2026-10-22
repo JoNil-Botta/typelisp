@@ -9,6 +9,9 @@ values in the literal-only array helper. Its two native transformer identities
 replace the old row/table builders without lowering the native-entry floor.
 Math codegen cases require static table definitions and reads while retaining
 allocation, external-call and instruction exclusions.
+The six scalar math fixtures retain their batched default cases and also run
+explicitly at opt0/1/2 on both hosts. The public test transcript runs every
+math inline test at each level through the native host toolchain.
 
 `spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
 restoration without leaving completed siblings active. The existing traversal

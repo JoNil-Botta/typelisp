@@ -703,15 +703,15 @@ bare_string_helper_wildcard|all|-|tests/integration/bare_string_helper_wildcard.
 bare_string_helper_selected|all|-|tests/integration/bare_string_helper_selected.tl|42|-|-|bare_string_helper_defs.tl stdlib/string.tl|-
 string_eq|all|-|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl|-
 core_string_length|all|-|tests/integration/core_string_length.tl|42|-|-|stdlib/string.tl|-
-stdlib_math_ieee|all|-|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl|-
+stdlib_math_ieee|all|-,0,1,2|tests/integration/stdlib_math_ieee.tl|42|-|-|stdlib/math.tl|-
 float_exponent_literals|all|-|tests/integration/float_exponent_literals.tl|42|-|-|stdlib/math.tl|-
 private_intrinsic_provenance|all|-|tests/integration/private_intrinsic_provenance.tl|42|-|-|private_intrinsic_provenance_provider.tl private_intrinsic_provenance_shadow_provider.tl|-
 stdlib_math_table_payloads|all|0,1,2|tests/integration/stdlib_math_table_payloads.tl|42|-|-|stdlib/math.tl stdlib/byte_buf.tl stdlib/crypto_sha256.tl stdlib/iterator.tl stdlib/string.tl|-
-stdlib_math_exp|all|-|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl|-
-stdlib_math_log|all|-|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl|-
-stdlib_math_pow|all|-|tests/integration/stdlib_math_pow.tl|0|-|-|stdlib/math.tl|-
-stdlib_math_mul_add|all|-|tests/integration/stdlib_math_mul_add.tl|42|-|-|stdlib/math.tl|-
-stdlib_math_trig|all|-|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl|-
+stdlib_math_exp|all|-,0,1,2|tests/integration/stdlib_math_exp.tl|0|-|-|stdlib/math.tl|-
+stdlib_math_log|all|-,0,1,2|tests/integration/stdlib_math_log.tl|0|-|-|stdlib/math.tl|-
+stdlib_math_pow|all|-,0,1,2|tests/integration/stdlib_math_pow.tl|0|-|-|stdlib/math.tl|-
+stdlib_math_mul_add|all|-,0,1,2|tests/integration/stdlib_math_mul_add.tl|42|-|-|stdlib/math.tl|-
+stdlib_math_trig|all|-,0,1,2|tests/integration/stdlib_math_trig.tl|0|-|-|stdlib/math.tl|-
 string_length|all|-|tests/integration/string_length.tl|5|-|-|stdlib/string.tl|-
 string_record_extent|all|-|tests/integration/string_record_extent.tl|42|-|-|-|-
 string_match|all|-|tests/integration/string_match.tl|42|-|-|-|-

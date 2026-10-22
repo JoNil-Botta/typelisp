@@ -963,7 +963,19 @@
             [_ false])]
         [_ false])]))
 
-(define (compiler-ast-program-compaction-smoke?) : bool
+(cfg
+  test
+  (define (compiler-ast-test-first-span-base
+    [pools : (& pools ast.AstNodePoolContext)]) : i64
+    (unsafe
+      (ptr-read
+        (int->ptr
+          (__tl-project-field
+            (ast.ast-expr-pool-cell-read pools.expr-pool)
+            span-slot-segment-bases)
+          : (Ptr i64))))))
+
+(define (compiler-ast-program-compaction-smoke? [consume-source-spans? : bool]) : bool
   (let
     [source-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new
@@ -1033,8 +1045,14 @@
         (Literal (ast.ast-lit-int 1234)))]
     [dest-decoy-ty : i64
       (ast.ast-node-pool-context-type-push dest-pools (Bool))]
+    [_source-span-base : i64
+      (cfg test (compiler-ast-test-first-span-base (& source-pools)) 0)]
     [compacted : ast.AstProgramCompaction
-      (ast.ast-program-compact-with-pools source-pools dest-pools (& program))]
+      (ast.ast-program-compact-with-pools
+        source-pools
+        dest-pools
+        (& program)
+        consume-source-spans?)]
     (match compacted
       [(AstProgramCompaction out-program out-pools)
         (let
@@ -1069,7 +1087,22 @@
                       [_ false])]
                   [_ false])])]
           (ast.ast-node-pool-context-install! active-before)
-          (and shape-ok installed-ok))])))
+          (and
+            shape-ok
+            installed-ok
+            (cfg
+              test
+              (and
+                (!= _source-span-base 0)
+                (=
+                  (compiler-ast-test-first-span-base (& source-pools))
+                  (if consume-source-spans?
+                    0
+                    _source-span-base)))
+              true)
+            (if consume-source-spans?
+              true
+              (ast.ast-node-pool-context-expr-span-oracle-ok? source-pools))))])))
 
 (define (compiler-ast-generated-key-decl
   [name : String]
@@ -1141,7 +1174,8 @@
     (match (ast.ast-program-compact-with-pools
       source-pools
       dest-pools
-      (& program))
+      (& program)
+      false)
       [(AstProgramCompaction out-program _)
         (match out-program
           [(Program decls-box)
@@ -1266,7 +1300,11 @@
           (& (ast.ast-decl-def-id name No borrow-id))
           (& (ast.ast-decl-list-new))))]
     [compacted : ast.AstProgramCompaction
-      (ast.ast-program-compact-with-pools source-pools dest-pools (& program))]
+      (ast.ast-program-compact-with-pools
+        source-pools
+        dest-pools
+        (& program)
+        false)]
     (match compacted
       [(AstProgramCompaction out-program out-pools)
         (match out-program
@@ -1559,7 +1597,11 @@
                                               "data.txt"))
                                           (& (ast.ast-decl-list-new))))))))))))))))))))]
     [compacted : ast.AstProgramCompaction
-      (ast.ast-program-compact-with-pools source-pools dest-pools (& program))]
+      (ast.ast-program-compact-with-pools
+        source-pools
+        dest-pools
+        (& program)
+        false)]
     (match compacted
       [(AstProgramCompaction out-program out-pools)
         (match out-program
@@ -2713,7 +2755,8 @@
   [count : i64]
   [reach : i64]
   [extra : i64]
-  [expected-capacity : i64]) : bool
+  [expected-capacity : i64]
+  [consume-source-spans? : bool]) : bool
   (let
     [source-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
@@ -2726,7 +2769,8 @@
     (match (ast.ast-program-compact-with-pools
       source-pools
       dest-pools
-      (& program))
+      (& program)
+      consume-source-spans?)
       [(AstProgramCompaction out-program out-pools)
         (let
           [out-views : ast.AstExprList
@@ -2760,7 +2804,8 @@
 ;; first, so the two later span-1 views each need a destination ReSpan: one
 ;; canonical record and two ReSpans from a source holding one of each, as the
 ;; unreserved compactor produced. The shared view B is copied once.
-(define (compiler-ast-canonical-reserve-reordered-first-span?) : bool
+(define (compiler-ast-canonical-reserve-reordered-first-span?
+  [consume-source-spans? : bool]) : bool
   (let
     [source-pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
@@ -2798,7 +2843,8 @@
     (match (ast.ast-program-compact-with-pools
       source-pools
       dest-pools
-      (& program))
+      (& program)
+      consume-source-spans?)
       [(AstProgramCompaction out-program out-pools)
         (let
           [out : ast.AstExprList
@@ -2822,7 +2868,8 @@
 ;; reservation, and the first generation's dense slots must not leak into the
 ;; second. The source lives in its own arena and is destroyed before the
 ;; destination is read: the reserved records belong to the destination.
-(define (compiler-ast-canonical-reserve-reuse-and-owners?) : bool
+(define (compiler-ast-canonical-reserve-reuse-and-owners?
+  [consume-source-spans? : bool]) : bool
   (let
     [home : arena.Arena (arena.current)]
     [dest : arena.Arena (arena.make)]
@@ -2842,7 +2889,8 @@
         (match (ast.ast-program-compact-with-pools
           source-pools
           dest-pools
-          (& program))
+          (& program)
+          consume-source-spans?)
           [(AstProgramCompaction _ out-pools)
             (and
               (=
@@ -2860,7 +2908,11 @@
     [program : ast.AstProgram
       (compiler-ast-reserve-program source-pools (& views) 70)]
     [compacted : ast.AstProgramCompaction
-      (ast.ast-program-compact-with-pools source-pools dest-pools (& program))]
+      (ast.ast-program-compact-with-pools
+        source-pools
+        dest-pools
+        (& program)
+        consume-source-spans?)]
     [_destroy-source : unit
       (begin
         (ast.ast-node-pool-context-destroy-storage! source-pools)
@@ -2896,16 +2948,34 @@
     ;; the reservation doubles it. A reserve sizes at most one 65,536-record
     ;; segment, so a larger source adds segment 1, and doubling a reserved
     ;; first segment stops at a full segment before segment 1 is added.
-    (compiler-ast-canonical-reserve-row? 0 0 0 64)
-    (compiler-ast-canonical-reserve-row? 64 64 0 64)
-    (compiler-ast-canonical-reserve-row? 65 65 0 65)
-    (compiler-ast-canonical-reserve-row? 200 200 0 200)
-    (compiler-ast-canonical-reserve-row? 200 3 0 200)
-    (compiler-ast-canonical-reserve-row? 65 65 1 130)
-    (compiler-ast-canonical-reserve-row? 65537 65537 0 131072)
-    (compiler-ast-canonical-reserve-row? 40000 40000 30000 131072)
-    (compiler-ast-canonical-reserve-reordered-first-span?)
-    (compiler-ast-canonical-reserve-reuse-and-owners?)))
+    (compiler-ast-canonical-reserve-row? 0 0 0 64 false)
+    (compiler-ast-canonical-reserve-row? 64 64 0 64 false)
+    (compiler-ast-canonical-reserve-row? 65 65 0 65 false)
+    (compiler-ast-canonical-reserve-row? 200 200 0 200 false)
+    (compiler-ast-canonical-reserve-row? 200 3 0 200 false)
+    (compiler-ast-canonical-reserve-row? 65 65 1 130 false)
+    (compiler-ast-canonical-reserve-row? 65537 65537 0 131072 false)
+    (compiler-ast-canonical-reserve-row? 40000 40000 30000 131072 false)
+    (compiler-ast-canonical-reserve-reordered-first-span? false)
+    (compiler-ast-canonical-reserve-reuse-and-owners? false)))
+
+(define (compiler-ast-span-forwarding-smoke?) : bool
+  (and
+    (compiler-ast-program-compaction-smoke? false)
+    (compiler-ast-program-compaction-smoke? true)
+    (compiler-ast-canonical-reserve-row? 0 0 0 64 true)
+    (compiler-ast-canonical-reserve-row? 31 31 0 64 true)
+    (compiler-ast-canonical-reserve-row? 32 32 0 64 true)
+    (compiler-ast-canonical-reserve-row? 33 33 0 64 true)
+    (compiler-ast-canonical-reserve-row? 65537 65537 0 131072 true)
+    (compiler-ast-canonical-reserve-reordered-first-span? true)
+    (compiler-ast-canonical-reserve-reuse-and-owners? true)))
+
+(test
+  compiler-ast-span-forwarding
+  (tl_test.assert-true
+    (compiler-ast-span-forwarding-smoke?)
+    "consumed span slots preserve sharing, provenance, growth and destination ownership"))
 
 (test
   compiler-ast-canonical-reserve
@@ -3764,7 +3834,7 @@
   (unless (compiler-ast-context-dedup-half-load-smoke?) (return 28))
   (unless (compiler-ast-context-dedup-max-capacity-smoke?) (return 29))
   (unless (compiler-ast-context-owner-identity-smoke?) (return 17))
-  (unless (compiler-ast-program-compaction-smoke?) (return 5))
+  (unless (compiler-ast-program-compaction-smoke? false) (return 5))
   (unless (compiler-ast-program-copy-append-smoke?) (return 13))
   (unless (compiler-ast-decl-cons-growth-smoke?) (return 6))
   (unless (compiler-ast-decl-cons-pure-smoke?) (return 7))
@@ -3789,4 +3859,5 @@
   (unless (compiler-ast-expr-binding-clause-syntax-identity-smoke?) (return 23))
   (unless (compiler-ast-generated-dense-list-operations-smoke?) (return 25))
   (unless (compiler-ast-canonical-reserve-smoke?) (return 27))
+  (unless (compiler-ast-span-forwarding-smoke?) (return 32))
   42)

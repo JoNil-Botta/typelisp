@@ -1621,6 +1621,11 @@
           (ptr-offset
             (int->ptr segment-bases : (Ptr i64))
             (shr id ast-expr-node-pool-segment-shift))))]
+    (cfg
+      test
+      (when
+        (= biased-base 0)
+        (io.panic "AST source spans consumed by compaction")))
     (cast
       (unsafe
         (ptr-read
@@ -10614,7 +10619,7 @@
 
 ;; `source-expr-bases` is the source pool's segment-bases pointer, resolved once
 ;; when the remap is built. `ast-compaction-remap-expr-id` reads a source node
-;; per reachable expression; compaction only reads `source-pools`, and the
+;; per reachable expression; compaction does not relocate source rows, and the
 ;; pointer is stable across reads (see `ast-node-pool-context-expr-segment-bases`),
 ;; so one resolution serves the whole walk.
 ;; `shared-expr-base` / `shared-type-base` split the source id space in two. An
@@ -10653,6 +10658,9 @@
   ;; borrowed remap in recursive probes: materializing a borrow cell and
   ;; recovering the remap address on every visit only repeats pointer traffic.
   (expr-map-address u64)
+  ;; Nonzero only when this compaction consumes the source's provenance slots.
+  ;; Then expr-map-address holds one visited bit per source expression.
+  (expr-forwarding-slots i64)
   (type-map-address u64)
   (source-expr-bases i64)
   (shared-expr-base i64)
@@ -10690,6 +10698,42 @@
 (define (ast-compaction-map-set! [address : u64] [index : i64] [value : i32]) : unit
   (unsafe
     (ptr-write! (ptr-offset (int->ptr address : (MutPtr i32)) index) value)))
+
+(define (ast-compaction-expr-map-ref
+  [remap : (& remap AstProgramCompactionRemap)]
+  [index : i64]) : i32
+  (if (= remap.expr-forwarding-slots 0)
+    (ast-compaction-map-ref remap.expr-map-address index)
+    (if (=
+      (bit-and
+        (cast
+          (ast-compaction-map-ref remap.expr-map-address (shr index 5))
+          : i64)
+        (shl 1 (bit-and index 31)))
+      0)
+      0
+      (cast
+        (ast-expr-span-slot-get-from-bases remap.expr-forwarding-slots index)
+        : i32))))
+
+(define (ast-compaction-expr-map-set!
+  [remap : (& remap AstProgramCompactionRemap)]
+  [index : i64]
+  [value : i32]) : unit
+  (if (= remap.expr-forwarding-slots 0)
+    (ast-compaction-map-set! remap.expr-map-address index value)
+    (let
+      [word : i64 (shr index 5)]
+      [bits : i64
+        (cast (ast-compaction-map-ref remap.expr-map-address word) : i64)]
+      (ast-expr-span-slot-set-in-bases!
+        remap.expr-forwarding-slots
+        index
+        (cast value : i64))
+      (ast-compaction-map-set!
+        remap.expr-map-address
+        word
+        (cast (bit-or bits (shl 1 (bit-and index 31))) : i32)))))
 
 ;; Compile-profile-only reachability census for the per-declaration macro
 ;; generation copy-out.  The copy walk is the ownership authority: ids below
@@ -11332,7 +11376,7 @@
       (let
         [expr-map-address : u64 remap.expr-map-address]
         [slot : i64 (- id base)]
-        [cached : i32 (ast-compaction-map-ref expr-map-address slot)]
+        [cached : i32 (ast-compaction-expr-map-ref remap slot)]
         [persist? : bool remap.persist-in-place]
         (if (> cached 0)
           (if persist?
@@ -11371,8 +11415,8 @@
                     id))]
               [new-id : i64
                 (ast-compaction-remap-dest-expr-push remap new-expr)]
-              (ast-compaction-map-set!
-                expr-map-address
+              (ast-compaction-expr-map-set!
+                remap
                 slot
                 (cast (+ new-id 1) : i32))
               new-id)))))))
@@ -11558,10 +11602,14 @@
 ;: Copy `program` from `source-pools` into a reset `dest-pools`, remapping every
 ;: reachable expression id and recursive type id into dense destination ids.
 ;: `dest-pools` is expected to be distinct from `source-pools`.
+;: `consume-source-spans?` permits reusing source span slots for forwarding ids.
+;: Only a caller that retires the source without reading its provenance again
+;: may pass true. The ordinary path leaves the source unchanged.
 (define (ast-program-compact-with-pools
   [source-pools : AstNodePoolContext]
   [dest-pools : AstNodePoolContext]
-  [program : (& AstProgram)]) : AstProgramCompaction
+  [program : (& AstProgram)]
+  [consume-source-spans? : bool]) : AstProgramCompaction
   (ast-node-pool-context-reset-to! dest-pools 0 0)
   ;; A destination semantic node gets one canonical record, from the first
   ;; wrapper the traversal reaches, and copies a distinct source node that
@@ -11586,7 +11634,11 @@
         (arena.tl_arena_set map-arena))]
     [expr-map : (__tl_dyn-array i32)
       (ast-compaction-id-map-create
-        (ast-node-pool-context-expr-len source-pools))]
+        (let
+          [count : i64 (ast-node-pool-context-expr-len source-pools)]
+          (if consume-source-spans?
+            (/ (+ count 31) 32)
+            count)))]
     [type-map : (__tl_dyn-array i32)
       (ast-compaction-id-map-create
         (ast-node-pool-context-type-len source-pools))]
@@ -11596,6 +11648,11 @@
         source-pools
         dest-pools
         (ast-i32-array-address expr-map)
+        (if consume-source-spans?
+          (__tl-project-field
+            (ast-expr-pool-cell-read source-pools.expr-pool)
+            span-slot-segment-bases)
+          0)
         (ast-i32-array-address type-map)
         (ast-node-pool-context-expr-segment-bases source-pools)
         0
@@ -11610,6 +11667,25 @@
           (arena.tl_arena_set dest-arena))
         (let
           [out : AstProgram (ast-compaction-remap-program remap program)]
+          ;; All source views share this stable base table. Poison it in test
+          ;; builds so a later provenance read fails before interpreting a
+          ;; forwarding id as a span record, including through an older view.
+          (cfg
+            test
+            (when
+              consume-source-spans?
+              (for [segment
+                (iterator.range
+                  0
+                  (__tl-project-field
+                    (ast-expr-pool-cell-read source-pools.expr-pool)
+                    segment-count))]
+                (unsafe
+                  (ptr-write!
+                    (ptr-offset
+                      (int->ptr remap.expr-forwarding-slots : (MutPtr i64))
+                      segment)
+                    0)))))
           (unsafe
             (arena.tl_arena_set prev-arena))
           out))]
@@ -11690,6 +11766,7 @@
         source-pools
         dest-pools
         expr-map-address
+        0
         type-map-address
         (ast-node-pool-context-expr-segment-bases source-pools)
         shared-expr-base

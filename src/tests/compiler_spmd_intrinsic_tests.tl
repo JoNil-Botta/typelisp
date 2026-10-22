@@ -24,7 +24,7 @@
       (test.assert-true
         (checks.compiler-typecheck-ok?
           (intrinsic-source (string.copy (& (array-ref operands index)))))
-        "ordinary intrinsic operands also classify inside foreach")))
+        (string.copy (& (array-ref operands index))))))
   (test.assert-true
     (checks.compiler-typecheck-ok?
       "(define (__tl_float_sqrt [value : f64]) : f64 (+ value 1.0))
@@ -65,12 +65,12 @@
           "typecheck: unbound name missing"))]
     (for [index (iterator.range 0 (array-length cases))]
       (let
-        [entry : (& IntrinsicErrorCase) (& (array-ref cases index))]
+        [entry (& (array-ref cases index))]
         (test.assert-true
           (checks.compiler-typecheck-error-ok?
             (intrinsic-source (string.copy (& entry.operand)))
             (string.copy (& entry.message)))
-          "ordinary arity/type/name diagnostics survive SPMD classification"))))
+          (string.copy (& entry.operand))))))
   (test.assert-true
     (checks.compiler-typecheck-error-ok?
       "(define (identity [value : f64]) : f64 value)

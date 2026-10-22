@@ -61,6 +61,11 @@ and reusable facts. Job-state isolation remains an ongoing migration in
 [#5756](https://github.com/JoNil-Botta/typelisp/issues/5756). Serial compatibility
 adapters do not make an ambient owner safe for a value from another job.
 
+Final macro detachment may retire source provenance before copying: it clears
+source span slots for forwarding IDs, while the shared AST traversal rebuilds
+destination provenance from wrapper rows. Other compactions preserve their
+source; see the [AST ownership invariants](compiler-invariants.md#architecture).
+
 Lifetime diagnostics and IR rendering share the validated syntax-name boundary
 with explicit macro-spelling policy; see the [rendering invariants](compiler-invariants.md#architecture).
 

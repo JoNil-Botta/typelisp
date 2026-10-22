@@ -4,7 +4,10 @@
 and projected register aggregates are captured before opaque mutation across
 loop backedges. Match bindings have the same rule; shadowed let and match
 bindings, lambda boundaries, reference arguments and read-only tails
-retain their existing no-copy behavior. Cached parameter, local and shadowed
+retain their existing no-copy behavior.
+`compiler-lower-borrowed-view-element-exposure` keeps the view descriptor private
+when borrowing its elements and materializes it for a direct raw slot address.
+Cached parameter, local and shadowed
 bindings cross type-environment compaction. The parameter case has 43 parameters
 as well as a compacted local prefix.
 Unrelated global addresses preserve the no-copy controls, while a global name

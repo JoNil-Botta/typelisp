@@ -71103,7 +71103,11 @@
                 (and
                   (not (tc-storage-value-reference? ctx (clone resolved)))
                   (or raw (not reference?)))
-                (tc-storage-register-resident? ctx resolved))
+                ;; Projections through references address their referents,
+                ;; independently of a fat view's register representation.
+                (and
+                  (not reference?)
+                  (tc-storage-register-resident? ctx resolved)))
               (let
                 [head : i64 (tc-storage-binding-node env root)]
                 [identity : i64

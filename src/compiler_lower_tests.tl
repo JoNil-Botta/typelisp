@@ -17610,3 +17610,31 @@
         (test.assert-true
           (lower-test-source-blocks-exit? source "probe" (clone label))
           label)))))
+
+(test
+  compiler-lower-borrowed-view-element-exposure
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      "(extern (sink-address [address : u64]) : unit)
+(define (bump [value : (&mut i64)]) : unit
+  (set! (deref value) (+ (deref value) 1)))
+(define (element [items : (&mut source (Slice i64))] [n : i64]) : i64
+  (let [i : i64 0]
+    (while (< i n) (bump (&mut (array-ref items i))) (set! i (+ i 1))) n))
+(define (slot [items : (&mut source (Slice i64))] [n : i64]) : i64
+  (let [i : i64 0]
+    (while (< i n)
+      (sink-address (unsafe (ptr->int (ptr-addr-of items)))) (set! i (+ i 1))) n))
+(define (main) : i64
+  (let [items : (Array i64 2) (array 1 2)]
+    (+ (element (slice-mut-view (&mut items) 0 2) 2)
+       (slot (slice-mut-view (&mut items) 0 2) 2))))"))
+    [(Some functions)
+      (test.assert-i64-eq
+        (lower-test-count functions "element" (AddrOf))
+        0
+        "borrowing an element does not expose the borrowed view descriptor")
+      (test.assert-true
+        (> (lower-test-count functions "slot" (AddrOf)) 0)
+        "a raw address of the view variable still exposes its descriptor slot")]
+    [_ (test.assert-true false "borrowed view exposure fixture lowers")]))

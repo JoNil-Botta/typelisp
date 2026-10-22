@@ -389,14 +389,14 @@ actual exposure keys survive function scratch. Cache compaction preserves identi
 original binding spine. Unique checker generations guard every identity read,
 including owners at recycled arena addresses. Exhausting the generation range
 leaves facts unavailable. Unknown storage roots or stale identities invalidate the frame.
+The move checker's existing global-place classifier excludes known globals from
+local-slot facts; lexical shadowing and captured locals retain their own slots.
 Nested lambdas record their private capture slots in separate frames; auxiliary
 capability queries suspend collection, including nested lambda checks, instead
 of attributing nested storage to the caller. Suspension tokens belong to one
 checker generation; a reset prevents an older token from restoring a frame.
 Parameter metadata annotates the ordinary bound environment, preserving its
 resolved types and lifetime markers without creating another binding layer.
-Parameters share their body/scope descriptor; one visit of the retained binding
-prefix attaches it to each lexical node. Names remain distinct exposure keys.
 
 A successfully completed, complete frame makes an absent exposure key a proven
 negative. An unavailable or incomplete frame never supplies that proof. The

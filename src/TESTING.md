@@ -5,7 +5,10 @@ and projected register aggregates are captured before opaque mutation across
 loop backedges. Match bindings have the same rule; shadowed let and match
 bindings, lambda boundaries, reference arguments and read-only tails
 retain their existing no-copy behavior. Cached parameter, local and shadowed
-bindings cross type-environment compaction. `compiler-storage-exposure-*`
+bindings cross type-environment compaction. The parameter case has 43 parameters
+as well as a compacted local prefix.
+Unrelated global addresses preserve the no-copy controls, while a global name
+shadowed by a parameter still receives local exposure facts. `compiler-storage-exposure-*`
 checks full-width lexical keys under forced hash collisions, nested frames,
 failed/incomplete checks, scope ownership, nested collection suspension and
 stale identities or suspension tokens after a checker-job reset. A rewound

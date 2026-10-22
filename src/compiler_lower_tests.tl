@@ -1842,7 +1842,9 @@
 
 (define (compiler-lower-loop-exposure-source) : String
   (str_cat.str-cat
-    "(defstruct Pair (left i64) (right i64))
+    "(define x : i64 77)
+(define global-slot : i64 0)
+(defstruct Pair (left i64) (right i64))
 (defenum Choice (Value i64))
 (define (first [a : i64] [_b : i64]) : i64 a)
 (define (first-ref [a : (& i64)] [_b : i64]) : i64 (deref a))
@@ -1916,6 +1918,12 @@
 (define (acyclic-callee [f : (-> i64 i64)]) : i64
   (let [p : (MutPtr (-> i64 i64)) (unsafe (ptr-addr-of f))]
     (f (write-dec! p))))
+(define (global-argument [x : i64] [q : (MutPtr i64)]) : i64
+  (unsafe (ptr-addr-of global-slot))
+  (first x (write-99! q)))
+(define (global-callee [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))]) : i64
+  (unsafe (ptr-addr-of global-slot))
+  (f (write-dec! p)))
 (define (readonly-argument [x : i64] [y : i64]) : i64
   (let [result (first x (+ y 1))] (unsafe (ptr-addr-of x)) result))
 (define (readonly-callee [f : (-> i64 i64)] [y : i64]) : i64
@@ -1929,6 +1937,7 @@
        (lambda-boundary 1 q 2) (ref-slot (& y) q 2) (ref-unrelated (& y) q 2)
        (cached-param-call q) (cached-local 1 q 2) (cached-shadow 1 q 2)
        (acyclic-argument 1) (acyclic-callee inc)
+       (global-argument 1 q) (global-callee inc p)
        (readonly-argument 1 y) (readonly-callee inc y))))"
     (compiler-lower-cached-exposure-source)))
 
@@ -2083,7 +2092,7 @@
       result))
     [(Some functions)
       (let
-        [names : (Array String 16)
+        [names : (Array String 18)
           (array
             "loop-argument"
             "loop-callee"
@@ -2100,10 +2109,13 @@
             "cached-local"
             "cached-shadow"
             "acyclic-argument"
-            "acyclic-callee")]
-        (for [index (iterator.range 0 16)]
+            "acyclic-callee"
+            "global-argument"
+            "global-callee")]
+        (for [index (iterator.range 0 18)]
           (let
-            [callee? : bool (or (= index 1) (= index 2) (= index 15))]
+            [callee? : bool
+              (or (= index 1) (= index 2) (= index 15) (= index 17))]
             (test.assert-i64-eq
               (lower-test-snapshot-before-effect
                 functions
@@ -2117,7 +2129,12 @@
                     "first-ref"
                     "first")))
               ;; Reference call arguments retain their existing borrow path.
-              (if (or (< index 5) (= index 11) (= index 12) (>= index 14))
+              (if (or
+                (< index 5)
+                (= index 11)
+                (= index 12)
+                (= index 14)
+                (= index 15))
                 1
                 0)
               (string.copy (array-ref names index)))))

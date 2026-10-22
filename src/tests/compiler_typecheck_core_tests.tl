@@ -12745,6 +12745,7 @@
     [source-b : storage_exposure.StorageExposure
       (tc_core.tc-body-storage-exposure (tc_core.tc-context-body-state ctx-b))]
     [name : i64 (ci.intern "foreign-storage-source")]
+    [locals : tc_core.TcMovedSet (tc_core.tc-moved-empty)]
     [params : ast.AstParamList (ast.ast-param-list-new)]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-id (tc_core.tc-empty-env) name (I64))]
@@ -12753,7 +12754,7 @@
       (tc_core.tc-storage-register! ctx-a env 0 -1 name)]
     [_enter-b : unit (tc_core.tc-storage-enter! ctx-b env (& params) 2)]
     [frame-b : i64 (storage_exposure.storage-exposure-current source-b)]
-    (tc_core.tc-storage-expose! ctx-b env (Var name) true)
+    (tc_core.tc-storage-expose! ctx-b env (& locals) (Var name) true)
     (test.assert-i64-eq
       (storage_exposure.storage-exposure-frame-field source-b frame-b 4)
       0
@@ -12783,7 +12784,7 @@
     (let
       [previous : i64 (storage_exposure.storage-exposure-enter! source-a 0 3)]
       [frame : i64 (storage_exposure.storage-exposure-current source-a)]
-      (tc_core.tc-storage-expose! ctx-a env (Var name) true)
+      (tc_core.tc-storage-expose! ctx-a env (& locals) (Var name) true)
       (test.assert-i64-eq
         (storage_exposure.storage-exposure-frame-field source-a frame 4)
         0

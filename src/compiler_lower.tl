@@ -29298,7 +29298,7 @@
                                 (match (tc_core.tc-type-strip-region
                                   (tc_core.tc-resolve-type
                                     ctx
-                                    (lower-global-shared-view left-ty)))
+                                    right-actual-ty))
                                   [(Unit) true]
                                   [_ false]))
                               (return
@@ -63052,21 +63052,21 @@
                     (Expr
                       field-state
                       field-value
-                      (lower-global-shared-view field-ty))]
+                      field-ty)]
                   [_
                     (try
                       (lower-materialize
                         field-state
                         field-value
-                        (lower-global-shared-view field-ty)))])]
+                        field-ty))])]
               (match bound
-                [(Expr bound-state bound-value _)
+                [(Expr bound-state bound-value bound-ty)
                   (match bound-value
                     [(Var field-var)
                       (Ok
                         bound-state
                         (sym_i64_env.sym-i64-bind-id env name field-var)
-                        (tc_core.tc-bind-id type-env name field-ty))]
+                        (tc_core.tc-bind-id type-env name bound-ty))]
                     [_
                       (Err
                         (box

@@ -56,7 +56,7 @@ exit 1
 stdout empty
 stderr contains error[E0214]: typecheck: foreach calls with varying arguments are not supported
 stderr contains provider.tl:4:5
-stderr contains middle.tl:3:3
+stderr contains middle.tl:3:4
 stderr contains caller.tl:4:30
 stderr contains in SPMD helper `provider/apply` called here
 stderr contains in SPMD helper `middle/through` called here

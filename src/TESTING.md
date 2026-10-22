@@ -418,6 +418,11 @@ safety corpus. This accessor is a freestanding Linux ABI primitive.
 
 ## Generated cfg declarations
 
+`macro-unqualified-import-cache-clears-live-key-storage` poisons all 65,536
+cache slots in a virgin owner arena. It checks full-array clearing for explicit
+invalidation and stale table/generation IDs, retention for a valid generation,
+unchanged name/value payloads and isolation from another live job.
+
 `source_selected_generated_export.tl` exercises selected aliases of generated
 macros, nested generators and a non-entry importer, with a caller-local shadow
 to check caller-syntax hygiene and an earlier qualified provider whose macro

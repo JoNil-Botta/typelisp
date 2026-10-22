@@ -103156,13 +103156,12 @@
       (= (tc-macro-import-index-control state 12) table-id)
       (= (tc-macro-import-index-control state 13) reset-generation))
       unit
-      (begin
-        (for [i (iterator.range 0 65536)]
-          (set!
-            (array-ref
-              (tc-macro-import-index-array state unqualified-module-keys)
-              i)
-            0))
+      (let
+        [keys : (__tl_dyn-array i64)
+          (tc-macro-import-index-array state unqualified-module-keys)]
+        ;; The key-array descriptor is stable throughout this clear.
+        (for [i (iterator.range 0 (array-length keys))]
+          (set! (array-ref keys i) 0))
         (tc-macro-import-index-control-set! state 11 0)
         (tc-macro-import-index-control-set! state 12 table-id)
         (tc-macro-import-index-control-set! state 13 reset-generation)

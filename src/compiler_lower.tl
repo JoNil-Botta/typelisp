@@ -2322,10 +2322,11 @@
   (pointer-proof pointer_proof.PointerProofRequest)
   (stdlib-roots svec.Vec)
   (cfg-names svec.Vec)
-  (in-session bool))
+  (in-session bool)
+  (executable bool))
 
 (define (compiler-lower-request [mode : CompilerLowerMode]) : CompilerLowerRequest
-  (CompilerLowerRequest mode Disabled (svec.new) (svec.new) false))
+  (CompilerLowerRequest mode Disabled (svec.new) (svec.new) false false))
 
 ;; Consumers of semantic evidence accept this checked boundary, not an ordinary
 ;; ResultCompilerLower. Its program is immutable until analysis finishes.
@@ -74497,14 +74498,15 @@
 (define (lower-source-load
   [path : (& str)]
   [src : (& str)]
-  [context : (& context tc_api.TypecheckRequest)]) : load.ResultCompilerLoadWithPaths
+  [context : (& context tc_api.TypecheckRequest)]
+  [request : (& request CompilerLowerRequest)]) : load.ResultCompilerLoadWithPaths
   (let
     [inline-runtime : bool
       (match context.program
         [(ast.Program decls)
           (lower-source-decls-define-module? (& (deref decls)) "stdlib.runtime")])]
     [prelude : load.ResultCompilerLoadWithPaths
-      (if inline-runtime
+      (if (or (not request.executable) inline-runtime)
         (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
           (owned_view.compiler-owned-reference-shared-view
             (& context.load-state))
@@ -74676,7 +74678,7 @@
     (ci.intern-source-name-session-capture-active-handle))
   (let
     [loaded : load.ResultCompilerLoadWithPaths
-      (lower-source-load (& path) src context)]
+      (lower-source-load (& path) src context request)]
     [result : ResultCompilerLower
       (match loaded
         [(Ok decls paths modules _)

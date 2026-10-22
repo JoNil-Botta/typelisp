@@ -6987,6 +6987,8 @@
         (= (lower-test-functions-call-count functions ".::close-b") 1))]
     [_ false]))
 
+;; Imported cleanup helpers retain the caller owner across the standalone
+;; intern/builtin reset; their cleanup edges and early returns stay exact.
 (define (compiler-lower-cleanup-struct-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-cleanup-struct-source)))
@@ -6995,14 +6997,14 @@
         (=
           (lower-test-function-direct-call-count
             functions
-            ".::cleanup-file-handle"
-            ".::close-fd")
+            "<source>::cleanup-file-handle"
+            "<source>::close-fd")
           1)
         (>
           (lower-test-function-direct-call-count
             functions
             "main"
-            ".::cleanup-file-handle")
+            "<source>::cleanup-file-handle")
           1)
         (> (lower-test-count functions "main" (Return)) 1))]
     [_ false]))

@@ -5,13 +5,10 @@
 (cfg compile-profile (import stdlib.profile))
 (cfg compile-profile (import compiler_profile_counters as counters))
 (cfg compile-profile-summary (import compiler_profile_summary as cps))
-(import sym_i64_env)
 (import compiler_lower)
 (import compiler_ir_types)
 (import compiler_ast_types)
 (import compiler_typecheck_core)
-(import compiler_cfg_core)
-(import compiler_parse_core)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic)
 (import compiler_optimize)
@@ -92287,12 +92284,15 @@ tl_shared_object_init:
       (compiler_lower.lower-resetting-entry-live-session-error
         "compiler-backend-lower-source-for-target"
         "<source>")))
-  (compiler_lower.lower-compiler-source-with-request
-    "<source>"
-    src
-    (&
+  (let
+    [request : compiler_lower.CompilerLowerRequest
       (compiler_lower.compiler-lower-request
-        (compiler-backend-lower-mode-for-target target (Scalar))))))
+        (compiler-backend-lower-mode-for-target target (Scalar)))]
+    (set! request.executable true)
+    (compiler_lower.lower-compiler-source-with-request
+      "<source>"
+      src
+      (& request))))
 
 ;; Additive jobs share the enclosing node/name owners and use private import
 ;; and typecheck request state; they never reset the enclosing session.
@@ -92304,6 +92304,7 @@ tl_shared_object_init:
       (compiler_lower.compiler-lower-request
         (compiler-backend-lower-mode-for-target target (Scalar)))]
     (set! request.in-session true)
+    (set! request.executable true)
     (compiler_lower.lower-compiler-source-with-request
       "<source>"
       src

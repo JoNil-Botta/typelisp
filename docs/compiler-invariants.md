@@ -671,7 +671,7 @@ failure releases its otherwise unreturned arenas after its diagnostic escapes.
 
 `CompilerLowerRequest` is borrowed by source lowering and semantic-evidence
 consumers. `compiler-lower-request` initializes the mode, disabled proof,
-empty stdlib roots/cfg names, and standalone policy. Callers may set those
+empty stdlib roots/cfg names, and standalone semantic-lowering policy. Callers may set those
 fields without another entry-point variant. Cfg names and roots are owned text,
 not interned IDs captured before a reset. Target predicates come from the
 shared target presets after the correct intern generation is installed.
@@ -690,12 +690,17 @@ previously published AST prefix.
 Imported source uses its caller path and the loader's complete declaration
 paths/module column, including selected/wildcard imports and macro-produced
 declarations. `compiler-load-executable-prelude` is the shared ordered
-runtime/core-macro prefix for the CLI and import-aware source jobs. A source
+runtime/core-macro prefix for the CLI and import-aware executable source jobs.
+Backend target helpers set `executable`; semantic-only lowering keeps its core
+macro prefix so executable runtime types do not enter its debug/type graph.
+A source
 that supplies its own inline `stdlib.runtime` keeps that owner. Import-free
 programs keep their existing unlocated lowering path, including in-session
 library entry naming used by the native macro catalog. Missing
 import diagnostics preserve the failing file and add the caller's exact
 import span as an `imported here` label.
+Imported helper names retain the actual caller owner (`<source>` for the
+default source API), rather than the old empty-path owner.
 
 Raw object-image helpers retain their structural contract; an image does not
 certify direct-object admission. Existing eligibility checks still exclude

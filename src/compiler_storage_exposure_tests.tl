@@ -1,4 +1,5 @@
 (import compiler_storage_exposure as exposure)
+(import stdlib.arena)
 (import stdlib.iterator)
 (import stdlib.test)
 
@@ -189,3 +190,52 @@
           current
           "stale resume cannot alter a new generation")
         (exposure.storage-exposure-leave! facts previous true)))))
+
+;; No capability escapes the rewound arena; only its numeric stamp is retained.
+(test
+  compiler-storage-exposure-reused-owner
+  (let
+    [scratch : arena.Arena (arena.make)]
+    [phase : arena.ArenaPhase (arena.phase scratch)]
+    [address : u64 0]
+    [generation : i64 -1]
+    (in-arena
+      (arena.Arena (arena.raw-handle scratch))
+      (let
+        [first : exposure.StorageExposure (exposure.storage-exposure-new)]
+        (set! address first.address)
+        (set! generation (exposure.storage-exposure-generation first))))
+    (arena.rewind-safe! phase)
+    (in-arena
+      (arena.Arena (arena.raw-handle scratch))
+      (let
+        [second : exposure.StorageExposure (exposure.storage-exposure-new)]
+        (test.assert-true
+          (= address second.address)
+          "probe actually reuses the owner address")
+        (test.assert-true
+          (!= generation (exposure.storage-exposure-generation second))
+          "a newly constructed owner rejects an older descriptor generation")))
+    (arena.destroy-safe! scratch)))
+
+(test
+  compiler-storage-exposure-generation-boundary
+  (let
+    [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
+    [_exhaust : unit
+      (unsafe
+        (set! (deref (exposure.storage-exposure-ptr facts)).generation -1))]
+    [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
+    [frame : i64 (exposure.storage-exposure-current facts)]
+    (test.assert-i64-eq
+      (exposure.storage-exposure-generation-successor 9223372036854775806)
+      9223372036854775807
+      "the final valid generation is representable")
+    (test.assert-i64-eq
+      (exposure.storage-exposure-generation-successor 9223372036854775807)
+      -1
+      "exhaustion cannot wrap to a previously issued generation")
+    (exposure.storage-exposure-leave! facts previous true)
+    (test.assert-true
+      (not (exposure.storage-exposure-ready? facts frame))
+      "exhausted generations cannot prove address absence")))

@@ -8,7 +8,9 @@ retain their existing no-copy behavior. Cached parameter, local and shadowed
 bindings cross type-environment compaction. `compiler-storage-exposure-*`
 checks full-width lexical keys under forced hash collisions, nested frames,
 failed/incomplete checks, scope ownership, nested collection suspension and
-stale identities or suspension tokens after a checker-job reset. The core
+stale identities or suspension tokens after a checker-job reset. A rewound
+arena reuses an owner's address without reusing its generation; exhaustion
+leaves facts unavailable. The core
 ownership regression retains an environment across checker
 jobs and reset generations. Acyclic raw-pointer argument/callee cases verify
 that sequential address marks still force the required snapshots. The

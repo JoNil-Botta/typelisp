@@ -386,8 +386,9 @@ Checker-job state owns a complete set of exposed lexical keys: declaration,
 function body, binding kind, source scope and hygienic name. Binding identities
 contain only numeric data and share their type-environment store's arena; only
 actual exposure keys survive function scratch. Cache compaction preserves identities through its
-original binding spine. Checker ownership and reset generations guard every
-identity read. Unknown storage roots or stale identities invalidate the frame.
+original binding spine. Unique checker generations guard every identity read,
+including owners at recycled arena addresses. Exhausting the generation range
+leaves facts unavailable. Unknown storage roots or stale identities invalidate the frame.
 Nested lambdas record their private capture slots in separate frames; auxiliary
 capability queries suspend collection, including nested lambda checks, instead
 of attributing nested storage to the caller. Suspension tokens belong to one

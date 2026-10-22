@@ -21,6 +21,23 @@
 (defstruct StorageExposure
   (address u64))
 
+;; Checker creation is serialized with the compiler's other mutable state.
+;; A fresh stamp also distinguishes owners allocated at a recycled address.
+(define storage-exposure-generation-serial : i64
+  0)
+
+(define (storage-exposure-generation-successor [serial : i64]) : i64
+  (if (< serial 9223372036854775807)
+    (+ serial 1)
+    -1))
+
+(define (storage-exposure-fresh-generation) : i64
+  (let
+    [next : i64
+      (storage-exposure-generation-successor storage-exposure-generation-serial)]
+    (when (>= next 0) (set! storage-exposure-generation-serial next))
+    next))
+
 (define (storage-exposure-ptr [state : StorageExposure]) : (MutPtr
     StorageExposureData)
   (unsafe
@@ -39,7 +56,7 @@
           (index_map.with-capacity 0)
           (index_map.with-capacity 0)
           -1
-          0
+          (storage-exposure-fresh-generation)
           0
           (arena.tl_arena_current)))]
     (StorageExposure
@@ -52,7 +69,7 @@
     (unsafe
       (set! (deref data).frames (storage-exposure-empty-words))
       (set! (deref data).bindings (storage-exposure-empty-words))
-      (set! (deref data).generation (+ (deref data).generation 1))
+      (set! (deref data).generation (storage-exposure-fresh-generation))
       (set! (deref data).by-body (index_map.with-capacity 0))
       (set! (deref data).by-hash (index_map.with-capacity 0))
       (set! (deref data).current -1)
@@ -87,6 +104,7 @@
     (unsafe
       (when
         (and
+          (>= token.generation 0)
           (= token.generation (deref data).generation)
           (> (deref data).suspension-depth 0))
         (set! (deref data).suspension-depth (- (deref data).suspension-depth 1))
@@ -133,7 +151,9 @@
   [body : i64]) : i64
   (when
     (unsafe
-      (> (deref (storage-exposure-ptr state)).suspension-depth 0))
+      (let
+        [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
+        (or (> (deref data).suspension-depth 0) (< (deref data).generation 0))))
     (return (storage-exposure-current state)))
   (let
     [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]

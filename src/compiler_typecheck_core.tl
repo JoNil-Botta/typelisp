@@ -70925,7 +70925,6 @@
     -1))
 
 (defstruct TcStorageBindingIdentity
-  (owner u64)
   (frame i64)
   (kind i64)
   (scope i64)
@@ -70949,7 +70948,6 @@
             (arena.Arena (tc-chain-store-owner env.store))
             (box
               (TcStorageBindingIdentity
-                facts.address
                 frame
                 kind
                 scope
@@ -71046,15 +71044,13 @@
                         (int->ptr
                           (cast identity : u64)
                           : (Ptr TcStorageBindingIdentity)))]
-                    ;; The descriptor shares the binding store's arena, so it
-                    ;; remains readable even after its checker retires. Check
-                    ;; both owner and generation before interpreting its key.
+                    ;; The descriptor shares the binding store's arena. Its
+                    ;; unique generation rejects retired or foreign checkers,
+                    ;; including a new owner at the same address.
                     (if (unsafe
-                      (and
-                        (= (deref descriptor).owner facts.address)
-                        (=
-                          (deref descriptor).generation
-                          (storage_exposure.storage-exposure-generation facts))))
+                      (=
+                        (deref descriptor).generation
+                        (storage_exposure.storage-exposure-generation facts)))
                       (let
                         [same-frame : bool
                           (unsafe

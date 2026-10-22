@@ -58,6 +58,9 @@ and reusable facts. Job-state isolation remains an ongoing migration in
 [#5756](https://github.com/JoNil-Botta/typelisp/issues/5756). Serial compatibility
 adapters do not make an ambient owner safe for a value from another job.
 
+Lifetime diagnostics and IR rendering share the validated syntax-name boundary
+with explicit macro-spelling policy; see the [rendering invariants](compiler-invariants.md#architecture).
+
 [Native TLCI source generation](../src/compiler_tlci_native_producer.tl) reads
 captured nodes and names through `TlciNativeSourceContext`. Its source owners
 remain live until canonical transformer text is captured; the

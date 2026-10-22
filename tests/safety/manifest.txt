@@ -447,6 +447,8 @@ byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_r
 byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_after_immut_reject.tl|-|cannot mutably borrow borrowed place `buf`
 byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot read mutably borrowed place `buf`
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
+macro_local_lifetime_coercion_reject|check-fail|tests/safety/macro_local_lifetime_coercion_reject.tl|-|source lifetime `shadowed` does not outlive required lifetime `keep`
+macro_local_lifetime_incoming_ok|run-exit|tests/safety/macro_local_lifetime_incoming_ok.tl|42|-
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|typecheck: ptr-read requires unsafe context
 fs_raw_metadata_safe_reject|check-fail|tests/safety/fs_raw_metadata_safe_reject.tl|-|fs/metadata-read-i64-at requires unsafe context
 fs_raw_directory_alias_safe_reject|check-fail|tests/safety/fs_raw_directory_alias_safe_reject.tl|-|disk/c-string-byte requires unsafe context

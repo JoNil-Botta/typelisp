@@ -14987,6 +14987,12 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [body : i64]) : unit
+  (when
+    (tc_core.tc-body-storage-acyclic? (tc_core.tc-context-body-state ctx) body)
+    (let
+      [data : (Box LowerStateData) (lower-state-box state)]
+      (set! (deref data).address-exposure-mode 0))
+    (return unit))
   (let
     [source : storage_exposure.StorageExposure
       (tc_core.tc-body-storage-exposure (tc_core.tc-context-body-state ctx))]

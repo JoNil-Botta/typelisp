@@ -398,6 +398,14 @@ checker generation; a reset prevents an older token from restoring a frame.
 Parameter metadata annotates the ordinary bound environment, preserving its
 resolved types and lifetime markers without creating another binding layer.
 
+The existing typing dispatch separately records bodies without loops or nested
+lambdas. Those bodies need only incremental address marks: a later expression
+cannot execute before an earlier read through a backedge. The proof is a
+job-owned numeric bitset, bounded by the source pool and reset with the other
+body facts. Move entry skips binding collection only for that proof. An
+unexpected loop or capture clears it and invalidates any older body frames
+before lowering, so a partial census never supplies negative evidence.
+
 A successfully completed, complete frame makes an absent exposure key a proven
 negative. An unavailable or incomplete frame never supplies that proof. The
 checker accounts for every potentially exposed slot, including through its

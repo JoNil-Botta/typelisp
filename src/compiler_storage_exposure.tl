@@ -202,6 +202,20 @@
             (+ (* frame 6) 4))
           0)))))
 
+(define (storage-exposure-invalidate-body!
+  [state : StorageExposure]
+  [body : i64]) : unit
+  (let
+    [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
+    [index : index_map.Map
+      (unsafe
+        (deref data).by-body)]
+    [frame : i64 (index_map.get-value-or (& index) body -1)]
+    (while (>= frame 0)
+      (unsafe
+        (set! (array-ref (deref data).frames.slots (+ (* frame 6) 4)) 0))
+      (set! frame (storage-exposure-frame-field state frame 3)))))
+
 (define (storage-exposure-leave!
   [state : StorageExposure]
   [previous : i64]

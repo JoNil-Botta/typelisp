@@ -2077,7 +2077,33 @@
             (=
               (lower.lower-state-address-taken-var? state 1)
               (or (= scenario 1) (= scenario 2) (= scenario 4) (= scenario 5)))
-            "only a complete address-free fallback walk proves privacy"))))))
+            "only a complete address-free fallback walk proves privacy"))))
+    (let
+      [body-state : tc_core.TcBodyState (tc_core.tc-context-body-state ctx)]
+      [_start : unit
+        (tc_core.tc-body-early-exit-facts-start-with-limit!
+          body-state
+          (ast.ast-node-pool-context-expr-len pools))]
+      [earlier : i64 (storage_exposure.storage-exposure-enter! facts -1 body)]
+      [_complete : unit
+        (storage_exposure.storage-exposure-leave! facts earlier true)]
+      [_proof : unit
+        (tc_core.tc-body-storage-acyclic-set! body-state body true)]
+      [previous : i64 (tc_core.tc-body-storage-body-swap! body-state body)]
+      (lower.lower-exposure-prepare! ctx state body)
+      (test.assert-true
+        (not (lower.lower-state-address-taken-var? state 1))
+        "checked acyclic bodies retain incremental tracking without a binding census")
+      (tc_core.tc-storage-loop-enter! ctx)
+      (lower.lower-exposure-prepare! ctx state body)
+      (test.assert-true
+        (lower.lower-state-address-taken-var? state 1)
+        "an unexpected loop invalidates the absence proof before lowering")
+      (test.assert-true
+        (not (tc_core.tc-body-storage-acyclic? body-state 9223372036854775807))
+        "unrecordable source identities remain conservative")
+      (tc_core.tc-body-storage-body-swap! body-state previous)
+      unit)))
 
 (test
   compiler-lower-loop-address-exposure

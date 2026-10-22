@@ -19,6 +19,8 @@ jobs and reset generations. Acyclic raw-pointer argument/callee cases verify
 that sequential address marks still force the required snapshots. The
 completeness table distinguishes missing, complete-empty, incomplete, ambiguous
 and unmapped scope facts, and checks that incremental marks remain effective.
+Its acyclic proof case also checks that an unexpected loop retires both the
+proof and any earlier complete frame; out-of-range bodies remain unavailable.
 Its unrecorded-body table distinguishes address absence from write absence,
 preserves nested lambda boundaries and refuses missing or already incomplete
 evidence. `loop_address_argument.tl`,

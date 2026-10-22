@@ -594,7 +594,10 @@
   ;; is positive an unbound name gets no near-miss scan: the suggestion would be
   ;; thrown away with the error (see `tc-unbound-suggestions-suppress-push!`).
   (unbound-suggestion-suppress-depth i64)
-  (semantic-observer TcSemanticObserver))
+  (semantic-observer TcSemanticObserver)
+  ;; Named-body typing accumulates loops and nested captures independently
+  ;; of ordinary scoped binding restoration.
+  (storage-census-required bool))
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
@@ -1437,7 +1440,8 @@
               (ptr->int (__tl_array-data outlives-lifetime-cache)))
             : i64)
           0
-          (TcSemanticObserver 0)))
+          (TcSemanticObserver 0)
+          false))
       state)))
 
 (define (tc-job-state-type-env-scoped-state-init! [job-state : TcJobState]) : TcTypeEnvScopedState
@@ -2661,7 +2665,9 @@
   ;; The address of the one-slot TcBorrowLoopExits cell; see
   ;; tc-body-borrow-exits-swap!.
   (borrow-exits-cell i64)
-  (storage-exposure storage_exposure.StorageExposure))
+  (storage-exposure storage_exposure.StorageExposure)
+  (storage-acyclic (__tl_dyn-array i64))
+  (storage-body i64))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
@@ -3374,7 +3380,9 @@
         (tc_i64_i64_map.with-capacity 0)
         0
         (tc-borrow-loop-exits-cell-new)
-        (storage_exposure.storage-exposure-new)))
+        (storage_exposure.storage-exposure-new)
+        (__tl_make-array i64 0)
+        -1))
     (TcBodyState
       (cast
         (unsafe
@@ -3411,6 +3419,10 @@
       (set!
         (deref data).early-exit-known
         (__tl_make-array i64 (/ (+ expr-limit 63) 64)))
+      (set!
+        (deref data).storage-acyclic
+        (__tl_make-array i64 (/ (+ expr-limit 63) 64)))
+      (set! (deref data).storage-body -1)
       (set! (deref data).early-exit-current false)
       (set! (deref data).early-exit-suppress-depth 0)
       (set! (deref data).early-exit-source-expr-limit expr-limit)
@@ -3425,6 +3437,52 @@
 (define (tc-body-storage-exposure [state : TcBodyState]) : storage_exposure.StorageExposure
   (unsafe
     (deref (tc-body-state-view state)).storage-exposure))
+
+(define (tc-body-storage-acyclic? [state : TcBodyState] [body : i64]) : bool
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (and
+        (>= body 0)
+        (< body (deref data).early-exit-source-expr-limit)
+        (< (/ body 64) (array-length (deref data).storage-acyclic))
+        (!=
+          (bit-and
+            (array-ref (deref data).storage-acyclic (/ body 64))
+            (shl 1 (% body 64)))
+          0)))))
+
+(define (tc-body-storage-acyclic-set!
+  [state : TcBodyState]
+  [body : i64]
+  [acyclic? : bool]) : unit
+  (let
+    [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    (unsafe
+      (when
+        (and
+          (>= body 0)
+          (< body (deref data).early-exit-source-expr-limit)
+          (< (/ body 64) (array-length (deref data).storage-acyclic)))
+        (let
+          [index : i64 (/ body 64)]
+          [mask : i64 (shl 1 (% body 64))]
+          [word : i64 (array-ref (deref data).storage-acyclic index)]
+          (set!
+            (array-ref (deref data).storage-acyclic index)
+            (if acyclic?
+              (bit-or word mask)
+              (bit-and word (bit-xor mask -1)))))))))
+
+(define (tc-body-storage-body-swap! [state : TcBodyState] [body : i64]) : i64
+  (let
+    [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    [previous : i64
+      (unsafe
+        (deref data).storage-body)]
+    (unsafe
+      (set! (deref data).storage-body body))
+    previous))
 
 (define (tc-body-early-exit-facts-start!
   [state : TcBodyState]
@@ -32509,12 +32567,28 @@
             allow-mut-by-value-borrow
             (tc-expr ctx env expr))))]))
 
-(define (tc-expr-scoped-bindings? [expr : (& expr ast.AstExpr)]) : bool
+(define (tc-scoped-storage-census-swap! [address : i64] [required? : bool]) : bool
+  (if (> address 0)
+    (let
+      [data : (MutPtr TcTypeEnvScopedStateData)
+        (tc-type-env-scoped-state-ptr (TcTypeEnvScopedState address))]
+      [previous : bool
+        (unsafe
+          (deref data).storage-census-required)]
+      (unsafe
+        (set! (deref data).storage-census-required required?))
+      previous)
+    true))
+
+;; This existing dispatch decision also notes constructs that need binding
+;; identities before a loop or a nested capture can revisit their storage.
+(define (tc-expr-scoped-bindings? [state : i64] [expr : (& expr ast.AstExpr)]) : bool
   (match expr
-    [(or (Let _) (While _ _) (ForOwnedState _) (ForOwnedStep _) (Foreach _)
-         (SpmdReduce _) (SpmdScan _) (SpmdCompact _) (ForeachActive _ _)
-         (WithResource _))
+    [(or (While _ _) (ForOwnedState _) (ForOwnedStep _) (Foreach _)
+         (SpmdReduce _) (SpmdScan _) (SpmdCompact _) (ForeachActive _ _))
+      (tc-scoped-storage-census-swap! state true)
       true]
+    [(or (Let _) (WithResource _)) true]
     [_ false]))
 
 (define (tc-expr-with-expected-or-actual-core
@@ -32525,7 +32599,7 @@
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (if (and
     (tc-type-env-scoped-runtime-active? env)
-    (tc-expr-scoped-bindings? expr))
+    (tc-expr-scoped-bindings? env.abi-pad expr))
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save env)]
       [result : ResultTcType
@@ -59864,6 +59938,7 @@
   [maybe-ret : ast.AstMaybeType]
   [body : ast.AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcType
+  (tc-scoped-storage-census-swap! env.abi-pad true)
   (let
     [_
       (try
@@ -61885,7 +61960,7 @@
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (if (and
     (tc-type-env-scoped-runtime-active? env)
-    (tc-expr-scoped-bindings? expr))
+    (tc-expr-scoped-bindings? env.abi-pad expr))
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save env)]
       [result : ResultTcType (tc-expr-inner ctx env expr)]
@@ -70985,15 +71060,23 @@
     [ordinal : i64
       (tc-checked-let-binding-fact-state-data
         (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))).current-declaration-ordinal]
-    [_ : i64 (storage_exposure.storage-exposure-enter! facts ordinal body)]
+    [_ : i64
+      (storage_exposure.storage-exposure-enter!
+        facts
+        ordinal
+        (if (tc-body-storage-acyclic? (tc-context-body-state ctx) body)
+          -1
+          body))]
     ;; Both callers supply the ordinary environment that already binds these
     ;; parameters. Metadata must preserve its resolved types and lifetime markers.
-    (for [index (iterator.range 0 (ast.ast-param-list-len params))]
-      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
-        [(Param name _ _)
-          (let
-            [_registered : TcTypeEnv (tc-storage-register! ctx env 0 -1 name)]
-            unit)]))))
+    (when
+      (>= (storage_exposure.storage-exposure-current facts) 0)
+      (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+        (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+          [(Param name _ _)
+            (let
+              [_registered : TcTypeEnv (tc-storage-register! ctx env 0 -1 name)]
+              unit)])))))
 
 (define (tc-storage-expose!
   [ctx : TcContext]
@@ -73334,6 +73417,21 @@
 
 ;; A loop body entered from the non-loop walker; its `break`s belong to this
 ;; loop, so its frame keeps them out of an enclosing loop's collection.
+(define (tc-storage-loop-enter! [ctx : TcContext]) : unit
+  (let
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [body : i64
+      (unsafe
+        (deref (tc-body-state-view state)).storage-body)]
+    ;; A missed or newly elaborated loop/capture invalidates absence evidence
+    ;; before lowering. Its missing binding census must remain conservative.
+    (when
+      (tc-body-storage-acyclic? state body)
+      (tc-body-storage-acyclic-set! state body false)
+      (storage_exposure.storage-exposure-invalidate-body!
+        (tc-body-storage-exposure state)
+        body))))
+
 (define (tc-move-check-loop-body
   [ctx : TcContext]
   [expr-bases : i64]
@@ -73343,6 +73441,7 @@
   [outer-loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [body : ast.AstExpr]) : TcMoveLoopResult
+  (tc-storage-loop-enter! ctx)
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
     [outer : TcMoveBreakCollection
@@ -74242,6 +74341,7 @@
             body-box
             (tc-move-result-access access))])]
     [(Lambda lambda-box)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-lambda-box-shared-view lambda-box)
         [(Lambda params maybe-ret body-box)
           (let
@@ -74264,6 +74364,8 @@
                   (tc-moved-clone locals)))]
             [storage : storage_exposure.StorageExposure
               (tc-body-storage-exposure (tc-context-body-state ctx))]
+            [previous-body : i64
+              (tc-body-storage-body-swap! (tc-context-body-state ctx) body-box)]
             [previous-storage : i64
               (storage_exposure.storage-exposure-current storage)]
             [_source-entry : unit
@@ -74290,6 +74392,10 @@
                 (match (& lambda-result)
                   [(Ok _) true]
                   [_ false]))]
+            [_restore-body : i64
+              (tc-body-storage-body-swap!
+                (tc-context-body-state ctx)
+                previous-body)]
             [lambda-moved (try lambda-result)]
             [_
               (tc-body-param-write-fact-record!
@@ -74343,6 +74449,7 @@
               params
               body))])]
     [(SpmdCompact compact-box)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-compact-box-shared-view compact-box)
         [(Compact
             index
@@ -75261,6 +75368,7 @@
                   (Ok moved2))]
               [(Err message) (Err message)]))])]
     [(SpmdReduce reduce-box)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
         [(Reduce _ _ _ a-box b-box c-box d-box)
           (let
@@ -75300,6 +75408,7 @@
                   c))]
             (tc-move-check-expr ctx expr-bases env locals loop-carried m3 d))])]
     [(SpmdScan scan-box)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-scan-box-shared-view scan-box)
         [(Scan
             _
@@ -76009,6 +76118,8 @@
   [body-id : i64]
   [return-ty : ast.AstType]) : ResultTcUnit
   (let
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [previous-body : i64 (tc-body-storage-body-swap! state body-id)]
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [previous : i64 (storage_exposure.storage-exposure-current facts)]
@@ -76021,6 +76132,7 @@
       (match (& result)
         [(Ok) true]
         [_ false]))
+    (tc-body-storage-body-swap! state previous-body)
     result))
 
 (define (tc-move-check-body-id-impl
@@ -117350,6 +117462,7 @@
     [scoped-save : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter! carrier)]
     [body-state : TcBodyState (tc-context-body-state ctx)]
+    [previous-census : bool (tc-scoped-storage-census-swap! env.abi-pad false)]
     [semantic-observer : TcSemanticObserver
       (if (= tc-semantic-observed-jobs 0)
         (TcSemanticObserver 0)
@@ -117363,6 +117476,17 @@
           env
           body-box
           (tc-global-shared-view resolved-ret)))]
+    [needs-census : bool
+      (tc-scoped-storage-census-swap! env.abi-pad previous-census)]
+    [_census-proof : unit
+      (tc-body-storage-acyclic-set!
+        body-state
+        body-box
+        (and
+          (not needs-census)
+          (match (& typed-result)
+            [(Ok _) true]
+            [_ false])))]
     [_semantic-function-leave : unit
       (when
         (!= semantic-observer.address 0)

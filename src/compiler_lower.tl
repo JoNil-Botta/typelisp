@@ -29296,9 +29296,7 @@
                               (and
                                 (lower-binop-group-eq? op)
                                 (match (tc_core.tc-type-strip-region
-                                  (tc_core.tc-resolve-type
-                                    ctx
-                                    right-actual-ty))
+                                  (tc_core.tc-resolve-type ctx right-actual-ty))
                                   [(Unit) true]
                                   [_ false]))
                               (return
@@ -63048,17 +63046,8 @@
             (let
               [bound : LowerExpr
                 (match (& field-value)
-                  [(Var _)
-                    (Expr
-                      field-state
-                      field-value
-                      field-ty)]
-                  [_
-                    (try
-                      (lower-materialize
-                        field-state
-                        field-value
-                        field-ty))])]
+                  [(Var _) (Expr field-state field-value field-ty)]
+                  [_ (try (lower-materialize field-state field-value field-ty))])]
               (match bound
                 [(Expr bound-state bound-value bound-ty)
                   (match bound-value

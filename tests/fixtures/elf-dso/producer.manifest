@@ -35,3 +35,6 @@ e1e08e36d5fea8e8920723441a89a54433f80aa32d4d05b78238874fdee23376  tests/fixtures
 7a9cd99179fdd4b5a919d0f61491618165f3d91c640fbe247cff4d72044cfcad  tests/fixtures/elf-dso/gcc-sysv.expected
 0069b10e7e0082dc5e59b709eb6e9af05ebfd2669a2a4ce02dd2f7d7e74e68f5  tests/fixtures/elf-dso/musl-1.2.5.expected
 3c65e137028b6c8aa6d55c6e4d2067e1e7936348a2f220b3eace217068f6ef99  tests/fixtures/elf-dso/no-sections.expected
+zero-dynstr-producer GNU as --64 zero-dynstr.s; GNU ld -shared --hash-style=sysv -T zero-dynstr.ld zero-dynstr.o; source/layout in scripts/generate-elf-dso-fixtures.sh
+7eca48b9e5e4c86eb2ca831815b70cededd6aa5fcd29998e8120836600e88bb0  tests/fixtures/elf-dso/zero-dynstr.in
+a0ea9a075c221108eaf56bd440e389595a1b7a326a799f15ead19d805372af86  tests/fixtures/elf-dso/zero-dynstr.expected

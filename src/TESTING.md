@@ -2311,11 +2311,14 @@ are staged; absolute/parent-traversal dependencies remain invalid.
 
 linker_elf_dso_reader_tests.tl shares self-test with
 src/tests/linker_elf_dso_reader_smoke.tl at opt0/1/2 on Linux and Windows.
-Ten embedded GCC/Clang/musl snapshots cover both hash formats, GNU versions,
-weak/protected/TLS/IFUNC definitions, loader flags, needed libraries and a
-sectionless DSO. Recorded readelf projections check every exposed record.
+Eleven embedded GCC/Clang/musl/GNU-as snapshots cover both hash formats,
+GNU versions, weak/protected/TLS/IFUNC definitions, loader flags, needed
+libraries and a sectionless DSO. Recorded readelf projections check every
+exposed record.
 The sectionless case also checks unchanged payload bytes and complete version
 model parity with its independently checked sectionful producer.
+The zero-address dynstr producer accepts unrelated unallocated string tables;
+marking either table allocated must report its contradictory source field.
 
 Keep own-hash versus independent linear-wire lookup checks, explicit/default
 versions, absent versions, NUL-containing queries, missing hash tables,

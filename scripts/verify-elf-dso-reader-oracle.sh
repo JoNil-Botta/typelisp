@@ -73,5 +73,5 @@ for fixture in "$ROOT"/tests/fixtures/elf-dso/*.in; do
     diff -u "$WORK/$name.actual" "$WORK/$name.relative"
     count=$((count + 1))
 done
-[ "$count" -eq 10 ] || { echo "ELF DSO oracle: expected all 10 producers" >&2; exit 1; }
+[ "$count" -eq 11 ] || { echo "ELF DSO oracle: expected all 11 producers" >&2; exit 1; }
 printf 'ELF DSO oracle: %s producers, every dynamic/symbol/version record verified\n' "$count"

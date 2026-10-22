@@ -38,6 +38,32 @@ for hash in gnu both; do
     gcc -fPIC -shared -O2 -g0 -Wl,--build-id=none,--hash-style="$hash" \
         "$OUT/empty.c" -o "$OUT/gcc-empty-$hash.in"
 done
+cat > "$OUT/zero-dynstr.s" <<'ASM'
+.text
+.globl sample
+.type sample,@function
+sample:
+  mov $42, %eax
+  ret
+.size sample, .-sample
+.section .note.GNU-stack,"",@progbits
+ASM
+cat > "$OUT/zero-dynstr.ld" <<'LD'
+SECTIONS
+{
+  . = 0;
+  .dynstr : { *(.dynstr) }
+  . = ALIGN(8);
+  .hash : { *(.hash) }
+  .dynsym : { *(.dynsym) }
+  .text : { *(.text) }
+  . = ALIGN(8);
+  .dynamic : { *(.dynamic) }
+}
+LD
+as --64 "$OUT/zero-dynstr.s" -o "$OUT/zero-dynstr.o"
+ld -shared --hash-style=sysv -T "$OUT/zero-dynstr.ld" "$OUT/zero-dynstr.o" \
+    -o "$OUT/zero-dynstr.in"
 cp "$OUT/gcc-both.in" "$OUT/no-sections.in"
 dd if=/dev/zero of="$OUT/no-sections.in" bs=1 seek=40 count=8 conv=notrunc 2>/dev/null
 dd if=/dev/zero of="$OUT/no-sections.in" bs=1 seek=58 count=6 conv=notrunc 2>/dev/null

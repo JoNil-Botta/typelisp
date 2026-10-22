@@ -2643,7 +2643,9 @@ as variable records. Version name references are checked in the extent pass,
 so malformed name diagnostics identify their source word rather than the
 untrusted target index.
 
-Only a string table selected by dynsym's section link or the dynamic string
-address is corroborating dynstr metadata. Unrelated allocated string tables
+Only a string table selected by dynsym's section link or an allocated table at
+the dynamic string address is corroborating dynstr metadata. In particular,
+unallocated strtab/shstrtab addresses of zero do not identify a dynstr whose
+valid mapped virtual address is zero. Unrelated allocated string tables
 remain unrelated; the section-work reservation checks its product by division
 before multiplication.

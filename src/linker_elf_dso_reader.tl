@@ -232,7 +232,11 @@
             (set! width 2)]
           [3
             (when
-              (or (= i string-section) (= section.address string-address))
+              (or
+                (= i string-section)
+                (and
+                  (elf.flag? section.flags 2)
+                  (= section.address string-address)))
               (set! expected (clone (deref strings)))
               (set! tag dynamic.dt-strtab))]
           [_ unit])

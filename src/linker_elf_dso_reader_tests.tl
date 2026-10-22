@@ -46,6 +46,12 @@
 
 (include-bin empty-both "../tests/fixtures/elf-dso/gcc-empty-both.in")
 
+(include-bin zero-dynstr "../tests/fixtures/elf-dso/zero-dynstr.in")
+
+(include-bin
+  zero-dynstr-oracle
+  "../tests/fixtures/elf-dso/zero-dynstr.expected")
+
 (include-bin
   empty-gnu-oracle
   "../tests/fixtures/elf-dso/gcc-empty-gnu.expected")
@@ -101,6 +107,7 @@
   unit)
 
 (define (producer-tests) : unit
+  (assert-fixture (& zero-dynstr) (& zero-dynstr-oracle) true)
   (assert-fixture (& gcc-both) (& gcc-both-oracle) true)
   (assert-fixture (& gcc-gnu) (& gcc-gnu-oracle) true)
   (assert-fixture (& gcc-sysv) (& gcc-sysv-oracle) true)
@@ -285,6 +292,7 @@
   unit)
 
 (define (lookup-tests) : unit
+  (lookup-fixture (& zero-dynstr))
   (lookup-fixture (& gcc-both))
   (lookup-fixture (& gcc-gnu))
   (lookup-fixture (& gcc-sysv))
@@ -999,6 +1007,51 @@
           (test.assert-true found "allocated rodata producer control")
           (assert-fixture (& data) (& gcc-both-oracle) true))])))
 
+(define (zero-address-string-table-tests) : unit
+  (let
+    [req : dso.DsoReadRequest (request)]
+    (match (dso.read-dso (& zero-dynstr) (& req))
+      [(ReadFailed _) (test.assert-true false "zero-address dynamic strings")]
+      [(ReadDso object)
+        (test.assert-true
+          (=
+            (dso.tag-value (& object.entries) dynamic.dt-strtab)
+            (cast 0 : u64))
+          "producer places dynstr at virtual address zero")
+        (let
+          [i : i64 0]
+          [controls : i64 0]
+          (while (< i object.header.section-count)
+            (let
+              [section : elf.ElfSection
+                (elf.section-at
+                  (& zero-dynstr)
+                  (& object.header)
+                  (& object.identity)
+                  i)]
+              (when
+                (and
+                  (= section.section-type 3)
+                  (not (elf.flag? section.flags 2)))
+                (let
+                  [data : (__tl_dyn-array u8) (clone zero-dynstr)]
+                  (set! controls (+ controls 1))
+                  ;; An allocated table at this address must corroborate the
+                  ;; mapped dynstr; ordinary unallocated tables need not.
+                  (le.set-u64!
+                    (&mut data)
+                    (+ section.id.offset 8)
+                    (bit-or (cast section.flags : i64) 2))
+                  (assert-error
+                    (& data)
+                    "section-dynamic-disagreement"
+                    (+ section.id.offset 24)))))
+            (set! i (+ i 1)))
+          (test.assert-i64-eq
+            controls
+            2
+            "both unrelated string tables exercised"))])))
+
 (define (self-test) : i64
   (producer-tests)
   (lookup-tests)
@@ -1013,6 +1066,7 @@
   (empty-gnu-tests)
   (version-name-offset-tests)
   (unrelated-string-table-tests)
+  (zero-address-string-table-tests)
   42)
 
 (test elf-dso-producer-records (producer-tests))
@@ -1044,3 +1098,7 @@
   (version-name-offset-tests))
 
 (test elf-dso-unrelated-allocated-string-table (unrelated-string-table-tests))
+
+(test
+  elf-dso-zero-address-dynstr-and-unallocated-tables
+  (zero-address-string-table-tests))

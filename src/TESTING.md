@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`load-cse-runtime-global-argument-needs-installed-row` covers all seeded fill
+helpers with same/different global destinations, global addresses, zero counts,
+missing arguments, absent tables and cells-only/object-only availability.
+`global-mod-ref-installed-zero-row` distinguishes a missing row from an installed
+empty write set and an unavailable table. Keep the T2-2
+same-global rejection and unrelated-global forwarding controls beside them.
+
 `compiler-ast-span-forwarding` runs the compaction fixtures with source-span
 consumption enabled: empty input, bitmap and pool-segment boundaries, shared
 expressions, reordered canonical/ReSpan views, destination reuse and spans read

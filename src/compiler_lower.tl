@@ -74134,7 +74134,8 @@
                             pools
                             (compiler-lower-checked-dest-pools-current
                               lower-state)
-                            (& specialized))
+                            (& specialized)
+                            false)
                           (AstProgramCompaction specialized pools))]
                       [source-program : ast.AstProgram
                         (match (lower-global-shared-view source-compaction)
@@ -74379,7 +74380,8 @@
                   (ast.ast-program-compact-with-pools
                     pools
                     (compiler-lower-checked-dest-pools-current lower-state)
-                    (& generated))
+                    (& generated)
+                    false)
                   (AstProgramCompaction generated pools))]
               [macro-program : ast.AstProgram
                 (match (lower-global-shared-view generated-compaction)
@@ -74502,7 +74504,8 @@
                                 committed-macro-pools
                                 (compiler-lower-checked-dest-pools-current
                                   lower-state)
-                                (& expanded))
+                                (& expanded)
+                                true)
                               (AstProgramCompaction
                                 (if retain-macro-source?
                                   macro-program

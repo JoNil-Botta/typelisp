@@ -28,6 +28,41 @@ run check examples/hello.tl
 stderr empty
 stdout contains Type checking passed!
 
+case check-spmd-helper-physical-locations
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+mode scalar avx2 avx512
+each check compile
+file provider.tl
+(define (increment [value : i64]) : i64 (+ value 1))
+(define (apply [value : i64]) : i64
+  (let [callable : (-> i64 i64) increment]
+    (callable value)))
+end-file
+file middle.tl
+(import provider)
+(define (through [value : i64]) : i64
+  (provider.apply value))
+end-file
+file caller.tl
+(import middle)
+(define (fill [xs : (& xs (__tl_dyn-array i64))] [out : (&mut out (__tl_dyn-array i64))]) : unit
+  (foreach ([i : i64 0 3])
+    (set! (array-ref out i) (middle.through (array-ref xs i)))))
+(define (main) : i64 0)
+end-file
+run {{each}} "{{dir}}/caller.tl" --target {{target}} --opt-level {{opt}} --backend-mode {{mode}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0214]: typecheck: foreach calls with varying arguments are not supported
+stderr contains provider.tl:4:5
+stderr contains middle.tl:3:3
+stderr contains caller.tl:4:30
+stderr contains in SPMD helper `provider/apply` called here
+stderr contains in SPMD helper `middle/through` called here
+stderr not-contains unbound name
+stderr not-contains caller.tl:3:3
+
 case loader-error-codes
 target linux-x86_64 windows-x86_64
 each check compile

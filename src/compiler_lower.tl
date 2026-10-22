@@ -9325,7 +9325,7 @@
   [body : ast.AstExpr]) : bool
   (or
     (>
-      (lower-spmd-inline-expr-cost ctx (lower-global-shared-view body))
+      (lower-spmd-inline-expr-cost ctx (clone body))
       lower-spmd-inline-node-limit)
     (lower-spmd-helper-has-private-intrinsic? ctx body)))
 
@@ -9334,7 +9334,7 @@
   [body : ast.AstExpr]) : bool
   ;; A private spelling is interpreted in its definition's module. Retaining
   ;; that function boundary prevents caller-owned shadows capturing the call.
-  (match (lower-global-shared-view body)
+  (match (& body)
     [(Call func _)
       (match (ast.ast-expr-unspan-with-segment-bases
         (tc_core.tc-context-expr-bases ctx)
@@ -47853,21 +47853,19 @@
                 env
                 type-env
                 (lower-id-set-empty)
-                (lower-global-shared-view func))
+                func)
                 [(Ok helper)
                   (match helper
                     [(Some _ _ _ body)
                       (or
-                        (lower-spmd-helper-out-of-line?
-                          ctx
-                          (lower-global-shared-view body))
+                        (lower-spmd-helper-out-of-line? ctx body)
                         (lower-spmd-call-target-has?
                           ctx
                           function-state
                           env
                           type-env
                           probe
-                          (lower-global-shared-view func)))]
+                          (lower-context-expr-get ctx func-box)))]
                     [(Imported _ _ _ _ _) true]
                     [(No) false])]
                 [(Err _) false])]
@@ -48944,10 +48942,7 @@
                     ctx
                     (ast.ast-expr-list-get (& args) 0 0)))
                   [(Ok source)
-                    (match (tc_core.tc-expr
-                      ctx
-                      type-env
-                      (lower-global-shared-view origin))
+                    (match (tc_core.tc-expr ctx type-env (clone origin))
                       [(Ok destination)
                         (return
                           (Some

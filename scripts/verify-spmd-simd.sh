@@ -139,6 +139,9 @@ tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
 tests/spmd/inline_helper_f64.tl
 tests/integration/spmd_inline_helper_composition.tl
+tests/spmd/stdlib_math_abs.tl
+tests/spmd/stdlib_math_sqrt.tl
+tests/spmd/stdlib_math_exp.tl
 tests/spmd/private_helper_i64.tl
 tests/spmd/private_helper_f64.tl
 tests/spmd/private_helper_bool.tl

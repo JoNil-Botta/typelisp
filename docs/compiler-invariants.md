@@ -501,6 +501,15 @@ proofs, masks, gather checks and scalar tails inspect both parts, including an
 unused binding; staging must neither drop an argument's checks nor introduce
 effects on inactive lanes.
 
+SPMD helper walks apply the ordinary checker's intrinsic visibility and operand
+rules. Private intrinsic spellings retain their definition module during helper
+lowering, including under caller shadows; bodies containing them keep a helper
+boundary rather than substituting those spellings into the caller. Scalar
+lowering preserves ordinary calls. SIMD admission reports a typed unsupported
+intrinsic at the call site until the numeric policy supplies its strategy.
+Errors from a rechecked helper retain their physical callee path/span and wrap
+each caller boundary using the same diagnostic transport as macro frames.
+
 `compiler_spmd_logical_gang.tl` owns numeric native widths and checked logical
 gang geometry. It reuses the numeric policy's closed backend/lane enums; ABI
 projection happens in the lowerer, so generic, Linux and Windows modes have

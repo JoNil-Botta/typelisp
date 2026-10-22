@@ -174,12 +174,14 @@
     [inner : ast.AstSourceSpan (ast.AstSourceSpan 7 2 7 12)]
     [outer : ast.AstSourceSpan (ast.AstSourceSpan 11 4 11 14)]
     [text : String
-      (tc.tc-macro-framed-error
+      (tc.tc-framed-error
+        (tc.tc-macro-framed-error-prefix)
         (ci.intern "caller.tl")
         outer
         (ci.intern "middle.tl")
         (ci.intern "middle/outer")
-        (tc.tc-macro-framed-error
+        (tc.tc-framed-error
+          (tc.tc-macro-framed-error-prefix)
           (ci.intern "middle.tl")
           inner
           (ci.intern "provider.tl")

@@ -5646,9 +5646,9 @@
 (define (tc-rich-error-prefix) : String
   "__tl_tc_diag|")
 
-;; A macro frame wraps any established typecheck error transport instead of
-;; flattening and rebuilding it. The fixed fields precede the untouched inner
-;; payload, which may itself be a located/rich error or another macro frame.
+;; Macro and helper frames wrap established typecheck errors without flattening
+;; their payload. Fixed fields precede the untouched located/rich error or the
+;; next frame, preserving the physical callee and every invocation boundary.
 (define (tc-macro-framed-error-prefix) : String
   "__tl_tc_macro|")
 
@@ -42930,17 +42930,10 @@
       (Err (tc-spmd-inline-helper-recursive-message))]
     (set!
       result
-      (tc-spmd-expr
-        ctx
-        expr-bases
-        helper-env
-        helper-spmd-env
-        (tc-global-shared-view body)))
-    (tc-spmd-inline-helper-stack-restore-for-state!
-      traversal
-      (tc-global-shared-view previous))
-    (match (tc-global-shared-view result)
-      [(Ok _) result]
+      (tc-spmd-expr ctx expr-bases helper-env helper-spmd-env (clone body)))
+    (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
+    (match result
+      [(Ok info) (Ok info)]
       [(Err message)
         (Err
           (tc-spmd-helper-error
@@ -43356,7 +43349,7 @@
                 expr-bases
                 env
                 spmd-env
-                (tc-global-shared-view func)
+                (clone func)
                 helper-ctx
                 base-env
                 base-spmd-env
@@ -43463,12 +43456,10 @@
         expr-bases
         helper-env
         helper-spmd-env
-        (tc-global-shared-view body)))
-    (tc-spmd-inline-helper-stack-restore-for-state!
-      traversal
-      (tc-global-shared-view previous))
-    (match (tc-global-shared-view result)
-      [(Ok) result]
+        (clone body)))
+    (tc-spmd-inline-helper-stack-restore-for-state! traversal previous)
+    (match result
+      [(Ok) Ok]
       [(Err message)
         (Err
           (tc-spmd-helper-error
@@ -43507,7 +43498,7 @@
                 expr-bases
                 env
                 spmd-env
-                (tc-global-shared-view func)
+                (clone func)
                 helper-ctx
                 base-env
                 base-spmd-env
@@ -46258,10 +46249,10 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         [result : ResultTcSpmdExprInfo
           (tc-spmd-expr-typed ctx expr-bases env spmd-env inner expr-ty)]
-        (match (tc-global-shared-view result)
+        (match result
           [(Err message)
             (Err (tc-locate-error-at-expr expr-bases expr message))]
-          [_ result]))]
+          [(Ok info) (Ok info)]))]
     [(MacroExpansion inner-box _ _)
       (tc-spmd-expr-typed
         ctx

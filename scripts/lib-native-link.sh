@@ -12,7 +12,8 @@
 # Source it (not exec): `. "$ROOT/scripts/lib-native-link.sh"`. POSIX sh only.
 # Callers must set ROOT (repo root) before sourcing. After sourcing, call
 # `native_link_detect_host` (sets NL_HOST_OS / NL_OBJ_EXT / NL_BIN_EXT /
-# NL_BOOTSTRAP_TARGET) and `configure_toolchain` once, then `assemble_and_link`.
+# NL_BOOTSTRAP_TARGET) and `configure_toolchain` once, then `assemble_and_link`,
+# or `link_native_object` for a serialized object.
 #
 # Stack reserve: a 256 MiB PE entry-stack setting, kept for compatibility with
 # existing link paths. The freestanding Windows entry uses it only for bounded
@@ -227,6 +228,44 @@ run_with_heartbeat_capture() {
     return "$heartbeat_status"
 }
 
+link_native_object() {
+    label=$1
+    obj=$2
+    bin=$3
+    _entry=${4:-_tl_start}
+    if [ "$NL_HOST_OS" = windows ]; then
+        obj_win=$(to_windows_path "$obj")
+        bin_win=$(to_windows_path "$bin")
+        repro_arg=
+        if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
+            repro_arg=/Brepro
+        fi
+        echo "[native-link] link $label with Windows COFF linker (freestanding: no CRT)"
+        # Freestanding Win32: the backend emits its own entry (_tl_start) plus
+        # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use plus
+        # the audited ntdll rooted-filesystem boundary, so the binary links against
+        # no C runtime (no vcruntime140/ucrt/msvcrt).
+        # /NODEFAULTLIB keeps link.exe from pulling a default CRT for the entry.
+        MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
+            /NOLOGO \
+            ${repro_arg:+"$repro_arg"} \
+            "$obj_win" \
+            "/OUT:$bin_win" \
+            /SUBSYSTEM:CONSOLE \
+            /ENTRY:_tl_start \
+            /NODEFAULTLIB \
+            /DYNAMICBASE:NO \
+            "/STACK:$NL_WINDOWS_STACK_RESERVE" \
+            kernel32.lib \
+            ntdll.lib
+    else
+        echo "[native-link] link $label with ld (freestanding: no libc, no loader)"
+        # Runtime syscalls and libc-ABI shims are emitted in the object; this
+        # link requires neither a C library nor a dynamic loader.
+        ld -static -e "$_entry" "$obj" -o "$bin"
+    fi
+}
+
 assemble_and_link_windows() {
     label=$1
     asm=$2
@@ -236,30 +275,7 @@ assemble_and_link_windows() {
     echo "[native-link] assemble $label with clang"
     "$TYPELISP_WINDOWS_CLANG_POSIX" --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj"
 
-    obj_win=$(to_windows_path "$obj")
-    bin_win=$(to_windows_path "$bin")
-    repro_arg=
-    if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
-        repro_arg=/Brepro
-    fi
-    echo "[native-link] link $label with Windows COFF linker (freestanding: no CRT)"
-    # Freestanding Win32: the backend emits its own entry (_tl_start) plus
-    # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use plus
-    # the audited ntdll rooted-filesystem boundary, so the binary links against
-    # no C runtime (no vcruntime140/ucrt/msvcrt).
-    # /NODEFAULTLIB keeps link.exe from pulling a default CRT for the entry.
-    MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
-        /NOLOGO \
-        ${repro_arg:+"$repro_arg"} \
-        "$obj_win" \
-        "/OUT:$bin_win" \
-        /SUBSYSTEM:CONSOLE \
-        /ENTRY:_tl_start \
-        /NODEFAULTLIB \
-        /DYNAMICBASE:NO \
-        "/STACK:$NL_WINDOWS_STACK_RESERVE" \
-        kernel32.lib \
-        ntdll.lib
+    link_native_object "$label" "$obj" "$bin"
 }
 
 assemble_and_link() {
@@ -273,12 +289,6 @@ assemble_and_link() {
     else
         echo "[native-link] assemble $label with as"
         as "$asm" -o "$obj"
-        echo "[native-link] link $label with ld (freestanding: no libc, no loader)"
-        # The runtime is pure syscalls and the backend emits its own libc-ABI
-        # shims (write/read/open/getenv/...), so the compiler links static with
-        # no `-lc` and no dynamic loader -- the produced binary depends on no
-        # shared library.
-        _entry=$(linux_entry_symbol_for_asm "$asm")
-        ld -static -e "$_entry" "$obj" -o "$bin"
+        link_native_object "$label" "$obj" "$bin" "$(linux_entry_symbol_for_asm "$asm")"
     fi
 }

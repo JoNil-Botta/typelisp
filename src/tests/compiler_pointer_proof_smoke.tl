@@ -33,7 +33,10 @@
 (define (proof-smoke-request
   [input : proof.PointerProofInput]
   [mode : lower.CompilerLowerMode]) : lower.CompilerLowerRequest
-  (lower.CompilerLowerRequest mode (Requested input)))
+  (let
+    [request : lower.CompilerLowerRequest (lower.compiler-lower-request mode)]
+    (set! request.pointer-proof (Requested input))
+    request))
 
 (define (proof-smoke-release-lower!
   [result : (& result lower.ResultCompilerLower)]) : unit
@@ -49,8 +52,11 @@
   (let
     [request : lower.CompilerLowerRequest (proof-smoke-request input mode)]
     [lowered : lower.ResultCompilerLower
-      (lower.lower-compiler-source-with-request "proof-case.tl" source request)]
-    (match (lower.lower-compiler-pointer-proof-result request lowered)
+      (lower.lower-compiler-source-with-request
+        "proof-case.tl"
+        source
+        (& request))]
+    (match (lower.lower-compiler-pointer-proof-result (& request) lowered)
       [(Err error)
         (let
           [message : diagnostic.CompilerDiagnostic (deref error)]
@@ -148,14 +154,13 @@
 
 (define (proof-smoke-missing-input [mode : lower.CompilerLowerMode]) : unit
   (let
-    [request : lower.CompilerLowerRequest
-      (lower.CompilerLowerRequest mode Disabled)]
+    [request : lower.CompilerLowerRequest (lower.compiler-lower-request mode)]
     [plain : lower.ResultCompilerLower
       (lower.lower-compiler-source-with-mode
         "(define (main [p : (Ptr i64)]) : (Ptr i64) p)"
         mode)]
     (match (lower.lower-compiler-pointer-proof-result
-      request
+      (& request)
       (owned_view.compiler-owned-shared-view plain))
       [(Err _) unit]
       [_
@@ -177,7 +182,7 @@
         (lower.lower-compiler-source-with-request
           "proof-parity.tl"
           source
-          request)
+          (& request))
         (lower.lower-compiler-source-with-path-mode
           "proof-parity.tl"
           source
@@ -188,7 +193,7 @@
         (when
           requested?
           (match (lower.lower-compiler-pointer-proof-result
-            request
+            (& request)
             (Ok
               (owned_view.compiler-owned-shared-view program)
               (owned_view.compiler-owned-shared-view spans)
@@ -295,9 +300,9 @@
       (lower.lower-compiler-source-with-request
         "unsupported-proof.tl"
         source
-        request)]
+        (& request))]
     (match (lower.lower-compiler-pointer-proof-result
-      request
+      (& request)
       (owned_view.compiler-owned-shared-view lowered))
       [(Err error)
         (let
@@ -475,12 +480,12 @@
       (lower.lower-compiler-source-with-request
         "first.tl"
         (owned_view.compiler-owned-shared-view source)
-        request)]
+        (& request))]
     [second-result : lower.ResultCompilerLower
       (lower.lower-compiler-source-with-request
         "second.tl"
         (owned_view.compiler-owned-shared-view source)
-        (proof-smoke-request second mode))]
+        (& (proof-smoke-request second mode)))]
     [reference : proof.PointerProofRef
       (match (proof.pointer-proof-input-function first 0)
         [(Ok function) function.result]
@@ -496,7 +501,7 @@
         (io.panic
           "pointer-proof smoke: a foreign semantic reference was admitted")])
     (match (lower.lower-compiler-pointer-proof-result
-      request
+      (& request)
       (owned_view.compiler-owned-shared-view second-result))
       [(Err _) unit]
       [_
@@ -507,7 +512,7 @@
         (match (owned_view.compiler-owned-shared-view second-result)
           [(Ok _ spans _lower-owner)
             (match (lower.lower-compiler-pointer-proof-result
-              request
+              (& request)
               (Ok program spans first-owner))
               [(Err _) unit]
               [_
@@ -516,7 +521,7 @@
           [_ (io.panic "pointer-proof smoke: second guard source failed")])]
       [_ (io.panic "pointer-proof smoke: first guard source failed")])
     (match (lower.lower-compiler-pointer-proof-result
-      (proof-smoke-request missing mode)
+      (& (proof-smoke-request missing mode))
       (owned_view.compiler-owned-shared-view first-result))
       [(Err _) unit]
       [_
@@ -525,7 +530,7 @@
     (match (lower.lower-compiler-source-with-request
       "reuse.tl"
       (owned_view.compiler-owned-shared-view source)
-      request)
+      (& request))
       [(Err _) unit]
       [_ (io.panic "pointer-proof smoke: a bound owner was reused")])
     (proof.pointer-proof-input-release! first)
@@ -535,7 +540,7 @@
     (match (lower.lower-compiler-source-with-request
       "retired.tl"
       source
-      request)
+      (& request))
       [(Err _) unit]
       [_
         (io.panic
@@ -557,7 +562,7 @@
           (lower.lower-compiler-source-with-request
             "failed-source.tl"
             (owned_view.compiler-owned-array-element-shared-view sources index)
-            request)]
+            (& request))]
         (match failed
           [(Err _) unit]
           [_ (io.panic "pointer-proof smoke: invalid source was accepted")])
@@ -570,7 +575,7 @@
         (match (lower.lower-compiler-source-with-request
           "failed-reuse.tl"
           "(define (main [p : (Ptr i64)]) : (Ptr i64) p)"
-          request)
+          (& request))
           [(Err _) unit]
           [_
             (io.panic
@@ -608,7 +613,7 @@
     (svec.push-ref! (&mut roots) "stdlib")
     (lower.compiler-lower-state-use-request!
       (driver.compiler-driver-state-owned-lower-state state)
-      request)
+      (& request))
     (match (driver.compiler-driver-load-and-lower-escaping-with-state-and-retirement
       (owned_view.compiler-owned-shared-view state)
       (owned_view.compiler-owned-shared-view path)
@@ -625,7 +630,7 @@
           (io.panic "pointer-proof smoke: driver lowering failed"))]
       [(Ok program spans _ _ _ _ lower-owner)
         (match (lower.lower-compiler-pointer-proof-result
-          request
+          (& request)
           (Ok program spans lower-owner))
           [(Err error)
             (let

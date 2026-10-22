@@ -75134,13 +75134,16 @@ return 0" true)
           (& globals)
           (& functions)))]
     [blocks
-      (opt-t22-run
-        (ir.compiler-ir-param-seq-empty)
-        (opt.opt-call-memory-build (opt-t22-type-bases) (& functions) 16)
-        (if (= mode 4)
-          (opt.opt-global-cell-summary-empty)
-          cells)
-        (opt-t22-blocks instrs))]
+      (begin
+        (when (= mode 6) (set! cells.mod-ref.built? false))
+        (when (= mode 7) (set! cells.obj-mod-ref.built? false))
+        (opt-t22-run
+          (ir.compiler-ir-param-seq-empty)
+          (opt.opt-call-memory-build (opt-t22-type-bases) (& functions) 16)
+          (if (= mode 4)
+            (opt.opt-global-cell-summary-empty)
+            cells)
+          (opt-t22-blocks instrs)))]
     (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
 
 (test
@@ -75155,7 +75158,7 @@ return 0" true)
     (for [at (iterator.range 0 3)]
       (match (ir.compiler-ir-value-seq-borrow (& callees) at)
         [(Global callee)
-          (for [mode (iterator.range 0 6)]
+          (for [mode (iterator.range 0 8)]
             (test.assert-i64-eq
               (opt-t22-runtime-global-loads callee mode)
               2

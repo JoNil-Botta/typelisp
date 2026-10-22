@@ -2,8 +2,9 @@
 
 `load-cse-runtime-global-argument-needs-installed-row` covers all seeded fill
 helpers with same/different global destinations, global addresses, zero counts,
-missing arguments and absent tables. `global-mod-ref-installed-zero-row` distinguishes a missing
-row from an installed empty write set and an unavailable table. Keep the T2-2
+missing arguments, absent tables and cells-only/object-only availability.
+`global-mod-ref-installed-zero-row` distinguishes a missing row from an installed
+empty write set and an unavailable table. Keep the T2-2
 same-global rejection and unrelated-global forwarding controls beside them.
 
 `backend-forwarded-address-*` tests coalesced copies and same-type casts on

@@ -18,6 +18,12 @@ on both hosts.
 sentinels, the source-table boundary and structural pair/triple/fresh-local IDs
 through both alias fallbacks. A missing structural variable must retain E0201.
 
+`type-resolution-list-order-and-allocation` checks empty through wide lists,
+mixed concrete/resolved/generic elements, immutable input and nested function
+and tuple types. Run it with `--cfg compile-profile` at opt0/1/2 to check linear
+allocation with live counters. The adjacent pool-isolation test also resolves a
+list while a different compatibility pool is installed.
+
 `load-cse-runtime-global-argument-needs-installed-row` covers all seeded fill
 helpers with same/different global destinations, global addresses, zero counts,
 missing arguments, absent tables and cells-only/object-only availability.

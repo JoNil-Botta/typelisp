@@ -10037,6 +10037,10 @@
         (ast.ast-node-pool-context-type-push concrete-pools (I64))]
       [concrete-root : ast.AstType (Array concrete-child 3)]
       [unresolved-name : i64 (ci.intern "Expr")]
+      ;; Distinct pool layouts keep a wrong-owner id from accidentally naming
+      ;; the expected resolved type in the installed compatibility pool.
+      [_compatibility-sentinel : i64
+        (ast.ast-node-pool-context-type-push compatibility-pools (Struct 701))]
       [unresolved-child : i64
         (ast.ast-node-pool-context-type-push
           compatibility-pools

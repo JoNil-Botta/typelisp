@@ -70945,15 +70945,11 @@
     [_ false]))
 
 (define (tc-storage-value-reference? [ctx : TcContext] [ty : ast.AstType]) : bool
-  (let
-    [resolved : ast.AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
-    (if (tc-storage-register-resident? ctx (clone resolved))
-      false
-      (match resolved
-        [(or (Tuple _) (Array _ _) (Struct _) (StructArgs _ _) (Enum _)
-             (EnumArgs _ _))
-          true]
-        [_ false]))))
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(or (Tuple _) (Array _ _)) true]
+    [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
+      (<= (tc-inline-aggregate-regwords-cached ctx name) 0)]
+    [_ false]))
 
 (define (tc-storage-place-root
   [ctx : TcContext]

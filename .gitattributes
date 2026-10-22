@@ -23,3 +23,8 @@ tools/idna-unicode12-data/inputs/* binary
 # ELF fixture objects and LLVM projections are exact byte oracles.
 tests/fixtures/elf-object/*.in binary
 tests/fixtures/elf-object/*.expected text eol=lf
+
+# DSO images are data; their readelf projections are exact LF byte oracles.
+tests/fixtures/elf-dso/*.in binary
+tests/fixtures/elf-dso/*.expected text eol=lf
+tests/fixtures/elf-dso/producer.manifest text eol=lf

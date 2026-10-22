@@ -1,0 +1,38 @@
+D	1	[libc.so.6]
+D	c	1000
+D	d	111c
+D	19	3df8
+D	1b	8
+D	1a	3e00
+D	1c	8
+D	6ffffef5	270
+D	5	320
+D	6	290
+D	a	70
+D	b	18
+D	3	3fe8
+D	2	18
+D	14	7
+D	17	468
+D	7	3c0
+D	8	a8
+D	9	18
+D	6ffffffe	3a0
+D	6fffffff	1
+D	6ffffff0	390
+D	6ffffff9	3
+D	0	0
+Y	0	0	0	NOTYPE	LOCAL	DEFAULT	UND	[]
+Y	1	0	0	NOTYPE	WEAK	DEFAULT	UND	[_ITM_deregisterTMCloneTable]
+Y	2	0	0	FUNC	GLOBAL	DEFAULT	UND	[puts@GLIBC_2.2.5]
+Y	3	0	0	NOTYPE	WEAK	DEFAULT	UND	[__gmon_start__]
+Y	4	0	0	NOTYPE	WEAK	DEFAULT	UND	[_ITM_registerTMCloneTable]
+Y	5	0	0	FUNC	WEAK	DEFAULT	UND	[__cxa_finalize@GLIBC_2.2.5]
+VS	0	0
+VS	1	0
+VS	2	2
+VS	3	0
+VS	4	0
+VS	5	2
+VN	0	1	libc.so.6
+VA	10	0	2	GLIBC_2.2.5

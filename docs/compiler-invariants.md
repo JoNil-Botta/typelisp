@@ -2578,3 +2578,72 @@ reservation reuse, cloned reservations, reverse waits and stale live tokens.
 A separate mode of the same fixture runs concurrent native starts, failed execs
 and waits without the single-threaded fault hooks; both modes check descriptor
 and child cleanup.
+
+### ELF shared-object metadata
+
+linker_elf_dso_reader.tl supplies pure ELF64/LSB/x86-64 ET_DYN syntax for
+#8300. read-dso borrows immutable input and takes caller-assigned input/content
+identity plus DsoLimits. The result retains that borrow, physical program and
+dynamic-entry indices/offsets, dynstr/name spans, typed symbols, both hash
+directories, soname/needed names, loader flags, and GNU version records.
+Identity records are provenance, not capabilities; consumers retain their
+owner and must not mutate the input or directory while using its records.
+Sectionful symbol IDs refer to their physical section; sectionless IDs use
+table index -1 and the dynamic symbol table's file offset.
+
+The checked ELF identity/machine prefix, unsigned range proofs and symbol
+decoders are shared with the ET_REL reader. PT_DYNAMIC is unique and its file
+offset must agree with translation through PT_LOAD. Load extents cannot wrap,
+overlap or map a requested virtual range ambiguously. File size, rather than
+memory size, bounds every address translation and open-ended hash/version
+walk. Zero-sized load extents are empty. Optional section headers corroborate
+dynamic table/symbol/string/hash/version addresses, sizes and entry widths;
+a discrepancy is an error, and absent headers never trigger a fallback.
+The ancillary section directory is internal; it is not a complete ET_REL model.
+
+DT_HASH nchain or checked GNU bucket/terminated-chain walks establish the
+symbol count; both agree when GNU chains encode a count. An empty GNU hash can have
+symoffset=1 despite a longer undefined-symbol prefix. A checked SysV count or
+the unique dynamic-symbol section supplies that total; its virtual address
+still maps through PT_LOAD. Without either, UnsupportedMetadata reports
+GNU-empty-symbol-count rather than assuming dynstr adjacency. chain-count
+retains the empty/nonempty distinction while symbol-count is complete for
+every accepted model. Validation checks reachability,
+chain ownership, bucket/name hashes and GNU bloom bits. The shared
+linker_elf_dynamic.tl owns dynamic tag classification and the GNU byte hash;
+the existing GNU-version codec remains the single SysV name-hash owner.
+GNU version extents are preflighted, then decoded by that existing codec,
+preserving hidden/default bits, definition/need indices, inheritance,
+physical offsets and required BASE. An unresolved version index is rejected.
+
+lookup takes borrowed name/version bytes, hash selection and a work limit.
+Empty version selects a non-hidden default; an explicit version can select a
+non-default definition. Local, undefined and hidden/internal visibility rows
+are absent; weak, protected, TLS and IFUNC definitions retain their syntax.
+An explicitly requested unavailable hash is an error. No lookup executes code
+or chooses a provider across DSOs. Unknown dynamic tags/loader bits remain raw
+syntax for later admission policy. #8293 and #7101 consume these records;
+#8300 does not search files, parse linker scripts, resolve imports, relocate
+images or add a public linker command. Non-ELF input has a distinct NotElf
+result so the caller can dispatch to the script parser.
+
+Limits cover input, segments, sections, dynamic entries, symbols, total version
+headers/auxiliaries, string bytes, conservative retained storage, and work.
+Every variable allocation has a prior bound. Name/payload bytes remain
+borrowed except the bounded version slices required by the existing codec.
+Its ownership maps, geometric vector storage, padding and fixed index map are
+reserved before decoding. The final section cross-check is charged before
+the remaining work budget is handed to that codec. Work is a conservative
+operation budget, not a time or OS-memory metric. Errors contain a fixed
+field name, physical source offset and original identity; hostile text is
+never copied into diagnostics.
+
+The retained reservation includes fixed result/empty-vector storage as well
+as variable records. Version name references are checked in the extent pass,
+so malformed name diagnostics identify their source word rather than the
+untrusted target index.
+
+Only a string table selected by dynsym's section link or the dynamic string
+address is corroborating dynstr metadata. Unrelated allocated string tables
+remain unrelated; the section-work reservation checks its product by division
+before multiplication.

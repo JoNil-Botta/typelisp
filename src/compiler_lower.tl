@@ -15040,22 +15040,39 @@
     [facts : LowerAddressExposure
       (unsafe
         (deref (compiler-lower-function-state-view function-state)).address-exposure)]
+    [ready : bool
+      (storage_exposure.storage-exposure-ready? facts.source facts.frame)]
+    [exposes : bool
+      (and
+        ready
+        (=
+          (storage_exposure.storage-exposure-frame-field
+            facts.source
+            facts.frame
+            6)
+          1))]
     [index : i64
-      (storage_exposure.storage-exposure-find
-        facts.source
-        facts.frame
-        kind
-        scope
-        name
-        (tc_core.tc-storage-key facts.frame kind scope name))]
+      (if ready
+        (storage_exposure.storage-exposure-find
+          facts.source
+          facts.frame
+          kind
+          scope
+          name
+          (storage_exposure.storage-exposure-key facts.frame kind scope name))
+        -1)]
     [exposed : bool
       (or
-        (not
-          (storage_exposure.storage-exposure-ready? facts.source facts.frame))
+        (not ready)
         (< index 0)
-        (!=
-          (storage_exposure.storage-exposure-binding-field facts.source index 4)
-          0))]
+        (and
+          exposes
+          (!=
+            (storage_exposure.storage-exposure-binding-field
+              facts.source
+              index
+              4)
+            0)))]
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower_i64_i64_map.insert-ref!
       (&mut (__tl-project-field (__tl-box-place data) address-taken))
@@ -15101,7 +15118,11 @@
                       0
                       scope
                       name
-                      (tc_core.tc-storage-key facts.frame 0 scope name))
+                      (storage_exposure.storage-exposure-key
+                        facts.frame
+                        0
+                        scope
+                        name))
                     0)
                   (= var-id (sym_i64_env.sym-i64-lookup-id-or env name -1)))
                 (begin

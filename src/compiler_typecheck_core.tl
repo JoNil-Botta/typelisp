@@ -70926,10 +70926,6 @@
             i64))))
     -1))
 
-(define (tc-storage-key [frame : i64] [kind : i64] [scope : i64] [name : i64]) : i64
-  ;; A bucket hint only: the fact table compares every full-width key field.
-  (bit-xor (bit-xor (* frame 16777619) (* scope 131)) (bit-xor kind name)))
-
 (define (tc-storage-register!
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -70949,7 +70945,7 @@
             kind
             scope
             name
-            (tc-storage-key frame kind scope name))]
+            (storage_exposure.storage-exposure-key frame kind scope name))]
         [head : i64 (tc-storage-binding-node env name)]
         (if (>= head 0)
           (unsafe
@@ -71002,7 +70998,7 @@
                     0
                     -1
                     name
-                    (tc-storage-key
+                    (storage_exposure.storage-exposure-key
                       (storage_exposure.storage-exposure-current facts)
                       0
                       -1
@@ -71097,7 +71093,7 @@
                         0
                         -1
                         root
-                        (tc-storage-key frame 0 -1 root)))
+                        (storage_exposure.storage-exposure-key frame 0 -1 root)))
                     (storage_exposure.storage-exposure-incomplete! facts))))))]
         [(Err _) (storage_exposure.storage-exposure-incomplete! facts)]))))
 

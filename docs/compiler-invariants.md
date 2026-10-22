@@ -390,6 +390,9 @@ identities invalidate the frame, and reset generations cannot reuse old IDs.
 Nested lambdas own capture slots in separate frames; auxiliary capability
 queries suspend collection instead of attributing a nested body to its caller.
 Only successfully completed, complete frames prove a source slot private.
+Binding descriptors are append-only until the first slot exposure builds that
+frame’s sparse index; exact membership and exposure joins are preserved before
+and after promotion. Missing keys remain conservative in both representations.
 
 Lowering seeds its existing address-taken map as parameter, local, pattern and
 loop slots are allocated, and scope entry seeds only visible bindings. Shared

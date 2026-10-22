@@ -24,14 +24,14 @@
               index
               "exact key survives collisions")
             (test.assert-i64-eq
-              (exposure.storage-exposure-bind! facts kind scope name 0)
-              identity
-              "duplicate has one identity")
-            (test.assert-i64-eq
               (exposure.storage-exposure-binding-field facts index 4)
               0
               "new binding is private")
             (exposure.storage-exposure-mark! facts identity)
+            (test.assert-i64-eq
+              (exposure.storage-exposure-bind! facts kind scope name 0)
+              identity
+              "duplicate has one identity")
             (test.assert-i64-eq
               (exposure.storage-exposure-binding-field facts index 4)
               1
@@ -128,3 +128,34 @@
         -1
         "missing frame has no binding facts")
       (exposure.storage-exposure-leave! facts previous true))))
+
+(test
+  compiler-storage-exposure-lazy-index-joins
+  (let
+    [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
+    [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
+    [frame : i64 (exposure.storage-exposure-current facts)]
+    [first : i64 (exposure.storage-exposure-bind! facts 0 -1 7 0)]
+    [second : i64 (exposure.storage-exposure-bind! facts 0 -1 7 0)]
+    (test.assert-i64-eq
+      (exposure.storage-exposure-frame-field facts frame 6)
+      0
+      "no index before any exposure")
+    (exposure.storage-exposure-mark! facts first)
+    (test.assert-i64-eq
+      (exposure.storage-exposure-frame-field facts frame 6)
+      1
+      "first exposure promotes the frame")
+    (test.assert-i64-eq
+      (exposure.storage-exposure-find facts frame 0 -1 7 0)
+      (exposure.storage-exposure-index facts first)
+      "promotion joins a marked older duplicate")
+    (exposure.storage-exposure-mark! facts second)
+    (test.assert-i64-eq
+      (exposure.storage-exposure-binding-field
+        facts
+        (exposure.storage-exposure-find facts frame 0 -1 7 0)
+        4)
+      1
+      "duplicate exposure remains visible")
+    (exposure.storage-exposure-leave! facts previous true)))

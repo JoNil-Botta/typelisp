@@ -14,10 +14,10 @@ source tests/integration/static_scalar_array_globals.tl
 target linux-x86_64 windows-x86_64
 opt 0 1 2
 assemble
-not-contains _tl_static_scalar_array_unused_provider_empty:
-not-contains _tl_static_scalar_array_unused_provider_unused_one:
-not-contains _tl_static_scalar_array_unused_provider_unused_eight:
-not-contains _tl_static_scalar_array_unused_provider_unused_wide:
+not-contains static_scalar_array_unused_provider_empty:
+not-contains static_scalar_array_unused_provider_unused_one:
+not-contains static_scalar_array_unused_provider_unused_eight:
+not-contains static_scalar_array_unused_provider_unused_wide:
 contains _tl_static_scalar_array_globals_mutable:
 contains _tl_static_scalar_array_globals_twin:
 contains _tl_static_scalar_array_globals_wide:

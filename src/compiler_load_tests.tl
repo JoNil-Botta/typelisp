@@ -4310,8 +4310,7 @@
         "proof_other.tl"
         (string.copy text))]
     [_next-entry : unit
-      (load.compiler-load-session-state-embedded-provenance-reset!
-        (load.compiler-load-global-shared-view state))]
+      (load.compiler-load-session-state-embedded-provenance-reset! (& state))]
     [after-reset : bool
       (compiler-load-proof-matches?
         (& state)
@@ -4442,8 +4441,7 @@
           (=
             (ci.intern-compat-state-pool-len (& intern-decoy))
             decoy-pool-before))]
-      (load.compiler-load-session-state-embedded-provenance-reset!
-        (owned_view.compiler-owned-shared-view state-b))
+      (load.compiler-load-session-state-embedded-provenance-reset! (& state-b))
       (let
         [active-after : ci.InternCompatState
           (ci.intern-compat-state-capture-active)]
@@ -4565,8 +4563,7 @@
           (load.compiler-load-canonical-stdlib-path "/roots/a/string.tl")
           "/roots/a/string.tl"))]
     [_reset : unit
-      (load.compiler-load-session-state-embedded-provenance-reset!
-        (owned_view.compiler-owned-shared-view state))]
+      (load.compiler-load-session-state-embedded-provenance-reset! (& state))]
     [_note-after-reset : unit
       (load.compiler-load-session-state-note-stdlib-path!
         (owned_view.compiler-owned-shared-view state)
@@ -4784,8 +4781,7 @@
         (sym_i64_env.sym-i64-contains-id observed-a.primary-members member-a-id)
         (sym_i64_env.sym-i64-contains-id observed-b.primary-members member-b-id))]
     [_reset-a : unit
-      (load.compiler-load-session-state-surface-summaries-reset!
-        (owned_view.compiler-owned-shared-view state-a))]
+      (load.compiler-load-session-state-surface-summaries-reset! (& state-a))]
     (cond
       [(not before-reset)
         (io.panic "compiler-load: traversal before-reset mismatch")]
@@ -5401,8 +5397,7 @@
               (= summary.module-id module-b)]
             [_ false]))]
       [_reset-a : unit
-        (load.compiler-load-session-state-surface-summaries-reset!
-          (owned_view.compiler-owned-shared-view state-a))]
+        (load.compiler-load-session-state-surface-summaries-reset! (& state-a))]
       [isolation-ok : bool
         (and
           (=
@@ -5525,8 +5520,7 @@
               (= decl.name decl-id)
               (= decl.module module-id)))]
         [_ false])]
-    (load.compiler-load-session-state-surface-summaries-reset!
-      (owned_view.compiler-owned-shared-view state))
+    (load.compiler-load-session-state-surface-summaries-reset! (& state))
     (and
       handoff-ok
       (=

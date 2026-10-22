@@ -15,6 +15,17 @@ builds poison the consumed source's shared span-base table so later reads
 through any context view fail; full compiler and corpus builds with `--cfg test`
 exercise the finalization-to-retirement boundary.
 
+The `tc-read-value-*` tests retain unchanged expression IDs and cover every
+result-path wrapper, empty sequences, conditional/match arms and non-result
+children. The owner test crosses an expression segment boundary with colliding
+IDs in a current peer, then destroys both that peer's node storage and base
+arena before reading the new payloads. Keep the shared `BoxTake` occurrence
+test: its prefix stays owning while its result becomes `BoxGet`. Run these at
+opt0/1/2; restoring allocation for unchanged nodes, suppressing the real read
+rewrite or allocating payloads in the current peer must fail the regressions.
+Unchanged paths check allocator deltas as well as row counts. A mixed Match
+case keeps the earlier arm unchanged while rewriting a later arm.
+
 `backend-forwarded-address-*` tests coalesced copies and same-type casts on
 both targets, phi filtering and cycle scheduling, and final-IR branch loads
 whose address setup must survive. Initialized same-home copies and real swap

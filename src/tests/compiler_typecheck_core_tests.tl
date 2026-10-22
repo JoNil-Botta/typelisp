@@ -3427,6 +3427,7 @@
     (= (comptime (offset-of (type TcTypeEnvBinding) name-id)) 0)
     (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
     (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
+    (= (comptime (offset-of (type TcTypeEnvBinding) storage-source)) 40)
     (= (comptime (offset-of (type TcTypeEnvStore) bindings)) 0)
     (= (comptime (offset-of (type TcTypeEnvStore) binding-capacity)) 8)
     (= (comptime (offset-of (type TcTypeEnvStore) binding-len)) 16)
@@ -3442,6 +3443,7 @@
       (comptime
         (offset-of (type TcTypeEnvStore) type-resolution-cache-state-address))
       80)
+    (= (comptime (offset-of (type TcTypeEnvStore) storage-source-owner)) 88)
     ;; The structural top-env index reads these four through raw word offsets,
     ;; so they must stay first and stay one word wide.
     (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)

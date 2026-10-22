@@ -4,7 +4,10 @@
 and projected register aggregates are captured before opaque mutation across
 loop backedges. Match bindings have the same rule; shadowed let and match
 bindings, lambda boundaries, reference arguments and read-only tails
-retain their existing no-copy behavior. `loop_address_argument.tl`,
+retain their existing no-copy behavior. Cached parameter, local and shadowed
+bindings cross type-environment compaction. `compiler-storage-exposure-*`
+checks full-width lexical keys under forced hash collisions, nested frames,
+failed/incomplete checks and stale identities after a checker-job reset. `loop_address_argument.tl`,
 `loop_address_callee.tl` and `loop_address_snapshots.tl` compare raw-pointer
 effects with explicit snapshots at opt0/1/2 on both hosts, including zero, one
 and multiple iterations and capturing lambdas. The stored mutable-borrow safety

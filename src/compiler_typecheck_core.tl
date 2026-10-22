@@ -70927,7 +70927,8 @@
     -1))
 
 (define (tc-storage-key [frame : i64] [kind : i64] [scope : i64] [name : i64]) : i64
-  (tc-checked-let-binding-key-hash frame scope kind name 0))
+  ;; A bucket hint only: the fact table compares every full-width key field.
+  (bit-xor (bit-xor (* frame 16777619) (* scope 131)) (bit-xor kind name)))
 
 (define (tc-storage-register!
   [ctx : TcContext]
@@ -70995,7 +70996,7 @@
             (when
               (>= name 0)
               (let
-                [identity : i64
+                [_identity : i64
                   (storage_exposure.storage-exposure-bind!
                     facts
                     0
@@ -71017,7 +71018,14 @@
             out
             (tc-storage-register!
               ctx
-              (tc-type-env-bind-node out name (tc-resolve-type ctx ty))
+              (tc-type-env-bind-node
+                out
+                name
+                (match (tc-lookup-id env name)
+                  [(Ok bound) bound]
+                  [(Err _)
+                    (storage_exposure.storage-exposure-incomplete! facts)
+                    (tc-type-strip-invalidate (tc-resolve-type ctx ty))]))
               0
               -1
               name))]))
@@ -71102,7 +71110,7 @@
     [remaining : TcNameIdList names]
     (while (not (tc-name-id-list-empty? remaining))
       (let
-        [registered : TcTypeEnv
+        [_registered : TcTypeEnv
           (tc-storage-register!
             ctx
             env
@@ -76027,9 +76035,9 @@
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
     [previous : i64 (storage_exposure.storage-exposure-current facts)]
-    [locals : TcMovedSet (tc-move-params-locals params (tc-moved-empty))]
+    [no-captures : TcMovedSet (tc-moved-empty)]
     [source-env : TcTypeEnv
-      (tc-storage-enter! ctx env params (& locals) body-id)]
+      (tc-storage-enter! ctx env params (& no-captures) body-id)]
     [result : ResultTcUnit
       (tc-move-check-body-id-impl
         ctx

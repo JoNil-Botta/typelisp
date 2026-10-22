@@ -1779,8 +1779,47 @@
           -2]
         [_ -2])]))
 
+(define (compiler-lower-cached-exposure-source) : String
+  (let
+    [source : String ""]
+    (for [variant (iterator.range 0 3)]
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          "\n(define (cached-"
+          (if (= variant 0)
+            "param"
+            (if (= variant 1)
+              "local"
+              "shadow"))
+          " [x : i64] [q : (MutPtr i64)] [n : i64]) : i64 (let "
+          (if (= variant 1)
+            "[x : i64 1] "
+            "")))
+      (for [index (iterator.range 0 40)]
+        (set!
+          source
+          (str_cat.str-cat
+            source
+            "[pad"
+            (string.int->string index)
+            " : i64 0] ")))
+      (set!
+        source
+        (str_cat.str-cat
+          source
+          "[result : i64 0] [i : i64 0] (while (< i n) "
+          "(when (= i 1) (set! result (first x (write-99! q)))) "
+          (if (= variant 2)
+            "(let [x : i64 17] (unsafe (ptr-addr-of x)) unit) "
+            "(set! q (unsafe (ptr-addr-of x))) ")
+          "(set! i (+ i 1))) result))\n")))
+    source))
+
 (define (compiler-lower-loop-exposure-source) : String
-  "(defstruct Pair (left i64) (right i64))
+  (str_cat.str-cat
+    "(defstruct Pair (left i64) (right i64))
 (defenum Choice (Value i64))
 (define (first [a : i64] [_b : i64]) : i64 a)
 (define (first-ref [a : (& i64)] [_b : i64]) : i64 (deref a))
@@ -1859,7 +1898,9 @@
        (projection q 2) (match-bound (Value 1) q 2) (shadowed 1 q 2)
        (match-shadowed 1 q 2) (unrelated 1 q 2)
        (lambda-boundary 1 q 2) (ref-slot (& y) q 2) (ref-unrelated (& y) q 2)
-       (readonly-argument 1 y) (readonly-callee inc y))))")
+       (cached-param 1 q 2) (cached-local 1 q 2) (cached-shadow 1 q 2)
+       (readonly-argument 1 y) (readonly-callee inc y))))"
+    (compiler-lower-cached-exposure-source)))
 
 (test
   compiler-lower-loop-address-exposure
@@ -1874,7 +1915,7 @@
       result))
     [(Some functions)
       (let
-        [names : (Array String 11)
+        [names : (Array String 14)
           (array
             "loop-argument"
             "loop-callee"
@@ -1886,8 +1927,11 @@
             "unrelated"
             "lambda-boundary"
             "ref-slot"
-            "ref-unrelated")]
-        (for [index (iterator.range 0 11)]
+            "ref-unrelated"
+            "cached-param"
+            "cached-local"
+            "cached-shadow")]
+        (for [index (iterator.range 0 14)]
           (let
             [callee? : bool (or (= index 1) (= index 2))]
             (test.assert-i64-eq
@@ -1899,11 +1943,11 @@
                   "write-99!")
                 (if callee?
                   ""
-                  (if (>= index 9)
+                  (if (or (= index 9) (= index 10))
                     "first-ref"
                     "first")))
               ;; Reference call arguments retain their existing borrow path.
-              (if (< index 5)
+              (if (or (< index 5) (= index 11) (= index 12))
                 1
                 0)
               (string.copy (array-ref names index)))))

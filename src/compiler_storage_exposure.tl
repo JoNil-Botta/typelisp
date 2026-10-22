@@ -1,9 +1,8 @@
 ;; Checked lexical storage facts. Handles and numeric source keys belong to
 ;; one checker job; no expression/type payload survives function scratch here.
 (import stdlib.arena)
-(import stdlib.iterator)
 (import stdlib.vector)
-(import (vector.vector i64) as words)
+(import (vector.vector i64 core) as words)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as index_map)
 

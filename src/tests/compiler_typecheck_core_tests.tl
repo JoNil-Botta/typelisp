@@ -9942,10 +9942,11 @@
           (ci.intern-source-name-session-capture-active-handle)
           job)]
       [unknown : i64 (ci.intern "UnresolvedListElement")]
+      [syntax-name : i64 (ci.intern "Expr")]
       [ids : (Array i64 3)
         (array
           (ast.ast-node-pool-context-type-push pools (I64))
-          (ast.ast-node-pool-context-type-push pools (Var (ci.intern "Expr")))
+          (ast.ast-node-pool-context-type-push pools (Var syntax-name))
           (ast.ast-node-pool-context-type-push pools (Var unknown)))]
       [widths : (Array i64 6) (array 0 1 2 3 17 256)]
       (for [case-index (iterator.range 0 6)]
@@ -9955,15 +9956,12 @@
           (for [index (iterator.range 0 count)]
             (ast.ast-type-list-push (&mut source) (array-ref ids (% index 3))))
           ;; Prime name/predicate caches so this measures list construction.
-          (tc_core.tc-resolve-type-list
-            ctx
-            (tc_core.tc-global-shared-view source))
+          (tc_core.tc-resolve-type-list ctx (clone source))
           (let
+            [input : ast.AstTypeList (clone source)]
             [before : i64 (profile.alloc-total)]
             [resolved : ast.AstTypeList
-              (tc_core.tc-resolve-type-list
-                ctx
-                (tc_core.tc-global-shared-view source))]
+              (tc_core.tc-resolve-type-list ctx input)]
             [allocated : i64 (- (profile.alloc-total) before)]
             (test.assert-i64-eq
               (ast.ast-type-list-len (& resolved))
@@ -9985,6 +9983,17 @@
                 (ast.ast-type-list-get (& source) index -1)
                 (array-ref ids (% index 3))
                 "source list is unchanged")
+              (test.assert-true
+                (match (ast.ast-node-pool-context-type-get
+                  pools
+                  (array-ref ids (% index 3)))
+                  [(I64) (= (% index 3) 0)]
+                  [(Var name)
+                    (if (= (% index 3) 1)
+                      (= name syntax-name)
+                      (and (= (% index 3) 2) (= name unknown)))]
+                  [_ false])
+                "source child types are unchanged")
               (let
                 [ty : ast.AstType
                   (ast.ast-node-pool-context-type-get
@@ -10000,12 +10009,12 @@
             (let
               [nested : ast.AstType
                 (ast.ast-ty-func
-                  (tc_core.tc-global-shared-view source)
-                  (& (ast.ast-ty-tuple (tc_core.tc-global-shared-view source))))]
+                  (clone source)
+                  (& (ast.ast-ty-tuple (clone source))))]
               [actual : ast.AstType (tc_core.tc-resolve-type ctx nested)]
               [expected : ast.AstType
                 (ast.ast-ty-func
-                  (tc_core.tc-global-shared-view resolved)
+                  (clone resolved)
                   (& (ast.ast-ty-tuple resolved)))]
               (test.assert-true
                 (ast.ast-type-eq? actual expected)

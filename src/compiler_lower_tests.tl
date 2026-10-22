@@ -1920,10 +1920,14 @@
     (f (write-dec! p))))
 (define (global-argument [x : i64] [q : (MutPtr i64)]) : i64
   (unsafe (ptr-addr-of global-slot))
-  (first x (write-99! q)))
+  (let [result : i64 0] [i : i64 0]
+    (while (< i 2)
+      (set! result (first x (write-99! q))) (set! i (+ i 1))) result))
 (define (global-callee [f : (-> i64 i64)] [p : (MutPtr (-> i64 i64))]) : i64
   (unsafe (ptr-addr-of global-slot))
-  (f (write-dec! p)))
+  (let [result : i64 0] [i : i64 0]
+    (while (< i 2)
+      (set! result (f (write-dec! p))) (set! i (+ i 1))) result))
 (define (readonly-argument [x : i64] [y : i64]) : i64
   (let [result (first x (+ y 1))] (unsafe (ptr-addr-of x)) result))
 (define (readonly-callee [f : (-> i64 i64)] [y : i64]) : i64
@@ -2096,6 +2100,7 @@
       (test.assert-true
         (not (lower.lower-state-address-taken-var? state 1))
         "checked acyclic bodies retain incremental tracking without a binding census")
+      (tc_core.tc-body-storage-acyclic-set! body-state body false)
       (tc_core.tc-storage-loop-enter! ctx)
       (lower.lower-exposure-prepare! ctx state body)
       (test.assert-true

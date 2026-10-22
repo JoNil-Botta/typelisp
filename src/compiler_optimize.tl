@@ -108893,6 +108893,8 @@
 ;; moment the row is armed.
 (define opt-inline-checked-target-relaxed? : bool
   false)
+(define opt-inline-checked-target-conditional-literal? : bool
+  false)
 
 ;; SCAN or TARGET, the two modes a caller walk runs in. A scan walk admits no
 ;; new site -- so its result is exactly the caller's banked-band-only rewrite,
@@ -109604,6 +109606,10 @@
         (if opt-inline-checked-target-relaxed?
           "relaxed"
           "core")
+        "|conditional-literal="
+        (if opt-inline-checked-target-conditional-literal?
+          "1"
+          "0")
         "|site="
         (if opt-inline-checked-target-tail?
           "tail"
@@ -109638,6 +109644,7 @@
   (set! opt-inline-checked-caller-verdicts 0)
   (set! opt-inline-checked-caller-relaxed-verdicts 0)
   (set! opt-inline-checked-target-relaxed? false)
+  (set! opt-inline-checked-target-conditional-literal? false)
   (set! opt-inline-checked-target-tail? false)
   (set! opt-inline-checked-last-margin-clear? false)
   (set! opt-inline-checked-generation 1)
@@ -109658,6 +109665,7 @@
   (set! opt-inline-checked-prior-blocks opt-inline-checked-accepted-blocks)
   (set! opt-inline-checked-scan-count 0)
   (set! opt-inline-checked-target-relaxed? false)
+  (set! opt-inline-checked-target-conditional-literal? false)
   (set! opt-inline-checked-target-tail? false)
   (set! opt-inline-checked-target-pos (- 0 1))
   (set! opt-inline-checked-scanning? true))
@@ -110474,6 +110482,14 @@
             (if (= opt-inline-checked-site-position 0)
               (opt-inline-checked-pos-entry)
               (opt-inline-checked-pos-none)))]
+        [conditional-literal? : bool
+          (and
+            (= site-depth 0)
+            (= position-class (opt-inline-checked-pos-none))
+            (> opt-inline-checked-current-literal-count 0)
+            (>= frequency (opt-inline-checked-depth-relaxed-frequency))
+            (opt-inline-caller-loop-free?)
+            (opt-inline-blocks-call-free? blocks))]
         [_publish : unit
           (begin
             (set! opt-inline-checked-trace-depth site-depth)
@@ -110493,12 +110509,14 @@
         (cond
           [(< frequency (opt-inline-checked-min-frequency))
             (opt-inline-checked-clause-frequency)]
-          [(<
-            site-depth
-            (opt-inline-checked-effective-min-site-depth
-              frequency
-              (opt-inline-checked-entry-equivalent? position-class)
-              (opt-inline-blocks-call-free? blocks)))
+          [(and
+            (<
+              site-depth
+              (opt-inline-checked-effective-min-site-depth
+                frequency
+                (opt-inline-checked-entry-equivalent? position-class)
+                (opt-inline-blocks-call-free? blocks)))
+            (not conditional-literal?))
             ;; SW-SPINE: a refusal the WALK decided -- no reading reached
             ;; the block -- is remembered for
             ;; opt-inline-checked-shape-changed-sites?. A block a reading
@@ -110530,6 +110548,9 @@
               tail-site?)
             (opt-inline-checked-clause-scanned)]
           [else
+            (set!
+              opt-inline-checked-target-conditional-literal?
+              conditional-literal?)
             (set! opt-inline-checked-site-depth site-depth)
             (set! opt-inline-checked-site-weight site-weight)
             (set! opt-inline-checked-callee-params np)
@@ -110723,12 +110744,10 @@
 ;; `--trace-passes` report passes over functions the pipeline never optimized
 ;; and would push throwaway generations into the `--dump-ir` buffer, which is
 ;; what scripts/verify-ir-observability.sh reads.
-(define (opt-inline-checked-plan-cost-at
+(define (opt-inline-checked-price-function
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]
-  [offset : i64]
-  [_entry-weight : i64]) : i64
+  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (let
     [saved-verify : bool compiler-opt-debug-verify-ir]
     [_silence : unit
@@ -110748,6 +110767,17 @@
       (begin
         (compiler-opt-debug-set-suppressed! false)
         (set! compiler-opt-debug-verify-ir saved-verify))]
+    optimized))
+
+(define (opt-inline-checked-plan-cost-at
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : (& ir.CompilerIrFunction)]
+  [offset : i64]
+  [_entry-weight : i64]) : i64
+  (let
+    [optimized : ir.CompilerIrFunction
+      (opt-inline-checked-price-function pools type-segment-bases func)]
     ;; INL-15: the plan is priced by the allocator's own estimator in the
     ;; tier's currency (opt-inline-checked-alloc-cost): weighted memory
     ;; references, prologue at the entry weight -- which is `entry-weight`
@@ -110770,6 +110800,36 @@
 ;; for a one-block body.
 (define (opt-inline-checked-small-body? [callee-cost : i64] [site-weight : i64]) : bool
   (<= callee-cost (* 64 site-weight)))
+
+;; Conditional candidates keep their actual position class. Their literal
+;; specialization must be call-free, acyclic, and inside the existing small-body
+;; cost bound; the ordinary budgets, growth ceilings and window still apply.
+(define (opt-inline-checked-conditional-literal-ok?
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [callee : (& callee ir.CompilerIrFunction)]) : bool
+  (match (opt-inline-checked-specialized callee)
+    [(Some special)
+      (let
+        [priced : ir.CompilerIrFunction
+          (opt-inline-checked-price-function
+            pools
+            type-segment-bases
+            (& special))]
+        (match (& priced)
+          [(Function _ _ _ _ blocks _)
+            (and
+              (opt-inline-blocks-call-free? blocks)
+              (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
+              (opt-inline-checked-small-body?
+                (+
+                  (opt-inline-checked-weighted-instrs-at priced 0)
+                  (opt-inline-checked-alloc-cost
+                    type-segment-bases
+                    (& priced)
+                    0))
+                1))]))]
+    [(No) false]))
 
 ;; The accept window, named so it can be pinned on its own. `saving` is the
 ;; modelled cost the inline removes; `boundary` is what a free inline would
@@ -111027,8 +111087,18 @@
       (or
         (not opt-inline-checked-target-over-ceiling?)
         (>= (* 2 spec-gain) boundary))]
+    [conditional-literal-ok? : bool
+      (or
+        (not opt-inline-checked-target-conditional-literal?)
+        (and
+          (> spec-gain 0)
+          (opt-inline-checked-conditional-literal-ok?
+            pools
+            type-segment-bases
+            callee)))]
     [keep? : bool
       (and
+        conditional-literal-ok?
         one-block-ok?
         fold-carries?
         (or

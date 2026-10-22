@@ -19,7 +19,7 @@
         "(__tl_float_sqrt (array-ref xs i))"
         "(__tl_float_sqrt (cast (array-ref xs i) : f32))"
         "(__tl_float_from_bits (__tl_float_to_bits (array-ref xs i)))"
-        "(if (< (array-ref xs i) 0.0) (__tl_float_sqrt (- (array-ref xs i))) (__tl_float_sqrt (array-ref xs i)))")]
+        "(if (< (array-ref xs i) 0.0) (__tl_float_sqrt (- 0.0 (array-ref xs i))) (__tl_float_sqrt (array-ref xs i)))")]
     (for [index (iterator.range 0 (array-length operands))]
       (test.assert-true
         (checks.compiler-typecheck-ok?

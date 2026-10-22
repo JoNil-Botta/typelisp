@@ -5,8 +5,10 @@
 (import compiler_intern as intern)
 (import compiler_builtin_ids as builtins)
 (import compiler_load as load)
+(import compiler_parse_core as parser)
+(import compiler_typecheck_api as typecheck)
+(import compiler_typecheck_core as tc)
 (import compiler_profile_state as profile)
-(import compiler_owned_view as owned_view)
 (import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.test)
@@ -121,6 +123,66 @@
               "unsupported-object-semantics")))))
     ok))
 
+(define (private-context-retired? [source : String] [expected-ok : bool]) : bool
+  (let
+    [request : lower.CompilerLowerRequest
+      (lower.compiler-lower-request (LinuxScalar))]
+    [cfgs (lower.lower-source-request-cfgs (& request))]
+    [program
+      (match (parser.parse-ast-source-diagnostic-with-cfg
+        "target/private-backend-source.tl"
+        (& source)
+        (clone cfgs))
+        [(Ok program) program]
+        [(Err _) (return false)])]
+    [context : typecheck.TypecheckRequest
+      (typecheck.TypecheckRequest
+        (load.compiler-load-standalone-session-state-new)
+        (tc.tc-prefix-snapshot-cache-state-new)
+        (tc.tc-job-state-new)
+        program
+        (ast.ast-decl-path-list-new)
+        (strings.new)
+        cfgs
+        "private-backend-source"
+        (ast.ast-node-pool-context-capture-active)
+        (intern.intern-compat-state-capture-active)
+        (tc.TcSemanticObserver 0))]
+    [surface-owner : i64
+      (load.compiler-load-session-state-surface-summary-owner-arena-ensure!
+        (& context.load-state))]
+    [owner : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+    [_provenance : unit
+      (load.compiler-load-session-state-note-embedded-module!
+        (& context.load-state)
+        "stdlib.backend_retirement_sentinel")]
+    [provenance-owner : i64
+      (array-ref context.load-state.embedded-provenance-owner-arena 0)]
+    [result : lower.ResultCompilerLower
+      (lower.lower-standalone-result
+        owner
+        (lower.lower-source-context
+          owner
+          "target/private-backend-source.tl"
+          (& source)
+          (& request)
+          (& context)))]
+    [ok : bool
+      (match result
+        [(Ok _ _ result-owner)
+          (lower.compiler-lower-arena-state-release!
+            (lower.compiler-lower-state-arenas result-owner))
+          expected-ok]
+        [(Err _) (not expected-ok)])]
+    (and
+      ok
+      (> surface-owner 0)
+      (> provenance-owner 0)
+      (= (array-ref context.load-state.surface-summary-owner-arena 0) 0)
+      (= (array-ref context.load-state.embedded-provenance-owner-arena 0) 0)
+      (= (array-ref context.load-state.dotted-path-cache-owner-arena 0) 0)
+      (= (array-ref context.prefix-cache.arena 0) 0))))
+
 (define (request-context-ok?) : bool
   (let
     [request : lower.CompilerLowerRequest
@@ -213,7 +275,12 @@
               (string.copy (& path))
               (string.copy (& source))
               (& request))))))
-    ok))
+    (and
+      ok
+      (private-context-retired? (string.copy (& payload-source)) true)
+      (private-context-retired?
+        "(import stdlib.backend_missing_for_test)"
+        false))))
 
 (define (in-session-library-entry-ok? [target : backend.CompilerBackendTarget]) : bool
   (match (backend.compiler-backend-lower-source-for-target-in-session

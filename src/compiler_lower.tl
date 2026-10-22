@@ -74665,26 +74665,28 @@
   [path : String]
   [src : (& str)]
   [request : (& request CompilerLowerRequest)]
-  [context : tc_api.TypecheckRequest]) : ResultCompilerLower
+  [context : (& context tc_api.TypecheckRequest)]) : ResultCompilerLower
   (load.compiler-load-session-state-program-cache-disable!
-    (lower-global-shared-view context.load-state))
+    (owned_view.compiler-owned-reference-shared-view (& context.load-state)))
   (tc_core.tc-job-state-set-parser-control!
-    context.job-state
-    (parser.compiler-parse-control-from-cfg context.cfgs))
+    (clone context.job-state)
+    (parser.compiler-parse-control-from-cfg (clone context.cfgs)))
   (tc_core.tc-macro-state-bind-source-names!
-    (tc_core.tc-job-state-macro-state context.job-state)
+    (tc_core.tc-job-state-macro-state (clone context.job-state))
     (ci.intern-source-name-session-capture-active-handle))
   (let
     [loaded : load.ResultCompilerLoadWithPaths
-      (lower-source-load (& path) src (& context))]
+      (lower-source-load (& path) src context)]
     [result : ResultCompilerLower
       (match loaded
         [(Ok decls paths modules _)
           (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
             lower-state
-            (lower-global-shared-view context.load-state)
-            (lower-global-shared-view context.prefix-cache)
-            context.job-state
+            (owned_view.compiler-owned-reference-shared-view
+              (& context.load-state))
+            (owned_view.compiler-owned-reference-shared-view
+              (& context.prefix-cache))
+            (clone context.job-state)
             path
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths (& modules))
@@ -74692,18 +74694,22 @@
             (clone context.stdlib-roots)
             (clone context.cfgs)
             (clone context.cache-scope)
-            context.pools
+            (clone context.pools)
             (ci.intern-source-name-session-capture-active-handle)
             (ci.intern-compat-state-capture-active)
             (cbi.state-capture))]
         [(Err diagnostic) (Err diagnostic)])]
     ;; No checked context escapes this boundary: successful IR and spans own
     ;; their escaped data, and failures already live in the caller's arena.
-    (tc_core.tc-job-state-retire-owned-storage! context.job-state)
+    (tc_core.tc-job-state-retire-owned-storage! (clone context.job-state))
     (tc_core.tc-prefix-snapshot-cache-clear-for-state! (& context.prefix-cache))
     (load.compiler-load-session-state-dotted-path-cache-reset!
-      (lower-global-shared-view context.load-state))
+      (owned_view.compiler-owned-reference-shared-view (& context.load-state)))
     (load.compiler-load-session-state-release-stdlib-proofs!
+      (& context.load-state))
+    (load.compiler-load-session-state-embedded-provenance-reset!
+      (& context.load-state))
+    (load.compiler-load-session-state-surface-summaries-reset!
       (& context.load-state))
     result))
 
@@ -74743,21 +74749,22 @@
               (clone path)
               src
               request
-              (tc_api.TypecheckRequest
-                (load.compiler-load-standalone-session-state-new)
-                (tc_core.tc-prefix-snapshot-cache-state-new)
-                (tc_core.tc-job-state-new)
-                program
-                (ast.ast-decl-path-list-new)
-                (clone request.stdlib-roots)
-                cfgs
-                (load.compiler-load-prelude-cache-key
-                  "typecheck-prefix-lower"
-                  (& request.stdlib-roots)
-                  cfgs)
-                (ast.ast-node-pool-context-capture-active)
-                (ci.intern-compat-state-capture-active)
-                (tc_core.TcSemanticObserver 0)))
+              (&
+                (tc_api.TypecheckRequest
+                  (load.compiler-load-standalone-session-state-new)
+                  (tc_core.tc-prefix-snapshot-cache-state-new)
+                  (tc_core.tc-job-state-new)
+                  program
+                  (ast.ast-decl-path-list-new)
+                  (clone request.stdlib-roots)
+                  cfgs
+                  (load.compiler-load-prelude-cache-key
+                    "typecheck-prefix-lower"
+                    (& request.stdlib-roots)
+                    cfgs)
+                  (ast.ast-node-pool-context-capture-active)
+                  (ci.intern-compat-state-capture-active)
+                  (tc_core.TcSemanticObserver 0))))
             (lower-compiler-program-with-path-mode-and-state
               lower-state
               path

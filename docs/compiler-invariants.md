@@ -680,7 +680,9 @@ Standalone requests retain the live-session guard and reset interning,
 builtins and serial typecheck state. `in-session` requests append to the
 caller's installed AST/name owners. Import-aware requests use private loader,
 prefix-cache and typecheck job state. They retire only that job's temporary
-storage after IR or diagnostics escape. Callers must publish explicit pool mutations before
+storage after IR or diagnostics escape. The borrowed context remains inspectable:
+prefix, dotted-path, proof, provenance and surface-summary owners are empty on
+both outcomes. Callers must publish explicit pool mutations before
 invoking an API that reads the installed pools. A nested success or failure
 cannot change the enclosing generation, builtin IDs, load-session selector or
 previously published AST prefix.

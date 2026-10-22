@@ -2093,74 +2093,23 @@
       [_complete : unit
         (storage_exposure.storage-exposure-leave! facts earlier true)]
       [_proof : unit
-        (tc_core.tc-body-storage-census-proof-set! body-state body 1)]
+        (tc_core.tc-body-storage-acyclic-set! body-state body true)]
       [previous : i64
         (storage_exposure.storage-exposure-enter! facts -1 body true)]
       (lower.lower-exposure-prepare! ctx state body)
       (test.assert-true
         (not (lower.lower-state-address-taken-var? state 1))
         "checked acyclic bodies retain incremental tracking without a binding census")
-      (tc_core.tc-body-storage-census-proof-set! body-state body 0)
-      (tc_core.tc-storage-census-event! ctx true)
+      (tc_core.tc-body-storage-acyclic-set! body-state body false)
+      (tc_core.tc-storage-loop-enter! ctx)
       (lower.lower-exposure-prepare! ctx state body)
       (test.assert-true
         (lower.lower-state-address-taken-var? state 1)
         "an unexpected loop invalidates the absence proof before lowering")
       (test.assert-true
-        (=
-          (tc_core.tc-body-storage-census-proof body-state 9223372036854775807)
-          0)
+        (not (tc_core.tc-body-storage-acyclic? body-state 9223372036854775807))
         "unrecordable source identities remain conservative")
-      (storage_exposure.storage-exposure-leave! facts previous true)
-      (tc_core.tc-body-early-exit-facts-start-with-limit! body-state 128)
-      (for [scenario (iterator.range 0 4)]
-        (let
-          [proof : i64 (+ 1 (/ scenario 2))]
-          [old : i64
-            (storage_exposure.storage-exposure-enter! facts -1 body false)]
-          [_ready : unit
-            (storage_exposure.storage-exposure-leave! facts old true)]
-          [_proof : unit
-            (tc_core.tc-body-storage-census-proof-set! body-state body proof)]
-          [parent : i64
-            (storage_exposure.storage-exposure-enter! facts -1 body true)]
-          (tc_core.tc-storage-census-event! ctx (= proof 2))
-          (test.assert-true
-            (= (tc_core.tc-body-storage-census-proof body-state body) proof)
-            "acyclic bodies admit addresses; address-free bodies admit loops")
-          (when
-            (= (% scenario 2) 1)
-            (tc_core.tc-body-storage-census-proof-set! body-state body 0))
-          (tc_core.tc-storage-census-event! ctx (= proof 1))
-          (lower.lower-exposure-prepare! ctx state body)
-          (test.assert-true
-            (and
-              (= (tc_core.tc-body-storage-census-proof body-state body) 0)
-              (lower.lower-state-address-taken-var? state 1))
-            "unexpected events retire omitted collection and older frames even after nested invalidation")
-          (storage_exposure.storage-exposure-leave! facts parent true)))
-      (let
-        [boundaries : (Array i64 4) (array 0 31 32 63)]
-        (for [index (iterator.range 0 4)]
-          (tc_core.tc-body-storage-census-proof-set!
-            body-state
-            (array-ref boundaries index)
-            2))
-        (for [index (iterator.range 0 4)]
-          (test.assert-true
-            (=
-              (tc_core.tc-body-storage-census-proof
-                body-state
-                (array-ref boundaries index))
-              2)
-            "proofs retain neighbors across packed-word and sign-bit boundaries"))
-        (tc_core.tc-body-storage-census-proof-set! body-state 31 3)
-        (test.assert-true
-          (and
-            (= (tc_core.tc-body-storage-census-proof body-state 31) 0)
-            (= (tc_core.tc-body-storage-census-proof body-state 32) 2)
-            (= (tc_core.tc-body-storage-census-proof body-state 63) 2))
-          "an unsupported proof value clears only its own evidence")))))
+      (storage_exposure.storage-exposure-leave! facts previous true))))
 
 (test
   compiler-lower-loop-address-exposure

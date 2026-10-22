@@ -595,10 +595,9 @@
   ;; thrown away with the error (see `tc-unbound-suggestions-suppress-push!`).
   (unbound-suggestion-suppress-depth i64)
   (semantic-observer TcSemanticObserver)
-  ;; Named-body typing accumulates possible reentry and address operations
-  ;; independently of ordinary scoped binding restoration.
-  (storage-census-required bool)
-  (storage-address-present bool))
+  ;; Named-body typing accumulates loops and nested captures independently
+  ;; of ordinary scoped binding restoration.
+  (storage-census-required bool))
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
@@ -1442,7 +1441,6 @@
             : i64)
           0
           (TcSemanticObserver 0)
-          false
           false))
       state)))
 
@@ -2668,7 +2666,7 @@
   ;; tc-body-borrow-exits-swap!.
   (borrow-exits-cell i64)
   (storage-exposure storage_exposure.StorageExposure)
-  (storage-census-proofs (__tl_dyn-array i64)))
+  (storage-acyclic (__tl_dyn-array i64)))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
@@ -3420,8 +3418,8 @@
         (deref data).early-exit-known
         (__tl_make-array i64 (/ (+ expr-limit 63) 64)))
       (set!
-        (deref data).storage-census-proofs
-        (__tl_make-array i64 (/ (+ expr-limit 31) 32)))
+        (deref data).storage-acyclic
+        (__tl_make-array i64 (/ (+ expr-limit 63) 64)))
       (set! (deref data).early-exit-current false)
       (set! (deref data).early-exit-suppress-depth 0)
       (set! (deref data).early-exit-source-expr-limit expr-limit)
@@ -3437,11 +3435,11 @@
   (unsafe
     (deref (tc-body-state-view state)).storage-exposure))
 
-(define (tc-body-storage-census-proof [state : TcBodyState] [body : i64]) : i64
+(define (tc-body-storage-acyclic? [state : TcBodyState] [body : i64]) : bool
   (let
     [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
     (unsafe
-      (if (and
+      (and
         (>= body 0)
         (<= body 9223372036854775805)
         (>=
@@ -3449,25 +3447,17 @@
             (deref data).storage-exposure)
           0)
         (< body (deref data).early-exit-source-expr-limit)
-        (< (/ body 32) (array-length (deref data).storage-census-proofs)))
-        (let
-          [proof : i64
-            (bit-and
-              (shr
-                (array-ref (deref data).storage-census-proofs (/ body 32))
-                (* 2 (% body 32)))
-              3)]
-          (if (< proof 3)
-            proof
-            0))
-        0))))
+        (< (/ body 64) (array-length (deref data).storage-acyclic))
+        (!=
+          (bit-and
+            (array-ref (deref data).storage-acyclic (/ body 64))
+            (shl 1 (% body 64)))
+          0)))))
 
-;; 0 is unavailable, 1 excludes loops/captures, 2 excludes address operations.
-;; Both proofs omit binding collection, but admit different move-walk events.
-(define (tc-body-storage-census-proof-set!
+(define (tc-body-storage-acyclic-set!
   [state : TcBodyState]
   [body : i64]
-  [proof : i64]) : unit
+  [acyclic? : bool]) : unit
   (let
     [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
     (unsafe
@@ -3476,20 +3466,16 @@
           (>= body 0)
           (<= body 9223372036854775805)
           (< body (deref data).early-exit-source-expr-limit)
-          (< (/ body 32) (array-length (deref data).storage-census-proofs)))
+          (< (/ body 64) (array-length (deref data).storage-acyclic)))
         (let
-          [index : i64 (/ body 32)]
-          [shift : i64 (* 2 (% body 32))]
-          [word : i64 (array-ref (deref data).storage-census-proofs index)]
-          [checked : i64
-            (if (and (>= proof 0) (<= proof 2))
-              proof
-              0)]
+          [index : i64 (/ body 64)]
+          [mask : i64 (shl 1 (% body 64))]
+          [word : i64 (array-ref (deref data).storage-acyclic index)]
           (set!
-            (array-ref (deref data).storage-census-proofs index)
-            (bit-or
-              (bit-and word (bit-xor (shl 3 shift) -1))
-              (shl checked shift))))))))
+            (array-ref (deref data).storage-acyclic index)
+            (if acyclic?
+              (bit-or word mask)
+              (bit-and word (bit-xor mask -1)))))))))
 
 (define (tc-body-early-exit-facts-start!
   [state : TcBodyState]
@@ -32587,19 +32573,6 @@
       previous)
     true))
 
-(define (tc-scoped-storage-address-swap! [address : i64] [present? : bool]) : bool
-  (if (> address 0)
-    (let
-      [data : (MutPtr TcTypeEnvScopedStateData)
-        (tc-type-env-scoped-state-ptr (TcTypeEnvScopedState address))]
-      [previous : bool
-        (unsafe
-          (deref data).storage-address-present)]
-      (unsafe
-        (set! (deref data).storage-address-present present?))
-      previous)
-    true))
-
 ;; This existing dispatch decision also notes constructs that need binding
 ;; identities before a loop or a nested capture can revisit their storage.
 (define (tc-expr-scoped-bindings? [state : i64] [expr : (& expr ast.AstExpr)]) : bool
@@ -52712,11 +52685,6 @@
   [lifetime : ast.AstBorrowLifetime]
   [place-expr : ast.AstExpr]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (when
-    mutable
-    (let
-      [_prior : bool (tc-scoped-storage-address-swap! env.abi-pad true)]
-      unit))
   (match (tc-borrow-place ctx expr-bases env (tc-global-shared-view place-expr))
     [(Ok place)
       (if (and mutable (not allow-mut-by-value-borrow))
@@ -58748,7 +58716,6 @@
   [env : TcTypeEnv]
   [place : ast.AstExpr]) : ResultTcType
   (let
-    [_address : bool (tc-scoped-storage-address-swap! env.abi-pad true)]
     [_ (try (tc-require-unsafe ctx env "ptr-addr-of"))]
     [ty : ast.AstType (try (tc-ptr-addr-of-place ctx env place))]
     [resolved : ast.AstType (tc-resolve-type ctx ty)]
@@ -71091,7 +71058,7 @@
         facts
         ordinal
         body
-        (> (tc-body-storage-census-proof (tc-context-body-state ctx) body) 0))]
+        (tc-body-storage-acyclic? (tc-context-body-state ctx) body))]
     ;; Both callers supply the ordinary environment that already binds these
     ;; parameters. Metadata must preserve its resolved types and lifetime markers.
     (when
@@ -71109,7 +71076,6 @@
   [locals : (& locals TcMovedSet)]
   [place : ast.AstExpr]
   [raw : bool]) : unit
-  (tc-storage-census-event! ctx false)
   (let
     [facts : storage_exposure.StorageExposure
       (tc-body-storage-exposure (tc-context-body-state ctx))]
@@ -73443,22 +73409,16 @@
 
 ;; A loop body entered from the non-loop walker; its `break`s belong to this
 ;; loop, so its frame keeps them out of an enclosing loop's collection.
-(define (tc-storage-census-event! [ctx : TcContext] [loop? : bool]) : unit
+(define (tc-storage-loop-enter! [ctx : TcContext]) : unit
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
     [facts : storage_exposure.StorageExposure (tc-body-storage-exposure state)]
-    [body : i64 (storage_exposure.storage-exposure-omitted-body facts)]
+    [body : i64 (storage_exposure.storage-exposure-acyclic-body facts)]
     ;; The entry token remembers omitted collection even if a nested query
     ;; already cleared the proof. Never revive an older partial census.
     (when
-      (and
-        (>= body 0)
-        (!=
-          (tc-body-storage-census-proof state body)
-          (if loop?
-            2
-            1)))
-      (tc-body-storage-census-proof-set! state body 0)
+      (>= body 0)
+      (tc-body-storage-acyclic-set! state body false)
       (storage_exposure.storage-exposure-invalidate-body! facts body))))
 
 (define (tc-move-check-loop-body
@@ -73470,7 +73430,7 @@
   [outer-loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [body : ast.AstExpr]) : TcMoveLoopResult
-  (tc-storage-census-event! ctx true)
+  (tc-storage-loop-enter! ctx)
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
     [outer : TcMoveBreakCollection
@@ -74370,7 +74330,7 @@
             body-box
             (tc-move-result-access access))])]
     [(Lambda lambda-box)
-      (tc-storage-census-event! ctx true)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-lambda-box-shared-view lambda-box)
         [(Lambda params maybe-ret body-box)
           (let
@@ -74472,7 +74432,7 @@
               params
               body))])]
     [(SpmdCompact compact-box)
-      (tc-storage-census-event! ctx true)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-compact-box-shared-view compact-box)
         [(Compact
             index
@@ -75391,7 +75351,7 @@
                   (Ok moved2))]
               [(Err message) (Err message)]))])]
     [(SpmdReduce reduce-box)
-      (tc-storage-census-event! ctx true)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
         [(Reduce _ _ _ a-box b-box c-box d-box)
           (let
@@ -75431,7 +75391,7 @@
                   c))]
             (tc-move-check-expr ctx expr-bases env locals loop-carried m3 d))])]
     [(SpmdScan scan-box)
-      (tc-storage-census-event! ctx true)
+      (tc-storage-loop-enter! ctx)
       (match (ast.ast-spmd-scan-box-shared-view scan-box)
         [(Scan
             _
@@ -117483,8 +117443,6 @@
       (tc-type-env-scoped-runtime-enter! carrier)]
     [body-state : TcBodyState (tc-context-body-state ctx)]
     [previous-census : bool (tc-scoped-storage-census-swap! env.abi-pad false)]
-    [previous-address : bool
-      (tc-scoped-storage-address-swap! env.abi-pad false)]
     [semantic-observer : TcSemanticObserver
       (if (= tc-semantic-observed-jobs 0)
         (TcSemanticObserver 0)
@@ -117500,15 +117458,15 @@
           (tc-global-shared-view resolved-ret)))]
     [needs-census : bool
       (tc-scoped-storage-census-swap! env.abi-pad previous-census)]
-    [has-address : bool
-      (tc-scoped-storage-address-swap! env.abi-pad previous-address)]
     [_census-proof : unit
-      (tc-body-storage-census-proof-set!
+      (tc-body-storage-acyclic-set!
         body-state
         body-box
-        (match (& typed-result)
-          [(Ok _) (cond [(not needs-census) 1] [(not has-address) 2] [else 0])]
-          [_ 0]))]
+        (and
+          (not needs-census)
+          (match (& typed-result)
+            [(Ok _) true]
+            [_ false])))]
     [_semantic-function-leave : unit
       (when
         (!= semantic-observer.address 0)

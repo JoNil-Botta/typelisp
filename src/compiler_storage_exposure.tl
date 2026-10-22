@@ -13,7 +13,7 @@
   (bindings words.Vec)
   (by-body index_map.Map)
   (by-hash index_map.Map)
-  ;; Nonnegative frame, -1 inactive, or -2-body for a checked scope that omits collection.
+  ;; Nonnegative frame, -1 inactive, or -2-body for a checked acyclic scope.
   (current i64)
   (generation i64)
   (suspension-depth i64)
@@ -111,7 +111,7 @@
         (set! (deref data).suspension-depth (- (deref data).suspension-depth 1))
         (set! (deref data).current token.frame)))))
 
-(define (storage-exposure-omitted-body [state : StorageExposure]) : i64
+(define (storage-exposure-acyclic-body [state : StorageExposure]) : i64
   (let
     [current : i64 (storage-exposure-current state)]
     (if (<= current -2)
@@ -157,7 +157,7 @@
   [state : StorageExposure]
   [declaration : i64]
   [body : i64]
-  [omit-census? : bool]) : i64
+  [acyclic? : bool]) : i64
   (when
     (unsafe
       (let
@@ -165,7 +165,7 @@
         (or (> (deref data).suspension-depth 0) (< (deref data).generation 0))))
     (return (storage-exposure-current state)))
   (when
-    (and omit-census? (>= body 0) (<= body 9223372036854775805))
+    (and acyclic? (>= body 0) (<= body 9223372036854775805))
     (let
       [data : (MutPtr StorageExposureData) (storage-exposure-ptr state)]
       [previous : i64 (storage-exposure-current state)]

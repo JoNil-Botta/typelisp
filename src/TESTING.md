@@ -19,12 +19,8 @@ across checker jobs and reset generations. Acyclic raw-pointer argument/callee c
 that sequential address marks still force the required snapshots. The
 completeness table distinguishes missing, complete-empty, incomplete, ambiguous
 and unmapped scope facts, and checks that incremental marks remain effective.
-Its proof table checks that acyclic bodies admit addresses and address-free
-bodies admit loops; unexpected events retire omitted collection and earlier
-frames even after a nested invalidation. Packed-word/sign-bit boundaries retain
-neighboring proofs; unsupported values and out-of-range bodies remain unavailable.
-The core address-note table excludes immutable borrows and ordinary reads and
-keeps missing scoped owners conservative.
+Its acyclic proof case also checks that an unexpected loop retires both the
+proof and any earlier complete frame; out-of-range bodies remain unavailable.
 Its unrecorded-body table distinguishes address absence from write absence,
 preserves nested lambda boundaries and refuses missing or already incomplete
 evidence. `loop_address_argument.tl`,

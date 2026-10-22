@@ -197,18 +197,18 @@
           (exposure.storage-exposure-suspend! facts)]
         [_nested : i64 (exposure.storage-exposure-enter! facts 1 100 true)]
         (test.assert-i64-eq
-          (exposure.storage-exposure-omitted-body facts)
+          (exposure.storage-exposure-acyclic-body facts)
           -1
-          "suspension hides an omitted scope from nested checks")
+          "suspension hides an acyclic scope from nested checks")
         (exposure.storage-exposure-resume! facts suspended)
         (test.assert-i64-eq
-          (exposure.storage-exposure-omitted-body facts)
+          (exposure.storage-exposure-acyclic-body facts)
           body
-          "resumption restores the exact omitted source identity")
+          "resumption restores the exact acyclic source identity")
         (test.assert-i64-eq
           (exposure.storage-exposure-frame facts 1 body)
           -1
-          "a proven-private entry allocates no binding census")
+          "acyclic entry allocates no binding census")
         (exposure.storage-exposure-leave! facts previous true)))))
 
 ;; No capability escapes the rewound arena; only its numeric stamp is retained.

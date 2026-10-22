@@ -9921,6 +9921,100 @@
 (cfg
   test
   (test
+    type-resolution-list-order-and-allocation
+    (let
+      [installed : ast.AstNodePoolContext
+        (if (ast.ast-node-pool-has-active-context?)
+          (ast.ast-node-pool-context-active-live)
+          (ast.ast-node-pool-context-capture-active))]
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 4 16)]
+      [_install : unit (ast.ast-node-pool-context-install! pools)]
+      [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+      [ctx : tc_core.TcContext
+        (tc_core.tc-context-new-with-source-names-and-job-state
+          (ast.ast-program (ast.ast-decl-list-new))
+          (csym.compiler-symbols-empty)
+          (csym.compiler-registries-empty)
+          ""
+          cbi.compiler-builtin-id-fix-empty
+          pools
+          (ci.intern-source-name-session-capture-active-handle)
+          job)]
+      [unknown : i64 (ci.intern "UnresolvedListElement")]
+      [ids : (Array i64 3)
+        (array
+          (ast.ast-node-pool-context-type-push pools (I64))
+          (ast.ast-node-pool-context-type-push pools (Var (ci.intern "Expr")))
+          (ast.ast-node-pool-context-type-push pools (Var unknown)))]
+      [widths : (Array i64 6) (array 0 1 2 3 17 256)]
+      (for [case-index (iterator.range 0 6)]
+        (let
+          [count : i64 (array-ref widths case-index)]
+          [source : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
+          (for [index (iterator.range 0 count)]
+            (ast.ast-type-list-push (&mut source) (array-ref ids (% index 3))))
+          ;; Prime name/predicate caches so this measures list construction.
+          (tc_core.tc-resolve-type-list
+            ctx
+            (tc_core.tc-global-shared-view source))
+          (let
+            [before : i64 (profile.alloc-total)]
+            [resolved : ast.AstTypeList
+              (tc_core.tc-resolve-type-list
+                ctx
+                (tc_core.tc-global-shared-view source))]
+            [allocated : i64 (- (profile.alloc-total) before)]
+            (test.assert-i64-eq
+              (ast.ast-type-list-len (& resolved))
+              count
+              "list width")
+            (cfg
+              compile-profile
+              (begin
+                (test.assert-true
+                  (<= allocated (+ 32 (* 16 count)))
+                  "resolution list storage grows linearly")
+                (test.assert-true
+                  (if (> count 1)
+                    (> allocated 0)
+                    (= allocated 0))
+                  "allocation counter is live; concrete lists are reused")))
+            (for [index (iterator.range 0 count)]
+              (test.assert-i64-eq
+                (ast.ast-type-list-get (& source) index -1)
+                (array-ref ids (% index 3))
+                "source list is unchanged")
+              (let
+                [ty : ast.AstType
+                  (ast.ast-node-pool-context-type-get
+                    pools
+                    (ast.ast-type-list-get (& resolved) index -1))]
+                (test.assert-true
+                  (match ty
+                    [(I64) (= (% index 3) 0)]
+                    [(Expr) (= (% index 3) 1)]
+                    [(Var name) (and (= (% index 3) 2) (= name unknown))]
+                    [_ false])
+                  "concrete, resolved and generic elements keep their order")))
+            (let
+              [nested : ast.AstType
+                (ast.ast-ty-func
+                  (tc_core.tc-global-shared-view source)
+                  (& (ast.ast-ty-tuple (tc_core.tc-global-shared-view source))))]
+              [actual : ast.AstType (tc_core.tc-resolve-type ctx nested)]
+              [expected : ast.AstType
+                (ast.ast-ty-func
+                  (tc_core.tc-global-shared-view resolved)
+                  (& (ast.ast-ty-tuple resolved)))]
+              (test.assert-true
+                (ast.ast-type-eq? actual expected)
+                "function arguments and nested tuples use the same resolution")))))
+      (ast.ast-node-pool-context-install! installed))))
+
+(cfg
+  test
+  (test
     type-resolution-concrete-fast-path-pool-isolation
     (let
       [installed : ast.AstNodePoolContext
@@ -9989,6 +10083,18 @@
                 [(Expr) true]
                 [_ false]))]
           [_ false])]
+      [compatibility-list : ast.AstTypeList
+        (ast.ast-type-list-cons-id unresolved-child (& (ast.ast-type-list-new)))]
+      [resolved-list : ast.AstTypeList
+        (tc_core.tc-resolve-type-list ctx compatibility-list)]
+      [compatibility-list-ok? : bool
+        (and
+          (= (ast.ast-type-list-len (& resolved-list)) 1)
+          (match (ast.ast-node-pool-context-type-get
+            compatibility-pools
+            (ast.ast-type-list-get (& resolved-list) 0 -1))
+            [(Expr) true]
+            [_ false]))]
       [compatibility-len-grew? : bool
         (=
           (ast.ast-node-pool-context-type-len compatibility-pools)
@@ -10003,6 +10109,8 @@
         [(not compatibility-result-ok?)
           (io.panic
             "typecheck: concrete resolution fast path changed unresolved output")]
+        [(not compatibility-list-ok?)
+          (io.panic "typecheck: list resolution read or wrote the wrong pool")]
         [(not compatibility-len-grew?)
           (io.panic
             "typecheck: concrete resolution fast path skipped unresolved rebuild")]

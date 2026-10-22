@@ -18720,20 +18720,6 @@
                 context
                 "; region value would escape"))))])))
 
-(define (tc-resolve-type-list-at
-  [ctx : TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : ast.AstTypeList
-  (if (>= index (ast.ast-type-list-len types))
-    (ast.ast-type-list-new)
-    (ast.ast-type-cons
-      (&
-        (tc-resolve-type
-          ctx
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
-      (& (tc-resolve-type-list-at ctx types (+ index 1))))))
-
 (define (tc-resolve-type-list [ctx : TcContext] [types : ast.AstTypeList]) : ast.AstTypeList
   (let
     [pools : ast.AstNodePoolContext (tc-context-type-resolution-pools ctx)]
@@ -18742,7 +18728,24 @@
       pools
       (ast.ast-node-pool-context-type-segment-bases pools)
       types)
-      (tc-resolve-type-list-at ctx (& types) 0)
+      (let
+        [count : i64 (ast.ast-type-list-len (& types))]
+        [out : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
+        ;; The source list is immutable. Reserve once instead of copying each
+        ;; suffix; children retain the resolver's existing reader/pusher owner.
+        (for [index (iterator.range 0 count)]
+          (ast.ast-type-list-push
+            (&mut out)
+            (ast.ast-node-pool-reader-type-push
+              (&
+                (tc-resolve-type
+                  ctx
+                  (ast.ty-node-get
+                    (ast.ast-type-list-get
+                      (& types)
+                      index
+                      (ast.ast-type-id-fallback))))))))
+        out)
       types)))
 
 ;; Per-type-node memo for the resolution predicate: type nodes are immutable

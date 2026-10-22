@@ -215,6 +215,28 @@
               (& request))))))
     ok))
 
+(define (in-session-library-entry-ok? [target : backend.CompilerBackendTarget]) : bool
+  (match (backend.compiler-backend-lower-source-for-target-in-session
+    "(module library-entries)
+(define (entry [value : i64]) : i64 value)"
+    target)
+    [(Err _) false]
+    [(Ok program spans owner)
+      (let
+        [ok : bool
+          (match (backend.compiler-backend-emit-program-target-with-mode
+            program
+            target
+            (Scalar)
+            spans
+            false)
+            [(Ok text)
+              (backend.compiler-backend-string-contains? text "_tl_f0:\n")]
+            [(Err _) false])]
+        (lower.compiler-lower-arena-state-release!
+          (lower.compiler-lower-state-arenas owner))
+        ok)]))
+
 (define (in-session-context-ok?) : bool
   (builtins.compiler-builtin-initialize-for-parse!)
   (let
@@ -236,6 +258,14 @@
     (ast.ast-node-pool-context-install! pools)
     (load.compiler-load-session-state-use! enclosing)
     (for [index (iterator.range 0 3)]
+      (set!
+        ok
+        (and
+          ok
+          (in-session-library-entry-ok?
+            (if (= index 1)
+              (Windows)
+              (Linux)))))
       (set!
         ok
         (and

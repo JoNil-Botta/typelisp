@@ -74665,8 +74665,7 @@
   [path : String]
   [src : (& str)]
   [request : (& request CompilerLowerRequest)]
-  [context : tc_api.TypecheckRequest]
-  [load-imports : bool]) : ResultCompilerLower
+  [context : tc_api.TypecheckRequest]) : ResultCompilerLower
   (load.compiler-load-session-state-program-cache-disable!
     (lower-global-shared-view context.load-state))
   (tc_core.tc-job-state-set-parser-control!
@@ -74677,15 +74676,7 @@
     (ci.intern-source-name-session-capture-active-handle))
   (let
     [loaded : load.ResultCompilerLoadWithPaths
-      (if load-imports
-        (lower-source-load (& path) src (& context))
-        (match context.program
-          [(ast.Program decls)
-            (load.ResultCompilerLoadWithPaths.Ok
-              (deref decls)
-              (clone context.paths)
-              (ast.ast-decl-module-list-new)
-              (sym_i64_env.sym-i64-empty))]))]
+      (lower-source-load (& path) src (& context))]
     [result : ResultCompilerLower
       (match loaded
         [(Ok decls paths modules _)
@@ -74746,7 +74737,7 @@
       [(Ok program)
         (let
           [load-imports : bool (lower-source-program-needs-loader? (& program))]
-          (if (or load-imports request.in-session)
+          (if load-imports
             (lower-source-context
               lower-state
               (clone path)
@@ -74766,8 +74757,7 @@
                   cfgs)
                 (ast.ast-node-pool-context-capture-active)
                 (ci.intern-compat-state-capture-active)
-                (tc_core.TcSemanticObserver 0))
-              load-imports)
+                (tc_core.TcSemanticObserver 0)))
             (lower-compiler-program-with-path-mode-and-state
               lower-state
               path

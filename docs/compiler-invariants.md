@@ -678,9 +678,9 @@ shared target presets after the correct intern generation is installed.
 
 Standalone requests retain the live-session guard and reset interning,
 builtins and serial typecheck state. `in-session` requests append to the
-caller's installed AST/name owners and use private loader, prefix-cache and
-typecheck job state. They retire only that job's temporary storage after IR or
-diagnostics escape. Callers must publish explicit pool mutations before
+caller's installed AST/name owners. Import-aware requests use private loader,
+prefix-cache and typecheck job state. They retire only that job's temporary
+storage after IR or diagnostics escape. Callers must publish explicit pool mutations before
 invoking an API that reads the installed pools. A nested success or failure
 cannot change the enclosing generation, builtin IDs, load-session selector or
 previously published AST prefix.
@@ -690,7 +690,8 @@ paths/module column, including selected/wildcard imports and macro-produced
 declarations. `compiler-load-executable-prelude` is the shared ordered
 runtime/core-macro prefix for the CLI and import-aware source jobs. A source
 that supplies its own inline `stdlib.runtime` keeps that owner. Import-free
-standalone programs keep their existing unlocated lowering path. Missing
+programs keep their existing unlocated lowering path, including in-session
+library entry naming used by the native macro catalog. Missing
 import diagnostics preserve the failing file and add the caller's exact
 import span as an `imported here` label.
 

@@ -3200,7 +3200,8 @@
       (match (opt.opt-prune-unreachable-program
         (ir.compiler-ir-global-seq-empty)
         (owned_view.compiler-owned-shared-view out)
-        (& (ir.compiler-ir-extern-seq-empty)))
+        (& (ir.compiler-ir-extern-seq-empty))
+        false)
         [(Program _ functions) functions])]
     ;; The stage output still holds the pruned bodies, whose chunk the carry
     ;; releases, so read it first.

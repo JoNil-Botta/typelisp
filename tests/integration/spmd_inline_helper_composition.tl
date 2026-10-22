@@ -1,6 +1,6 @@
 ;; Acyclic helper bodies and completed caller arguments may reuse a callee.
 ;; Distinct inputs, masked branches and 13 lanes pin the packed path and tail.
-(import inline_helper_composition_provider as provider)
+(import spmd_inline_helper_composition_provider as provider)
 
 (define (bump [value : i64]) : i64
   (+ value 1))

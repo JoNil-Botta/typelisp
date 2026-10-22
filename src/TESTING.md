@@ -2,7 +2,7 @@
 
 `spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
 restoration without leaving completed siblings active. The existing traversal
-isolation test preserves job/scratch ownership. `inline_helper_composition.tl`
+isolation test preserves job/scratch ownership. `spmd_inline_helper_composition.tl`
 compares composed arguments, repeated callees, imported bodies and masked tails
 with ordinary calls; safety rows keep direct and mutual recursion rejected.
 

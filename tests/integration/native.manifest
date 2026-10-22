@@ -21,7 +21,7 @@
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
 packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
-inline_helper_composition|all|0,1,2|tests/spmd/inline_helper_composition.tl|42|-|-|inline_helper_composition_provider.tl|-
+inline_helper_composition|all|0,1,2|tests/integration/spmd_inline_helper_composition.tl|42|-|-|spmd_inline_helper_composition_provider.tl|-
 packed_narrow_bitwise_fold|all|0,1,2|tests/integration/packed_narrow_bitwise_fold.tl|42|-|-|-|-
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
 macro_body_splice|all|0,1,2|tests/integration/macro_body_splice.tl|42|-|-|-|stage-stdlib

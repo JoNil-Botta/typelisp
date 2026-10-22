@@ -537,12 +537,12 @@ match ^[[:space:]]+vpaddq %[yz]mm
 not-match call .*(_bump|_non_negative)
 
 case inline-helper-composition-shape
-source tests/spmd/inline_helper_composition.tl
+source tests/integration/spmd_inline_helper_composition.tl
 target linux-x86_64 windows-x86_64
 mode avx2 avx512
 opt 0 1 2
 assemble
-in fn _tl_inline_helper_composition_fill
+in fn _tl_spmd_inline_helper_composition_fill
 contains foreach_avx512_mask_body
 match ^[[:space:]]+vpaddq .*%[yz]mm
 not-match call .*(_bump|_compose|_combine)

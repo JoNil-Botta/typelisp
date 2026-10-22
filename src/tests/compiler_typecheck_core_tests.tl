@@ -12592,11 +12592,9 @@
     [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
     [_prefix : unit (ast.ast-expr-list-push (&mut items) shared)]
     [_tail : unit (ast.ast-expr-list-push (&mut items) shared)]
+    [source : i64 (ast.ast-node-push (ast.AstExpr.Begin items))]
     [read : ast.AstExpr
-      (ast.ast-node-get
-        (tc_core.tc-read-value-expr-id
-          (ast.ast-node-pool-context-expr-segment-bases pools)
-          (ast.AstExpr.Begin items)))]
+      (ast.ast-node-get (tc_core.tc-read-value-expr-id (& pools) source))]
     (test.assert-true
       (match read
         [(Begin rewritten)
@@ -12614,6 +12612,298 @@
         [_ false])
       "a shared AST node remains owning in the prefix and read-only in the tail")
     (ast.ast-node-pool-context-install! saved)))
+
+(test
+  tc-read-value-reuses-source-ids
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 1)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [source : i64 (ast.ast-node-push (ast.AstExpr.Var (ci.intern "owner")))]
+    [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+    [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
+    (test.assert-i64-eq read source "an unchanged read retains its source ID")
+    (test.assert-i64-eq
+      (ast.ast-node-pool-context-expr-len pools)
+      count
+      "an unchanged read appends no expression")
+    (ast.ast-node-pool-context-install! saved)
+    (ast.ast-node-pool-context-destroy-storage! pools)))
+
+(cfg
+  test
+  (define (tc-read-test-expr
+    [pools : ast.AstNodePoolContext]
+    [kind : i64]
+    [leaf : i64]
+    [other : i64]
+    [type-id : i64]) : i64
+    (in-arena
+      (arena.Arena pools.owner-arena)
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (match kind
+          [0 (ast.AstExpr.Spanned leaf (ast.ast-source-span 2 3 2 9))]
+          [1 (ast.AstExpr.Ann leaf type-id)]
+          [2 (ast.AstExpr.Cast leaf type-id)]
+          [3 (ast.AstExpr.MacroExpansion leaf 71 72)]
+          [(or 4 5 14 15)
+            (let
+              [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
+              (ast.ast-expr-list-push (&mut items) other)
+              (ast.ast-expr-list-push (&mut items) leaf)
+              (match kind
+                [4 (ast.AstExpr.Begin items)]
+                [5 (ast.AstExpr.Unsafe items)]
+                [14 (ast.AstExpr.Call other items)]
+                [_ (ast.AstExpr.While other items)]))]
+          [6 (ast.AstExpr.If other leaf leaf)]
+          [7
+            (let
+              [bindings : ast.AstLetBindingList
+                (ast.ast-let-binding-list-with-capacity 1)]
+              (ast.ast-let-binding-list-push
+                (&mut bindings)
+                (ast.AstLetBinding.Binding 73 (ast.AstMaybeType.No) other))
+              (ast.AstExpr.Let (box (ast.AstLet.Let bindings leaf))))]
+          [8
+            (let
+              [arms : ast.AstMatchArmList
+                (ast.ast-match-arm-list-with-capacity 2)]
+              (ast.ast-match-arm-list-push
+                (&mut arms)
+                (ast.AstMatchArm.Arm (ast.AstPattern.Wildcard) leaf))
+              (ast.ast-match-arm-list-push
+                (&mut arms)
+                (ast.AstMatchArm.Arm (ast.AstPattern.Binding 74) leaf))
+              (ast.AstExpr.Match (box (ast.AstMatch.Match other arms))))]
+          [9 (ast.AstExpr.StructGet leaf 75)]
+          [10 (ast.AstExpr.TupleRef leaf 3)]
+          [11 (ast.AstExpr.ArrayRef leaf other)]
+          [12 (ast.AstExpr.BoxGet leaf)]
+          [13 (ast.AstExpr.BoxTake leaf)]
+          [_ (io.panic "invalid read fixture kind")])))))
+
+(test
+  tc-read-value-unchanged-result-paths
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [leaf : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var 100))]
+    [other : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.BoxTake leaf))]
+    [type-id : i64
+      (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    (for [kind (iterator.range 0 16)]
+      (unless
+        (= kind 13)
+        (let
+          [source : i64 (tc-read-test-expr pools kind leaf other type-id)]
+          [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+          [allocation-start : i64 (profile.alloc-total)]
+          [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
+          [allocated : i64 (- (profile.alloc-total) allocation-start)]
+          (test.assert-i64-eq
+            allocated
+            0
+            "unchanged result reads allocate no payload")
+          (test.assert-i64-eq read source "unchanged result path keeps its ID")
+          (test.assert-i64-eq
+            (ast.ast-node-pool-context-expr-len pools)
+            count
+            "unchanged wrappers and non-result children append no nodes"))))
+    (for [kind (iterator.range 0 3)]
+      (let
+        [source : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (match kind
+              [0 (ast.AstExpr.Begin (ast.ast-expr-list-with-capacity 0))]
+              [1 (ast.AstExpr.Unsafe (ast.ast-expr-list-with-capacity 0))]
+              [_
+                (ast.AstExpr.Match
+                  (box
+                    (ast.AstMatch.Match
+                      other
+                      (ast.ast-match-arm-list-with-capacity 0))))]))]
+        [count : i64 (ast.ast-node-pool-context-expr-len pools)]
+        [allocation-start : i64 (profile.alloc-total)]
+        [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
+        [allocated : i64 (- (profile.alloc-total) allocation-start)]
+        (test.assert-i64-eq
+          allocated
+          0
+          "empty result reads allocate no payload")
+        (test.assert-i64-eq read source "an empty result sequence is unchanged")
+        (test.assert-i64-eq
+          (ast.ast-node-pool-context-expr-len pools)
+          count
+          "empty sequences append no nodes")))
+    (let
+      [arms : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity 2)]
+      [_first : unit
+        (ast.ast-match-arm-list-push
+          (&mut arms)
+          (ast.AstMatchArm.Arm (ast.AstPattern.Wildcard) leaf))]
+      [_last : unit
+        (ast.ast-match-arm-list-push
+          (&mut arms)
+          (ast.AstMatchArm.Arm (ast.AstPattern.Binding 74) other))]
+      [source : i64
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (ast.AstExpr.Match (box (ast.AstMatch.Match other arms))))]
+      [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
+      [children : ast.AstExprList
+        (ast.ast-expr-child-ids (ast.ast-node-pool-context-expr-get pools read))]
+      [original : ast.AstExprList
+        (ast.ast-expr-child-ids
+          (ast.ast-node-pool-context-expr-get pools source))]
+      (test.assert-true
+        (and
+          (!= read source)
+          (= (array-ref children.slots 0) other)
+          (= (array-ref children.slots 1) leaf)
+          (tc-read-test-box-get? pools (array-ref children.slots 2) leaf))
+        "a later changed arm preserves the scrutinee and earlier unchanged arm")
+      (test.assert-i64-eq
+        (array-ref original.slots 2)
+        other
+        "the source arm remains owning"))
+    (test.assert-true
+      (match (ast.ast-node-pool-context-expr-get pools other)
+        [(BoxTake id) (= id leaf)]
+        [_ false])
+      "conditions, initializers, scrutinees, indices and prefixes remain owning")
+    (ast.ast-node-pool-context-destroy-storage! pools)))
+
+(cfg
+  test
+  (define (tc-read-test-box-get?
+    [pools : ast.AstNodePoolContext]
+    [id : i64]
+    [receiver : i64]) : bool
+    (match (ast.ast-node-pool-context-expr-get pools id)
+      [(BoxGet source) (= source receiver)]
+      [_ false])))
+
+(test
+  tc-read-value-owner-growth-and-retirement
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [owner-a : arena.Arena (arena.make)]
+    [owner-b : arena.Arena (arena.make)]
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        1
+        1
+        (arena.raw-handle owner-a))]
+    [b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities-in-arena
+        1
+        1
+        (arena.raw-handle owner-b))]
+    [leaf-a : i64 (ast.ast-node-pool-context-expr-push a (ast.AstExpr.Var 100))]
+    [leaf-b : i64 (ast.ast-node-pool-context-expr-push b (ast.AstExpr.Var 200))]
+    [take-a : i64
+      (ast.ast-node-pool-context-expr-push a (ast.AstExpr.BoxTake leaf-a))]
+    [take-b : i64
+      (ast.ast-node-pool-context-expr-push b (ast.AstExpr.BoxTake leaf-b))]
+    [type-id : i64 (ast.ast-node-pool-context-type-push a (ast.AstType.I64))]
+    [reads : (__tl_dyn-array i64) (__tl_make-array i64 14)]
+    [peer-count : i64 (ast.ast-node-pool-context-expr-len b)]
+    (test.assert-i64-eq leaf-a leaf-b "independent owners have colliding IDs")
+    (test.assert-i64-eq take-a take-b "nested IDs collide too")
+    (ast.ast-node-pool-context-install! b)
+    (for [kind (iterator.range 0 14)]
+      (let
+        [source : i64 (tc-read-test-expr a kind take-a take-a type-id)]
+        [read : i64
+          (in-arena owner-b (tc_core.tc-read-value-expr-id (& a) source))]
+        (test.assert-true (!= source read) "a real result read gets a new root")
+        (test.assert-true
+          (< read (ast.ast-node-pool-context-expr-len a))
+          "the new root belongs to the supplied owner")
+        (set! (array-ref reads kind) read)))
+    (let
+      [source : i64 (tc-read-test-expr a 0 take-a take-a type-id)]
+      [boundary : i64 ast.ast-expr-node-pool-segment-size]
+      (while (< (ast.ast-node-pool-context-expr-len a) (- boundary 1))
+        (let
+          [_node : i64
+            (ast.ast-node-pool-context-expr-push a (ast.AstExpr.Var 0))]
+          unit))
+      (let
+        [read : i64
+          (in-arena owner-b (tc_core.tc-read-value-expr-id (& a) source))]
+        (test.assert-i64-eq read boundary "a changed wrapper crosses a segment")
+        (test.assert-i64-eq
+          (ast.ast-node-pool-context-expr-len a)
+          (+ boundary 1)
+          "only the changed leaf and wrapper are appended")
+        (test.assert-true
+          (match (ast.ast-node-pool-context-expr-get a read)
+            [(Spanned inner span)
+              (and
+                (tc-read-test-box-get? a inner leaf-a)
+                (ast.ast-source-span-eq? span (ast.ast-source-span 2 3 2 9)))]
+            [_ false])
+          "growth preserves the source view and owning receiver")))
+    (test.assert-i64-eq
+      (ast.ast-node-pool-context-expr-len b)
+      peer-count
+      "the installed peer receives no rows")
+    (ast.ast-node-pool-context-install! saved)
+    (ast.ast-node-pool-context-destroy-storage! b)
+    (unsafe
+      (arena.destroy owner-b))
+    (for [kind (iterator.range 0 14)]
+      (let
+        [children : ast.AstExprList
+          (ast.ast-expr-child-ids
+            (ast.ast-node-pool-context-expr-get a (array-ref reads kind)))]
+        [slot : i64
+          (cond
+            [(or (= kind 4) (= kind 5) (= kind 7)) (- children.len 1)]
+            [(or (= kind 6) (= kind 8)) 1]
+            [else 0])]
+        (test.assert-true
+          (tc-read-test-box-get? a (array-ref children.slots slot) leaf-a)
+          "rewritten payloads survive destruction of the current arena")
+        (when
+          (or (= kind 6) (= kind 8))
+          (test.assert-true
+            (tc-read-test-box-get? a (array-ref children.slots 2) leaf-a)
+            "every result branch is rewritten"))
+        (when
+          (or (= kind 4) (= kind 5) (= kind 6) (= kind 7) (= kind 8))
+          (test.assert-i64-eq
+            (array-ref children.slots 0)
+            take-a
+            "non-result positions retain the shared owning node"))
+        (when
+          (= kind 11)
+          (test.assert-i64-eq
+            (array-ref children.slots 1)
+            take-a
+            "an array index does not inherit the read"))
+        (when
+          (= kind 13)
+          (test.assert-true
+            (match (ast.ast-node-pool-context-expr-get a (array-ref reads kind))
+              [(BoxGet _) true]
+              [_ false])
+            "a nested BoxTake changes kind too"))))
+    (test.assert-true
+      (match (ast.ast-node-pool-context-expr-get a take-a)
+        [(BoxTake id) (= id leaf-a)]
+        [_ false])
+      "shared source occurrences are never rewritten")
+    (ast.ast-node-pool-context-destroy-storage! a)
+    (unsafe
+      (arena.destroy owner-a))))
 
 (cfg
   test

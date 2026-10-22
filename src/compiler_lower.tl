@@ -1849,6 +1849,7 @@
 (defstruct LowerExposureScan
   (ctx tc_core.TcContext)
   (state LowerState)
+  (pools ast.AstNodePoolContext)
   (facts LowerAddressExposure))
 
 (define (lower-state-from-box [data : (Box LowerStateData)]) : LowerState
@@ -15012,15 +15013,17 @@
   [scope : i64]
   [name : i64]) : i64
   (let
-    [key : LowerExposureBinding (LowerExposureBinding scope kind name 0)]
     [lo : i64 0]
     [hi : i64 bindings.len]
     (while (< lo hi)
       (let
         [mid : i64 (+ lo (/ (- hi lo) 2))]
-        (if (lower-exposure-binding-less?
-          (clone (array-ref bindings.slots mid))
-          key)
+        [value : (& bindings LowerExposureBinding)
+          (& (array-ref bindings.slots mid))]
+        (if (cond
+          [(!= value.scope scope) (< value.scope scope)]
+          [(!= value.kind kind) (< value.kind kind)]
+          [else (< value.name name)])
           (set! lo (+ mid 1))
           (set! hi mid))))
     (if (< lo bindings.len)
@@ -15177,9 +15180,11 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [id : i64]) : unit
-  (let
-    [ctx : tc_core.TcContext (clone scan.ctx)]
-    (lower-exposure-walk! scan env type-env (lower-context-expr-get ctx id))))
+  (lower-exposure-walk!
+    scan
+    env
+    type-env
+    (ast.ast-node-pool-context-expr-get (& scan.pools) id)))
 
 (define (lower-exposure-names!
   [scan : (&mut scan LowerExposureScan)]
@@ -15231,8 +15236,8 @@
   (let
     [ctx : tc_core.TcContext (clone scan.ctx)]
     [state : LowerState (clone scan.state)]
-    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-    [unwrapped : ast.AstExpr (ast.ast-expr-unspan-with-pools pools (& expr))]
+    [unwrapped : ast.AstExpr
+      (ast.ast-expr-unspan-with-pools (& scan.pools) (& expr))]
     (match (& unwrapped)
       [(or (Lambda _) (Quote _) (Quasiquote _) (Comptime _)) unit]
       [(Let payload)
@@ -15259,12 +15264,7 @@
                       [(Ok ty)
                         (set!
                           next-types
-                          (tc_core.tc-bind-initialized-value-id
-                            ctx
-                            next-types
-                            name
-                            ty
-                            (lower-context-expr-get ctx init)))]
+                          (tc_core.tc-bind-id next-types name ty))]
                       [(Err _) (set! scan.facts.complete false)])
                     (set!
                       next-env
@@ -15492,14 +15492,15 @@
           [(Borrow true _ place)
             (lower-exposure-place! scan env type-env place false)]
           [_ unit])
-        (let
-          [children : ast.AstExprList (ast.ast-expr-child-ids unwrapped)]
-          (for [index (iterator.range 0 children.len)]
-            (lower-exposure-walk-id!
-              scan
-              env
-              type-env
-              (ast.ast-expr-list-get (& children) index -1))))])))
+        (ast.ast-expr-for-each-child
+          unwrapped
+          lower-exposure-walk-id!
+          ast.ast-child-unit
+          ast.ast-child-unit
+          ast.ast-child-unit
+          scan
+          env
+          type-env)])))
 
 (define (lower-exposure-census!
   [ctx : tc_core.TcContext]
@@ -15512,6 +15513,7 @@
       (LowerExposureScan
         ctx
         state
+        (tc_core.tc-context-pools ctx)
         (LowerAddressExposure
           true
           true
@@ -15531,7 +15533,7 @@
     (lower-exposure-walk! (&mut scan) source-env type-env body)
     (lower-exposure-finish! (&mut scan.facts.bindings))
     (match scan
-      [(LowerExposureScan _ _ facts)
+      [(LowerExposureScan _ _ _ facts)
         (unsafe
           (set!
             (deref

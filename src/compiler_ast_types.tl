@@ -10700,25 +10700,19 @@
   (unsafe
     (ptr-write! (ptr-offset (int->ptr address : (MutPtr i32)) index) value)))
 
-(define (ast-compaction-expr-map-ref
+(define (ast-compaction-expr-map-slot
   [remap : (& remap AstProgramCompactionRemap)]
-  [index : i64]) : i32
-  (if (= remap.expr-forwarding-slots 0)
-    (ast-compaction-map-ref remap.expr-map-address index)
-    (cast
-      (ast-expr-span-slot-get-from-bases remap.expr-forwarding-slots index)
-      : i32)))
-
-(define (ast-compaction-expr-map-set!
-  [remap : (& remap AstProgramCompactionRemap)]
-  [index : i64]
-  [value : i32]) : unit
-  (if (= remap.expr-forwarding-slots 0)
-    (ast-compaction-map-set! remap.expr-map-address index value)
-    (ast-expr-span-slot-set-in-bases!
-      remap.expr-forwarding-slots
-      index
-      (cast value : i64))))
+  [index : i64]) : (MutPtr i32)
+  (unsafe
+    (if (= remap.expr-forwarding-slots 0)
+      (ptr-offset (int->ptr remap.expr-map-address : (MutPtr i32)) index)
+      (let
+        [base : i64
+          (ptr-read
+            (ptr-offset
+              (int->ptr remap.expr-forwarding-slots : (Ptr i64))
+              (shr index ast-expr-node-pool-segment-shift)))]
+        (int->ptr (+ base (* index ast-expr-span-slot-bytes)) : (MutPtr i32))))))
 
 ;; Compaction reconstructs provenance from wrapper rows, never from the source
 ;; span sidecar. Only the consuming caller retires that sidecar before walking.
@@ -11384,9 +11378,12 @@
         (cfg compile-profile (ast-compaction-profile-note-source-expr!))
         id)
       (let
-        [expr-map-address : u64 remap.expr-map-address]
-        [slot : i64 (- id base)]
-        [cached : i32 (ast-compaction-expr-map-ref remap slot)]
+        ;; Both map storage and source span segments stay fixed across the
+        ;; recursive walk; retain this exact slot through its eventual write.
+        [slot : (MutPtr i32) (ast-compaction-expr-map-slot remap (- id base))]
+        [cached : i32
+          (unsafe
+            (ptr-read slot))]
         [persist? : bool remap.persist-in-place]
         (if (> cached 0)
           (if persist?
@@ -11404,7 +11401,8 @@
             (let
               [_mark : unit
                 (begin
-                  (ast-compaction-map-set! expr-map-address slot (cast 1 : i32))
+                  (unsafe
+                    (ptr-write! slot (cast 1 : i32)))
                   (cfg
                     compile-profile
                     (ast-compaction-profile-note-survivor-expr!)))]
@@ -11425,10 +11423,8 @@
                     id))]
               [new-id : i64
                 (ast-compaction-remap-dest-expr-push remap new-expr)]
-              (ast-compaction-expr-map-set!
-                remap
-                slot
-                (cast (+ new-id 1) : i32))
+              (unsafe
+                (ptr-write! slot (cast (+ new-id 1) : i32)))
               new-id)))))))
 
 (define (ast-string-same-storage? [left : (& left str)] [right : (& right str)]) : bool

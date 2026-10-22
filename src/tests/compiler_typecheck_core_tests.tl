@@ -12712,3 +12712,77 @@
           [_ false])
         "reset invalidates all module admissions")
       (tc_core.tc-job-state-retire-owned-storage! job))))
+
+(test
+  macro-unqualified-import-cache-clears-live-key-storage
+  (let
+    [owner : i64 (arena.tl_arena_make_small)]
+    [state-a : tc_core.TcMacroState
+      (in-arena
+        (arena.Arena owner)
+        (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new)))]
+    [state-b : tc_core.TcMacroState
+      (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
+    [_ready-a : unit (tc_core.macro-unqualified-import-cache-ensure! state-a)]
+    [_ready-b : unit (tc_core.macro-unqualified-import-cache-ensure! state-b)]
+    [keys-a : (__tl_dyn-array i64)
+      (tc_core.tc-macro-import-index-array state-a unqualified-module-keys)]
+    [names-a : (__tl_dyn-array i64)
+      (tc_core.tc-macro-import-index-array state-a unqualified-name-keys)]
+    [values-a : (__tl_dyn-array i64)
+      (tc_core.tc-macro-import-index-array state-a unqualified-values)]
+    [keys-b : (__tl_dyn-array i64)
+      (tc_core.tc-macro-import-index-array state-b unqualified-module-keys)]
+    (test.assert-i64-eq
+      (array-length keys-a)
+      65536
+      "the full cache remains allocated")
+    (set! (array-ref keys-b 0) 42)
+    (set! (array-ref keys-b 65535) 84)
+    ;; A valid generation keeps live keys. Every invalidation cause must clear
+    ;; all keys while retaining the unused name/value payload and the other job.
+    (for [scenario (iterator.range 0 4)]
+      (for [index (iterator.range 0 65536)]
+        (set! (array-ref keys-a index) (+ index 1))
+        (set! (array-ref names-a index) (- index 7))
+        (set! (array-ref values-a index) (+ index 9)))
+      (tc_core.tc-macro-import-index-control-set! state-a 11 123)
+      (when
+        (> scenario 0)
+        (tc_core.tc-macro-import-index-control-set!
+          state-a
+          (cond [(= scenario 1) 14] [(= scenario 2) 12] [else 13])
+          -1))
+      ;; The current owner has never been rewound: array-zero's fresh-storage
+      ;; shortcut would leave these deliberately overwritten live keys intact.
+      (in-arena
+        (arena.Arena owner)
+        (tc_core.macro-unqualified-import-cache-initialize! state-a))
+      (let
+        [exact : bool true]
+        (for [index (iterator.range 0 65536)]
+          (set!
+            exact
+            (and
+              exact
+              (=
+                (array-ref keys-a index)
+                (if (= scenario 0)
+                  (+ index 1)
+                  0))
+              (= (array-ref names-a index) (- index 7))
+              (= (array-ref values-a index) (+ index 9)))))
+        (test.assert-true
+          exact
+          "invalidation clears every live key and only keys"))
+      (test.assert-i64-eq
+        (tc_core.tc-macro-import-index-control state-a 11)
+        (if (= scenario 0)
+          123
+          0)
+        "only invalidation resets the cache count")
+      (test.assert-true
+        (and (= (array-ref keys-b 0) 42) (= (array-ref keys-b 65535) 84))
+        "another live job retains its boundary keys"))
+    (unsafe
+      (arena.tl_arena_destroy owner))))

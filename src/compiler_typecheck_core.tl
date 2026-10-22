@@ -2,6 +2,7 @@
 (import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.arena)
+(import stdlib.runtime)
 (import stdlib.comptime)
 (import compiler_owned_view as owned_view)
 (import stdlib.hashmap)
@@ -103156,12 +103157,15 @@
       (= (tc-macro-import-index-control state 12) table-id)
       (= (tc-macro-import-index-control state 13) reset-generation))
       unit
-      (begin
-        (for [i (iterator.range 0 65536)]
-          (set!
-            (array-ref
-              (tc-macro-import-index-array state unqualified-module-keys)
-              i)
+      (let
+        [keys : (__tl_dyn-array i64)
+          (tc-macro-import-index-array state unqualified-module-keys)]
+        ;; Live keys need an unconditional fill, including in virgin arenas.
+        ;; Storage ensure owns a complete, eight-byte-aligned i64 array.
+        (unsafe
+          (runtime.mem-fill8
+            (ptr-cast (__tl_array-data keys) : (MutPtr u8))
+            (array-length keys)
             0))
         (tc-macro-import-index-control-set! state 11 0)
         (tc-macro-import-index-control-set! state 12 table-id)

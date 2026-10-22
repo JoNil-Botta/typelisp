@@ -884,6 +884,13 @@ index. The `macro-segmented-program-events` test and the generated-declaration
 typecheck cases cover the event index and the re-resolution boundary; the
 `expansions` compiler-scaling row measures expansions within one module.
 
+Unqualified import-cache invalidation clears every module-key slot in its
+existing aligned i64 array with an unconditional fill. Name/value slots remain
+unreadable until their module key is populated again. Fresh-allocation zeroing
+cannot clear this live storage: a virgin arena may contain overwritten keys.
+Valid source-name table/generation pairs retain the cache; each job owns its
+own key array and invalidation controls.
+
 Macro and CTFE diagnostic raises supply a `CompilerMacroKind` to
 `ctfe-diagnostic-at-expr`. The shared code transport preserves an existing
 parse/typecheck/load code, while a `comptime-error` String always receives the

@@ -42591,9 +42591,7 @@
     ;; a disposable function scratch arena. Materialize the parent before
     ;; publishing the child so the saved stack cannot alias a mutated field.
     [next : TcNameIdList
-      (in-arena
-        (arena.Arena owner)
-        (tc-name-id-list-add (tc-global-shared-view previous) name-id))]
+      (in-arena (arena.Arena owner) (tc-name-id-list-add previous name-id))]
     (tc-spmd-inline-helper-stack-restore-for-state! state next)
     previous))
 

@@ -15011,10 +15011,7 @@
             (>= scope 0)
             (=
               (storage_exposure.storage-exposure-binding-field source binding 1)
-              0)
-            (=
-              (storage_exposure.storage-exposure-binding-field source binding 4)
-              1))
+              0))
           (match (lower-context-expr-get ctx scope)
             [(or (Spanned inner _) (MacroExpansion inner _ _))
               (let
@@ -15027,7 +15024,7 @@
             [_ (set! ready false)])))
       (set!
         binding
-        (storage_exposure.storage-exposure-binding-field source binding 6)))
+        (storage_exposure.storage-exposure-binding-field source binding 5)))
     (let
       [data : (Box LowerStateData) (lower-state-box state)]
       (set!
@@ -15069,14 +15066,7 @@
           name
           (storage_exposure.storage-exposure-key facts.frame kind scope name))]
       (when
-        (and
-          (>= index 0)
-          (=
-            (storage_exposure.storage-exposure-binding-field
-              facts.source
-              index
-              4)
-            1))
+        (>= index 0)
         (lower_i64_i64_map.insert-ref!
           (&mut (__tl-project-field (__tl-box-place data) address-taken))
           var-id
@@ -15148,7 +15138,7 @@
               (storage_exposure.storage-exposure-binding-field
                 facts.source
                 binding
-                6))))))))
+                5))))))))
 
 (define (lower-state-deferred-copy? [state : LowerState] [var-id : i64]) : bool
   (let

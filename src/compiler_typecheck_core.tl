@@ -71072,18 +71072,16 @@
                             (unsafe
                               (deref descriptor).scope)
                             -1)]
-                        [exposure : i64
-                          (storage_exposure.storage-exposure-bind!
-                            facts
+                        (storage_exposure.storage-exposure-record!
+                          facts
+                          kind
+                          scope
+                          root
+                          (storage_exposure.storage-exposure-key
+                            frame
                             kind
                             scope
-                            root
-                            (storage_exposure.storage-exposure-key
-                              frame
-                              kind
-                              scope
-                              root))]
-                        (storage_exposure.storage-exposure-mark! facts exposure))
+                            root)))
                       (storage_exposure.storage-exposure-incomplete! facts)))
                   (storage_exposure.storage-exposure-incomplete! facts)))))]
         [(Err _) (storage_exposure.storage-exposure-incomplete! facts)]))))

@@ -1986,14 +1986,12 @@
                     (if (= index 0)
                       first
                       second))]
-                [exposure : i64
-                  (storage_exposure.storage-exposure-bind!
-                    facts
-                    0
-                    scope
-                    name
-                    (storage_exposure.storage-exposure-key frame 0 scope name))]
-                (storage_exposure.storage-exposure-mark! facts exposure))))
+                (storage_exposure.storage-exposure-record!
+                  facts
+                  0
+                  scope
+                  name
+                  (storage_exposure.storage-exposure-key frame 0 scope name)))))
           (storage_exposure.storage-exposure-leave! facts previous true)))
       (lower.lower-exposure-prepare! ctx state body)
       (test.assert-true

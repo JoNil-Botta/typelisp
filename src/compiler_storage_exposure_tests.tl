@@ -8,34 +8,20 @@
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
     [previous : i64 (exposure.storage-exposure-enter! facts 3 9)]
     [frame : i64 (exposure.storage-exposure-current facts)]
-    [first : i64 -1]
     (for [name (array (cast 7 : i64) -9223372036854775808 9223372036854775807)]
       (for [scope (iterator.range 0 3)]
         (for [kind (iterator.range -1 3)]
+          ;; Deliberately collide every key, including full-width names.
+          (exposure.storage-exposure-record! facts kind scope name 0)
           (let
-            ;; Deliberately collide every key, including full-width names.
-            [identity : i64
-              (exposure.storage-exposure-bind! facts kind scope name 0)]
             [index : i64
               (exposure.storage-exposure-find facts frame kind scope name 0)]
-            (when (= first -1) (set! first identity))
+            (test.assert-true (>= index 0) "exact key survives collisions")
+            (exposure.storage-exposure-record! facts kind scope name 0)
             (test.assert-i64-eq
-              (exposure.storage-exposure-index facts identity)
+              (exposure.storage-exposure-find facts frame kind scope name 0)
               index
-              "exact key survives collisions")
-            (test.assert-i64-eq
-              (exposure.storage-exposure-binding-field facts index 4)
-              0
-              "new binding is private")
-            (exposure.storage-exposure-mark! facts identity)
-            (test.assert-i64-eq
-              (exposure.storage-exposure-bind! facts kind scope name 0)
-              identity
-              "duplicate has one identity")
-            (test.assert-i64-eq
-              (exposure.storage-exposure-binding-field facts index 4)
-              1
-              "exposure is monotone")))))
+              "repeated exposure retains one record")))))
     (test.assert-i64-eq
       (exposure.storage-exposure-find facts frame 4 0 7 0)
       -1
@@ -58,19 +44,7 @@
     (test.assert-i64-eq
       (exposure.storage-exposure-frame facts 4 9)
       -1
-      "declarations sharing syntax stay distinct")
-    (exposure.storage-exposure-reset! facts)
-    (test.assert-i64-eq
-      (exposure.storage-exposure-index facts first)
-      -1
-      "reset rejects stale binding identities")
-    (let
-      [outer : i64 (exposure.storage-exposure-enter! facts 3 9)]
-      [fresh : i64 (exposure.storage-exposure-bind! facts 0 0 7 0)]
-      (test.assert-true
-        (!= first fresh)
-        "new generation cannot reuse a source identity")
-      (exposure.storage-exposure-leave! facts outer true))))
+      "declarations sharing syntax stay distinct")))
 
 (test
   compiler-storage-exposure-nested-and-incomplete
@@ -78,24 +52,21 @@
     [facts : exposure.StorageExposure (exposure.storage-exposure-new)]
     [outside : i64 (exposure.storage-exposure-enter! facts 3 9)]
     [outer-frame : i64 (exposure.storage-exposure-current facts)]
-    [outer : i64 (exposure.storage-exposure-bind! facts 0 -1 7 0)]
     [previous : i64 (exposure.storage-exposure-enter! facts 3 10)]
     [inner-frame : i64 (exposure.storage-exposure-current facts)]
-    [inner : i64 (exposure.storage-exposure-bind! facts 0 -1 7 0)]
-    (test.assert-true (!= outer inner) "capture owns a separate slot")
-    (exposure.storage-exposure-mark! facts inner)
+    (exposure.storage-exposure-record! facts 0 -1 7 0)
     (exposure.storage-exposure-leave! facts previous true)
     (test.assert-i64-eq
       (exposure.storage-exposure-current facts)
       outer-frame
       "nested exit restores enclosing frame")
     (test.assert-i64-eq
-      (exposure.storage-exposure-binding-field
-        facts
-        (exposure.storage-exposure-index facts outer)
-        4)
-      0
+      (exposure.storage-exposure-find facts outer-frame 0 -1 7 0)
+      -1
       "nested exposure leaves enclosing slot private")
+    (test.assert-true
+      (>= (exposure.storage-exposure-find facts inner-frame 0 -1 7 0) 0)
+      "capture owns a separate exposed slot")
     (test.assert-true
       (exposure.storage-exposure-ready? facts inner-frame)
       "nested frame completes independently")
@@ -136,26 +107,25 @@
     [generation : i64 (exposure.storage-exposure-generation facts)]
     [previous : i64 (exposure.storage-exposure-enter! facts 1 2)]
     [outer-frame : i64 (exposure.storage-exposure-current facts)]
-    [outer-binding : i64 (exposure.storage-exposure-bind! facts 0 5 7 0)]
-    (exposure.storage-exposure-mark! facts outer-binding)
+    [_outer : unit (exposure.storage-exposure-record! facts 0 5 7 0)]
+    [outer-binding : i64
+      (exposure.storage-exposure-find facts outer-frame 0 5 7 0)]
     (let
       [outer : i64 (exposure.storage-exposure-enter! facts 1 3)]
       [inner-frame : i64 (exposure.storage-exposure-current facts)]
-      [inner-binding : i64 (exposure.storage-exposure-bind! facts 0 5 8 0)]
-      (exposure.storage-exposure-mark! facts inner-binding)
+      [_inner : unit (exposure.storage-exposure-record! facts 0 5 8 0)]
+      [inner-binding : i64
+        (exposure.storage-exposure-find facts inner-frame 0 5 8 0)]
       (test.assert-i64-eq
         (exposure.storage-exposure-frame-field facts outer-frame 2)
-        (exposure.storage-exposure-index facts outer-binding)
+        outer-binding
         "outer frame keeps its own exposure list")
       (test.assert-i64-eq
         (exposure.storage-exposure-frame-field facts inner-frame 2)
-        (exposure.storage-exposure-index facts inner-binding)
+        inner-binding
         "nested frame keeps its own exposure list")
       (test.assert-i64-eq
-        (exposure.storage-exposure-binding-field
-          facts
-          (exposure.storage-exposure-index facts inner-binding)
-          6)
+        (exposure.storage-exposure-binding-field facts inner-binding 5)
         -1
         "frame links do not cross a function boundary")
       (exposure.storage-exposure-leave! facts outer true))

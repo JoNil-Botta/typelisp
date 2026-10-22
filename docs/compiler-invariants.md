@@ -667,6 +667,48 @@ current. Successful raw lower, pointer-proof and driver-lowered results carry
 the one-word lower owner through their consumers. A fresh standalone lowering
 failure releases its otherwise unreturned arenas after its diagnostic escapes.
 
+### Standalone source context
+
+`CompilerLowerRequest` is borrowed by source lowering and semantic-evidence
+consumers. `compiler-lower-request` initializes the mode, disabled proof,
+empty stdlib roots/cfg names, and standalone semantic-lowering policy. Callers may set those
+fields without another entry-point variant. Cfg names and roots are owned text,
+not interned IDs captured before a reset. Target predicates come from the
+shared target presets after the correct intern generation is installed.
+
+Standalone requests retain the live-session guard and reset interning,
+builtins and serial typecheck state. `in-session` requests append to the
+caller's installed AST/name owners. Import-aware requests use private loader,
+prefix-cache and typecheck job state. They retire only that job's temporary
+storage after IR or diagnostics escape. The borrowed context remains inspectable:
+prefix, dotted-path, proof, provenance and surface-summary owners are empty on
+both outcomes. Callers must publish explicit pool mutations before
+invoking an API that reads the installed pools. A nested success or failure
+cannot change the enclosing generation, builtin IDs, load-session selector or
+previously published AST prefix.
+
+Imported source uses its caller path and the loader's complete declaration
+paths/module column, including selected/wildcard imports and macro-produced
+declarations. `compiler-load-executable-prelude` is the shared ordered
+runtime/core-macro prefix for the CLI and import-aware executable source jobs.
+Backend target helpers set `executable`; semantic-only lowering keeps its core
+macro prefix so executable runtime types do not enter its debug/type graph.
+A source
+that supplies its own inline `stdlib.runtime` keeps that owner. Import-free
+programs keep their existing unlocated lowering path, including in-session
+library entry naming used by the native macro catalog. Missing
+import diagnostics preserve the failing file and add the caller's exact
+import span as an `imported here` label.
+Imported helper names retain the actual caller owner (`<source>` for the
+default source API), rather than the old empty-path owner.
+
+Raw object-image helpers retain their structural contract; an image does not
+certify direct-object admission. Existing eligibility checks still exclude
+unsupported instructions, ABI shapes and runtime bodies. The source-import
+tests keep an allocation program's explicit semantic exclusion until #8317's
+runtime bodies are materialized, alongside assembly/CLI execution and
+supported raw-image artifact controls on both target ABIs.
+
 Function lowering forks the persistent type-environment store inside its
 existing scratch extent. Parameters, return/cleanup markers and local bindings
 append there while the immutable module tail stays borrowed. The inherited

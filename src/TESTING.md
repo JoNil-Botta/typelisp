@@ -2356,3 +2356,25 @@ tests/fixtures/elf-dso/README.md. Normal/native tests invoke no external tool.
 The empty-GNU-hash controls retain every undefined symbol using a SysV or
 checked section count. Removing both count sources yields explicit unsupported
 metadata. Do not infer symbol count from the distance to dynstr.
+
+### Standalone backend source imports
+
+`compiler_backend_source_tests.tl` checks the public source helpers with
+qualified stdlib functions/types, declaration/expression macros, selected and
+wildcard imports, and both target cfg presets. Its assertion body also runs
+inside `compiler-backend-self-test`. Request tests carry explicit roots/user
+cfg names through successes and failures and pin caller paths/import labels.
+Nested jobs retain a published AST prefix, source name, builtin IDs, intern
+generation and enclosing load-session owner. Import-free library controls retain
+the native catalog's entry names. Success/failure controls also inspect private
+prefix, dotted-path, provenance and surface-summary owners after retirement.
+
+The four `backend_source_import_*` fixtures run in the native corpus at
+opt0/1/2 on both hosts. `stage2-backend-source-import-context` additionally
+builds a test-only source-helper driver and compares executable exit 42 and
+empty output through assembly, serialized raw objects and the ordinary CLI.
+The required gate performs 12 route checks per host. The allocation fixture
+keeps assembly/CLI execution plus an explicit object-eligibility exclusion;
+it must not execute an unadmitted raw image with #8317's placeholder runtime
+symbols. The shared native-link helper links serialized objects with the same
+entry, libraries and flags as its assembly path.

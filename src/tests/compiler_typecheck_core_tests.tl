@@ -1,6 +1,7 @@
 ;; compiler_typecheck_core_tests.tl - White-box tests for the typechecker core:
 ;; state isolation between jobs, environment and cache smokes, and inline tests.
 (import stdlib.iterator)
+(import compiler_storage_exposure as storage_exposure)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.hashmap)
@@ -3428,6 +3429,7 @@
     (= (comptime (offset-of (type TcTypeEnvBinding) ty)) 8)
     (= (comptime (offset-of (type TcTypeEnvBinding) parent)) 32)
     (= (comptime (offset-of (type TcTypeEnvBinding) storage-source)) 40)
+    (= (comptime (offset-of (type TcTypeEnvBinding) storage-owner)) 48)
     (= (comptime (offset-of (type TcTypeEnvStore) bindings)) 0)
     (= (comptime (offset-of (type TcTypeEnvStore) binding-capacity)) 8)
     (= (comptime (offset-of (type TcTypeEnvStore) binding-len)) 16)
@@ -3443,7 +3445,6 @@
       (comptime
         (offset-of (type TcTypeEnvStore) type-resolution-cache-state-address))
       80)
-    (= (comptime (offset-of (type TcTypeEnvStore) storage-source-owner)) 88)
     ;; The structural top-env index reads these four through raw word offsets,
     ;; so they must stay first and stay one word wide.
     (= (comptime (offset-of (type TcTypeEnvCache) chain-depth)) 0)
@@ -12477,3 +12478,59 @@
           [_ false])
         "reset invalidates all module admissions")
       (tc_core.tc-job-state-retire-owned-storage! job))))
+
+(test
+  tc-storage-exposure-rejects-foreign-binding-identities
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx-a : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        (tc_core.tc-job-state-new))]
+    [ctx-b : tc_core.TcContext
+      (tc_core.tc-context-new-with-source-names-and-job-state
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools
+        (ci.intern-source-name-session-capture-active-handle)
+        (tc_core.tc-job-state-new))]
+    [source-a : storage_exposure.StorageExposure
+      (tc_core.tc-body-storage-exposure (tc_core.tc-context-body-state ctx-a))]
+    [source-b : storage_exposure.StorageExposure
+      (tc_core.tc-body-storage-exposure (tc_core.tc-context-body-state ctx-b))]
+    [name : i64 (ci.intern "foreign-storage-source")]
+    [params : ast.AstParamList (ast.ast-param-list-new)]
+    [locals : tc_core.TcMovedSet
+      (tc_core.tc-moved-add (tc_core.tc-moved-empty) name)]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id (tc_core.tc-empty-env) name (I64))]
+    [previous-a : i64 (storage_exposure.storage-exposure-enter! source-a 0 1)]
+    [_annotate : tc_core.TcTypeEnv
+      (tc_core.tc-storage-register! ctx-a env 0 -1 name)]
+    [_enter-b : tc_core.TcTypeEnv
+      (tc_core.tc-storage-enter! ctx-b env (& params) (& locals) 2)]
+    [frame-b : i64 (storage_exposure.storage-exposure-current source-b)]
+    (tc_core.tc-storage-expose! ctx-b env (& locals) (Var name) true)
+    (test.assert-i64-eq
+      (storage_exposure.storage-exposure-frame-field source-b frame-b 4)
+      0
+      "a shared environment cannot turn another job's numeric identity into evidence")
+    (storage_exposure.storage-exposure-leave! source-b -1 true)
+    (test.assert-true
+      (not (storage_exposure.storage-exposure-ready? source-b frame-b))
+      "foreign evidence remains conservative")
+    (test.assert-i64-eq
+      (storage_exposure.storage-exposure-binding-field source-a 0 4)
+      0
+      "the original checker is unchanged")
+    (storage_exposure.storage-exposure-leave! source-a previous-a true)))

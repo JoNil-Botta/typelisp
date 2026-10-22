@@ -100,7 +100,8 @@
   (ty ast.AstType)
   (parent i64)
   ;; Checker-job storage identity; -1 outside a recorded source binding.
-  (storage-source i64))
+  (storage-source i64)
+  (storage-owner u64))
 
 ;; The four chain fields lead the record so the structural top-env index can
 ;; read them with fixed word offsets (0..3) without materializing the whole
@@ -432,8 +433,7 @@
   (structural-session-address i64)
   ;; Job-owned memo used while explicit cache layers collect signatures that
   ;; still contain unresolved type variables.
-  (type-resolution-cache-state-address i64)
-  (storage-source-owner u64))
+  (type-resolution-cache-state-address i64))
 
 ;; Structural index over one store's explicit top-env layer forest. `map` sends
 ;; a binding key to the packed reference of the newest layer that binds it;
@@ -8534,8 +8534,7 @@
     topenv-state-address
     0
     structural-session-address
-    type-resolution-cache-state-address
-    0))
+    type-resolution-cache-state-address))
 
 (define (tc-type-env-store-handle-new-with-topenv-state-address
   [topenv-state-address : i64]
@@ -8806,7 +8805,7 @@
     [index : i64
       (tc-type-env-store-push-binding!
         store-handle
-        (TcTypeEnvBinding name-id ty env.head -1))]
+        (TcTypeEnvBinding name-id ty env.head -1 0))]
     (TcTypeEnv store-handle index env.abi-pad)))
 
 (define (tc-type-env-cache-node [env : TcTypeEnv] [cache : TcTypeEnvCache]) : TcTypeEnv
@@ -70951,7 +70950,10 @@
           (unsafe
             (set!
               (deref (int->ptr (cast head : u64) : (MutPtr TcTypeEnvBinding))).storage-source
-              identity))
+              identity)
+            (set!
+              (deref (int->ptr (cast head : u64) : (MutPtr TcTypeEnvBinding))).storage-owner
+              facts.address))
           (storage_exposure.storage-exposure-incomplete! facts))))
     env))
 
@@ -70976,10 +70978,7 @@
       (tc-checked-let-binding-fact-state-data
         (tc-job-state-checked-let-binding-facts (tc-context-job-state ctx))).current-declaration-ordinal]
     [_ : i64 (storage_exposure.storage-exposure-enter! facts ordinal body)]
-    [store : TcTypeEnvStore (tc-type-env-store-read env.store)]
     [out : TcTypeEnv env]
-    (set! store.storage-source-owner facts.address)
-    (tc-type-env-store-write! env.store store)
     ;; Captures have private slots in the nested function; their facts must
     ;; never mark the enclosing function's source binding.
     (let
@@ -71068,7 +71067,9 @@
                   (if (and
                     (>= head 0)
                     (=
-                      (tc-type-env-store-read env.store).storage-source-owner
+                      (unsafe
+                        (deref
+                          (int->ptr (cast head : u64) : (Ptr TcTypeEnvBinding))).storage-owner)
                       facts.address))
                     (unsafe
                       (deref

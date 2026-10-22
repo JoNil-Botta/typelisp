@@ -8839,6 +8839,9 @@
   [type-env : tc_core.TcTypeEnv]
   [shadowed : LowerIdSet]
   [func : ast.AstExpr]) : tc_core.TcNameLookup
+  (when
+    (tc_core.tc-spmd-private-intrinsic-call? ctx type-env (& func))
+    (return (Err "")))
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     (match (ast.ast-expr-unspan-with-pools (& pools) (& func))

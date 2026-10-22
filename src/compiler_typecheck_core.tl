@@ -42617,6 +42617,16 @@
     (Spmd)
     "typecheck: recursive SPMD helper call is not supported"))
 
+(define (tc-spmd-private-intrinsic-call?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : (& ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    func)
+    [(Var name) (tc-private-intrinsic-unshadowed-id? ctx env name)]
+    [_ false]))
+
 (define (tc-spmd-inline-helper-resolve-name
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -43450,6 +43460,9 @@
   [func : ast.AstExpr]
   [args : ast.AstExprList]
   [expr : ast.AstExpr]) : ResultTcUnit
+  (when
+    (tc-spmd-private-intrinsic-call? ctx env (& func))
+    (return (tc-spmd-masked-if-expr-list ctx expr-bases env spmd-env args)))
   (let
     [symbol (try (tc-spmd-atomic-call-symbol ctx env spmd-env func))]
     (if (string.eq symbol "")
@@ -46232,10 +46245,15 @@
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
-        (if (tc-spmd-array-length-call?
-          expr-bases
-          (tc-context-structural-session ctx)
-          (tc-global-shared-view func))
+        ;; Intrinsics have no first-class function value to resolve. Their
+        ;; ordinary call check has already proved types and visibility; lane
+        ;; dependence comes from their operands, including under a mask.
+        (if (or
+          (tc-spmd-private-intrinsic-call? ctx env (& func))
+          (tc-spmd-array-length-call?
+            expr-bases
+            (tc-context-structural-session ctx)
+            (tc-global-shared-view func)))
           (tc-spmd-array-length-call ctx expr-bases env spmd-env expr-ty args)
           (tc-spmd-atomic-call ctx expr-bases env spmd-env expr-ty func args)))]
     [(If cond-box then-branch-box else-branch-box)

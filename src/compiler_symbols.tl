@@ -3795,18 +3795,14 @@
 
 (define (compiler-field-type-at-index
   [fields : (& ast.AstFieldDefList)]
-  [target : i64]
-  [index : i64]) : parser.ResultAstType
-  (if (>= index (ast.ast-field-def-list-len fields))
+  [target : i64]) : parser.ResultAstType
+  (if (or (< target 0) (>= target (ast.ast-field-def-list-len fields)))
     (Err "symbols: field index not found")
     (match (ast.ast-field-def-list-get
       fields
-      index
+      target
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
-        (if (= target index)
-          (Ok ty)
-          (compiler-field-type-at-index fields target (+ index 1)))])))
+      [(Def _ ty _) (Ok ty)])))
 
 (define (compiler-registries-variant-fields-indexed
   [symbols : (& symbols CompilerSymbols)]
@@ -3854,7 +3850,7 @@
       (Err "symbols: declaration index not found")
       (match (array-ref decls owner-index)
         [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
-          (compiler-field-type-at-index (& fields) child-index 0)]
+          (compiler-field-type-at-index (& fields) child-index)]
         [_ (Err "symbols: field owner is not struct")]))))
 
 (define (compiler-symbols-decl-name-id-at-index

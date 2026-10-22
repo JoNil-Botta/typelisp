@@ -73792,7 +73792,7 @@
                 lower-state
                 decls
                 paths
-                (lower-global-shared-view entry-path)
+                (clone entry-path)
                 Nil))])]
       [specialized-result : spec.ResultSpecProgramWithPaths
         (begin
@@ -73805,7 +73805,7 @@
               (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
                 (& program)
                 (& paths)
-                (lower-global-shared-view entry-path)
+                (clone entry-path)
                 pools
                 (& intern-state)
                 (compiler-lower-state-profile lower-state))
@@ -73915,12 +73915,12 @@
                             (& specialized)
                             false)
                           (AstProgramCompaction specialized pools))]
-                      [source-program : ast.AstProgram
-                        (match (lower-global-shared-view source-compaction)
-                          [(AstProgramCompaction out _) out])]
                       [source-pools : ast.AstNodePoolContext
+                        (match (& source-compaction)
+                          [(AstProgramCompaction _ out-pools) (clone out-pools)])]
+                      [source-program : ast.AstProgram
                         (match source-compaction
-                          [(AstProgramCompaction _ out-pools) out-pools])]
+                          [(AstProgramCompaction out _) out])]
                       [source-entry-path : String
                         (if detach-source?
                           (lower-copy-string-into-pools entry-path source-pools)
@@ -74142,7 +74142,7 @@
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
             (& program)
             (& paths)
-            (lower-global-shared-view entry-path)
+            (clone entry-path)
             generation-owner)]
         ;; Publish explicit generation mutations before matching either result
         ;; or entering the legacy macro-expansion phase.
@@ -74161,12 +74161,12 @@
                     (& generated)
                     false)
                   (AstProgramCompaction generated pools))]
-              [macro-program : ast.AstProgram
-                (match (lower-global-shared-view generated-compaction)
-                  [(AstProgramCompaction out _) out])]
               [macro-pools : ast.AstNodePoolContext
+                (match (& generated-compaction)
+                  [(AstProgramCompaction _ out-pools) (clone out-pools)])]
+              [macro-program : ast.AstProgram
                 (match generated-compaction
-                  [(AstProgramCompaction _ out-pools) out-pools])]
+                  [(AstProgramCompaction out _) out])]
               [macro-entry-path : String
                 (if detach-before-macro?
                   (lower-copy-string-into-pools entry-path macro-pools)
@@ -74289,13 +74289,13 @@
                                   macro-program
                                   expanded)
                                 committed-macro-pools))]
-                          [detached-program : ast.AstProgram
-                            (match (lower-global-shared-view
-                              detached-compaction)
-                              [(AstProgramCompaction out _) out])]
                           [detached-pools : ast.AstNodePoolContext
+                            (match (& detached-compaction)
+                              [(AstProgramCompaction _ out-pools)
+                                (clone out-pools)])]
+                          [detached-program : ast.AstProgram
                             (match detached-compaction
-                              [(AstProgramCompaction _ out-pools) out-pools])]
+                              [(AstProgramCompaction out _) out])]
                           [detached-entry-path : String
                             (if detach-load-pools?
                               (lower-copy-string-into-pools
@@ -74497,7 +74497,7 @@
 (define (lower-source-load
   [path : (& str)]
   [src : (& str)]
-  [context : tc_api.TypecheckRequest]) : load.ResultCompilerLoadWithPaths
+  [context : (& context tc_api.TypecheckRequest)]) : load.ResultCompilerLoadWithPaths
   (let
     [inline-runtime : bool
       (match context.program
@@ -74506,27 +74506,30 @@
     [prelude : load.ResultCompilerLoadWithPaths
       (if inline-runtime
         (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
-          (lower-global-shared-view context.load-state)
+          (owned_view.compiler-owned-reference-shared-view
+            (& context.load-state))
           (sym_i64_env.sym-i64-empty)
           (& context.stdlib-roots)
-          (lower-global-shared-view context.cfgs)
-          (lower-global-shared-view context.pools))
+          (clone context.cfgs)
+          (clone context.pools))
         (load.compiler-load-executable-prelude
-          (lower-global-shared-view context.load-state)
-          (lower-global-shared-view context.stdlib-roots)
-          (lower-global-shared-view context.cfgs)
-          (lower-global-shared-view context.pools)))]
+          (owned_view.compiler-owned-reference-shared-view
+            (& context.load-state))
+          (clone context.stdlib-roots)
+          (clone context.cfgs)
+          (clone context.pools)))]
     (match prelude
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
         (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
-          (lower-global-shared-view context.load-state)
+          (owned_view.compiler-owned-reference-shared-view
+            (& context.load-state))
           path
           src
           prelude-seen
           (& context.stdlib-roots)
           (ast.AstMaybeModuleName.No)
-          (lower-global-shared-view context.cfgs)
-          (lower-global-shared-view context.pools))
+          (clone context.cfgs)
+          (clone context.pools))
           [(Ok entry-decls entry-paths entry-modules seen)
             (Ok
               (load.compiler-load-decl-list-append
@@ -74627,8 +74630,8 @@
 
 (define (lower-source-decls-need-loader?
   [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [all-decls : ast.AstDeclList]) : bool
+  [decls : (& ast.AstDeclList)]
+  [all-decls : (& ast.AstDeclList)]) : bool
   (match (ast.ast-decl-list-step decls)
     [(Nil) false]
     [(Cons decl rest)
@@ -74636,17 +74639,13 @@
         (lower-source-decl-needs-loader? pools decl all-decls)
         (lower-source-decls-need-loader? pools rest all-decls))]))
 
-(define (lower-source-program-needs-loader? [program : ast.AstProgram]) : bool
+(define (lower-source-program-needs-loader? [program : (& ast.AstProgram)]) : bool
   (match program
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (deref decls-box)]
-        [pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        (lower-source-decls-need-loader?
-          pools
-          (lower-global-shared-view decls)
-          decls))]))
+    [(Program decls)
+      (lower-source-decls-need-loader?
+        (ast.ast-node-pool-context-capture-active)
+        decls
+        decls)]))
 
 (define (lower-source-request-cfgs [request : (& request CompilerLowerRequest)]) : sym_i64_env.SymI64Env
   (cbi.compiler-builtin-initialize-for-parse!)
@@ -74679,12 +74678,12 @@
   (let
     [loaded : load.ResultCompilerLoadWithPaths
       (if load-imports
-        (lower-source-load (& path) src (lower-global-shared-view context))
+        (lower-source-load (& path) src (& context))
         (match context.program
           [(ast.Program decls)
             (load.ResultCompilerLoadWithPaths.Ok
               (deref decls)
-              (lower-global-shared-view context.paths)
+              (clone context.paths)
               (ast.ast-decl-module-list-new)
               (sym_i64_env.sym-i64-empty))]))]
     [result : ResultCompilerLower
@@ -74699,10 +74698,10 @@
             (ast.ast-program decls)
             (ast.ast-decl-path-list-with-modules paths (& modules))
             (clone request.mode)
-            (lower-global-shared-view context.stdlib-roots)
-            (lower-global-shared-view context.cfgs)
-            (lower-global-shared-view context.cache-scope)
-            (lower-global-shared-view context.pools)
+            (clone context.stdlib-roots)
+            (clone context.cfgs)
+            (clone context.cache-scope)
+            context.pools
             (ci.intern-source-name-session-capture-active-handle)
             (ci.intern-compat-state-capture-active)
             (cbi.state-capture))]
@@ -74743,16 +74742,14 @@
     (match (parser.parse-ast-source-diagnostic-with-cfg
       (clone path)
       src
-      (lower-global-shared-view cfgs))
+      (clone cfgs))
       [(Ok program)
         (let
-          [load-imports : bool
-            (lower-source-program-needs-loader?
-              (lower-global-shared-view program))]
+          [load-imports : bool (lower-source-program-needs-loader? (& program))]
           (if (or load-imports request.in-session)
             (lower-source-context
               lower-state
-              (lower-global-shared-view path)
+              (clone path)
               src
               request
               (tc_api.TypecheckRequest

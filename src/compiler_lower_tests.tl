@@ -1,7 +1,6 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import stdlib.iterator)
 (import compiler_lower as lower)
-(import (vector.vector lower.LowerExposureBinding) as exposure_vec)
 (import compiler_optimize as optimize)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -1779,70 +1778,6 @@
                               (set! (array-ref captured dst) true))))))))]))
           -2]
         [_ -2])]))
-
-(test
-  compiler-lower-exposure-binding-order
-  (let
-    [bindings : exposure_vec.Vec (exposure_vec.new)]
-    (for [offset (iterator.range 0 40)]
-      (let
-        [index : i64 (- 39 offset)]
-        (exposure_vec.push-ref!
-          (&mut bindings)
-          (lower.LowerExposureBinding (% index 3) (/ index 3) 7 (% index 2)))
-        (exposure_vec.push-ref!
-          (&mut bindings)
-          (lower.LowerExposureBinding
-            (% index 3)
-            (/ index 3)
-            7
-            (- 1 (% index 2))))))
-    (let
-      [names : (Array i64 4)
-        (array 6 8 -9223372036854775808 9223372036854775807)]
-      (for [index (iterator.range 0 4)]
-        (exposure_vec.push-ref!
-          (&mut bindings)
-          (lower.LowerExposureBinding 0 0 (array-ref names index) 1))))
-    (lower.lower-exposure-finish! (&mut bindings))
-    (test.assert-i64-eq
-      bindings.len
-      44
-      "equal lexical keys join after the merge-sort boundary")
-    (for [index (iterator.range 0 40)]
-      (let
-        [found : i64
-          (lower.lower-exposure-binding-index
-            (& bindings)
-            (/ index 3)
-            (% index 3)
-            7)]
-        (test.assert-true
-          (>= found 0)
-          "every scope/ordinal key survives sorting")
-        (when
-          (>= found 0)
-          (test.assert-i64-eq
-            (array-ref bindings.slots found).exposed
-            1
-            "duplicate exposure facts join with OR"))))
-    (for [name
-      (array (cast 6 : i64) 8 -9223372036854775808 9223372036854775807)]
-      (test.assert-true
-        (>= (lower.lower-exposure-binding-index (& bindings) 0 0 name) 0)
-        "full-width names remain distinct"))
-    (test.assert-i64-eq
-      (lower.lower-exposure-binding-index (& bindings) -1 0 7)
-      -1
-      "a different binding kind is missing")
-    (test.assert-i64-eq
-      (lower.lower-exposure-binding-index (& bindings) 0 -1 7)
-      -1
-      "a different source scope is missing")
-    (test.assert-i64-eq
-      (lower.lower-exposure-binding-index (& bindings) 0 0 5)
-      -1
-      "an absent name remains missing")))
 
 (define (compiler-lower-loop-exposure-source) : String
   "(defstruct Pair (left i64) (right i64))
@@ -14491,7 +14426,7 @@
       (and
         (= (lower.lower-type-size ctx ref) 16)
         (= (lower.lower-type-align ctx ref) 8)
-        (lower.lower-type-register-resident?
+        (tc_core.tc-storage-register-resident?
           ctx
           (owned_view.compiler-owned-shared-view ref))
         (=
@@ -14503,7 +14438,7 @@
         (tc_core.tc-type-eq (lower.lower-register-word-type ctx ref 1) (I64))
         (= (lower.lower-type-size ctx mut-ref) 16)
         (= (lower.lower-type-align ctx mut-ref) 8)
-        (lower.lower-type-register-resident?
+        (tc_core.tc-storage-register-resident?
           ctx
           (owned_view.compiler-owned-shared-view mut-ref))
         (=
@@ -14513,7 +14448,7 @@
           2)
         (= (lower.lower-type-size ctx ordinary-ref) 8)
         (not
-          (lower.lower-type-register-resident?
+          (tc_core.tc-storage-register-resident?
             ctx
             (owned_view.compiler-owned-shared-view ordinary-ref)))
         (=
@@ -14523,14 +14458,14 @@
           0)
         (= (lower.lower-type-size ctx pointer-ref) 8)
         (not
-          (lower.lower-type-register-resident?
+          (tc_core.tc-storage-register-resident?
             ctx
             (owned_view.compiler-owned-shared-view pointer-ref)))
         (lower.lower-supported-reference-type? ctx pointer-ref)
         (lower.lower-supported-reference-type? ctx mutable-pointer-ref)
         (= (lower.lower-type-size ctx bare-slice) 0)
         (not
-          (lower.lower-type-register-resident?
+          (tc_core.tc-storage-register-resident?
             ctx
             (owned_view.compiler-owned-shared-view bare-slice)))
         (lower.lower-supported-reference-type?
@@ -14726,7 +14661,7 @@
         (= (lower.lower-type-size ctx slice-ref-tuple) 16)
         (lower.lower-type-inline-storage? ctx u8-u64)
         (not
-          (lower.lower-type-register-resident?
+          (tc_core.tc-storage-register-resident?
             ctx
             (ast.ast-global-shared-view u8-u64)))
         (match (lower.lower-internal-aggregate-class

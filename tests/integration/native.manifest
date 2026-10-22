@@ -20,6 +20,7 @@
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
+git_object_smoke|all|0,1,2|tests/integration/git_object_smoke.tl|42|-|-|git_object_core.tl git_object_tests.tl|stage-stdlib
 packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
 inline_helper_composition|all|0,1,2|tests/integration/spmd_inline_helper_composition.tl|42|-|-|spmd_inline_helper_composition_provider.tl|-
 packed_narrow_bitwise_fold|all|0,1,2|tests/integration/packed_narrow_bitwise_fold.tl|42|-|-|-|-

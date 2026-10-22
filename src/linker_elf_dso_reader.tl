@@ -172,6 +172,16 @@
     [i : i64 0]
     [dynsyms : i64 0]
     [dynamics : i64 0]
+    [string-section : i64 -1]
+    [string-address : u64 (tag-value entries dynamic.dt-strtab)]
+    ;; Other allocated string tables are not dynamic metadata. The symbol
+    ;; table's link identifies dynstr even when its address disagrees.
+    (while (< i (array-length sections))
+      (when
+        (= (array-ref sections i).section-type 11)
+        (set! string-section (array-ref sections i).link))
+      (set! i (+ i 1)))
+    (set! i 0)
     (while (and check.ok (< i (array-length sections)))
       (let
         [section : (& s elf.ElfSection) (& (array-ref sections i))]
@@ -222,7 +232,7 @@
             (set! width 2)]
           [3
             (when
-              (elf.flag? section.flags 2)
+              (or (= i string-section) (= section.address string-address))
               (set! expected (clone (deref strings)))
               (set! tag dynamic.dt-strtab))]
           [_ unit])
@@ -258,6 +268,10 @@
   (let
     [check : DsoCheck (new-check request)]
     [header : elf.ElfHeader (read-header! data (&mut check))]
+    (unless check.ok (return (ReadFailed (clone check.error))))
+    ;; Result owners and the version codec's empty vectors have fixed storage
+    ;; even when their variable record counts are zero.
+    (reserve! (&mut check) 4096 1)
     (unless check.ok (return (ReadFailed (clone check.error))))
     (let
       [segments : (__tl_dyn-array DsoSegment)
@@ -390,9 +404,17 @@
                   [flags-1 : u64 (tag-value (& entries) dynamic.dt-flags-1)]
                   ;; Pay for the final section cross-check before handing the
                   ;; remaining work budget to the shared version decoder.
+                  (limit!
+                    (&mut check)
+                    (<=
+                      (array-length sections)
+                      (/ check.left (+ 2 (array-length entries))))
+                    "work-limit"
+                    header.section-offset)
+                  (unless check.ok (return (ReadFailed (clone check.error))))
                   (charge!
                     (&mut check)
-                    (* (array-length sections) (+ 1 (array-length entries)))
+                    (* (array-length sections) (+ 2 (array-length entries)))
                     header.section-offset)
                   (let
                     [version-data : DsoVersions
@@ -951,6 +973,7 @@
 ;; checks disjoint ownership, hashes, indices, flags and exact chain counts.
 (define (version-extent!
   [data : (& b (__tl_dyn-array u8))]
+  [strings : (& s elf.ElfSpan)]
   [tail : (& t elf.ElfSpan)]
   [count : i64]
   [definitions : bool]
@@ -1036,6 +1059,17 @@
             (if definitions
               12
               8)))
+        (unless
+          definitions
+          (let
+            [name : elf.ElfSpan
+              (name-span!
+                data
+                strings
+                (cast (le.read-u32 data (+ at 4)) : u64)
+                check
+                (+ at 4))]
+            (require! check (> name.size 0) "vn_file" (+ at 4))))
         (while (and check.ok (< i aux-count))
           (require!
             check
@@ -1044,6 +1078,27 @@
             aux-at)
           (charge! check aux-size aux-at)
           (unless check.ok (return (elf.ElfSpan tail.offset 0)))
+          (let
+            [name-at : i64
+              (+
+                aux-at
+                (if definitions
+                  0
+                  8))]
+            [name : elf.ElfSpan
+              (name-span!
+                data
+                strings
+                (cast (le.read-u32 data name-at) : u64)
+                check
+                name-at)]
+            (require!
+              check
+              (> name.size 0)
+              (if definitions
+                "vda_name"
+                "vna_name")
+              name-at))
           (set! end (math.i64-max end (+ aux-at aux-size)))
           (let
             [relative : i64
@@ -1194,7 +1249,7 @@
                   (tag-offset entries tag))]
               (set!
                 (array-ref spans (+ i 1))
-                (version-extent! data (& tail) number (= i 0) check)))))
+                (version-extent! data strings (& tail) number (= i 0) check)))))
         (set! i (+ i 1))))
     (let
       [size : i64

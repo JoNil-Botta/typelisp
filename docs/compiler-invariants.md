@@ -2613,3 +2613,13 @@ the remaining work budget is handed to that codec. Work is a conservative
 operation budget, not a time or OS-memory metric. Errors contain a fixed
 field name, physical source offset and original identity; hostile text is
 never copied into diagnostics.
+
+The retained reservation includes fixed result/empty-vector storage as well
+as variable records. Version name references are checked in the extent pass,
+so malformed name diagnostics identify their source word rather than the
+untrusted target index.
+
+Only a string table selected by dynsym's section link or the dynamic string
+address is corroborating dynstr metadata. Unrelated allocated string tables
+remain unrelated; the section-work reservation checks its product by division
+before multiplication.

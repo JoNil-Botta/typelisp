@@ -414,19 +414,21 @@
   (let
     [data : (__tl_dyn-array u8) (minimal size)]
     [req : dso.DsoReadRequest (request)]
-    [before : i64 (profile.alloc-total)]
-    (match (dso.read-dso (& data) (& req))
-      [(ReadFailed _) (test.assert-true false "borrowed payload")]
-      [(ReadDso object)
-        (test.assert-i64-eq
-          (array-length object.bytes)
-          size
-          "complete input remains borrowed")
-        (test.assert-i64-eq
-          object.symbol-span.offset
-          288
-          "VA mapped to physical symbol bytes")])
-    (- (profile.alloc-total) before)))
+    (set! req.limits.max-retained-bytes 8192)
+    (let
+      [before : i64 (profile.alloc-total)]
+      (match (dso.read-dso (& data) (& req))
+        [(ReadFailed _) (test.assert-true false "borrowed payload")]
+        [(ReadDso object)
+          (test.assert-i64-eq
+            (array-length object.bytes)
+            size
+            "complete input remains borrowed")
+          (test.assert-i64-eq
+            object.symbol-span.offset
+            288
+            "VA mapped to physical symbol bytes")])
+      (- (profile.alloc-total) before))))
 
 (define (payload-tests) : unit
   (test.assert-i64-eq
@@ -437,7 +439,10 @@
     compile-profile
     (test.assert-true
       (> (payload-allocation 313) 0)
-      "profile allocation counters are active")))
+      "profile allocation counters are active")
+    (test.assert-true
+      (<= (payload-allocation 313) 8192)
+      "actual reader allocation fits its explicit retained budget")))
 
 (defstruct Mutation
   (at i64)
@@ -918,6 +923,82 @@
       (le.set-u16! (&mut data) 62 0)
       (assert-fixture (& data) (& empty-both-oracle) true))))
 
+(define (version-name-offset-tests) : unit
+  (let
+    [req : dso.DsoReadRequest (request)]
+    (match (dso.read-dso (& gcc-both) (& req))
+      [(ReadFailed _) (test.assert-true false "version name control")]
+      [(ReadDso object)
+        (let
+          [def : i64 (array-ref object.version-spans 1).offset]
+          [need : i64 (array-ref object.version-spans 2).offset]
+          [def-name : i64 (+ def (le.read-u32 (& gcc-both) (+ def 12)))]
+          [need-name : i64 (+ need (le.read-u32 (& gcc-both) (+ need 8)) 8)]
+          [cases : (Array Mutation 6)
+            (array
+              (Mutation def-name 4 0 "vda_name" def-name)
+              (Mutation def-name 4 -1 "dynstr-index" def-name)
+              (Mutation (+ need 4) 4 0 "vn_file" (+ need 4))
+              (Mutation (+ need 4) 4 -1 "dynstr-index" (+ need 4))
+              (Mutation need-name 4 -1 "dynstr-index" need-name)
+              (Mutation
+                need-name
+                4
+                (- object.strings.size 1)
+                "vna_name"
+                need-name))]
+          [i : i64 0]
+          (while (< i 6)
+            (let
+              [data : (__tl_dyn-array u8) (clone gcc-both)]
+              [mutation : (& cases Mutation) (& (array-ref cases i))]
+              (mutate! (&mut data) mutation.at mutation.width mutation.value)
+              (assert-error (& data) mutation.field mutation.offset))
+            (set! i (+ i 1))))])))
+
+(define (unrelated-string-table-tests) : unit
+  (let
+    [req : dso.DsoReadRequest (request)]
+    (match (dso.read-dso (& gcc-both) (& req))
+      [(ReadFailed _) (test.assert-true false "unrelated string table control")]
+      [(ReadDso object)
+        (let
+          [data : (__tl_dyn-array u8) (clone gcc-both)]
+          [i : i64 0]
+          [found : bool false]
+          (while (< i object.header.section-count)
+            (let
+              [section : elf.ElfSection
+                (elf.section-at
+                  (& gcc-both)
+                  (& object.header)
+                  (& object.identity)
+                  i)]
+              (when
+                (and
+                  (= section.section-type 1)
+                  (= section.size (cast 8 : u64))
+                  (elf.flag? section.flags 2)
+                  (not (elf.flag? section.flags 4))
+                  (=
+                    (le.byte-le-at
+                      (& gcc-both)
+                      (cast section.file-offset : i64))
+                    102)
+                  (=
+                    (le.byte-le-at
+                      (& gcc-both)
+                      (+ (cast section.file-offset : i64) 1))
+                    105))
+                (set! found true)
+                (le.set-u32! (&mut data) (+ section.id.offset 4) 3)
+                (set!
+                  (array-ref data (cast section.file-offset : i64))
+                  (cast 0 : u8))))
+            (set! i (+ i 1)))
+          (test.assert-true found "allocated rodata producer control")
+          (assert-fixture (& data) (& gcc-both-oracle) true))])))
+
 (define (self-test) : i64
   (producer-tests)
   (lookup-tests)
@@ -930,6 +1011,8 @@
   (mutation-corpus-tests)
   (numbering-and-empty-tests)
   (empty-gnu-tests)
+  (version-name-offset-tests)
+  (unrelated-string-table-tests)
   42)
 
 (test elf-dso-producer-records (producer-tests))
@@ -955,3 +1038,9 @@
 (test elf-dso-extended-numbering-and-empty-loads (numbering-and-empty-tests))
 
 (test elf-dso-empty-gnu-hash-undefined-count-and-ambiguity (empty-gnu-tests))
+
+(test
+  elf-dso-version-name-errors-point-to-source-fields
+  (version-name-offset-tests))
+
+(test elf-dso-unrelated-allocated-string-table (unrelated-string-table-tests))

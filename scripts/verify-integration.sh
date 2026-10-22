@@ -1881,7 +1881,7 @@ integration_batch_queue() {
         case "$_b_name" in
             "" | \#*) continue ;;
         esac
-        manifest_row_split_opt_level "${_b_extra:-}"
+        manifest_row_split_opt_level "${_b_extra:-}" || return 1
         _b_opt_level=$MANIFEST_ROW_OPT_LEVEL
         _b_group=embedded
         case "$MANIFEST_ROW_EXTRA" in
@@ -2039,6 +2039,15 @@ EOF
         echo "FAIL: invalid batch optimization metadata was accepted" >&2
         exit 1
     fi
+    _valid_manifest=$NORMALIZED_MANIFEST
+    NORMALIZED_MANIFEST="$_dir/invalid-level.manifest"
+    printf '%s\n' 'invalid|invalid.tl|0|-|-|-|opt-level:3+' > "$NORMALIZED_MANIFEST"
+    if ci_timing_run invalid-level batch-queue integration_batch_queue \
+        2> "$_dir/invalid-queue.stderr"; then
+        echo "FAIL: timed batch queue suppressed invalid optimization metadata" >&2
+        exit 1
+    fi
+    NORMALIZED_MANIFEST=$_valid_manifest
     HOST_OS=windows
     integration_batch_queue
     if [ "$(cat "$_dir/batch-stage-stdlib-opt2-1.list")" != \
@@ -3270,7 +3279,7 @@ integration_stage_plan() {
         case "$_s_name" in
             "" | \#*) continue ;;
         esac
-        manifest_row_split_opt_level "${_s_extra:-}"
+        manifest_row_split_opt_level "${_s_extra:-}" || return 1
         _s_stage=0
         case "$MANIFEST_ROW_EXTRA" in
             stage-stdlib | stage-stdlib+expected-stderr:*) _s_stage=1 ;;

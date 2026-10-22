@@ -15,6 +15,7 @@
 ;; imports, so this adds no cycle.
 (import stdlib.arena)
 (import stdlib.io)
+(import stdlib.runtime)
 
 (defmacro (ast-global-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -10659,7 +10660,7 @@
   ;; recovering the remap address on every visit only repeats pointer traffic.
   (expr-map-address u64)
   ;; Nonzero only when this compaction consumes the source's provenance slots.
-  ;; Then expr-map-address holds one visited bit per source expression.
+  ;; Those slots are cleared before the walk; zero means not yet forwarded.
   (expr-forwarding-slots i64)
   (type-map-address u64)
   (source-expr-bases i64)
@@ -10704,17 +10705,9 @@
   [index : i64]) : i32
   (if (= remap.expr-forwarding-slots 0)
     (ast-compaction-map-ref remap.expr-map-address index)
-    (if (=
-      (bit-and
-        (cast
-          (ast-compaction-map-ref remap.expr-map-address (shr index 5))
-          : i64)
-        (shl 1 (bit-and index 31)))
-      0)
-      0
-      (cast
-        (ast-expr-span-slot-get-from-bases remap.expr-forwarding-slots index)
-        : i32))))
+    (cast
+      (ast-expr-span-slot-get-from-bases remap.expr-forwarding-slots index)
+      : i32)))
 
 (define (ast-compaction-expr-map-set!
   [remap : (& remap AstProgramCompactionRemap)]
@@ -10722,18 +10715,35 @@
   [value : i32]) : unit
   (if (= remap.expr-forwarding-slots 0)
     (ast-compaction-map-set! remap.expr-map-address index value)
-    (let
-      [word : i64 (shr index 5)]
-      [bits : i64
-        (cast (ast-compaction-map-ref remap.expr-map-address word) : i64)]
-      (ast-expr-span-slot-set-in-bases!
-        remap.expr-forwarding-slots
-        index
-        (cast value : i64))
-      (ast-compaction-map-set!
-        remap.expr-map-address
-        word
-        (cast (bit-or bits (shl 1 (bit-and index 31))) : i32)))))
+    (ast-expr-span-slot-set-in-bases!
+      remap.expr-forwarding-slots
+      index
+      (cast value : i64))))
+
+;; Compaction reconstructs provenance from wrapper rows, never from the source
+;; span sidecar. Only the consuming caller retires that sidecar before walking.
+;; Every slot segment is a whole, aligned allocation, so its unused tail is also
+;; writable. Clear it unconditionally: fresh-allocation zeroing can skip reused
+;; live storage while the current arena is still virgin.
+(define (ast-compaction-forwarding-slots-clear!
+  [source-pools : (& AstNodePoolContext)]) : unit
+  (let
+    [source : AstExprNodePoolState
+      (ast-expr-pool-cell-read source-pools.expr-pool)]
+    (for [segment (iterator.range 0 source.segment-count)]
+      (let
+        [first : i64 (* segment ast-expr-node-pool-segment-size)]
+        [base : i64
+          (unsafe
+            (ptr-read
+              (ptr-offset
+                (int->ptr source.span-slot-segment-bases : (Ptr i64))
+                segment)))]
+        (unsafe
+          (runtime.mem-fill8
+            (int->ptr (+ base (* first ast-expr-span-slot-bytes)) : (MutPtr u8))
+            (/ ast-expr-span-slot-segment-bytes 8)
+            0))))))
 
 ;; Compile-profile-only reachability census for the per-declaration macro
 ;; generation copy-out.  The copy walk is the ownership authority: ids below
@@ -11637,7 +11647,7 @@
         (let
           [count : i64 (ast-node-pool-context-expr-len source-pools)]
           (if consume-source-spans?
-            (/ (+ count 31) 32)
+            0
             count)))]
     [type-map : (__tl_dyn-array i32)
       (ast-compaction-id-map-create
@@ -11663,6 +11673,9 @@
     [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
     [out-program : AstProgram
       (begin
+        (when
+          consume-source-spans?
+          (ast-compaction-forwarding-slots-clear! (& source-pools)))
         (unsafe
           (arena.tl_arena_set dest-arena))
         (let

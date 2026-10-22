@@ -44,6 +44,7 @@ the singleton `Begin` rule alongside the `While` body-list contract.
 | Shared IR and operands | [IR model](../src/compiler_ir_types.tl) | Extend `compiler-ir-instr-visit-uses`, `compiler-ir-instr-map` and related operand helpers instead of copying full-variant walkers. |
 | Target predicates | [target cfg builder](../src/compiler_target_cfg_core.tl) | Use the shared target presets and [target dispatch guard](../scripts/check-codegen-target-dispatch.sh). |
 | ELF relocatable input syntax | [ELF reader](../src/linker_elf_object_reader.tl) | Preserve the input/content owner, physical IDs and borrowed spans under the [input contract](compiler-invariants.md#elf-relocatable-object-input); #7101 owns admission and linking policy. |
+| ELF shared-object metadata | [DSO reader](../src/linker_elf_dso_reader.tl) | Translate dynamic addresses through unique file-backed load extents, preserve input ownership and version identities under the [DSO contract](compiler-invariants.md#elf-shared-object-metadata); #8293/#7101 own provider selection and resolution. |
 | AMD64 short import syntax | [COFF import reader](../src/linker_coff_import_reader.tl) | Preserve physical archive member IDs, original spellings and literal IAT symbols under the [import contract](compiler-invariants.md#coff-short-import-input); #7102 owns selection and #7175 owns PE import layout. |
 
 Optimizer, backend, driver/CLI and LSP implementations consume shared IR; its

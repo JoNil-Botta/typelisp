@@ -13,6 +13,14 @@ isolation test preserves job/scratch ownership. `spmd_inline_helper_composition.
 compares composed arguments, repeated callees, imported bodies and masked tails
 with ordinary calls; safety rows keep direct and mutual recursion rejected.
 
+`git-object-tree-linear-names` and `git_object_smoke` check canonical Git tree
+order, separated file/directory duplicates in both object-ID formats, and
+exhaustive short sequences against the former all-pairs duplicate rule. Exact
+comparison budgets cover 10,000 entries and nested prefix stacks; the budget
+counts duplicate look-back work, with at most twice as many comparisons as
+entries. Keep the byte/entry limits and malformed-object coverage at opt0/1/2
+on both hosts.
+
 `tc-dotted-alias-variant-source-name-boundary` checks absent source names,
 sentinels, the source-table boundary and structural pair/triple/fresh-local IDs
 through both alias fallbacks. A missing structural variable must retain E0201.

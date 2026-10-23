@@ -68965,6 +68965,18 @@ return 0" true)
   cse-block-tables-keep-the-first-walk-state
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [previous : arena.Arena (arena.make)]
+    [_preceding-function : unit
+      (in-arena
+        previous
+        (let
+          [blocks : ir.CompilerIrBlockList
+            (irt.blocks
+              "entry:
+                           %1 = addr_of %0
+                           return %0")]
+          (opt.opt-function-addr-taken-install! 2 (& blocks))))]
+    [_retire-previous : unit (arena.destroy-safe! previous)]
     [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
     [no-exprs : ir.CompilerIrInstrSeq (irt.instrs "%1 = mov %0 : i64")]
     [first : ir.CompilerIrInstrSeq
@@ -68973,6 +68985,17 @@ return 0" true)
     [second : ir.CompilerIrInstrSeq
       (irt.instrs "%4 = mul %0, %1 : i64
 %5 = mul %0, %1 : i64")]
+    [own : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "empty")
+          (clone no-exprs))
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "first") (clone first))
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "second")
+          (clone second)))]
+    ;; Raw block walks use the enclosing function's address-taken facts.
+    [_own-facts : unit (opt.opt-function-addr-taken-install! 6 (& own))]
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables.exprs)

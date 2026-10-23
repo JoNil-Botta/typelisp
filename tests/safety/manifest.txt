@@ -443,6 +443,8 @@ borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result
 borrow_match_result_before_last_use_reject|check-fail|tests/safety/borrow_match_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_if_lifetime_aggregate_result_before_last_use_reject|check-fail|tests/safety/borrow_if_lifetime_aggregate_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 substring_view_move_live_reject|check-fail|tests/safety/substring_view_move_live_reject.tl|-|cannot move borrowed place `text`
+utf8_iterator_owner_move_reject|check-fail|tests/safety/utf8_iterator_owner_move_reject.tl|-|cannot move borrowed place `text`
+utf8_slice_owner_move_reject|check-fail|tests/safety/utf8_slice_owner_move_reject.tl|-|cannot move borrowed place `text`
 substring_view_arena_escape_reject|check-fail|tests/safety/substring_view_arena_escape_reject.tl|-|cannot escape with-arena
 byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_reject.tl|-|cannot move borrowed place `buf`
 byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_after_immut_reject.tl|-|cannot mutably borrow borrowed place `buf`

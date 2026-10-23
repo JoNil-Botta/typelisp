@@ -135,6 +135,16 @@
   (Ok String)
   (Err String))
 
+;; A live-owner reference to one immutable text entry. This POD carrier may
+;; cross a function-scratch clone; it cannot outlive the capture itself.
+(defenum CompilerBackendTextOriginSnapshot
+  (None)
+  (Saved u64 i64 i64))
+
+(defstruct CompilerBackendOriginCopy
+  (text String)
+  (snapshot CompilerBackendTextOriginSnapshot))
+
 (define (compiler-backend-text-origins-disabled) : CompilerBackendTextOrigins
   (CompilerBackendTextOrigins 0 0))
 
@@ -219,9 +229,9 @@
   (unsafe
     (cast (ptr->int (string-data text)) : i64)))
 
-(define (compiler-backend-text-origins-find
+(define (compiler-backend-text-origins-entry-index
   [capture : CompilerBackendTextOrigins]
-  [text : (& text str)]) : (__tl_dyn-array CompilerBackendTextOrigin)
+  [text : (& text str)]) : i64
   (when
     (!= capture.storage 0)
     (unsafe
@@ -241,10 +251,69 @@
                 (=
                   (string.string-length text)
                   (string.string-length (& (array-ref entries index).text)))
-                (return
-                  (owned_view.compiler-owned-reference-shared-view
-                    (& (array-ref entries index).origins)))))]))))
-  (__tl_make-array CompilerBackendTextOrigin 0))
+                (return index)))]))))
+  -1)
+
+(define (compiler-backend-text-origins-find
+  [capture : CompilerBackendTextOrigins]
+  [text : (& text str)]) : (__tl_dyn-array CompilerBackendTextOrigin)
+  (let
+    [index : i64 (compiler-backend-text-origins-entry-index capture text)]
+    (if (< index 0)
+      (__tl_make-array CompilerBackendTextOrigin 0)
+      (unsafe
+        (let
+          [data : CompilerBackendTextOriginData
+            (ptr-read
+              (int->ptr capture.storage : (Ptr CompilerBackendTextOriginData)))]
+          [entries : (& data (Slice CompilerBackendTextOriginEntry))
+            (origin_entries.view (& data.entries))]
+          (owned_view.compiler-owned-reference-shared-view
+            (& (array-ref entries index).origins)))))))
+
+(define (compiler-backend-text-origins-snapshot
+  [capture : CompilerBackendTextOrigins]
+  [text : (& text str)]) : CompilerBackendTextOriginSnapshot
+  (let
+    [index : i64 (compiler-backend-text-origins-entry-index capture text)]
+    (if (< index 0)
+      (None)
+      (Saved capture.storage capture.owner index))))
+
+;; An explicit copy supplies its pre-copy identity. Equality validates the
+;; copy; it never recovers an origin from unrelated equal-looking text.
+(define (compiler-backend-text-origins-restore-copy
+  [capture : CompilerBackendTextOrigins]
+  [snapshot : CompilerBackendTextOriginSnapshot]
+  [text : String]) : CompilerBackendOriginTextResult
+  (match snapshot
+    [(None) (Ok text)]
+    [(Saved storage owner index)
+      (unless
+        (and (!= storage 0) (= storage capture.storage) (= owner capture.owner))
+        (return (Err "stack traffic: copy snapshot belongs to another capture")))
+      (unsafe
+        (let
+          [data : CompilerBackendTextOriginData
+            (ptr-read
+              (int->ptr capture.storage : (Ptr CompilerBackendTextOriginData)))]
+          [entries : (& data (Slice CompilerBackendTextOriginEntry))
+            (origin_entries.view (& data.entries))]
+          (when
+            (or (< index 0) (>= index (array-length entries)))
+            (return (Err "stack traffic: invalid copy snapshot")))
+          (unless
+            (string.eq (& text) (& (array-ref entries index).text))
+            (return
+              (Err "stack traffic: copied text differs from its snapshot")))
+          (in-arena
+            (arena.Arena capture.owner)
+            (Ok
+              (compiler-backend-text-origins-publish
+                capture
+                (string.copy (& text))
+                (owned_view.compiler-owned-reference-shared-view
+                  (& (array-ref entries index).origins)))))))]))
 
 ;; Internal: text and origins were allocated in capture.owner and are immutable
 ;; from here onward. Only that owner can publish an indexed allocation.
@@ -399,6 +468,40 @@
           (= origin.end (string.string-length (& operand))))
         (return (Err "stack traffic: address rewrite needs one exact origin")))
       (compiler-backend-text-origins-mark capture replacement origin.token))))
+
+;; Match stdlib.string.replace's FIRST-occurrence semantics. Whole removed
+;; annotations disappear; newly inserted text supplies its own identities.
+;; A partial operand match cannot silently inherit the old annotation.
+(define (compiler-backend-text-origins-replace
+  [capture : CompilerBackendTextOrigins]
+  [text : String]
+  [pattern : String]
+  [replacement : String]) : CompilerBackendOriginTextResult
+  (when
+    (= capture.storage 0)
+    (return (Ok (string.replace text pattern replacement))))
+  (let
+    [length : i64 (string.string-length (& text))]
+    [size : i64 (string.string-length (& pattern))]
+    [position : i64 0]
+    (while (and
+      (<= position (- length size))
+      (not (string.is-string-prefix-at (& text) (& pattern) position)))
+      (+= position 1))
+    (when (> position (- length size)) (return (Ok text)))
+    (match (compiler-backend-text-origins-slice capture (& text) 0 position)
+      [(Err message) (Err message)]
+      [(Ok before)
+        (match (compiler-backend-text-origins-slice
+          capture
+          (& text)
+          (+ position size)
+          (- length (+ position size)))
+          [(Err message) (Err message)]
+          [(Ok after)
+            (let
+              [parts : (Array String 3) (array before replacement after)]
+              (Ok (compiler-backend-text-origins-concat capture (& parts))))])])))
 
 (define (compiler-backend-text-origin-buffer-new
   [capture : CompilerBackendTextOrigins]) : CompilerBackendTextOriginBuffer

@@ -398,3 +398,161 @@
     (origins.compiler-backend-text-origins-release! (&mut capture))))
 
 (test text-origins-buffer-order-and-byte-witness (text-origin-buffer-test))
+
+(define (text-origin-copy-test) : unit
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [other : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [cloned : origins.CompilerBackendOriginCopy
+      (with-scratch
+        (let
+          [marked : String
+            (text-origin-test-ok
+              (origins.compiler-backend-text-origins-mark capture "-8(%rbp)" 61))]
+          [saved : origins.CompilerBackendTextOriginSnapshot
+            (origins.compiler-backend-text-origins-snapshot capture (& marked))]
+          (origins.CompilerBackendOriginCopy marked saved)))]
+    [snapshot : origins.CompilerBackendTextOriginSnapshot cloned.snapshot]
+    [escaped : String cloned.text]
+    [copy : String (string.copy (& escaped))]
+    (test.assert-i64-eq
+      (array-length
+        (origins.compiler-backend-text-origins-find capture (& copy)))
+      0
+      "ordinary copy has no inferred origin")
+    (for [index (iterator.range 0 65)]
+      (let
+        [_noise : String
+          (text-origin-test-ok
+            (origins.compiler-backend-text-origins-mark
+              capture
+              "noise"
+              (+ 100 index)))]
+        unit))
+    (text-origin-test-error
+      (origins.compiler-backend-text-origins-restore-copy
+        other
+        (clone snapshot)
+        (owned_view.compiler-owned-shared-view copy)))
+    (text-origin-test-error
+      (origins.compiler-backend-text-origins-restore-copy
+        capture
+        (clone snapshot)
+        "-9(%rbp)"))
+    (text-origin-test-error
+      (origins.compiler-backend-text-origins-restore-copy
+        capture
+        (Saved capture.storage capture.owner -1)
+        "-8(%rbp)"))
+    (let
+      [restored : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-restore-copy
+            capture
+            snapshot
+            copy))]
+      (test.assert-string-eq
+        restored
+        "-8(%rbp)"
+        "scratch clone preserves bytes")
+      (text-origin-test-span capture (& restored) 0 0 8 61))
+    (let
+      [plain : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-restore-copy
+            capture
+            (None)
+            "-8(%rbp)"))]
+      (test.assert-i64-eq
+        (array-length
+          (origins.compiler-backend-text-origins-find capture (& plain)))
+        0
+        "absent snapshot cannot recover identity by equality"))
+    (origins.compiler-backend-text-origins-release! (&mut other))
+    (origins.compiler-backend-text-origins-release! (&mut capture))))
+
+(define (text-origin-replace-test) : unit
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [operand : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-mark capture "-8(%rbp)" 41))]
+    [source : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        "guard\n"
+        operand
+        "\nguard\n")]
+    [changed : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-replace
+          capture
+          (owned_view.compiler-owned-shared-view source)
+          "guard\n"
+          "new-prologue\n"))]
+    (test.assert-string-eq
+      changed
+      "new-prologue\n-8(%rbp)\nguard\n"
+      "replacement keeps first-occurrence semantics")
+    (text-origin-test-span capture (& changed) 0 13 21 41)
+    (text-origin-test-span capture (& source) 0 6 14 41)
+    (text-origin-test-error
+      (origins.compiler-backend-text-origins-replace
+        capture
+        (owned_view.compiler-owned-shared-view source)
+        "(%rbp)"
+        "(%rsp)"))
+    (let
+      [same-bytes : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-replace
+            capture
+            (owned_view.compiler-owned-shared-view source)
+            "-8(%rbp)"
+            "-8(%rbp)"))]
+      [unchanged : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-replace
+            capture
+            (owned_view.compiler-owned-shared-view source)
+            "not-found"
+            "x"))]
+      [prepended : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-replace
+            capture
+            (owned_view.compiler-owned-shared-view source)
+            ""
+            "X"))]
+      (test.assert-string-eq
+        same-bytes
+        source
+        "an unannotated replacement may have identical bytes")
+      (test.assert-i64-eq
+        (array-length
+          (origins.compiler-backend-text-origins-find capture (& same-bytes)))
+        0
+        "removed origin is not inferred on replacement text")
+      (text-origin-test-span capture (& unchanged) 0 6 14 41)
+      (text-origin-test-span capture (& prepended) 0 7 15 41))
+    (let
+      [inserted : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-mark capture "home" 42))]
+      [with-insert : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-replace
+            capture
+            (owned_view.compiler-owned-shared-view source)
+            "guard\n"
+            inserted))]
+      (text-origin-test-span capture (& with-insert) 0 0 4 42)
+      (text-origin-test-span capture (& with-insert) 1 4 12 41))
+    (origins.compiler-backend-text-origins-release! (&mut capture))))
+
+(test text-origins-copy-snapshot-survives-clone (text-origin-copy-test))
+
+(test text-origins-replacement-is-explicit (text-origin-replace-test))

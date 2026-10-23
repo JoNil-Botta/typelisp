@@ -7,4 +7,6 @@
   (fixtures.text-origin-macro-test)
   (fixtures.text-origin-record-test)
   (fixtures.text-origin-buffer-test)
+  (fixtures.text-origin-copy-test)
+  (fixtures.text-origin-replace-test)
   42)

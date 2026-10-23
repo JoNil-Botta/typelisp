@@ -1,4 +1,5 @@
 (import stdlib.byte_buf)
+(import stdlib.format)
 (import stdlib.profile)
 (import stdlib.string)
 (import stdlib.string_utf8 as utf8)
@@ -306,7 +307,24 @@
             (expect-error view 6 2)
             (begin
               (expect-scalar view 1 value (+ width 1))
-              (expect-valid view))))
+              (expect-valid view)
+              (let
+                [out : byte_buf.ByteBuf (byte_buf.from-string "!!!!")]
+                (match (utf8.encode
+                  (utf8.UnicodeScalar (cast value : u32))
+                  (byte_buf.as-mut-bytes (&mut out)))
+                  [(Encoded actual-width)
+                    (test.assert-i64-eq
+                      actual-width
+                      width
+                      "property encoding width")
+                    (let
+                      [encoded : String (byte_buf.to-string out)]
+                      (test.assert-string-eq
+                        (string.substring-view (& encoded) 0 actual-width)
+                        (string.substring-view view 1 width)
+                        "encoding matches independent scalar byte construction"))]
+                  [_ (test.assert-true false "valid scalar property encoding")])))))
         (set! index (+ index 1))))))
 
 (define (assert-allocation-and-progress) : unit
@@ -350,6 +368,396 @@
 
 (test utf8-allocation-and-progress (assert-allocation-and-progress))
 
+(define (assert-item [result : utf8.IterNext] [expected : i64]) : unit
+  (match result
+    [(Item scalar)
+      (test.assert-i64-eq (cast scalar.value : i64) expected "iterator scalar")]
+    [_ (test.assert-true false "expected iterator item")]))
+
+(define (assert-done [result : utf8.IterNext]) : unit
+  (match result
+    [(Done) unit]
+    [_ (test.assert-true false "iterator must remain exhausted")]))
+
+(define (assert-code-point-operations) : unit
+  (let
+    [buffer : byte_buf.ByteBuf (byte_buf.from-string "Aé€😀é")]
+    [_nul : unit (set! buffer (byte_buf.push buffer (cast 0 : u8)))]
+    [_last : unit (set! buffer (byte_buf.push buffer (cast 90 : u8)))]
+    [text : String (byte_buf.to-string buffer)]
+    [values : (Array i64 8) (array 65 233 0x20ac 0x1f600 101 0x301 0 90)]
+    [offsets : (Array i64 9) (array 0 1 3 6 10 11 13 14 15)]
+    [forward : (utf8.Iter text) (utf8.iterator (& text))]
+    [reverse : (utf8.Iter text) (utf8.iterator (& text))]
+    [mixed : (utf8.Iter text) (utf8.iterator (& text))]
+    [index : i64 0]
+    (match (utf8.count (& text))
+      [(Count value)
+        (test.assert-i64-eq
+          value
+          8
+          "scalar count includes combining mark and NUL")]
+      [_ (test.assert-true false "valid scalar count")])
+    (while (< index 8)
+      (assert-item (utf8.next (&mut forward)) (array-ref values index))
+      (assert-item
+        (utf8.next-back (&mut reverse))
+        (array-ref values (- 7 index)))
+      (match (utf8.decode-before (& text) (array-ref offsets (+ index 1)))
+        [(Previous scalar start)
+          (test.assert-i64-eq
+            (cast scalar.value : i64)
+            (array-ref values index)
+            "reverse decode scalar")
+          (test.assert-i64-eq
+            start
+            (array-ref offsets index)
+            "reverse decode byte offset")]
+        [_ (test.assert-true false "reverse decode succeeds")])
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index 4)
+      (assert-item (utf8.next (&mut mixed)) (array-ref values index))
+      (assert-item (utf8.next-back (&mut mixed)) (array-ref values (- 7 index)))
+      (set! index (+ index 1)))
+    (assert-done (utf8.next (&mut forward)))
+    (assert-done (utf8.next-back (&mut forward)))
+    (assert-done (utf8.next-back (&mut reverse)))
+    (assert-done (utf8.next (&mut reverse)))
+    (assert-done (utf8.next (&mut mixed)))
+    (assert-done (utf8.next-back (&mut mixed)))
+    (set! index 0)
+    (while (<= index 15)
+      (let
+        [expected : bool false]
+        [point : i64 0]
+        (while (< point 9)
+          (when (= index (array-ref offsets point)) (set! expected true))
+          (set! point (+ point 1)))
+        (match (utf8.boundary-at (& text) index)
+          [(Boundary actual)
+            (test.assert-true (= actual expected) "byte boundary")]
+          [_ (test.assert-true false "valid boundary query")]))
+      (set! index (+ index 1)))
+    (let
+      [start : i64 0]
+      (while (<= start 8)
+        (let
+          [end : i64 start]
+          (while (<= end 8)
+            (match (utf8.slice-range (& text) start end)
+              [(Range first length)
+                (test.assert-i64-eq
+                  first
+                  (array-ref offsets start)
+                  "scalar byte range start")
+                (test.assert-i64-eq
+                  length
+                  (- (array-ref offsets end) (array-ref offsets start))
+                  "scalar byte range length")]
+              [_ (test.assert-true false "valid scalar byte range")])
+            (match (utf8.slice (& text) start end)
+              [(Slice view)
+                (test.assert-string-eq
+                  view
+                  (string.substring-view
+                    (& text)
+                    (array-ref offsets start)
+                    (- (array-ref offsets end) (array-ref offsets start)))
+                  "scalar slice equals exact byte view")]
+              [_ (test.assert-true false "valid scalar slice")])
+            (set! end (+ end 1))))
+        (set! start (+ start 1))))))
+
+(define (assert-checked-api-errors) : unit
+  (let
+    [bad : String (input-bytes 0xf4 0x90 0x80 0x80)]
+    [forward : (utf8.Iter bad) (utf8.iterator (& bad))]
+    [reverse : (utf8.Iter bad) (utf8.iterator (& bad))]
+    (assert-item (utf8.next (&mut forward)) 65)
+    (match (utf8.next (&mut forward))
+      [(Invalid error) (assert-error error 7 1 2)]
+      [_ (test.assert-true false "iteration reports invalid text")])
+    (assert-done (utf8.next (&mut forward)))
+    (match (utf8.next-back (&mut reverse))
+      [(Invalid error) (assert-error error 7 1 2)]
+      [_ (test.assert-true false "reverse iteration reports invalid text")])
+    (assert-done (utf8.next-back (&mut reverse)))
+    (match (utf8.count (& bad))
+      [(CountError error) (assert-error error 7 1 2)]
+      [_ (test.assert-true false "count rejects malformed input")])
+    (match (utf8.boundary-at (& bad) 0)
+      [(BoundaryError error) (assert-error error 7 1 2)]
+      [_ (test.assert-true false "boundary validates whole input")])
+    (match (utf8.slice (& bad) 0 0)
+      [(SliceError error) (assert-error error 7 1 2)]
+      [_ (test.assert-true false "even empty slice checks malformed suffix")])
+    (let
+      [offsets : (Array i64 3) (array -1 6 9223372036854775807)]
+      [i : i64 0]
+      (while (< i 3)
+        (let
+          [offset : i64 (array-ref offsets i)]
+          (match (utf8.decode-before (& bad) offset)
+            [(ReverseError error) (assert-error error 0 offset offset)]
+            [_ (test.assert-true false "reverse caller offset")])
+          (match (utf8.boundary-at (& bad) offset)
+            [(BoundaryError error) (assert-error error 0 offset offset)]
+            [_ (test.assert-true false "boundary caller offset")]))
+        (set! i (+ i 1)))))
+  (let
+    [empty : String ""]
+    [iter : (utf8.Iter empty) (utf8.iterator (& empty))]
+    (assert-done (utf8.next-back (&mut iter)))
+    (assert-done (utf8.next (&mut iter)))
+    (match (utf8.decode-before (& empty) 0)
+      [(Start) unit]
+      [_ (test.assert-true false "empty reverse decode")])
+    (let
+      [ranges : (Array (Array i64 2) 3)
+        (array (array -1 0) (array 1 0) (array 0 1))]
+      [i : i64 0]
+      (while (< i 3)
+        (match (utf8.slice
+          (& empty)
+          (array-ref (array-ref ranges i) 0)
+          (array-ref (array-ref ranges i) 1))
+          [(InvalidRange) unit]
+          [_ (test.assert-true false "invalid scalar range")])
+        (set! i (+ i 1))))))
+
+(define (assert-encoding) : unit
+  (let
+    [scalars : (Array i64 14)
+      (array
+        0
+        0x7f
+        0x80
+        0x7ff
+        0x800
+        0xd7ff
+        0xe000
+        0xffff
+        0x10000
+        0x10ffff
+        0xd800
+        0xdfff
+        0x110000
+        0xffffffff)]
+    [i : i64 0]
+    (while (< i 14)
+      (let
+        [value : i64 (array-ref scalars i)]
+        [output : byte_buf.ByteBuf (byte_buf.from-string "!!!!")]
+        (match (utf8.encode
+          (utf8.UnicodeScalar (cast value : u32))
+          (byte_buf.as-mut-bytes (&mut output)))
+          [(Encoded width)
+            (test.assert-true (< i 10) "only valid scalar encodes")
+            (let
+              [text : String (byte_buf.to-string output)]
+              (expect-scalar
+                (string.substring-view (& text) 0 width)
+                0
+                value
+                width)
+              (let
+                [tail : i64 width]
+                (while (< tail 4)
+                  (test.assert-i64-eq
+                    (cast (string.string-ref (& text) tail) : i64)
+                    33
+                    "encoder leaves tail unchanged")
+                  (set! tail (+ tail 1)))))]
+          [(InvalidScalar actual)
+            (test.assert-true (>= i 10) "invalid scalar rejected")
+            (test.assert-i64-eq
+              (cast actual : i64)
+              value
+              "invalid scalar retained")
+            (let
+              [text : String (byte_buf.to-string output)]
+              (test.assert-string-eq
+                (& text)
+                "!!!!"
+                "invalid scalar leaves output unchanged"))]
+          [_ (test.assert-true false "four bytes always suffice")]))
+      (set! i (+ i 1))))
+  (let
+    [output : byte_buf.ByteBuf (byte_buf.from-string "abc")]
+    (match (utf8.encode
+      (utf8.UnicodeScalar (cast 0x10000 : u32))
+      (byte_buf.as-mut-bytes (&mut output)))
+      [(InsufficientSpace required)
+        (test.assert-i64-eq required 4 "encoder required capacity")]
+      [_ (test.assert-true false "short output rejected")])
+    (let
+      [text : String (byte_buf.to-string output)]
+      (test.assert-string-eq (& text) "abc" "short buffer unchanged"))))
+
+(test utf8-code-point-operations (assert-code-point-operations))
+
+(test utf8-checked-api-errors (assert-checked-api-errors))
+
+(test utf8-encoding (assert-encoding))
+
+(define (assert-code-point-allocation) : unit
+  (let
+    [text : String "Aé€😀"]
+    [output : byte_buf.ByteBuf (byte_buf.from-string "!!!!")]
+    [before : i64 (profile.alloc-total)]
+    [round : i64 0]
+    [total : i64 0]
+    (while (< round 4096)
+      (let
+        [iter : (utf8.Iter text) (utf8.iterator (& text))]
+        [done : bool false]
+        (while (not done)
+          (match (utf8.next (&mut iter))
+            [(Item _) (set! total (+ total 1))]
+            [(Done) (set! done true)]
+            [_ (test.assert-true false "allocation walk")]))
+        (let
+          [reverse : (utf8.Iter text) (utf8.iterator (& text))]
+          [finished : bool false]
+          (while (not finished)
+            (match (utf8.next-back (&mut reverse))
+              [(Item _) (set! total (+ total 1))]
+              [(Done) (set! finished true)]
+              [_ (test.assert-true false "allocation reverse walk")])))
+        (match (utf8.decode-before (& text) 10)
+          [(Previous _ 6) (set! total (+ total 1))]
+          [_ (test.assert-true false "allocation reverse decode")])
+        (match (utf8.count (& text))
+          [(Count n) (set! total (+ total n))]
+          [_ (test.assert-true false "allocation count")])
+        (match (utf8.slice-range (& text) 1 3)
+          [(Range _ length) (set! total (+ total length))]
+          [_ (test.assert-true false "allocation slice")])
+        (match (utf8.boundary-at (& text) 3)
+          [(Boundary true) (set! total (+ total 1))]
+          [_ (test.assert-true false "allocation boundary")])
+        (match (utf8.encode
+          (utf8.UnicodeScalar (cast 0xfffd : u32))
+          (byte_buf.as-mut-bytes (&mut output)))
+          [(Encoded n) (set! total (+ total n))]
+          [_ (test.assert-true false "allocation encoding")]))
+      (set! round (+ round 1)))
+    (test.assert-i64-eq
+      (- (profile.alloc-total) before)
+      0
+      "code-point APIs allocate nothing")
+    (test.assert-i64-eq total (* 4096 22) "code-point API work retained")))
+
+(test utf8-code-point-allocation (assert-code-point-allocation))
+
+(define (assert-reverse-prefix-cuts) : unit
+  (let
+    [text : String "Aé€😀Z"]
+    [starts : (Array i64 12) (array 0 0 1 1 3 3 3 6 6 6 6 10)]
+    [complete : (Array bool 12)
+      (array true true false true false false true false false false true true)]
+    [end : i64 0]
+    (while (<= end 11)
+      (match (utf8.decode-before (& text) end)
+        [(Start) (test.assert-i64-eq end 0 "reverse start")]
+        [(Previous _ start)
+          (test.assert-true
+            (array-ref complete end)
+            "only complete prefix decodes")
+          (test.assert-i64-eq
+            start
+            (array-ref starts end)
+            "reverse complete prefix start")]
+        [(ReverseError error)
+          (test.assert-false
+            (array-ref complete end)
+            "only interior prefix truncates")
+          (assert-error error 3 (array-ref starts end) end)])
+      (set! end (+ end 1)))))
+
+(test utf8-reverse-prefix-cuts (assert-reverse-prefix-cuts))
+
+(define (assert-reverse-malformed-tail) : unit
+  (let
+    [prefixes : (Array String 3) (array "é" "€" "😀")]
+    [values : (Array i64 3) (array 233 0x20ac 0x1f600)]
+    [i : i64 0]
+    (while (< i 3)
+      (let
+        [prefix : (& prefixes str) (& (array-ref prefixes i))]
+        [first-invalid : i64 (string.string-length prefix)]
+        [tail : i64 1]
+        (while (<= tail 8)
+          (let
+            [buffer : byte_buf.ByteBuf
+              (byte_buf.from-string (string.copy prefix))]
+            [n : i64 0]
+            [_append : unit
+              (while (< n tail)
+                (set! buffer (byte_buf.push buffer (cast 0x80 : u8)))
+                (set! n (+ n 1)))]
+            [text : String (byte_buf.to-string buffer)]
+            [iter : (utf8.Iter text) (utf8.iterator (& text))]
+            (assert-item (utf8.next (&mut iter)) (array-ref values i))
+            (match (utf8.next-back (&mut iter))
+              [(Invalid error)
+                (test.assert-i64-eq
+                  (kind-code error.kind)
+                  2
+                  "continuation tail error")
+                (test.assert-true
+                  (>= error.sequence-start first-invalid)
+                  "reverse error must not blame a consumed valid scalar")
+                (test.assert-true
+                  (< error.failure-offset (string.string-length (& text)))
+                  "reverse error names an existing malformed tail byte")]
+              [_ (test.assert-true false "continuation tail must fail")])
+            (assert-done (utf8.next (&mut iter)))
+            (assert-done (utf8.next-back (&mut iter))))
+          (set! tail (+ tail 1))))
+      (set! i (+ i 1)))))
+
+(test utf8-reverse-malformed-tail (assert-reverse-malformed-tail))
+
+(define (assert-runtime-byte-semantics) : unit
+  (let
+    [text : String (format.format "{:.1}" "é")]
+    [buffer : byte_buf.ByteBuf (byte_buf.from-string (string.copy (& text)))]
+    [copied : String (byte_buf.to-string buffer)]
+    [part : String (string.substring (& copied) 0 1)]
+    (test.assert-i64-eq
+      (string.string-length (& text))
+      1
+      "format precision counts bytes")
+    (test.assert-i64-eq
+      (cast (string.string-ref (& text) 0) : i64)
+      0xc3
+      "precision can produce malformed UTF-8")
+    (test.assert-string-eq
+      (& copied)
+      (& text)
+      "safe ByteBuf conversion preserves arbitrary bytes")
+    (test.assert-string-eq
+      (& part)
+      (& text)
+      "byte slicing preserves arbitrary bytes")
+    (test.assert-i64-eq
+      (string.index-of-byte (& copied) 0 (cast 0xc3 : u8))
+      0
+      "byte search ignores encoding")
+    (test.assert-true
+      (string.contains (& copied) (& part))
+      "byte substring search ignores encoding")
+    (match (utf8.validate (& text))
+      [(Invalid error) (assert-error error 3 0 1)]
+      [_
+        (test.assert-true
+          false
+          "only explicit UTF-8 operation rejects runtime bytes")])))
+
+(test utf8-runtime-byte-semantics (assert-runtime-byte-semantics))
+
 (define (main) : i64
   (assert-boundaries)
   (assert-all-leads)
@@ -358,4 +766,11 @@
   (assert-offsets-and-provenance)
   (assert-scalar-roundtrip)
   (assert-allocation-and-progress)
+  (assert-code-point-operations)
+  (assert-checked-api-errors)
+  (assert-encoding)
+  (assert-code-point-allocation)
+  (assert-reverse-prefix-cuts)
+  (assert-reverse-malformed-tail)
+  (assert-runtime-byte-semantics)
   42)

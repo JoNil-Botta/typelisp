@@ -678,6 +678,48 @@
 
 (test utf8-reverse-prefix-cuts (assert-reverse-prefix-cuts))
 
+(define (assert-reverse-malformed-tail) : unit
+  (let
+    [prefixes : (Array String 3) (array "é" "€" "😀")]
+    [values : (Array i64 3) (array 233 0x20ac 0x1f600)]
+    [i : i64 0]
+    (while (< i 3)
+      (let
+        [prefix : (& prefixes str) (& (array-ref prefixes i))]
+        [first-invalid : i64 (string.string-length prefix)]
+        [tail : i64 1]
+        (while (<= tail 8)
+          (let
+            [buffer : byte_buf.ByteBuf
+              (byte_buf.from-string (string.copy prefix))]
+            [n : i64 0]
+            [_append : unit
+              (while (< n tail)
+                (set! buffer (byte_buf.push buffer (cast 0x80 : u8)))
+                (set! n (+ n 1)))]
+            [text : String (byte_buf.to-string buffer)]
+            [iter : (utf8.Iter text) (utf8.iterator (& text))]
+            (assert-item (utf8.next (&mut iter)) (array-ref values i))
+            (match (utf8.next-back (&mut iter))
+              [(Invalid error)
+                (test.assert-i64-eq
+                  (kind-code error.kind)
+                  2
+                  "continuation tail error")
+                (test.assert-true
+                  (>= error.sequence-start first-invalid)
+                  "reverse error must not blame a consumed valid scalar")
+                (test.assert-true
+                  (< error.failure-offset (string.string-length (& text)))
+                  "reverse error names an existing malformed tail byte")]
+              [_ (test.assert-true false "continuation tail must fail")])
+            (assert-done (utf8.next (&mut iter)))
+            (assert-done (utf8.next-back (&mut iter))))
+          (set! tail (+ tail 1))))
+      (set! i (+ i 1)))))
+
+(test utf8-reverse-malformed-tail (assert-reverse-malformed-tail))
+
 (define (assert-runtime-byte-semantics) : unit
   (let
     [text : String (format.format "{:.1}" "é")]
@@ -729,5 +771,6 @@
   (assert-encoding)
   (assert-code-point-allocation)
   (assert-reverse-prefix-cuts)
+  (assert-reverse-malformed-tail)
   (assert-runtime-byte-semantics)
   42)

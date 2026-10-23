@@ -177,6 +177,8 @@
 ;: Decode immediately before `end`, treating it as the input's exclusive end.
 ;: Only that suffix is checked; earlier invalid bytes are not skipped or repaired.
 ;: Error offsets refer to `text`, with truncation reported at `end`.
+;: A full four-continuation window reports its final byte when its possible
+;: lead lies outside the window, rather than blaming an earlier valid scalar.
 (define (decode-before [text : (& text str)] [end : i64]) : ReverseResult
   (when
     (or (< end 0) (> end (string.string-length text)))
@@ -196,6 +198,18 @@
               (set! width (+ width 1)))
             (set! search false))
           (set! search false))))
+    ;; Four continuations cannot end a valid scalar. The window can begin in
+    ;; a preceding valid scalar, so its first byte is not a sound error site.
+    (when
+      (and
+        (= width 4)
+        (> start 0)
+        (let
+          [byte : char (string.string-ref text start)]
+          (and (>= byte (cast 0x80 : char)) (<= byte (cast 0xbf : char)))))
+      (return
+        (ReverseError
+          (DecodeError (UnexpectedContinuation) (- end 1) (- end 1)))))
     (match (decode-prefix-at text start end)
       [(Scalar scalar next)
         (if (= next end)

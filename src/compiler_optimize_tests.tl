@@ -1,6 +1,7 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_stack_traffic_regions_tests as stack_regions)
 (import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import compiler_ir_types as ir)
@@ -31,6 +32,10 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+
+(test
+  stack-traffic-final-source-regions
+  (stack_regions.compiler-stack-traffic-region-tests))
 
 ;; Whole-program entries arm the checked tier; a fixture must restore the
 ;; caller's mode so later band-only and explicitly armed probes stay distinct.

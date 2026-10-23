@@ -134730,7 +134730,7 @@
     total))
 
 ;; Blocks reachable from `start` over `csr`, into `mark`.
-(define (opt-guard-dedup-reach-fill!
+(define (opt-cfg-reach-fill!
   [csr : (& csr OptCfgCsr)]
   [start : i64]
   [blocked : i64]
@@ -134782,8 +134782,8 @@
     [clean : bool true]
     (opt-guard-dedup-clear-bools! fwd block-count)
     (opt-guard-dedup-clear-bools! bwd block-count)
-    (opt-guard-dedup-reach-fill! index.succs from (- 0 1) block-count fwd stack)
-    (opt-guard-dedup-reach-fill! index.preds to (- 0 1) block-count bwd stack)
+    (opt-cfg-reach-fill! index.succs from (- 0 1) block-count fwd stack)
+    (opt-cfg-reach-fill! index.preds to (- 0 1) block-count bwd stack)
     (for [id (iterator.range 0 block-count)]
       (if (and (array-ref fwd id) (array-ref bwd id) (array-ref writes id))
         (set! clean false)
@@ -135311,8 +135311,8 @@
     [live : bool true]
     (opt-guard-dedup-clear-bools! fwd block-count)
     (opt-guard-dedup-clear-bools! bwd block-count)
-    (opt-guard-dedup-reach-fill! index.succs from blocked block-count fwd stack)
-    (opt-guard-dedup-reach-fill! index.preds to blocked block-count bwd stack)
+    (opt-cfg-reach-fill! index.succs from blocked block-count fwd stack)
+    (opt-cfg-reach-fill! index.preds to blocked block-count bwd stack)
     (for [slot (iterator.range 0 leaf-count)]
       (let
         [var : i64 (array-ref leaves slot)]

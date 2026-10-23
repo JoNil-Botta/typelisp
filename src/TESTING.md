@@ -852,6 +852,12 @@ labels; lower optimization levels and refused cold tail sites publish no clone.
 disabled job, checks accepted versus refused/malformed input, and reads the
 trace after destroying function scratch. Unroll history follows explicit label
 maps when cloned; the IR source-span smoke checks all fields after escape.
+`stack-traffic-final-source-regions` checks exact/spare graph construction,
+nested source ownership, separate unrolled/remainder headers, tail boundaries,
+cold exits and unreachable sites. Graph identity/edge mismatches, duplicate
+claims, lost recurring bodies, tail reentry and unbound unroll history reject.
+These tests attribute final IR control; they do not establish final backend
+access capture or the report's real-kernel acceptance.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

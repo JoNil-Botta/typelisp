@@ -614,6 +614,15 @@ priced candidates use a disabled sink. The sink belongs to the optimizer job's
 surviving arena, so function scratch retirement cannot erase the trace or mix
 two jobs. These are transform-history facts: later CFG rewrites may retire
 their labels, and the final census must still reconcile and validate membership.
+The IR partition checks the exact graph labels and edges against its function,
+then uses canonical dominance-based natural loops rooted at retained source
+headers or bodies. Committed unroll headers remain separate from their
+remainders. Tails stop at their source exit; nested source sets must be strictly
+contained, with inner traffic owned once and retained as parent control.
+Identical or partially overlapping claims reject. Reachability cannot invent
+a hot region for a retired or unreachable site. This partition attributes IR
+control only: backend-generated traps and final machine rewrites must preserve
+or refine that attribution before a post-regalloc census is published.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

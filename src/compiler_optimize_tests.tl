@@ -31046,7 +31046,7 @@
 ;: a different block. This asserts the numbering itself.
 (define (opt-cfg-index-walk-order-ids-ok?
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [index : opt.OptCfgIndex]
+  [index : (& index opt.OptCfgIndex)]
   [position : i64]) : bool
   (match blocks
     [(slice) true]

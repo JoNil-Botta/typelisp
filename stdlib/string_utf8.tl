@@ -72,8 +72,9 @@
 (define (decode-at [text : (& text str)] [offset : i64]) : DecodeResult
   (decode-prefix-at text offset (string.string-length text)))
 
-;; Shared bounded decoder for forward/reverse traversal without allocating
-;; substring-view headers. Error offsets always refer to the original text.
+;: Decode within the prefix ending at `length`, without allocating a substring.
+;: Offsets and errors refer to the original text; both the prefix length and
+;: offset are checked before reading. Exact prefix end returns `End`.
 (define (decode-prefix-at [text : (& text str)] [offset : i64] [length : i64]) : DecodeResult
   (let
     [full-length : i64 (string.string-length text)]
@@ -226,6 +227,7 @@
   (back i64)
   (exhausted bool))
 
+;: A scalar item, exhaustion, or one invalid-input error from either iterator end.
 (defenum IterNext
   (:must-use)
   (Item UnicodeScalar)
@@ -270,6 +272,7 @@
       (set! iter.exhausted true)
       (Invalid error)]))
 
+;: A Unicode scalar count, or the first decoding error in the complete input.
 (defenum CountResult
   (:must-use)
   (Count i64)
@@ -289,6 +292,7 @@
         [(Error error) (return (CountError error))]))
     (Count total)))
 
+;: Whether a byte offset is a scalar boundary, or an input/offset error.
 (defenum BoundaryResult
   (:must-use)
   (Boundary bool)
@@ -312,6 +316,7 @@
             (Boundary
               (or (< byte (cast 0x80 : char)) (> byte (cast 0xbf : char))))))])))
 
+;: A slice borrowing its source owner, an invalid scalar range, or a decoding error.
 (defenum SliceResult
   (:lifetimes source)
   (:must-use)
@@ -319,6 +324,7 @@
   (InvalidRange)
   (SliceError DecodeError))
 
+;: An allocation-free byte start/length, an invalid scalar range, or a decoding error.
 (defenum SliceRangeResult
   (:must-use)
   (Range i64 i64)
@@ -360,6 +366,7 @@
     [(InvalidRange) (InvalidRange)]
     [(RangeError error) (SliceError error)]))
 
+;: Bytes written, the rejected scalar value, or the required output byte capacity.
 (defenum EncodeResult
   (:must-use)
   (Encoded i64)

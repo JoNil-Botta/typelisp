@@ -1,5 +1,6 @@
 ;; doc_extract_smoke.tl - Runnable structural smoke for doc_extract.tl.
 (import doc_extract)
+(import stdlib.arena)
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
@@ -103,8 +104,80 @@
         (= (doc_extract.doc-item-list-count items) 1)
         (=
           (doc_extract.doc-item-source-line
-            (doc_extract.doc-item-list-ref items 0))
+            (& (doc_extract.doc-item-list-ref items 0)))
           2))]))
+
+(define (doc-borrowed-getters-own-results? [scoped : bool]) : bool
+  (let
+    [owner (arena.make)]
+    [original : doc_extract.DocItem
+      (if scoped
+        (doc_extract.ScopedItem
+          (doc_extract.DocIdentity
+            Field
+            (string.copy "value")
+            (string.copy "Box")
+            (doc_extract.Generated
+              (string.copy "vector")
+              (string.copy "Box")
+              (string.copy "String")))
+          (string.copy "field docs")
+          (string.copy "(value String)")
+          0)
+        (doc_extract.Item
+          GeneratedImport
+          (string.copy "value")
+          (string.copy "field docs")
+          (string.copy "(value String)")
+          7))]
+    [item (in-arena owner (clone original))]
+    [kind : doc_extract.DocItemKind (doc_extract.doc-item-kind (& item))]
+    [name : String (doc_extract.doc-item-name (& item))]
+    [docs : String (doc_extract.doc-item-doc (& item))]
+    [signature : String (doc_extract.doc-item-signature (& item))]
+    [line : i64 (doc_extract.doc-item-source-line (& item))]
+    [identity : doc_extract.DocIdentity
+      (doc_extract.doc-item-identity (& item))]
+    [label : String (doc_extract.doc-item-label (& item))]
+    (arena.destroy-safe! owner)
+    (and
+      (=
+        (doc_extract.doc-kind-tag kind)
+        (if scoped
+          9
+          7))
+      (string.eq name "value")
+      (string.eq docs "field docs")
+      (string.eq signature "(value String)")
+      (=
+        line
+        (if scoped
+          0
+          7))
+      (=
+        (doc_extract.doc-kind-tag identity.kind)
+        (if scoped
+          9
+          7))
+      (string.eq identity.name "value")
+      (string.eq
+        identity.parent
+        (if scoped
+          "Box"
+          "(value String)"))
+      (string.eq
+        label
+        (if scoped
+          "Box.value"
+          "value"))
+      (match (& identity.origin)
+        [(Source) (not scoped)]
+        [(Generated generator item key)
+          (and
+            scoped
+            (string.eq generator "vector")
+            (string.eq item "Box")
+            (string.eq key "String"))]))))
 
 (define (doc-extract-smoke) : i64
   (match (doc_extract.doc-extract-source
@@ -153,6 +226,12 @@
       (unless
         (doc-extract-source-line-smoke-ok?)
         (return (io.panic "doc-extract: declaration source line mismatch")))
+      (unless
+        (and
+          (doc-borrowed-getters-own-results? false)
+          (doc-borrowed-getters-own-results? true))
+        (return
+          (io.panic "doc-extract: borrowed getter result lifetime mismatch")))
       (match (doc_extract.doc-extract-source
         ";# Legacy module
 ;: legacy item

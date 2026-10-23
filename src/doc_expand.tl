@@ -1016,14 +1016,11 @@
           (Some
             (ScopedItem
               (doc_extract.DocIdentity
-                (doc_extract.doc-item-kind
-                  (owned_view.compiler-owned-shared-view item))
-                (doc_extract.doc-item-name
-                  (owned_view.compiler-owned-shared-view item))
+                (doc_extract.doc-item-kind (& item))
+                (doc_extract.doc-item-name (& item))
                 ""
                 (Generated generator name key))
-              (doc_extract.doc-item-doc
-                (owned_view.compiler-owned-shared-view item))
+              (doc_extract.doc-item-doc (& item))
               (doc_extract.doc-item-signature item)
               0))]
         [(No) No])]
@@ -1128,8 +1125,7 @@
                     (owned_view.compiler-owned-shared-view item))
                   (let
                     [identity : doc_extract.DocIdentity
-                      (doc_extract.doc-item-identity
-                        (owned_view.compiler-owned-shared-view item))]
+                      (doc_extract.doc-item-identity (& item))]
                     [tag : i64 (doc_extract.doc-kind-tag identity.kind)]
                     (when
                       (or (= tag 4) (= tag 5))

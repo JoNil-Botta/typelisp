@@ -547,8 +547,7 @@
 
 (define (doc-html-item-nav-entry [path : String] [item : doc_extract.DocItem]) : String
   (let
-    [name : String
-      (doc_extract.doc-item-label (owned_view.compiler-owned-shared-view item))]
+    [name : String (doc_extract.doc-item-label (& item))]
     [anchor : String (doc_render.doc-render-item-anchor path item)]
     (str_cat.str-cat
       "<li><a href=\"#"
@@ -609,13 +608,14 @@
         "<dt>Parent</dt><dd><a href=\"#"
         (doc_render.doc-render-documentation-anchor
           path
-          (doc_extract.DocIdentity
-            (if (= tag 9)
-              DefStruct
-              DefEnum)
-            (owned_view.compiler-owned-shared-view identity.parent)
-            ""
-            (owned_view.compiler-owned-shared-view identity.origin)))
+          (&
+            (doc_extract.DocIdentity
+              (if (= tag 9)
+                DefStruct
+                DefEnum)
+              (string.copy (& identity.parent))
+              ""
+              identity.origin)))
         "\">"
         (doc-html-escape identity.parent)
         "</a></dd>")
@@ -626,15 +626,10 @@
   [source-url : (& source-url str)]
   [item : doc_extract.DocItem]) : String
   (let
-    [name : String
-      (doc_extract.doc-item-label (owned_view.compiler-owned-shared-view item))]
-    [anchor : String
-      (doc_render.doc-render-item-anchor
-        (owned_view.compiler-owned-shared-view path)
-        (owned_view.compiler-owned-shared-view item))]
+    [name : String (doc_extract.doc-item-label (& item))]
+    [anchor : String (doc_render.doc-render-item-anchor (& path) (& item))]
     [kind : String
-      (doc_extract.doc-kind-name
-        (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))]
+      (doc_extract.doc-kind-name (& (doc_extract.doc-item-kind (& item))))]
     (str_cat.str-cat
       "<a id=\""
       (owned_view.compiler-owned-shared-view anchor)
@@ -652,12 +647,9 @@
         (owned_view.compiler-owned-shared-view item))
       (doc-html-source-link
         source-url
-        (doc_extract.doc-item-source-line
-          (owned_view.compiler-owned-shared-view item)))
+        (doc_extract.doc-item-source-line (& item)))
       "</dl>\n"
-      (doc-html-code-block
-        (doc_extract.doc-item-signature
-          (owned_view.compiler-owned-shared-view item)))
+      (doc-html-code-block (doc_extract.doc-item-signature (& item)))
       (doc-html-doc-block
         "tl-doc-item-text"
         (doc_extract.doc-item-doc item)
@@ -769,20 +761,15 @@
   [path : String]
   [item : doc_extract.DocItem]) : String
   (let
-    [identity : String
-      (doc_render.doc-render-item-anchor
-        (owned_view.compiler-owned-shared-view path)
-        (owned_view.compiler-owned-shared-view item))]
+    [identity : String (doc_render.doc-render-item-anchor (& path) (& item))]
     (doc-html-search-record
       (owned_view.compiler-owned-shared-view identity)
-      (doc_extract.doc-kind-name
-        (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
-      (doc_extract.doc-item-label (owned_view.compiler-owned-shared-view item))
+      (doc_extract.doc-kind-name (& (doc_extract.doc-item-kind (& item))))
+      (doc_extract.doc-item-label (& item))
       path
       (str_cat.str-cat page "#" identity)
-      (doc_extract.doc-item-signature
-        (owned_view.compiler-owned-shared-view item))
-      (doc_extract.doc-item-doc (owned_view.compiler-owned-shared-view item))
+      (doc_extract.doc-item-signature (& item))
+      (doc_extract.doc-item-doc (& item))
       (doc_extract.doc-item-source-line item))))
 
 (define (doc-html-search-item-records-from

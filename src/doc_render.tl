@@ -125,7 +125,7 @@
 ;; as declaration fields; a synthetic declaration cannot alias source text.
 (define (doc-render-documentation-anchor
   [module-path : (& module-path str)]
-  [identity : doc_extract.DocIdentity]) : String
+  [identity : (& identity doc_extract.DocIdentity)]) : String
   (let
     [base : String
       (doc-render-identity-anchor
@@ -137,7 +137,7 @@
       (set!
         base
         (str_cat.str-cat base "." (doc-render-anchor-field identity.parent))))
-    (match identity.origin
+    (match (& identity.origin)
       [(Source) base]
       [(Generated generator item key)
         (str_cat.str-cat
@@ -150,11 +150,11 @@
           (doc-render-anchor-field key))])))
 
 (define (doc-render-item-anchor
-  [module-path : String]
-  [item : doc_extract.DocItem]) : String
-  (doc-render-documentation-anchor
-    module-path
-    (doc_extract.doc-item-identity item)))
+  [module-path : (& module-path str)]
+  [item : (& item doc_extract.DocItem)]) : String
+  (let
+    [identity : doc_extract.DocIdentity (doc_extract.doc-item-identity item)]
+    (doc-render-documentation-anchor module-path (& identity))))
 
 (define (doc-render-escape-one [text : (& text str)] [idx : i64]) : String
   (let
@@ -198,13 +198,10 @@
 
 (define (doc-render-item-heading [item : doc_extract.DocItem]) : String
   (let
-    [name : String
-      (doc_extract.doc-item-label (owned_view.compiler-owned-shared-view item))]
+    [name : String (doc_extract.doc-item-label (& item))]
     [anchor : String
       (if (>=
-        (doc_extract.doc-kind-tag
-          (doc_extract.doc-item-kind
-            (owned_view.compiler-owned-shared-view item)))
+        (doc_extract.doc-kind-tag (& (doc_extract.doc-item-kind (& item))))
         8)
         (doc-render-item-anchor "" item)
         (doc-render-anchor (doc_extract.doc-item-name item)))]
@@ -219,12 +216,9 @@
   (str_cat.str-cat
     (doc-render-item-heading (owned_view.compiler-owned-shared-view item))
     "Kind: "
-    (doc_extract.doc-kind-name
-      (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
+    (doc_extract.doc-kind-name (& (doc_extract.doc-item-kind (& item))))
     "\n\n"
-    (doc-render-code-block
-      (doc_extract.doc-item-signature
-        (owned_view.compiler-owned-shared-view item)))
+    (doc-render-code-block (doc_extract.doc-item-signature (& item)))
     "\n"
     (doc-render-item-doc (doc_extract.doc-item-doc item))
     "\n"))
@@ -234,7 +228,7 @@
   [item : doc_extract.DocItem]) : String
   (str_cat.str-cat
     "<a id=\""
-    (doc-render-item-anchor path (owned_view.compiler-owned-shared-view item))
+    (doc-render-item-anchor path (& item))
     "\"></a>\n\n### "
     (doc-render-escape-markdown (doc_extract.doc-item-label item))
     "\n\n"))
@@ -245,12 +239,9 @@
       path
       (owned_view.compiler-owned-shared-view item))
     "Kind: "
-    (doc_extract.doc-kind-name
-      (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item)))
+    (doc_extract.doc-kind-name (& (doc_extract.doc-item-kind (& item))))
     "\n\n"
-    (doc-render-code-block
-      (doc_extract.doc-item-signature
-        (owned_view.compiler-owned-shared-view item)))
+    (doc-render-code-block (doc_extract.doc-item-signature (& item)))
     "\n"
     (doc-render-item-doc (doc_extract.doc-item-doc item))
     "\n"))

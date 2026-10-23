@@ -1,7 +1,6 @@
 ;; Documentation facts copied from an owned checked source index. Registry
 ;; handles are used only through its identity API, never as URL components.
 (import compiler_semantic_index as semantic)
-(import compiler_owned_view as owned_view)
 (import compiler_ast_types as ast)
 (import doc_extract)
 (import stdlib.iterator)
@@ -31,7 +30,8 @@
     [(EnumMember) EnumVariant]
     [_ Define]))
 
-(define (documentation-origin [origin : semantic.CompilerSemanticProvenance]) : doc_extract.DocOrigin
+(define (documentation-origin
+  [origin : (& origin semantic.CompilerSemanticProvenance)]) : doc_extract.DocOrigin
   (match origin
     [(EditableSource) Source]
     [(Generated generator item key)
@@ -103,7 +103,7 @@
             [(or (Local) (Parameter)) true]
             [_ false]))
         (return None))
-      (match (owned_view.compiler-owned-shared-view definition.provenance)
+      (match (& definition.provenance)
         [(EditableSource)
           (when
             (or
@@ -152,14 +152,10 @@
         (let
           [range : (& index semantic.CompilerSemanticDocumentationModule)
             (& (array-ref index.documentation-modules range-index))]
-          [path : semantic.CompilerSemanticSourcePathInfo
-            (owned_view.compiler-owned-array-element-shared-view
-              index.paths
-              path-index)]
-          [module : semantic.CompilerSemanticModuleInfo
-            (owned_view.compiler-owned-array-element-shared-view
-              index.modules
-              range.module-index)]
+          [path : (& index semantic.CompilerSemanticSourcePathInfo)
+            (& (array-ref index.paths path-index))]
+          [module : (& index semantic.CompilerSemanticModuleInfo)
+            (& (array-ref index.modules range.module-index))]
           ;; A source module marker has a page identity, not an import-alias
           ;; declaration. Never invent an alias item for that marker.
           (when
@@ -183,8 +179,7 @@
                   (string.copy (& range.alias))
                   (string.copy (& definition.display-name)))
                 parent
-                (documentation-origin
-                  (owned_view.compiler-owned-shared-view definition.provenance)))
+                (documentation-origin (& definition.provenance)))
               definition-index
               (match definition.provenance
                 [(EditableSource)

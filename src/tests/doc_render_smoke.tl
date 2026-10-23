@@ -178,26 +178,32 @@ _No documented declarations._
     (string.eq
       (doc_render.doc-render-documentation-anchor
         "m"
-        (doc_extract.DocIdentity Field "value" "Left" Source))
+        (& (doc_extract.DocIdentity Field "value" "Left" Source)))
       "tl-m.field.value.Left")
     (string.eq
       (doc_render.doc-render-documentation-anchor
         "m"
-        (doc_extract.DocIdentity Field "value" "Right" Source))
+        (& (doc_extract.DocIdentity Field "value" "Right" Source)))
       "tl-m.field.value.Right")
     (string.eq
       (doc_render.doc-render-documentation-anchor
         "m"
-        (doc_extract.DocIdentity Function "same" "" (Generated "a.b" "c" "d")))
+        (&
+          (doc_extract.DocIdentity Function "same" "" (Generated "a.b" "c" "d"))))
       "tl-m.define-function.same.generated.a_2eb.c.d")
     (not
       (string.eq
         (doc_render.doc-render-documentation-anchor
           "m"
-          (doc_extract.DocIdentity Function "same" "" (Generated "a" "b.c" "d")))
+          (&
+            (doc_extract.DocIdentity
+              Function
+              "same"
+              ""
+              (Generated "a" "b.c" "d"))))
         (doc_render.doc-render-documentation-anchor
           "m"
-          (doc_extract.DocIdentity Function "same" "" Source))))))
+          (& (doc_extract.DocIdentity Function "same" "" Source)))))))
 
 (define (doc-render-distinct-names-ok?) : bool
   (let

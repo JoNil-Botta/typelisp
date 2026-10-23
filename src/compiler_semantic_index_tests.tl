@@ -936,8 +936,7 @@
                               [anchor : String
                                 (doc_render.doc-render-documentation-anchor
                                   "pkg/api.tl"
-                                  (owned_view.compiler-owned-shared-view
-                                    docs.identity))]
+                                  (& docs.identity))]
                               (unless
                                 (or
                                   (string.eq

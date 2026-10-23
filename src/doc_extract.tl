@@ -11,10 +11,10 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
-(import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
+(import stdlib.clone as clone_gen)
 (import stdlib.string)
 (import source_text_core as source_text)
 (import stdlib.vector)
@@ -31,9 +31,13 @@
   (Field)
   (EnumVariant))
 
+(clone_gen.gen-clone DocItemKind)
+
 (defenum DocOrigin
   (Source)
   (Generated String String String))
+
+(clone_gen.gen-clone DocOrigin)
 
 ;; Names and origin fields are independent identity components. In particular,
 ;; member names never encode their owner by joining source spellings.
@@ -42,6 +46,8 @@
   (name String)
   (parent String)
   (origin DocOrigin))
+
+(clone_gen.gen-clone DocIdentity)
 
 (defenum DocItem
   ;; `source-line` is one-based for source declarations and zero for synthetic
@@ -61,7 +67,7 @@
   (No)
   (DocDeclInfo DocItemKind String))
 
-(define (doc-kind-tag [kind : DocItemKind]) : i64
+(define (doc-kind-tag [kind : (& kind DocItemKind)]) : i64
   (match kind
     [(Define) 1]
     [(Function) 2]
@@ -74,7 +80,7 @@
     [(Field) 9]
     [(EnumVariant) 10]))
 
-(define (doc-kind-name [kind : DocItemKind]) : String
+(define (doc-kind-name [kind : (& kind DocItemKind)]) : String
   (match kind
     [(Define) "define"]
     [(Function) "define-function"]
@@ -95,44 +101,45 @@
   (match docs
     [(Extraction _ items) items]))
 
-(define (doc-item-kind [item : DocItem]) : DocItemKind
+;; Readers preserve the item; owned results are allocated in the caller's arena.
+(define (doc-item-kind [item : (& item DocItem)]) : DocItemKind
   (match item
-    [(Item kind _ _ _ _) kind]
-    [(ScopedItem identity _ _ _) identity.kind]))
+    [(Item kind _ _ _ _) (clone-doc-item-kind kind)]
+    [(ScopedItem identity _ _ _) (clone-doc-item-kind (& identity.kind))]))
 
-(define (doc-item-name [item : DocItem]) : String
+(define (doc-item-name [item : (& item DocItem)]) : String
   (match item
-    [(Item _ name _ _ _) name]
-    [(ScopedItem identity _ _ _) identity.name]))
+    [(Item _ name _ _ _) (string.copy name)]
+    [(ScopedItem identity _ _ _) (string.copy (& identity.name))]))
 
-(define (doc-item-doc [item : DocItem]) : String
+(define (doc-item-doc [item : (& item DocItem)]) : String
   (match item
-    [(Item _ _ doc-text _ _) doc-text]
-    [(ScopedItem _ doc-text _ _) doc-text]))
+    [(Item _ _ doc-text _ _) (string.copy doc-text)]
+    [(ScopedItem _ doc-text _ _) (string.copy doc-text)]))
 
-(define (doc-item-signature [item : DocItem]) : String
+(define (doc-item-signature [item : (& item DocItem)]) : String
   (match item
-    [(Item _ _ _ signature _) signature]
-    [(ScopedItem _ _ signature _) signature]))
+    [(Item _ _ _ signature _) (string.copy signature)]
+    [(ScopedItem _ _ signature _) (string.copy signature)]))
 
-(define (doc-item-source-line [item : DocItem]) : i64
+(define (doc-item-source-line [item : (& item DocItem)]) : i64
   (match item
     [(Item _ _ _ _ source-line) source-line]
     [(ScopedItem _ _ _ source-line) source-line]))
 
-(define (doc-item-identity [item : DocItem]) : DocIdentity
+(define (doc-item-identity [item : (& item DocItem)]) : DocIdentity
   (match item
     [(Item kind name _ signature _)
       (DocIdentity
-        kind
-        name
+        (clone-doc-item-kind kind)
+        (string.copy name)
         (if (= (doc-kind-tag kind) 7)
-          signature
+          (string.copy signature)
           "")
         Source)]
-    [(ScopedItem identity _ _ _) identity]))
+    [(ScopedItem identity _ _ _) (clone-doc-identity identity)]))
 
-(define (doc-item-label [item : DocItem]) : String
+(define (doc-item-label [item : (& item DocItem)]) : String
   (let
     [identity : DocIdentity (doc-item-identity item)]
     (if (or
@@ -452,7 +459,7 @@
   [parent : String]
   [kind : DocItemKind]
   [source-line : i64]
-  [origin : DocOrigin]) : unit
+  [origin : (& origin DocOrigin)]) : unit
   (let
     [n : i64 (string.string-length signature)]
     [head : i64 (doc-decl-next-token signature 1 n)]
@@ -499,8 +506,8 @@
                         member
                         (- (doc-decl-symbol-end signature member n) member))
                       (string.copy (& parent))
-                      (owned_view.compiler-owned-shared-view origin))
-                    (owned_view.compiler-owned-shared-view docs)
+                      (clone-doc-origin origin))
+                    (string.copy (& docs))
                     (string.substring signature i (- end i))
                     (if (> source-line 0)
                       (+ source-line (- (doc-source-line-at signature i) 1))
@@ -585,10 +592,10 @@
                           (&mut items)
                           (Item
                             kind
-                            (owned_view.compiler-owned-shared-view name)
+                            (string.copy (& name))
                             (unsafe
                               (ptr-read (ptr-addr-of pending-doc)))
-                            (owned_view.compiler-owned-shared-view signature)
+                            (string.copy (& signature))
                             (doc-source-line-at src line-start))))
                       (when
                         (or (= (doc-kind-tag kind) 4) (= (doc-kind-tag kind) 5))
@@ -600,7 +607,7 @@
                             EnumVariant
                             Field)
                           (doc-source-line-at src line-start)
-                          Source))]
+                          (& (Source))))]
                     [(No) unit])
                   (set! pending-doc "")
                   (set! pending-has false)

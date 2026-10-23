@@ -124,10 +124,12 @@
         (= (doc_generated_target_example_vec.len (& targets)) 6)
         (= (doc_render.doc-module-list-count (clone modules)) 6)
         (string.eq
-          (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 0))
+          (doc_extract.doc-item-name
+            (& (doc_extract.doc-item-list-ref items 0)))
           "0")
         (string.eq
-          (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 5))
+          (doc_extract.doc-item-name
+            (& (doc_extract.doc-item-list-ref items 5)))
           "5")
         (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
         (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
@@ -316,11 +318,10 @@
                 [item : doc_extract.DocItem
                   (doc_extract.doc-item-list-ref items i)]
                 [identity : doc_extract.DocIdentity
-                  (doc_extract.doc-item-identity
-                    (owned_view.compiler-owned-shared-view item))]
+                  (doc_extract.doc-item-identity (& item))]
                 [anchor : String
                   (doc_render.doc-render-item-anchor
-                    (string.copy (& path))
+                    (& (string.copy (& path)))
                     item)]
                 [found : bool false]
                 (when

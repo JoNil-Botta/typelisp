@@ -504,7 +504,7 @@
                     [anchor : String
                       (doc_render.doc-render-documentation-anchor
                         "pkg/api.tl"
-                        (owned_view.compiler-owned-shared-view docs.identity))]
+                        (& docs.identity))]
                     (unless
                       (target-cases-ok? (& docs) (string.copy (& anchor)))
                       (io.print-error "documentation: exact target cases\n")
@@ -596,8 +596,7 @@
                       [anchor : String
                         (doc_render.doc-render-documentation-anchor
                           (& (array-ref modules (+ (* namespace-case 2) i)))
-                          (owned_view.compiler-owned-reference-shared-view
-                            (& item.identity)))]
+                          (& item.identity))]
                       [configured : json.Json
                         (replace-field
                           (replace-field
@@ -693,9 +692,7 @@
         [item : doc_extract.DocItem (doc_extract.doc-item-list-ref items i)]
         (when
           (>=
-            (doc_extract.doc-kind-tag
-              (doc_extract.doc-item-kind
-                (owned_view.compiler-owned-shared-view item)))
+            (doc_extract.doc-kind-tag (& (doc_extract.doc-item-kind (& item))))
             8)
           (let
             [expected : String

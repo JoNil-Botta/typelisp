@@ -2,7 +2,6 @@
 ;; Source freshness is supplied by the LSP's current overlay/disk provider;
 ;; neither a displayed signature nor a package name authorizes a URL.
 (import compiler_load as load)
-(import compiler_owned_view as owned_view)
 (import compiler_semantic_documentation as semantic_docs)
 (import doc_extract)
 (import doc_render)
@@ -87,7 +86,7 @@
         (+= cache.len 1))
       digest)))
 
-(define (origin-json [origin : doc_extract.DocOrigin]) : json.Json
+(define (origin-json [origin : (& origin doc_extract.DocOrigin)]) : json.Json
   (match origin
     [(Source)
       (JsonObject
@@ -144,12 +143,7 @@
     (set! fields (json.member-cons "anchor" (JsonString anchor) fields))
     (set!
       fields
-      (json.member-cons
-        "origin"
-        (origin-json
-          (owned_view.compiler-owned-reference-shared-view
-            (& docs.identity.origin)))
-        fields))
+      (json.member-cons "origin" (origin-json (& docs.identity.origin)) fields))
     (set! fields (json.member-cons "source" source fields))
     (set!
       fields
@@ -172,7 +166,7 @@
       fields
       (json.member-cons
         "kind"
-        (JsonString (doc_extract.doc-kind-name (clone docs.identity.kind)))
+        (JsonString (doc_extract.doc-kind-name (& docs.identity.kind)))
         fields))
     (set!
       fields
@@ -236,8 +230,7 @@
             [anchor : String
               (doc_render.doc-render-documentation-anchor
                 (& site.doc-module)
-                (owned_view.compiler-owned-reference-shared-view
-                  (& docs.identity)))]
+                (& docs.identity))]
             (when
               (sites.contains-anchor? site anchor)
               ;; An ambiguous package/site assignment fails closed. Do not let

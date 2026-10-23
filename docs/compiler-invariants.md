@@ -813,6 +813,9 @@ generator provenance with non-editable negative spans; no authored token is
 invented. Locals, parameters, module-header markers and incomplete indexes do
 not become public declaration targets. The canonical encoder in `doc_render`
 is shared by extraction, generated HTML/search and the LSP adapter.
+Item readers and the encoder borrow retained declarations. Owned reader results
+copy strings and use owner-generated identity clones in the caller's arena, so
+retiring extraction storage cannot invalidate an emitted response.
 
 Opted-in exact site bindings own a separate initialize-to-shutdown arena in
 `LspServerState`. Document/cache swaps preserve that owner; replacement and

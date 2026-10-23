@@ -113,10 +113,10 @@
         (match (lex.spanned-result source)
           [(Ok tokens)
             (let
-              [tok : token.Token
-                (token.spanned-token-tok (lex.array-shared-view tokens 0))]
+              [tok : (& tokens token.Token)
+                (token.spanned-token-token-ref (& (array-ref tokens 0)))]
               (test.assert-string-eq
-                (intern.intern-id-str (token.str-id (& tok)))
+                (intern.intern-id-str (token.str-id tok))
                 (& (array-ref expected index))
                 "unescaped UTF-8 literal preserves exact bytes"))]
           [_ (test.assert-true false "valid scalar encodings accepted")])

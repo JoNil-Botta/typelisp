@@ -1010,7 +1010,23 @@
   [ctx : DocExpandContext]
   [decl : ast.AstDecl]) : DocMaybeItem
   (match (ast.ast-decl-generated-meta decl)
-    [(Some _ _ _ _) (doc-ast-decl-item ctx decl)]
+    [(Some generator name _ key)
+      (match (doc-ast-decl-item ctx decl)
+        [(Some item)
+          (Some
+            (ScopedItem
+              (doc_extract.DocIdentity
+                (doc_extract.doc-item-kind
+                  (owned_view.compiler-owned-shared-view item))
+                (doc_extract.doc-item-name
+                  (owned_view.compiler-owned-shared-view item))
+                ""
+                (Generated generator name key))
+              (doc_extract.doc-item-doc
+                (owned_view.compiler-owned-shared-view item))
+              (doc_extract.doc-item-signature item)
+              0))]
+        [(No) No])]
     [(No) (No)]))
 
 (define (doc-generated-import-item [form : String]) : doc_extract.DocItem
@@ -1107,7 +1123,25 @@
             [_
               (match (doc-ast-generated-decl-item ctx decl)
                 [(Some item)
-                  (doc_item_vec.push-ref! (&mut items) item)
+                  (doc_item_vec.push-ref!
+                    (&mut items)
+                    (owned_view.compiler-owned-shared-view item))
+                  (let
+                    [identity : doc_extract.DocIdentity
+                      (doc_extract.doc-item-identity
+                        (owned_view.compiler-owned-shared-view item))]
+                    [tag : i64 (doc_extract.doc-kind-tag identity.kind)]
+                    (when
+                      (or (= tag 4) (= tag 5))
+                      (doc_extract.doc-extract-members!
+                        (&mut items)
+                        (doc_extract.doc-item-signature item)
+                        identity.name
+                        (if (= tag 4)
+                          EnumVariant
+                          Field)
+                        0
+                        identity.origin)))
                   (set! has-generated true)]
                 [(No) unit])])
           (set! cursor rest)]))

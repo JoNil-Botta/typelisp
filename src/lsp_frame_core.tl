@@ -25,6 +25,10 @@
 (import compiler_check_core)
 (import compiler_expand_query as expand)
 (import compiler_semantic_index)
+(import compiler_semantic_documentation)
+(import lsp_documentation_core as doc_targets)
+(import lsp_documentation_sites as doc_sites)
+(import compiler_build_identity as build_identity)
 (import compiler_ast_types as ast)
 (import compiler_ctfe as ctfe)
 (import compiler_diagnostic as cdiag)
@@ -1051,7 +1055,7 @@
     "full"
     (JsonBool true)))
 
-(define (lsp-initialize-result) : json.Json
+(define (lsp-initialize-result [documentation-targets : bool]) : json.Json
   (lsp-json-object2
     "capabilities"
     (lsp-json-object
@@ -1136,7 +1140,14 @@
                                               (JsonBool true)
                                               "changeNotifications"
                                               (JsonBool true)))
-                                          (json.member-list-empty))))))))))))))))))))
+                                          (if documentation-targets
+                                            (lsp-json-member
+                                              "experimental"
+                                              (lsp-json-object1
+                                                "typelispDocumentationTargets"
+                                                (JsonBool true))
+                                              (json.member-list-empty))
+                                            (json.member-list-empty)))))))))))))))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -7304,23 +7315,45 @@
 ;; Document links (textDocument/documentLink): make import operands clickable,
 ;; navigating to the resolved module file.
 ;; --------------------------------------------------------------------------
+(defstruct LspDocumentLinkRequest
+  (uri String)
+  (start-byte i64)
+  (end-byte i64)
+  (documentation json.Json))
+
 (define (lsp-document-link-json
   [text : (& text str)]
-  [resolved : String]
-  [content-start : i64]
-  [content-end : i64]) : json.Json
+  [request : LspDocumentLinkRequest]) : json.Json
   (let
-    [start-lc : LspLineCol (lsp-line-col-at-offset text content-start)]
-    [end-lc : LspLineCol (lsp-line-col-at-offset text content-end)]
-    (lsp-json-object2
-      "range"
-      (lsp-json-object2
-        "start"
-        (lsp-position start-lc.line start-lc.col)
-        "end"
-        (lsp-position end-lc.line end-lc.col))
-      "target"
-      (JsonString (lsp-resolved-path-to-file-uri resolved)))))
+    [start-lc : LspLineCol (lsp-line-col-at-offset text request.start-byte)]
+    [end-lc : LspLineCol (lsp-line-col-at-offset text request.end-byte)]
+    [fields : json.JsonMemberSeq
+      (lsp-json-member
+        "range"
+        (lsp-json-object2
+          "start"
+          (lsp-position start-lc.line start-lc.col)
+          "end"
+          (lsp-position end-lc.line end-lc.col))
+        (lsp-json-member
+          "target"
+          (JsonString request.uri)
+          (json.member-list-empty)))]
+    (match (owned_view.compiler-owned-shared-view request.documentation)
+      [(JsonNull) unit]
+      [_
+        (set!
+          fields
+          (lsp-json-member
+            "data"
+            (lsp-json-object1
+              "typelispDocumentationTarget"
+              request.documentation)
+            fields))
+        (set!
+          fields
+          (lsp-json-member "tooltip" (JsonString "Documentation") fields))])
+    (lsp-json-object fields)))
 
 (define (lsp-document-links
   [text : (& text str)]
@@ -7360,13 +7393,237 @@
                       (set!
                         acc
                         (lsp-json-list-cons
-                          (lsp-document-link-json text resolved start end)
+                          (lsp-document-link-json
+                            text
+                            (LspDocumentLinkRequest
+                              (lsp-resolved-path-to-file-uri resolved)
+                              start
+                              end
+                              JsonNull))
                           acc))
                       (set! i end)]
                     [(Missing) (+= i 1)]))
                 (+= i 1)))]
           [else (+= i 1)])))
     acc))
+
+(define (lsp-documentation-target-at
+  [state : (& state lsp_vector_families.LspServerState)]
+  [document : (& document lsp_vector_families.LspDocument)]
+  [record-index : i64]
+  [cache : (&mut cache doc_targets.SourceDigestCache)]) : doc_targets.MaybeDocumentationTarget
+  (match (lsp-document-semantic-snapshot-status document)
+    [(Current _ true) unit]
+    [_ (return Missing)])
+  (match (compiler_semantic_documentation.documentation-at
+    (& document.semantic.index)
+    record-index)
+    [(None) Missing]
+    [(Some docs)
+      (doc_targets.target
+        (& state.documentation-sites)
+        (& docs)
+        (doc_targets.DocumentationTargetRequest
+          (build_identity.compiler-build-git-hash-shared-view)
+          (doc_targets.current-source-digest
+            (& state.documents)
+            cache
+            (& docs.source-path))))]))
+
+(define (lsp-documentation-hover-respond
+  [id : json.Json]
+  [uri : String]
+  [position : json.Json]
+  [state : (& state lsp_vector_families.LspServerState)]) : unit
+  (let
+    [document-index : i64 (lsp-documents-find-index (& state.documents) uri)]
+    (when (< document-index 0) (lsp-write-response id JsonNull) (return unit))
+    (let
+      [document : lsp_vector_families.LspDocument
+        (lsp_document_vec.get
+          (& state.documents)
+          document-index
+          (lsp-document-fallback))]
+      [offset : i64
+        (lsp-offset-at-position
+          (& document.text)
+          (lsp-json-int-field-default position "line" 0)
+          (lsp-json-int-field-default position "character" 0))]
+      [record-index : i64 (lsp-document-semantic-record-at (& document) offset)]
+      [cache : doc_targets.SourceDigestCache
+        (doc_targets.source-cache document.semantic.index.path-len)]
+      (match (lsp-documentation-target-at
+        state
+        (& document)
+        record-index
+        (&mut cache))
+        [(Missing)
+          (lsp-semantic-hover-respond id uri position (& state.documents))]
+        [(Found target)
+          (let
+            [definition : compiler_semantic_index.CompilerSemanticRecord
+              (compiler_semantic_index.compiler-semantic-source-index-get
+                (& document.semantic.index)
+                target.definition-index)]
+            [cursor : compiler_semantic_index.CompilerSemanticRecord
+              (compiler_semantic_index.compiler-semantic-source-index-get
+                (& document.semantic.index)
+                record-index)]
+            [body : String
+              (str_cat.str-cat
+                (lsp-hover-markdown
+                  (lsp-semantic-hover-body
+                    (owned_view.compiler-owned-shared-view definition))
+                  definition.documentation)
+                "\n\n[Documentation](<"
+                (string.copy (& target.uri))
+                ">)")]
+            (match (lsp-hover-result
+              body
+              document.text
+              cursor.span.start-byte
+              cursor.span.end-byte)
+              [(JsonObject fields)
+                (lsp-write-response
+                  id
+                  (lsp-json-object
+                    (lsp-json-member
+                      "data"
+                      (lsp-json-object1
+                        "typelispDocumentationTarget"
+                        target.data)
+                      (deref fields))))]
+              [_ (lsp-write-response id JsonNull)]))]))))
+
+(define (lsp-documentation-links
+  [state : (& state lsp_vector_families.LspServerState)]
+  [document : (& document lsp_vector_families.LspDocument)]
+  [stdlib-roots : lsp_svec.Vec]) : json.JsonSeq
+  (let
+    [links : json.JsonSeq
+      (lsp-document-links
+        (& document.text)
+        (string.copy (& document.path))
+        stdlib-roots)]
+    (match (lsp-document-semantic-snapshot-status document)
+      [(Current _ true) unit]
+      [_ (return links)])
+    (let
+      [index : (& document compiler_semantic_index.CompilerSemanticSourceIndex)
+        (& document.semantic.index)]
+      [length : i64 (string.string-length (& document.text))]
+      [starts : (__tl_dyn-array i64) (__tl_make-array i64 length)]
+      [cache : doc_targets.SourceDigestCache
+        (doc_targets.source-cache index.path-len)]
+      [extra : json.JsonSeq (json.list-empty)]
+      [last-end : i64 0]
+      (for [i (iterator.range 0 index.len)]
+        (let
+          [record : compiler_semantic_index.CompilerSemanticRecord
+            (compiler_semantic_index.compiler-semantic-source-index-get index i)]
+          [start : i64 record.span.start-byte]
+          [end : i64 record.span.end-byte]
+          (when
+            (and
+              record.editable
+              (>= start 0)
+              (> end start)
+              (<= end length)
+              (string.eq record.span.path document.path)
+              (match record.provenance
+                [(EditableSource) true]
+                [_ false]))
+            (let
+              [stored : i64 (array-ref starts start)]
+              [prior : compiler_semantic_index.CompilerSemanticRecord
+                (compiler_semantic_index.compiler-semantic-source-index-get
+                  index
+                  (- stored 1))]
+              [priority : i64
+                (compiler_semantic_index.compiler-semantic-source-record-priority
+                  record.kind)]
+              [prior-priority : i64
+                (compiler_semantic_index.compiler-semantic-source-record-priority
+                  prior.kind)]
+              (when
+                (or
+                  (= stored 0)
+                  (> priority prior-priority)
+                  (and
+                    (= priority prior-priority)
+                    (<
+                      (- end start)
+                      (- prior.span.end-byte prior.span.start-byte))))
+                (set! (array-ref starts start) (+ i 1)))))))
+      (for [offset (iterator.range 0 length)]
+        (let
+          [stored : i64 (array-ref starts offset)]
+          (when
+            (and (> stored 0) (>= offset last-end))
+            (match (lsp-documentation-target-at
+              state
+              document
+              (- stored 1)
+              (&mut cache))
+              [(Missing) unit]
+              [(Found target)
+                (let
+                  [record : compiler_semantic_index.CompilerSemanticRecord
+                    (compiler_semantic_index.compiler-semantic-source-index-get
+                      index
+                      (- stored 1))]
+                  (set!
+                    extra
+                    (lsp-json-list-cons
+                      (lsp-document-link-json
+                        (& document.text)
+                        (LspDocumentLinkRequest
+                          target.uri
+                          record.span.start-byte
+                          record.span.end-byte
+                          target.data))
+                      extra))
+                  (set! last-end record.span.end-byte))]))))
+      (json.list-concat links (json.list-reverse extra)))))
+
+(define (lsp-handle-documentation-message
+  [method : String]
+  [message : json.Json]
+  [state : (& state lsp_vector_families.LspServerState)]
+  [stdlib-roots : lsp_svec.Vec]) : unit
+  (let
+    [id-key : String "id"]
+    (match (json.object-get
+      (owned_view.compiler-owned-shared-view message)
+      (& id-key))
+      [(JsonMissing) unit]
+      [(JsonFound id)
+        (let
+          [params : json.Json (doc_sites.field (& message) "params")]
+          [text-document : json.Json
+            (doc_sites.field (& params) "textDocument")]
+          [uri : String (doc_sites.text (& text-document) "uri")]
+          (if (string.eq method "textDocument/hover")
+            (lsp-documentation-hover-respond
+              id
+              uri
+              (doc_sites.field (& params) "position")
+              state)
+            (let
+              [document-index : i64
+                (lsp-documents-find-index (& state.documents) uri)]
+              (if (< document-index 0)
+                (lsp-write-response id (lsp-json-array (json.list-empty)))
+                (let
+                  [document : lsp_vector_families.LspDocument
+                    (lsp_document_vec.get
+                      (& state.documents)
+                      document-index
+                      (lsp-document-fallback))]
+                  (lsp-write-response
+                    id
+                    (lsp-json-array
+                      (lsp-documentation-links state (& document) stdlib-roots))))))))])))
 
 (define (lsp-document-link-respond
   [id : json.Json]
@@ -7931,7 +8188,64 @@
     0
     (lsp-documents-copy state.documents)
     (lsp-workspace-index-copy state.workspace)
-    (lsp-workspace-semantic-cache-copy state.semantic-cache)))
+    (lsp-workspace-semantic-cache-copy state.semantic-cache)
+    (owned_view.compiler-owned-reference-shared-view
+      (& state.documentation-sites))))
+
+(define (lsp-documentation-sites-release!
+  [sites : (&mut sites doc_sites.DocumentationSites)]) : unit
+  (let
+    [owner : i64 sites.owner-arena]
+    (set! sites.owner-arena 0)
+    (set! sites.len 0)
+    (set! sites.enabled false)
+    (when
+      (> owner 0)
+      (unsafe
+        (arena.tl_arena_destroy owner)))))
+
+(define (lsp-documentation-sites-initialize [message : (& message json.Json)]) : doc_sites.ResultDocumentationSites
+  (let
+    [params : json.Json (doc_sites.field message "params")]
+    [capabilities : json.Json (doc_sites.field (& params) "capabilities")]
+    [experimental : json.Json (doc_sites.field (& capabilities) "experimental")]
+    [requested : json.Json
+      (doc_sites.field (& experimental) "typelispDocumentationTargets")]
+    (match requested
+      [(JsonNull) (return (Ok (doc_sites.empty false)))]
+      [(JsonBool value) (unless value (return (Ok (doc_sites.empty false))))]
+      [_
+        (return
+          (Err
+            "lsp: experimental.typelispDocumentationTargets must be a boolean"))])
+    (let
+      [options : json.Json (doc_sites.field (& params) "initializationOptions")]
+      [nested : json.Json (doc_sites.field (& options) "typelisp")]
+      [settings : json.Json
+        (match (owned_view.compiler-owned-shared-view nested)
+          [(JsonNull) options]
+          [_ nested])]
+      [bindings : json.Json (doc_sites.field (& settings) "documentationSites")]
+      (match bindings
+        [(JsonNull) (Ok (doc_sites.empty true))]
+        [(JsonArray values-box)
+          (let
+            [owner : i64 (arena.tl_arena_make)]
+            [result : doc_sites.ResultDocumentationSites
+              (in-arena
+                (arena.Arena owner)
+                (doc_sites.parse-bindings (& (__tl-box-place values-box)) owner))]
+            (match result
+              [(Ok sites) (Ok sites)]
+              [(Err error)
+                (let
+                  [retained : String (string.copy (& error))]
+                  (unsafe
+                    (arena.tl_arena_destroy owner))
+                  (Err retained))]))]
+        [_
+          (Err
+            "lsp: initializationOptions.typelisp.documentationSites must be an array")]))))
 
 (define (lsp-server-state-finish-swap
   [old-state : (& old-state lsp_vector_families.LspServerState)]
@@ -7944,7 +8258,18 @@
         owner
         draft.documents
         draft.workspace
-        draft.semantic-cache)]
+        draft.semantic-cache
+        (owned_view.compiler-owned-reference-shared-view
+          (& draft.documentation-sites)))]
+    (when
+      (!=
+        old-state.documentation-sites.owner-arena
+        next.documentation-sites.owner-arena)
+      (let
+        [retired : doc_sites.DocumentationSites
+          (owned_view.compiler-owned-reference-shared-view
+            (& old-state.documentation-sites))]
+        (lsp-documentation-sites-release! (&mut retired))))
     (unsafe
       (arena.tl_arena_set previous-arena))
     (if (> old-state.owner-arena 0)
@@ -7972,7 +8297,12 @@
       (unsafe
         (arena.tl_arena_set previous))]
     (set! lsp-document-cache-arena owner)
-    (lsp_vector_families.LspServerState owner docs workspace semantic-cache)))
+    (lsp_vector_families.LspServerState
+      owner
+      docs
+      workspace
+      semantic-cache
+      (doc_sites.empty false))))
 
 (define (lsp-server-state-destroy! [state : lsp_vector_families.LspServerState]) : unit
   (let
@@ -7980,6 +8310,7 @@
     [owner : i64 state.owner-arena]
     (lsp-documents-release-all! (&mut state.documents))
     (lsp-workspace-semantic-cache-release-all! (&mut state.semantic-cache))
+    (lsp-documentation-sites-release! (&mut state.documentation-sites))
     (set! lsp-document-cache-arena 0)
     (if (> owner 0)
       (unsafe
@@ -9246,7 +9577,8 @@
 
 (define (lsp-server-state-initialize-workspaces
   [state : lsp_vector_families.LspServerState]
-  [message : json.Json]) : lsp_vector_families.LspServerState
+  [message : json.Json]
+  [documentation-sites : doc_sites.DocumentationSites]) : lsp_vector_families.LspServerState
   (let
     [previous : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
@@ -9264,7 +9596,12 @@
     [_invalidate : unit
       (lsp-workspace-semantic-cache-release-all! (&mut semantic-cache))]
     [draft : lsp_vector_families.LspServerState
-      (lsp_vector_families.LspServerState 0 docs workspace semantic-cache)]
+      (lsp_vector_families.LspServerState
+        0
+        docs
+        workspace
+        semantic-cache
+        documentation-sites)]
     (lsp-server-state-finish-swap state draft owner previous)))
 
 (define lsp-workspace-symbol-result-limit : i64
@@ -9544,7 +9881,9 @@
                 0
                 docs
                 workspace
-                semantic-cache)]
+                semantic-cache
+                (owned_view.compiler-owned-shared-view
+                  state.documentation-sites))]
             (Continue (lsp-server-state-finish-swap state draft owner previous)))])]
     [(Exit next-documents)
       (match (lsp-server-state-refresh-document-result
@@ -9581,7 +9920,13 @@
             (lsp-workspace-semantic-cache-release-all! (&mut semantic-cache))
             unit)]
         [draft : lsp_vector_families.LspServerState
-          (lsp_vector_families.LspServerState 0 docs workspace semantic-cache)]
+          (lsp_vector_families.LspServerState
+            0
+            docs
+            workspace
+            semantic-cache
+            (owned_view.compiler-owned-reference-shared-view
+              (& state.documentation-sites)))]
         (Continue (lsp-server-state-finish-swap state draft owner previous)))]
     [(Exit next-documents)
       (match (lsp-server-state-copy-document-result
@@ -12526,7 +12871,7 @@
                       lsp-position-encoding-utf8
                       (lsp-initialize-position-encoding-utf8?
                         (owned_view.compiler-owned-shared-view message)))
-                    (lsp-write-response id (lsp-initialize-result))]
+                    (lsp-write-response id (lsp-initialize-result false))]
                   [(Err config-error) (lsp-write-error id -32602 config-error)])]
               [(JsonMissing) unit]))
           (set! result (Continue (owned_view.compiler-owned-shared-view docs))))
@@ -12882,24 +13227,35 @@
       (& id-key))
       [(JsonMissing) (Continue state)]
       [(JsonFound id)
-        (match (lsp-initialize-language-config
-          (owned_view.compiler-owned-shared-view message))
-          [(Err config-error)
-            (lsp-write-error id -32602 config-error)
+        (match (lsp-documentation-sites-initialize (& message))
+          [(Err site-error)
+            (lsp-write-error id -32602 site-error)
             (Continue state)]
-          [(Ok target cfg-names)
-            (lsp-language-config-install! target cfg-names)
-            (set!
-              lsp-position-encoding-utf8
-              (lsp-initialize-position-encoding-utf8?
-                (owned_view.compiler-owned-shared-view message)))
-            ;; Declaration ranges are scanned only after the negotiated
-            ;; encoding has been installed.
-            (let
-              [next : lsp_vector_families.LspServerState
-                (lsp-server-state-initialize-workspaces state message)]
-              (lsp-write-response id (lsp-initialize-result))
-              (Continue next))])])))
+          [(Ok documentation-sites)
+            (match (lsp-initialize-language-config
+              (owned_view.compiler-owned-shared-view message))
+              [(Err config-error)
+                (lsp-documentation-sites-release! (&mut documentation-sites))
+                (lsp-write-error id -32602 config-error)
+                (Continue state)]
+              [(Ok target cfg-names)
+                (lsp-language-config-install! target cfg-names)
+                (set!
+                  lsp-position-encoding-utf8
+                  (lsp-initialize-position-encoding-utf8?
+                    (owned_view.compiler-owned-shared-view message)))
+                ;; Install both immutable source roots and site bindings before
+                ;; a client can request a checked documentation target.
+                (let
+                  [next : lsp_vector_families.LspServerState
+                    (lsp-server-state-initialize-workspaces
+                      state
+                      message
+                      documentation-sites)]
+                  (lsp-write-response
+                    id
+                    (lsp-initialize-result next.documentation-sites.enabled))
+                  (Continue next))])])])))
 
 (define (lsp-handle-document-event
   [method : String]
@@ -13750,6 +14106,17 @@
           (lsp-handle-references-message message state stdlib-roots)]
         [(string.eq method "textDocument/completion")
           (lsp-handle-completion-message message state)]
+        [(and
+          state.documentation-sites.enabled
+          (or
+            (string.eq method "textDocument/hover")
+            (string.eq method "textDocument/documentLink")))
+          (lsp-handle-documentation-message
+            method
+            message
+            (& state)
+            stdlib-roots)
+          (Continue state)]
         [(string.eq method "textDocument/semanticTokens/full")
           (lsp-handle-semantic-tokens-message message state)]
         [(or

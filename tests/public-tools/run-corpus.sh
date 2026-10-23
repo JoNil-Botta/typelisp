@@ -87,6 +87,17 @@ record_fail() {
 
 . "$FIXTURE_ROOT/lib-result-checks.sh"
 
+# Exact documentation mappings bind the running compiler, including in the
+# fresh/batch differential. Never substitute a guessed source HEAD or unknown.
+CORPUS_COMPILER_IDENTITY=
+if [ "$MODE" = lsp ] || [ "$MODE" = all ]; then
+    CORPUS_COMPILER_IDENTITY=$("$COMPILER" --producer-identity | tr -d '\r\n')
+    if ! printf '%s\n' "$CORPUS_COMPILER_IDENTITY" | LC_ALL=C grep -Eq '^[0-9a-f]{40}$'; then
+        echo 'LSP documentation-target fixtures require a compiler with an exact producer identity' >&2
+        exit 1
+    fi
+fi
+
 report_corpus_result() {
     if [ -s "$2" ]; then
         record_fail "$1"

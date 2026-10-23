@@ -167,15 +167,16 @@ check 0 linux 'literal ampersand and backslash paths'
 # Content-Length in bytes for a UTF-8 path.
 frame_tmp='/tmp/å b&c\d'
 frame_uri='file:///tmp/%C3%A5%20b&c\d'
+CORPUS_COMPILER_IDENTITY=dddddddddddddddddddddddddddddddddddddddd
 cat > "$case_dir/in.json" <<'INPUT'
 [
-  {"id":1,"uri":"${{TMP_URI}}/main.tl","path":"${{TMP}}","raw":"${{TMPX}}"},
+  {"id":1,"uri":"${{TMP_URI}}/main.tl","path":"${{TMP}}","raw":"${{TMPX}}","compiler":"${{COMPILER_IDENTITY}}"},
   {"id":2,"result":null}
 ]
 INPUT
 : > "$case_dir/want"
 for body in \
-    '{"id":1,"uri":"file:///tmp/%C3%A5%20b&c\\d/main.tl","path":"/tmp/å b&c\\d","raw":"${{TMPX}}"}' \
+    '{"id":1,"uri":"file:///tmp/%C3%A5%20b&c\\d/main.tl","path":"/tmp/å b&c\\d","raw":"${{TMPX}}","compiler":"dddddddddddddddddddddddddddddddddddddddd"}' \
     '{"id":2,"result":null}'; do
     printf '%s' "$body" > "$case_dir/body"
     printf 'Content-Length: %s\r\n\r\n%s' "$(LC_ALL=C wc -c < "$case_dir/body" | tr -d ' ')" "$body" >> "$case_dir/want"

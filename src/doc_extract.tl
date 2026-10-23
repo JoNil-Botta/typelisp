@@ -26,12 +26,28 @@
   (DefEnum)
   (DefStruct)
   (DefMacro)
-  (GeneratedImport))
+  (GeneratedImport)
+  (ImportAlias)
+  (Field)
+  (EnumVariant))
+
+(defenum DocOrigin
+  (Source)
+  (Generated String String String))
+
+;; Names and origin fields are independent identity components. In particular,
+;; member names never encode their owner by joining source spellings.
+(defstruct DocIdentity
+  (kind DocItemKind)
+  (name String)
+  (parent String)
+  (origin DocOrigin))
 
 (defenum DocItem
   ;; `source-line` is one-based for source declarations and zero for synthetic
   ;; declarations produced from expanded ASTs.
-  (Item DocItemKind String String String i64))
+  (Item DocItemKind String String String i64)
+  (ScopedItem DocIdentity String String i64))
 
 (import (vector.vector DocItem core) as doc_item_vec)
 
@@ -53,7 +69,10 @@
     [(DefEnum) 4]
     [(DefStruct) 5]
     [(DefMacro) 6]
-    [(GeneratedImport) 7]))
+    [(GeneratedImport) 7]
+    [(ImportAlias) 8]
+    [(Field) 9]
+    [(EnumVariant) 10]))
 
 (define (doc-kind-name [kind : DocItemKind]) : String
   (match kind
@@ -63,7 +82,10 @@
     [(DefEnum) "defenum"]
     [(DefStruct) "defstruct"]
     [(DefMacro) "defmacro"]
-    [(GeneratedImport) "generated-module-import"]))
+    [(GeneratedImport) "generated-module-import"]
+    [(ImportAlias) "import-alias"]
+    [(Field) "field"]
+    [(EnumVariant) "enum-variant"]))
 
 (define (doc-extraction-module-doc [docs : DocExtraction]) : String
   (match docs
@@ -75,23 +97,49 @@
 
 (define (doc-item-kind [item : DocItem]) : DocItemKind
   (match item
-    [(Item kind _ _ _ _) kind]))
+    [(Item kind _ _ _ _) kind]
+    [(ScopedItem identity _ _ _) identity.kind]))
 
 (define (doc-item-name [item : DocItem]) : String
   (match item
-    [(Item _ name _ _ _) name]))
+    [(Item _ name _ _ _) name]
+    [(ScopedItem identity _ _ _) identity.name]))
 
 (define (doc-item-doc [item : DocItem]) : String
   (match item
-    [(Item _ _ doc-text _ _) doc-text]))
+    [(Item _ _ doc-text _ _) doc-text]
+    [(ScopedItem _ doc-text _ _) doc-text]))
 
 (define (doc-item-signature [item : DocItem]) : String
   (match item
-    [(Item _ _ _ signature _) signature]))
+    [(Item _ _ _ signature _) signature]
+    [(ScopedItem _ _ signature _) signature]))
 
 (define (doc-item-source-line [item : DocItem]) : i64
   (match item
-    [(Item _ _ _ _ source-line) source-line]))
+    [(Item _ _ _ _ source-line) source-line]
+    [(ScopedItem _ _ _ source-line) source-line]))
+
+(define (doc-item-identity [item : DocItem]) : DocIdentity
+  (match item
+    [(Item kind name _ signature _)
+      (DocIdentity
+        kind
+        name
+        (if (= (doc-kind-tag kind) 7)
+          signature
+          "")
+        Source)]
+    [(ScopedItem identity _ _ _) identity]))
+
+(define (doc-item-label [item : DocItem]) : String
+  (let
+    [identity : DocIdentity (doc-item-identity item)]
+    (if (or
+      (= (doc-kind-tag identity.kind) 9)
+      (= (doc-kind-tag identity.kind) 10))
+      (str_cat.str-cat identity.parent "." identity.name)
+      identity.name)))
 
 (define (doc-item-fallback) : DocItem
   (Item (Define) "" "" "" 0))
@@ -101,28 +149,6 @@
 
 (define (doc-item-list-ref [items : (& items doc_item_vec.Vec)] [index : i64]) : DocItem
   (doc_item_vec.get (& items) index (doc-item-fallback)))
-
-(define (doc-item-array-copy-to-list
-  [out : (&mut out doc_item_vec.Vec)]
-  [items : (__tl_dyn-array DocItem)]
-  [index : i64]
-  [count : i64]) : unit
-  (unless
-    (>= index count)
-    (doc_item_vec.push-ref!
-      out
-      (owned_view.compiler-owned-array-element-shared-view items index))
-    (doc-item-array-copy-to-list out items (+ index 1) count)))
-
-(define (doc-item-array-to-list [items : (__tl_dyn-array DocItem)]) : doc_item_vec.Vec
-  (let
-    [out : doc_item_vec.Vec (doc_item_vec.with-capacity (array-length items))]
-    (doc-item-array-copy-to-list
-      (&mut out)
-      (owned_view.compiler-owned-shared-view items)
-      0
-      (array-length items))
-    out))
 
 (define (doc-inline-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -346,6 +372,30 @@
       (doc-info-after-name (DefMacro) src (+ next 1))
       (No))))
 
+(define (doc-info-after-import [src : (& src str)] [idx : i64]) : DocMaybeDeclInfo
+  (let
+    [n : i64 (string.string-length src)]
+    [operand : i64 (doc-decl-next-token src idx n)]
+    [end : i64
+      (if (and (< operand n) (= (string.string-ref src operand) '('))
+        (doc-scan-form-end src operand n)
+        (doc-decl-symbol-end src operand n))]
+    [next : i64 (doc-decl-next-token src end n)]
+    [word-end : i64 (doc-decl-symbol-end src next n)]
+    (if (string.eq (string.substring src next (- word-end next)) "as")
+      (doc-info-after-name ImportAlias src word-end)
+      (if (doc-decl-symbol-start? src operand n)
+        (let
+          [start : i64 operand]
+          [i : i64 operand]
+          (while (< i end)
+            (when (= (string.string-ref src i) '.') (set! start (+ i 1)))
+            (+= i 1))
+          (if (and (< start end) (!= (string.string-ref src start) '*'))
+            (DocDeclInfo ImportAlias (string.substring src start (- end start)))
+            No))
+        No))))
+
 (define (doc-decl-info-at-list [src : (& src str)] [open-idx : i64]) : DocMaybeDeclInfo
   (let
     [n : i64 (string.string-length src)]
@@ -371,6 +421,7 @@
                 (doc-info-after-name (DefStruct) src after-head)]
               [(string.eq head "defmacro")
                 (doc-info-after-defmacro src after-head)]
+              [(string.eq head "import") (doc-info-after-import src after-head)]
               [else (No)]))
           (No)))
       (No))))
@@ -392,6 +443,73 @@
       (set! i (+ i 1)))
     line))
 
+;; Only immediate fields/variants of a type are members. Consuming each whole
+;; child form prevents nested type syntax, strings, comments and attributes
+;; from being mistaken for another member declaration.
+(define (doc-extract-members!
+  [items : (&mut items doc_item_vec.Vec)]
+  [signature : (& signature str)]
+  [parent : String]
+  [kind : DocItemKind]
+  [source-line : i64]
+  [origin : DocOrigin]) : unit
+  (let
+    [n : i64 (string.string-length signature)]
+    [head : i64 (doc-decl-next-token signature 1 n)]
+    [name : i64
+      (doc-decl-next-token signature (doc-decl-symbol-end signature head n) n)]
+    [i : i64 (doc-decl-symbol-end signature name n)]
+    [docs : String ""]
+    [has-docs : bool false]
+    (while (< i n)
+      (let
+        [c : char (string.string-ref signature i)]
+        (cond
+          [(or (doc-inline-space? c) (doc-newline? c)) (+= i 1)]
+          [(= c ';')
+            (let
+              [end : i64 (source_text.line-end signature i)]
+              [prefix : i64 (doc-item-doc-prefix-len signature i)]
+              (if (> prefix 0)
+                (begin
+                  (set!
+                    docs
+                    (doc-append-line
+                      docs
+                      has-docs
+                      (doc-comment-body signature i end prefix)))
+                  (set! has-docs true))
+                (begin
+                  (set! docs "")
+                  (set! has-docs false)))
+              (set! i (source_text.next-line-start signature end)))]
+          [(or (= c '(') (= c '['))
+            (let
+              [end : i64 (doc-scan-form-end signature i n)]
+              [member : i64 (doc-decl-next-token signature (+ i 1) n)]
+              (when
+                (doc-decl-symbol-start? signature member n)
+                (doc_item_vec.push-ref!
+                  items
+                  (ScopedItem
+                    (DocIdentity
+                      kind
+                      (string.substring
+                        signature
+                        member
+                        (- (doc-decl-symbol-end signature member n) member))
+                      (string.copy (& parent))
+                      (owned_view.compiler-owned-shared-view origin))
+                    (owned_view.compiler-owned-shared-view docs)
+                    (string.substring signature i (- end i))
+                    (if (> source-line 0)
+                      (+ source-line (- (doc-source-line-at signature i) 1))
+                      0))))
+              (set! docs "")
+              (set! has-docs false)
+              (set! i end))]
+          [else (+= i 1)])))))
+
 (define (doc-extract-source [src : String]) : DocExtraction
   (let
     [n : i64 (string.string-length src)]
@@ -400,7 +518,7 @@
     [module-has : bool false]
     [pending-doc : String ""]
     [pending-has : bool false]
-    [items : (__tl_dyn-array DocItem) (__tl_make-array DocItem 0)]
+    [items : doc_item_vec.Vec (doc_item_vec.new)]
     (while (< i n)
       (let
         [line-end : i64 (source_text.line-end src i)]
@@ -455,20 +573,35 @@
                   [form-end : i64 (doc-scan-form-end src line-start n)]
                   [signature : String
                     (string.substring src line-start (- form-end line-start))]
-                  (if pending-has
-                    (match (doc-decl-info signature)
-                      [(DocDeclInfo kind name)
-                        (__tl_array-push!
-                          items
+                  (match (doc-decl-info signature)
+                    [(DocDeclInfo kind name)
+                      (when
+                        (or
+                          pending-has
+                          (= (doc-kind-tag kind) 4)
+                          (= (doc-kind-tag kind) 5)
+                          (= (doc-kind-tag kind) 8))
+                        (doc_item_vec.push-ref!
+                          (&mut items)
                           (Item
                             kind
-                            name
+                            (owned_view.compiler-owned-shared-view name)
                             (unsafe
                               (ptr-read (ptr-addr-of pending-doc)))
-                            signature
-                            (doc-source-line-at src line-start)))]
-                      [(No) unit])
-                    unit)
+                            (owned_view.compiler-owned-shared-view signature)
+                            (doc-source-line-at src line-start))))
+                      (when
+                        (or (= (doc-kind-tag kind) 4) (= (doc-kind-tag kind) 5))
+                        (doc-extract-members!
+                          (&mut items)
+                          signature
+                          name
+                          (if (= (doc-kind-tag kind) 4)
+                            EnumVariant
+                            Field)
+                          (doc-source-line-at src line-start)
+                          Source))]
+                    [(No) unit])
                   (set! pending-doc "")
                   (set! pending-has false)
                   (set! i form-end))
@@ -476,7 +609,7 @@
                   (set! pending-doc "")
                   (set! pending-has false)
                   (set! i (source_text.next-line-start src line-end)))))))))
-    (Extraction module-doc (doc-item-array-to-list items))))
+    (Extraction module-doc items)))
 
 (define (doc-extract-file [path : String]) : DocExtraction
   (doc-extract-source (byte_buf.to-string (io.read-file path))))

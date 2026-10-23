@@ -1676,6 +1676,19 @@ existing fixture specs. Windows defaults to `lsp batch`. Use
 `scripts/verify-lsp-transcript-batch.sh` for the fast manifest/parser mutation
 coverage, including raw malformed-frame input and incomplete result sets.
 
+The frame smoke also calls `lsp_documentation_tests`: actual checked aliases,
+fields and variants agree with extraction/HTML identities, exact site matching
+rejects stale/ambiguous inputs, and site owners survive request and document
+retirement without retaining response borrows. Generated-module smoke compares
+every generated declaration/member anchor to a separately checked semantic
+index. The docs-site postprocessor expands real source examples through the
+same frontend and renderer rather than carrying a copied collection API.
+The public `documentation-targets` transcript exercises negotiated hover/link
+payloads, source-link preservation, private items, source changes, recovery and
+invalid reinitialization; `documentation-disabled` retains opt-out behavior.
+Its compiler-identity placeholder is filled from the actual CLI producer, so
+the public LSP corpus requires a compiler with a known producer identity.
+
 ### Stage0 and the bootstrap
 
 The stage0 workflow, the minimum-seed policy, the published assets and the

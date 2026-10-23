@@ -1,0 +1,18 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id":1,"raw_contains":"\"typelispDocumentationTargets\""},
+    {"jsonpath_id":2,"raw_contains":"[Documentation]\n\"typelispDocumentationTarget\"\n\"compilerIdentity\":\"${{COMPILER_IDENTITY}}\"\n\"moduleIdentity\":\"docs.fixture\"\n\"declaration\":\"Left\"\n\"member\":\"value\"\n\"sha256\":\"6bc4f5909da2316a66f523ca6095243350a057f9949ccc75c5960588565ac17b\"\n\"uri\":\"${{TMP_URI}}/docs/api.html#tl-pkg_2fapi_2etl.field.value.Left\""},
+    {"jsonpath_id":3,"raw_contains":"\"declaration\":\"Right\"\n\"anchor\":\"tl-pkg_2fapi_2etl.field.value.Right\""},
+    {"jsonpath_id":4,"raw_contains":"\"target\":\"${{TMP_URI}}/docs/dep.tl\"\n\"target\":\"${{TMP_URI}}/docs/api.html#tl-pkg_2fapi_2etl.field.value.Left\"\n\"typelispDocumentationTarget\""},
+    {"jsonpath_id":5,"raw_not_contains":"typelispDocumentationTarget\n[Documentation]"},
+    {"jsonpath_id":6,"raw_not_contains":"typelispDocumentationTarget\n[Documentation]"},
+    {"jsonpath_id":7,"raw_contains":"\"typelispDocumentationTarget\"\n\"declaration\":\"Left\""},
+    {"jsonpath_id":8,"raw_contains":"\"error\"\n\"code\":-32602"},
+    {"jsonpath_id":9,"raw_contains":"\"typelispDocumentationTarget\""},
+    {"jsonpath_id":11,"raw_not_contains":"typelispDocumentationTarget\n[Documentation]"},
+    {"jsonpath_id":12,"raw_contains":"\"target\":\"${{TMP_URI}}/docs/dep.tl\"","raw_not_contains":"typelispDocumentationTarget"},
+    {"jsonpath_id":13,"jsonpath_result":null}
+  ]
+}

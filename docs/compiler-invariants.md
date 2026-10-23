@@ -800,6 +800,27 @@ state, then destroys the session and transport arenas, so no transport field
 stays globally reachable after its owner is gone. The LSP frame smoke covers
 reset and reinstall after the input was consumed and both outputs written.
 
+Documentation uses the owned semantic source index through
+`compiler_semantic_documentation`: exact source SHA256 values, logical module
+names and ordered declaration-record ranges survive checker/parser retirement.
+Expanded `Module` markers determine documentation ownership independently of
+the checked symbol's import/caller scope. Import ranges retain their written
+alias. Checked generated fields/variants retain real registry identities and
+generator provenance with non-editable negative spans; no authored token is
+invented. Locals, parameters, module-header markers and incomplete indexes do
+not become public declaration targets. The canonical encoder in `doc_render`
+is shared by extraction, generated HTML/search and the LSP adapter.
+
+Opted-in exact site bindings own a separate initialize-to-shutdown arena in
+`LspServerState`. Document/cache swaps preserve that owner; replacement and
+shutdown retire it once. Configuration parsing copies every retained string
+and anchor before request scratch is released. Responses copy target metadata
+into the request owner before a site can be retired. Target lookup requires a
+unique compiler/source/path/module/anchor match and a current overlay/disk
+digest, cached only within that request. An unavailable source or ambiguous,
+stale or unknown identity cannot authorize a link. Existing source links and
+the disabled protocol retain their previous behavior.
+
 Parsed LSP messages pass envelope admission before any stateful dispatch.
 Requests require the exact JSON-RPC version, a string method and a valid ID
 type when present; invalid envelopes emit `-32600` without entering document

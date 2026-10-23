@@ -120,25 +120,41 @@
     "."
     (doc-render-anchor-field name)))
 
-;; Synthetic generated imports add their form as a fourth field, because a
-;; generated module can expose more than one import record.
-(define (doc-render-item-anchor
-  [module-path : String]
-  [item : doc_extract.DocItem]) : String
+;; This is the shared source/member/generated identity boundary for renderers
+;; and checked semantic consumers. Each origin component uses the same encoder
+;; as declaration fields; a synthetic declaration cannot alias source text.
+(define (doc-render-documentation-anchor
+  [module-path : (& module-path str)]
+  [identity : doc_extract.DocIdentity]) : String
   (let
-    [kind : doc_extract.DocItemKind
-      (doc_extract.doc-item-kind (owned_view.compiler-owned-shared-view item))]
     [base : String
       (doc-render-identity-anchor
         module-path
-        (doc_extract.doc-kind-name kind)
-        (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item)))]
-    (if (= (doc_extract.doc-kind-tag kind) 7)
-      (str_cat.str-cat
+        (doc_extract.doc-kind-name identity.kind)
+        identity.name)]
+    (unless
+      (string.eq identity.parent "")
+      (set!
         base
-        "."
-        (doc-render-anchor-field (doc_extract.doc-item-signature item)))
-      base)))
+        (str_cat.str-cat base "." (doc-render-anchor-field identity.parent))))
+    (match identity.origin
+      [(Source) base]
+      [(Generated generator item key)
+        (str_cat.str-cat
+          base
+          ".generated."
+          (doc-render-anchor-field generator)
+          "."
+          (doc-render-anchor-field item)
+          "."
+          (doc-render-anchor-field key))])))
+
+(define (doc-render-item-anchor
+  [module-path : String]
+  [item : doc_extract.DocItem]) : String
+  (doc-render-documentation-anchor
+    module-path
+    (doc_extract.doc-item-identity item)))
 
 (define (doc-render-escape-one [text : (& text str)] [idx : i64]) : String
   (let
@@ -183,8 +199,15 @@
 (define (doc-render-item-heading [item : doc_extract.DocItem]) : String
   (let
     [name : String
-      (doc_extract.doc-item-name (owned_view.compiler-owned-shared-view item))]
-    [anchor : String (doc-render-anchor (doc_extract.doc-item-name item))]
+      (doc_extract.doc-item-label (owned_view.compiler-owned-shared-view item))]
+    [anchor : String
+      (if (>=
+        (doc_extract.doc-kind-tag
+          (doc_extract.doc-item-kind
+            (owned_view.compiler-owned-shared-view item)))
+        8)
+        (doc-render-item-anchor "" item)
+        (doc-render-anchor (doc_extract.doc-item-name item)))]
     (str_cat.str-cat
       "<a id=\""
       anchor
@@ -213,7 +236,7 @@
     "<a id=\""
     (doc-render-item-anchor path (owned_view.compiler-owned-shared-view item))
     "\"></a>\n\n### "
-    (doc-render-escape-markdown (doc_extract.doc-item-name item))
+    (doc-render-escape-markdown (doc_extract.doc-item-label item))
     "\n\n"))
 
 (define (doc-render-module-item [path : String] [item : doc_extract.DocItem]) : String

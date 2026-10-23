@@ -6,6 +6,7 @@
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.profile)
+(import stdlib.iterator)
 (import stdlib.string)
 (import stdlib.vector)
 (import stdlib.option)
@@ -18,6 +19,8 @@
 (import compiler_typecheck_core as tc)
 (import compiler_ast_types as ast)
 (import compiler_semantic_index as sem)
+(import compiler_semantic_documentation as documentation)
+(import doc_render)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
 ;; inside `(type ...)`.
@@ -26,6 +29,9 @@
 
 ;; lint-allow: unused-import
 (import compiler_semantic_index.CompilerSemanticModuleEvent)
+
+;; lint-allow: unused-import
+(import compiler_semantic_index.CompilerSemanticDocumentationModule)
 
 ;; lint-allow: unused-import
 (import compiler_semantic_index.CompilerSemanticModuleInfo)
@@ -170,8 +176,18 @@
           (* index.canonical-symbol-len (comptime (size-of (type String))))
           (compiler-semantic-source-index-canonical-key-byte-count index)))]
     [path-index : i64 0]
+    [module-index : i64 0]
     [binding-index : i64 0]
     [candidate-index : i64 0]
+    (+=
+      bytes
+      (*
+        (array-length index.documentation-modules)
+        (comptime (size-of (type CompilerSemanticDocumentationModule)))))
+    (for [i (iterator.range 0 (array-length index.documentation-modules))]
+      (+=
+        bytes
+        (string.string-length (array-ref index.documentation-modules i).alias)))
     (set!
       bytes
       (+
@@ -213,11 +229,26 @@
         bytes
         (+
           bytes
+          (+
+            (string.string-length
+              (owned_view.compiler-owned-array-element-shared-view
+                index.paths
+                path-index).path)
+            (string.string-length
+              (owned_view.compiler-owned-array-element-shared-view
+                index.paths
+                path-index).source-sha256))))
+      (set! path-index (+ path-index 1)))
+    (while (< module-index index.module-len)
+      (set!
+        bytes
+        (+
+          bytes
           (string.string-length
             (owned_view.compiler-owned-array-element-shared-view
-              index.paths
-              path-index).path)))
-      (set! path-index (+ path-index 1)))
+              index.modules
+              module-index).name)))
+      (+= module-index 1))
     (while (< binding-index index.binding-len)
       (let
         [binding : sem.CompilerSemanticBinding
@@ -837,6 +868,92 @@
             (+ (string.string-length source) 1))
             [(None) true]
             [_ false]))))))
+
+(define (compiler-semantic-documentation-smoke-ok?) : bool
+  (let
+    [path : String "src/tests/semantic_documentation_entry.tl"]
+    [source : String
+      "(module docs.example)\n(defstruct Left (value i64))\n(defstruct Right (value i64))\n(defenum Mode (Same) (Other i64))\n(defmacro (emit-doc) : Decls `(define generated-value : i64 7))\n(emit-doc)\n(define (use [private : i64]) : i64 (let [hidden : i64 private] (+ hidden generated-value)))\n"]
+    [digest : String (sem.compiler-semantic-source-sha256 source)]
+    (match (compiler-check-source-index-with-roots
+      (owned_view.compiler-owned-shared-view path)
+      (owned_view.compiler-owned-shared-view source)
+      (svec.new))
+      [(Ok _ index)
+        (let
+          [ok : bool true]
+          [fields : i64 0]
+          [variants : i64 0]
+          [generated : i64 0]
+          [lexical : i64 0]
+          (for [i (iterator.range 0 index.len)]
+            (let
+              [record : sem.CompilerSemanticRecord
+                (sem.compiler-semantic-source-index-get (& index) i)]
+              (when
+                (and
+                  (string.eq record.span.path path)
+                  (match record.role
+                    [(Definition) true]
+                    [_ false]))
+                (match record.kind
+                  [(or (Local) (Parameter))
+                    (+= lexical 1)
+                    (when
+                      (match (documentation.documentation-at (& index) i)
+                        [(None) false]
+                        [_ true])
+                      (set! ok false))]
+                  [_
+                    (match (documentation.documentation-at (& index) i)
+                      [(None)
+                        (unless
+                          (match record.kind
+                            [(Module) true]
+                            [_ false])
+                          (set! ok false))]
+                      [(Some docs)
+                        (unless
+                          (and
+                            (string.eq docs.module "docs.example")
+                            (string.eq docs.source-sha256 digest))
+                          (set! ok false))
+                        (match record.kind
+                          [(Field)
+                            (+= fields 1)
+                            (let
+                              [anchor : String
+                                (doc_render.doc-render-documentation-anchor
+                                  "pkg/api.tl"
+                                  (owned_view.compiler-owned-shared-view
+                                    docs.identity))]
+                              (unless
+                                (or
+                                  (string.eq
+                                    anchor
+                                    "tl-pkg_2fapi_2etl.field.value.Left")
+                                  (string.eq
+                                    anchor
+                                    "tl-pkg_2fapi_2etl.field.value.Right"))
+                                (set! ok false)))]
+                          [(EnumMember) (+= variants 1)]
+                          [_ unit])
+                        (when
+                          (string.eq record.display-name "generated-value")
+                          (+= generated 1)
+                          (unless
+                            (and
+                              (= docs.source-line 0)
+                              (match docs.identity.origin
+                                [(Generated _ _ _) true]
+                                [_ false]))
+                            (set! ok false)))])]))))
+          (sem.compiler-semantic-source-index-release! (&mut index))
+          (and ok (= fields 2) (= variants 2) (= generated 1) (>= lexical 2)))]
+      [(Partial _ index)
+        (sem.compiler-semantic-source-index-release! (&mut index))
+        false]
+      [(Err _) false])))
 
 (define (compiler-check-semantic-index-base-ok?) : bool
   (let

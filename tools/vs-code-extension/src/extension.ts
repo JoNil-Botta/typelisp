@@ -104,6 +104,9 @@ async function stopLanguageClient(): Promise<void> {
 }
 
 function createLanguageClient(executable: Executable): LanguageClient {
+  const documentationSites = vscode.workspace
+    .getConfiguration(configSection)
+    .get<unknown[]>('documentationSites', []);
   const serverOptions: ServerOptions = {
     run: executable,
     debug: executable
@@ -117,12 +120,30 @@ function createLanguageClient(executable: Executable): LanguageClient {
     }
   };
 
-  return new LanguageClient(
+  if (documentationSites.length > 0) {
+    clientOptions.initializationOptions = { typelisp: { documentationSites } };
+  }
+
+  const nextClient = new LanguageClient(
     'typelispLanguageServer',
     'TypeLisp Language Server',
     serverOptions,
     clientOptions
   );
+  if (documentationSites.length > 0) {
+    nextClient.registerFeature({
+      fillClientCapabilities(capabilities) {
+        capabilities.experimental = {
+          ...capabilities.experimental,
+          typelispDocumentationTargets: true
+        };
+      },
+      initialize() {},
+      dispose() {},
+      getState() { return { kind: 'static' }; }
+    });
+  }
+  return nextClient;
 }
 
 async function resolveServerExecutable(): Promise<Executable> {

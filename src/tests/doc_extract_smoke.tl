@@ -19,10 +19,11 @@
       (unless (= (doc_extract.doc-kind-tag kind) kind-tag) (return false))
       (unless (string.eq item-name name) (return false))
       (unless (string.eq item-doc doc-text) (return false))
-      (string.contains signature signature-fragment)]))
+      (string.contains signature signature-fragment)]
+    [_ false]))
 
 (define (doc-extract-smoke-items-ok? [items : doc_item_vec.Vec]) : bool
-  (unless (= (doc_extract.doc-item-list-count items) 6) (return false))
+  (unless (= (doc_extract.doc-item-list-count items) 10) (return false))
   (unless
     (doc-item-ok?
       (doc_extract.doc-item-list-ref items 0)
@@ -49,7 +50,7 @@
     (return false))
   (unless
     (doc-item-ok?
-      (doc_extract.doc-item-list-ref items 3)
+      (doc_extract.doc-item-list-ref items 5)
       3
       "io.emit"
       "external doc"
@@ -57,14 +58,14 @@
     (return false))
   (unless
     (doc-item-ok?
-      (doc_extract.doc-item-list-ref items 4)
+      (doc_extract.doc-item-list-ref items 6)
       5
       "Point"
       "struct doc"
       "(defstruct Point")
     (return false))
   (doc-item-ok?
-    (doc_extract.doc-item-list-ref items 5)
+    (doc_extract.doc-item-list-ref items 9)
     6
     "guard"
     "macro doc"
@@ -81,7 +82,7 @@
   value.value)")
     [(Extraction _ items)
       (and
-        (= (doc_extract.doc-item-list-count items) 2)
+        (= (doc_extract.doc-item-list-count items) 3)
         (doc-item-ok?
           (doc_extract.doc-item-list-ref items 0)
           5
@@ -89,7 +90,7 @@
           "box doc"
           "(defstruct Box_String")
         (doc-item-ok?
-          (doc_extract.doc-item-list-ref items 1)
+          (doc_extract.doc-item-list-ref items 2)
           2
           "box-string-value"
           "helper doc"
@@ -141,7 +142,7 @@
         (string.eq module-doc "Module title\nsecond module line\nlater module")
         (return (io.panic "doc-extract: module doc smoke mismatch")))
       (unless
-        (= (doc_extract.doc-item-list-count items) 6)
+        (= (doc_extract.doc-item-list-count items) 10)
         (return (io.panic "doc-extract: item count smoke mismatch")))
       (unless
         (doc-extract-smoke-items-ok? items)

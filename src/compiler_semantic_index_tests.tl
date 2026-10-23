@@ -179,6 +179,7 @@
     [module-index : i64 0]
     [binding-index : i64 0]
     [candidate-index : i64 0]
+    (+= bytes (* (array-length index.canonical-definitions) 8))
     (+=
       bytes
       (*
@@ -890,6 +891,16 @@
             (let
               [record : sem.CompilerSemanticRecord
                 (sem.compiler-semantic-source-index-get (& index) i)]
+              (unless
+                (=
+                  (sem.compiler-semantic-source-index-canonical-definition-index
+                    (& index)
+                    record.canonical-index)
+                  (sem.compiler-semantic-source-index-find-symbol-role
+                    (& index)
+                    record.symbol
+                    Definition))
+                (set! ok false))
               (when
                 (and
                   (string.eq record.span.path path)
@@ -949,7 +960,17 @@
                                 [_ false]))
                             (set! ok false)))])]))))
           (sem.compiler-semantic-source-index-release! (&mut index))
-          (and ok (= fields 2) (= variants 2) (= generated 1) (>= lexical 2)))]
+          (and
+            ok
+            (= fields 2)
+            (= variants 2)
+            (= generated 1)
+            (>= lexical 2)
+            (=
+              (sem.compiler-semantic-source-index-canonical-definition-index
+                (& index)
+                0)
+              -1)))]
       [(Partial _ index)
         (sem.compiler-semantic-source-index-release! (&mut index))
         false]

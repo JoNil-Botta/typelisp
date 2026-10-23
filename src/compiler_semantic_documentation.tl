@@ -67,10 +67,9 @@
             (return i))))
       -1]
     [_
-      (semantic.compiler-semantic-source-index-find-symbol-role
+      (semantic.compiler-semantic-source-index-canonical-definition-index
         index
-        cursor.symbol
-        Definition)]))
+        cursor.canonical-index)]))
 
 (define (documentation-at
   [index : (& index semantic.CompilerSemanticSourceIndex)]
@@ -94,7 +93,9 @@
       [definition : semantic.CompilerSemanticRecord
         (semantic.compiler-semantic-source-index-get index definition-index)]
       [kind : semantic.CompilerSemanticSymbolKind definition.kind]
+      [range-index : i64 (documentation-range-index index definition-index)]
       [parent : String ""]
+      (when (< range-index 0) (return None))
       (when
         (or
           (>= definition.symbol.local-ordinal 0)
@@ -114,7 +115,10 @@
         (match kind
           [(or (Field) (EnumMember)) true]
           [_ false])
-        (for [i (iterator.range 0 index.len)]
+        (for [i
+          (iterator.range
+            (array-ref index.documentation-modules range-index).record-start
+            (array-ref index.documentation-modules range-index).record-end)]
           (let
             [owner : semantic.CompilerSemanticRecord
               (semantic.compiler-semantic-source-index-get index i)]
@@ -139,13 +143,12 @@
               (break))))
         (when (string.eq parent "") (return None)))
       (let
-        [range-index : i64 (documentation-range-index index definition-index)]
         [path-index : i64
           (semantic.compiler-semantic-path-index-find
             (& index.paths)
             index.path-len
             (string.copy (& definition.span.path)))]
-        (when (or (< range-index 0) (< path-index 0)) (return None))
+        (when (< path-index 0) (return None))
         (let
           [range : (& index semantic.CompilerSemanticDocumentationModule)
             (& (array-ref index.documentation-modules range-index))]

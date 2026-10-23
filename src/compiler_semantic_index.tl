@@ -261,6 +261,8 @@
   ;; only `canonical-index`, avoiding repeated module/path/name strings.
   (canonical-symbols (__tl_dyn-array String))
   (canonical-symbol-len i64)
+  ;; First definition record plus one per canonical symbol; zero is unresolved.
+  (canonical-definitions (__tl_dyn-array i64))
   ;; False identifies current-buffer records established by recovery. It never
   ;; denotes a caller-owned last-good snapshot.
   (complete bool)
@@ -312,6 +314,7 @@
 
 (defstruct CompilerSemanticCanonicalBuildResult
   (symbols (__tl_dyn-array String))
+  (definitions (__tl_dyn-array i64))
   (len i64))
 
 ;; Snapshot heads share one append-only dense store. Each appended binding
@@ -501,6 +504,7 @@
     0
     (__tl_make-array String 0)
     0
+    (__tl_make-array i64 0)
     false
     (__tl_make-array CompilerSemanticSourcePathInfo 0)
     0
@@ -531,6 +535,7 @@
         0
         (__tl_make-array String 0)
         0
+        (__tl_make-array i64 0)
         false
         (__tl_make-array CompilerSemanticSourcePathInfo 0)
         0
@@ -1030,6 +1035,18 @@
   [index : (& index CompilerSemanticSourceIndex)]
   [record : (& record CompilerSemanticRecord)]) : String
   (compiler-semantic-source-index-canonical-key index record.canonical-index))
+
+;; The immutable canonical table is built before queries and shares the index
+;; owner. Module-alias consumers still disambiguate same-target aliases by source.
+(define (compiler-semantic-source-index-canonical-definition-index
+  [index : (& index CompilerSemanticSourceIndex)]
+  [canonical-index : i64]) : i64
+  (if (or
+    (<= index.owner-arena 0)
+    (< canonical-index 0)
+    (>= canonical-index index.canonical-symbol-len))
+    -1
+    (- (array-ref index.canonical-definitions canonical-index) 1)))
 
 (define (compiler-semantic-source-index-release!
   [index : (&mut index CompilerSemanticSourceIndex)]) : unit
@@ -2263,6 +2280,7 @@
         (__tl_make-array CompilerSemanticCanonicalBuildSlot capacity))]
     [symbols : (__tl_dyn-array String) (__tl_make-array String record-len)]
     [canonical-len : i64 0]
+    [definitions : (__tl_dyn-array i64) (__tl_make-array i64 record-len)]
     ;; Definitions establish owner-derived keys before any use is assigned.
     ;; Top-level definitions precede their lexical definitions in the record
     ;; stream, so locals can frame the already-owned declaration key. Keep
@@ -2366,13 +2384,16 @@
                         record.symbol
                         canonical-len))
                     (+= canonical-len 1))))
+              (when
+                (and definition? (= (array-ref definitions assigned) 0))
+                (set! (array-ref definitions assigned) (+ record-index 1)))
               (if (= pass 1)
                 (set! (array-ref records record-index).canonical-index assigned)
                 unit))
             unit))))
     (let
       [result : CompilerSemanticCanonicalBuildResult
-        (CompilerSemanticCanonicalBuildResult symbols canonical-len)]
+        (CompilerSemanticCanonicalBuildResult symbols definitions canonical-len)]
       (arena.destroy-safe! scratch)
       result)))
 
@@ -6954,6 +6975,7 @@
                   record-count
                   canonical-build.symbols
                   canonical-build.len
+                  canonical-build.definitions
                   (and
                     complete
                     (not (deref walk-state.checked-let-fact-mismatch)))
@@ -7139,6 +7161,7 @@
               source-index.len
               source-index.canonical-symbols
               source-index.canonical-symbol-len
+              source-index.canonical-definitions
               false
               source-index.paths
               source-index.path-len

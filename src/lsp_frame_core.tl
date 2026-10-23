@@ -7323,10 +7323,13 @@
 
 (define (lsp-document-link-json
   [text : (& text str)]
-  [request : LspDocumentLinkRequest]) : json.Json
+  [request : LspDocumentLinkRequest]
+  [cache : (&mut cache LspLineColCache)]) : json.Json
   (let
-    [start-lc : LspLineCol (lsp-line-col-at-offset text request.start-byte)]
-    [end-lc : LspLineCol (lsp-line-col-at-offset text request.end-byte)]
+    [start-lc : LspLineCol
+      (lsp-line-col-cache-at-offset! cache text request.start-byte)]
+    [end-lc : LspLineCol
+      (lsp-line-col-cache-at-offset! cache text request.end-byte)]
     [fields : json.JsonMemberSeq
       (lsp-json-member
         "range"
@@ -7363,6 +7366,7 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [acc : json.JsonSeq (json.list-empty)]
+    [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
     (while (< i n)
       (let
         [c : char (string.string-ref text i)]
@@ -7399,7 +7403,8 @@
                               (lsp-resolved-path-to-file-uri resolved)
                               start
                               end
-                              JsonNull))
+                              JsonNull)
+                            (&mut lc-cache))
                           acc))
                       (set! i end)]
                     [(Missing) (+= i 1)]))
@@ -7412,9 +7417,7 @@
   [document : (& document lsp_vector_families.LspDocument)]
   [record-index : i64]
   [cache : (&mut cache doc_targets.SourceDigestCache)]) : doc_targets.MaybeDocumentationTarget
-  (match (lsp-document-semantic-snapshot-status document)
-    [(Current _ true) unit]
-    [_ (return Missing)])
+  ;; Callers validate the immutable document snapshot once per request.
   (match (compiler_semantic_documentation.documentation-at
     (& document.semantic.index)
     record-index)
@@ -7452,6 +7455,11 @@
       [record-index : i64 (lsp-document-semantic-record-at (& document) offset)]
       [cache : doc_targets.SourceDigestCache
         (doc_targets.source-cache document.semantic.index.path-len)]
+      (match (lsp-document-semantic-snapshot-status (& document))
+        [(Current _ true) unit]
+        [_
+          (lsp-semantic-hover-respond id uri position (& state.documents))
+          (return unit)])
       (match (lsp-documentation-target-at
         state
         (& document)
@@ -7516,6 +7524,7 @@
       [cache : doc_targets.SourceDigestCache
         (doc_targets.source-cache index.path-len)]
       [extra : json.JsonSeq (json.list-empty)]
+      [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
       [last-end : i64 0]
       (for [i (iterator.range 0 index.len)]
         (let
@@ -7581,7 +7590,8 @@
                           target.uri
                           record.span.start-byte
                           record.span.end-byte
-                          target.data))
+                          target.data)
+                        (&mut lc-cache))
                       extra))
                   (set! last-end record.span.end-byte))]))))
       (json.list-concat links (json.list-reverse extra)))))

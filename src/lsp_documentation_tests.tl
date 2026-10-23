@@ -371,9 +371,60 @@
           (lsp.lsp-server-state-destroy! state)
           ok)])))
 
+(define (link-positions-smoke-ok?) : bool
+  (let
+    [source : String "λx\r\n𝄞y"]
+    [offsets : (Array i64 3) (array 2 9 2)]
+    [ok : bool true]
+    (for [encoding (iterator.range 0 2)]
+      (if (= encoding 0)
+        (lsp.lsp-position-encoding-use-utf16!)
+        (lsp.lsp-position-encoding-use-utf8!))
+      (let
+        [cache : lsp.LspLineColCache (lsp.LspLineColCache -1 1 1)]
+        (for [i (iterator.range 0 3)]
+          (let
+            [offset : i64 (array-ref offsets i)]
+            [link : json.Json
+              (lsp.lsp-document-link-json
+                source
+                (lsp.LspDocumentLinkRequest
+                  "file:///docs/api.html#value"
+                  offset
+                  (+ offset 1)
+                  JsonNull)
+                (&mut cache))]
+            [range : json.Json (sites.field (& link) "range")]
+            [start : json.Json (sites.field (& range) "start")]
+            [end : json.Json (sites.field (& range) "end")]
+            [line : i64
+              (if (= i 1)
+                1
+                0)]
+            [column : i64
+              (if (= i 1)
+                (if (= encoding 0)
+                  2
+                  4)
+                (if (= encoding 0)
+                  1
+                  2))]
+            (unless
+              (and
+                (= (lsp.lsp-json-int-field-default start "line" -1) line)
+                (= (lsp.lsp-json-int-field-default end "line" -1) line)
+                (= (lsp.lsp-json-int-field-default start "character" -1) column)
+                (=
+                  (lsp.lsp-json-int-field-default end "character" -1)
+                  (+ column 1)))
+              (set! ok false))))))
+    (lsp.lsp-position-encoding-use-utf16!)
+    ok))
+
 (define (documentation-target-smoke-ok?) : bool
   (unless (source-cache-smoke-ok?) (return false))
   (unless (namespace-targets-smoke-ok?) (return false))
+  (unless (link-positions-smoke-ok?) (return false))
   (let
     [path : String "src/tests/semantic_documentation_target_entry.tl"]
     [source : String

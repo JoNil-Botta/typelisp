@@ -844,6 +844,10 @@ arena-retirement smoke also reads escaped loop records after destroying their
 producer. These source anchors do not establish final optimized region
 membership; consumers must check the transformed CFG and retain explicit
 clone/rotation/unroll lineage.
+The optimizer's `optimizer-inline-loop-boundaries-*` tests check repeated and
+nested clone maps, unchanged source identities, scratch-arena escape and
+speculative rollback isolation. Admitted multiblock calls publish actual caller
+labels; lower optimization levels and refused cold tail sites publish no clone.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

@@ -16232,6 +16232,225 @@
         (& (opt-inline-switch-callee-named callee-name))
         (& (ir.compiler-ir-function-seq-empty))))))
 
+(define (opt-inline-loop-boundary-test-spans [callee : i64]) : ir.CompilerSourceSpans
+  (let
+    [facts : ir.CompilerSpmdDecisions (ir.compiler-spmd-decisions-empty)]
+    (ir.compiler-spmd-loop-region-list-push
+      (&mut facts.loops)
+      (ir.CompilerSpmdLoopRegion
+        (ir.compiler-ir-symbol-typed-id callee)
+        (ir.CompilerSpmdSiteId (opt-test-span-symbol "source_function") 7)
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-label "zero")
+        (ir.compiler-ir-label "other")
+        (ir.compiler-ir-label "join")))
+    (ir.compiler-source-spans-set-spmd (ir.compiler-source-spans-empty) facts)))
+
+(define (opt-inline-loop-boundary-test-clone-ok?
+  [region : ir.CompilerSpmdLoopRegion]
+  [caller : i64]
+  [prefix : String]) : bool
+  (and
+    (ir.compiler-ir-symbol-id-eq?
+      region.function
+      (ir.compiler-ir-symbol-typed-id caller))
+    (ir.compiler-ir-symbol-id-eq?
+      region.site.function
+      (opt-test-span-symbol "source_function"))
+    (= region.site.ordinal 7)
+    (=
+      region.header
+      (opt.opt-inline-prefix-label
+        (owned_view.compiler-owned-shared-view prefix)
+        (ir.compiler-ir-label "entry")))
+    (=
+      region.body
+      (opt.opt-inline-prefix-label
+        (owned_view.compiler-owned-shared-view prefix)
+        (ir.compiler-ir-label "zero")))
+    (=
+      region.tail
+      (opt.opt-inline-prefix-label
+        (owned_view.compiler-owned-shared-view prefix)
+        (ir.compiler-ir-label "other")))
+    (=
+      region.exit
+      (opt.opt-inline-prefix-label prefix (ir.compiler-ir-label "join")))))
+
+(test
+  optimizer-inline-loop-boundaries-distinct-clones
+  (let
+    [callee : i64 (opt-test-symbol "boundary_callee")]
+    [caller : i64 (opt-test-symbol "boundary_caller")]
+    [outer : i64 (opt-test-symbol "boundary_outer")]
+    [original : ir.CompilerSourceSpans
+      (opt-inline-loop-boundary-test-spans callee)]
+    [once : ir.CompilerSourceSpans
+      (opt.opt-inline-clone-spmd-loops
+        (ir.compiler-source-spans-escape (& original))
+        caller
+        callee
+        "first")]
+    [twice : ir.CompilerSourceSpans
+      (opt.opt-inline-clone-spmd-loops once caller callee "second")]
+    [nested : ir.CompilerSourceSpans
+      (opt.opt-inline-clone-spmd-loops twice outer caller "outer")]
+    [facts (ir.compiler-source-spans-spmd (& nested))]
+    [original-facts (ir.compiler-source-spans-spmd (& original))]
+    (test.assert-i64-eq
+      original-facts.loops.len
+      1
+      "callee input facts remain unchanged")
+    (test.assert-i64-eq facts.loops.len 5 "two copies and both nested copies")
+    (for [index (iterator.range 1 5)]
+      (test.assert-true
+        (opt-inline-loop-boundary-test-clone-ok?
+          (clone (array-ref facts.loops.slots index))
+          (if (< index 3)
+            caller
+            outer)
+          (match index
+            [1 "first"]
+            [2 "second"]
+            [3 "outer.first"]
+            [_ "outer.second"]))
+        "each emitted clone retains its source site and exact label mapping"))
+    (let
+      [unrelated : ir.CompilerSourceSpans
+        (opt.opt-inline-clone-spmd-loops
+          (ir.compiler-source-spans-escape (& nested))
+          caller
+          (opt-test-symbol "not_this_callee")
+          "unused")]
+      [unrelated-facts (ir.compiler-source-spans-spmd (& unrelated))]
+      (test.assert-i64-eq
+        unrelated-facts.loops.len
+        5
+        "unrelated functions do not create records"))
+    (let
+      [accepted : ir.CompilerSourceSpans
+        (opt.opt-inline-clone-spmd-loops
+          (owned_view.compiler-owned-shared-view original)
+          caller
+          callee
+          "accepted")]
+      [rejected : ir.CompilerSourceSpans
+        (opt.opt-inline-clone-spmd-loops
+          (owned_view.compiler-owned-shared-view original)
+          caller
+          callee
+          "rejected")]
+      [accepted-facts (ir.compiler-source-spans-spmd (& accepted))]
+      [rejected-facts (ir.compiler-source-spans-spmd (& rejected))]
+      (test.assert-true
+        (opt-inline-loop-boundary-test-clone-ok?
+          (clone (array-ref accepted-facts.loops.slots 1))
+          caller
+          "accepted")
+        "rejected rounds cannot overwrite an accepted positional suffix")
+      (test.assert-true
+        (opt-inline-loop-boundary-test-clone-ok?
+          (clone (array-ref rejected-facts.loops.slots 1))
+          caller
+          "rejected")
+        "tentative clone facts have independent storage"))))
+
+(test
+  optimizer-inline-loop-boundaries-admitted-and-refused-sites
+  (with-test-inline-mode
+    (begin
+      (opt.opt-inline-checked-set-active! true)
+      (for [level (iterator.range 1 3)]
+        (for [tail (iterator.range 0 2)]
+          (let
+            [symbols : OptInlineMultiTestSymbols
+              (opt-inline-multi-test-symbols)]
+            [caller : ir.CompilerIrFunction
+              (if (= tail 0)
+                (opt-inline-switch-caller symbols)
+                (Function
+                  symbols.main
+                  (opt-inline-switch-params)
+                  (I64)
+                  4
+                  (irt.blocks
+                    "entry:
+                 tailcall inline_switch(%1, %0, %2) : i64")
+                  Ordinary))]
+            [input : ir.CompilerSourceSpans
+              (opt-inline-loop-boundary-test-spans symbols.inline-switch)]
+            (match (opt-test-inline-program-with-spans
+              (ast.ast-node-pool-reader-context-current)
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (ir.compiler-ir-function-seq-prepend
+                (& caller)
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (& (opt-inline-acyclic-switch-callee symbols))
+                    (& (ir.compiler-ir-function-seq-empty)))))
+              level
+              input)
+              [(Program functions spans)
+                (let
+                  [facts (ir.compiler-source-spans-spmd (& spans))]
+                  (test.assert-i64-eq
+                    (+
+                      (opt-count-direct-call-name-function-seq
+                        (& functions)
+                        "main"
+                        "inline_switch")
+                      (opt-count-tail-call-name-function-seq
+                        (owned_view.compiler-owned-shared-view functions)
+                        "main"
+                        "inline_switch"))
+                    (if (and (= level 2) (= tail 0))
+                      0
+                      1)
+                    (str_cat.str-cat
+                      "boundary clone fixture admission at level "
+                      (string.int->string level)
+                      " tail "
+                      (string.int->string tail)))
+                  (test.assert-i64-eq
+                    facts.loops.len
+                    (if (and (= level 2) (= tail 0))
+                      2
+                      1)
+                    (str_cat.str-cat
+                      "admitted clone facts at level "
+                      (string.int->string level)
+                      " tail "
+                      (string.int->string tail)))
+                  (when
+                    (and (= level 2) (= facts.loops.len 2))
+                    (let
+                      [region : ir.CompilerSpmdLoopRegion
+                        (clone (array-ref facts.loops.slots 1))]
+                      (test.assert-true
+                        (opt-inline-loop-boundary-test-clone-ok?
+                          region
+                          symbols.main
+                          "inl.entry.0")
+                        "admitted sites transfer exact source boundaries")
+                      (match (opt-function-seq-find (& functions) "main")
+                        [(Some func)
+                          (let
+                            [blocks : ir.CompilerIrBlockList
+                              (opt.opt-function-blocks func)]
+                            (for [part (iterator.range 0 4)]
+                              (test.assert-true
+                                (match (opt.opt-cfg-find-block
+                                  (& blocks)
+                                  (match part
+                                    [0 region.header]
+                                    [1 region.body]
+                                    [2 region.tail]
+                                    [_ region.exit]))
+                                  [(Some _) true]
+                                  [(No) false])
+                                "all transferred labels name actual cloned blocks")))]
+                        [(No) (test.assert-true false "caller retained")]))))])))))))
+
 (define (opt-inline-switch-case-result-ok?
   [functions : ir.CompilerIrFunctionSeq]
   [callee-text : String]

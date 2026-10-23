@@ -604,6 +604,10 @@ rotation or unrolling must explicitly reconcile them before a consumer applies
 them to a transformed CFG. A missing anchor is not permission to infer a region
 from a label's spelling. Escape copies the live record prefix into its receiver;
 the instruction-span cutoff and reset do not discard source loop facts.
+The inliner transfers these anchors with the same explicit caller-site label
+map that clones the blocks, retaining the original source site. Tentative
+positional records own separate storage: a rejected checked-tier round cannot
+overwrite a previously accepted suffix as if it were a keyed span table.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

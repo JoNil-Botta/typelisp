@@ -105712,6 +105712,70 @@
 (define (opt-inline-prefix-label [prefix : String] [label : i64]) : i64
   (opt-inline-maybe-prefix-label prefix label))
 
+;; A clone changes the emitted function and block identities, not the source
+;; site. Read only the input prefix: a caller may itself contain earlier clones,
+;; and appending those records must neither revisit the new records nor change
+;; the retained callee facts. The enclosing site rewrite owns this tentative
+;; span result. Detach before appending: unlike instruction spans, these are
+;; positional facts, so the checked tier's superset-key rollback argument does
+;; not permit a later rejected round to overwrite an accepted round's suffix.
+(define (opt-inline-clone-spmd-loops
+  [out : ir.CompilerSourceSpans]
+  [caller : i64]
+  [callee : i64]
+  [prefix : String]) : ir.CompilerSourceSpans
+  (match out
+    [(Spans entries instructions count facts)
+      (let
+        [input-count : i64 facts.loops.len]
+        [matches? : bool false]
+        (for [index (iterator.range 0 input-count)]
+          (let
+            [region : ir.CompilerSpmdLoopRegion
+              (clone (array-ref facts.loops.slots index))]
+            (when
+              (ir.compiler-ir-symbol-id-eq?
+                region.function
+                (ir.compiler-ir-symbol-typed-id callee))
+              (set! matches? true))))
+        (unless matches? (return (Spans entries instructions count facts)))
+        (let
+          [loops : ir.CompilerSpmdLoopRegionList
+            (ir.compiler-spmd-loop-region-list-escape (& facts.loops))]
+          (for [index (iterator.range 0 input-count)]
+            (let
+              [region : ir.CompilerSpmdLoopRegion
+                (clone (array-ref facts.loops.slots index))]
+              (when
+                (ir.compiler-ir-symbol-id-eq?
+                  region.function
+                  (ir.compiler-ir-symbol-typed-id callee))
+                (ir.compiler-spmd-loop-region-list-push
+                  (&mut loops)
+                  (ir.CompilerSpmdLoopRegion
+                    (ir.compiler-ir-symbol-typed-id caller)
+                    region.site
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      region.header)
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      region.body)
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      region.tail)
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      region.exit))))))
+          (Spans
+            entries
+            instructions
+            count
+            (ir.CompilerSpmdDecisions
+              (compiler-opt-global-shared-view facts.decisions)
+              (compiler-opt-global-shared-view facts.frames)
+              loops))))]))
+
 (define (opt-inline-cont-label [prefix : String]) : i64
   (ir.compiler-ir-label (& (str_cat.str-cat prefix ".cont"))))
 
@@ -112424,6 +112488,12 @@
                     block-label
                     site-pos
                     callee-name)]
+                [clone-spans : ir.CompilerSourceSpans
+                  (opt-inline-clone-spmd-loops
+                    spans2
+                    func-name
+                    callee-name
+                    (compiler-opt-global-shared-view prefix))]
                 [entry-label : i64
                   (opt-inline-prefix-label
                     (compiler-opt-global-shared-view prefix)
@@ -112488,7 +112558,7 @@
                   plan.np
                   clone-base
                   source-spans
-                  spans2
+                  clone-spans
                   func-name
                   call-instr
                   callee-name)

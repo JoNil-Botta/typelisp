@@ -29301,6 +29301,24 @@
                               [(Never)
                                 (return (Ok (Expr right-state Unit (Never))))]
                               [_ unit])
+                            ;; Unit has one value and no machine-width operand.
+                            ;; Operand effects precede this choice; exits returned above.
+                            (when
+                              (and
+                                (lower-binop-group-eq? op)
+                                (match (tc_core.tc-type-strip-region
+                                  (tc_core.tc-resolve-type ctx right-actual-ty))
+                                  [(Unit) true]
+                                  [_ false]))
+                              (return
+                                (Ok
+                                  (Expr
+                                    right-state
+                                    (Bool
+                                      (match op
+                                        [(Eq) true]
+                                        [_ false]))
+                                    result-ty))))
                             (if (and
                               (lower-binop-group-eq? op)
                               (lower-type-register-group?
@@ -30754,6 +30772,12 @@
       (try (lower-struct-field-info ctx struct-id struct-name field))]
     (match info
       [(Info offset field-ty)
+        ;; The receiver is already evaluated. Zero-sized fields carry the unit
+        ;; value; there is no packed word or memory range to read, including a
+        ;; trailing field beyond the final word of a register group.
+        (when
+          (= (lower-type-size ctx field-ty) 0)
+          (return (Ok (Expr state Unit result-ty))))
         ;; When the receiver is a register-resident struct, its value is
         ;; the packed word itself; extract the field with shift/mask instead of
         ;; computing an address and loading from memory.
@@ -30810,6 +30834,9 @@
   [offset : i64]
   [field-ty : ast.AstType]
   [result-ty : ast.AstType]) : ResultLowerExpr
+  (when
+    (= (lower-type-size ctx field-ty) 0)
+    (return (Ok (Expr state Unit result-ty))))
   (match (lower-gep-byte state base offset)
     [(Expr ptr-state ptr _)
       ;; A register-resident field is carried as a packed word,
@@ -31020,6 +31047,19 @@
   [struct-name : String]
   [field : String]
   [result-ty : ast.AstType]) : ResultLowerExpr
+  ;; A checked reference's zero-sized projection needs no receiver load.
+  ;; The named reader still validates the field and its resolved layout.
+  (when
+    (= (lower-type-size ctx result-ty) 0)
+    (return
+      (lower-struct-get-named
+        ctx
+        state
+        receiver-value
+        struct-id
+        struct-name
+        field
+        result-ty)))
   (match (if (lower-type-register-resident?
     ctx
     (lower-global-shared-view referent-ty))
@@ -63014,17 +63054,24 @@
               (lower-global-shared-view field-ty)))]
         (match lowered
           [(Expr field-state field-value _)
-            (match field-value
-              [(Var field-var)
-                (Ok
-                  field-state
-                  (sym_i64_env.sym-i64-bind-id env name field-var)
-                  (tc_core.tc-bind-id type-env name field-ty))]
-              [_
-                (Err
-                  (box
-                    (lower-diagnostic
-                      "lower: internal struct field pattern load failed")))])]))]
+            (let
+              [bound : LowerExpr
+                (match (& field-value)
+                  [(Var _) (Expr field-state field-value field-ty)]
+                  [_ (try (lower-materialize field-state field-value field-ty))])]
+              (match bound
+                [(Expr bound-state bound-value bound-ty)
+                  (match bound-value
+                    [(Var field-var)
+                      (Ok
+                        bound-state
+                        (sym_i64_env.sym-i64-bind-id env name field-var)
+                        (tc_core.tc-bind-id type-env name bound-ty))]
+                    [_
+                      (Err
+                        (box
+                          (lower-diagnostic
+                            "lower: internal struct field pattern load failed")))])]))]))]
     [(Tuple patterns-box)
       (let
         [lowered

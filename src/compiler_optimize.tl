@@ -109053,7 +109053,7 @@
 ;; folds, and with it every branch, bounds check and address computation that
 ;; read it. The tier prices that fold on the callee alone -- a copy with the
 ;; literal parameters pinned by a `Mov` at its entry, planned exactly as the
-;; callee is (opt-inline-checked-spec-gain) -- and reads it in three places:
+;; callee is (opt-inline-checked-spec-price) -- and reads it in three places:
 ;;
 ;;   * the CAP: a free inline of such a site saves the boundary AND the fold,
 ;;     so the window's upper bound is read against both
@@ -109371,27 +109371,48 @@
               (opt-blocks-build blocks opt-inline-checked-prefix-entry! prefix)
               function-abi))))]))
 
-(define (opt-inline-checked-spec-gain
+(defstruct OptInlineCheckedSpecPrice
+  (gain i64)
+  (conditional-ok bool))
+
+;; Gain and the conditional proof read the same frozen priced body. Only the
+;; scalar result escapes the verdict's scratch arena.
+(define (opt-inline-checked-spec-price
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [callee : (& callee ir.CompilerIrFunction)]
   [callee-cost : i64]
   [site-depth : i64]
-  [site-weight : i64]) : i64
+  [site-weight : i64]
+  [conditional-literal? : bool]) : OptInlineCheckedSpecPrice
   (match (opt-inline-checked-specialized callee)
     [(Some special)
       (let
-        [special-cost : i64
-          (opt-inline-checked-plan-cost-at
+        [priced : ir.CompilerIrFunction
+          (opt-inline-checked-price-function
             pools
             type-segment-bases
-            (& special)
-            site-depth
-            site-weight)]
-        (if (> callee-cost special-cost)
-          (- callee-cost special-cost)
-          0))]
-    [(No) 0]))
+            (& special))]
+        [special-cost : i64
+          (+
+            (opt-inline-checked-weighted-instrs-at priced site-depth)
+            (opt-inline-checked-alloc-cost
+              type-segment-bases
+              (& priced)
+              site-depth))]
+        (OptInlineCheckedSpecPrice
+          (if (> callee-cost special-cost)
+            (- callee-cost special-cost)
+            0)
+          (and
+            conditional-literal?
+            (> callee-cost special-cost)
+            (opt-inline-checked-conditional-literal-ok?
+              callee
+              (& priced)
+              special-cost
+              site-weight))))]
+    [(No) (OptInlineCheckedSpecPrice 0 false)]))
 
 (define opt-inline-checked-callee-slot : i64
   (- 0 1))
@@ -110799,35 +110820,28 @@
 (define (opt-inline-checked-small-body? [callee-cost : i64] [site-weight : i64]) : bool
   (<= callee-cost (* 64 site-weight)))
 
-;; Conditional candidates keep their actual position class. Their literal
-;; specialization must be call-free, acyclic, and inside the existing small-body
-;; cost bound; the ordinary budgets, growth ceilings and window still apply.
+;; Conditional candidates keep their actual position class. Specialization
+;; must retire a loop or resolve the body to one block; residual acyclic
+;; branches do not justify a new conditional import. The priced body remains
+;; call-free, acyclic and inside the existing small-body cost bound.
 (define (opt-inline-checked-conditional-literal-ok?
-  [pools : ast.AstNodePoolContext]
-  [type-segment-bases : i64]
-  [callee : (& callee ir.CompilerIrFunction)]) : bool
-  (match (opt-inline-checked-specialized callee)
-    [(Some special)
-      (let
-        [priced : ir.CompilerIrFunction
-          (opt-inline-checked-price-function
-            pools
-            type-segment-bases
-            (& special))]
-        (match (& priced)
-          [(Function _ _ _ _ blocks _)
-            (and
-              (opt-inline-blocks-call-free? blocks)
-              (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
-              (opt-inline-checked-small-body?
-                (+
-                  (opt-inline-checked-weighted-instrs-at priced 0)
-                  (opt-inline-checked-alloc-cost
-                    type-segment-bases
-                    (& priced)
-                    0))
-                1))]))]
-    [(No) false]))
+  [callee : (& ir.CompilerIrFunction)]
+  [priced : (& ir.CompilerIrFunction)]
+  [special-cost : i64]
+  [site-weight : i64]) : bool
+  (match priced
+    [(Function _ _ _ _ blocks _)
+      (and
+        (opt-inline-blocks-call-free? blocks)
+        (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
+        (opt-inline-checked-small-body? special-cost site-weight)
+        (or
+          (= (ir.compiler-ir-block-list-count blocks) 1)
+          (match callee
+            [(Function _ _ _ _ original _)
+              (>
+                (opt_natural_loop_vec.len (& (opt-cfg-natural-loops original)))
+                0)])))]))
 
 ;; The accept window, named so it can be pinned on its own. `saving` is the
 ;; modelled cost the inline removes; `boundary` is what a free inline would
@@ -110997,16 +111011,18 @@
     ;; INL-18: what the site's literal arguments fold out of the callee, priced
     ;; on the callee alone with those parameters pinned. A free inline of such
     ;; a site saves the boundary AND this, so the cap is read against both.
-    [spec-gain : i64
+    [spec-price : OptInlineCheckedSpecPrice
       (if (> opt-inline-checked-target-literal-count 0)
-        (opt-inline-checked-spec-gain
+        (opt-inline-checked-spec-price
           pools
           type-segment-bases
           callee
           callee-cost
           site-depth
-          site-weight)
-        0)]
+          site-weight
+          opt-inline-checked-target-conditional-literal?)
+        (OptInlineCheckedSpecPrice 0 false))]
+    [spec-gain : i64 spec-price.gain]
     ;; INL-22: an sret callee's boundary is the call and the result copy.
     [boundary : i64
       (*
@@ -111088,12 +111104,7 @@
     [conditional-literal-ok? : bool
       (or
         (not opt-inline-checked-target-conditional-literal?)
-        (and
-          (> spec-gain 0)
-          (opt-inline-checked-conditional-literal-ok?
-            pools
-            type-segment-bases
-            callee)))]
+        (and (> spec-gain 0) spec-price.conditional-ok))]
     [keep? : bool
       (and
         conditional-literal-ok?

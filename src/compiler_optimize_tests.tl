@@ -19702,19 +19702,76 @@
       (begin
         (opt.opt-inline-checked-record-literals! args)
         (opt.opt-inline-checked-adopt-literals!))]
-    [accepted? : bool
-      (opt.opt-inline-checked-conditional-literal-ok?
+    [price : opt.OptInlineCheckedSpecPrice
+      (opt.opt-inline-checked-spec-price
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (& callee))]
+        (& callee)
+        1000
+        0
+        1
+        true)]
     [no-args : ir.CompilerIrCallArgs Nil]
     [_clear : unit
       (begin
         (opt.opt-inline-checked-record-literals! no-args)
         (opt.opt-inline-checked-adopt-literals!))]
     (test.assert-true
-      (not accepted?)
+      (not price.conditional-ok)
       "a small specialized body still needs an acyclic CFG")))
+
+(define (opt-inline-conditional-branch-proof [known-second? : bool]) : bool
+  (let
+    [callee : ir.CompilerIrFunction
+      (irt.func
+        "function @conditional_branch(x=%0:i64, n=%1:i64) -> i64 vars 4 {
+                   entry:
+                     %2 = eq %0, 0 : i64
+                     branch %2, choose, no
+                   choose:
+                     %3 = ne %1, 0 : i64
+                     branch %3, yes, no
+                   yes:
+                     return 1
+                   no:
+                     return 2
+                 }")]
+    [args : ir.CompilerIrCallArgs
+      (Array
+        (__tl_make-array
+          (ir.CompilerIrValue.I64 0)
+          (if known-second?
+            (ir.CompilerIrValue.I64 1)
+            (ir.CompilerIrValue.Var 1))))]
+    [_pin : unit
+      (begin
+        (opt.opt-inline-checked-record-literals! args)
+        (opt.opt-inline-checked-adopt-literals!))]
+    [price : opt.OptInlineCheckedSpecPrice
+      (opt.opt-inline-checked-spec-price
+        (ast.ast-node-pool-reader-context-current)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& callee)
+        1000
+        0
+        1
+        true)]
+    [no-args : ir.CompilerIrCallArgs Nil]
+    [_clear : unit
+      (begin
+        (opt.opt-inline-checked-record-literals! no-args)
+        (opt.opt-inline-checked-adopt-literals!))]
+    price.conditional-ok))
+
+(test
+  inline-checked-conditional-literal-control-resolution
+  (begin
+    (test.assert-true
+      (not (opt-inline-conditional-branch-proof false))
+      "a residual acyclic branch does not justify a conditional import")
+    (test.assert-true
+      (opt-inline-conditional-branch-proof true)
+      "literal resolution to one block retains conditional eligibility")))
 
 (define (opt-inline-inl8-holder-tail [loop? : bool]) : ir.CompilerIrBlockList
   (if loop?

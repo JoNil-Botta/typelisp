@@ -2,7 +2,8 @@
 (import stdlib.string)
 
 (define (main) : i64
-  (let [text : String "é😀"]
+  (let
+    [text : String "é😀"]
     [iter : (utf8.Iter text) (utf8.iterator (& text))]
     [moved : String text]
     (match (utf8.next (&mut iter))

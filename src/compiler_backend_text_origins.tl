@@ -556,6 +556,35 @@
       (ptr-write! destination data)
       (Ok))))
 
+(define (compiler-backend-text-origin-buffer-append!
+  [buffer : CompilerBackendTextOriginBuffer]
+  [text : (& text str)]) : CompilerBackendOriginCheck
+  (when (= buffer.storage 0) (return (Ok)))
+  (unsafe
+    (let
+      [data : CompilerBackendTextOriginBufferData
+        (ptr-read
+          (int->ptr buffer.storage : (Ptr CompilerBackendTextOriginBufferData)))]
+      (compiler-backend-text-origin-buffer-note! buffer text data.len))))
+
+;; The caller names an exact source range, including any retained newline.
+;; Slicing validates whole-operand boundaries before metadata is appended.
+(define (compiler-backend-text-origin-buffer-append-range!
+  [buffer : CompilerBackendTextOriginBuffer]
+  [text : (& text str)]
+  [start : i64]
+  [len : i64]) : CompilerBackendOriginCheck
+  (when (= buffer.storage 0) (return (Ok)))
+  (unsafe
+    (let
+      [data : CompilerBackendTextOriginBufferData
+        (ptr-read
+          (int->ptr buffer.storage : (Ptr CompilerBackendTextOriginBufferData)))]
+      (match (compiler-backend-text-origins-slice data.capture text start len)
+        [(Err message) (Err message)]
+        [(Ok slice)
+          (compiler-backend-text-origin-buffer-note! buffer (& slice) data.len)]))))
+
 ;; A cold save can be issued after its body but inserted before it. Merge by
 ;; final byte position; token creation order cannot establish execution order.
 (define (compiler-backend-text-origin-buffer-insert!

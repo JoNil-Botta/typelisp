@@ -9,6 +9,7 @@
 (import stdlib.test)
 (import stdlib.string)
 (import stdlib.io)
+(import stdlib.iterator)
 
 (define (backend-stack-origin-read
   [state : backend.CompilerBackendState]
@@ -282,3 +283,146 @@
 (test
   backend-stack-origins-are-emitter-owned
   (backend-stack-origins-producer-test))
+
+(define (backend-stack-origins-rebase-test) : unit
+  (let
+    [intern : ci.InternCompatState (ci.intern-compat-state-new)]
+    [function : i64
+      (ci.intern-compat-state-intern (&mut intern) "frame_origins")]
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (owned_view.compiler-owned-shared-view intern))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [read-home : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 7 (Spill -64))]
+    [write-home : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 8 (Spill -64))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignments-prepend
+        (& read-home)
+        (regalloc.compiler-reg-assignments-prepend
+          (& write-home)
+          (regalloc.compiler-reg-assignment-table-empty)))]
+    [push-regs : (__tl_dyn-array String)
+      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      function)
+    (backend.compiler-backend-function-state-set-i64!
+      function-state
+      backend.compiler-backend-function-i64-current-block-label
+      (ir.compiler-ir-label "frame_block"))
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (let
+      [capture : origins.CompilerBackendTextOrigins
+        (backend.compiler-backend-state-stack-text-origins state)]
+      [read : String
+        (backend-stack-origin-read
+          state
+          (owned_view.compiler-owned-shared-view homes)
+          7)]
+      [write : String
+        (backend.compiler-backend-vector-store-dst
+          (owned_view.compiler-owned-shared-view homes)
+          8
+          "ymm"
+          (ast.AstType.F32)
+          "%ymm14"
+          state)]
+      [body : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "frame_block:\n\n"
+          read
+          write
+          "    leave\n    ret")]
+      [plain : String (string.copy (& body))]
+      (for [mode (iterator.range 0 2)]
+        (let
+          [expected : backend.CompilerBackendRspRebaseResult
+            (backend.compiler-backend-rsp-rebase-full-result
+              (owned_view.compiler-owned-shared-view plain)
+              64
+              (= mode 1)
+              (owned_view.compiler-owned-shared-view push-regs)
+              0
+              9
+              state)]
+          [actual : backend.CompilerBackendRspRebaseResult
+            (backend.compiler-backend-rsp-rebase-full-result
+              (owned_view.compiler-owned-shared-view body)
+              64
+              (= mode 1)
+              (owned_view.compiler-owned-shared-view push-regs)
+              0
+              9
+              state)]
+          [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+            (origins.compiler-backend-text-origins-find capture (& actual.text))]
+          (test.assert-true actual.ok "audited frame/FPO text")
+          (test.assert-string-eq
+            actual.text
+            expected.text
+            "capture preserves exact rebase bytes")
+          (test.assert-i64-eq
+            (array-length spans)
+            2
+            "both equal-offset logical homes survive")
+          (for [index (iterator.range 0 2)]
+            (test.assert-i64-eq
+              (array-ref spans index).token
+              index
+              "retarget preserves distinct tokens")
+            (test.assert-string-eq
+              (string.copy
+                (string.substring-view
+                  (& actual.text)
+                  (array-ref spans index).start
+                  (- (array-ref spans index).end (array-ref spans index).start)))
+              (string.concat
+                (string.int->string
+                  (-
+                    (backend.compiler-backend-frame-bias-neg
+                      state
+                      (= mode 1)
+                      64
+                      0)
+                    64))
+                "(%rsp)")
+              "new operand spelling is bound to its old token"))))
+      (let
+        [unsafe-body : String
+          (origins.compiler-backend-text-origins-cat
+            capture
+            "    syscall\n"
+            body)]
+        [rejected : backend.CompilerBackendRspRebaseResult
+          (backend.compiler-backend-rsp-rebase-full-result
+            (owned_view.compiler-owned-shared-view unsafe-body)
+            64
+            true
+            push-regs
+            0
+            9
+            state)]
+        (test.assert-true
+          (not rejected.ok)
+          "failed FPO audit keeps original text")
+        (test.assert-string-eq
+          rejected.text
+          unsafe-body
+          "failed audit is transactional")
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-find
+              capture
+              (& rejected.text)))
+          2
+          "failed audit preserves original identities")))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-survive-frame-rebase
+  (backend-stack-origins-rebase-test))

@@ -556,3 +556,57 @@
 (test text-origins-copy-snapshot-survives-clone (text-origin-copy-test))
 
 (test text-origins-replacement-is-explicit (text-origin-replace-test))
+
+(define (text-origin-range-buffer-test) : unit
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [buffer : origins.CompilerBackendTextOriginBuffer
+      (origins.compiler-backend-text-origin-buffer-new capture)]
+    [operand : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-mark capture "-8(%rbp)" 91))]
+    [source : String
+      (origins.compiler-backend-text-origins-cat capture "p" operand "q\n")]
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-append-range!
+        buffer
+        (& source)
+        2
+        3))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-append-range!
+        buffer
+        (& source)
+        -1
+        0))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-append! buffer "prefix"))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-append-range!
+        buffer
+        (& source)
+        1
+        8))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-append-range!
+        buffer
+        (& source)
+        9
+        2))
+    (let
+      [text : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origin-buffer-finish
+            buffer
+            "prefix-8(%rbp)q\n"))]
+      (text-origin-test-span capture (& text) 0 6 14 91))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-append!
+        buffer
+        "after finish"))
+    (origins.compiler-backend-text-origins-release! (&mut capture))))
+
+(test
+  text-origins-range-buffer-validates-before-append
+  (text-origin-range-buffer-test))

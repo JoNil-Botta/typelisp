@@ -607,6 +607,17 @@
   (Ok String)
   (Err (Box compiler_diagnostic.CompilerDiagnostic)))
 
+(defstruct CompilerBackendOriginEmission
+  (result ResultCompilerBackend)
+  (snapshot text_origins.CompilerBackendTextOriginSnapshot))
+
+(define (compiler-backend-origin-text-result
+  [result : text_origins.CompilerBackendOriginTextResult]) : ResultCompilerBackend
+  (match result
+    [(Ok text) (Ok text)]
+    [(Err message)
+      (Err (box (compiler_diagnostic.compiler-diagnostic-at-start "" message)))]))
+
 ;; Append-only function-body assembly text buffer.
 ;;
 ;; The block/instruction spine appends emitted text straight into this growth
@@ -17139,7 +17150,11 @@
           function-state
           compiler-backend-scratch-bool-emergency-restore-suppressed
           false)
-        (str_cat.str-cat save-asm (str_cat.str-cat head restore-asm)))
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          save-asm
+          head
+          restore-asm))
       (begin
         (compiler-backend-function-scratch-set-bool!
           function-state
@@ -65264,6 +65279,55 @@
     slot-vars
     backend-state))
 
+(define (compiler-backend-origin-invariant-text
+  [result : text_origins.CompilerBackendOriginTextResult]) : String
+  (match result
+    [(Ok text) text]
+    [(Err message) (io.panic message)]))
+
+(define (compiler-backend-rebase-append-line
+  [origins : text_origins.CompilerBackendTextOriginBuffer]
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
+  [line : String]
+  [newline : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
+  (when
+    (!= origins.storage 0)
+    (match (text_origins.compiler-backend-text-origin-buffer-append!
+      origins
+      (& line))
+      [(Ok) unit]
+      [(Err message) (io.panic message)])
+    (when
+      newline
+      (match (text_origins.compiler-backend-text-origin-buffer-append!
+        origins
+        "\n")
+        [(Ok) unit]
+        [(Err message) (io.panic message)])))
+  (compiler-backend-peephole-append-line buf line newline))
+
+(define (compiler-backend-rebase-append-range
+  [origins : text_origins.CompilerBackendTextOriginBuffer]
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
+  [asm : (& asm str)]
+  [start : i64]
+  [end : i64]
+  [newline : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
+  (when
+    (!= origins.storage 0)
+    (match (text_origins.compiler-backend-text-origin-buffer-append-range!
+      origins
+      asm
+      start
+      (-
+        (if newline
+          (+ end 1)
+          end)
+        start))
+      [(Ok) unit]
+      [(Err message) (io.panic message)]))
+  (compiler-backend-peephole-append-line-range buf asm start end newline))
+
 ;; RG-1 fix B. `save-regs` is the set the PROLOGUE ORIGINALLY SAVED and is what
 ;; classifies (and so deletes) the save/restore movq lines and the pop-run
 ;; entry; `push-regs` is the set the pass EMITS pushes and pops for. They are
@@ -65282,6 +65346,10 @@
   [slot-vars : i64]
   [backend-state : CompilerBackendState]) : CompilerBackendRspRebaseResult
   (let
+    [origin-capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins backend-state)]
+    [origin-buffer : text_origins.CompilerBackendTextOriginBuffer
+      (text_origins.compiler-backend-text-origin-buffer-new origin-capture)]
     [n : i64 (string.string-length text)]
     [data : (Ptr u8)
       (unsafe
@@ -65349,7 +65417,13 @@
           ;; blank line
           (set!
             buf
-            (compiler-backend-peephole-append-line-range buf text i end nl))
+            (compiler-backend-rebase-append-range
+              origin-buffer
+              buf
+              text
+              i
+              end
+              nl))
           (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
             ;; a label: only reachable at delta 0 (dip windows are
             ;; straight-line); it also re-establishes rsp validity after an
@@ -65363,7 +65437,13 @@
               (set! tail false)
               (set!
                 buf
-                (compiler-backend-peephole-append-line-range buf text i end nl)))
+                (compiler-backend-rebase-append-range
+                  origin-buffer
+                  buf
+                  text
+                  i
+                  end
+                  nl)))
             (let
               [tok : i64
                 (- (compiler-backend-peephole-scan-byte-range data m end 32) m)]
@@ -65496,7 +65576,8 @@
                         unit
                         (set!
                           buf
-                          (compiler-backend-peephole-append-line
+                          (compiler-backend-rebase-append-line
+                            origin-buffer
                             buf
                             (str_cat.str-cat
                               "    addq $"
@@ -65546,7 +65627,8 @@
                                     (set! ok false)
                                     (set!
                                       buf
-                                      (compiler-backend-peephole-append-line
+                                      (compiler-backend-rebase-append-line
+                                        origin-buffer
                                         buf
                                         (str_cat.str-cat
                                           (if (= amount 0)
@@ -65574,7 +65656,8 @@
                                       unit
                                       (set!
                                         buf
-                                        (compiler-backend-peephole-append-line
+                                        (compiler-backend-rebase-append-line
+                                          origin-buffer
                                           buf
                                           (str_cat.str-cat
                                             "    addq $"
@@ -65627,7 +65710,8 @@
                             (if (< p 0)
                               (set!
                                 buf
-                                (compiler-backend-peephole-append-line-range
+                                (compiler-backend-rebase-append-range
+                                  origin-buffer
                                   buf
                                   text
                                   i
@@ -65726,23 +65810,61 @@
                                                   (begin
                                                     (set!
                                                       buf
-                                                      (compiler-backend-peephole-append-line-range
+                                                      (compiler-backend-rebase-append-range
+                                                        origin-buffer
                                                         buf
                                                         text
                                                         cursor
                                                         ks
                                                         false))
-                                                    (set!
-                                                      buf
-                                                      (text_buf_borrowed.append-owned
-                                                        buf
-                                                        (string.int->string
-                                                          noff)))
-                                                    (set!
-                                                      buf
-                                                      (text_buf_borrowed.append-owned
-                                                        buf
-                                                        "(%rsp)"))
+                                                    (if (=
+                                                      origin-buffer.storage
+                                                      0)
+                                                      (begin
+                                                        (set!
+                                                          buf
+                                                          (text_buf_borrowed.append-owned
+                                                            buf
+                                                            (string.int->string
+                                                              noff)))
+                                                        (set!
+                                                          buf
+                                                          (text_buf_borrowed.append-owned
+                                                            buf
+                                                            "(%rsp)")))
+                                                      (let
+                                                        [old : String
+                                                          (compiler-backend-origin-invariant-text
+                                                            (text_origins.compiler-backend-text-origins-slice
+                                                              origin-capture
+                                                              (& text)
+                                                              ks
+                                                              (- (+ p 6) ks)))]
+                                                        [replacement : String
+                                                          (str_cat.str-cat
+                                                            (string.int->string
+                                                              noff)
+                                                            "(%rsp)")]
+                                                        [rewritten : String
+                                                          (if (=
+                                                            (array-length
+                                                              (text_origins.compiler-backend-text-origins-find
+                                                                origin-capture
+                                                                (& old)))
+                                                            0)
+                                                            replacement
+                                                            (compiler-backend-origin-invariant-text
+                                                              (text_origins.compiler-backend-text-origins-retarget
+                                                                origin-capture
+                                                                old
+                                                                replacement)))]
+                                                        (set!
+                                                          buf
+                                                          (compiler-backend-rebase-append-line
+                                                            origin-buffer
+                                                            buf
+                                                            rewritten
+                                                            false))))
                                                     (set! last-noff noff)
                                                     (set!
                                                       ref-count
@@ -65793,7 +65915,8 @@
                                   (if ok
                                     (set!
                                       buf
-                                      (compiler-backend-peephole-append-line-range
+                                      (compiler-backend-rebase-append-range
+                                        origin-buffer
                                         buf
                                         text
                                         cursor
@@ -65895,7 +66018,10 @@
               1))
           unit)
         (CompilerBackendRspRebaseResult
-          (text_buf_borrowed.render buf)
+          (compiler-backend-origin-invariant-text
+            (text_origins.compiler-backend-text-origin-buffer-finish
+              origin-buffer
+              (text_buf_borrowed.render buf)))
           true
           csr-mask))
       (begin
@@ -71187,6 +71313,8 @@
         ;; Every representation-aware register-allocation view below carries the
         ;; same pre-optimization job capability from `program-index`.
         [backend-state : CompilerBackendState program-index.backend-state]
+        [origin-capture : text_origins.CompilerBackendTextOrigins
+          (compiler-backend-state-stack-text-origins backend-state)]
         [target-policy : CompilerBackendTargetPolicy
           (compiler-backend-state-emission-target-policy backend-state)]
         [function-state : CompilerBackendFunctionState
@@ -71858,7 +71986,8 @@
         [shrinkwrap-incoming-guard : String
           (if (string.eq shrinkwrap-incoming-prefix "")
             ""
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              origin-capture
               shrinkwrap-incoming-prefix
               "    # shrinkwrap incoming guard\n"
               ""))]
@@ -72173,7 +72302,8 @@
                   (compiler-backend-simd-scratch-drift? function-state))
                   (compiler-backend-instr-error
                     func-diag
-                    (str_cat.str-cat
+                    (text_origins.compiler-backend-text-origins-cat
+                      origin-capture
                       (if (compiler-backend-gep-fold-audit-failed?
                         function-state)
                         "backend: gep displacement ordinal drift"
@@ -72278,7 +72408,8 @@
                           program-index.backend-state)
                         (compiler-backend-gep-fold-disable! function-state))]
                     [saving-prologue-body : String
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        origin-capture
                         (compiler-backend-emit-save-callee-regs
                           assignments
                           slot-vars
@@ -72328,24 +72459,44 @@
                         wrap-saving-label)]
                     [guarded-body : String
                       (if shrinkwrap-active?
-                        (string.replace
-                          (compiler-backend-global-shared-view body)
-                          (compiler-backend-global-shared-view
-                            shrinkwrap-planned-guard)
-                          shrinkwrap-incoming-guard)
+                        (try
+                          (compiler-backend-origin-text-result
+                            (text_origins.compiler-backend-text-origins-replace
+                              origin-capture
+                              (compiler-backend-global-shared-view body)
+                              (compiler-backend-global-shared-view
+                                shrinkwrap-planned-guard)
+                              shrinkwrap-incoming-guard)))
                         (owned_view.compiler-owned-shared-view body))]
                     [framed-body : String
                       (if wrap-active?
                         (let
                           [label-line : String
-                            (str_cat.str-cat saving-asm-label ":\n" "")]
-                          (string.replace
-                            (compiler-backend-global-shared-view guarded-body)
-                            (compiler-backend-global-shared-view label-line)
-                            (str_cat.str-cat label-line saving-prologue-body "")))
-                        (str_cat.str-cat saving-prologue-body guarded-body ""))]
+                            (text_origins.compiler-backend-text-origins-cat
+                              origin-capture
+                              saving-asm-label
+                              ":\n"
+                              "")]
+                          (try
+                            (compiler-backend-origin-text-result
+                              (text_origins.compiler-backend-text-origins-replace
+                                origin-capture
+                                (compiler-backend-global-shared-view
+                                  guarded-body)
+                                (compiler-backend-global-shared-view label-line)
+                                (text_origins.compiler-backend-text-origins-cat
+                                  origin-capture
+                                  label-line
+                                  saving-prologue-body
+                                  "")))))
+                        (text_origins.compiler-backend-text-origins-cat
+                          origin-capture
+                          saving-prologue-body
+                          guarded-body
+                          ""))]
                     [post-prologue : String
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        origin-capture
                         (compiler-backend-mode-prologue mode)
                         framed-body
                         (compiler-backend-return-epilogue
@@ -72783,11 +72934,18 @@
                               program-index.backend-state))]
                         [emitted-body : String
                           (if wrap-active?
-                            (string.replace
-                              swb-body
-                              (str_cat.str-cat saving-asm-label ":\n" "")
-                              (compiler-backend-global-shared-view
-                                selected-prologue))
+                            (try
+                              (compiler-backend-origin-text-result
+                                (text_origins.compiler-backend-text-origins-replace
+                                  origin-capture
+                                  swb-body
+                                  (text_origins.compiler-backend-text-origins-cat
+                                    origin-capture
+                                    saving-asm-label
+                                    ":\n"
+                                    "")
+                                  (compiler-backend-global-shared-view
+                                    selected-prologue))))
                             swb-body)]
                         [described-result : ResultCompilerBackend
                           (if windows-describe?
@@ -72887,7 +73045,11 @@
                                 body
                                 shrinkwrap-planned-guard
                                 guarded-body
-                                (str_cat.str-cat saving-asm-label ":\n" "")
+                                (text_origins.compiler-backend-text-origins-cat
+                                  origin-capture
+                                  saving-asm-label
+                                  ":\n"
+                                  "")
                                 final-body))
                             ;; A textual invariant drifted. Re-run the full
                             ;; unwrapped pipeline so the IR split, bare return,
@@ -72943,7 +73105,8 @@
                                 rebase-ok
                                 wrap-active?)
                               (Ok
-                                (str_cat.str-cat
+                                (text_origins.compiler-backend-text-origins-cat
+                                  origin-capture
                                   (compiler-backend-function-symbol-map-comment
                                     program-index
                                     name)
@@ -72963,7 +73126,11 @@
                                     target
                                     symbol)
                                   (if wrap-active?
-                                    (str_cat.str-cat symbol ":\n" "")
+                                    (text_origins.compiler-backend-text-origins-cat
+                                      origin-capture
+                                      symbol
+                                      ":\n"
+                                      "")
                                     selected-prologue)
                                   ""
                                   ""
@@ -73080,7 +73247,9 @@
   [scratch : i64]) : ResultCompilerBackend
   (let
     [backend-state : CompilerBackendState program-index.backend-state]
-    [result : ResultCompilerBackend
+    [origin-capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins backend-state)]
+    [escaped : CompilerBackendOriginEmission
       (with-escape
         (arena.Arena scratch)
         (let
@@ -73115,13 +73284,27 @@
               [(Ok head)
                 (Ok (compiler-backend-emergency-wrap head backend-state))]
               [(Err message) (Err message)])]
+          [snapshot : text_origins.CompilerBackendTextOriginSnapshot
+            (match (& wrapped)
+              [(Ok text)
+                (text_origins.compiler-backend-text-origins-snapshot
+                  origin-capture
+                  text)]
+              [(Err _) (None)])]
           ;; Clear scratch-owned references while the scratch arena is still
           ;; live, then retire the only job-owned handle before with-escape
           ;; rewinds it. This runs for success and controlled diagnostics.
           (compiler-backend-clear-function-owned-state! backend-state)
           (compiler-backend-state-retire-function-state! backend-state)
-          wrapped))]
-    result))
+          (CompilerBackendOriginEmission wrapped snapshot)))]
+    (match escaped.result
+      [(Err message) (Err message)]
+      [(Ok text)
+        (compiler-backend-origin-text-result
+          (text_origins.compiler-backend-text-origins-restore-copy
+            origin-capture
+            escaped.snapshot
+            text))])))
 
 ;; Keep the direct path available for A/B experiments by raising
 ;; `compiler-backend-direct-emit-instr-limit`; normal builds route emitted

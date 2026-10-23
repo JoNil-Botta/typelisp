@@ -9,4 +9,5 @@
   (fixtures.text-origin-buffer-test)
   (fixtures.text-origin-copy-test)
   (fixtures.text-origin-replace-test)
+  (fixtures.text-origin-range-buffer-test)
   42)

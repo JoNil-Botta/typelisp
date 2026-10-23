@@ -640,6 +640,13 @@ cannot split an operand. The buffer accounts for every appended byte and checks
 retained operand spellings before publishing its protected result. Byte equality
 validates that transport; it never supplies an absent logical identity. A failed
 step leaves the buffer metadata unchanged, and finalization closes it once.
+A scratch escape carries its pre-copy entry identity through the checked
+clone-out result, then validates the cloned bytes before restoring annotations.
+First-occurrence replacements preserve only explicitly retained or inserted
+annotations. Frame/FPO rendering copies exact source ranges and retargets each
+annotated address explicitly; rejected frame audits return the original text
+and identity. Distinct logical homes never merge when rebased addresses match.
+The ordinary uncaptured route retains its borrowed text builder.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

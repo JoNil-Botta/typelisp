@@ -2,4 +2,5 @@
 
 (define (main) : i64
   (fixtures.backend-stack-origins-producer-test)
+  (fixtures.backend-stack-origins-rebase-test)
   42)

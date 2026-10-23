@@ -868,7 +868,13 @@ producer smoke also checks all three optimization levels, including body-buffer
 growth, all append forms and a later-issued save inserted before its body.
 Buffer fixtures reject noncontiguous writes, cuts, invalid extents, changed
 operand bytes and reuse after finalization; refused operations publish no
-partial metadata. Remaining frame/peephole rewrite transport, traffic owners
+partial metadata. Copy witnesses cross checked scratch clone-out; changed,
+foreign or invalid snapshots reject. Replacement tests cover first-only
+semantics, empty needles and partial operand cuts. Source-range buffer checks
+are transactional. Actual vector factory operands pass both audited frame
+modes with exact untracked-output parity, distinct equal-offset home tokens,
+blank/label lines and no terminal newline; a syscall refusal retains the
+original text and annotations. Final-stream rewrites, remaining traffic owners
 and complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source

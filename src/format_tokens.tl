@@ -7,6 +7,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.result)
+(import lex as lexer)
 
 (defenum FormatToken
   (LParen)
@@ -827,6 +828,12 @@
           [(= c '"')
             (match (fmt-scan-string-end-result src data (+ i 1) n)
               [(Ok end)
+                (match (lexer.string-literal-result src (+ i 1) (- end 1))
+                  [(Ok _) unit]
+                  [(Err message position)
+                    (unless
+                      recover
+                      (return (Err (fmt-source-error-at src position message))))])
                 (fmt-store-token
                   (owned_view.compiler-owned-shared-view tokens)
                   (owned_view.compiler-owned-shared-view starts)

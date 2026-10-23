@@ -257,6 +257,12 @@ identities differ from the page.
 Any other escaped character denotes that character literally: `\0` in a
 string is the character `0`, not a NUL byte.
 
+After escape processing, a source string literal must be well-formed UTF-8.
+The compiler rejects the first malformed sequence and reports its failure
+byte at the corresponding source location, including through escapes. Valid
+one- through four-byte scalar encodings retain their exact bytes. This is a
+source-literal rule, not an invariant on runtime-created `String` values.
+
 ### 2.4 Numeric literals and type inference
 
 Integer literals default to `i32` when unconstrained. In an expected integer
@@ -380,6 +386,8 @@ there is no public unsized `Array` alias.
 - String literals have type `String`. Their bytes live in static read-only
   data, but the source value is still an owned `String` handle, not a
   borrowed `str`.
+- Source literals are validated as UTF-8 after unescaping (§2.3). Safe byte
+  construction remains capable of producing arbitrary-byte strings.
 - Runtime-created strings from `str-cat`/the low-level concat primitives,
   `substring`, `read-file`, `arg`, `int->string`, stdin/file reads, and
   stdlib helpers allocate fresh `String` storage in the active arena.
@@ -2922,6 +2930,20 @@ byte-offset contract are documented in [stdlib/string_utf8.tl](stdlib/string_utf
 This does not change the byte-sized `char`, byte indexing, or arbitrary-byte
 `String`/`ByteBuf.to-string` contract.
 
+The same module provides `decode-before`, `iterator` with `next`/`next-back`,
+`count`, `boundary-at`, `slice-range`, `slice`, and `encode`. Scalars use
+`UnicodeScalar.value : u32`; encoding rejects surrogates and values above
+U+10FFFF even when the record was constructed directly. Checked iteration
+yields an error once and becomes exhausted, without replacement. `count`,
+`boundary-at`, and scalar-index slicing validate the complete input; scalar
+indices count combining marks and NUL individually. Traversal, counting,
+boundary/range computation, and encoding into caller-provided bytes allocate
+nothing. `slice` returns a borrowed byte view with the existing two-word
+process-lifetime view-header allocation; `slice-range` returns checked byte
+bounds without that allocation. Ordinary length, indexing, slicing, search,
+comparison, and formatting precision continue to operate on bytes without
+implicit UTF-8 validation or replacement.
+
 #### Source model
 
 - `String` is the owned text value type. It is immutable, move-only, and may
@@ -3681,6 +3703,10 @@ stages only ever see a normal global.
 
 - Text-only: the file is read as UTF-8 source payload. Use `include-bin` for
   arbitrary binary payloads.
+- Malformed UTF-8 is rejected with its byte offset and a source location in
+  the included file; the diagnostic retains the requested path and importer.
+  Valid contents, including NUL, combining marks and supplementary scalars,
+  are embedded without normalization or any other byte change.
 - `path` is a string file path: relative paths resolve from the including
   file's directory, and `stdlib/...` paths use the stdlib-root and
   embedded-stdlib precedence of §4.4.1, including the rejection of
@@ -8250,6 +8276,11 @@ runtime contracts:
   a false-liveness `T` slot or forge the bitmap/cursor used by later steps.
 
 ### 6.2 Runtime functions (emitted by the backend)
+
+Windows executables retain an application manifest selecting the UTF-8 active
+code page. Paths, arguments, environment names/values, and child command lines
+use UTF-8 strings through the existing narrow `A` APIs; no separate OS-string
+representation or implicit wide-string conversion is introduced.
 
 The compiler emits helper routines into the generated assembly when needed.
 They are not implemented by a separate C runtime.

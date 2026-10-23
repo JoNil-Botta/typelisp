@@ -31130,6 +31130,62 @@
           "empty, sparse, reordered and duplicate labels retain first-match lookup and bounded misses")))))
 
 (test
+  cfg-label-index-survives-source-pool-reset-and-reuse
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "cfg-reset-entry:
+                     jump cfg-reset-exit
+                   cfg-reset-exit:
+                     return 0")]
+    [other : ir.CompilerIrBlockList
+      (irt.blocks
+        "cfg-reset-exit:
+                     return 1
+                   cfg-reset-entry:
+                     return 2")]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+    [ambient : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [_install : unit (ci.intern-compat-state-install! state)]
+    [kept : i64 (ci.intern-source-slice "kept" 0 4)]
+    [discarded : i64 (ci.intern-source-slice "discard" 0 7)]
+    [_partial : unit (ci.intern-reset-to! 1)]
+    [replacement : i64 (ci.intern-source-slice "replacement" 0 11)]
+    [partial-ok : bool
+      (and
+        (= discarded replacement)
+        (opt-cfg-index-walk-order-ids-ok?
+          (ir.compiler-ir-block-list-view (& blocks))
+          index
+          0))]
+    [_full : unit (ci.intern-reset!)]
+    [reused : i64 (ci.intern-source-slice "reused" 0 6)]
+    [_other : opt.OptCfgIndex (opt.opt-cfg-index-build (& other))]
+    [full-ok : bool
+      (and
+        (= kept reused)
+        (opt-cfg-index-walk-order-ids-ok?
+          (ir.compiler-ir-block-list-view (& blocks))
+          index
+          0)
+        (match (opt.opt-cfg-index-id (& index) -1)
+          [(None) true]
+          [(Some _) false]))]
+    [_capture : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut state))]
+    [_restore : unit (ci.intern-compat-state-install! ambient)]
+    [_release : unit
+      (ci.intern-compat-state-release-structural-generations! (&mut state))]
+    [_destroy : unit
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena (& state))))]
+    (test.assert-true
+      (and partial-ok full-ok)
+      "a live CFG index retains integer-label lookup across source-pool reset, slot reuse and another index build")))
+
+(test
   cfg-label-index-sparse-probes-stay-short
   (for [power (iterator.range 4 7)]
     (let

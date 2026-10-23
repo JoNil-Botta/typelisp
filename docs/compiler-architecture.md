@@ -91,6 +91,9 @@ contracts, canonical APIs and regression witnesses. The
 covers handwritten runtime/startup/direct-object code; shared machine-program
 work belongs to [#7055](https://github.com/JoNil-Botta/typelisp/issues/7055) and
 [#7056](https://github.com/JoNil-Botta/typelisp/issues/7056).
+The Windows startup and process boundary retain the shared
+[argument transport contract](compiler-invariants.md#windows-argument-transport)
+across text and direct-object emission.
 
 The target boundary guard from
 [#5347](https://github.com/JoNil-Botta/typelisp/issues/5347) is implemented.

@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`stdlib/tests/process_argv.tl` covers the Windows encoder's exact Microsoft C
+argv goldens and byte limit, both native spawn modes, and all 4096 public
+arguments. Keep empty/tab/quote/trailing-backslash cases and exact framed
+child output. Windows text and direct-object startup must decode the same
+rules, preserving program-name quoting separately; update their existing
+executable-template payload and ordered-event identities together.
+
 `cse-block-tables-keep-the-first-walk-state` installs address-taken facts for
 its own blocks before the raw CSE walks. A retired preceding function's facts
 must not be read. Keep the empty-state, generation and repeated-expression

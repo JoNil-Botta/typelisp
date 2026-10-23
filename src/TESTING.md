@@ -1,5 +1,10 @@
 # Selfhost compiler testing
 
+`cse-block-tables-keep-the-first-walk-state` installs address-taken facts for
+its own blocks before the raw CSE walks. A retired preceding function's facts
+must not be read. Keep the empty-state, generation and repeated-expression
+assertions when changing this fixture's setup.
+
 `spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
 restoration without leaving completed siblings active. The existing traversal
 isolation test preserves job/scratch ownership. `spmd_inline_helper_composition.tl`

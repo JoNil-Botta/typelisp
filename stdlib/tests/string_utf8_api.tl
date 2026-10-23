@@ -681,7 +681,7 @@
 (define (assert-runtime-byte-semantics) : unit
   (let
     [text : String (format.format "{:.1}" "é")]
-    [buffer : byte_buf.ByteBuf (byte_buf.from-string (& text))]
+    [buffer : byte_buf.ByteBuf (byte_buf.from-string (string.copy (& text)))]
     [copied : String (byte_buf.to-string buffer)]
     [part : String (string.substring (& copied) 0 1)]
     (test.assert-i64-eq

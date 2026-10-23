@@ -2678,6 +2678,23 @@ An unresolved local dotted import retains its candidate path so normal source
 loading reports E0301; dependency declarations control alias routing, while
 an unknown explicit `pkg:` include alias remains an E0303 resolution failure.
 
+## Windows argument transport
+
+Both synchronous process paths use one bounded Microsoft C argv encoder.
+Validation rejects a quote in the program pathname and an encoded command
+exceeding 32767 bytes including its NUL before allocating native resources or
+creating a child. Argument escaping doubles backslashes only before quotes
+and the closing delimiter; program-name quoting leaves them literal.
+
+Text and direct-object startup compact the command-line copy in place with
+the write cursor never ahead of the read cursor. Spaces and tabs delimit
+only outside quotes; odd/even backslash runs and doubled quotes inside a
+quoted argument follow the same rules as the encoder. The first token uses
+the distinct program-name rule. The OS limit of 32767 UTF-16 code units bounds
+both the UTF-8 byte copy and 32768 pointers inside the existing 512 KiB boot
+pool. Public process builders retain their separate 4096-argument limit.
+`process_argv.tl` exercises exact count/bytes through both native spawn modes.
+
 ## Async process ownership
 
 Async process start reserves a generation-tagged, boxed registry authority before

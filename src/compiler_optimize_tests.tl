@@ -68989,13 +68989,13 @@ return 0" true)
       (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "empty")
-          (opt.compiler-opt-global-shared-view no-exprs))
+          (clone no-exprs))
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "first")
-          (opt.compiler-opt-global-shared-view first))
+          (clone first))
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "second")
-          (opt.compiler-opt-global-shared-view second)))]
+          (clone second)))]
     ;; Raw block walks use the enclosing function's address-taken facts.
     [_own-facts : unit (opt.opt-function-addr-taken-install! 6 (& own))]
     (opt.opt-fold-strength-cse-instr-seq-rewrite!

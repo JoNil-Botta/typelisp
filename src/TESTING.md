@@ -18,6 +18,15 @@ The six scalar math fixtures retain their batched default cases and also run
 explicitly at opt0/1/2 on both hosts. The public test transcript runs every
 math inline test at each level through the native host toolchain.
 
+`inline-checked-conditional-literal` checks a guarded literal whose specialization
+removes a callee loop, an unknown argument, a retained callee loop and a caller
+loop. The cycle-proof control retains a small cyclic specialized body. The
+control-resolution pair distinguishes a residual acyclic branch from complete
+literal resolution to one path, including a chain of unconditional jumps. Keep the
+native `string_literal_eq.tl` conditional chain at opt0/1/2 on both hosts,
+including first/last-byte differences, runtime copies, UTF-8, length boundaries
+and a returning guard.
+
 `spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
 restoration without leaving completed siblings active. The existing traversal
 isolation test preserves job/scratch ownership. `spmd_inline_helper_composition.tl`

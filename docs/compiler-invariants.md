@@ -1717,6 +1717,20 @@ Keep traversal
 separate from that admission decision; stopping the scan early changes its
 recorded result. This read-only path does not change block ownership.
 
+Conditional depth-zero literal sites retain their actual position class. A
+loop-free, nonrecursive caller may offer such a site at the existing relaxed
+frequency floor when the original callee is call-free. The verdict additionally
+requires positive literal specialization gain and a specialized callee whose
+frozen priced body is call-free, acyclic and within the existing small-body
+cost bound. Specialization must either retire an original natural loop or
+resolve control to one path; an acyclic residual branch alone does not qualify.
+Unconditional jump chains do not introduce a choice. These candidates use the existing relaxed reserve, caller limits,
+growth ceilings and acceptance window. The ordinary position classifier and
+arm-wrapper restrictions still govern nonspecializing sites. Pricing shares
+the existing frozen pipeline and suppresses developer observability while its
+temporary bodies are live. Specialization gain and the conditional proof read
+the same priced body; only the scalar gain and proof escape verdict scratch.
+
 Level 2 can rematerialize a single-definition, unescaped global capture within
 its block while the global still has the captured value. A direct store,
 possibly writing call, indirect store or unknown effect ends forwarding;

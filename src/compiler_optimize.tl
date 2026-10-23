@@ -108893,6 +108893,8 @@
 ;; moment the row is armed.
 (define opt-inline-checked-target-relaxed? : bool
   false)
+(define opt-inline-checked-target-conditional-literal? : bool
+  false)
 
 ;; SCAN or TARGET, the two modes a caller walk runs in. A scan walk admits no
 ;; new site -- so its result is exactly the caller's banked-band-only rewrite,
@@ -109051,7 +109053,7 @@
 ;; folds, and with it every branch, bounds check and address computation that
 ;; read it. The tier prices that fold on the callee alone -- a copy with the
 ;; literal parameters pinned by a `Mov` at its entry, planned exactly as the
-;; callee is (opt-inline-checked-spec-gain) -- and reads it in three places:
+;; callee is (opt-inline-checked-spec-price) -- and reads it in three places:
 ;;
 ;;   * the CAP: a free inline of such a site saves the boundary AND the fold,
 ;;     so the window's upper bound is read against both
@@ -109369,27 +109371,48 @@
               (opt-blocks-build blocks opt-inline-checked-prefix-entry! prefix)
               function-abi))))]))
 
-(define (opt-inline-checked-spec-gain
+(defstruct OptInlineCheckedSpecPrice
+  (gain i64)
+  (conditional-ok bool))
+
+;; Gain and the conditional proof read the same frozen priced body. Only the
+;; scalar result escapes the verdict's scratch arena.
+(define (opt-inline-checked-spec-price
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [callee : (& callee ir.CompilerIrFunction)]
   [callee-cost : i64]
   [site-depth : i64]
-  [site-weight : i64]) : i64
+  [site-weight : i64]
+  [conditional-literal? : bool]) : OptInlineCheckedSpecPrice
   (match (opt-inline-checked-specialized callee)
     [(Some special)
       (let
-        [special-cost : i64
-          (opt-inline-checked-plan-cost-at
+        [priced : ir.CompilerIrFunction
+          (opt-inline-checked-price-function
             pools
             type-segment-bases
-            (& special)
-            site-depth
-            site-weight)]
-        (if (> callee-cost special-cost)
-          (- callee-cost special-cost)
-          0))]
-    [(No) 0]))
+            (& special))]
+        [special-cost : i64
+          (+
+            (opt-inline-checked-weighted-instrs-at priced site-depth)
+            (opt-inline-checked-alloc-cost
+              type-segment-bases
+              (& priced)
+              site-depth))]
+        (OptInlineCheckedSpecPrice
+          (if (> callee-cost special-cost)
+            (- callee-cost special-cost)
+            0)
+          (and
+            conditional-literal?
+            (> callee-cost special-cost)
+            (opt-inline-checked-conditional-literal-ok?
+              callee
+              (& priced)
+              special-cost
+              site-weight))))]
+    [(No) (OptInlineCheckedSpecPrice 0 false)]))
 
 (define opt-inline-checked-callee-slot : i64
   (- 0 1))
@@ -109604,6 +109627,10 @@
         (if opt-inline-checked-target-relaxed?
           "relaxed"
           "core")
+        "|conditional-literal="
+        (if opt-inline-checked-target-conditional-literal?
+          "1"
+          "0")
         "|site="
         (if opt-inline-checked-target-tail?
           "tail"
@@ -109638,6 +109665,7 @@
   (set! opt-inline-checked-caller-verdicts 0)
   (set! opt-inline-checked-caller-relaxed-verdicts 0)
   (set! opt-inline-checked-target-relaxed? false)
+  (set! opt-inline-checked-target-conditional-literal? false)
   (set! opt-inline-checked-target-tail? false)
   (set! opt-inline-checked-last-margin-clear? false)
   (set! opt-inline-checked-generation 1)
@@ -109658,6 +109686,7 @@
   (set! opt-inline-checked-prior-blocks opt-inline-checked-accepted-blocks)
   (set! opt-inline-checked-scan-count 0)
   (set! opt-inline-checked-target-relaxed? false)
+  (set! opt-inline-checked-target-conditional-literal? false)
   (set! opt-inline-checked-target-tail? false)
   (set! opt-inline-checked-target-pos (- 0 1))
   (set! opt-inline-checked-scanning? true))
@@ -110474,6 +110503,14 @@
             (if (= opt-inline-checked-site-position 0)
               (opt-inline-checked-pos-entry)
               (opt-inline-checked-pos-none)))]
+        [conditional-literal? : bool
+          (and
+            (= site-depth 0)
+            (= position-class (opt-inline-checked-pos-none))
+            (> opt-inline-checked-current-literal-count 0)
+            (>= frequency (opt-inline-checked-depth-relaxed-frequency))
+            (opt-inline-caller-loop-free?)
+            (opt-inline-blocks-call-free? blocks))]
         [_publish : unit
           (begin
             (set! opt-inline-checked-trace-depth site-depth)
@@ -110493,12 +110530,14 @@
         (cond
           [(< frequency (opt-inline-checked-min-frequency))
             (opt-inline-checked-clause-frequency)]
-          [(<
-            site-depth
-            (opt-inline-checked-effective-min-site-depth
-              frequency
-              (opt-inline-checked-entry-equivalent? position-class)
-              (opt-inline-blocks-call-free? blocks)))
+          [(and
+            (<
+              site-depth
+              (opt-inline-checked-effective-min-site-depth
+                frequency
+                (opt-inline-checked-entry-equivalent? position-class)
+                (opt-inline-blocks-call-free? blocks)))
+            (not conditional-literal?))
             ;; SW-SPINE: a refusal the WALK decided -- no reading reached
             ;; the block -- is remembered for
             ;; opt-inline-checked-shape-changed-sites?. A block a reading
@@ -110530,6 +110569,9 @@
               tail-site?)
             (opt-inline-checked-clause-scanned)]
           [else
+            (set!
+              opt-inline-checked-target-conditional-literal?
+              conditional-literal?)
             (set! opt-inline-checked-site-depth site-depth)
             (set! opt-inline-checked-site-weight site-weight)
             (set! opt-inline-checked-callee-params np)
@@ -110714,21 +110756,16 @@
       (set! (array-ref out p) (opt-inline-census-block-weight p offset)))
     out))
 
-;; `offset` and `entry-weight` place the body: `offset` is the loop depth its
-;; instructions would sit at, and `entry-weight` is how often the body is
-;; entered, which is what the prologue and the spill traffic pay per entry.
-;; The check's optimizer runs are MEASUREMENTS, not pipeline stages: their
-;; results are thrown away and only a bool escapes. So the developer
-;; observability hooks are silenced around them. Leaving them live would make
+;; Pricing runs do not publish their temporary bodies as pipeline output, so
+;; developer observability hooks are silenced around them. Leaving them live
+;; would make
 ;; `--trace-passes` report passes over functions the pipeline never optimized
 ;; and would push throwaway generations into the `--dump-ir` buffer, which is
 ;; what scripts/verify-ir-observability.sh reads.
-(define (opt-inline-checked-plan-cost-at
+(define (opt-inline-checked-price-function
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
-  [func : (& ir.CompilerIrFunction)]
-  [offset : i64]
-  [_entry-weight : i64]) : i64
+  [func : (& ir.CompilerIrFunction)]) : ir.CompilerIrFunction
   (let
     [saved-verify : bool compiler-opt-debug-verify-ir]
     [_silence : unit
@@ -110748,6 +110785,18 @@
       (begin
         (compiler-opt-debug-set-suppressed! false)
         (set! compiler-opt-debug-verify-ir saved-verify))]
+    optimized))
+
+;; `offset` places the priced body at the site's loop depth.
+(define (opt-inline-checked-plan-cost-at
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : (& ir.CompilerIrFunction)]
+  [offset : i64]
+  [_entry-weight : i64]) : i64
+  (let
+    [optimized : ir.CompilerIrFunction
+      (opt-inline-checked-price-function pools type-segment-bases func)]
     ;; INL-15: the plan is priced by the allocator's own estimator in the
     ;; tier's currency (opt-inline-checked-alloc-cost): weighted memory
     ;; references, prologue at the entry weight -- which is `entry-weight`
@@ -110770,6 +110819,41 @@
 ;; for a one-block body.
 (define (opt-inline-checked-small-body? [callee-cost : i64] [site-weight : i64]) : bool
   (<= callee-cost (* 64 site-weight)))
+
+(define (opt-inline-checked-single-path? [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    (for [id (iterator.range 0 (opt-cfg-index-block-count index))]
+      (when
+        (>
+          (opt-label-count
+            (opt-cfg-index-successors index (opt-cfg-index-label index id)))
+          1)
+        (return false)))
+    true))
+
+;; Conditional candidates keep their actual position class. Specialization
+;; must retire a loop or resolve control to one path; residual acyclic
+;; branches do not justify a new conditional import. The priced body remains
+;; call-free, acyclic and inside the existing small-body cost bound.
+(define (opt-inline-checked-conditional-literal-ok?
+  [callee : (& ir.CompilerIrFunction)]
+  [priced : (& ir.CompilerIrFunction)]
+  [special-cost : i64]
+  [site-weight : i64]) : bool
+  (match priced
+    [(Function _ _ _ _ blocks _)
+      (and
+        (opt-inline-blocks-call-free? blocks)
+        (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
+        (opt-inline-checked-small-body? special-cost site-weight)
+        (or
+          (opt-inline-checked-single-path? blocks)
+          (match callee
+            [(Function _ _ _ _ original _)
+              (>
+                (opt_natural_loop_vec.len (& (opt-cfg-natural-loops original)))
+                0)])))]))
 
 ;; The accept window, named so it can be pinned on its own. `saving` is the
 ;; modelled cost the inline removes; `boundary` is what a free inline would
@@ -110911,8 +110995,6 @@
   [banked-cost-in : i64]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
-    [after : i64
-      (opt-inline-checked-plan-cost pools type-segment-bases checked)]
     [banked-cost : i64
       (if (>= banked-cost-in 0)
         banked-cost-in
@@ -110939,16 +111021,32 @@
     ;; INL-18: what the site's literal arguments fold out of the callee, priced
     ;; on the callee alone with those parameters pinned. A free inline of such
     ;; a site saves the boundary AND this, so the cap is read against both.
-    [spec-gain : i64
+    [spec-price : OptInlineCheckedSpecPrice
       (if (> opt-inline-checked-target-literal-count 0)
-        (opt-inline-checked-spec-gain
+        (opt-inline-checked-spec-price
           pools
           type-segment-bases
           callee
           callee-cost
           site-depth
-          site-weight)
-        0)]
+          site-weight
+          opt-inline-checked-target-conditional-literal?)
+        (OptInlineCheckedSpecPrice 0 false))]
+    [spec-gain : i64 spec-price.gain]
+    ;; The callee proof is independent of the trial caller's price. A failed
+    ;; proof cannot be rescued by pricing that caller. Traced runs still price
+    ;; it so their rejected verdicts retain the full numeric comparison.
+    [_conditional-proof : unit
+      (when
+        (and
+          opt-inline-checked-target-conditional-literal?
+          (not spec-price.conditional-ok)
+          (not compiler-opt-debug-trace-passes))
+        (opt-inline-checked-publish-margin! false)
+        (set! opt-inline-checked-next-state-cost banked-cost)
+        (return false))]
+    [after : i64
+      (opt-inline-checked-plan-cost pools type-segment-bases checked)]
     ;; INL-22: an sret callee's boundary is the call and the result copy.
     [boundary : i64
       (*
@@ -111027,8 +111125,13 @@
       (or
         (not opt-inline-checked-target-over-ceiling?)
         (>= (* 2 spec-gain) boundary))]
+    [conditional-literal-ok? : bool
+      (or
+        (not opt-inline-checked-target-conditional-literal?)
+        (and (> spec-gain 0) spec-price.conditional-ok))]
     [keep? : bool
       (and
+        conditional-literal-ok?
         one-block-ok?
         fold-carries?
         (or

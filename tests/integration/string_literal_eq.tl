@@ -94,6 +94,42 @@
     (check is-17 "abcdefghxjklmnopq" false)
     (check is-17 "abcdefghijklmnop" false)))
 
+(define (verb-id [s : (& s str)] [permit : bool]) : i64
+  (if (not permit)
+    0
+    (cond
+      [(string.eq s "open") 1]
+      [(string.eq s "save") 2]
+      [(string.eq s "stop") 3]
+      [(string.eq s "exit") 4]
+      [(string.eq s "å🙂") 5]
+      [else 0])))
+
+(define (check-verb [text : String] [permit : bool] [expected : i64]) : i64
+  (let
+    [value : String (runtime text)]
+    (if (= (verb-id (& value) permit) expected)
+      1
+      0)))
+
+(define (conditional-score) : i64
+  (+
+    (check-verb "open" true 1)
+    (check-verb "save" true 2)
+    (check-verb "stop" true 3)
+    (check-verb "exit" true 4)
+    (check-verb "å🙂" true 5)
+    (check-verb "opeN" true 0)
+    (check-verb "xpen" true 0)
+    (check-verb "" true 0)
+    (check-verb "op" true 0)
+    (check-verb "openn" true 0)
+    (check-verb "å🙃" true 0)
+    (check-verb "a🙂" true 0)
+    (check-verb "open" false 0)
+    (check-verb "å🙂" false 0)))
+
 (define (main) : i64
-  ;; 38 checks; every one passing scores 38, offset to the corpus's 42.
-  (+ (score) 4))
+  (if (and (= (score) 38) (= (conditional-score) 14))
+    42
+    1))

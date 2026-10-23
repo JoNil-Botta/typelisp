@@ -114440,7 +114440,8 @@
 
 (define (opt-filter-reachable-globals
   [globals : (& ir.CompilerIrGlobalSeq)]
-  [reachable : (& opt_i64_i64_map.Map)]) : ir.CompilerIrGlobalSeq
+  [reachable : (& opt_i64_i64_map.Map)]
+  [static-arrays-only? : bool]) : ir.CompilerIrGlobalSeq
   (let
     [builder : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity globals.len)]
@@ -114451,7 +114452,11 @@
           [(Global name ty value)
             (when
               (or
-                (opt-runtime-global? (& ty) (& value))
+                (if static-arrays-only?
+                  (match (& value)
+                    [(StaticArray _) false]
+                    [_ true])
+                  (opt-runtime-global? (& ty) (& value)))
                 (opt_i64_i64_map.contains?
                   reachable
                   (ir.compiler-ir-symbol-id name)))
@@ -114557,12 +114562,23 @@
             (set! ok false)))
         ok))))
 
-;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf) for
-;; standalone callers that do not already have a classified start.
+(define (opt-static-array-globals? [globals : (& ir.CompilerIrGlobalSeq)]) : bool
+  (for [index (iterator.range 0 globals.len)]
+    (match (ir.compiler-ir-global-seq-borrow globals index)
+      [(Global _ _ value)
+        (match value
+          [(StaticArray _) (return true)]
+          [_ unit])]))
+  false)
+
 (define (opt-prune-unreachable-program
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]
-  [externs : (& ir.CompilerIrExternSeq)]) : OptPrunedProgram
+  [externs : (& ir.CompilerIrExternSeq)]
+  [static-arrays-only? : bool]) : OptPrunedProgram
+  (when
+    (and static-arrays-only? (not (opt-static-array-globals? (& globals))))
+    (return (Program globals functions)))
   (if (opt-function-seq-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
@@ -114573,29 +114589,33 @@
         (opt_i64_i64_map.with-capacity
           (opt-function-index-capacity
             (ir.compiler-ir-global-seq-count globals)))]
+      [initial : OptReachState
+        (State reachable (opt-reach-worklist-new) reachable-globals 0)]
+      [roots : OptReachState
+        (if static-arrays-only?
+          initial
+          (opt-reach-add-function-leaf index (& initial) "main"))]
+      ;; Opt0 emits every function and retains every non-static global. Scan
+      ;; all those bodies and initializer values so none can name omitted data.
+      (when
+        static-arrays-only?
+        (for [slot (iterator.range 0 (opt-function-index-count (& index)))]
+          (set! roots (opt-reach-add-function-slot roots slot))))
       (match (opt-reach-process
         (& index)
         (opt-reach-globals
           index
-          (&
-            (opt-reach-add-provided-externs
-              index
-              externs
-              (&
-                (opt-reach-add-function-leaf
-                  index
-                  (&
-                    (State
-                      reachable
-                      (opt-reach-worklist-new)
-                      reachable-globals
-                      0))
-                  "main"))))
+          (& (opt-reach-add-provided-externs index externs (& roots)))
           (& globals)))
         [(State reachable-out _ reachable-globals-out _)
           (Program
-            (opt-filter-reachable-globals (& globals) (& reachable-globals-out))
-            (opt-filter-reachable-functions index (& functions) reachable-out))]))
+            (opt-filter-reachable-globals
+              (& globals)
+              (& reachable-globals-out)
+              static-arrays-only?)
+            (if static-arrays-only?
+              functions
+              (opt-filter-reachable-functions index (& functions) reachable-out)))]))
     (Program globals functions)))
 
 (define (opt-direct-call-self-recursive-instr?
@@ -124103,9 +124123,17 @@
   (match (owned_view.compiler-owned-reference-shared-view program)
     [(Program globals functions externs)
       (if (= level 0)
-        (Program
-          (compiler-opt-debug-finish-program program)
-          (opt-remap-spans-program (& spans) program))
+        (let
+          [pruned : OptPrunedProgram
+            (opt-prune-unreachable-program globals functions (& externs) true)]
+          [retained : ir.CompilerIrProgram
+            (Program
+              (opt-pruned-program-globals pruned)
+              (opt-pruned-program-functions pruned)
+              externs)]
+          (Program
+            (compiler-opt-debug-finish-program (& retained))
+            (opt-remap-spans-program (& spans) (& retained))))
         (begin
           (cfg compile-profile (compiler-opt-profile-start profile-state))
           ;; Everything the inline stage builds -- the devirtualized function
@@ -124209,7 +124237,8 @@
                       (opt-prune-unreachable-program
                         (compiler-opt-global-shared-view globals)
                         reachable-functions
-                        (& externs))]
+                        (& externs)
+                        false)]
                     [pruned-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals pruned)]
                     [pruned-functions : ir.CompilerIrFunctionSeq
@@ -124310,7 +124339,8 @@
                           (opt-prune-unreachable-program
                             globals
                             optimized-functions
-                            (& externs))]
+                            (& externs)
+                            false)]
                         [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionSeq

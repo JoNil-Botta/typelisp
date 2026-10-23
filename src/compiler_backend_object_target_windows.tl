@@ -36,12 +36,12 @@
 (define (compiler-backend-object-setup-after-boot1-bytes) : String
   (compiler-backend-object-registered-bytes
     (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectSetupAfterBoot1Bytes)
-    "4883c4204989c54831c94c39e17d0d8a040b4188440d0048ffc1ebee43c64425000048c7c1080800004883ec20"))
+    "4883c4204989c54831c94c39e17d0d8a040b4188440d0048ffc1ebee43c64425000048c7c1000004004883ec20"))
 
 (define (compiler-backend-object-setup-after-boot2-pre-store-bytes) : String
   (compiler-backend-object-registered-bytes
     (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectSetupAfterBoot2Bytes)
-    "4883c4204989c64d31ff4c89eb8a033c0074513c20750548ffc3ebf14981ffff0000007d3f4b891cfe49ffc74531c98a033c00742f3c2275154183f1014889d98a4101880148ffc13c0075f4ebe13c20750d4585c97508c6030048ffc3ebae48ffc3ebcb4bc704fe00000000"))
+    "4883c4204989c64d31ff4c89eb8a0384c00f84b40000003c2074043c09750548ffc3ebe94f892cfe49ffc74531c98a0384c00f848e0000003c2074043c0975124585c9750d48ffc341c645000049ffc5ebbb4983ff01744f3c5c75374d31e449ffc448ffc3803b5c74f54d89e2803b22750349d1ea4d85d2740d41c645005c49ffc549ffcaebee8a033c2275a141f6c40175243c2275204585c9740f807b0122750948ffc3eb103c22750c4183f10148ffc3e977ffffff4188450049ffc548ffc3e968ffffff41c64500004bc704fe00000000"))
 
 (define (compiler-backend-object-setup-epilogue-bytes) : String
   (compiler-backend-object-registered-bytes

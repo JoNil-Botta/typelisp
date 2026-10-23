@@ -1681,7 +1681,10 @@ fields and variants agree with extraction/HTML identities, exact site matching
 rejects stale/ambiguous inputs, and site owners survive request and document
 retirement without retaining response borrows. Same-named fields from two
 independently checked modules retain distinct package/page targets in either
-mapping order after both source indexes retire. Generated-module smoke compares
+mapping order after both source indexes retire. Cached definition lookup agrees
+with the linear semantic lookup and declines retired owners; link endpoint
+checks cover UTF-8/UTF-16, astral characters, CRLF and backward offsets.
+Generated-module smoke compares
 every generated declaration/member anchor to a separately checked semantic
 index. The docs-site postprocessor expands real source examples through the
 same frontend and renderer rather than carrying a copied collection API.

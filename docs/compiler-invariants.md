@@ -803,6 +803,9 @@ reset and reinstall after the input was consumed and both outputs written.
 Documentation uses the owned semantic source index through
 `compiler_semantic_documentation`: exact source SHA256 values, logical module
 names and ordered declaration-record ranges survive checker/parser retirement.
+Canonical symbol slots retain their first definition record in the same owner;
+member owners are resolved within their declaration range, while module aliases
+retain source/name disambiguation.
 Expanded `Module` markers determine documentation ownership independently of
 the checked symbol's import/caller scope. Import ranges retain their written
 alias. Checked generated fields/variants retain real registry identities and
@@ -819,7 +822,9 @@ into the request owner before a site can be retired. Target lookup requires a
 unique compiler/source/path/module/anchor match and a current overlay/disk
 digest, cached only within that request. An unavailable source or ambiguous,
 stale or unknown identity cannot authorize a link. Existing source links and
-the disabled protocol retain their previous behavior.
+the disabled protocol retain their previous behavior. A document-link request
+validates its immutable snapshot once; source-ordered ranges reuse the existing
+negotiated-position cache rather than rescanning the document for each link.
 
 Parsed LSP messages pass envelope admission before any stateful dispatch.
 Requests require the exact JSON-RPC version, a string method and a valid ID

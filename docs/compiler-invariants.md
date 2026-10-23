@@ -616,8 +616,11 @@ The verifier rejects malformed extents, references, duplicate operations and
 missing reverse edges. A recurrence witness requires a reachable full-gang
 header and paths that return to it; child control flow participates while
 child traffic retains its own region. Warning policy belongs to #7294.
-Facts borrow their function/job owner. The function's display name is an owned
-snapshot, so rendering never consults another installed symbol table. Retention
+Facts borrow their function/job owner. Emitted and source function identities
+are distinct: inlined regions retain the callee's canonical source site. Both
+display names are owned snapshots, so rendering never consults another
+installed symbol table. Ordinary cold traps carry `NoSite`; full-gang and tail
+regions require a typed `Site`. Retention
 must escape all arrays and strings into the receiving owner. The v1 JSON schema
 uses canonical array order and explicit compiler digest/source identity.
 The module is groundwork with #7236 as its named next production consumer;

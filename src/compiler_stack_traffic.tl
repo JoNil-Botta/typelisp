@@ -33,9 +33,16 @@
   (Tail)
   (Cold))
 
+;; Source identity survives inlining into a different emitted function. The
+;; spelling is snapshotted with the site's owner. Ordinary cold traps need no
+;; fabricated SPMD site; full-gang and tail regions require a real one.
+(defenum CompilerStackTrafficSource
+  (NoSite)
+  (Site ir.CompilerSpmdSiteId String))
+
 (defstruct CompilerStackTrafficRegion
   (kind CompilerStackTrafficRegionKind)
-  (site ir.CompilerSpmdSiteId)
+  (source CompilerStackTrafficSource)
   ;; Preorder parent, or -1. Nested regions participate in the parent's CFG
   ;; paths but keep their own traffic classification and source identity.
   (parent i64)
@@ -239,18 +246,23 @@
         (when
           (!= (array-ref facts.block-regions region.header) index)
           (return (Err "stack traffic: region does not own its header")))
-        (when
-          (!= region.site.function.value facts.function.value)
-          (return (Err "stack traffic: source function mismatch")))
-        (match region.kind
-          [(Ordinary)
+        (match region.source
+          [(NoSite)
+            (match region.kind
+              [(or (FullGang) (Tail))
+                (return (Err "stack traffic: missing SPMD site"))]
+              [(or (Ordinary) (Cold)) unit])]
+          [(Site site function-name)
+            (match region.kind
+              [(Ordinary)
+                (return (Err "stack traffic: ordinary region has a SPMD site"))]
+              [(or (FullGang) (Tail) (Cold)) unit])
             (when
-              (!= region.site.ordinal -1)
-              (return (Err "stack traffic: ordinary region has a SPMD site")))]
-          [(or (FullGang) (Tail) (Cold))
-            (when
-              (< region.site.ordinal 0)
-              (return (Err "stack traffic: missing SPMD site")))])
+              (or
+                (< site.ordinal 0)
+                (< site.function.value 0)
+                (= (string.string-length (& function-name)) 0))
+              (return (Err "stack traffic: invalid SPMD site")))])
         (when
           (compiler-stack-traffic-full-gang? (& region.kind))
           (match facts.backend
@@ -462,7 +474,14 @@
           (compiler-stack-traffic-json-text
             (compiler-stack-traffic-region-name (& region.kind))))
         (text_buf.append! out ",\"site\":")
-        (text_buf.append-int! out region.site.ordinal)
+        (match region.source
+          [(NoSite) (text_buf.append! out "null,\"source_function\":null")]
+          [(Site site function-name)
+            (text_buf.append-int! out site.ordinal)
+            (text_buf.append! out ",\"source_function\":")
+            (text_buf.append!
+              out
+              (compiler-stack-traffic-json-text (string.copy (& function-name))))])
         (text_buf.append! out ",\"parent\":")
         (text_buf.append-int! out region.parent)
         (text_buf.append! out ",\"header\":")

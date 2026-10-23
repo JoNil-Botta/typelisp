@@ -73,11 +73,9 @@
             (array-ref regions index)
             (traffic.CompilerStackTrafficRegion
               (array-ref kinds index)
-              (ir.CompilerSpmdSiteId
-                function
-                (if (or (= index 0) (= index 4))
-                  -1
-                  0))
+              (if (or (= index 0) (= index 4))
+                (NoSite)
+                (Site (ir.CompilerSpmdSiteId function 0) "traffic"))
               -1
               (array-ref headers index)))
           (set!
@@ -162,7 +160,7 @@
     (stack-traffic-cycle-assert (& facts) 1 0 0 0)))
 
 (define (stack-traffic-invalid-test) : unit
-  (for [mutation (iterator.range 0 20)]
+  (for [mutation (iterator.range 0 23)]
     (let
       [facts : traffic.CompilerStackTraffic (stack-traffic-fixture false)]
       (cond
@@ -174,8 +172,11 @@
         [(= mutation 5) (set! (array-ref facts.block-regions 0) 6)]
         [(= mutation 6) (set! (array-ref facts.regions 1).header 9)]
         [(= mutation 7) (set! (array-ref facts.regions 1).header 0)]
-        [(= mutation 8) (set! (array-ref facts.regions 1).site.ordinal -1)]
-        [(= mutation 9) (set! (array-ref facts.regions 0).site.ordinal 0)]
+        [(= mutation 8) (set! (array-ref facts.regions 1).source (NoSite))]
+        [(= mutation 9)
+          (set!
+            (array-ref facts.regions 0).source
+            (Site (ir.CompilerSpmdSiteId facts.function 0) "traffic"))]
         [(= mutation 10)
           (set! (array-ref (array-ref facts.graph.successors 0).items 0) 9)]
         [(= mutation 11)
@@ -183,7 +184,11 @@
         [(= mutation 12) (set! (array-ref facts.regions 1).parent 1)]
         [(= mutation 13) (set! (array-ref facts.regions 1).parent -2)]
         [(= mutation 14)
-          (set! (array-ref facts.regions 1).site.function.value -1)]
+          (set!
+            (array-ref facts.regions 1).source
+            (Site
+              (ir.CompilerSpmdSiteId (ir.CompilerIrSymbolId -1) 0)
+              "traffic"))]
         [(= mutation 15) (set! facts.function-name "")]
         [(= mutation 16) (set! facts.block-regions (__tl_make-array i64 0))]
         [(= mutation 17)
@@ -191,7 +196,19 @@
             facts.graph.successors
             (__tl_make-array live.CompilerLiveIndexVec 0))]
         [(= mutation 18) (set! (array-ref facts.events 0).access-index -1)]
-        [else (set! facts.backend (Scalar))])
+        [(= mutation 19) (set! facts.backend (Scalar))]
+        [(= mutation 20)
+          (set!
+            (array-ref facts.regions 1).source
+            (Site (ir.CompilerSpmdSiteId facts.function 0) ""))]
+        [(= mutation 21)
+          (set!
+            (array-ref facts.regions 1).source
+            (Site (ir.CompilerSpmdSiteId facts.function -1) "traffic"))]
+        [else
+          (set!
+            (array-ref facts.regions 1).source
+            (Site (ir.CompilerSpmdSiteId facts.function -2) "traffic"))])
       (match (traffic.compiler-stack-traffic-check (& facts))
         [(Err _) unit]
         [(Ok) (io.panic "stack traffic: malformed fact accepted")])
@@ -252,7 +269,7 @@
     (set! facts.backend (Scalar))
     (for [region (iterator.range 0 6)]
       (set! (array-ref facts.regions region).kind (Ordinary))
-      (set! (array-ref facts.regions region).site.ordinal -1))
+      (set! (array-ref facts.regions region).source (NoSite)))
     (match (json.parse (stack-traffic-render (& facts)))
       [(json.OkJson _) unit]
       [(json.ErrJson message) (io.panic message)])))
@@ -288,7 +305,7 @@
       (array-ref regions 0)
       (traffic.CompilerStackTrafficRegion
         (FullGang)
-        (ir.CompilerSpmdSiteId facts.function 0)
+        (Site (ir.CompilerSpmdSiteId facts.function 0) "traffic")
         -1
         0))
     (set!
@@ -307,7 +324,7 @@
         (test.assert-true
           (string.eq
             (& text)
-            "{\"schema\":\"typelisp-stack-traffic-v1\",\"compiler_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"source\":\"fixture\",\"function\":\"traffic\",\"backend\":\"avx2\",\"regions\":[{\"kind\":\"full-gang\",\"site\":0,\"parent\":-1,\"header\":0}],\"blocks\":[{\"region\":0,\"successors\":[0]}],\"homes\":[{\"owner\":\"allocator\",\"bank\":\"vector\",\"bytes\":32}],\"events\":[{\"operation\":0,\"access_index\":0,\"block\":0,\"home\":0,\"access\":\"read-write\"}]}\n")
+            "{\"schema\":\"typelisp-stack-traffic-v1\",\"compiler_sha256\":\"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"source\":\"fixture\",\"function\":\"traffic\",\"backend\":\"avx2\",\"regions\":[{\"kind\":\"full-gang\",\"site\":0,\"source_function\":\"traffic\",\"parent\":-1,\"header\":0}],\"blocks\":[{\"region\":0,\"successors\":[0]}],\"homes\":[{\"owner\":\"allocator\",\"bank\":\"vector\",\"bytes\":32}],\"events\":[{\"operation\":0,\"access_index\":0,\"block\":0,\"home\":0,\"access\":\"read-write\"}]}\n")
           "versioned census golden")]
       [(Err message) (io.panic message)])
     ;; An empty function has no headers, homes or events, and no fabricated
@@ -334,7 +351,9 @@
     ;; A nested region may carry a path back to the parent header. Its own
     ;; writes stay classified at that child and do not enter parent counts.
     (set! (array-ref facts.regions 4).kind (FullGang))
-    (set! (array-ref facts.regions 4).site.ordinal 1)
+    (set!
+      (array-ref facts.regions 4).source
+      (Site (ir.CompilerSpmdSiteId facts.function 1) "traffic"))
     (set! (array-ref facts.regions 4).header 2)
     (set! (array-ref facts.regions 4).parent 1)
     (set! (array-ref facts.block-regions 2) 4)
@@ -350,6 +369,35 @@
     (match (traffic.compiler-stack-traffic-check (& facts))
       [(Ok) unit]
       [(Err message) (io.panic message)])))
+
+(define (stack-traffic-inlined-source-test) : unit
+  (let
+    [facts : traffic.CompilerStackTraffic (stack-traffic-fixture false)]
+    [callee : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id (ir.compiler-ir-test-symbol "callee"))]
+    (set!
+      (array-ref facts.regions 1).source
+      (Site (ir.CompilerSpmdSiteId callee 0) "callee"))
+    (stack-traffic-cycle-assert (& facts) 1 0 1 1)
+    (let
+      [text : String (stack-traffic-render (& facts))]
+      (test.assert-true
+        (string.contains (& text) "\"function\":\"traffic\"")
+        "emitted function retained")
+      (test.assert-true
+        (string.contains (& text) "\"source_function\":\"callee\"")
+        "inlined source function retained")
+      (match (json.parse (& text))
+        [(json.OkJson _) unit]
+        [(json.ErrJson message) (io.panic message)]))
+    (set! (array-ref facts.regions 3).source (NoSite))
+    (let
+      [text : String (stack-traffic-render (& facts))]
+      (test.assert-true
+        (string.contains
+          (& text)
+          "\"kind\":\"cold\",\"site\":null,\"source_function\":null")
+        "ordinary trap has no fabricated SPMD source"))))
 
 ;; Exhaust every directed graph on three vertices without self edges. Floyd's
 ;; transitive closure is an independent oracle for the worklist proof. Self
@@ -427,7 +475,7 @@
                   (array-ref regions 0)
                   (traffic.CompilerStackTrafficRegion
                     (FullGang)
-                    (ir.CompilerSpmdSiteId function 0)
+                    (Site (ir.CompilerSpmdSiteId function 0) "graph")
                     -1
                     0))
                 (set!
@@ -450,6 +498,7 @@
   (stack-traffic-invalid-test)
   (stack-traffic-render-test)
   (stack-traffic-boundaries-test)
+  (stack-traffic-inlined-source-test)
   (stack-traffic-graph-oracle-test))
 
 (test stack-traffic-facts-and-cycles (compiler-stack-traffic-self-test))

@@ -803,7 +803,8 @@ SPMD differential and shape gates retain end-to-end lowering coverage.
 
 `compiler_stack_traffic_tests.tl` checks the #9242 typed boundary for #7236:
 all closed owner/bank/access/region kinds, unique emitted-operation keys,
-source-function and region-parent consistency, logical homes, malformed graph
+source identities across inlining, ordinary traps without fabricated sites,
+region-parent consistency, logical homes, malformed graph
 indices/reverse edges, nested regions, disconnected and acyclic control flow,
 self loops and an independent transitive-closure oracle over all 64 three-node
 graphs without self edges. Keep the v1 JSON golden, escaping and exact/spare IR

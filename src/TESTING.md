@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`compiler-lower-unit-field-reads` requires canonical unit results without
+addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
+`unit_struct_fields` exercises empty, one/two-word and memory-class structs,
+nested empty fields, checked/raw references, destructuring, receiver effects and
+unit equality/inequality effects and early exits at opt0/1/2. Keep the separate
+unsupported tuple/array ABI checks.
+
 `spmd-helper-stack-parent-snapshots` pins empty/single/dense pushes, growth and
 restoration without leaving completed siblings active. The existing traversal
 isolation test preserves job/scratch ownership. `spmd_inline_helper_composition.tl`

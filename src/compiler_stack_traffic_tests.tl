@@ -212,7 +212,10 @@
       (match (traffic.compiler-stack-traffic-check (& facts))
         [(Err _) unit]
         [(Ok) (io.panic "stack traffic: malformed fact accepted")])
-      (match (traffic.compiler-stack-traffic-render (& facts) "tool" "source")
+      (match (traffic.compiler-stack-traffic-render
+        (& facts)
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        "source")
         [(Err _) unit]
         [(Ok _) (io.panic "stack traffic: rendered malformed facts")])
       (match (traffic.compiler-stack-traffic-cycles (& facts) 1)
@@ -254,9 +257,22 @@
     (match (traffic.compiler-stack-traffic-owner "new-stack-kind")
       [(Err _) unit]
       [(Ok _) (io.panic "stack traffic: unknown owner accepted")])
-    (match (traffic.compiler-stack-traffic-render (& facts) "" "source")
+    (for [digest
+      (array
+        ""
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde"
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0"
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeG"
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg")]
+      (match (traffic.compiler-stack-traffic-render (& facts) digest "source")
+        [(Err _) unit]
+        [(Ok _) (io.panic "stack traffic: invalid compiler digest accepted")]))
+    (match (traffic.compiler-stack-traffic-render
+      (& facts)
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      "")
       [(Err _) unit]
-      [(Ok _) (io.panic "stack traffic: anonymous producer accepted")])
+      [(Ok _) (io.panic "stack traffic: missing source identity accepted")])
     (match (traffic.compiler-stack-traffic-cycles (& facts) 6)
       [(Err _) unit]
       [(Ok _) (io.panic "stack traffic: invalid query accepted")]))

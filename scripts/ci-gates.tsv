@@ -125,3 +125,4 @@ windows-native-link-build-run	windows	windows native link build/run	bootstrap-fi
 win64-seh-unwind-verifier	windows	Win64 SEH unwind verifier	bootstrap-fixpoint	stage2	2304	-	scripts/verify-win64-seh-unwind.sh
 stage2-elf-object-reader-oracle	linux	stage2 ELF object reader independent oracle	bootstrap-fixpoint	stage2	1024	-	scripts/verify-elf-object-reader-oracle.sh
 stage2-elf-dso-reader-oracle	linux	stage2 ELF shared-object reader independent oracle	bootstrap-fixpoint	stage2	1024	-	scripts/verify-elf-dso-reader-oracle.sh
+stage2-backend-source-import-context	all	stage2 backend source import context	bootstrap-fixpoint	stage2	3072	-	scripts/verify-backend-source-import-context.sh

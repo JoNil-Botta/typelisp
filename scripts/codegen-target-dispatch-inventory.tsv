@@ -11,7 +11,6 @@ src/compiler_backend.tl	compiler-backend-raw-syscall-diagnostic	policy	abi	linux
 src/compiler_backend.tl	compiler-backend-unsupported-object-abi-category	policy	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|linux-x86_64|windows-x86_64	8	Fixed fallback category names per target and ABI context, literals because callers keep them past their scratch.
 src/compiler_backend.tl	compiler-backend-state-new-with-metrics	policy	backend-mode	CompilerBackendTarget[.]Linux	1	A fresh backend state holds the Linux policy until a prepared emission installs its own.
 src/compiler_backend.tl	compiler-backend-target-abi	policy	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Maps a target to its ABI tables.
-src/compiler_backend.tl	compiler-backend-target-cfgs	policy	target-cfg	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|target-linux|target-windows	4	Target cfg names for conditional compilation.
 src/compiler_backend.tl	compiler-backend-target-linux?	policy	backend-mode	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-linux[?]	3	Target predicate for policy construction and leaf selection.
 src/compiler_backend.tl	compiler-backend-target-policy-new	policy	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	The one place a target maps to its ABI, unwind, object-format and runtime policy.
 src/compiler_backend.tl	compiler-backend-target-triple	policy	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|linux-x86_64|windows-x86_64	4	Spells a target name for diagnostics and fallback categories.
@@ -84,3 +83,7 @@ src/compiler_lower_tests.tl	compiler-lower-static-array-global-shape-ok?	test	te
 src/compiler_lower_tests.tl	compiler-lower-tuple-inline-storage-ok?	test	test-only	CompilerLowerMode[.](Linux|Windows)Scalar	2	Inline lowerer tuple inline-storage shape test checks target-independent lowering on Linux and Windows scalar modes.
 src/compiler_lower_tests.tl	compiler-lower-windows-error-ok?	test	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
 src/compiler_x64_executable_template_identity.tl	compiler-x64-template-target-name	policy	entry	linux-x86_64|windows-x86_64	2	Names the template catalog's targets.
+src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs	policy	target-cfg	target-linux	1	Shared target cfg preset used by CLI and backend source requests.
+src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs	policy	target-cfg	target-windows	1	Shared target cfg preset used by CLI and backend source requests.
+src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs-with-intern-state	policy	target-cfg	target-linux	1	Shared target cfg preset used by CLI and backend source requests.
+src/compiler_target_cfg_core.tl	compiler-target-enable-windows-cfgs-with-intern-state	policy	target-cfg	target-windows	1	Shared target cfg preset used by CLI and backend source requests.

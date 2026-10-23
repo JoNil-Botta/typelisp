@@ -6937,10 +6937,10 @@
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)
       (and
-        (> (lower-test-count functions ".::sum" (Branch)) 1)
-        (> (lower-test-count functions ".::sum" (Return)) 2)
-        (> (lower-test-count functions ".::chain" (Return)) 1)
-        (> (lower-test-count functions ".::sum" (Load)) 3))]
+        (> (lower-test-count functions "<source>::sum" (Branch)) 1)
+        (> (lower-test-count functions "<source>::sum" (Return)) 2)
+        (> (lower-test-count functions "<source>::chain" (Return)) 1)
+        (> (lower-test-count functions "<source>::sum" (Load)) 3))]
     [_ false]))
 
 (define (compiler-lower-option-try-shape-ok?) : bool
@@ -6972,8 +6972,8 @@
     (lower.lower-compiler-source (compiler-lower-resource-with-source)))
     [(Some functions)
       (and
-        (= (lower-test-functions-call-count functions ".::close-a") 3)
-        (= (lower-test-functions-call-count functions ".::close-b") 2)
+        (= (lower-test-functions-call-count functions "<source>::close-a") 3)
+        (= (lower-test-functions-call-count functions "<source>::close-b") 2)
         (> (lower-test-count functions "main" (Return)) 2)
         (> (lower-test-count functions "main" (Branch)) 2))]
     [_ false]))
@@ -6983,10 +6983,12 @@
     (lower.lower-compiler-source (compiler-lower-resource-with-nested-source)))
     [(Some functions)
       (and
-        (= (lower-test-functions-call-count functions ".::close-a") 1)
-        (= (lower-test-functions-call-count functions ".::close-b") 1))]
+        (= (lower-test-functions-call-count functions "<source>::close-a") 1)
+        (= (lower-test-functions-call-count functions "<source>::close-b") 1))]
     [_ false]))
 
+;; Imported cleanup helpers retain the caller owner across the standalone
+;; intern/builtin reset; their cleanup edges and early returns stay exact.
 (define (compiler-lower-cleanup-struct-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-cleanup-struct-source)))
@@ -6995,14 +6997,14 @@
         (=
           (lower-test-function-direct-call-count
             functions
-            ".::cleanup-file-handle"
-            ".::close-fd")
+            "<source>::cleanup-file-handle"
+            "<source>::close-fd")
           1)
         (>
           (lower-test-function-direct-call-count
             functions
             "main"
-            ".::cleanup-file-handle")
+            "<source>::cleanup-file-handle")
           1)
         (> (lower-test-count functions "main" (Return)) 1))]
     [_ false]))

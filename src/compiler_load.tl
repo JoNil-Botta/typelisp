@@ -2759,7 +2759,7 @@
   (array-ref state.embedded-stdlib-provenance.noted 0))
 
 (define (compiler-load-session-state-embedded-provenance-reset!
-  [state : CompilerLoadSessionState]) : unit
+  [state : (& state CompilerLoadSessionState)]) : unit
   (set!
     (array-ref state.embedded-stdlib-provenance.module-ids 0)
     (sym_i64_env.sym-i64-empty))
@@ -3129,8 +3129,7 @@
   [state : CompilerLoadSessionState]
   [pools : ast.AstNodePoolContext]) : unit
   (parser.compiler-parse-decl-origin-cache-reset!)
-  (compiler-load-session-state-surface-summaries-reset!
-    (owned_view.compiler-owned-shared-view state))
+  (compiler-load-session-state-surface-summaries-reset! (& state))
   (compiler-load-session-state-lazy-qualified-observer-reset! state)
   (set! (array-ref state.surface-summary-load-depth 0) 0)
   (if (compiler-load-session-state-cache-enabled? state)
@@ -3148,7 +3147,7 @@
 
 (define (compiler-load-session-reset-interns!) : unit
   (compiler-load-session-state-embedded-provenance-reset!
-    (compiler-load-active-session-state-shared-view))
+    (& (compiler-load-active-session-state-shared-view)))
   (compiler-load-surface-summaries-reset!)
   (compiler-load-lazy-qualified-observer-reset!)
   (set!
@@ -3167,10 +3166,8 @@
 (define (compiler-load-session-state-reset-interns-with-state!
   [load-state : CompilerLoadSessionState]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : unit
-  (compiler-load-session-state-embedded-provenance-reset!
-    (owned_view.compiler-owned-shared-view load-state))
-  (compiler-load-session-state-surface-summaries-reset!
-    (owned_view.compiler-owned-shared-view load-state))
+  (compiler-load-session-state-embedded-provenance-reset! (& load-state))
+  (compiler-load-session-state-surface-summaries-reset! (& load-state))
   (compiler-load-session-state-lazy-qualified-observer-reset! load-state)
   (set! (array-ref load-state.surface-summary-load-depth 0) 0)
   (if (compiler-load-session-state-cache-enabled? load-state)
@@ -5185,6 +5182,40 @@
       cfgs
       pools)))
 
+;; The executable prefix is one ordered runtime/macro load. Driver and
+;; in-memory source jobs must use the same paths, cfgs and module columns.
+(define (compiler-load-executable-prelude
+  [load-state : CompilerLoadSessionState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
+    (owned_view.compiler-owned-shared-view load-state)
+    (& (compiler-load-runtime-prelude-path-shared-view))
+    (sym_i64_env.sym-i64-empty)
+    (& stdlib-roots)
+    cfgs
+    pools)
+    [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
+      (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+        load-state
+        runtime-seen
+        (& stdlib-roots)
+        cfgs
+        pools)
+        [(Ok macro-decls macro-paths macro-modules macro-seen)
+          (Ok
+            (compiler-load-decl-list-append (& runtime-decls) (& macro-decls))
+            (compiler-load-decl-path-list-append
+              (& runtime-paths)
+              (& macro-paths))
+            (compiler-load-decl-module-list-append
+              (& runtime-modules)
+              (& macro-modules))
+            macro-seen)]
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
+
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
     [(Ok decls _ _ seen) (Ok decls seen)]
@@ -6112,7 +6143,7 @@
     owner-arena))
 
 (define (compiler-load-session-state-surface-summaries-reset!
-  [state : CompilerLoadSessionState]) : unit
+  [state : (& state CompilerLoadSessionState)]) : unit
   (compiler-load-surface-summaries-epoch-bump!)
   (let
     [payload-owner : i64
@@ -6138,15 +6169,14 @@
 
 (define (compiler-load-surface-summaries-reset!) : unit
   (compiler-load-session-state-surface-summaries-reset!
-    (compiler-load-active-session-state-shared-view)))
+    (& (compiler-load-active-session-state-shared-view))))
 
 (define (compiler-load-session-state-surface-summary-load-enter!
   [state : CompilerLoadSessionState]) : unit
   (let
     [depth : i64 (array-ref state.surface-summary-load-depth 0)]
     (if (= depth 0)
-      (compiler-load-session-state-surface-summaries-reset!
-        (owned_view.compiler-owned-shared-view state))
+      (compiler-load-session-state-surface-summaries-reset! (& state))
       unit)
     (set! (array-ref state.surface-summary-load-depth 0) (+ depth 1))))
 
@@ -9941,7 +9971,21 @@
                                         (& after-modules))
                                       rest-seen))))]
                             [(Err diag) (Err diag)]))]
-                      [(Err diag) (Err diag)]))]
+                      [(Err diag)
+                        (let
+                          [origin : cdiag.CompilerDiagnostic
+                            (cdiag.compiler-diagnostic-from-ast-span
+                              importer-path
+                              (__tl-box-place span)
+                              "")]
+                          (Err
+                            (box
+                              (cdiag.compiler-diagnostic-with-secondary
+                                (__tl-box-place diag)
+                                (cdiag.compiler-diagnostic-primary-span
+                                  (& origin))
+                                (cdiag.CompilerDiagnosticSomeString
+                                  "imported here")))))]))]
                 [(Err message)
                   (Err
                     (box

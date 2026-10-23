@@ -1679,6 +1679,9 @@
         102
         103
         104))
+    (compiler_ir_types.compiler-spmd-loop-unroll-list-push
+      (&mut facts.unrolls)
+      (compiler_ir_types.CompilerSpmdLoopUnroll function 102 105 106 107))
     (compiler_ir_types.compiler-source-spans-set-spmd spans facts)))
 
 (define (compiler-ir-smoke-spmd-spans-ok?
@@ -1693,6 +1696,7 @@
       (= facts.decisions.len 1)
       (= facts.frames.len 1)
       (= facts.loops.len 1)
+      (= facts.unrolls.len 1)
       (let
         [item : compiler_ir_types.CompilerSpmdDecision
           (clone (array-ref facts.decisions.slots 0))]
@@ -1700,7 +1704,16 @@
           (clone (array-ref facts.frames.slots 0))]
         [region : compiler_ir_types.CompilerSpmdLoopRegion
           (clone (array-ref facts.loops.slots 0))]
+        [unroll : compiler_ir_types.CompilerSpmdLoopUnroll
+          (clone (array-ref facts.unrolls.slots 0))]
         (and
+          (compiler_ir_types.compiler-ir-symbol-id-eq?
+            unroll.function
+            item.site.function)
+          (= unroll.body 102)
+          (= unroll.guard 105)
+          (= unroll.unrolled 106)
+          (= unroll.exit 107)
           (compiler_ir_types.compiler-ir-symbol-id-eq?
             region.function
             item.site.function)

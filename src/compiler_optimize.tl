@@ -58228,6 +58228,65 @@
     (opt-global-mod-ref-none)
     (opt_i64_i64_map.with-capacity 1)))
 
+;; A synchronous, job-owned sink into the enclosing optimizer arena. Function
+;; scratch and priced candidates cannot own this cell; only accepted live
+;; rewrites append, and every allocation uses the recorded surviving arena.
+(defstruct OptSpmdLoopTrace
+  (storage u64)
+  (arena i64))
+
+(define (opt-spmd-loop-trace-disabled) : OptSpmdLoopTrace
+  (OptSpmdLoopTrace 0 0))
+
+(define (opt-spmd-loop-trace-new [facts : (& facts ir.CompilerSpmdDecisions)]) : OptSpmdLoopTrace
+  (if (and (= facts.loops.len 0) (= facts.unrolls.len 0))
+    (opt-spmd-loop-trace-disabled)
+    (let
+      [cell : (__tl_dyn-array ir.CompilerSpmdLoopUnrollList)
+        (__tl_make-array ir.CompilerSpmdLoopUnrollList 1)]
+      (set!
+        (array-ref cell 0)
+        (ir.compiler-spmd-loop-unroll-list-escape (& facts.unrolls)))
+      (OptSpmdLoopTrace
+        (unsafe
+          (ptr->int (__tl_array-data cell)))
+        (arena.tl_arena_current)))))
+
+(define (opt-spmd-loop-trace-output [trace : OptSpmdLoopTrace]) : ir.CompilerSpmdLoopUnrollList
+  (if (= trace.storage 0)
+    (ir.compiler-spmd-loop-unroll-list-new)
+    (unsafe
+      (ptr-read (int->ptr trace.storage : (Ptr ir.CompilerSpmdLoopUnrollList))))))
+
+(define (opt-spmd-loop-trace-note!
+  [trace : OptSpmdLoopTrace]
+  [function : i64]
+  [labels : (& OptMaybeSimdUnroll)]) : unit
+  (unless
+    (= trace.storage 0)
+    (match labels
+      [(No) unit]
+      [(Some copied)
+        (in-arena
+          (arena.Arena trace.arena)
+          (let
+            [rows : ir.CompilerSpmdLoopUnrollList
+              (opt-spmd-loop-trace-output trace)]
+            (ir.compiler-spmd-loop-unroll-list-push
+              (&mut rows)
+              (ir.CompilerSpmdLoopUnroll
+                (ir.compiler-ir-symbol-typed-id function)
+                copied.body
+                copied.guard
+                copied.unrolled
+                copied.exit))
+            (unsafe
+              (ptr-write!
+                (int->ptr
+                  trace.storage
+                  : (MutPtr ir.CompilerSpmdLoopUnrollList))
+                rows))))])))
+
 (defstruct OptProgramSummaries
   ;; Set only for the inliner's checked tier, which runs the frozen priced
   ;; pipeline instead of the live one (see opt-live-only).
@@ -58235,6 +58294,7 @@
   ;; Compile-profile ownership follows the already per-program summary bundle.
   ;; The disabled state is a one-word sentinel and allocates no summary storage.
   (profile-state profile_state.CompilerProfileState)
+  (spmd-loop-trace OptSpmdLoopTrace)
   ;; Direct user calls proven not to perform memory writes. LICM consumes this
   ;; to keep descriptor header fields live across read-only helper calls without
   ;; treating arbitrary calls as safe.
@@ -58275,6 +58335,7 @@
   (OptProgramSummaries
     priced?
     (profile_state.compiler-profile-state-new)
+    (opt-spmd-loop-trace-disabled)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
     (opt_i64_i64_map.with-capacity 8)
@@ -60413,6 +60474,28 @@
 
 (defenum OptUnrollResult
   (Result ir.CompilerIrBlockList i64 bool))
+
+(defstruct OptSimdUnrollLabels
+  (body i64)
+  (guard i64)
+  (unrolled i64)
+  (exit i64))
+
+(defenum OptMaybeSimdUnroll
+  (No)
+  (Some OptSimdUnrollLabels))
+
+(defenum OptSimdUnrollBlocks
+  (Result ir.CompilerIrBlockList i64 OptMaybeSimdUnroll))
+
+(defenum OptSimdUnrollFunction
+  (Result ir.CompilerIrFunction OptCfgContext OptMaybeSimdUnroll))
+
+(defstruct OptUnrollRequest
+  (type-segment-bases i64)
+  (context OptCfgContext)
+  (verified? bool)
+  (spmd-loop-trace OptSpmdLoopTrace))
 
 ;; The cascade's second group, or `No` when the class factor is already the
 ;; smallest the ladder offers. Carries the two blocks it emits, their labels,
@@ -67862,7 +67945,7 @@
   [blocks : (& ir.CompilerIrBlockList)]
   [block : (& ir.CompilerIrBlock)]
   [shape : OptUnrollSimdShape]
-  [frame : i64]) : OptUnrollResult
+  [frame : i64]) : OptSimdUnrollBlocks
   (match block
     [(Block label instrs)
       (let
@@ -68056,7 +68139,8 @@
             (owned_view.compiler-owned-reference-shared-view block)
             guard-label)
           (array-ref cell 0)
-          true))]))
+          (Some
+            (OptSimdUnrollLabels label guard-label unrolled-label exit-label))))]))
 
 ;; Per-invocation application budget shared by the loop passes (the unroller
 ;; and the single-block and multi-block bce_version drivers). A pass's driver
@@ -68150,9 +68234,9 @@
   [remaining : (& remaining (Slice ir.CompilerIrBlock))]
   [entry-label : i64]
   [frame : i64]
-  [require-store? : bool]) : OptUnrollResult
+  [require-store? : bool]) : OptSimdUnrollBlocks
   (match remaining
-    [(slice) (Result blocks frame false)]
+    [(slice) (Result blocks frame (No))]
     [(slice block & rest)
       (match (opt-unroll-simd-block-shape
         type-segment-bases
@@ -68221,7 +68305,7 @@
   [type-segment-bases : i64]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]
-  [require-store? : bool]) : OptFunctionCtxResult
+  [require-store? : bool]) : OptSimdUnrollFunction
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret-ty frame blocks function-abi)
       (match (opt-unroll-simd-blocks-scan
@@ -68231,8 +68315,10 @@
         (opt-cfg-entry-label blocks)
         frame
         require-store?)
-        [(Result next-blocks next-frame changed)
-          (if changed
+        [(Result next-blocks next-frame labels)
+          (if (match labels
+            [(No) false]
+            [(Some _) true])
             (let
               [next : ir.CompilerIrFunction
                 (Function
@@ -68249,49 +68335,58 @@
               ;; contract; the exact local shape checks above establish the
               ;; dataflow used by the rewrite.
               (match (opt-verify-final-function next)
-                [(Ok) (Result next next-context)]
-                [(Err _) (Result func context)]))
-            (Result func context))])]))
+                [(Ok) (Result next next-context labels)]
+                [(Err _) (Result func context (No))]))
+            (Result func context (No)))])]))
 
 (define (opt-unroll-function-with-context-result
-  [type-segment-bases : i64]
-  [context : OptCfgContext]
-  [verified? : bool]
+  [request : OptUnrollRequest]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
-  (match (compiler-opt-global-shared-view func)
-    [(Function _ params _ frame prescan-blocks _)
-      (if (or
-        (opt-unroll-blocks-have-candidate?
-          (ir.compiler-ir-block-list-view prescan-blocks))
-        (opt-unroll-mb-blocks-have-candidate? prescan-blocks))
-        (if verified?
-          (opt-unroll-function-verified-with-context-result
-            type-segment-bases
-            context
-            true
-            func)
-          (match (opt-verify-function-with-context func context)
-            [(Ok)
-              (opt-unroll-function-verified-with-context-result
-                type-segment-bases
-                context
-                true
-                func)]
-            [(Err _)
-              ;; SPMD vector state is deliberately mutable, so these functions
-              ;; fail only the scalar single-definition contract. Admit just
-              ;; the exact SIMD shape through the backend IR contract.
-              (if (and
-                (not (opt-verify-single-defs? (& params) frame prescan-blocks))
-                (opt-verify-ok? (& (opt-verify-final-function func))))
-                (opt-unroll-simd-function-with-context-result
+  (let
+    [type-segment-bases : i64 request.type-segment-bases]
+    [context : OptCfgContext request.context]
+    [verified? : bool request.verified?]
+    (match (compiler-opt-global-shared-view func)
+      [(Function name params _ frame prescan-blocks _)
+        (if (or
+          (opt-unroll-blocks-have-candidate?
+            (ir.compiler-ir-block-list-view prescan-blocks))
+          (opt-unroll-mb-blocks-have-candidate? prescan-blocks))
+          (if verified?
+            (opt-unroll-function-verified-with-context-result
+              type-segment-bases
+              context
+              true
+              func)
+            (match (opt-verify-function-with-context func context)
+              [(Ok)
+                (opt-unroll-function-verified-with-context-result
                   type-segment-bases
                   context
-                  func
-                  false)
-                (Result func context))]))
-        (Result func context))]))
+                  true
+                  func)]
+              [(Err _)
+                ;; SPMD vector state is deliberately mutable, so these functions
+                ;; fail only the scalar single-definition contract. Admit just
+                ;; the exact SIMD shape through the backend IR contract.
+                (if (and
+                  (not
+                    (opt-verify-single-defs? (& params) frame prescan-blocks))
+                  (opt-verify-ok? (& (opt-verify-final-function func))))
+                  (match (opt-unroll-simd-function-with-context-result
+                    type-segment-bases
+                    context
+                    func
+                    false)
+                    [(Result next next-context labels)
+                      (opt-spmd-loop-trace-note!
+                        request.spmd-loop-trace
+                        name
+                        (& labels))
+                      (Result next next-context)])
+                  (Result func context))]))
+          (Result func context))])))
 
 ;; Budgeted multi-application: each round scans for the first eligible loop,
 ;; rewrites it, rebuilds the function around the rewrite, and verifies that
@@ -68392,9 +68487,11 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ _ blocks _)
       (match (opt-unroll-function-with-context-result
-        type-segment-bases
-        (opt-cfg-context-build blocks)
-        false
+        (OptUnrollRequest
+          type-segment-bases
+          (opt-cfg-context-build blocks)
+          false
+          (opt-spmd-loop-trace-disabled))
         (owned_view.compiler-owned-reference-shared-view func))
         [(Result next _) next])]))
 
@@ -98563,11 +98660,12 @@
 ;; fallback for functions whose SSA construction is intentionally rejected.
 (define (opt-pass-rotation
   [pools : ast.AstNodePoolContext]
+  [trace : OptSpmdLoopTrace]
   [state : OptPassState]) : OptPassState
   (let
     [rotation : OptBlockCtxResult
       (opt-loop-rotation-function-result pools (& (opt-pass-func state)))]
-    [simd : OptFunctionCtxResult
+    [simd : OptSimdUnrollFunction
       (match (opt-loop-rotation-normalized-function-result
         pools
         (opt-pass-func state))
@@ -98586,14 +98684,21 @@
                 ctx
                 rotated
                 true)
-              (Result rotated ctx)))])]
+              (Result rotated ctx (No))))])]
     ;; A successful SIMD rewrite always allocates fresh destinations; rotation
     ;; itself leaves the frame alone.
-    (if (match (compiler-opt-global-shared-view simd)
-      [(Result simd-func _)
-        (> (opt-function-frame simd-func) (opt-pass-frame state))])
-      (opt-pass-with-ctx-result (& simd) (& state))
-      (opt-pass-with-block-ctx (& rotation) state))))
+    (match simd
+      [(Result simd-func simd-context labels)
+        (if (> (opt-function-frame simd-func) (opt-pass-frame state))
+          (begin
+            (opt-spmd-loop-trace-note!
+              trace
+              (opt-function-name simd-func)
+              (& labels))
+            (opt-pass-with-ctx-result
+              (& (OptFunctionCtxResult.Result simd-func simd-context))
+              (& state)))
+          (opt-pass-with-block-ctx (& rotation) state))])))
 
 (define (optimize-function-once-with-summaries
   [pools : ast.AstNodePoolContext]
@@ -98736,7 +98841,10 @@
                   (& (opt-pass-blocks s))))
               s)
             s)))]
-    [s (opt-stage "rotation" (opt-pass-rotation pools s))]
+    [s
+      (opt-stage
+        "rotation"
+        (opt-pass-rotation pools summaries.spmd-loop-trace s))]
     ;; A multi-def register-group var becomes one word var per word, which the
     ;; SSA below renames (opt-group-split-function). A split hands SSA a stale
     ;; context, since the CFG index holds the block values; an untouched
@@ -99199,9 +99307,11 @@
           func
           ctx
           (opt-unroll-function-with-context-result
-            type-segment-bases
-            ctx
-            verified?
+            (OptUnrollRequest
+              type-segment-bases
+              ctx
+              verified?
+              summaries.spmd-loop-trace)
             func)))]
     ;; Byte-compose load combining runs immediately after the unroller: a
     ;; constant-trip loop unrolled THIS iteration exposes its straight-line
@@ -105738,10 +105848,23 @@
                 region.function
                 (ir.compiler-ir-symbol-typed-id callee))
               (set! matches? true))))
+        (unless
+          matches?
+          (for [index (iterator.range 0 facts.unrolls.len)]
+            (let
+              [item : ir.CompilerSpmdLoopUnroll
+                (clone (array-ref facts.unrolls.slots index))]
+              (when
+                (ir.compiler-ir-symbol-id-eq?
+                  item.function
+                  (ir.compiler-ir-symbol-typed-id callee))
+                (set! matches? true)))))
         (unless matches? (return (Spans entries instructions count facts)))
         (let
           [loops : ir.CompilerSpmdLoopRegionList
             (ir.compiler-spmd-loop-region-list-escape (& facts.loops))]
+          [unrolls : ir.CompilerSpmdLoopUnrollList
+            (ir.compiler-spmd-loop-unroll-list-escape (& facts.unrolls))]
           (for [index (iterator.range 0 input-count)]
             (let
               [region : ir.CompilerSpmdLoopRegion
@@ -105767,6 +105890,30 @@
                     (opt-inline-prefix-label
                       (compiler-opt-global-shared-view prefix)
                       region.exit))))))
+          (for [index (iterator.range 0 facts.unrolls.len)]
+            (let
+              [item : ir.CompilerSpmdLoopUnroll
+                (clone (array-ref facts.unrolls.slots index))]
+              (when
+                (ir.compiler-ir-symbol-id-eq?
+                  item.function
+                  (ir.compiler-ir-symbol-typed-id callee))
+                (ir.compiler-spmd-loop-unroll-list-push
+                  (&mut unrolls)
+                  (ir.CompilerSpmdLoopUnroll
+                    (ir.compiler-ir-symbol-typed-id caller)
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      item.body)
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      item.guard)
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      item.unrolled)
+                    (opt-inline-prefix-label
+                      (compiler-opt-global-shared-view prefix)
+                      item.exit))))))
           (Spans
             entries
             instructions
@@ -105774,7 +105921,8 @@
             (ir.CompilerSpmdDecisions
               (compiler-opt-global-shared-view facts.decisions)
               (compiler-opt-global-shared-view facts.frames)
-              loops))))]))
+              loops
+              unrolls))))]))
 
 (define (opt-inline-cont-label [prefix : String]) : i64
   (ir.compiler-ir-label (& (str_cat.str-cat prefix ".cont"))))
@@ -117162,6 +117310,7 @@
     (OptProgramSummaries
       false
       (profile_state.compiler-profile-state-new)
+      (opt-spmd-loop-trace-disabled)
       (opt-direct-call-clean-map functions call-memory capacity)
       call-memory
       ;; The whole-program RETURN-ALIAS table feeds LICM provenance only.
@@ -124347,7 +124496,11 @@
                     [_summary-context : unit
                       (begin
                         (set! summaries.profile-state profile-state)
-                        (set! summaries.representations representations))]
+                        (set! summaries.representations representations)
+                        (set!
+                          summaries.spmd-loop-trace
+                          (opt-spmd-loop-trace-new
+                            (ir.compiler-source-spans-spmd (& inline-spans)))))]
                     [_load-cse-profile-reset : unit
                       (cfg
                         compile-profile
@@ -124361,6 +124514,21 @@
                         level
                         (& summaries)
                         (&mut optimizer-input))]
+                    [optimized-spmd : ir.CompilerSpmdDecisions
+                      (let
+                        [facts (ir.compiler-source-spans-spmd (& inline-spans))]
+                        (ir.CompilerSpmdDecisions
+                          (owned_view.compiler-owned-reference-shared-view
+                            (& facts.decisions))
+                          (owned_view.compiler-owned-reference-shared-view
+                            (& facts.frames))
+                          (owned_view.compiler-owned-reference-shared-view
+                            (& facts.loops))
+                          (opt-spmd-loop-trace-output summaries.spmd-loop-trace)))]
+                    [optimized-spans : ir.CompilerSourceSpans
+                      (ir.compiler-source-spans-set-spmd
+                        inline-spans
+                        optimized-spmd)]
                     ;; No live pointer into the optimizer-input arenas remains
                     ;; here; the loop has already released every chunk it
                     ;; passed. Every function in `optimized-functions` was
@@ -124375,8 +124543,8 @@
                     ;; function index and the census as the arenas' only
                     ;; referents, and all of them
                     ;; are dead from here on: nothing below this binding reads
-                    ;; them. `summaries` carries only i64/i64 maps and the
-                    ;; profile-state struct, never a body pointer, so the
+                    ;; them. The summary maps, profile state and source-control
+                    ;; trace live in the enclosing arena, never a body arena, so the
                     ;; compile-profile-summary emit below stays valid.
                     [_release-optimizer-input : unit
                       (if (= carrier 0)
@@ -124439,7 +124607,7 @@
                           (Program
                             (compiler-opt-debug-finish-program optimized)
                             (opt-remap-spans-program
-                              (& inline-spans)
+                              (& optimized-spans)
                               (& optimized))))))))]))))]))
 
 ;; Optional authority to retire source function storage at the end of the

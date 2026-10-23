@@ -608,6 +608,12 @@ The inliner transfers these anchors with the same explicit caller-site label
 map that clones the blocks, retaining the original source site. Tentative
 positional records own separate storage: a rejected checked-tier round cannot
 overwrite a previously accepted suffix as if it were a keyed span table.
+Accepted mutable SIMD unrolls separately record the original body, new guard,
+recurring body and exit. Only verified live rewrites publish these records;
+priced candidates use a disabled sink. The sink belongs to the optimizer job's
+surviving arena, so function scratch retirement cannot erase the trace or mix
+two jobs. These are transform-history facts: later CFG rewrites may retire
+their labels, and the final census must still reconcile and validate membership.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

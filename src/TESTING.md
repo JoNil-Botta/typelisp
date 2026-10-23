@@ -848,6 +848,10 @@ The optimizer's `optimizer-inline-loop-boundaries-*` tests check repeated and
 nested clone maps, unchanged source identities, scratch-arena escape and
 speculative rollback isolation. Admitted multiblock calls publish actual caller
 labels; lower optimization levels and refused cold tail sites publish no clone.
+`optimizer-spmd-unroll-trace-owned-and-committed` interleaves enabled jobs and a
+disabled job, checks accepted versus refused/malformed input, and reads the
+trace after destroying function scratch. Unroll history follows explicit label
+maps when cloned; the IR source-span smoke checks all fields after escape.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

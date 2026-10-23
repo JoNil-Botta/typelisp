@@ -8263,23 +8263,57 @@
     (compiler-spmd-loop-region-list-append-from (&mut out) regions 0)
     out))
 
+;; An accepted SIMD unroll keeps the original body as the full-gang remainder
+;; and creates a separate recurring body, with a one-time guard and exit. The
+;; optimizer records these identities at the rewrite, never by reading names.
+(defstruct CompilerSpmdLoopUnroll
+  (function CompilerIrSymbolId)
+  (body i64)
+  (guard i64)
+  (unrolled i64)
+  (exit i64))
+
+(defstruct CompilerSpmdLoopUnrollList
+  (slots (__tl_dyn-array CompilerSpmdLoopUnroll))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerSpmdLoopUnroll
+  CompilerSpmdLoopUnrollList
+  compiler-spmd-loop-unroll-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  append-from)
+
+(define (compiler-spmd-loop-unroll-list-escape
+  [unrolls : (& unrolls CompilerSpmdLoopUnrollList)]) : CompilerSpmdLoopUnrollList
+  (let
+    [out : CompilerSpmdLoopUnrollList
+      (compiler-spmd-loop-unroll-list-with-capacity unrolls.len)]
+    (compiler-spmd-loop-unroll-list-append-from (&mut out) unrolls 0)
+    out))
+
 (defstruct CompilerSpmdDecisions
   (decisions CompilerSpmdDecisionList)
   (frames CompilerSpmdMacroFrameList)
-  (loops CompilerSpmdLoopRegionList))
+  (loops CompilerSpmdLoopRegionList)
+  (unrolls CompilerSpmdLoopUnrollList))
 
 (define (compiler-spmd-decisions-empty) : CompilerSpmdDecisions
   (CompilerSpmdDecisions
     (compiler-spmd-decision-list-empty)
     (compiler-spmd-macro-frame-list-empty)
-    (compiler-spmd-loop-region-list-new)))
+    (compiler-spmd-loop-region-list-new)
+    (compiler-spmd-loop-unroll-list-new)))
 
 (define (compiler-spmd-decisions-escape
   [facts : (& facts CompilerSpmdDecisions)]) : CompilerSpmdDecisions
   (CompilerSpmdDecisions
     (compiler-spmd-decision-list-escape (& facts.decisions))
     (compiler-spmd-macro-frame-list-escape (& facts.frames))
-    (compiler-spmd-loop-region-list-escape (& facts.loops))))
+    (compiler-spmd-loop-region-list-escape (& facts.loops))
+    (compiler-spmd-loop-unroll-list-escape (& facts.unrolls))))
 
 (define (compiler-source-spans-spmd [spans : (& spans CompilerSourceSpans)]) : (&
     spans
@@ -8827,6 +8861,7 @@
         [decision-start : i64 base-facts.decisions.len]
         [frame-start : i64 base-facts.frames.len]
         [loop-start : i64 base-facts.loops.len]
+        [unroll-start : i64 base-facts.unrolls.len]
         [out : CompilerSourceSpans
           (Spans base-entries base-instructions base-count base-facts)]
         (match complete
@@ -8870,6 +8905,10 @@
                     (&mut output.loops)
                     (& facts.loops)
                     loop-start)
+                  (compiler-spmd-loop-unroll-list-append-from
+                    (&mut output.unrolls)
+                    (& facts.unrolls)
+                    unroll-start)
                   (Spans output-entries output-instructions output-count output)]))])
         out)]))
 

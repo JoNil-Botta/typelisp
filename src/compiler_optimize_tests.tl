@@ -31094,7 +31094,9 @@
         (ir.compiler-ir-block-builder-to-list builder)]
       [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
       [_other : opt.OptCfgIndex
-        (opt.opt-cfg-index-build (& (irt.blocks "other: return 1")))]
+        (opt.opt-cfg-index-build
+          (& (irt.blocks "other:
+                        return 1")))]
       (for [query (iterator.range -2 (+ count 2))]
         (let
           [label : i64

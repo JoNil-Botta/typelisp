@@ -528,3 +528,14 @@ exit 1
 stdout empty
 stderr contains invalid --backend-mode 'neon'; expected scalar, avx2, or avx512
 stderr not-contains cannot run on this host
+
+case math-inline-opt-matrix
+do none
+target -
+opt 0 1 2
+mode -
+each -
+cwd {{root}}
+run test stdlib/math.tl --target {{host-target}} --opt-level {{opt}} --stdlib-root stdlib
+stdout empty
+stderr contains TypeLisp tests: 13 passed; 0 failed; 0 ignored; 0 slow-skipped; 13 total

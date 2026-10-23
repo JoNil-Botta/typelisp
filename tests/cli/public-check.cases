@@ -1438,3 +1438,32 @@ stderr contains error[E0208]
 stderr contains reference;
 stderr contains is not Copy
 stderr contains this reads the value through a reference
+
+case math-table-literal-errors
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each check compile
+file bad-table-float.tl
+(import stdlib.math)
+(define table : (Array u64 1) (math.math-bits-array 1.0))
+(define (main) : i64 (cast (array-ref table 0) : i64))
+end-file
+file bad-table-value.tl
+(import stdlib.math)
+(define word : u64 7)
+(define table : (Array u64 1) (math.math-bits-array word))
+(define (main) : i64 (cast (array-ref table 0) : i64))
+end-file
+run {{each}} "{{dir}}/bad-table-float.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]
+stderr contains math-bits-array: expected a raw integer word literal
+stderr not-contains unbound name
+run {{each}} "{{dir}}/bad-table-value.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0505]
+stderr contains math-bits-array: expected a raw integer word literal
+stderr not-contains unbound name

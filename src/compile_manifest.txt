@@ -136,6 +136,9 @@ end
 case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|none|direct
 end
 
+case|selfhost_compiler_stack_traffic|src/compiler_stack_traffic.tl|assembly|none|direct
+end
+
 case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|none|direct
 end
 

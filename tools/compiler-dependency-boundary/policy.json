@@ -155,6 +155,11 @@
     "Consumer implementation must depend on shared IR, never the reverse."
   ],
   [
+    "src/compiler_stack_traffic.tl",
+    "forbidden",
+    "Post-regalloc census and CFG proof consume core IR; shared IR must not depend on these late facts."
+  ],
+  [
     "src/compiler_driver_core.tl",
     "forbidden",
     "Consumer implementation must depend on shared IR, never the reverse."

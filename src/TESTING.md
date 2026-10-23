@@ -799,6 +799,18 @@ roots. `compiler-lower-native-lane-table` checks all nine lowerer modes against
 the previous numeric width table, including non-numeric rejection. The existing
 SPMD differential and shape gates retain end-to-end lowering coverage.
 
+## Stack traffic evidence
+
+`compiler_stack_traffic_tests.tl` checks the #9242 typed boundary for #7236:
+all closed owner/bank/access/region kinds, unique emitted-operation keys,
+source-function and region-parent consistency, logical homes, malformed graph
+indices/reverse edges, nested regions, disconnected and acyclic control flow,
+self loops and an independent transitive-closure oracle over all 64 three-node
+graphs without self edges. Keep the v1 JSON golden, escaping and exact/spare IR
+capacity checks. The native smoke runs the same checks at opt0/1/2 on both hosts.
+The producer/report integration remains #7236; these fixtures do not certify
+actual backend ownership or publish a warning.
+
 ## SPMD decision provenance
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
@@ -1177,7 +1189,7 @@ The package follows the standard layout: `typelisp build` resolves the default
 - modules only a tool imports (`compiler_embedded_stdlib_tlci_encoder.tl`,
   `doc_site_doc_bridge.tl`);
 - groundwork that an open issue chain builds on and that, until then, only its
-  own tests reach: the incremental identity/trace/graph/planner modules (#7025), the SFrame v3 codec,
+  own tests reach: the stack-traffic fact boundary (#7236), the incremental identity/trace/graph/planner modules (#7025), the SFrame v3 codec,
   the COFF import-member writer, the x64 executable template selection
   modules, the git client cores and `lint_fix_plan_core.tl`.
 

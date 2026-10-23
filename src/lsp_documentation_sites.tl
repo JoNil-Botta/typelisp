@@ -94,7 +94,13 @@
     (let
       [c : char (string.string-ref uri i)]
       (when
-        (or (<= (cast c : i64) 32) (= c '"') (= c '<') (= c '>') (= c '\\'))
+        (or
+          (<= (cast c : i64) 32)
+          (= (cast c : i64) 127)
+          (= c '"')
+          (= c '<')
+          (= c '>')
+          (= c '\\'))
         (return false))))
   true)
 

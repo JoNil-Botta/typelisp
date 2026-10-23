@@ -1679,7 +1679,9 @@ coverage, including raw malformed-frame input and incomplete result sets.
 The frame smoke also calls `lsp_documentation_tests`: actual checked aliases,
 fields and variants agree with extraction/HTML identities, exact site matching
 rejects stale/ambiguous inputs, and site owners survive request and document
-retirement without retaining response borrows. Generated-module smoke compares
+retirement without retaining response borrows. Same-named fields from two
+independently checked modules retain distinct package/page targets in either
+mapping order after both source indexes retire. Generated-module smoke compares
 every generated declaration/member anchor to a separately checked semantic
 index. The docs-site postprocessor expands real source examples through the
 same frontend and renderer rather than carrying a copied collection API.

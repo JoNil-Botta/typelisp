@@ -104,7 +104,8 @@ compiler on startup and keeps it current:
   hosted revision. Each binding supplies exact package/source/compiler identity,
   canonical source path/SHA256, checked module, site `docModule`, published
   `anchors`, and `localUri` or `hostedUri`/`revision`; see
-  [SPEC §2.2](../../SPEC.md#22-comments) for the complete contract. Obtain the
+  [SPEC §2.2](https://github.com/JoNil-Botta/typelisp/blob/main/SPEC.md#22-comments)
+  for the complete contract. Obtain the
   compiler identity from `typelisp --producer-identity`. Changed source,
   mismatched compiler or ambiguous bindings produce no documentation target;
   package graph discovery is separate. Updating this setting restarts the server.

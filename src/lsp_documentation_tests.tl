@@ -17,6 +17,7 @@
 (import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.json)
+(import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -218,7 +219,7 @@
   [anchor : String]) : bool
   (let
     [base : json.Json (binding docs anchor)]
-    [bad : (Array (Tuple String json.Json) 13)
+    [bad : (Array (Tuple String json.Json) 14)
       (array
         (tuple "packageIdentity" (JsonString ""))
         (tuple "sourceIdentity" (JsonString "main"))
@@ -226,6 +227,13 @@
         (tuple "sourceSha256" (JsonString "ABC"))
         (tuple "moduleIdentity" (JsonNumber "1"))
         (tuple "localUri" (JsonString "file:///docs/unsafe name.html"))
+        (tuple
+          "localUri"
+          (JsonString
+            (byte_buf.to-string
+              (byte_buf.push
+                (byte_buf.from-string "file:///docs/")
+                (cast 127 : u8)))))
         (tuple "hostedUri" (JsonString "https://docs.example/main/api.html"))
         (tuple
           "hostedUri"
@@ -365,6 +373,7 @@
 
 (define (documentation-target-smoke-ok?) : bool
   (unless (source-cache-smoke-ok?) (return false))
+  (unless (namespace-targets-smoke-ok?) (return false))
   (let
     [path : String "src/tests/semantic_documentation_target_entry.tl"]
     [source : String
@@ -421,6 +430,155 @@
         (semantic.compiler-semantic-source-index-release! (&mut index))
         false]
       [(Err _) false])))
+
+(define (checked-member [path : String] [module : String]) : semantic_docs.MaybeSemanticDocumentation
+  (let
+    [source : String
+      (str_cat.str-cat
+        "(module "
+        (string.copy (& module))
+        ")\r\n(defstruct Item (value i64))\r\n")]
+    (match (semantic_tests.compiler-check-source-index-with-roots
+      path
+      source
+      (svec.new))
+      [(Ok _ index)
+        (let
+          [found : semantic_docs.MaybeSemanticDocumentation None]
+          (for [i (iterator.range 0 index.len)]
+            (match (semantic_docs.documentation-at (& index) i)
+              [(Some docs)
+                (when
+                  (and
+                    (string.eq docs.module module)
+                    (string.eq docs.identity.parent "Item")
+                    (string.eq docs.identity.name "value"))
+                  (set! found (Some docs))
+                  (break))]
+              [(None) unit]))
+          (semantic.compiler-semantic-source-index-release! (&mut index))
+          found)]
+      [(Partial _ index)
+        (semantic.compiler-semantic-source-index-release! (&mut index))
+        None]
+      [(Err _) None])))
+
+(define (namespace-targets-smoke-ok?) : bool
+  (let
+    [first : semantic_docs.MaybeSemanticDocumentation
+      (checked-member "src/tests/docs_package_one.tl" "docs.one")]
+    [second : semantic_docs.MaybeSemanticDocumentation
+      (checked-member "src/tests/docs_package_two.tl" "docs.two")]
+    (match first
+      [(None) false]
+      [(Some one)
+        (match second
+          [(None) false]
+          [(Some two)
+            ;; Both checked members have the same type/name. Retained identities
+            ;; outlive each source index and the next independent frontend job.
+            (let
+              [docs : (Array semantic_docs.SemanticDocumentation 2)
+                (array one two)]
+              [packages : (Array String 2)
+                (array "package-one@v1" "package-two@v2")]
+              [modules : (Array String 4)
+                (array "one/api.tl" "two/api.tl" "api.tl" "api.tl")]
+              [pages : (Array String 2)
+                (array "file:///docs/one/api.html" "file:///docs/two/api.html")]
+              (for [namespace-case (iterator.range 0 2)]
+                (let
+                  [bindings : (Array json.Json 2) (array JsonNull JsonNull)]
+                  [anchors : (Array String 2) (array "" "")]
+                  (for [i (iterator.range 0 2)]
+                    (let
+                      [item : (& docs semantic_docs.SemanticDocumentation)
+                        (& (array-ref docs i))]
+                      [anchor : String
+                        (doc_render.doc-render-documentation-anchor
+                          (& (array-ref modules (+ (* namespace-case 2) i)))
+                          (owned_view.compiler-owned-reference-shared-view
+                            (& item.identity)))]
+                      [configured : json.Json
+                        (replace-field
+                          (replace-field
+                            (replace-field
+                              (binding item (string.copy (& anchor)))
+                              "packageIdentity"
+                              (JsonString
+                                (string.copy (& (array-ref packages i)))))
+                            "docModule"
+                            (JsonString
+                              (string.copy
+                                (&
+                                  (array-ref modules (+ (* namespace-case 2) i))))))
+                          "localUri"
+                          (JsonString (string.copy (& (array-ref pages i)))))]
+                      (set! (array-ref anchors i) anchor)
+                      (set! (array-ref bindings i) configured)))
+                  ;; Distinct module paths have distinct anchors. Equal relative
+                  ;; paths in separate packages may share an anchor, but not a page.
+                  (when
+                    (if (= namespace-case 0)
+                      (string.eq (array-ref anchors 0) (array-ref anchors 1))
+                      (not
+                        (string.eq (array-ref anchors 0) (array-ref anchors 1))))
+                    (return false))
+                  (for [order (iterator.range 0 2)]
+                    (let
+                      [message : json.Json
+                        (initialize-message
+                          (json.list-cons
+                            (clone (array-ref bindings order))
+                            (json.list-cons
+                              (clone (array-ref bindings (- 1 order)))
+                              (json.list-empty))))]
+                      (match (lsp.lsp-documentation-sites-initialize
+                        (& message))
+                        [(Err _) (return false)]
+                        [(Ok configured)
+                          (let
+                            [ok : bool true]
+                            (for [i (iterator.range 0 2)]
+                              (let
+                                [item : (&
+                                  docs
+                                  semantic_docs.SemanticDocumentation)
+                                  (& (array-ref docs i))]
+                                (match (targets.target
+                                  (& configured)
+                                  item
+                                  (request (string.copy (& item.source-sha256))))
+                                  [(Missing) (set! ok false)]
+                                  [(Found target)
+                                    (unless
+                                      (and
+                                        (string.eq
+                                          (sites.text
+                                            (& target.data)
+                                            "packageIdentity")
+                                          (array-ref packages i))
+                                        (string.eq
+                                          (sites.text
+                                            (& target.data)
+                                            "moduleIdentity")
+                                          item.module)
+                                        (string.eq
+                                          (sites.text (& target.data) "anchor")
+                                          (array-ref anchors i))
+                                        (string.eq
+                                          target.uri
+                                          (str_cat.str-cat
+                                            (string.copy
+                                              (& (array-ref pages i)))
+                                            "#"
+                                            (string.copy
+                                              (& (array-ref anchors i))))))
+                                      (set! ok false))])))
+                            (lsp.lsp-documentation-sites-release!
+                              (&mut configured))
+                            (unless ok (return false)))])))))
+              true)])])))
 
 (define (source-identities-ok?
   [source : (& source str)]

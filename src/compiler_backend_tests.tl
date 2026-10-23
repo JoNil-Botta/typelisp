@@ -3133,11 +3133,30 @@
                 [xdata-size : i64
                   (layout.compiler-object-layout-u32-at obj (+ xdata-header 16))]
                 [xdata-ptr : i64
-                  (layout.compiler-object-layout-u32-at obj (+ xdata-header 20))]
+                  (+
+                    (layout.compiler-object-layout-u32-at
+                      obj
+                      (+ xdata-header 20))
+                    (layout.compiler-object-layout-section-label-offset
+                      image
+                      (Xdata)
+                      ".L_tl_start_xdata"))]
                 (and
-                  (= pdata-size 36)
-                  (= pdata-relocs 9)
-                  (= xdata-size 8)
+                  (= pdata-size 48)
+                  (= pdata-relocs 12)
+                  (= xdata-size 16)
+                  (cobj.compiler-object-relocation-list-contains?
+                    relocs
+                    (Addr32Nb)
+                    "tl_tlci_call_image_entry")
+                  (cobj.compiler-object-relocation-list-contains?
+                    relocs
+                    (Addr32Nb)
+                    "tl_tlci_call_image_entry$end")
+                  (cobj.compiler-object-relocation-list-contains?
+                    relocs
+                    (Addr32Nb)
+                    "tl_tlci_call_image_entry$unwind")
                   (= (layout.compiler-object-layout-u8-at obj xdata-ptr) 0x01)
                   (=
                     (layout.compiler-object-layout-u8-at obj (+ xdata-ptr 1))
@@ -3235,10 +3254,10 @@
 
 (define (compiler-backend-windows-object-stack-param-spill-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
-    "(define (sum5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : i64
-  e)
+    "(define (sum7 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64] [g : i64]) : i64
+  g)
 (define (main) : i64
-  (sum5 1 2 3 4 5))"
+  (sum7 1 2 3 4 5 6 7))"
     (backend.CompilerBackendTarget.Windows))
     [(Ok image)
       (let
@@ -6789,23 +6808,15 @@
         (backend.compiler-backend-plan-uses-callee-regs?
           assignments
           backend-state)
-        (=
-          (backend.compiler-backend-frame-slots 3 assignments backend-state)
-          10)
-        (= (backend.compiler-backend-frame-slots 1 full backend-state) 8)
-        (string.eq
-          save
-          "    movq %r12, -32(%rbp)\n    movq %rsi, -72(%rbp)\n    movq %rdi, -80(%rbp)\n")
-        (string.eq
-          restore
-          "    movq -80(%rbp), %rdi\n    movq -72(%rbp), %rsi\n    movq -32(%rbp), %r12\n")
+        (= (backend.compiler-backend-frame-slots 3 assignments backend-state) 7)
+        (= (backend.compiler-backend-frame-slots 1 full backend-state) 6)
+        (string.eq save "    movq %r12, -32(%rbp)\n")
+        (string.eq restore "    movq -32(%rbp), %r12\n")
         (asm-lacks? restore "popq")
-        (asm-lacks? full-restore "popq")
-        (asm-has?
+        (asm-lacks? full-restore "%rsi" "%rdi")
+        (string.eq
           full-restore
-          "    movq -64(%rbp), %rdi\n"
-          "    movq -56(%rbp), %rsi\n"
-          "    movq -48(%rbp), %rbx\n"))]
+          "    leaq -48(%rbp), %rsp\n    popq %rbx\n    popq %r15\n    popq %r14\n    popq %r13\n    popq %r12\n"))]
     [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
     ok))
 
@@ -6841,10 +6852,8 @@
     [safe-body : String
       "    movq %r12, -16(%rbp)
     movq -8(%rbp), %rax
-    leaq -72(%rbp), %rsp
+    leaq -56(%rbp), %rsp
     popq %rbp
-    popq %rdi
-    popq %rsi
     popq %rbx
     popq %r15
     popq %r14
@@ -6879,26 +6888,26 @@
     [unsafe-rejected : bool (not unsafe-result.ok)]
     [ok : bool
       (and
-        (= push-count 8)
-        (= (backend.compiler-backend-frame-slots 1 assignments backend-state) 9)
+        (= push-count 6)
+        (= (backend.compiler-backend-frame-slots 1 assignments backend-state) 7)
         (let
           [text
             (backend.compiler-backend-emit-save-callee-regs
               assignments
               1
               backend-state)]
-          (asm-has? text "    movq %rbp, -72(%rbp)\n"))
-        (= (backend.compiler-backend-string-count prologue "    pushq %") 8)
+          (asm-has? text "    movq %rbp, -56(%rbp)\n"))
+        (= (backend.compiler-backend-string-count prologue "    pushq %") 6)
         (=
           (backend.compiler-backend-string-count prologue "    .seh_pushreg %")
-          8)
+          6)
         (asm-has?
           prologue
           "    pushq %rbp\n"
           "    .seh_pushreg %rbp\n"
-          "    .seh_stackalloc 88\n"
+          "    .seh_stackalloc 72\n"
           "    .seh_endprologue\n")
-        (asm-lacks? prologue ".seh_setframe" "movq %rsp, %rbp")
+        (asm-lacks? prologue ".seh_setframe" "movq %rsp, %rbp" "%rsi" "%rdi")
         safe-result.ok
         (asm-lacks? safe-rebased "(%rbp)")
         (asm-has? safe-rebased "    popq %rbp\n")
@@ -7015,53 +7024,53 @@
         (asm-has? planned-save "    movdqu %xmm6, ")
         (asm-lacks? planned-save "%xmm7")
         (backend.compiler-backend-plan-uses-callee-regs? sparse backend-state)
-        (= frame 240)
-        (= (backend.compiler-backend-frame-slots 3 sparse backend-state) 30)
+        (= frame 224)
+        (= (backend.compiler-backend-frame-slots 3 sparse backend-state) 28)
         (=
           (backend.compiler-backend-frame-slots-with-groups
             3
             sparse
             true
             backend-state)
-          36)
+          34)
         (=
           (backend.compiler-backend-frame-slots-emergency-max
             3
             true
             backend-state)
-          38)
+          36)
         (=
           (backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
             sparse
             3
             0)
-          -96)
+          -80)
         (=
           (backend.compiler-backend-win64-xmm-callee-slot-offset
             backend-state
             sparse
             3
             9)
-          -240)
+          -224)
         (=
           (backend.compiler-backend-group-word0-slot 0 3 sparse backend-state)
-          -256)
+          -240)
         (=
           (backend.compiler-backend-group-word1-slot 0 3 sparse backend-state)
-          -248)
+          -232)
         (string.eq
           save
-          "    movdqu %xmm6, -96(%rbp)\n    .seh_savexmm %xmm6, 144\n    movdqu %xmm15, -240(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+          "    movdqu %xmm6, -80(%rbp)\n    .seh_savexmm %xmm6, 144\n    movdqu %xmm15, -224(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (string.eq
           restore
-          "    movdqu -240(%rbp), %xmm15\n    movdqu -96(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
+          "    movdqu -224(%rbp), %xmm15\n    movdqu -80(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
         (asm-has?
           entry
-          "    subq $240, %rsp\n"
+          "    subq $224, %rsp\n"
           save
           "    .seh_savexmm %xmm15, 0\n    .seh_endprologue\n")
-        (= full-frame 224)
+        (= full-frame 208)
         (=
           (backend.compiler-backend-string-count full-save "    movdqu %xmm")
           10)
@@ -7080,27 +7089,27 @@
             backend-state)
           3)
         (asm-lacks? empty-entry "movdqu" ".seh_savexmm")
-        (= large-frame 5024)
+        (= large-frame 5008)
         (asm-has?
           large-entry
           "    callq __chkstk\n"
-          "    movdqu %xmm15, -5024(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+          "    movdqu %xmm15, -5008(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (=
           (backend.compiler-backend-string-count
             inline-tail
-            "movdqu -240(%rbp), %xmm15")
+            "movdqu -224(%rbp), %xmm15")
           1)
         (asm-has? inline-tail "    leave\n    ret\n")
         (=
           (backend.compiler-backend-string-count
             jump-tail
-            "movdqu -240(%rbp), %xmm15")
+            "movdqu -224(%rbp), %xmm15")
           1)
         (asm-has? jump-tail "    leave\n    jmp _tl_xmm_target\n")
         (=
           (backend.compiler-backend-string-count
             shared-tail
-            "movdqu -240(%rbp), %xmm15")
+            "movdqu -224(%rbp), %xmm15")
           1)
         (asm-has? shared-tail ".L_tl_xmm_shared_return:"))]
     [_linux : unit (compiler-backend-set-current-fn-linux! backend-state)]
@@ -7161,7 +7170,7 @@
         backend.CompilerBackendTarget.Windows)]
     [full : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12 %1=%r13 %2=%r14 %3=%r15 %4=%rbx %5=%rsi %6=%rdi")]
-    [sparse : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r13 %1=%rdi")]
+    [sparse : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r13 %1=%rbx")]
     [r12-only : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12")]
     [mixed : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12 %1=%vec6")]
     [xmm-only : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%vec6")]
@@ -7205,7 +7214,7 @@
         backend-state)]
     [sparse-described : String
       (compiler-backend-win64-seh-splice
-        "    movq %r13, 40(%rsp)\n    movq %rdi, 0(%rsp)\n    ret\n"
+        "    movq %r13, 40(%rsp)\n    movq %rbx, 16(%rsp)\n    ret\n"
         0
         ""
         sparse
@@ -7214,7 +7223,7 @@
         backend-state)]
     [mode-described : String
       (compiler-backend-win64-seh-splice
-        "    vzeroupper\n    movq %r13, 40(%rsp)\n    movq %rdi, 0(%rsp)\n    ret\n"
+        "    vzeroupper\n    movq %r13, 40(%rsp)\n    movq %rbx, 16(%rsp)\n    ret\n"
         0
         "    vzeroupper\n"
         sparse
@@ -7288,23 +7297,23 @@
         backend-state)]
     [ok : bool
       (and
-        (= full-frame 80)
+        (= full-frame 64)
         (string.eq
           full-entry
-          ".seh_proc _tl_seh_full\n_tl_seh_full:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $80, %rsp\n    .seh_stackalloc 80\n")
+          ".seh_proc _tl_seh_full\n_tl_seh_full:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $64, %rsp\n    .seh_stackalloc 64\n")
         (asm-has?
           framed-entry
           "    .seh_setframe %rbp, 0\n"
-          "    .seh_stackalloc 80\n    .seh_endprologue\n")
+          "    .seh_stackalloc 64\n    .seh_endprologue\n")
         (string.eq
           full-described
-          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 48\n    movq %r13, -40(%rbp)\n    .seh_savereg %r13, 40\n    movq %r14, -48(%rbp)\n    .seh_savereg %r14, 32\n    movq %r15, -56(%rbp)\n    .seh_savereg %r15, 24\n    movq %rbx, -64(%rbp)\n    .seh_savereg %rbx, 16\n    movq %rsi, -72(%rbp)\n    .seh_savereg %rsi, 8\n    movq %rdi, -80(%rbp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    movq %rcx, %rax\n    call _tl_seh_probe\n")
+          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 32\n    movq %r13, -40(%rbp)\n    .seh_savereg %r13, 24\n    movq %r14, -48(%rbp)\n    .seh_savereg %r14, 16\n    movq %r15, -56(%rbp)\n    .seh_savereg %r15, 8\n    movq %rbx, -64(%rbp)\n    .seh_savereg %rbx, 0\n    .seh_endprologue\n    movq %rcx, %rax\n    call _tl_seh_probe\n")
         (string.eq
           sparse-described
-          "    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rdi, 0(%rsp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    ret\n")
+          "    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rbx, 16(%rsp)\n    .seh_savereg %rbx, 16\n    .seh_endprologue\n    ret\n")
         (string.eq
           mode-described
-          "    vzeroupper\n    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rdi, 0(%rsp)\n    .seh_savereg %rdi, 0\n    .seh_endprologue\n    ret\n")
+          "    vzeroupper\n    movq %r13, 40(%rsp)\n    .seh_savereg %r13, 40\n    movq %rbx, 16(%rsp)\n    .seh_savereg %rbx, 16\n    .seh_endprologue\n    ret\n")
         (string.eq
           xmm-only-described
           "    .seh_endprologue\n    vzeroupper\n    ret\n")
@@ -7313,22 +7322,22 @@
           (str_cat.str-cat
             wrap-prefix
             "    movq %r12, 16(%rsp)\n    .seh_savereg %r12, 16\n    .seh_endprologue\n    ret\n"))
-        (= mixed-frame 96)
+        (= mixed-frame 80)
         (string.eq
           mixed-entry
-          ".seh_proc _tl_seh_mixed\n_tl_seh_mixed:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $96, %rsp\n    .seh_stackalloc 96\n    movdqu %xmm6, -96(%rbp)\n    .seh_savexmm %xmm6, 0\n")
+          ".seh_proc _tl_seh_mixed\n_tl_seh_mixed:\n    pushq %rbp\n    .seh_pushreg %rbp\n    movq %rsp, %rbp\n    subq $80, %rsp\n    .seh_stackalloc 80\n    movdqu %xmm6, -80(%rbp)\n    .seh_savexmm %xmm6, 0\n")
         (string.eq
           mixed-described
-          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 64\n    .seh_endprologue\n    ret\n")
-        (= large-frame 4864)
+          "    movq %r12, -32(%rbp)\n    .seh_savereg %r12, 48\n    .seh_endprologue\n    ret\n")
+        (= large-frame 4848)
         (asm-has?
           large-entry
-          "    movl $4864, %eax\n    callq __chkstk\n    subq %rax, %rsp\n    .seh_stackalloc 4864\n")
+          "    movl $4848, %eax\n    callq __chkstk\n    subq %rax, %rsp\n    .seh_stackalloc 4848\n")
         (asm-lacks? large-entry ".seh_setframe" ".seh_endprologue")
         (asm-has?
           large-described
-          "    movq %r12, -4808(%rbp)\n    .seh_savereg %r12, 56\n"
-          "    movq %rdi, -4856(%rbp)\n    .seh_savereg %rdi, 8\n    .seh_endprologue\n")
+          "    movq %r12, -4808(%rbp)\n    .seh_savereg %r12, 40\n"
+          "    movq %rbx, -4840(%rbp)\n    .seh_savereg %rbx, 8\n    .seh_endprologue\n")
         (string.eq
           far-described
           "    movq %r12, 599968(%rsp)\n    .seh_savereg %r12, 599968\n    .seh_endprologue\n")
@@ -7336,7 +7345,7 @@
         ;; inside the allocation; XMM rows must stay 16-byte aligned.
         (string.eq
           (compiler-backend-win64-seh-splice
-            "    movq %rdi, 0(%rsp)\n    movq %r13, 40(%rsp)\n"
+            "    movq %rbx, 16(%rsp)\n    movq %r13, 40(%rsp)\n"
             0
             ""
             sparse
@@ -15052,13 +15061,13 @@ f:
           (asm-has? asm ".globl main\n")
           (asm-lacks? asm "\n_start:\n")
           (asm-lacks? asm "syscall\n")
-          ;; Win64 FPO rebases both local slots and the positive incoming
-          ;; stack argument against the constant post-prologue %rsp.
+          ;; The Internal entry captures its fifth word from RSI; forwarding
+          ;; to the C extern still writes that word after the Win64 home area.
           (asm-has? asm "    movq %rcx, 88(%rsp)\n")
           (asm-has? asm "    movq %rdx, 80(%rsp)\n")
           (asm-has? asm "    movq %r8, 72(%rsp)\n")
           (asm-has? asm "    movq %r9, 64(%rsp)\n")
-          (asm-has? asm "    movq 144(%rsp), %r8\n"))
+          (asm-has? asm "    movq %rsi, 56(%rsp)\n"))
         (asm-has? asm "    movq %r10, 32(%rsp)\n")
         (asm-lacks? asm "    movq %r11, 32(%rsp)\n")
         (asm-has? asm "    call ext\n"))]
@@ -15068,7 +15077,14 @@ f:
   (let
     [ok : bool
       (match (backend.compiler-backend-lower-source-for-target
-        (compiler-backend-callee-save-source)
+        ;; Keep every value live across a call so this remains an allocated
+        ;; frame/SEH control when six register arguments need no local slots.
+        (str_cat.str-cat
+          "(extern (callee-save-sink) : unit)\n"
+          (string.replace
+            (compiler-backend-callee-save-source)
+            "[v5 : i64 (+ f 6)]"
+            "[v5 : i64 (+ f 6)]\n    (callee-save-sink)"))
         (backend.CompilerBackendTarget.Windows))
         [(Ok program spans lower-owner)
           (let
@@ -21961,13 +21977,7 @@ f:
         (owned_view.compiler-owned-shared-view prev-starts)
         (owned_view.compiler-owned-shared-view prev-ends)
         prev-assignment-index
-        (if (backend.compiler-backend-target-windows? target)
-          (bit-or
-            prev-plan-mask
-            backend.compiler-backend-scavenge-plan-win64-bit)
-          (bit-and
-            prev-plan-mask
-            (- backend.compiler-backend-scavenge-plan-win64-bit 1)))
+        prev-plan-mask
         (owned_view.compiler-owned-shared-view prev-occupied-masks)
         prev-vars)]
     [prev-post-base : i64 (state-emit-instr-post-base backend-state)]
@@ -29365,7 +29375,8 @@ f:
 ;; in %rcx.  The direct store must reject that address/clobber intersection so
 ;; %rcx is restored before the ordinary Gep+StorePtr reads it.
 (define (compiler-backend-c22-divmod-store-collision-assignments) : regalloc.CompilerRegAssignmentTable
-  (reg-homes "%0=%rcx %1=%r8 %4=%r12 %7=%rdx %8=%rax %10=%r10 %11=%r11"))
+  (reg-homes
+    "%0=%rcx %1=%r8 %4=%r12 %7=%rdx %8=%rax %10=%r10 %11=%r11 %15=%rsi %16=%rdi"))
 
 (define (compiler-backend-c22-divmod-store-collision-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs
@@ -29379,7 +29390,9 @@ f:
      store_ptr %9, %8 : i64
      %12 = mov %1 : i64
      %13 = mov %10 : i64
-     %14 = mov %11 : i64"))
+     %14 = mov %11 : i64
+     %17 = mov %15 : i64
+     %18 = mov %16 : i64"))
 
 (define (compiler-backend-c22-divmod-store-collision-asm) : backend.ResultCompilerBackend
   (let
@@ -29423,7 +29436,7 @@ f:
           "c22_divmod_store_collision"
           (ir.compiler-ir-param-seq-empty)
           (I64)
-          15
+          19
           blocks
           assignments
           backend-state)
@@ -29436,7 +29449,7 @@ f:
       (compiler-backend-emit-test-instrs-target-with-backend-state
         instrs
         assignments
-        15
+        19
         (backend.CompilerBackendTarget.Windows)
         backend-state)]
     [_restore : unit
@@ -30133,55 +30146,60 @@ f:
         (asm-lacks? asm "    divsd %xmm1, %xmm0\n"))]
     [(Err _) false]))
 
-;; Windows f64 ABI emit-shape coverage: the first four positional
-;; f64 args use xmm0..xmm3, the fifth is stacked after the 32-byte shadow
-;; space, and f64 returns remain in xmm0.
+;; Windows Internal f64 calls use six positional registers, retain the
+;; shadow area before the seventh argument, and return f64 in XMM0.
 (define (compiler-backend-win64-f64-abi-source) : String
-  "(define (sum5
+  "(define (sum7
   [a : f64]
   [b : f64]
   [c : f64]
   [d : f64]
-  [e : f64]) : f64
-  (+ (+ (+ (+ a b) c) d) e))
+  [e : f64]
+  [f : f64]
+  [g : f64]) : f64
+  (+ a b c d e f g))
 
-(define (call5 [x : f64]) : f64
-  (+ 0.0 (sum5 x 2.0 3.0 4.0 5.0)))
+(define (call7 [x : f64]) : f64
+  (+ 0.0 (sum7 x 2.0 3.0 4.0 5.0 6.0 7.0)))
 
 (define (main) : i64
-  (if (< (call5 1.0) 16.0) 42 0))")
+  (if (< (call7 1.0) 29.0) 42 0))")
 
 (define (compiler-backend-win64-f64-abi-ok?) : bool
   (match (backend.compiler-backend-emit-source-for-target
     (compiler-backend-win64-f64-abi-source)
     (backend.CompilerBackendTarget.Windows))
     [(Ok asm)
-      (and
-        (backend.backend-and8
-          ;; Win64 FPO rebases local slots and the positive incoming fifth
-          ;; argument against the compacted post-prologue %rsp frame.
-          (asm-has? asm "    movsd %xmm0, 56(%rsp)\n")
-          (asm-has? asm "    movsd %xmm1, 48(%rsp)\n")
-          (asm-has? asm "    movsd %xmm2, 40(%rsp)\n")
-          (asm-has? asm "    movsd %xmm3, 32(%rsp)\n")
-          (asm-has? asm "    subq $72, %rsp\n")
-          (asm-has? asm "    movq 64(%rsp), %r10\n")
-          (asm-has? asm "    movq %r10, 32(%rsp)\n")
-          (asm-has? asm "    movsd 112(%rsp), %xmm2\n"))
-        (or
-          (asm-has? asm "    call _tl_f")
-          (asm-has? asm "    call _tl_sum5")
-          (asm-has? asm "    call _tl_call5"))
-        ;; The f64 call result (kept in %xmm0) spills to rsp slot 56(%rsp).
-        (asm-has? asm "    movsd %xmm0, 56(%rsp)\n")
-        (asm-lacks? asm "too many call args")
-        (asm-lacks? asm "    syscall")
-        (asm-lacks? asm "    movsd 48(%rbp), %xmm0\n")
-        (asm-lacks? asm "    movq %r11, 32(%rsp)\n")
-        (not
-          (let
-            [needle (compiler-backend-todo-marker)]
-            (asm-has? asm needle))))]
+      (let
+        [callee : String (compiler-backend-asm-function-body asm "_tl_sum7")]
+        [caller : String (compiler-backend-asm-function-body asm "_tl_call7")]
+        (and
+          (backend.backend-and8
+            (asm-has? callee "    movsd %xmm0, 72(%rsp)\n")
+            (asm-has? callee "    movsd %xmm1, 64(%rsp)\n")
+            (asm-has? callee "    movsd %xmm2, 56(%rsp)\n")
+            (asm-has? callee "    movsd %xmm3, 48(%rsp)\n")
+            (asm-has? callee "    movsd %xmm4, 40(%rsp)\n")
+            (asm-has? callee "    movsd %xmm5, 32(%rsp)\n")
+            (asm-has? callee "    subq $88, %rsp\n")
+            (asm-has? callee "    movsd 128(%rsp), %xmm2\n"))
+          (asm-has?
+            caller
+            "    movsd 80(%rsp), %xmm4\n"
+            "    movsd 72(%rsp), %xmm5\n"
+            "    movq 64(%rsp), %r10\n    movq %r10, 32(%rsp)\n"
+            "    call _tl_sum7\n"
+            "    movsd %xmm0, 56(%rsp)\n")
+          (asm-lacks?
+            asm
+            "too many call args"
+            "    syscall"
+            "    movsd 48(%rbp), %xmm0\n"
+            "    movq %r11, 32(%rsp)\n")
+          (not
+            (let
+              [needle (compiler-backend-todo-marker)]
+              (asm-has? asm needle)))))]
     [(Err _) false]))
 
 (define (compiler-backend-register-f64-aggregate-source) : String
@@ -30356,8 +30374,8 @@ f:
         (compiler-backend-stack-mix-call-ok? asm))]
     [(Err _) false]))
 
-;; The Windows positional ABI still reserves 32-byte shadow space, stacks
-;; args after the first four, and stores them after the shadow space.
+;; Windows Internal calls reserve 32-byte shadow space, pass six words in
+;; registers, and place the seventh/eighth words after the shadow space.
 (define (compiler-backend-stack-windows-args-ok?) : bool
   (asm-ok?
     (backend.compiler-backend-emit-source-for-target
@@ -30367,7 +30385,9 @@ f:
     (has
       "    call _tl_add8\n"
       "    movq %r10, 32(%rsp)\n"
-      "    movq %r10, 56(%rsp)\n"
+      "    movq %r10, 40(%rsp)\n"
+      "    movq 80(%rsp), %rsi\n"
+      "    movq 72(%rsp), %rdi\n"
       "    movq 128(%rsp), %r8\n")
     (lacks "    movq 128(%rsp), %rax\n")))
 
@@ -31236,7 +31256,7 @@ f:
   [target : backend.CompilerBackendTarget]) : String
   (if (backend.compiler-backend-target-windows? target)
     ;; Win64 FPO rebases the outgoing tail stack-arg store.
-    "    movq %r10, 200(%rsp)\n"
+    "    movq %r10, 168(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 104(%rsp)\n"))
 
@@ -31279,7 +31299,7 @@ f:
   [target : backend.CompilerBackendTarget]) : String
   (if (backend.compiler-backend-target-windows? target)
     ;; Win64 FPO rebases the outgoing mixed tail stack-arg store.
-    "    movq %r10, 392(%rsp)\n"
+    "    movq %r10, 360(%rsp)\n"
     ;; FPO makes the Linux outgoing tail stack-arg store rsp-relative.
     "    movq %r10, 168(%rsp)\n"))
 
@@ -34163,14 +34183,13 @@ f:
           0)))
     ok))
 
-(define (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?) : bool
+(define (compiler-backend-scavenge-internal-rsi-rdi-plan-mask-ok?) : bool
   (let
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
         (ci.intern-compat-state-capture-active))]
     [rsi-bit : i64 (backend.compiler-backend-scavenge-reg-bit "%rsi")]
     [rdi-bit : i64 (backend.compiler-backend-scavenge-reg-bit "%rdi")]
-    [win64-bit : i64 backend.compiler-backend-scavenge-plan-win64-bit]
     [linux-ok : bool false]
     [win64-ok : bool false]
     (set!
@@ -34188,35 +34207,36 @@ f:
           0
           0
           cabi.compiler-reg-id-rdi)))
+    (compiler-backend-set-current-fn-win64! backend-state)
     (set!
       win64-ok
       (and
-        (not
-          (backend.compiler-backend-scavenge-candidate-ok?
-            (backend.compiler-backend-state-function-state backend-state)
-            0
-            0
-            win64-bit
-            cabi.compiler-reg-id-rsi))
-        (not
-          (backend.compiler-backend-scavenge-candidate-ok?
-            (backend.compiler-backend-state-function-state backend-state)
-            0
-            0
-            win64-bit
-            cabi.compiler-reg-id-rdi))
         (backend.compiler-backend-scavenge-candidate-ok?
           (backend.compiler-backend-state-function-state backend-state)
           0
           0
-          (bit-or win64-bit rsi-bit)
+          0
           cabi.compiler-reg-id-rsi)
         (backend.compiler-backend-scavenge-candidate-ok?
           (backend.compiler-backend-state-function-state backend-state)
           0
           0
-          (bit-or win64-bit rdi-bit)
-          cabi.compiler-reg-id-rdi)))
+          0
+          cabi.compiler-reg-id-rdi)
+        (not
+          (backend.compiler-backend-scavenge-candidate-ok?
+            (backend.compiler-backend-state-function-state backend-state)
+            rsi-bit
+            0
+            0
+            cabi.compiler-reg-id-rsi))
+        (not
+          (backend.compiler-backend-scavenge-candidate-ok?
+            (backend.compiler-backend-state-function-state backend-state)
+            rdi-bit
+            0
+            0
+            cabi.compiler-reg-id-rdi))))
     (and linux-ok win64-ok)))
 
 (define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : regalloc.CompilerRegVarTypes
@@ -34477,9 +34497,8 @@ f:
         1)
       (= (array-ref tally 0) 1))))
 
-;; Const-hoist candidates must reflect ABI volatility. Win64 keeps %rsi/%rdi
-;; out of the plan while retaining the caller-saved %r8/%r9 and the
-;; ABI-neutral %rbx frame-home fallback.
+;; Both Internal conventions admit the same volatile RSI/RDI/R8/R9 subset
+;; and the RBX frame-home fallback.
 (define (compiler-backend-const-hoist-candidates-abi-ok?) : bool
   (and
     (=
@@ -34511,7 +34530,7 @@ f:
       (regalloc.compiler-reg-id-seq-count
         (backend.compiler-backend-const-hoist-candidate-regs
           (backend.CompilerBackendTarget.Windows)))
-      3)
+      5)
     (regalloc.compiler-reg-id-seq-contains?
       (backend.compiler-backend-const-hoist-candidate-regs
         (backend.CompilerBackendTarget.Windows))
@@ -34524,16 +34543,14 @@ f:
       (backend.compiler-backend-const-hoist-candidate-regs
         (backend.CompilerBackendTarget.Windows))
       cabi.compiler-reg-id-rbx)
-    (not
-      (regalloc.compiler-reg-id-seq-contains?
-        (backend.compiler-backend-const-hoist-candidate-regs
-          (backend.CompilerBackendTarget.Windows))
-        cabi.compiler-reg-id-rsi))
-    (not
-      (regalloc.compiler-reg-id-seq-contains?
-        (backend.compiler-backend-const-hoist-candidate-regs
-          (backend.CompilerBackendTarget.Windows))
-        cabi.compiler-reg-id-rdi))))
+    (regalloc.compiler-reg-id-seq-contains?
+      (backend.compiler-backend-const-hoist-candidate-regs
+        (backend.CompilerBackendTarget.Windows))
+      cabi.compiler-reg-id-rsi)
+    (regalloc.compiler-reg-id-seq-contains?
+      (backend.compiler-backend-const-hoist-candidate-regs
+        (backend.CompilerBackendTarget.Windows))
+      cabi.compiler-reg-id-rdi)))
 
 ;; Regression for the opt1-built compiler crash exposed by
 ;; integration_spmd_gather_read/fill-lane-offset-gather. The reduced IR keeps
@@ -36062,7 +36079,8 @@ f:
 (define (compiler-backend-param-spill-stack-scratch-preserves-home-ok?) : bool
   (let
     [params : ir.CompilerIrParamSeq
-      (irt.params "a=%0:u64, b=%1:u64, c=%2:u64, d=%3:u64, e=%4:bool")]
+      (irt.params
+        "a=%0:u64, b=%1:u64, c=%2:u64, d=%3:u64, e=%4:u64, f=%5:u64, g=%6:bool")]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%3=%r9")]
     [index : backend.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -36081,7 +36099,7 @@ f:
         0
         0
         index
-        5
+        7
         backend-state)
       (has "    movzbq 48(%rbp), ")
       (lacks "    movzbq 48(%rbp), %r9\n"))))
@@ -38323,7 +38341,7 @@ b_keep:
         (compiler-backend-any-arity-stack-arg-shape-ok?)
         (compiler-backend-emergency-vector-width-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
-        (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)
+        (compiler-backend-scavenge-internal-rsi-rdi-plan-mask-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-emit-current-count-gate-ok?)
         (compiler-backend-const-hoist-candidates-abi-ok?)
@@ -42408,6 +42426,33 @@ user_fn:
         (if (= target 0)
           (Linux)
           (Windows))]
+      (test.assert-owned-string-eq
+        (cabi.compiler-abi-internal-link-symbol abi "entry$typelisp")
+        (if (= target 0)
+          "entry"
+          "entry$typelisp")
+        "package C-export body identity must follow the physical ABI")
+      (for [kind (iterator.range 0 4)]
+        (let
+          [symbol : String
+            (cond
+              [(= kind 0) ""]
+              [(= kind 1) "$typelisp"]
+              [(= kind 2) "entry"]
+              [else "entry$typelisp_more"])]
+          (test.assert-owned-string-eq
+            (cabi.compiler-abi-internal-link-symbol
+              abi
+              (string.copy (& symbol)))
+            (string.copy (& symbol))
+            "ordinary and malformed body identities must remain unchanged")))))
+  ;; System V retains identical physical facts at both boundaries.
+  (for [target (iterator.range 0 1)]
+    (let
+      [abi : cabi.CompilerRegTargetAbi
+        (if (= target 0)
+          (Linux)
+          (Windows))]
       (test.assert-true
         (and
           (=
@@ -42518,6 +42563,225 @@ user_fn:
                     floats
                     position))
                 "internal and platform stack placement differs"))))))))
+
+(test
+  backend-windows-internal-convention
+  (for [entry (iterator.range 0 2)]
+    (let
+      [internal? : bool (= entry 0)]
+      [convention : cabi.CompilerCallConvention
+        (if internal?
+          (Internal)
+          (Platform))]
+      [slots : i64
+        (if internal?
+          6
+          4)]
+      [volatile : i64
+        (if internal?
+          9
+          7)]
+      [preserved : i64
+        (if internal?
+          5
+          7)]
+      (test.assert-true
+        (and
+          (=
+            (cabi.compiler-abi-gp-arg-register-count (Windows) convention)
+            slots)
+          (=
+            (cabi.compiler-abi-float-arg-register-count (Windows) convention)
+            slots)
+          (=
+            (cabi.compiler-abi-caller-saved-gp-register-count
+              (Windows)
+              convention)
+            volatile)
+          (=
+            (cabi.compiler-abi-callee-saved-gp-register-count
+              (Windows)
+              convention)
+            preserved)
+          (= (cabi.compiler-abi-outgoing-shadow-space (Windows) convention) 32)
+          (not (cabi.compiler-abi-arg-banks-independent? (Windows) convention))
+          (not
+            (cabi.compiler-abi-aggregate-eightbyte-classes?
+              (Windows)
+              convention))
+          (not
+            (cabi.compiler-abi-varargs-vector-count-in-al? (Windows) convention))
+          (=
+            (cabi.compiler-abi-caller-saved-xmm-register-count
+              (Windows)
+              convention)
+            6)
+          (=
+            (cabi.compiler-abi-callee-saved-xmm-register-count
+              (Windows)
+              convention)
+            10))
+        "Windows Internal or Platform contract changed")
+      (for [index (iterator.range -1 50)]
+        (let
+          [expected-gp : i64
+            (cond
+              [(= index 0) cabi.compiler-reg-id-rcx]
+              [(= index 1) cabi.compiler-reg-id-rdx]
+              [(= index 2) cabi.compiler-reg-id-r8]
+              [(= index 3) cabi.compiler-reg-id-r9]
+              [(and internal? (= index 4)) cabi.compiler-reg-id-rsi]
+              [(and internal? (= index 5)) cabi.compiler-reg-id-rdi]
+              [else cabi.compiler-reg-id-invalid])]
+          [expected-float : i64
+            (if (and (>= index 0) (< index slots))
+              (cabi.compiler-abi-xmm-register-id index)
+              cabi.compiler-reg-id-invalid)]
+          (test.assert-true
+            (and
+              (=
+                (cabi.compiler-abi-gp-arg-register-id
+                  (Windows)
+                  convention
+                  index)
+                expected-gp)
+              (=
+                (cabi.compiler-abi-float-arg-register-id
+                  (Windows)
+                  convention
+                  index)
+                expected-float)
+              (=
+                (cabi.compiler-abi-caller-saved-xmm-register-id
+                  (Windows)
+                  convention
+                  index)
+                (if (and (>= index 0) (< index 6))
+                  (cabi.compiler-abi-xmm-register-id index)
+                  cabi.compiler-reg-id-invalid))
+              (=
+                (cabi.compiler-abi-callee-saved-xmm-register-id
+                  (Windows)
+                  convention
+                  index)
+                (if (and (>= index 0) (< index 10))
+                  (cabi.compiler-abi-xmm-register-id (+ index 6))
+                  cabi.compiler-reg-id-invalid)))
+            "Windows argument or XMM preservation boundary changed"))
+        (let
+          [reg : i64
+            (cabi.compiler-abi-callee-saved-gp-register-id
+              (Windows)
+              convention
+              index)]
+          (test.assert-true
+            (if (and (>= index 0) (< index preserved))
+              (and
+                (not (= reg cabi.compiler-reg-id-invalid))
+                (not
+                  (cabi.compiler-abi-caller-saved-gp-register?
+                    (Windows)
+                    convention
+                    reg)))
+              (= reg cabi.compiler-reg-id-invalid))
+            "Windows GP preserved and volatile sets overlap or exceed their bounds"))
+        (let
+          [reg : i64
+            (cabi.compiler-abi-caller-saved-gp-register-id
+              (Windows)
+              convention
+              index)]
+          (test.assert-true
+            (if (and (>= index 0) (< index volatile))
+              (and
+                (not (= reg cabi.compiler-reg-id-invalid))
+                (cabi.compiler-abi-caller-saved-gp-register?
+                  (Windows)
+                  convention
+                  reg))
+              (= reg cabi.compiler-reg-id-invalid))
+            "Windows GP volatile set exceeds its bounds")))
+      (for [reg
+        (iterator.range cabi.compiler-reg-id-rsi (+ cabi.compiler-reg-id-rdi 1))]
+        (test.assert-true
+          (=
+            (cabi.compiler-abi-caller-saved-gp-register?
+              (Windows)
+              convention
+              reg)
+            internal?)
+          "RSI/RDI preservation crossed the C boundary"))
+      (for [ints (iterator.range 0 10)]
+        (for [floats (iterator.range 0 10)]
+          (for [position (iterator.range -1 10)]
+            (for [bank (iterator.range 0 2)]
+              (test.assert-true
+                (=
+                  (cabi.compiler-abi-stack-call-arg-for-banks?
+                    (Windows)
+                    convention
+                    (= bank 1)
+                    ints
+                    floats
+                    position)
+                  (>= position slots))
+                "Windows arguments do not share the declared positional slots")))))))
+  (let
+    [pool : regalloc.CompilerRegIdSeq
+      (regalloc.compiler-reg-greedy-integer-pool-for-abi (Windows))]
+    [volatile : i64
+      (regalloc.compiler-reg-greedy-caller-saved-count-for-abi (Windows))]
+    (test.assert-i64-eq volatile 9 "Windows Internal allocator boundary")
+    (for [index (iterator.range 0 (regalloc.compiler-reg-id-seq-count pool))]
+      (test.assert-true
+        (=
+          (cabi.compiler-abi-caller-saved-gp-register?
+            (Windows)
+            (Internal)
+            (regalloc.compiler-reg-id-seq-ref pool index))
+          (< index volatile))
+        "Windows allocator pool does not match its volatile prefix"))))
+
+(test
+  backend-call-convention-caller-saved-membership
+  (for [target (iterator.range 0 2)]
+    (let
+      [abi : cabi.CompilerRegTargetAbi
+        (if (= target 0)
+          (Linux)
+          (Windows))]
+      (for [boundary (iterator.range 0 2)]
+        (let
+          [convention : cabi.CompilerCallConvention
+            (if (= boundary 0)
+              (Internal)
+              (Platform))]
+          ;; Include every register family, gaps, and invalid GP ids.
+          (for [reg (iterator.range -2 106)]
+            (let
+              [listed : bool false]
+              (for [index
+                (iterator.range
+                  0
+                  (cabi.compiler-abi-caller-saved-gp-register-count
+                    abi
+                    convention))]
+                (when
+                  (=
+                    reg
+                    (cabi.compiler-abi-caller-saved-gp-register-id
+                      abi
+                      convention
+                      index))
+                  (set! listed true)))
+              (test.assert-true
+                (=
+                  (cabi.compiler-abi-caller-saved-gp-register?
+                    abi
+                    convention
+                    reg)
+                  listed)
+                "caller-saved membership and ABI enumeration disagree"))))))))
 
 ;; Six-argument calls of each kind for `backend-call-convention-emission-sites`.
 ;; Runtime helper and TLS rows use their builtin ids with a synthetic arity:
@@ -42664,7 +42928,7 @@ user_fn:
       ""
       (string.substring asm start (- end start)))))
 
-;; With the test-only Windows Internal registers, a Platform call passes its
+;; With Windows Internal registers, a Platform call passes its
 ;; fifth and sixth arguments at 32/40(%rsp) and an Internal call passes them in
 ;; RSI/RDI. Adapters forward register values; the other rows pass 14 and 15.
 (define (compiler-backend-convention-site-ok?
@@ -42716,13 +42980,11 @@ user_fn:
           (< kind 4))
         "runtime helper selected the wrong calling convention"))
     (backend.compiler-backend-state-release-final-arenas! index.backend-state))
-  (cabi.compiler-abi-test-windows-internal-six-gp-args! true)
   (let
     [emitted : backend.ResultCompilerBackend
       (backend.compiler-backend-emit-program-for-target
         (compiler-backend-convention-site-program)
         (backend.CompilerBackendTarget.Windows))]
-    (cabi.compiler-abi-test-windows-internal-six-gp-args! false)
     (match emitted
       [(Ok asm)
         (for [kind (iterator.range 0 8)]
@@ -42748,3 +43010,264 @@ user_fn:
                 ""))))]
       [(Err _)
         (test.assert-true false "convention emission-site program failed")])))
+
+(test
+  backend-c-export-entries
+  (test.assert-true
+    (compiler-backend-export-symbol-tests-ok?)
+    "C export names and collision diagnostics")
+  (let
+    [source : String
+      (str_cat.str-cat
+        (compiler-backend-export-symbol-source)
+        "\n(define (zero) (:export-symbol \"tl_zero\") : i64 0)")]
+    (match (backend.compiler-backend-emit-source-for-target
+      (clone source)
+      (Windows))
+      [(Err _) (test.assert-true false "small C entries assembly")]
+      [(Ok asm)
+        (let
+          [marker : String ".seh_proc __tl$c_entry\n"]
+          [first : i64 (backend.compiler-backend-string-find-from asm marker 0)]
+          (test.assert-true
+            (and
+              (>= first 0)
+              (<
+                (backend.compiler-backend-string-find-from
+                  asm
+                  marker
+                  (+ first 1))
+                0)
+              (asm-has?
+                asm
+                "tl_exported_value:\n    leaq tl_exported_value$typelisp(%rip), %r11\n    jmp __tl$c_entry\n"
+                "tl_zero:\n    leaq tl_zero$typelisp(%rip), %r11\n    jmp __tl$c_entry\n"))
+            "small C entries tail-enter one local preservation frame"))])
+    (match (backend.compiler-backend-emit-source-object-image-for-target
+      source
+      (Windows))
+      [(Err _) (test.assert-true false "small C entries object")]
+      [(Ok image)
+        (match (coff.compiler-object-coff-render image)
+          [(Err _) (test.assert-true false "small C entries COFF")]
+          [(Ok bytes)
+            (let
+              [offset : i64
+                (+
+                  (layout.compiler-object-layout-u32-at
+                    bytes
+                    (+
+                      (coff.compiler-object-coff-section-header-offset (Text))
+                      20))
+                  (layout.compiler-object-layout-section-label-offset
+                    image
+                    (Text)
+                    "__tl$c_entry"))]
+              (test.assert-owned-string-eq
+                (string.substring bytes offset 16)
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "56574883ec2841ffd34883c4285f5ec3")
+                "shared C bridge preserves SI/DI, calls through R11, and restores its frame")
+              (test.assert-true
+                (and
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (RipAddress)
+                    "tl_exported_value$typelisp")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Branch)
+                    "__tl$c_entry")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "__tl$c_entry")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "__tl$c_entry$end")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "__tl$c_entry$unwind"))
+                "small C entries own body/bridge relocations and one complete unwind range"))])]))
+  ;; Assembler SEH goldens include both ALLOC_LARGE encodings and the probe.
+  (let
+    [frames : (Array i64 5) (array 40 56 136 4104 524296)]
+    [prologues : (Array i64 5) (array 6 6 9 15 15)]
+    [expected : (Array String 5)
+      (array
+        "010603000642027001600000"
+        "010603000662027001600000"
+        "010904000901110002700160"
+        "010f04000f01010202700160"
+        "010f05000f1108000800027001600000")]
+    (for [i (iterator.range 0 5)]
+      (test.assert-owned-string-eq
+        (object_windows.compiler-backend-object-entry-range-unwind-bytes
+          (array-ref frames i)
+          (array-ref prologues i)
+          true)
+        (object_target.compiler-backend-object-bytes-from-hex
+          (clone (array-ref expected i)))
+        "C entry unwind agrees with assembler saves/allocation")))
+  (let
+    [counts : (Array i64 8) (array 0 4 5 6 7 8 513 514)]
+    [frames : (Array i64 8) (array 40 40 40 40 40 56 4088 4104)]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    (for [i (iterator.range 0 8)]
+      (let
+        [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+        (for [arg (iterator.range 0 (array-ref counts i))]
+          (set!
+            params
+            (ir.compiler-ir-param-seq-prepend (Param "arg" (I64) arg) params)))
+        (test.assert-i64-eq
+          (backend.compiler-backend-c-entry-plan
+            (ast.ast-node-pool-reader-type-segment-bases)
+            index
+            params).frame
+          (array-ref frames i)
+          "C entry frame at register, padding and guard-page boundaries")))
+    (backend.compiler-backend-state-release-final-arenas! index.backend-state))
+  (let
+    [provided : ir.CompilerIrExtern
+      (Extern
+        (compiler-backend-test-symbol "bridge")
+        (compiler-backend-test-symbol "bridge")
+        "bridge"
+        (ast.ast-ty-func (compiler-backend-type-list-of "iiiiiiii") (& (I64)))
+        (C)
+        (compiler-backend-test-symbol "bridge_c")
+        (ast.ast-extern-link-input-list-new)
+        true)]
+    [program : ir.CompilerIrProgram
+      (Program
+        (ir.compiler-ir-global-seq-empty)
+        (ir.compiler-ir-function-seq-prepend
+          (&
+            (irt.func
+              "function @bridge(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64, h=%7:i64) -> i64 vars 8 {
+          entry:
+            return %7
+          }"))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (irt.func
+                  "function @main() -> i64 vars 1 {
+            entry:
+              %0 = call bridge(1, 2, 3, 4, 5, 6, 7, 8) : i64
+              return %0
+            }"))
+              (& (ir.compiler-ir-function-seq-empty)))))
+        (ir.compiler-ir-extern-seq1 provided))]
+    (match (backend.compiler-backend-emit-program-object-image-target
+      (clone program)
+      (backend.CompilerBackendTarget.Windows)
+      (ir.compiler-source-spans-empty)
+      false)
+      [(Err diag)
+        (test.assert-true
+          false
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]
+      [(Ok image)
+        (match (coff.compiler-object-coff-render image)
+          [(Err _) (test.assert-true false "C entry COFF rendering")]
+          [(Ok bytes)
+            (let
+              [entry : i64
+                (+
+                  (layout.compiler-object-layout-u32-at
+                    bytes
+                    (+
+                      (coff.compiler-object-coff-section-header-offset (Text))
+                      20))
+                  (layout.compiler-object-layout-section-label-offset
+                    image
+                    (Text)
+                    "bridge_c"))]
+              [unwind : i64
+                (+
+                  (layout.compiler-object-layout-u32-at
+                    bytes
+                    (+
+                      (coff.compiler-object-coff-section-header-offset (Xdata))
+                      20))
+                  (layout.compiler-object-layout-section-label-offset
+                    image
+                    (Xdata)
+                    "bridge_c$unwind"))]
+              [prefix : String
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "56574883ec38488b4424704889c6488b4424784889c7488b8424800000004889442420488b8424880000004889442428")]
+              [xdata : String
+                (object_target.compiler-backend-object-bytes-from-hex
+                  "010603000662027001600000")]
+              (test.assert-owned-string-eq
+                (string.substring bytes entry (string.string-length prefix))
+                prefix
+                "COFF C entry forwards all four incoming stack words")
+              (test.assert-owned-string-eq
+                (string.substring bytes unwind (string.string-length xdata))
+                xdata
+                "COFF unwind describes allocation and both Platform saves")
+              (test.assert-true
+                (and
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Call)
+                    "bridge_c$typelisp")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "bridge_c")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "bridge_c$end")
+                  (cobj.compiler-object-relocation-list-contains?
+                    image.relocations
+                    (Addr32Nb)
+                    "bridge_c$unwind"))
+                "C entry owns its call and complete runtime-function range"))])])
+    (match (backend.compiler-backend-emit-program-target-with-mode
+      program
+      (backend.CompilerBackendTarget.Windows)
+      (Scalar)
+      (ir.compiler-source-spans-empty)
+      false)
+      [(Err diag)
+        (test.assert-true
+          false
+          (cdiag.compiler-diagnostic-message (__tl-box-place diag)))]
+      [(Ok asm)
+        (let
+          [body : String
+            (compiler-backend-convention-site-body (& asm) "bridge_c")]
+          (test.assert-true
+            (and
+              (asm-has? body "pushq %rsi\n" "pushq %rdi\n" "subq $56, %rsp\n")
+              (asm-has?
+                body
+                "movq 112(%rsp), %rax\n    movq %rax, %rsi\n"
+                "movq 120(%rsp), %rax\n    movq %rax, %rdi\n")
+              (asm-has?
+                body
+                "movq 128(%rsp), %rax\n    movq %rax, 32(%rsp)\n"
+                "movq 136(%rsp), %rax\n    movq %rax, 40(%rsp)\n")
+              (asm-has?
+                body
+                "call bridge_c$typelisp\n"
+                "popq %rdi\n"
+                "popq %rsi\n")
+              (asm-has?
+                asm
+                ".seh_proc bridge_c\n"
+                ".seh_pushreg %rsi\n"
+                ".seh_pushreg %rdi\n"))
+            "C entry must preserve registers, forward stack words and describe its own frame"))])))

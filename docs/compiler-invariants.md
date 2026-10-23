@@ -77,7 +77,9 @@ Codegen Parity*) describes its rules.
 
 `CompilerCallConvention` is independent of the target: every register, bank,
 clobber, stack-placement, shadow-space and aggregate-classification query
-receives `Internal` or `Platform`. Both currently return the same facts. IR
+receives `Internal` or `Platform`. Windows Internal calls have six positional
+GP/float slots, with RSI/RDI volatile; Platform retains four slots and preserves
+RSI/RDI. SysV facts coincide. IR
 function bodies, closure descriptors and private SPMD calls use `Internal`; C
 externs (including varargs), C function pointers and C store-result calls use
 `Platform`. TypeLisp package externs retain `Internal`. Helpers the backend
@@ -93,7 +95,19 @@ both. These facts share the existing reset and suppression lifetime with
 memory-transport facts. These are independent bits: a private by-value
 TypeLisp parameter needs memory transport without selecting the platform ABI.
 C exports retain `Platform` for their raw link entry, while their IR function
-name uses `Internal`; TypeLisp exports use `Internal` for both names. Inlined
+name uses `Internal`. Package metadata appends `$typelisp` to the validated C
+identifier; the backend resolves this identity to a distinct body on Windows
+and to the existing C symbol on SysV. Windows emits a C entry that saves RSI/RDI, forwards the actual lowered physical words
+(including hidden sret and register groups). Up to four physical words need
+no moves: a leaf entry tail-enters one object-local bridge via volatile R11;
+that bridge owns the shadow area, RSI/RDI saves and SEH record. Wider entries
+own their forwarding frame and unwind record. The assembly and object routes
+share the same lowered-word admission and forwarding plan. SysV needs no
+bridge or additional symbol because both conventions coincide. Reserved atomic and
+volatile helper leaves share their raw C and Internal entry bytes on both
+targets: their at-most-three GP slots coincide, their literal templates use
+only common volatile registers, and Windows RSI/RDI stay untouched. TypeLisp exports use
+`Internal` for both names. Inlined
 atomic, volatile and TLS-arena operations read the same convention as their
 argument setup. A closure entry adapter is entered with `Internal` and forwards
 with its target's convention, so a C extern used as a function value receives
@@ -103,10 +117,14 @@ classification and outgoing frame sizing. Incoming parameter and saved-register
 facts use the function's `Internal` contract; caller-clobber allocation remains
 conservative across the call family. `backend-call-conventions` pins
 classification and fact lifetime, `backend-call-convention-facts-parity` checks
-both targets, register boundaries and mixed argument banks, and
+SysV parity, `backend-windows-internal-convention` checks register boundaries,
+clobbers and mixed argument banks, and
 `backend-call-convention-emission-sites` pins each emission site's convention.
-Full before/after assembly and bootstrap comparisons guard the no-output-change
-invariant.
+Full bootstrap and cross-mode comparisons guard convergence. Windows thread
+and macro trampolines preserve RSI/RDI for their C callers. TLCI host callbacks
+use explicit C exports rather than Internal closure entries on Windows;
+callback/host ABI version 3 rejects preceding images before invocation.
+Package runtime input schema v2 invalidates old Windows Internal archives.
 
 The freestanding Linux runtime installs a zeroed TLS mapping before global
 initializers and at each native worker entry. FS:0 holds the mapping's thread

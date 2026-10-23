@@ -1678,10 +1678,19 @@ tl_thread_entry_ptr:
     .quad .L_tl_thread_entry
 
     .text
+    .seh_proc .L_tl_thread_entry
 .L_tl_thread_entry:
+    pushq %rsi
+    .seh_pushreg %rsi
+    pushq %rdi
+    .seh_pushreg %rdi
     pushq %r12
+    .seh_pushreg %r12
     pushq %r13
+    .seh_pushreg %r13
     subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
     leaq .L_tl_null_arena(%rip), %rax
     movq %rax, %gs:0x28
     movq (%rcx), %r11
@@ -1695,7 +1704,10 @@ tl_thread_entry_ptr:
     addq $40, %rsp
     popq %r13
     popq %r12
+    popq %rdi
+    popq %rsi
     ret
+    .seh_endproc
 
 ")
 
@@ -1979,33 +1991,45 @@ tl_array_zero:
 
 (define (compiler-backend-runtime-tlci-entry-functions) : String
   "    .globl tl_tlci_call_image_entry
+    .seh_proc tl_tlci_call_image_entry
 tl_tlci_call_image_entry:
     movq %rcx, %rax
     movq %rdx, %rcx
     movq %r8, %rdx
     subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
     call *%rax
     addq $40, %rsp
     ret
+    .seh_endproc
 
 ")
 
 (define (compiler-backend-runtime-tlci-macro-entry-functions) : String
   "    .globl tl_tlci_call_macro_entry
+    .seh_proc tl_tlci_call_macro_entry
 tl_tlci_call_macro_entry:
+    pushq %rsi
+    .seh_pushreg %rsi
+    pushq %rdi
+    .seh_pushreg %rdi
+    subq $40, %rsp
+    .seh_stackalloc 40
+    .seh_endprologue
     movq %rcx, %rax
     movq %rdx, %rcx
     movq %r8, %rdx
     movq %r9, %r8
-    movq 40(%rsp), %r9
-    movq 48(%rsp), %r10
-    movq 56(%rsp), %r11
-    subq $56, %rsp
-    movq %r10, 32(%rsp)
-    movq %r11, 40(%rsp)
+    movq 96(%rsp), %r9
+    movq 104(%rsp), %rsi
+    movq 112(%rsp), %rdi
     call *%rax
-    addq $56, %rsp
+    addq $40, %rsp
+    popq %rdi
+    popq %rsi
     ret
+    .seh_endproc
 
 ")
 

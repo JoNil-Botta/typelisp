@@ -155,14 +155,34 @@ and aggregate-result forwarding at opt2 on both ABIs.
 aliases, variadic signatures, private by-value copies and call-fact lifetime.
 `backend-call-convention-facts-parity` compares all convention-dependent ABI
 facts on both targets, including invalid register indices and mixed-bank stack
-boundaries. `backend-call-convention-emission-sites` turns on a `cfg test` hook
-that gives Windows `Internal` calls RSI/RDI as fifth and sixth argument
-registers, then checks where a TypeLisp call, C extern call, C function pointer
+boundaries. `backend-call-convention-caller-saved-membership` cross-checks the
+GP membership predicate against the ABI enumeration through GP, vector and mask
+register families, gaps and invalid IDs. `backend-call-convention-emission-sites` uses Windows `Internal`
+RSI/RDI fifth and sixth argument registers, then checks where a TypeLisp call, C extern call, C function pointer
 call, closure adapter forwarding to C or TypeLisp, backend runtime helper call,
 TLS-arena intrinsic and variadic call place those arguments. Run these at
 opt0/1/2; a convention-only refactor also needs exact before/after Linux and
 Windows assembly for the integration corpus and compiler, plus the bootstrap
-fixpoints.
+fixpoints. `internal_abi_six_positions.tl` runs mixed GP/FP calls, hidden result
+pointers, Slice pairs, closures and live values across Internal and C calls at
+opt0/1/2. Its C companion calls raw exports and concatenation, and on Windows
+installs RSI/RDI canaries around C-export, macro and thread entries; independent
+Internal assembly leaves force clobbers so allocator choices cannot mask a
+missing boundary save. The fixed-slot/FPO/SEH tests retain all five GP saves,
+optional RBP, XMM6–15, probes, alignment and malformed-prologue rejection.
+The Windows virtual-unwind driver enters through Platform C exports and
+crosses their RSI/RDI-saving bridges and both Internal frame forms. It still
+recovers every seeded Win64 nonvolatile GP/XMM register, RSP and RIP; the
+near/far save oracle separately covers the five Internal GP saves and RBP.
+`package-c-export-internal-body` builds a separate dependency archive at
+opt0/1/2, then calls its six-argument function through both the TypeLisp import
+and raw C export. It pins the distinct body symbol through package metadata
+and linking on both hosts.
+`runtime-atomic-export-intrinsics` retains inline sequentially consistent
+operations through the runtime's provided C exports at opt0/1/2 on both targets,
+and checks that the distinct Internal load symbols remain frameless leaves.
+The C companion also calls the raw atomic load/CAS leaves through the Windows
+RSI/RDI canary interposers.
 
 `tc-module-index-job-owned` interleaves two job-owned declaration/import indexes
 with colliding numeric names while a decoy interner remains installed. It keeps

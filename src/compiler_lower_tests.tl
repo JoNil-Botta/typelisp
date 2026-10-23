@@ -14902,6 +14902,7 @@
           name
           (& (ast.ast-param-list-new))
           (& (I64))
+          (No)
           (& (Unavailable)))]
       [right : ast.AstDecl
         (load.compiler-load-package-def-fn-extern
@@ -14913,6 +14914,7 @@
           name
           (& (ast.ast-param-list-new))
           (& (I64))
+          (No)
           (& (Unavailable)))]
       [lower-state : lower.CompilerLowerState
         (lower.compiler-lower-state-new-with-intern-state

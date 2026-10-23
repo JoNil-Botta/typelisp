@@ -24,19 +24,19 @@ The checked inventory has these bounds:
 
 | Kind | Rows | Payload identity |
 | --- | ---: | --- |
-| Assembly | 51 | 47 fixed variants are size/hash pinned; 4 startup fragments are dynamically composed |
+| Assembly | 53 | 49 fixed variants are size/hash pinned; 4 startup fragments are dynamically composed |
 | Opaque direct-object bytes | 24 | Every byte string is size/hash pinned |
 | Structured direct-object contributions | 9 | Exact instruction/byte encoding is supplied by the object producer |
-| Total | 84 | Registry storage capacity is 96 rows |
+| Total | 86 | Registry storage capacity is 96 rows |
 
 Runtime selection uses a fixed capacity of 20 IDs. The full Linux and Windows
-sets select 15 and 15 rows, respectively. Profile and arena-debug combinations
+sets select 16 and 16 rows, respectively. Profile and arena-debug combinations
 have separate IDs, so a feature change cannot reuse the identity of a
 different rendered variant.
 
 Each row records its producer and schema, target and ABI, feature gate,
 entry/interior/end anchors, related data, terminal behavior, and an ordered
-event transcript. The transcript contains 3,225 reviewed events in 19,082
+event transcript. The transcript contains 3,253 reviewed events in 19,208
 bytes. Its closed event codes are:
 
 | Code | Meaning |
@@ -56,7 +56,9 @@ bytes. Its closed event codes are:
 Unknown codes fail parsing. `O` without provenance also fails. The Windows
 startup rows classify `SwitchToFiber` as an external context switch with its
 abnormal return path, and classify the fiber procedure and unhandled-exception
-filter as externally entered callbacks. The three Windows callback/startup
+filter as externally entered callbacks. The TLCI image and macro bridges each
+carry their own `.pdata`/`.xdata` relation; the macro record includes the
+Platform RSI/RDI saves. The three Windows callback/startup
 ranges carry explicit `.pdata` relations to `.L_tl_start_xdata`; the relation
 also pins the shared eight-byte unwind record's hash.
 

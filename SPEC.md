@@ -6924,7 +6924,7 @@ Windows. It is not ELF or COFF. The first 176 bytes are a fixed header:
 | 0 | 8 | Magic bytes `54 4c 43 49 0d 0a 1a 0a` (`TLCI\r\n\x1a\n`) |
 | 8 | 8 | Format version (`2`) |
 | 16 | 8 | Host platform enum: `1 = x86_64 legacy/ambiguous`, `2 = x86_64-linux`, `3 = x86_64-windows` |
-| 24 | 8 | Callback ABI version (`2`) |
+| 24 | 8 | Callback ABI version (`3`) |
 | 32 | 8 | Compiler build hash byte offset |
 | 40 | 8 | Compiler build hash byte length |
 | 48 | 8 | Content hash |
@@ -7104,10 +7104,15 @@ consumer to use the source fallback.
 
 ##### 5.17.1.2 Host ABI handshake
 
-The tlci header field at byte offset 24 is callback ABI version `2`. This is a
+The tlci header field at byte offset 24 is callback ABI version `3`. This is a
 hard cutover: a loader rejects a code-bearing image whose callback ABI is not
-`2`, and it validates the host callback table as version `2` before mapping
-the image. There is no numeric-dispatch or callback-ABI-v1 compatibility path.
+`3`, and it validates the host callback table as version `3` before mapping
+the image. Callback ABI v2 remains readable for inspection and portable
+metadata; code-bearing v2 images are rejected before native page allocation.
+There is no execution compatibility path. The container
+format and metadata schema remain independently versioned. Version 3 gives
+Windows macro entries the six-position Internal convention; named host
+callbacks and the image registration entry retain their C convention.
 
 A code-bearing image exports one native entry point named `tlci_image_entry`.
 The host calls it with the host platform's ordinary C integer calling
@@ -7127,7 +7132,7 @@ old `invoke` slot and reserves it as zero:
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIHOST` |
-| 8 | 8 | Host callback ABI version (`2`) |
+| 8 | 8 | Host callback ABI version (`3`) |
 | 16 | 8 | Callback table byte size; must be at least `64` |
 | 24 | 8 | Opaque host context pointer, or `0` |
 | 32 | 8 | Reserved, must be `0` |
@@ -7213,7 +7218,7 @@ entry table:
 | Offset | Size | Field |
 | ---: | ---: | --- |
 | 0 | 8 | Magic little-endian u64 for ASCII `TLCIIMAG` |
-| 8 | 8 | Host callback ABI version used by the image (`2`) |
+| 8 | 8 | Host callback ABI version used by the image (`3`) |
 | 16 | 8 | Registration record byte size; must be at least `64` |
 | 24 | 8 | Opaque image context pointer for later dispatch, or `0` |
 | 32 | 8 | Reserved, must be `0` |
@@ -7231,7 +7236,9 @@ of the mapping:
 | 16 | 8 | Macro entry function pointer |
 | 24 | 8 | Reserved, must be `0` |
 
-A macro entry function uses the host C ABI:
+A macro entry function uses the host's TypeLisp Internal convention (§11.1–11.2).
+The C-entered loader trampoline preserves the platform's nonvolatile registers
+and forwards these six arguments to that convention:
 
 | Position | Type | Meaning |
 | ---: | --- | --- |
@@ -7331,6 +7338,10 @@ string of `u`/`v` classes whose length equals the ordinary parameter count.
 source parameter that supplies the logical `foreach` index and accounts for the
 hidden uniform index-base ABI operand. `symbol` is the exact nonempty,
 target-independent TypeLisp linker symbol in the package runtime archive.
+Windows scalar specializations use the six-position Internal ABI in §11.2,
+including the hidden active-mask and index-base operands. They are not C
+exports. Runtime archive identity schema `typelisp-package-runtime-inputs-v2`
+invalidates archives produced with the preceding four-position convention.
 Helper names and signatures are nonempty. Metadata v1 images continue to parse
 and emit without this field and remain byte-layout compatible.
 
@@ -10082,17 +10093,37 @@ loaded file's own path, line and column for `.load`.
 | 2nd | `%rdx` | `%xmm1` |
 | 3rd | `%r8` | `%xmm2` |
 | 4th | `%r9` | `%xmm3` |
-| 5th+ | Stack after 32-byte shadow space | Stack after 32-byte shadow space |
+| 5th | `%rsi` | `%xmm4` |
+| 6th | `%rdi` | `%xmm5` |
+| 7th+ | Stack after 32-byte shadow space | Stack after 32-byte shadow space |
 
-- Integer and float arguments share the four register slots.
+This table describes TypeLisp **Internal** calls. Integer and float arguments
+share the six positional register slots. C externs, `CFunc` calls, varargs and
+raw C exports retain the Win64 **Platform** convention: four shared register
+slots, with the fifth and later arguments on the stack after shadow space.
+
+- Internal caller-saved GP registers are `%rax`, `%rcx`, `%rdx`, `%r8`–`%r11`,
+  `%rsi` and `%rdi`. Callee-saved GP registers are `%rbx`, `%rbp`, `%r12`–`%r15`.
+  `%xmm6`–`%xmm15` remain callee-saved under both conventions.
+- A declared C export has a distinct Platform entry and Internal body. The C
+  entry preserves `%rsi`/`%rdi`, forwards stack arguments to their Internal
+  positions, and describes its frame and saves in SEH unwind information.
+  Entries with at most four lowered physical words may tail-enter a shared
+  object-local bridge; their raw leaf changes no stack state, and the shared
+  bridge owns the preservation frame and unwind record.
+  Direct TypeLisp and package calls use the Internal body. TypeLisp package
+  exports retain Internal for both their entry and body. The reserved raw
+  atomic/volatile helper leaves may share entry bytes: they use at most three
+  common GP argument slots, do not adjust the stack, and leave `%rsi`/`%rdi`
+  untouched under both conventions.
 - Scalar `f64` and `f32` both use the float (`%xmm`) registers: `f64` moves with
   `movsd`, `f32` with single-precision `movss`.
 - Return value: `%rax` (integer), `%xmm0` (float, `f64` or `f32`).
 - **Internal structural values.** Non-empty finite Tuple and fixed
   `(Array T N)` values use the same recursive, naturally aligned inline layout
   described above. A structural value of size 1, 2, 4, or 8 bytes is passed by
-  value in the integer register/value transport (`%rcx`, `%rdx`, `%r8`, or
-  `%r9`, then the stack area after shadow space). Every other parameter size
+  value in the integer register/value transport (`%rcx`, `%rdx`, `%r8`, `%r9`,
+  `%rsi`, `%rdi`, then the stack area after shadow space). Every other parameter size
   is passed indirectly through a pointer to a private caller-created
   temporary. A return of 1, 2, 4, or 8 bytes uses `%rax`; every other
   structural return size uses a leading caller-owned sret pointer and returns

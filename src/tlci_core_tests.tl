@@ -202,6 +202,8 @@
 
 (define (tlci-test-host-abi-layout-ok?) : bool
   (and
+    (= tlci.tlci-callback-abi-version 3)
+    (= tlci.tlci-host-abi-version 3)
     (= tlci.tlci-host-abi-version tlci.tlci-callback-abi-version)
     (string.eq tlci.tlci-image-entry-symbol "tlci_image_entry")
     (= tlci.tlci-image-entry-param-count 2)
@@ -358,7 +360,10 @@
         "tlci host ABI: bad host callback table magic")
       (tlci-test-table-rejects?
         (tlci-test-table magic (+ version 1) size 0 1 1)
-        "tlci host ABI: unsupported callback ABI version 3")
+        "tlci host ABI: unsupported callback ABI version 4")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic 2 size 0 0 1)
+        "tlci host ABI: unsupported callback ABI version 2")
       (tlci-test-table-rejects?
         (tlci-test-table magic version (- size 1) 0 1 1)
         "tlci host ABI: host callback table byte-size is smaller than v2")
@@ -394,7 +399,10 @@
           0
           0
           0)
-        "tlci host ABI: unsupported callback ABI version 3")
+        "tlci host ABI: unsupported callback ABI version 4")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration registration-magic 2 registration-size 0 0 0)
+        "tlci host ABI: unsupported callback ABI version 2")
       (tlci-test-registration-rejects?
         (tlci-test-registration
           registration-magic

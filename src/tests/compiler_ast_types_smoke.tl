@@ -2959,14 +2959,47 @@
     (compiler-ast-canonical-reserve-reordered-first-span? false)
     (compiler-ast-canonical-reserve-reuse-and-owners? false)))
 
+;; The consuming path must also accept an empty source while clearing a
+;; previously populated destination, without consulting any source row or span.
+(define (compiler-ast-empty-compaction? [consume-source-spans? : bool]) : bool
+  (let
+    [source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [dest : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [_decoy : i64
+      (ast.ast-node-pool-context-expr-push dest (Literal (ast.ast-lit-int 9)))]
+    [program : ast.AstProgram (ast.ast-program (ast.ast-decl-list-new))]
+    (match (ast.ast-program-compact-with-pools
+      source
+      dest
+      (& program)
+      consume-source-spans?)
+      [(AstProgramCompaction compacted pools)
+        (match compacted
+          [(Program decls)
+            (and
+              (= (ast.ast-decl-list-len (deref decls)) 0)
+              (= (ast.ast-node-pool-context-expr-len pools) 0)
+              (= (ast.ast-node-pool-context-type-len pools) 0)
+              (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 0)
+              (= (ast.ast-node-pool-context-expr-respan-count pools) 0))])])))
+
 (define (compiler-ast-span-forwarding-smoke?) : bool
   (and
+    (compiler-ast-empty-compaction? false)
+    (compiler-ast-empty-compaction? true)
     (compiler-ast-program-compaction-smoke? false)
     (compiler-ast-program-compaction-smoke? true)
     (compiler-ast-canonical-reserve-row? 0 0 0 64 true)
+    (compiler-ast-canonical-reserve-row? 1 1 0 64 true)
+    (compiler-ast-canonical-reserve-row? 2 2 0 64 true)
     (compiler-ast-canonical-reserve-row? 31 31 0 64 true)
     (compiler-ast-canonical-reserve-row? 32 32 0 64 true)
     (compiler-ast-canonical-reserve-row? 33 33 0 64 true)
+    (compiler-ast-canonical-reserve-row? 8191 8191 0 8191 true)
+    (compiler-ast-canonical-reserve-row? 8192 8192 0 8192 true)
+    (compiler-ast-canonical-reserve-row? 8192 1 0 8192 true)
     (compiler-ast-canonical-reserve-row? 65537 65537 0 131072 true)
     (compiler-ast-canonical-reserve-reordered-first-span? true)
     (compiler-ast-canonical-reserve-reuse-and-owners? true)))

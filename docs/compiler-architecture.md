@@ -69,6 +69,11 @@ adapters do not make an ambient owner safe for a value from another job.
 Borrow-conflict read forms retain unchanged source IDs and build changed
 payloads in that same owner, under the linked expression/fact contract.
 
+Final macro detachment may retire source provenance before copying: it clears
+source span slots for forwarding IDs, while the shared AST traversal rebuilds
+destination provenance from wrapper rows. Other compactions preserve their
+source; see the [AST ownership invariants](compiler-invariants.md#architecture).
+
 Lifetime diagnostics and IR rendering share the validated syntax-name boundary
 with explicit macro-spelling policy; see the [rendering invariants](compiler-invariants.md#architecture).
 

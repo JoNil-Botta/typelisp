@@ -9,7 +9,7 @@ assertions when changing this fixture's setup.
 removes a callee loop, an unknown argument, a retained callee loop and a caller
 loop. The cycle-proof control retains a small cyclic specialized body. The
 control-resolution pair distinguishes a residual acyclic branch from complete
-literal resolution to one block. Keep the
+literal resolution to one path, including a chain of unconditional jumps. Keep the
 native `string_literal_eq.tl` conditional chain at opt0/1/2 on both hosts,
 including first/last-byte differences, runtime copies, UTF-8, length boundaries
 and a returning guard.

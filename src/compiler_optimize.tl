@@ -110820,8 +110820,20 @@
 (define (opt-inline-checked-small-body? [callee-cost : i64] [site-weight : i64]) : bool
   (<= callee-cost (* 64 site-weight)))
 
+(define (opt-inline-checked-single-path? [blocks : (& ir.CompilerIrBlockList)]) : bool
+  (let
+    [index : OptCfgIndex (opt-cfg-index-build blocks)]
+    (for [id (iterator.range 0 (opt-cfg-index-block-count index))]
+      (when
+        (>
+          (opt-label-count
+            (opt-cfg-index-successors index (opt-cfg-index-label index id)))
+          1)
+        (return false)))
+    true))
+
 ;; Conditional candidates keep their actual position class. Specialization
-;; must retire a loop or resolve the body to one block; residual acyclic
+;; must retire a loop or resolve control to one path; residual acyclic
 ;; branches do not justify a new conditional import. The priced body remains
 ;; call-free, acyclic and inside the existing small-body cost bound.
 (define (opt-inline-checked-conditional-literal-ok?
@@ -110836,7 +110848,7 @@
         (opt-inline-tiny-predicate-acyclic-reclaiming? blocks)
         (opt-inline-checked-small-body? special-cost site-weight)
         (or
-          (= (ir.compiler-ir-block-list-count blocks) 1)
+          (opt-inline-checked-single-path? blocks)
           (match callee
             [(Function _ _ _ _ original _)
               (>

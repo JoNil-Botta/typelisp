@@ -19771,7 +19771,7 @@
       "a residual acyclic branch does not justify a conditional import")
     (test.assert-true
       (opt-inline-conditional-branch-proof true)
-      "literal resolution to one block retains conditional eligibility")))
+      "literal resolution to one path retains conditional eligibility")))
 
 (define (opt-inline-inl8-holder-tail [loop? : bool]) : ir.CompilerIrBlockList
   (if loop?

@@ -1719,7 +1719,8 @@ frequency floor when the original callee is call-free. The verdict additionally
 requires positive literal specialization gain and a specialized callee whose
 frozen priced body is call-free, acyclic and within the existing small-body
 cost bound. Specialization must either retire an original natural loop or
-resolve the body to one block; an acyclic residual branch alone does not qualify. These candidates use the existing relaxed reserve, caller limits,
+resolve control to one path; an acyclic residual branch alone does not qualify.
+Unconditional jump chains do not introduce a choice. These candidates use the existing relaxed reserve, caller limits,
 growth ceilings and acceptance window. The ordinary position classifier and
 arm-wrapper restrictions still govern nonspecializing sites. Pricing shares
 the existing frozen pipeline and suppresses developer observability while its

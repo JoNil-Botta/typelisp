@@ -607,6 +607,30 @@ expression dispatcher. Each expansion frame pairs its invocation span with the
 current origin path, so an imported template's nested call keeps the template
 file while a forwarded caller operand keeps the caller file.
 
+`compiler_stack_traffic.tl` defines the #9242 post-regalloc fact boundary for
+#7236. Its producer must supply final emitted-operation keys, logical homes,
+closed ownership and register-bank facts, and source-owned region membership;
+neither a stack offset nor a mnemonic proves them. Region parents precede
+children. The existing liveness CFG supplies indexed forward/reverse edges.
+The verifier rejects malformed extents, references, duplicate operations and
+missing reverse edges. Recurring-access counts describe header SCC membership
+only; they do not prove a round trip. An ordered witness names a same-home write
+and later read on a path which returns to the reachable full-gang header without
+visiting it between those events. In one block, operation/access keys give
+execution order. A `ReadWrite` access reads before writing and cannot witness
+itself without a nonempty inner cycle. Child control flow participates while
+child traffic retains its own region. The proof selects no owner or bank;
+allocator/vector/mask warning policy belongs to #7294.
+Facts borrow their function/job owner. Emitted and source function identities
+are distinct: inlined regions retain the callee's canonical source site. Both
+display names are owned snapshots, so rendering never consults another
+installed symbol table. Ordinary cold traps carry `NoSite`; full-gang and tail
+regions require a typed `Site`. Retention
+must escape all arrays and strings into the receiving owner. The v1 JSON schema
+uses canonical array order and explicit compiler digest/source identity.
+The module is groundwork with #7236 as its named next production consumer;
+retire it if that consumer is retired. It adds no default compiler-path hooks.
+
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,
 then the body, so binding order and ordinal survive every AST walker. The

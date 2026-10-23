@@ -18,6 +18,7 @@
 (import token)
 (import stdlib.text_buf)
 (import stdlib.string)
+(import stdlib.string_utf8 as utf8)
 (import stdlib.result)
 (import (result.result i64 String) as result_lex_i64)
 
@@ -49,6 +50,10 @@
   (No)
   (Ok char i64)
   (Err String))
+
+(defenum ResultStringLiteral
+  (Ok String)
+  (Err String i64))
 
 ;; Dynamic capability used by standalone lexing and explicit compile jobs.
 (defenum LexerInternOwner
@@ -511,6 +516,50 @@
             (set! i (+ i 1))))))
     (text_buf.render buf)))
 
+;; Every current escape contributes exactly one byte. Translate a decoded
+;; byte offset back through those escapes only on the diagnostic path.
+(define (string-literal-source-offset
+  [src : (& src str)]
+  [start : i64]
+  [end : i64]
+  [offset : i64]) : i64
+  (let
+    [position : i64 start]
+    [decoded : i64 0]
+    (while (and (< position end) (< decoded offset))
+      (set!
+        position
+        (+
+          position
+          (if (= (__tl_string_ref src position) '\\')
+            2
+            1)))
+      (set! decoded (+ decoded 1)))
+    (if (< position end)
+      (+
+        position
+        (if (= (__tl_string_ref src position) '\\')
+          1
+          0))
+      end)))
+
+;; Both the compiler lexer and strict formatter validate the completed value,
+;; so escaped bytes cannot bypass the shared scalar decoder.
+(define (string-literal-result [src : (& src str)] [start : i64] [end : i64]) : ResultStringLiteral
+  (let
+    [text : String (unescape-string-literal src start end)]
+    (match (utf8.validate (& text))
+      [(Valid) (Ok text)]
+      [(Invalid error)
+        (Err
+          (str_cat.str-cat
+            "lexer: invalid UTF-8 string literal at byte "
+            (string.int->string error.failure-offset)
+            " ("
+            (utf8.error-kind-name error.kind)
+            ")")
+          (string-literal-source-offset src start end error.failure-offset))])))
+
 ;; Return the index of the end-of-line that ends a `;` line comment whose body
 ;; starts at `start`. `n` is the source length. Scans forward until a newline
 ;; or the end of the source, returning that index (the newline is
@@ -722,26 +771,31 @@
                 [token-col : i64 col]
                 (match (scan-str-end-result src start n)
                   [(Ok end)
-                    (let
-                      [text : String (unescape-string-literal src start end)]
-                      [string-id : ci.InternId
-                        (lexer-intern-source-slice-id
-                          owner
-                          text
-                          0
-                          (string.string-length text))]
-                      (set!
-                        (array-ref lex-spanned-token-buffer count)
-                        (token.spanned-token-new
-                          (Str (token.token-intern-payload string-id))
-                          token-line
-                          token-col))
-                      (set! count (+ count 1))
-                      (match (advance-position src i (+ end 1) line col)
-                        [(Position next-line next-col)
-                          (set! line next-line)
-                          (set! col next-col)])
-                      (set! i (+ end 1)))]
+                    (match (string-literal-result src start end)
+                      [(Ok text)
+                        (let
+                          [string-id : ci.InternId
+                            (lexer-intern-source-slice-id
+                              owner
+                              text
+                              0
+                              (string.string-length text))]
+                          (set!
+                            (array-ref lex-spanned-token-buffer count)
+                            (token.spanned-token-new
+                              (Str (token.token-intern-payload string-id))
+                              token-line
+                              token-col))
+                          (set! count (+ count 1))
+                          (match (advance-position src i (+ end 1) line col)
+                            [(Position next-line next-col)
+                              (set! line next-line)
+                              (set! col next-col)])
+                          (set! i (+ end 1)))]
+                      [(Err err position)
+                        (set! ok false)
+                        (set! message err)
+                        (set! err-pos position)])]
                   [(Err err)
                     (set! ok false)
                     (set! message err)

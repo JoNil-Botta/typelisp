@@ -7,6 +7,7 @@
 (import compiler_diagnostic as diag)
 (import compiler_embedded_stdlib as embedded)
 (import stdlib.io)
+(import stdlib.fs)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
 (import stdlib.test)
@@ -99,6 +100,28 @@
           (string.eq diagnostic.message message)))]
     [_ false]))
 
+(define (malformed-text-matches?
+  [result : load.ResultCompilerLoadInclude]
+  [request : String]) : bool
+  (match result
+    [(Err boxed)
+      (let
+        [diagnostic : diag.CompilerDiagnostic (deref boxed)]
+        (and
+          (load_tests.compiler-load-error-code? (& diagnostic) "E0302")
+          (string.eq
+            (diag.compiler-diagnostic-path (& diagnostic))
+            "tests/integration/include_bin_payload.bin")
+          (= (diag.compiler-diagnostic-line (& diagnostic)) 1)
+          (= (diag.compiler-diagnostic-col (& diagnostic)) 4)
+          (string.eq
+            diagnostic.message
+            (cat.str-cat
+              "compiler-load: invalid UTF-8 include-str "
+              request
+              " from tests/integration/include-entry.tl at byte 3 (UnexpectedContinuation)"))))]
+    [_ false]))
+
 (define (check-includes) : unit
   (let
     [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
@@ -122,8 +145,11 @@
             (& (load_tests.compiler-load-string-vec-one "stdlib"))
             pools)]
         (test.assert-true
-          (include-matches? kind (& pools) result (string.copy contents))
-          "local file retains exact payload and declaration kind")
+          (match kind
+            [(RuntimeString)
+              (malformed-text-matches? result "include_bin_payload.bin")]
+            [_ (include-matches? kind (& pools) result (string.copy contents))])
+          "runtime text rejects malformed UTF-8; binary forms retain exact payload")
         (test.assert-i64-eq
           (ast.ast-node-pool-len)
           ambient-count
@@ -172,16 +198,60 @@
           [active : ast.AstNodePoolContext
             (ast.ast-node-pool-context-capture-active)]
           (test.assert-true
-            (include-matches?
-              kind
-              (& active)
-              package-result
-              (string.copy contents))
-            "package resolver and active-pool adapter preserve every kind"))
+            (match kind
+              [(RuntimeString)
+                (malformed-text-matches?
+                  package-result
+                  "pkg:assets/include_bin_payload.bin")]
+              [_
+                (include-matches?
+                  kind
+                  (& active)
+                  package-result
+                  (string.copy contents))])
+            "package resolver preserves UTF-8 admission and every binary kind"))
         (set! ambient-count (ast.ast-node-pool-len))
         (set! index (+ index 1))))))
 
 (test include-kind-matrix (check-includes))
+
+(test
+  include-utf8-text-exact-bytes
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [contents : String "Aé€😀é\n"]
+    [directory : String
+      (match (fs.try-create-temp-dir "typelisp-include-utf8")
+        [(OkIoString path) path]
+        [(ErrIoString error) (io.panic (io.error-message error))])]
+    [path : String (fs.path-join (& directory) "payload.txt")]
+    [entry : String (fs.path-join (& directory) "entry.tl")]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    (load_tests.compiler-load-write-file-text
+      (string.copy (& path))
+      (string.copy (& contents)))
+    (test.assert-true
+      (include-matches?
+        load.CompilerLoadIncludeKind.RuntimeString
+        (& pools)
+        (load.compiler-load-expand-include-with-pools
+          load.CompilerLoadIncludeKind.RuntimeString
+          (string.copy (& entry))
+          "payload.txt"
+          cbi.compiler-builtin-id-fix-x
+          (& (load_tests.compiler-load-string-vec-one "stdlib"))
+          pools)
+        (string.copy (& contents)))
+      "valid text include retains every UTF-8 byte")
+    (test.assert-i64-eq
+      (fs.remove-file-status (& path))
+      0
+      "remove own include payload")
+    (test.assert-i64-eq
+      (fs.remove-dir-status (& directory))
+      0
+      "remove own include directory")))
 
 ;; The ordinary inline harness deliberately uses an empty embedded payload.
 ;; Linux's alternate accepted separator forces fallback even inside the repo.

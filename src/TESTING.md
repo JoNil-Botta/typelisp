@@ -1,5 +1,16 @@
 # Selfhost compiler testing
 
+`utf8_literals.tl` checks completed literal bytes, every malformed UTF-8
+class, escape-to-source diagnostic offsets, and strict formatter agreement.
+`compiler_load_includes.tl` retains the four include-kind matrix: runtime text
+rejects malformed bytes while binary/comptime/compressed forms preserve them;
+valid Unicode text retains its bytes. `string_utf8_api.tl` shares the decoder,
+forward/reverse, count, boundary, scalar-slice and encoding corpus on both hosts,
+including exact allocation assertions for traversal/range/encoding. Borrowed
+slice views retain the ordinary view-header cost. `utf8_process_api.tl` checks
+non-ASCII paths, cwd, quoted argv and environment names/values; on Windows,
+both parent and copied child require `GetACP() == 65001` from their manifests.
+
 `cse-block-tables-keep-the-first-walk-state` installs address-taken facts for
 its own blocks before the raw CSE walks. A retired preceding function's facts
 must not be read. Keep the empty-state, generation and repeated-expression

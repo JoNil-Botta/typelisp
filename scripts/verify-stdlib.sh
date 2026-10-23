@@ -322,6 +322,7 @@ stdlib/tests/string_eq_lengths.tl|42|-|-|-
 stdlib/tests/string_copy_lengths.tl|42|-|-|-
 stdlib/tests/json_sequence_api.tl|42|-|-|-
 stdlib/tests/string_utf8_api.tl|42|-|-|-
+stdlib/tests/utf8_process_api.tl|42|-|-|-
 stdlib/tests/http_head_codec.tl|42|-|-|-
 stdlib/tests/http_trailer.tl|42|-|-|-
 stdlib/tests/http_trailer_policy.tl|42|-|-|-

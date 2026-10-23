@@ -110503,21 +110503,25 @@
             (if (= opt-inline-checked-site-position 0)
               (opt-inline-checked-pos-entry)
               (opt-inline-checked-pos-none)))]
-        ;; The depth floor is zero or one. Outside depth zero and the existing
-        ;; frequency rung, callee call-freedom cannot change admission.
-        [callee-call-free? : bool
-          (and
-            (= site-depth 0)
-            (>= frequency (opt-inline-checked-depth-relaxed-frequency))
-            (opt-inline-blocks-call-free? blocks))]
-        [conditional-literal? : bool
+        [entry-equivalent? : bool
+          (opt-inline-checked-entry-equivalent? position-class)]
+        [conditional-caller? : bool
           (and
             (= site-depth 0)
             (= position-class (opt-inline-checked-pos-none))
             (> opt-inline-checked-current-literal-count 0)
             (>= frequency (opt-inline-checked-depth-relaxed-frequency))
-            (opt-inline-caller-loop-free?)
-            callee-call-free?)]
+            (opt-inline-caller-loop-free?))]
+        ;; Call-freedom can lower the depth floor only at an entry-equivalent
+        ;; site, or qualify a conditional caller that passed the other guards.
+        [callee-call-free? : bool
+          (and
+            (= site-depth 0)
+            (>= frequency (opt-inline-checked-depth-relaxed-frequency))
+            (or entry-equivalent? conditional-caller?)
+            (opt-inline-blocks-call-free? blocks))]
+        [conditional-literal? : bool
+          (and conditional-caller? callee-call-free?)]
         [_publish : unit
           (begin
             (set! opt-inline-checked-trace-depth site-depth)
@@ -110542,7 +110546,7 @@
               site-depth
               (opt-inline-checked-effective-min-site-depth
                 frequency
-                (opt-inline-checked-entry-equivalent? position-class)
+                entry-equivalent?
                 callee-call-free?))
             (not conditional-literal?))
             ;; SW-SPINE: a refusal the WALK decided -- no reading reached

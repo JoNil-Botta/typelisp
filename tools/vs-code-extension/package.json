@@ -98,6 +98,93 @@
           "type": "boolean",
           "default": true,
           "description": "Connect to the TypeLisp LSP server (`typelisp lsp`) for diagnostics and editor features."
+        },
+        "typelisp.documentationSites": {
+          "type": "array",
+          "default": [],
+          "description": "Exact documentation-site bindings for canonical public-symbol hover and document links. Local pages take precedence; hosted pages require an immutable revision. Source/compiler mismatches produce no documentation target.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "packageIdentity",
+              "sourceIdentity",
+              "compilerIdentity",
+              "sourcePath",
+              "sourceSha256",
+              "moduleIdentity",
+              "docModule",
+              "anchors"
+            ],
+            "anyOf": [
+              {
+                "required": [
+                  "localUri"
+                ]
+              },
+              {
+                "required": [
+                  "hostedUri",
+                  "revision"
+                ]
+              }
+            ],
+            "properties": {
+              "packageIdentity": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceIdentity": {
+                "type": "string",
+                "minLength": 1,
+                "not": {
+                  "enum": [
+                    "main",
+                    "master",
+                    "HEAD"
+                  ]
+                }
+              },
+              "sourcePath": {
+                "type": "string",
+                "minLength": 1
+              },
+              "docModule": {
+                "type": "string",
+                "minLength": 1
+              },
+              "compilerIdentity": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "sourceSha256": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{64}$"
+              },
+              "moduleIdentity": {
+                "type": "string"
+              },
+              "anchors": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "pattern": "^tl-"
+                }
+              },
+              "localUri": {
+                "type": "string",
+                "pattern": "^file://[^#]*$"
+              },
+              "hostedUri": {
+                "type": "string",
+                "pattern": "^https://[^?#]*$"
+              },
+              "revision": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              }
+            }
+          }
         }
       }
     }

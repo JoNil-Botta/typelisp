@@ -1,5 +1,6 @@
 ;; doc_html_smoke.tl - Runnable golden smoke for doc_html.tl.
 (import stdlib.vector)
+(import stdlib.string)
 (import doc_html)
 (import doc_render)
 (import doc_extract)
@@ -32,6 +33,33 @@
 ;: Function docs with `tick` and [arg].
 (define (add-one [x : i64]) : i64 (+ x 1))"))
 
+(define (doc-html-member-search-smoke?) : bool
+  (let
+    [source : String
+      ";# API.\n(import stdlib.string as words)\n(defstruct Left\n  ;: Exact field docs.\n  (value i64))\n(defstruct Right (value i64))\n(defenum Status (Same) (Other i64))\n(define (local-only) : i64 (let [hidden : i64 1] hidden))\n"]
+    [records : String
+      (doc_html.doc-html-search-records-for-module
+        "api.html"
+        (Module
+          "pkg/api.tl"
+          (doc_extract.doc-extract-source (string.copy (& source)))))]
+    [html : String
+      (doc_html.doc-html-render-module-page
+        "pkg/api.tl"
+        (doc_extract.doc-extract-source source))]
+    (and
+      (string.contains records "tl-pkg_2fapi_2etl.import-alias.words")
+      (string.contains records "tl-pkg_2fapi_2etl.field.value.Left")
+      (string.contains records "tl-pkg_2fapi_2etl.field.value.Right")
+      (string.contains records "tl-pkg_2fapi_2etl.enum-variant.Same.Status")
+      (string.contains records "\"label\":\"Left.value\"")
+      (string.contains records "Exact field docs.")
+      (not (string.contains records "hidden"))
+      (string.contains
+        html
+        "<dt>Parent</dt><dd><a href=\"#tl-pkg_2fapi_2etl.defstruct.Left\">Left</a>")
+      (string.contains html "id=\"tl-pkg_2fapi_2etl.field.value.Right\""))))
+
 (define (doc-html-smoke) : i64
   (let
     [docs : doc_extract.DocExtraction (doc-html-smoke-docs)]
@@ -50,6 +78,7 @@
         "smoke.html"
         (Module "smoke<&>.tl" docs))]
     (if (and
+      (doc-html-member-search-smoke?)
       (doc_html.doc-html-require-contains
         page
         "<!doctype html>"

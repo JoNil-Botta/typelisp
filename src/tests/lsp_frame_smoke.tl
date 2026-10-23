@@ -22,6 +22,8 @@
 (import lsp_frame_core as lsp)
 (import lsp_frame_core_tests as lsp_tests)
 (import lsp_vector_families as lvf)
+(import lsp_documentation_sites as doc_sites)
+(import lsp_documentation_tests as doc_tests)
 (import read as reader)
 (import (vector.vector lvf.LspDeclEntry core) as lsp_decl_vec)
 (import (vector.vector lvf.LspDocument core) as lsp_document_vec)
@@ -84,7 +86,8 @@
     [state : lvf.LspServerState (lsp.lsp-server-state-new)]
     (lsp.lsp-server-state-initialize-workspaces
       state
-      (lsp-smoke-initialize-message roots root-uri))))
+      (lsp-smoke-initialize-message roots root-uri)
+      (doc_sites.empty false))))
 
 (define (lsp-smoke-state-name-count
   [state : (& state lvf.LspServerState)]
@@ -1122,7 +1125,7 @@
       "(define (fun) : i64 1)\n(define value : i64 2)\n(defstruct Pair (x i64))\n(defenum Choice (Yes))\n(defmacro make [] unit)\n(defdispatch choose [] fun)\n(extern (puts [s : ptr]) : i64)\n(extern errno : i64)\n;; (define hidden : i64 0)\n(define text : String \"(defstruct Hidden)\")"]
     [rendered : String
       (json.stringify (lsp_tests.lsp-document-symbols-for-text source))]
-    [capabilities : String (json.stringify (lsp.lsp-initialize-result))]
+    [capabilities : String (json.stringify (lsp.lsp-initialize-result false))]
     [fun : String
       "{\"name\":\"fun\",\"kind\":12,\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":22}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":9},\"end\":{\"line\":0,\"character\":12}}}"]
     [value : String
@@ -1158,7 +1161,7 @@
     [path : String "src/tests/lsp_document_highlight_smoke.tl"]
     [source : String
       "(define prefix : String \"λ€𝄞\") (define top : i64 1)\n(define (bump [slot : i64]) : i64\n  (begin\n    (set! slot (+ slot 1))\n    slot))\n(define (shadow [top : i64]) : i64 top)\n(define (local-use) : i64 (let [local : i64 top] local))\n(define (read) : i64 top)\n; top\n(define text : String \"top\")\n(define top-suffix : i64 2)\n(defmacro (wrap [value : Expr]) : Expr value)\n(define result : i64 (wrap top))"]
-    [capabilities : String (json.stringify (lsp.lsp-initialize-result))]
+    [capabilities : String (json.stringify (lsp.lsp-initialize-result false))]
     [top-want : String
       "[{\"range\":{\"start\":{\"line\":0,\"character\":40},\"end\":{\"line\":0,\"character\":43}},\"kind\":1},{\"range\":{\"start\":{\"line\":6,\"character\":44},\"end\":{\"line\":6,\"character\":47}},\"kind\":2},{\"range\":{\"start\":{\"line\":7,\"character\":21},\"end\":{\"line\":7,\"character\":24}},\"kind\":2},{\"range\":{\"start\":{\"line\":12,\"character\":27},\"end\":{\"line\":12,\"character\":30}},\"kind\":2}]"]
     [local-want : String
@@ -1405,7 +1408,7 @@
     [path : String "src/tests/semantic_token_semantic.tl"]
     [source : String
       "(module semantic.tokens)\n; semantic token comment\n(defstruct Pair (field i64))\n(defenum Choice (Empty) (Some i64))\n(defmacro (identity [value : Expr]) : Expr value)\n(define (consume [parameter : i64]) : i64\n  (let [local : i64 parameter] (+ local 1)))\n(define text : String \"hello\")\n(define top : i64 (identity (consume 2)))\n(extern (foreign [x : i64]) : i64)"]
-    [capabilities : String (json.stringify (lsp.lsp-initialize-result))]
+    [capabilities : String (json.stringify (lsp.lsp-initialize-result false))]
     [legend : String
       "\"tokenTypes\":[\"namespace\",\"type\",\"enumMember\",\"function\",\"macro\",\"parameter\",\"variable\",\"property\",\"keyword\",\"comment\",\"string\",\"number\",\"operator\"]"]
     [modifiers : String
@@ -1498,7 +1501,7 @@
       "(define (fun) : i64\n  (+ 1\n     2))\n(define small : i64 1)"]
     [want : String
       "[{\"startLine\":0,\"startCharacter\":1,\"endLine\":2,\"endCharacter\":7},{\"startLine\":1,\"startCharacter\":3,\"endLine\":2,\"endCharacter\":6}]"]
-    [capabilities : String (json.stringify (lsp.lsp-initialize-result))]
+    [capabilities : String (json.stringify (lsp.lsp-initialize-result false))]
     [capability : String "\"foldingRangeProvider\":true"]
     (and
       (string.contains (& capabilities) (& capability))
@@ -2320,7 +2323,7 @@
     [stale : String "\"id\":92,\"result\":[]"]
     [filtered : String "\"id\":93,\"result\":[]"]
     [capability : String "\"codeActionKinds\":[\"quickfix\"]"]
-    [capabilities : String (json.stringify (lsp.lsp-initialize-result))]
+    [capabilities : String (json.stringify (lsp.lsp-initialize-result false))]
     (and
       (= result.status 0)
       (string.eq result.stderr "")
@@ -2388,7 +2391,7 @@
     [root-a-src-uri : String (lsp.lsp-resolved-path-to-file-uri root-a-src)]
     [root-b-uri : String (lsp.lsp-resolved-path-to-file-uri root-b)]
     [workspace-capabilities : String
-      (json.stringify (lsp.lsp-initialize-result))]
+      (json.stringify (lsp.lsp-initialize-result false))]
     [workspace-capability : String
       "\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true}"]
     [roots : lsp_svec.Vec (lsp_svec.new)]
@@ -2747,6 +2750,10 @@
     (if (not (= base-result 42))
       base-result
       (begin
+        (unless
+          (sem_tests.compiler-semantic-documentation-smoke-ok?)
+          (return 52))
+        (unless (doc_tests.documentation-target-smoke-ok?) (return 53))
         (unless (lsp-memory-reinstall-smoke-ok?) (return 51))
         (unless (lsp-completion-smoke-ok?) (return 6))
         (unless (lsp-inlay-smoke-ok?) (return 7))

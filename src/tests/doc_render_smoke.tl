@@ -67,6 +67,30 @@ Kind: defenum
 
 Enum docs mention variants.
 
+<a id=\"tl-.enum-variant.No.MaybeNumber\"></a>
+
+### MaybeNumber.No
+
+Kind: enum-variant
+
+```typelisp
+(No)
+```
+
+_No item docs._
+
+<a id=\"tl-.enum-variant.Some.MaybeNumber\"></a>
+
+### MaybeNumber.Some
+
+Kind: enum-variant
+
+```typelisp
+(Some i64)
+```
+
+_No item docs._
+
 <a id=\"tl-Point\"></a>
 
 ### Point
@@ -80,6 +104,30 @@ Kind: defstruct
 ```
 
 Struct docs mention fields.
+
+<a id=\"tl-.field.x.Point\"></a>
+
+### Point.x
+
+Kind: field
+
+```typelisp
+(x i64)
+```
+
+_No item docs._
+
+<a id=\"tl-.field.y.Point\"></a>
+
+### Point.y
+
+Kind: field
+
+```typelisp
+(y i64)
+```
+
+_No item docs._
 
 ")
 
@@ -124,6 +172,38 @@ _No documented declarations._
     (string.eq
       (doc_render.doc-render-identity-anchor "m" "define-function" "")
       "tl-m.define-function.")))
+
+(define (doc-render-member-origin-identities-ok?) : bool
+  (and
+    (string.eq
+      (doc_render.doc-render-documentation-anchor
+        "m"
+        (& (doc_extract.DocIdentity Field "value" "Left" Source)))
+      "tl-m.field.value.Left")
+    (string.eq
+      (doc_render.doc-render-documentation-anchor
+        "m"
+        (& (doc_extract.DocIdentity Field "value" "Right" Source)))
+      "tl-m.field.value.Right")
+    (string.eq
+      (doc_render.doc-render-documentation-anchor
+        "m"
+        (&
+          (doc_extract.DocIdentity Function "same" "" (Generated "a.b" "c" "d"))))
+      "tl-m.define-function.same.generated.a_2eb.c.d")
+    (not
+      (string.eq
+        (doc_render.doc-render-documentation-anchor
+          "m"
+          (&
+            (doc_extract.DocIdentity
+              Function
+              "same"
+              ""
+              (Generated "a" "b.c" "d"))))
+        (doc_render.doc-render-documentation-anchor
+          "m"
+          (& (doc_extract.DocIdentity Function "same" "" Source)))))))
 
 (define (doc-render-distinct-names-ok?) : bool
   (let
@@ -175,6 +255,8 @@ _No documented declarations._
         (io.panic "doc-render: empty markdown smoke mismatch")]
       [(not (doc-render-anchor-table-ok?))
         (io.panic "doc-render: anchor encoding table mismatch")]
+      [(not (doc-render-member-origin-identities-ok?))
+        (io.panic "doc-render: member/origin identity mismatch")]
       [(not (doc-render-distinct-names-ok?))
         (io.panic "doc-render: escape-looking names share an anchor")]
       [else 42])))

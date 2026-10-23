@@ -1,0 +1,9 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id":1,"raw_not_contains":"typelispDocumentationTargets"},
+    {"jsonpath_id":2,"raw_contains":"answer : i64","raw_not_contains":"typelispDocumentationTarget\n[Documentation]"},
+    {"jsonpath_id":3,"jsonpath_result":null}
+  ]
+}

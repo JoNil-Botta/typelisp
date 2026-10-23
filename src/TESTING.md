@@ -1723,6 +1723,31 @@ existing fixture specs. Windows defaults to `lsp batch`. Use
 `scripts/verify-lsp-transcript-batch.sh` for the fast manifest/parser mutation
 coverage, including raw malformed-frame input and incomplete result sets.
 
+The frame smoke also calls `lsp_documentation_tests`: actual checked aliases,
+fields and variants agree with extraction/HTML identities, exact site matching
+rejects stale/ambiguous inputs, and site owners survive request and document
+retirement without retaining response borrows. Same-named fields from two
+independently checked modules retain distinct package/page targets in either
+mapping order after both source indexes retire. Cached definition lookup agrees
+with the linear semantic lookup and declines retired owners; link endpoint
+checks cover UTF-8/UTF-16, astral characters, CRLF and backward offsets.
+Anchor membership covers empty, singleton, unsorted and duplicate lists,
+including actual target presence and absence.
+The extraction smoke coalesces repeated source imports into one alias identity,
+retaining first-declaration order/line and every source form and doc block.
+Generated-module smoke compares
+every generated declaration/member anchor to a separately checked semantic
+index. The docs-site postprocessor expands real source examples through the
+same frontend and renderer rather than carrying a copied collection API.
+The public `documentation-targets` transcript exercises negotiated hover/link
+payloads, source-link preservation, private items, source changes, recovery and
+invalid reinitialization; `documentation-disabled` retains opt-out behavior.
+Its compiler-identity placeholder is filled from the actual CLI producer, so
+the public LSP corpus requires a compiler with a known producer identity.
+Bootstrap embedded-source parity covers the URL normalizer used by configured
+site bindings; `net/url.tl` is included in the compressed source payload and
+checked by the complete payload closure and exact-source verifier.
+
 ### Stage0 and the bootstrap
 
 The stage0 workflow, the minimum-seed policy, the published assets and the

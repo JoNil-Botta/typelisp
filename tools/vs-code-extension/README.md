@@ -97,6 +97,18 @@ compiler on startup and keeps it current:
   the mutable release republished on every push to `main`).
 - `typelisp.stdlibRoots`: extra roots passed to `typelisp lsp` as repeated
   `--stdlib-root <dir>` arguments, in order.
+- `typelisp.documentationSites`: exact documentation-page bindings (default
+  `[]`). A nonempty list negotiates documentation targets and sends the bindings
+  as `initializationOptions.typelisp.documentationSites`. Hover links and
+  document links then open the matching local dependency page or immutable
+  hosted revision. Each binding supplies exact package/source/compiler identity,
+  canonical source path/SHA256, checked module, site `docModule`, published
+  `anchors`, and `localUri` or `hostedUri`/`revision`; see
+  [SPEC §2.2](https://github.com/JoNil-Botta/typelisp/blob/main/SPEC.md#22-comments)
+  for the complete contract. Obtain the
+  compiler identity from `typelisp --producer-identity`. Changed source,
+  mismatched compiler or ambiguous bindings produce no documentation target;
+  package graph discovery is separate. Updating this setting restarts the server.
 - `typelisp.enableLanguageServer`: set to `false` to keep syntax highlighting
   but skip starting the LSP client.
 

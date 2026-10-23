@@ -22,7 +22,7 @@ function corpus_json_text(s) {
 # expanded again.
 function corpus_expand(text,    out, at) {
     out = ""
-    while ((at = index(text, "${{TMP")) > 0) {
+    while ((at = index(text, "${{")) > 0) {
         out = out substr(text, 1, at - 1)
         text = substr(text, at)
         if (substr(text, 1, 12) == "${{TMP_URI}}") {
@@ -31,6 +31,9 @@ function corpus_expand(text,    out, at) {
         } else if (substr(text, 1, 8) == "${{TMP}}") {
             out = out corpus_json_text(ENVIRON["CORPUS_TMP"])
             text = substr(text, 9)
+        } else if (index(text, "${{COMPILER_IDENTITY}}") == 1) {
+            out = out corpus_json_text(ENVIRON["CORPUS_COMPILER_IDENTITY"])
+            text = substr(text, length("${{COMPILER_IDENTITY}}") + 1)
         } else {
             out = out "$"
             text = substr(text, 2)
@@ -89,7 +92,7 @@ corpus_require_literal_path() {
 # the expanded body in bytes, as Content-Length requires; a shell's ${#var}
 # counts characters in a UTF-8 locale on some shells (dash 0.5.13).
 write_json_frames() {
-    CORPUS_TMP=$3 CORPUS_URI=$4 LC_ALL=C awk -v BINMODE=3 "$CORPUS_PATH_AWK"'
+    CORPUS_TMP=$3 CORPUS_URI=$4 CORPUS_COMPILER_IDENTITY=${CORPUS_COMPILER_IDENTITY:-} LC_ALL=C awk -v BINMODE=3 "$CORPUS_PATH_AWK"'
 {
     line = $0
     sub(/^[[:space:]]*/, "", line)
@@ -118,6 +121,7 @@ check_corpus_result() {
     # Disable Windows text I/O translation; exact() owns CR normalization.
     CORPUS_SPEC=$1 CORPUS_OUT=$2 CORPUS_ERR=$3 CORPUS_CODE=$4 \
     CORPUS_MESSAGES=$5 CORPUS_TMP=$6 CORPUS_URI=$7 CORPUS_HOST=$8 \
+    CORPUS_COMPILER_IDENTITY=${CORPUS_COMPILER_IDENTITY:-} \
     LC_ALL=C awk -v BINMODE=3 "$CORPUS_PATH_AWK"'
 function read_file(path,    text, status) {
     # A nonempty file cannot match ^$: preserve final newlines for exact checks

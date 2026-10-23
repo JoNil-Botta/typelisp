@@ -22,19 +22,25 @@
         "ivec")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.generated.Vec\">Vec</a></h3>")
+        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.defstruct.Vec.generated.")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.generated.new\">new</a></h3>")
+        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.define-function.new.generated.")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.generated.len\">len</a></h3>")
+        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.define-function.len.generated.")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.generated.push-ref_21\">push-ref!</a></h3>")
+        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.define-function.push-ref_21.generated.")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         vector-sections
-        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.generated.push_21\">push!</a></h3>")
+        "<h3><a href=\"#tl-stdlib_2evector_2egenerated_2ei64.defmacro.push_21.generated.")
+      (doc_site_expand_pages_core.doc-site-expand-string-contains?
+        vector-sections
+        "tl-stdlib_2evector_2egenerated_2ei64.field.len.Vec.generated.")
+      (doc_site_expand_pages_core.doc-site-expand-string-contains?
+        vector-sections
+        "tl-stdlib_2evector_2egenerated_2ei64.enum-variant.Ok.Pop.generated.")
       (not
         (doc_site_expand_pages_core.doc-site-expand-string-contains?
           vector-sections
@@ -48,10 +54,10 @@
         "stdlib.queue.deque.generated.i64")
       (doc_site_expand_pages_core.doc-site-expand-string-contains?
         queue-sections
-        "(__tl_dyn-array i64)")
+        "<span class=\"tl-syn-call\">__tl_dyn-array</span> <span class=\"tl-syn-type\">i64</span>")
       (not
         (doc_site_expand_pages_core.doc-site-expand-string-contains?
           queue-sections
-          "(Array i64)")))
+          "<span class=\"tl-syn-type\">Array</span> <span class=\"tl-syn-type\">i64</span>)")))
       42
       (io.panic "doc-site-expand: generated collection smoke mismatch"))))

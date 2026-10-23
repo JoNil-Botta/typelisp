@@ -1,0 +1,7 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{"experimental":{"typelispDocumentationTargets":false}},"initializationOptions":{"typelisp":{"documentationSites":42}}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/disabled.tl","languageId":"typelisp","version":1,"text":"(define answer : i64 42)\n(define (main) : i64 answer)\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{"textDocument":{"uri":"${{TMP_URI}}/disabled.tl"},"position":{"line":1,"character":22}}},
+  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit","params":{}}
+]

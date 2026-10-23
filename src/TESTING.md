@@ -1684,6 +1684,8 @@ independently checked modules retain distinct package/page targets in either
 mapping order after both source indexes retire. Cached definition lookup agrees
 with the linear semantic lookup and declines retired owners; link endpoint
 checks cover UTF-8/UTF-16, astral characters, CRLF and backward offsets.
+Anchor membership covers empty, singleton, unsorted and duplicate lists,
+including actual target presence and absence.
 Generated-module smoke compares
 every generated declaration/member anchor to a separately checked semantic
 index. The docs-site postprocessor expands real source examples through the

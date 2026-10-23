@@ -214,9 +214,57 @@
             (= configured.owner-arena 0)
             (= configured.len 0)))])))
 
+(define (anchor-list-cases-ok?
+  [docs : (& docs semantic_docs.SemanticDocumentation)]
+  [anchor : String]) : bool
+  (let
+    [counts : (Array i64 3) (array 0 1 4)]
+    [values : (Array String 4)
+      (array "tl-z" (clone anchor) "tl-a" (clone anchor))]
+    (for [case (iterator.range 0 3)]
+      (let
+        [count : i64 (array-ref counts case)]
+        [items : json.JsonSeq (json.list-empty)]
+        (for [i (iterator.range 0 count)]
+          (set!
+            items
+            (json.list-cons
+              (JsonString
+                (if (= count 1)
+                  (clone anchor)
+                  (clone (array-ref values i))))
+              items)))
+        (match (parse-one
+          (replace-field
+            (binding docs (clone anchor))
+            "anchors"
+            (JsonArray (box items))))
+          [(Err _) (return false)]
+          [(Ok configured)
+            (let
+              [site : (& configured sites.DocumentationSite)
+                (& (array-ref configured.items 0))]
+              [ok : bool
+                (and
+                  (= (sites.contains-anchor? site anchor) (> count 0))
+                  (= (sites.contains-anchor? site "tl-a") (= count 4))
+                  (= (sites.contains-anchor? site "tl-z") (= count 4))
+                  (not (sites.contains-anchor? site ""))
+                  (not (sites.contains-anchor? site "tl-missing"))
+                  (=
+                    (missing?
+                      (& configured)
+                      docs
+                      (request (string.copy (& docs.source-sha256))))
+                    (= count 0)))]
+              (lsp.lsp-documentation-sites-release! (&mut configured))
+              (unless ok (return false)))])))
+    true))
+
 (define (configuration-cases-ok?
   [docs : (& docs semantic_docs.SemanticDocumentation)]
   [anchor : String]) : bool
+  (unless (anchor-list-cases-ok? docs (clone anchor)) (return false))
   (let
     [base : json.Json (binding docs anchor)]
     [bad : (Array (Tuple String json.Json) 14)

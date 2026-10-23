@@ -817,7 +817,8 @@ is shared by extraction, generated HTML/search and the LSP adapter.
 Opted-in exact site bindings own a separate initialize-to-shutdown arena in
 `LspServerState`. Document/cache swaps preserve that owner; replacement and
 shutdown retire it once. Configuration parsing copies every retained string
-and anchor before request scratch is released. Responses copy target metadata
+and anchor before request scratch is released. Anchors are sorted once with
+the shared stdlib sorter; membership queries use binary search. Responses copy target metadata
 into the request owner before a site can be retired. Target lookup requires a
 unique compiler/source/path/module/anchor match and a current overlay/disk
 digest, cached only within that request. An unavailable source or ambiguous,

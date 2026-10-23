@@ -5,6 +5,10 @@
 (import stdlib.iterator)
 (import stdlib.json)
 (import stdlib.net.url)
+(import stdlib.sort)
+(import stdlib.vector)
+(import (stdlib.vector.vector String) as anchor_vec)
+(import (stdlib.sort.vec String) as anchor_sort)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
@@ -17,7 +21,7 @@
   (module String)
   (doc-module String)
   (page-uri String)
-  (anchors (__tl_dyn-array String)))
+  (anchors anchor_vec.Vec))
 
 (defstruct DocumentationSites
   (owner-arena i64)
@@ -184,8 +188,7 @@
                 [values : (& values-box json.JsonSeq)
                   (& (__tl-box-place values-box))]
                 [length : i64 (json.list-count-ref values)]
-                [anchors : (__tl_dyn-array String)
-                  (__tl_make-array String length)]
+                [anchors : anchor_vec.Vec (anchor_vec.with-capacity length)]
                 (for [j (iterator.range 0 length)]
                   (match (owned_view.compiler-owned-array-element-shared-view
                     values.slots
@@ -196,11 +199,14 @@
                         (return
                           (Err
                             "lsp: documentationSites anchors must be canonical documentation identities")))
-                      (set! (array-ref anchors j) (string.copy (& anchor)))]
+                      (anchor_vec.push-ref!
+                        (&mut anchors)
+                        (string.copy (& anchor)))]
                     [_
                       (return
                         (Err
                           "lsp: documentationSites anchors must contain strings"))]))
+                (anchor_sort.sort! (&mut anchors) sort.string-less?)
                 (set!
                   (array-ref items i)
                   (DocumentationSite
@@ -222,6 +228,17 @@
 (define (contains-anchor?
   [site : (& site DocumentationSite)]
   [anchor : (& anchor str)]) : bool
-  (for [i (iterator.range 0 (array-length site.anchors))]
-    (when (string.eq (array-ref site.anchors i) anchor) (return true)))
-  false)
+  (let
+    [low : i64 0]
+    [high : i64 (anchor_vec.len (& site.anchors))]
+    [slots : (& site (__tl_dyn-array String))
+      (anchor_vec.slots (& site.anchors))]
+    (while (< low high)
+      (let
+        [middle : i64 (+ low (/ (- high low) 2))]
+        [value : (& site str) (& (array-ref slots middle))]
+        (cond
+          [(string.eq value anchor) (return true)]
+          [(sort.string-less-borrowed? value anchor) (set! low (+ middle 1))]
+          [else (set! high middle)])))
+    false))

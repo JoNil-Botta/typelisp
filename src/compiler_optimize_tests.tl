@@ -19527,6 +19527,195 @@
       (+ (* 1000 spent) dispatch-calls)
       (- 0 1))))
 
+(define (opt-inline-conditional-literal-call [callee-name : i64] [mode : i64]) : ir.CompilerIrInstr
+  (let
+    [args : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue (opt-inline-checked-builder-arity))]
+    (opt-inline-checked-builder-args!
+      (&mut args)
+      0
+      (opt-inline-checked-builder-arity))
+    (unless
+      (= mode 1)
+      (set!
+        (array-ref args 0)
+        (ir.CompilerIrValue.I64
+          (if (= mode 2)
+            1
+            0))))
+    (Call 3 callee-name (Array args) (I64))))
+
+;; The callee's long loop keeps it out of the predictive bands. Pinning its
+;; flag to zero retires that loop; pinning it to one leaves the back edge.
+(define (opt-inline-conditional-literal-caller
+  [name : i64]
+  [callee-name : i64]
+  [mode : i64]) : ir.CompilerIrFunction
+  (Function
+    name
+    (opt-inline-switch-params)
+    (I64)
+    4
+    (ir.compiler-ir-blocks-with-tail
+      (ir.compiler-ir-blocks-with-tail
+        (if (= mode 3)
+          (irt.blocks
+            "wait:
+                         branch %1, wait, out
+                       out:
+                         return %3")
+          (ir.compiler-ir-block-list-empty))
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "conditional_call")
+          (opt-test-instrs
+            (opt-inline-conditional-literal-call callee-name mode)
+            (if (= mode 3)
+              (irt.instr "jump wait")
+              (irt.instr "return %3")))))
+      (irt.block "entry:
+                     branch %0, bail, choose")
+      (irt.block "bail:
+                     return %2")
+      (irt.block
+        "choose:
+                     branch %1, conditional_call, other")
+      (irt.block "other:
+                     return %2"))
+    Ordinary))
+
+(define (opt-inline-conditional-literal-callee [name : i64]) : ir.CompilerIrFunction
+  (Function
+    name
+    (opt-inline-checked-builder-params-from
+      0
+      (opt-inline-checked-builder-arity))
+    (I64)
+    140
+    (ir.compiler-ir-blocks-with-tail
+      (irt.blocks "done:
+                     return %8")
+      (irt.block
+        "entry:
+                     %7 = mov 0 : i64
+                     jump header")
+      (irt.block
+        "header:
+                     %8 = phi [%7, entry], [%138, body] : i64
+                     %139 = ne %0, 0 : i64
+                     branch %139, body, done")
+      (ir.CompilerIrBlock.Block
+        (ir.compiler-ir-label "body")
+        (opt-inline-checked-builder-chain
+          0
+          (opt-inline-inl9-leaf-pad)
+          8
+          (irt.instrs "jump header"))))
+    Ordinary))
+
+(define (opt-inline-conditional-literal-self-test [mode : i64]) : i64
+  (let
+    [symbols : OptInlineMultiTestSymbols (opt-inline-multi-test-symbols)]
+    [_arm : unit
+      (begin
+        (opt.opt-inline-checked-set-active! true)
+        (opt.opt-inline-checked-program-begin!))]
+    [optimized : ir.CompilerIrFunctionSeq
+      (opt-test-inline-program-functions
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (let
+          [functions : ir.CompilerIrFunctionBuilder
+            (ir.compiler-ir-function-builder-with-capacity 4)]
+          (ir.compiler-ir-function-builder-push!
+            (&mut functions)
+            (opt-inline-checked-hot-driver-function
+              symbols.main
+              symbols.inline-nonleaf))
+          (ir.compiler-ir-function-builder-push!
+            (&mut functions)
+            (opt-inline-checked-cold-pair-function
+              symbols.inline-loop
+              symbols.inline-nonleaf
+              symbols.inline-switch))
+          (ir.compiler-ir-function-builder-push!
+            (&mut functions)
+            (opt-inline-conditional-literal-caller
+              symbols.inline-nonleaf
+              symbols.inline-switch
+              mode))
+          (ir.compiler-ir-function-builder-push!
+            (&mut functions)
+            (opt-inline-conditional-literal-callee symbols.inline-switch))
+          (ir.compiler-ir-function-builder-to-seq functions))
+        2)]
+    [calls : i64
+      (opt-count-direct-call-name-function-seq
+        optimized
+        "inline_nonleaf"
+        "inline_switch")]
+    [verified? : bool
+      (opt-inline-mb2-main-verified? optimized "inline_nonleaf")]
+    [_disarm : unit (opt.opt-inline-checked-set-active! false)]
+    (if verified?
+      calls
+      (- 0 1))))
+
+(test
+  inline-checked-conditional-literal
+  (with-test-inline-mode
+    (begin
+      (test.assert-i64-eq
+        (opt-inline-conditional-literal-self-test 0)
+        0
+        "a conditional literal retires the callee loop and its call")
+      (test.assert-i64-eq
+        (opt-inline-conditional-literal-self-test 1)
+        1
+        "an unknown argument retains the conditional call")
+      (test.assert-i64-eq
+        (opt-inline-conditional-literal-self-test 2)
+        1
+        "a literal that retains the callee loop stays out of line")
+      (test.assert-i64-eq
+        (opt-inline-conditional-literal-self-test 3)
+        1
+        "a conditional site in a caller with a loop retains its call"))))
+
+(test
+  inline-checked-conditional-literal-cycle-proof
+  (let
+    [callee : ir.CompilerIrFunction
+      (irt.func
+        "function @conditional_cycle(x=%0:i64, n=%1:i64) -> i64 vars 4 {
+                   entry:
+                     %2 = add %0, %1 : i64
+                     jump loop
+                   loop:
+                     %3 = ne %1, 0 : i64
+                     branch %3, loop, exit
+                   exit:
+                     return %2
+                 }")]
+    [args : ir.CompilerIrCallArgs
+      (Array
+        (__tl_make-array (ir.CompilerIrValue.I64 0) (ir.CompilerIrValue.Var 1)))]
+    [_pin : unit
+      (begin
+        (opt.opt-inline-checked-record-literals! args)
+        (opt.opt-inline-checked-adopt-literals!))]
+    [accepted? : bool
+      (opt.opt-inline-checked-conditional-literal-ok?
+        (ast.ast-node-pool-reader-context-current)
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& callee))]
+    [no-args : ir.CompilerIrCallArgs Nil]
+    [_clear : unit
+      (begin
+        (opt.opt-inline-checked-record-literals! no-args)
+        (opt.opt-inline-checked-adopt-literals!))]
+    (test.assert-true
+      (not accepted?)
+      "a small specialized body still needs an acyclic CFG")))
+
 (define (opt-inline-inl8-holder-tail [loop? : bool]) : ir.CompilerIrBlockList
   (if loop?
     (irt.blocks

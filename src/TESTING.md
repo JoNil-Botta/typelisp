@@ -858,6 +858,14 @@ cold exits and unreachable sites. Graph identity/edge mismatches, duplicate
 claims, lost recurring bodies, tail reentry and unbound unroll history reject.
 These tests attribute final IR control; they do not establish final backend
 access capture or the report's real-kernel acceptance.
+`compiler_backend_text_origins_tests.tl` checks distinct identities for equal
+operand bytes, interleaved owners, nested concatenation/single evaluation,
+slice/retarget rejection, inventory growth and scratch retirement. Its native
+smoke calls the same fixtures at opt0/1/2. `compiler_backend_stack_origins_tests.tl`
+checks actual vector load/store/folded/fallback factories and a higher-level
+vector copy with equal colored offsets but distinct logical homes. The native
+producer smoke also checks all three optimization levels. Final buffer/rewrite
+transport, remaining traffic owners and complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

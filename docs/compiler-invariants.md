@@ -623,6 +623,17 @@ Identical or partially overlapping claims reject. Reachability cannot invent
 a hot region for a retired or unreachable site. This partition attributes IR
 control only: backend-generated traps and final machine rewrites must preserve
 or refine that attribution before a post-regalloc census is published.
+Stack-operand capture also precedes rendering. A typed vector operand retains
+its logical variable even when allocation gives another variable the same
+physical offset. Read/write factories issue snapshots with the actual emitted
+function and block; snapshot order is not a final operation ordinal. Protected
+operand allocations and every indexed concatenation live in one explicit
+capture arena, preventing scratch-address reuse from transferring an identity.
+The index compares allocation identity, never byte equality. Untracked copies
+lose proof rather than recover it from matching text. Slices cannot cut an
+operand annotation; address rewrites explicitly retarget an exact annotation.
+Rejected snapshots publish no access token. The owning backend clears its
+capture before retirement, after all text users have finished or escaped.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

@@ -46,6 +46,8 @@
 (import stdlib.option)
 (import (option.option i64) as option_i64)
 (import compiler_owned_view as owned_view)
+(import compiler_stack_traffic as stack_traffic)
+(import compiler_backend_text_origins as text_origins)
 
 (define compiler-backend-phi-xmm-cycle-register-metric : i64
   147)
@@ -375,9 +377,17 @@
   (No)
   (Some String))
 
+(defstruct CompilerBackendStackOperand
+  (var i64)
+  (text String))
+
 (defenum CompilerBackendMaybeStackOperand
   (No)
   (Some String))
+
+(defenum CompilerBackendMaybeStackHomeOperand
+  (No)
+  (Some CompilerBackendStackOperand))
 
 (defenum CompilerBackendVectorUse
   (Use String String))
@@ -1184,7 +1194,10 @@
   (shared-object-code-model bool)
   ;; The same immutable symbol index ordinary loads use, installed for this
   ;; emission. Operand folds and rematerialization must name the same cell.
-  (emission-symbols CompilerBackendEmissionSymbols))
+  (emission-symbols CompilerBackendEmissionSymbols)
+  ;; Optional #7236 capture owns its indexed text until the final consumer.
+  ;; Earlier field offsets remain unchanged.
+  (stack-text-origins text_origins.CompilerBackendTextOrigins))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1251,7 +1264,8 @@
         (compiler-backend-target-policy-new CompilerBackendTarget.Linux)
         (compiler_diagnostic.compiler-advisory-sink-new)
         false
-        CompilerBackendEmissionSymbols.None))
+        CompilerBackendEmissionSymbols.None
+        (text_origins.compiler-backend-text-origins-disabled)))
     (CompilerBackendState
       (cast
         (unsafe
@@ -1264,6 +1278,7 @@
 ;; The caller retains its intern capability, metrics and advisory sink.
 (define (compiler-backend-state-release-final-arenas!
   [state : CompilerBackendState]) : unit
+  (compiler-backend-state-stack-origins-end! state)
   (unsafe
     (let
       [data : (MutPtr CompilerBackendStateData)
@@ -1300,6 +1315,76 @@
     intern-state
     (profile_state.compiler-profile-state-metrics
       (profile_state.compiler-profile-state-new))))
+
+(define (compiler-backend-state-stack-text-origins
+  [state : CompilerBackendState]) : text_origins.CompilerBackendTextOrigins
+  (unsafe
+    (deref (compiler-backend-state-view state)).stack-text-origins))
+
+(define (compiler-backend-state-stack-access-origins
+  [state : CompilerBackendState]) : text_origins.CompilerBackendStackAccessOriginList
+  (text_origins.compiler-backend-text-origins-accesses
+    (compiler-backend-state-stack-text-origins state)))
+
+(define (compiler-backend-state-stack-origins-begin!
+  [state : CompilerBackendState]) : unit
+  (when
+    (!= (compiler-backend-state-stack-text-origins state).storage 0)
+    (io.panic "backend: stack origin capture already active"))
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).stack-text-origins
+      (text_origins.compiler-backend-text-origins-new))))
+
+;; The consumer has finished or escaped all indexed text and origin views.
+(define (compiler-backend-state-stack-origins-end!
+  [state : CompilerBackendState]) : unit
+  (let
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins state)]
+    (unsafe
+      (set!
+        (deref (compiler-backend-state-ptr state)).stack-text-origins
+        (text_origins.compiler-backend-text-origins-disabled)))
+    (text_origins.compiler-backend-text-origins-release! (&mut capture))))
+
+(define (compiler-backend-stack-operand-origin
+  [state : CompilerBackendState]
+  [operand : CompilerBackendStackOperand]
+  [bytes : i64]
+  [access : stack_traffic.CompilerStackTrafficAccess]) : String
+  (let
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins state)]
+    (when (= capture.storage 0) (return operand.text))
+    (let
+      [function-state : CompilerBackendFunctionState
+        (compiler-backend-state-function-state state)]
+      (match (text_origins.compiler-backend-text-origins-record
+        capture
+        (text_origins.CompilerBackendStackAccessOrigin
+          (compiler_ir_types.compiler-ir-symbol-typed-id
+            (compiler-backend-function-scratch-i64
+              function-state
+              compiler-backend-scratch-i64-current-source-function))
+          (compiler-backend-function-state-i64
+            function-state
+            compiler-backend-function-i64-current-block-label)
+          operand.var
+          (Allocator)
+          (Vector)
+          bytes
+          access)
+        operand.text)
+        [(Ok text) text]
+        [(Err message) (io.panic message)]))))
+
+(define (compiler-backend-vector-access-bytes [width : (& str)]) : i64
+  (cond
+    [(string.eq width "xmm") 16]
+    [(string.eq width "ymm") 32]
+    [(string.eq width "zmm") 64]
+    [else (io.panic "backend: invalid vector stack access width")]))
 
 (define (compiler-backend-state-emission-target-policy
   [state : CompilerBackendState]) : CompilerBackendTargetPolicy
@@ -4897,7 +4982,11 @@
   [candidates : (__tl_dyn-array i64)]
   [i : i64]) : ResultBackendReg
   (if (>= i (array-length candidates))
-    (Err (str_cat.str-cat "backend: no free AVX-512 vector temp for " role))
+    (Err
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
+        "backend: no free AVX-512 vector temp for "
+        role))
     (let
       [home : i64 (array-ref candidates i)]
       [reg : String (compiler-backend-vector-home-to-zmm home)]
@@ -5069,7 +5158,8 @@
             (Err (compiler-backend-vector-home-unavailable role)))]
         [(Spill _)
           (Err
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               "backend: vector spills are not implemented for "
               role))]
         ;; A rematerialised value is an i64-class constant/address, never a vector.
@@ -6329,15 +6419,18 @@
               [addr-asm : String addr-plan.asm]
               [addr : String addr-plan.addr]
               (Ok
-                (str_cat.str-cat
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins backend-state)
                   addr-asm
-                  (str_cat.str-cat
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
                     "    "
                     (compiler-backend-mode-vector-move mode elem-ty)
                     " "
                     addr
                     ", ")
-                  (str_cat.str-cat
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
                     dst-reg
                     "\n"
                     (compiler-backend-vector-store-dst
@@ -6592,7 +6685,8 @@
           backend-state)
           [(Ok load-asm)
             (Ok
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
                 load-asm
                 dst-reg
                 "\n"
@@ -6873,10 +6967,14 @@
                             backend-state)
                             [(Ok dst-reg)
                               (Ok
-                                (str_cat.str-cat
+                                (text_origins.compiler-backend-text-origins-cat
+                                  (compiler-backend-state-stack-text-origins
+                                    backend-state)
                                   lhs-asm
                                   rhs-asm
-                                  (str_cat.str-cat
+                                  (text_origins.compiler-backend-text-origins-cat
+                                    (compiler-backend-state-stack-text-origins
+                                      backend-state)
                                     "    "
                                     mnemonic
                                     " "
@@ -6961,10 +7059,14 @@
                           [addr-asm : String addr-plan.asm]
                           [addr : String addr-plan.addr]
                           (Ok
-                            (str_cat.str-cat
+                            (text_origins.compiler-backend-text-origins-cat
+                              (compiler-backend-state-stack-text-origins
+                                backend-state)
                               reg-asm
                               addr-asm
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    "
                                 mnemonic
                                 " "
@@ -7030,16 +7132,23 @@
                   [addr-asm : String addr-plan.asm]
                   [addr : String addr-plan.addr]
                   (Ok
-                    (str_cat.str-cat
+                    (text_origins.compiler-backend-text-origins-cat
+                      (compiler-backend-state-stack-text-origins backend-state)
                       value-asm
                       addr-asm
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          backend-state)
                         "    "
                         (compiler-backend-mode-vector-move mode elem-ty)
                         " "
                         value-reg
                         ", ")
-                      (str_cat.str-cat addr "\n"))))]
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          backend-state)
+                        addr
+                        "\n"))))]
               [(Err message)
                 (compiler-backend-instr-error-from instr-diag message)])])]
       [(Err message) (compiler-backend-instr-error instr-diag message)])
@@ -7201,22 +7310,28 @@
 (define (compiler-backend-vector-var-stack-operand
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
-  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
+  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackHomeOperand
   (match (compiler-backend-emit-assignment-lookup backend-state assignments var)
     [(Some location)
       (match location
         [(Spill offset)
           (Some
-            (compiler-backend-frame-offset-with-backend-state
-              backend-state
-              offset))]
+            (CompilerBackendStackOperand
+              var
+              (compiler-backend-frame-offset-with-backend-state
+                backend-state
+                offset)))]
         [_ No])]
-    [(No) (Some (compiler-backend-slot-with-backend-state backend-state var))]))
+    [(No)
+      (Some
+        (CompilerBackendStackOperand
+          var
+          (compiler-backend-slot-with-backend-state backend-state var)))]))
 
 (define (compiler-backend-vector-value-stack-operand
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
-  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
+  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackHomeOperand
   (match value
     [(Var var)
       (compiler-backend-vector-var-stack-operand assignments var backend-state)]
@@ -7224,15 +7339,45 @@
 
 (define (compiler-backend-vector-load-stack-asm
   [move : String]
-  [operand : String]
-  [reg : (& reg str)]) : String
-  (str_cat.str-cat "    " move " " operand ", " reg "\n"))
+  [operand : CompilerBackendStackOperand]
+  [reg : (& reg str)]
+  [bytes : i64]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [text : String
+      (compiler-backend-stack-operand-origin backend-state operand bytes (Read))]
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
+      "    "
+      move
+      " "
+      text
+      ", "
+      reg
+      "\n")))
 
 (define (compiler-backend-vector-store-stack-asm
   [move : String]
   [reg : String]
-  [operand : String]) : String
-  (str_cat.str-cat "    " move " " reg ", " operand "\n"))
+  [operand : CompilerBackendStackOperand]
+  [bytes : i64]
+  [backend-state : CompilerBackendState]) : String
+  (let
+    [text : String
+      (compiler-backend-stack-operand-origin
+        backend-state
+        operand
+        bytes
+        (Write))]
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
+      "    "
+      move
+      " "
+      reg
+      ", "
+      text
+      "\n")))
 
 (define (compiler-backend-vector-register-use
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -7254,7 +7399,9 @@
               (compiler-backend-vector-load-stack-asm
                 (compiler-backend-vector-move-for-width width elem-ty)
                 operand
-                scratch)
+                scratch
+                (compiler-backend-vector-access-bytes width)
+                backend-state)
               scratch))]
         [(No)
           (let
@@ -7282,7 +7429,15 @@
         assignments
         var
         backend-state)
-        [(Some operand) (Ok (Use "" operand))]
+        [(Some operand)
+          (Ok
+            (Use
+              ""
+              (compiler-backend-stack-operand-origin
+                backend-state
+                operand
+                (compiler-backend-vector-access-bytes width)
+                (Read))))]
         [(No)
           (let
             [reg
@@ -7326,7 +7481,9 @@
       (compiler-backend-vector-store-stack-asm
         (compiler-backend-vector-move-for-width width elem-ty)
         reg
-        operand)]
+        operand
+        (compiler-backend-vector-access-bytes width)
+        backend-state)]
     [(No) ""]))
 
 ;; A plain IR Mov can carry a SIMD identity after CSE/GVN. Recover its shape
@@ -7539,22 +7696,40 @@
               backend-state)
               [(Ok dst-reg)
                 (Ok
-                  (str_cat.str-cat
-                    (str_cat.str-cat
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
+                    (text_origins.compiler-backend-text-origins-cat
+                      (compiler-backend-state-stack-text-origins backend-state)
                       load-asm
                       (if (string.eq source-reg dst-reg)
                         ""
-                        (str_cat.str-cat
-                          (str_cat.str-cat
-                            (str_cat.str-cat
-                              (str_cat.str-cat
+                        (text_origins.compiler-backend-text-origins-cat
+                          (compiler-backend-state-stack-text-origins
+                            backend-state)
+                          (text_origins.compiler-backend-text-origins-cat
+                            (compiler-backend-state-stack-text-origins
+                              backend-state)
+                            (text_origins.compiler-backend-text-origins-cat
+                              (compiler-backend-state-stack-text-origins
+                                backend-state)
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    "
                                 (compiler-backend-vector-move-for-width
                                   width
                                   elem-ty))
                               " ")
                             source-reg)
-                          (str_cat.str-cat ", " (str_cat.str-cat dst-reg "\n")))))
+                          (text_origins.compiler-backend-text-origins-cat
+                            (compiler-backend-state-stack-text-origins
+                              backend-state)
+                            ", "
+                            (text_origins.compiler-backend-text-origins-cat
+                              (compiler-backend-state-stack-text-origins
+                                backend-state)
+                              dst-reg
+                              "\n")))))
                     (compiler-backend-vector-store-dst
                       assignments
                       dst
@@ -7905,7 +8080,8 @@
         (let
           [data-label : String (compiler-backend-avx512-i64-lane-id-label)]
           (Ok
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               "    vmovdqa64 "
               data-label
               "(%rip), "
@@ -7931,7 +8107,8 @@
           (let
             [data-label : String (compiler-backend-avx2-i64-lane-id-label)]
             (Ok
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
                 "    vmovdqa "
                 data-label
                 "(%rip), "
@@ -8003,7 +8180,9 @@
                           backend-state)
                           [(Ok dst-reg)
                             (Ok
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 lhs-asm
                                 rhs-asm
                                 "    "
@@ -8333,7 +8512,9 @@
                               (if (>
                                 (string.string-length predicate-separator)
                                 0)
-                                (str_cat.str-cat
+                                (text_origins.compiler-backend-text-origins-cat
+                                  (compiler-backend-state-stack-text-origins
+                                    backend-state)
                                   "    "
                                   float-mnemonic
                                   predicate-separator
@@ -8355,7 +8536,9 @@
                               instr-diag
                               "backend: unsupported AVX2 vector compare")
                             (Ok
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 lhs-asm
                                 rhs-asm
                                 cmp-asm
@@ -10086,7 +10269,9 @@
                     [copy-asm : String
                       (if (string.eq src-reg dst-reg)
                         ""
-                        (str_cat.str-cat
+                        (text_origins.compiler-backend-text-origins-cat
+                          (compiler-backend-state-stack-text-origins
+                            backend-state)
                           "    vmovdqu "
                           src-reg
                           ", "
@@ -10118,7 +10303,9 @@
                           backend-state)
                           [(Ok carry-asm)
                             (Ok
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 src-asm
                                 copy-asm
                                 prefix-asm
@@ -10143,7 +10330,9 @@
                           backend-state)
                           [(Ok carry-asm)
                             (Ok
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 src-asm
                                 copy-asm
                                 prefix-asm
@@ -10511,7 +10700,9 @@
                   backend-state)
                   [(Ok carry-asm)
                     (Ok
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          backend-state)
                         src-asm
                         "    "
                         mask-move
@@ -10587,7 +10778,9 @@
                   [copy-asm : String
                     (if (string.eq src-reg dst-reg)
                       ""
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          backend-state)
                         "    vmovdqu64 "
                         src-reg
                         ", "
@@ -10607,7 +10800,9 @@
                             (compiler-backend-global-shared-view work0-xmm)
                             "zmm")]
                         (Ok
-                          (str_cat.str-cat
+                          (text_origins.compiler-backend-text-origins-cat
+                            (compiler-backend-state-stack-text-origins
+                              backend-state)
                             src-asm
                             copy-asm
                             (compiler-backend-avx512-vector-prefix-numeric-body
@@ -19924,7 +20119,8 @@
         [no-exclude : (__tl_dyn-array String) (__tl_make-array String 0)]
         [gp-reg : String
           (compiler-backend-scavenge-reg dst no-exclude 0 "%r8" backend-state)]
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
           (compiler-backend-avx2-vector-reduce-move-scalar
             elem-ty
             xmm-reg
@@ -20243,7 +20439,9 @@
                       instr-diag
                       (compiler-backend-vector-home-unavailable "reduce source"))
                     (Ok
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          backend-state)
                         src-asm
                         (compiler-backend-avx2-vector-reduce-horizontal-asm
                           op
@@ -20639,7 +20837,9 @@
                       instr-diag
                       (compiler-backend-vector-home-unavailable "reduce source"))
                     (Ok
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          backend-state)
                         src-asm
                         (compiler-backend-avx512-vector-reduce-horizontal-asm
                           mnemonic

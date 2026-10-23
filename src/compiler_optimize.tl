@@ -10432,11 +10432,13 @@
       (set! size (* size 2)))
     size))
 
-;; Labels inside one function are near-contiguous, so masking alone already
-;; spreads them; folding the high bits down first keeps a pruned, strided label
-;; set from collapsing onto one slot.
+;; Fold multiplied high bits into the slot before masking: pruned labels need
+;; not retain the dense numbering of the original body. Equality still reads
+;; the label through the stored id, independently of its probe position.
 (define (opt-cfg-index-id-slot [label : i64] [mask : i64]) : i64
-  (bit-and (bit-xor label (shr label 5)) mask))
+  (let
+    [mixed : i64 (* label -7046029254386353131)]
+    (bit-and (bit-xor mixed (cast (shr (cast mixed : u64) 29) : i64)) mask)))
 
 ;; Ids are inserted in block order and an occupied slot whose label matches is
 ;; left alone, so a duplicate-label CFG resolves to its first block -- the same

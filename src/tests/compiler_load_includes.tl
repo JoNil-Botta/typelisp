@@ -8,6 +8,7 @@
 (import compiler_embedded_stdlib as embedded)
 (import stdlib.io)
 (import stdlib.fs)
+(import stdlib.byte_buf)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
 (import stdlib.test)
@@ -219,7 +220,9 @@
   include-utf8-text-exact-bytes
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
-    [contents : String "Aé€😀é\n"]
+    [contents : String
+      (byte_buf.to-string
+        (byte_buf.push (byte_buf.from-string "Aé€😀é\n") (cast 0 : u8)))]
     [directory : String
       (match (fs.try-create-temp-dir "typelisp-include-utf8")
         [(OkIoString path) path]

@@ -97,21 +97,33 @@
 
 (define (assert-valid-literal-bytes) : unit
   (let
-    [source : String "\"A\\né€😀é\""]
-    [expected : String "A\né€😀é"]
-    (match (lex.spanned-result (& source))
-      [(Ok tokens)
-        (let
-          [tok : token.Token
-            (token.spanned-token-tok (lex.array-shared-view tokens 0))]
-          (test.assert-string-eq
-            (intern.intern-id-str (token.str-id (& tok)))
-            (& expected)
-            "unescaped UTF-8 literal preserves exact bytes"))]
-      [_ (test.assert-true false "valid scalar encodings accepted")])
-    (match (fmt.format-lex-result (string.copy (& source)))
-      [(Ok _) unit]
-      [_ (test.assert-true false "valid Unicode formatter input")])))
+    [nul : String
+      (byte_buf.to-string
+        (byte_buf.push (byte_buf.from-string "") (cast 0 : u8)))]
+    [sources : (Array String 3)
+      (array
+        "\"A\\né€😀é\""
+        "\"\""
+        (cat.str-cat "\"" (string.copy (& nul)) "\""))]
+    [expected : (Array String 3) (array "A\né€😀é" "" nul)]
+    [index : i64 0]
+    (while (< index 3)
+      (let
+        [source : (& sources str) (& (array-ref sources index))]
+        (match (lex.spanned-result source)
+          [(Ok tokens)
+            (let
+              [tok : token.Token
+                (token.spanned-token-tok (lex.array-shared-view tokens 0))]
+              (test.assert-string-eq
+                (intern.intern-id-str (token.str-id (& tok)))
+                (& (array-ref expected index))
+                "unescaped UTF-8 literal preserves exact bytes"))]
+          [_ (test.assert-true false "valid scalar encodings accepted")])
+        (match (fmt.format-lex-result (string.copy source))
+          [(Ok _) unit]
+          [_ (test.assert-true false "valid Unicode formatter input")]))
+      (set! index (+ index 1)))))
 
 (test utf8-literal-invalid-classes-and-source-spans (assert-malformed-literals))
 

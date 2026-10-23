@@ -1381,6 +1381,16 @@ the immutable guard links until the corresponding RHS finishes; nested guards
 are popped in lowering order. This rule is specific to unit-valued field stores;
 `replace!`, which returns the old value, retains its separate place lowering.
 
+Zero-sized struct-field reads produce the canonical unit value after evaluating
+the receiver exactly once. They emit no field address, memory load or packed-word
+extraction, including trailing fields beyond a register group's final word and
+projections through checked/raw references. Named lookup still validates the
+field. A pattern binding materializes a non-variable result only when the local
+environment requires a variable. Unit equality evaluates both operands in order
+and chooses its boolean result without a machine comparison; an operand's exit
+still stops subsequent evaluation. This does not change structural tuple/array
+call-transport admission.
+
 Memory-class aggregate expressions carry addresses into inline storage.
 Whole-global assignment copies the shallow container through the private
 `tl_alloc_global` entry before emitting the ordinary IR `Store`. Keeping that

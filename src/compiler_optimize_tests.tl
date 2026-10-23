@@ -31067,6 +31067,92 @@
       (opt.opt-cfg-index-build (& blocks))
       0)))
 
+;; The integer lookup must not depend on live global stamps or a particular
+;; label spelling. Synthetic numeric labels also exercise high bits without
+;; growing the global spelling pool to those ids.
+(define (opt-cfg-label-index-property [count : i64] [stride : i64] [base : i64]) : bool
+  (let
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    (for [id (iterator.range 0 count)]
+      (let
+        [label : i64
+          (+
+            base
+            (*
+              stride
+              (if (and (> count 1) (= id (- count 1)))
+                0
+                (% (* id 17) count))))]
+        (set! (array-ref labels id) label)
+        (ir.compiler-ir-block-builder-push!
+          (&mut builder)
+          (Block label (irt.instrs "return 0")))))
+    (let
+      [blocks : ir.CompilerIrBlockList
+        (ir.compiler-ir-block-builder-to-list builder)]
+      [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+      [_other : opt.OptCfgIndex
+        (opt.opt-cfg-index-build (& (irt.blocks "other: return 1")))]
+      (for [query (iterator.range -2 (+ count 2))]
+        (let
+          [label : i64
+            (cond
+              [(= query -2) -9223372036854775808]
+              [(= query -1) 9223372036854775807]
+              [else (+ base (* stride query))])]
+          [expected : i64 -1]
+          [actual : i64
+            (match (opt.opt-cfg-index-id (& index) label)
+              [(Some id) id]
+              [(None) -1])]
+          (for [id (iterator.range 0 count)]
+            (when
+              (and (< expected 0) (= (array-ref labels id) label))
+              (set! expected id)))
+          (unless (= actual expected) (return false))))
+      true)))
+
+(test
+  cfg-label-index-matches-first-block-after-another-build
+  (for [power (iterator.range 0 7)]
+    (for [edge (iterator.range -1 2)]
+      (let
+        [count : i64 (+ (shl 1 power) edge)]
+        (test.assert-true
+          (and
+            (opt-cfg-label-index-property count 1 1)
+            (opt-cfg-label-index-property count 2048 1073741824)
+            (opt-cfg-label-index-property count 65536 4611686018427387904))
+          "empty, sparse, reordered and duplicate labels retain first-match lookup and bounded misses")))))
+
+(test
+  cfg-label-index-sparse-probes-stay-short
+  (for [power (iterator.range 4 7)]
+    (let
+      [count : i64 (shl 1 power)]
+      [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [slots : (__tl_dyn-array i64)
+        (__tl_make-array i64 (opt.opt-cfg-index-id-map-capacity count))]
+      [mask : i64 (- (array-length slots) 1)]
+      [probes : i64 0]
+      (for [id (iterator.range 0 count)]
+        (set! (array-ref labels id) (+ 11 (* id 2048))))
+      (opt.opt-cfg-index-fill-id-map! (&mut slots) (& labels) count)
+      (for [id (iterator.range 0 count)]
+        (let
+          [slot : i64 (opt.opt-cfg-index-id-slot (array-ref labels id) mask)]
+          [found : bool false]
+          (while (not found)
+            (+= probes 1)
+            (if (= (array-ref slots slot) (+ id 1))
+              (set! found true)
+              (set! slot (bit-and (+ slot 1) mask))))))
+      (test.assert-true
+        (<= probes (* count 3))
+        "half-full sparse label tables avoid a long shared probe chain"))))
+
 ;; The borrowed lookups read the function's own list, which the index numbers in
 ;; walk order: a label the index knows finds that label's block, and an unknown
 ;; one finds nothing (#9013).

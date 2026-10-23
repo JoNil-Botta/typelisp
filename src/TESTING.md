@@ -835,6 +835,16 @@ actual backend ownership or publish a warning.
 
 ## SPMD decision provenance
 
+`compiler-lower-spmd-loop-boundaries` checks all five native loop emitters in
+Linux/Windows scalar, AVX2 and AVX-512 modes. Every native record's four labels
+must name distinct blocks in its emitted function; scalar and unsupported
+routes publish none. Sequential loops, branch-state forks, repeated macro
+syntax and unreachable sites check collection boundaries. The source-span
+arena-retirement smoke also reads escaped loop records after destroying their
+producer. These source anchors do not establish final optimized region
+membership; consumers must check the transformed CFG and retain explicit
+clone/rotation/unroll lineage.
+
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected
 maps, empty/tail ranges, cross-lane parent identities and deterministic order.

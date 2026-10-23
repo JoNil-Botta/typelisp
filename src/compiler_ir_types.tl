@@ -13,6 +13,7 @@
 (import stdlib.hash)
 (import stdlib.hashmap)
 (import stdlib.arena)
+(import stdlib.dense_list)
 (import stdlib.comptime)
 (import compiler_owned_view as owned_view)
 (import (hashmap.hashmap String i64) as ir_label_map)
@@ -8229,20 +8230,56 @@
       (set! (array-ref copy index) (clone (array-ref items.slots index))))
     (CompilerSpmdMacroFrameList copy items.len)))
 
+;; These labels are selected by lowering, not recognized from their spelling.
+;; The full-gang header, first tail block and exit delimit one source loop;
+;; intervening control blocks are classified against the resulting CFG. The
+;; source site remains distinct from the emitted function after inlining.
+(defstruct CompilerSpmdLoopRegion
+  (function CompilerIrSymbolId)
+  (site CompilerSpmdSiteId)
+  (header i64)
+  (body i64)
+  (tail i64)
+  (exit i64))
+
+(defstruct CompilerSpmdLoopRegionList
+  (slots (__tl_dyn-array CompilerSpmdLoopRegion))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerSpmdLoopRegion
+  CompilerSpmdLoopRegionList
+  compiler-spmd-loop-region-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  append-from)
+
+(define (compiler-spmd-loop-region-list-escape
+  [regions : (& regions CompilerSpmdLoopRegionList)]) : CompilerSpmdLoopRegionList
+  (let
+    [out : CompilerSpmdLoopRegionList
+      (compiler-spmd-loop-region-list-with-capacity regions.len)]
+    (compiler-spmd-loop-region-list-append-from (&mut out) regions 0)
+    out))
+
 (defstruct CompilerSpmdDecisions
   (decisions CompilerSpmdDecisionList)
-  (frames CompilerSpmdMacroFrameList))
+  (frames CompilerSpmdMacroFrameList)
+  (loops CompilerSpmdLoopRegionList))
 
 (define (compiler-spmd-decisions-empty) : CompilerSpmdDecisions
   (CompilerSpmdDecisions
     (compiler-spmd-decision-list-empty)
-    (compiler-spmd-macro-frame-list-empty)))
+    (compiler-spmd-macro-frame-list-empty)
+    (compiler-spmd-loop-region-list-new)))
 
 (define (compiler-spmd-decisions-escape
   [facts : (& facts CompilerSpmdDecisions)]) : CompilerSpmdDecisions
   (CompilerSpmdDecisions
     (compiler-spmd-decision-list-escape (& facts.decisions))
-    (compiler-spmd-macro-frame-list-escape (& facts.frames))))
+    (compiler-spmd-macro-frame-list-escape (& facts.frames))
+    (compiler-spmd-loop-region-list-escape (& facts.loops))))
 
 (define (compiler-source-spans-spmd [spans : (& spans CompilerSourceSpans)]) : (&
     spans
@@ -8789,6 +8826,7 @@
         [instruction-start : i64 base-instructions.len]
         [decision-start : i64 base-facts.decisions.len]
         [frame-start : i64 base-facts.frames.len]
+        [loop-start : i64 base-facts.loops.len]
         [out : CompilerSourceSpans
           (Spans base-entries base-instructions base-count base-facts)]
         (match complete
@@ -8828,6 +8866,10 @@
                     (compiler-spmd-macro-frame-list-append!
                       (&mut output.frames)
                       (clone (array-ref facts.frames.slots index))))
+                  (compiler-spmd-loop-region-list-append-from
+                    (&mut output.loops)
+                    (& facts.loops)
+                    loop-start)
                   (Spans output-entries output-instructions output-count output)]))])
         out)]))
 

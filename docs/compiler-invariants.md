@@ -595,6 +595,15 @@ are retained in the lower owner's `spmd-rejected-spans` result field and escaped
 beside the diagnostic before scratch retirement; entry reset clears them.
 Optimizer instruction-span rebuilding and backend register remapping retain the
 source decisions unchanged. Functions without SPMD allocate no site collection.
+Native loop emitters also retain source-owned `CompilerSpmdLoopRegion` records:
+the emitted function, source site, full-gang header and body, first tail entry,
+and exit. The emitter supplies these labels directly. Scalar/fallback and
+unvisited sites have no native loop record, and publication waits for a
+terminal native decision. These are lowering-input anchors: cloning, inlining,
+rotation or unrolling must explicitly reconcile them before a consumer applies
+them to a transformed CFG. A missing anchor is not permission to infer a region
+from a label's spelling. Escape copies the live record prefix into its receiver;
+the instruction-span cutoff and reset do not discard source loop facts.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

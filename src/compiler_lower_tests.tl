@@ -16482,7 +16482,8 @@
   (when
     (or
       (not (= left.decisions.len right.decisions.len))
-      (not (= left.frames.len right.frames.len)))
+      (not (= left.frames.len right.frames.len))
+      (not (= left.loops.len right.loops.len)))
     (return false))
   (unless
     (string.eq
@@ -16518,6 +16519,21 @@
           (= a.invocation.path-id b.invocation.path-id)
           (= a.origin-path-id b.origin-path-id)
           (ast.ast-source-span-eq? a.invocation.span b.invocation.span))
+        (return false))))
+  (for [index (iterator.range 0 left.loops.len)]
+    (let
+      [a : ir.CompilerSpmdLoopRegion (clone (array-ref left.loops.slots index))]
+      [b : ir.CompilerSpmdLoopRegion
+        (clone (array-ref right.loops.slots index))]
+      (unless
+        (and
+          (ir.compiler-ir-symbol-id-eq? a.function b.function)
+          (ir.compiler-ir-symbol-id-eq? a.site.function b.site.function)
+          (= a.site.ordinal b.site.ordinal)
+          (= a.header b.header)
+          (= a.body b.body)
+          (= a.tail b.tail)
+          (= a.exit b.exit))
         (return false))))
   true)
 
@@ -16569,7 +16585,118 @@
         (test.assert-owned-string-eq
           (compiler-lower-spmd-facts-text (& facts))
           expected
-          "backend and native lane shape")))))
+          "backend and native lane shape")
+        (test.assert-i64-eq
+          facts.loops.len
+          (if (< index 2)
+            0
+            1)
+          "only native gangs publish loop boundaries")
+        (when
+          (>= index 2)
+          (let
+            [region : ir.CompilerSpmdLoopRegion
+              (clone (array-ref facts.loops.slots 0))]
+            [site : ir.CompilerSpmdDecision
+              (clone (array-ref facts.decisions.slots 0))]
+            (test.assert-true
+              (and
+                (ir.compiler-ir-symbol-id-eq?
+                  region.function
+                  site.site.function)
+                (ir.compiler-ir-symbol-id-eq?
+                  region.site.function
+                  site.site.function)
+                (= region.site.ordinal 0)
+                (>= region.header 0)
+                (>= region.body 0)
+                (>= region.tail 0)
+                (>= region.exit 0)
+                (not (= region.header region.body))
+                (not (= region.tail region.exit)))
+              "escaped boundaries retain explicit source and control identities")))))))
+
+(define (compiler-lower-spmd-loop-labels-present?
+  [program : (& ir.CompilerIrProgram)]
+  [region : (& region ir.CompilerSpmdLoopRegion)]) : bool
+  (match program
+    [(Program _ functions _)
+      (for [index (iterator.range 0 functions.len)]
+        (match (ir.compiler-ir-function-seq-borrow functions index)
+          [(Function name _ _ _ blocks _)
+            (when
+              (= name region.function.value)
+              (let
+                [labels : (Array i64 4)
+                  (array region.header region.body region.tail region.exit)]
+                [seen : (Array i64 4) (array 0 0 0 0)]
+                [seq : ir.CompilerIrBlockSeq
+                  (ir.compiler-ir-block-list-seq
+                    (owned_view.compiler-owned-reference-shared-view blocks))]
+                (for [block (iterator.range 0 seq.len)]
+                  (match (ir.compiler-ir-block-seq-borrow seq block)
+                    [(Block label _)
+                      (for [key (iterator.range 0 4)]
+                        (when
+                          (= label (array-ref labels key))
+                          (+= (array-ref seen key) 1)))]))
+                (for [key (iterator.range 0 4)]
+                  (unless (= (array-ref seen key) 1) (return false))
+                  (for [other (iterator.range 0 key)]
+                    (when
+                      (= (array-ref labels key) (array-ref labels other))
+                      (return false))))
+                (return true)))]))])
+  false)
+
+(test
+  compiler-lower-spmd-loop-boundaries
+  (let
+    [modes : (Array lower.CompilerLowerMode 6)
+      (array
+        (lower.CompilerLowerMode.LinuxScalar)
+        (lower.CompilerLowerMode.WindowsScalar)
+        (lower.CompilerLowerMode.LinuxAvx2)
+        (lower.CompilerLowerMode.WindowsAvx2)
+        (lower.CompilerLowerMode.LinuxAvx512)
+        (lower.CompilerLowerMode.WindowsAvx512))]
+    [sources : (Array String 10)
+      (array
+        (compiler-lower-spmd-broadcast-source)
+        (compiler-lower-avx512-masked-if-source)
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (+ (array-ref xs i) 2)))"
+        "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (spmd-scan sum ([i : i64 0 n] [prefix : i64 0]) (array-ref xs i) (set! (array-ref out i) prefix)))"
+        "(define (f) : unit (foreach ([i : i64 0 3]) unit))"
+        "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (begin (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref xs i))) (foreach ([j : i64 0 n]) (set! (array-ref out j) (+ (array-ref xs j) 1)))))"
+        "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64] [choose : bool]) : unit (if choose (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref xs i))) (foreach ([j : i64 0 n]) (set! (array-ref out j) (+ (array-ref xs j) 1)))))"
+        "(defmacro (twice [body : Expr]) : Expr `(begin ,body ,body)) (define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (twice (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref xs i)))))"
+        "(define (f [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)] [n : i64]) : unit (begin (return unit) (foreach ([i : i64 0 n]) (set! (array-ref out i) (array-ref xs i)))))")]
+    (for [mode (iterator.range 0 6)]
+      (for [case (iterator.range 0 (array-length sources))]
+        (match (lower.lower-compiler-source-with-mode
+          (clone (array-ref sources case))
+          (array-ref modes mode))
+          [(Err _) (test.assert-true false "loop boundary fixture rejected")]
+          [(Ok program spans owner)
+            (let
+              [facts : (& spans ir.CompilerSpmdDecisions)
+                (ir.compiler-source-spans-spmd (& spans))]
+              (test.assert-i64-eq
+                facts.loops.len
+                (cond
+                  [(or (< mode 2) (= case 5) (= case 9)) 0]
+                  [(>= case 6) 2]
+                  [else 1])
+                "scalar and unsupported loops never fabricate a full gang")
+              (for [index (iterator.range 0 facts.loops.len)]
+                (test.assert-true
+                  (compiler-lower-spmd-loop-labels-present?
+                    (& program)
+                    (& (array-ref facts.loops.slots index)))
+                  "all four source-selected boundaries name distinct emitted blocks")))
+            (lower.compiler-lower-arena-state-release!
+              (lower.compiler-lower-state-arenas owner))])))))
 
 (test
   compiler-lower-spmd-decisions-atomic

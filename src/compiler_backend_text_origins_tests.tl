@@ -321,3 +321,80 @@
     (origins.compiler-backend-text-origins-release! (&mut capture))))
 
 (test text-origins-record-typed-facts-transactionally (text-origin-record-test))
+
+(define (text-origin-check-ok [result : origins.CompilerBackendOriginCheck]) : unit
+  (match result
+    [(Ok) unit]
+    [(Err message) (io.panic message)]))
+
+(define (text-origin-check-error [result : origins.CompilerBackendOriginCheck]) : unit
+  (match result
+    [(Err _) unit]
+    [(Ok) (test.assert-true false "invalid buffer step must reject")]))
+
+(define (text-origin-buffer-test) : unit
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [buffer : origins.CompilerBackendTextOriginBuffer
+      (origins.compiler-backend-text-origin-buffer-new capture)]
+    [body : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-mark capture "abc" 21))]
+    [late-prefix : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-mark capture "X" 22))]
+    [suffix : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-mark capture "Z" 23))]
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-note! buffer "p" 0))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-note! buffer (& body) 0))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-note! buffer (& body) 1))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-note! buffer "q" 4))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-insert!
+        buffer
+        (& late-prefix)
+        2))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-insert! buffer "x" -1))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-insert! buffer "x" 6))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-insert! buffer "" 2))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-insert!
+        buffer
+        (& late-prefix)
+        1))
+    (text-origin-check-ok
+      (origins.compiler-backend-text-origin-buffer-insert! buffer (& suffix) 6))
+    (text-origin-test-error
+      (origins.compiler-backend-text-origin-buffer-finish buffer "wrong length"))
+    (text-origin-test-error
+      (origins.compiler-backend-text-origin-buffer-finish buffer "pXabdqZ"))
+    (let
+      [text : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origin-buffer-finish buffer "pXabcqZ"))]
+      (text-origin-test-span capture (& text) 0 1 2 22)
+      (text-origin-test-span capture (& text) 1 2 5 21)
+      (text-origin-test-span capture (& text) 2 6 7 23)
+      (test.assert-string-eq
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-slice capture (& text) 3 0))
+        ""
+        "zero-length slice publishes no partial origin"))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-note! buffer "later" 7))
+    (text-origin-check-error
+      (origins.compiler-backend-text-origin-buffer-insert! buffer "later" 7))
+    (text-origin-test-error
+      (origins.compiler-backend-text-origin-buffer-finish buffer "pXabcqZ"))
+    (origins.compiler-backend-text-origins-release! (&mut capture))))
+
+(test text-origins-buffer-order-and-byte-witness (text-origin-buffer-test))

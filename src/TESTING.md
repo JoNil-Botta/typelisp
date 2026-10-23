@@ -864,8 +864,12 @@ slice/retarget rejection, inventory growth and scratch retirement. Its native
 smoke calls the same fixtures at opt0/1/2. `compiler_backend_stack_origins_tests.tl`
 checks actual vector load/store/folded/fallback factories and a higher-level
 vector copy with equal colored offsets but distinct logical homes. The native
-producer smoke also checks all three optimization levels. Final buffer/rewrite
-transport, remaining traffic owners and complete report acceptance are distinct.
+producer smoke also checks all three optimization levels, including body-buffer
+growth, all append forms and a later-issued save inserted before its body.
+Buffer fixtures reject noncontiguous writes, cuts, invalid extents, changed
+operand bytes and reuse after finalization; refused operations publish no
+partial metadata. Remaining frame/peephole rewrite transport, traffic owners
+and complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

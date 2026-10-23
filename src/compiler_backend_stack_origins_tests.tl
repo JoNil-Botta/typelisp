@@ -202,7 +202,74 @@
             (test.assert-i64-eq
               (array-ref copy-spans 1).token
               5
-              "copy write binding"))]))
+              "copy write binding")
+            (let
+              [buf : backend.CompilerBackendAsmBuf
+                (backend.compiler-backend-asm-buf-with-capacity 16)]
+              [late : String
+                (backend-stack-origin-read
+                  state
+                  (owned_view.compiler-owned-shared-view homes)
+                  7)]
+              [late-spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+                (origins.compiler-backend-text-origins-find capture (& late))]
+              (backend.compiler-backend-asm-buf-capture! (&mut buf) capture)
+              (backend.compiler-backend-asm-append (&mut buf) "A")
+              (backend.compiler-backend-asm-append2 (&mut buf) "B" "C")
+              (backend.compiler-backend-asm-append4 (&mut buf) "D" "E" "F" "G")
+              (backend.compiler-backend-asm-append5
+                (&mut buf)
+                "H"
+                "I"
+                "J"
+                "K"
+                "L")
+              (backend.compiler-backend-asm-append
+                (&mut buf)
+                (owned_view.compiler-owned-shared-view copy))
+              (backend.compiler-backend-asm-buf-insert-at!
+                (&mut buf)
+                12
+                (owned_view.compiler-owned-shared-view late))
+              (let
+                [text : String
+                  (backend.compiler-backend-asm-buf-finish (& buf))]
+                [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+                  (origins.compiler-backend-text-origins-find capture (& text))]
+                [expected : String
+                  (string.concat3-borrowed "ABCDEFGHIJKL" (& late) (& copy))]
+                (test.assert-string-eq
+                  text
+                  expected
+                  "buffer growth/appends/insertion preserve bytes")
+                (test.assert-i64-eq
+                  (array-length spans)
+                  3
+                  "all actual operand identities survive the body buffer")
+                (test.assert-i64-eq
+                  (array-ref spans 0).token
+                  6
+                  "late-issued prefix comes first in final text")
+                (test.assert-i64-eq
+                  (array-ref spans 1).token
+                  4
+                  "original read follows inserted access")
+                (test.assert-i64-eq
+                  (array-ref spans 2).token
+                  5
+                  "original write follows original read")
+                (test.assert-i64-eq
+                  (array-ref spans 0).start
+                  (+ 12 (array-ref late-spans 0).start)
+                  "inserted byte coordinate")
+                (test.assert-i64-eq
+                  (array-ref spans 1).start
+                  (+
+                    12
+                    (+
+                      (string.string-length (& late))
+                      (array-ref copy-spans 0).start))
+                  "shifted original coordinate"))))]))
     (backend.compiler-backend-state-release-final-arenas! state)
     (test.assert-true
       (= (backend.compiler-backend-state-stack-text-origins state).storage 0)

@@ -77,7 +77,30 @@
 (defstruct CompilerBackendTextOrigin
   (start i64)
   (end i64)
-  (token i64))
+  (token i64)
+  (expected String))
+
+(define (compiler-backend-text-origin-shift
+  [origin : (& origin CompilerBackendTextOrigin)]
+  [offset : i64]) : CompilerBackendTextOrigin
+  (CompilerBackendTextOrigin
+    (+ origin.start offset)
+    (+ origin.end offset)
+    origin.token
+    (owned_view.compiler-owned-string-place-shared-view origin.expected)))
+
+(defstruct CompilerBackendTextOriginList
+  (slots (__tl_dyn-array CompilerBackendTextOrigin))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerBackendTextOrigin
+  CompilerBackendTextOriginList
+  compiler-backend-text-origin-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  append-from)
 
 (defstruct CompilerBackendTextOriginEntry
   (text String)
@@ -94,6 +117,19 @@
 (defstruct CompilerBackendTextOrigins
   (storage u64)
   (owner i64))
+
+(defstruct CompilerBackendTextOriginBufferData
+  (capture CompilerBackendTextOrigins)
+  (origins CompilerBackendTextOriginList)
+  (len i64)
+  (finished bool))
+
+(defstruct CompilerBackendTextOriginBuffer
+  (storage u64))
+
+(defenum CompilerBackendOriginCheck
+  (Ok)
+  (Err String))
 
 (defenum CompilerBackendOriginTextResult
   (Ok String)
@@ -254,7 +290,11 @@
         (__tl_make-array CompilerBackendTextOrigin 1)]
       (set!
         (array-ref origins 0)
-        (CompilerBackendTextOrigin 0 (string.string-length (& copy)) token))
+        (CompilerBackendTextOrigin
+          0
+          (string.string-length (& copy))
+          token
+          (owned_view.compiler-owned-shared-view copy)))
       (Ok (compiler-backend-text-origins-publish capture copy origins)))))
 
 (define (compiler-backend-text-origins-concat
@@ -290,10 +330,7 @@
                   (& (array-ref source index))]
                 (set!
                   (array-ref origins next)
-                  (CompilerBackendTextOrigin
-                    (+ offset origin.start)
-                    (+ offset origin.end)
-                    origin.token))
+                  (compiler-backend-text-origin-shift origin offset))
                 (+= next 1))))
           (+= offset (string.string-length (& (array-ref parts part)))))
         (compiler-backend-text-origins-publish capture text origins)))))
@@ -311,6 +348,7 @@
     (when
       (or (< start 0) (< len 0) (> start length) (> len (- length start)))
       (return (Err "stack traffic: invalid text slice")))
+    (when (= len 0) (return (Ok "")))
     (for [index (iterator.range 0 (array-length source))]
       (let
         [origin : (& source CompilerBackendTextOrigin)
@@ -337,10 +375,7 @@
               (and (>= origin.start start) (<= origin.end (+ start len)))
               (set!
                 (array-ref origins next)
-                (CompilerBackendTextOrigin
-                  (- origin.start start)
-                  (- origin.end start)
-                  origin.token))
+                (compiler-backend-text-origin-shift origin (- 0 start)))
               (+= next 1))))
         (Ok (compiler-backend-text-origins-publish capture copy origins))))))
 
@@ -364,3 +399,167 @@
           (= origin.end (string.string-length (& operand))))
         (return (Err "stack traffic: address rewrite needs one exact origin")))
       (compiler-backend-text-origins-mark capture replacement origin.token))))
+
+(define (compiler-backend-text-origin-buffer-new
+  [capture : CompilerBackendTextOrigins]) : CompilerBackendTextOriginBuffer
+  (when (= capture.storage 0) (return (CompilerBackendTextOriginBuffer 0)))
+  (in-arena
+    (arena.Arena capture.owner)
+    (let
+      [cell : (__tl_dyn-array CompilerBackendTextOriginBufferData)
+        (__tl_make-array CompilerBackendTextOriginBufferData 1)]
+      (set!
+        (array-ref cell 0)
+        (CompilerBackendTextOriginBufferData
+          capture
+          (compiler-backend-text-origin-list-new)
+          0
+          false))
+      (CompilerBackendTextOriginBuffer
+        (unsafe
+          (ptr->int (__tl_array-data cell)))))))
+
+;; Every append accounts for its bytes, including unannotated text. This makes
+;; a missed buffer write detectable at finalization rather than shifting facts.
+(define (compiler-backend-text-origin-buffer-note!
+  [buffer : CompilerBackendTextOriginBuffer]
+  [text : (& text str)]
+  [offset : i64]) : CompilerBackendOriginCheck
+  (when (= buffer.storage 0) (return (Ok)))
+  (unsafe
+    (let
+      [destination : (MutPtr CompilerBackendTextOriginBufferData)
+        (int->ptr buffer.storage : (MutPtr CompilerBackendTextOriginBufferData))]
+      [data : CompilerBackendTextOriginBufferData (ptr-read destination)]
+      [n : i64 (string.string-length text)]
+      [source : (__tl_dyn-array CompilerBackendTextOrigin)
+        (compiler-backend-text-origins-find data.capture text)]
+      (when
+        (or
+          data.finished
+          (!= data.len offset)
+          (> n (- 9223372036854775807 data.len)))
+        (return (Err "stack traffic: noncontiguous or finished text buffer")))
+      (in-arena
+        (arena.Arena data.capture.owner)
+        (for [index (iterator.range 0 (array-length source))]
+          (let
+            [origin : (& source CompilerBackendTextOrigin)
+              (& (array-ref source index))]
+            (compiler-backend-text-origin-list-push
+              (&mut data.origins)
+              (compiler-backend-text-origin-shift origin offset)))))
+      (set! data.len (+ data.len n))
+      (ptr-write! destination data)
+      (Ok))))
+
+;; A cold save can be issued after its body but inserted before it. Merge by
+;; final byte position; token creation order cannot establish execution order.
+(define (compiler-backend-text-origin-buffer-insert!
+  [buffer : CompilerBackendTextOriginBuffer]
+  [text : (& text str)]
+  [at : i64]) : CompilerBackendOriginCheck
+  (when (= buffer.storage 0) (return (Ok)))
+  (unsafe
+    (let
+      [destination : (MutPtr CompilerBackendTextOriginBufferData)
+        (int->ptr buffer.storage : (MutPtr CompilerBackendTextOriginBufferData))]
+      [data : CompilerBackendTextOriginBufferData (ptr-read destination)]
+      [n : i64 (string.string-length text)]
+      [source : (__tl_dyn-array CompilerBackendTextOrigin)
+        (compiler-backend-text-origins-find data.capture text)]
+      (when
+        (or
+          data.finished
+          (< at 0)
+          (> at data.len)
+          (> n (- 9223372036854775807 data.len)))
+        (return (Err "stack traffic: invalid text insertion")))
+      (when (= n 0) (return (Ok)))
+      (for [index (iterator.range 0 data.origins.len)]
+        (let
+          [origin : (& data CompilerBackendTextOrigin)
+            (& (array-ref data.origins.slots index))]
+          (when
+            (and (< origin.start at) (> origin.end at))
+            (return (Err "stack traffic: insertion cuts an operand origin")))))
+      (in-arena
+        (arena.Arena data.capture.owner)
+        (let
+          [merged : CompilerBackendTextOriginList
+            (compiler-backend-text-origin-list-with-capacity
+              (+ data.origins.len (array-length source)))]
+          [inserted : bool false]
+          (for [index (iterator.range 0 (+ data.origins.len 1))]
+            (when
+              (and
+                (not inserted)
+                (or
+                  (= index data.origins.len)
+                  (>= (array-ref data.origins.slots index).start at)))
+              (for [next (iterator.range 0 (array-length source))]
+                (let
+                  [origin : (& source CompilerBackendTextOrigin)
+                    (& (array-ref source next))]
+                  (compiler-backend-text-origin-list-push
+                    (&mut merged)
+                    (compiler-backend-text-origin-shift origin at))))
+              (set! inserted true))
+            (when
+              (< index data.origins.len)
+              (let
+                [origin : (& data CompilerBackendTextOrigin)
+                  (& (array-ref data.origins.slots index))]
+                [shift : i64
+                  (if (>= origin.start at)
+                    n
+                    0)]
+                (compiler-backend-text-origin-list-push
+                  (&mut merged)
+                  (compiler-backend-text-origin-shift origin shift)))))
+          (set! data.origins merged)))
+      (set! data.len (+ data.len n))
+      (ptr-write! destination data)
+      (Ok))))
+
+(define (compiler-backend-text-origin-buffer-finish
+  [buffer : CompilerBackendTextOriginBuffer]
+  [text : String]) : CompilerBackendOriginTextResult
+  (when (= buffer.storage 0) (return (Ok text)))
+  (unsafe
+    (let
+      [destination : (MutPtr CompilerBackendTextOriginBufferData)
+        (int->ptr buffer.storage : (MutPtr CompilerBackendTextOriginBufferData))]
+      [data : CompilerBackendTextOriginBufferData (ptr-read destination)]
+      (when
+        (or data.finished (!= data.len (string.string-length (& text))))
+        (return (Err "stack traffic: final text buffer extent mismatch")))
+      (for [index (iterator.range 0 data.origins.len)]
+        (let
+          [origin : (& data CompilerBackendTextOrigin)
+            (& (array-ref data.origins.slots index))]
+          (unless
+            (string.eq
+              (string.substring-view
+                (& text)
+                origin.start
+                (- origin.end origin.start))
+              (& origin.expected))
+            (return
+              (Err "stack traffic: buffer changed an operand without transfer")))))
+      (set! data.finished true)
+      (ptr-write! destination (owned_view.compiler-owned-shared-view data))
+      (when (= data.origins.len 0) (return (Ok text)))
+      (in-arena
+        (arena.Arena data.capture.owner)
+        (let
+          [copy : String (string.copy (& text))]
+          [spans : (__tl_dyn-array CompilerBackendTextOrigin)
+            (__tl_make-array CompilerBackendTextOrigin data.origins.len)]
+          (for [index (iterator.range 0 data.origins.len)]
+            (set!
+              (array-ref spans index)
+              (compiler-backend-text-origin-shift
+                (& (array-ref data.origins.slots index))
+                0)))
+          (Ok (compiler-backend-text-origins-publish data.capture copy spans)))))))

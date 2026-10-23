@@ -616,9 +616,9 @@
 ;; the group-chunk invariant holds (one whole newline-terminated function text
 ;; per chunk).
 ;;
-;; Only the prefix [0, len) is live. `finish` hands the live prefix out as a
-;; String that ALIASES this storage, so a finished buffer is never appended to
-;; or reused -- emission allocates a fresh one per body it builds.
+;; Only the prefix [0, len) is live. Ordinary `finish` aliases that storage;
+;; annotated text is retained by the capture owner with its operand facts.
+;; A finished buffer is never appended to or reused.
 ;;
 ;; Storage comes straight from the active-arena allocator the String
 ;; constructors already use (`tl_alloc`, exactly what `concat*` calls),
@@ -628,7 +628,8 @@
 (defstruct CompilerBackendAsmBuf
   (data (MutPtr u8))
   (cap i64)
-  (len i64))
+  (len i64)
+  (origins text_origins.CompilerBackendTextOriginBuffer))
 
 (define (compiler-backend-asm-buf-with-capacity [capacity : i64]) : CompilerBackendAsmBuf
   (let
@@ -640,7 +641,29 @@
       (unsafe
         (compiler-backend-asm-buf-alloc cap))
       cap
-      0)))
+      0
+      (text_origins.CompilerBackendTextOriginBuffer 0))))
+
+(define (compiler-backend-asm-buf-capture!
+  [buf : (&mut buf CompilerBackendAsmBuf)]
+  [capture : text_origins.CompilerBackendTextOrigins]) : unit
+  (unless
+    (and (= buf.len 0) (= buf.origins.storage 0))
+    (io.panic "backend: origin capture needs a fresh assembly buffer"))
+  (set!
+    buf.origins
+    (text_origins.compiler-backend-text-origin-buffer-new capture)))
+
+(define (compiler-backend-asm-note-origin!
+  [buf : (& buf CompilerBackendAsmBuf)]
+  [part : (& part str)]
+  [offset : i64]) : unit
+  (match (text_origins.compiler-backend-text-origin-buffer-note!
+    (clone buf.origins)
+    part
+    offset)
+    [(Ok) unit]
+    [(Err message) (io.panic message)]))
 
 ;; Bytes of assembly text budgeted per IR instruction when sizing a function
 ;; body buffer. Chosen so the overwhelming majority of functions never grow
@@ -724,18 +747,6 @@
       (set! asm-copy-b (+ asm-copy-b 1)))
     unit))
 
-;; Copy `n` bytes of `part` to offset `off`; the caller has already reserved.
-;; Out-of-line form for the cold splice path.
-(define (compiler-backend-asm-buf-put!
-  [buf : (&mut buf CompilerBackendAsmBuf)]
-  [off : i64]
-  [part : String]
-  [n : i64]) : unit
-  (if (= n 0)
-    unit
-    (unsafe
-      (string.str-copy-owned-bytes-into part buf.data off n))))
-
 (define (compiler-backend-asm-append
   [buf : (&mut buf CompilerBackendAsmBuf)]
   [part : String]) : unit
@@ -746,6 +757,9 @@
       (let
         [off : i64 buf.len]
         (compiler-backend-asm-buf-reserve! buf (+ off n))
+        (when
+          (!= buf.origins.storage 0)
+          (compiler-backend-asm-note-origin! buf (& part) off))
         (let
           [dst : (MutPtr u8) buf.data]
           (compiler-backend-asm-copy-part! dst off part n))
@@ -764,6 +778,10 @@
     (let
       [dst : (MutPtr u8) buf.data]
       [ob : i64 (+ off na)]
+      (when
+        (!= buf.origins.storage 0)
+        (compiler-backend-asm-note-origin! buf (& a) off)
+        (compiler-backend-asm-note-origin! buf (& b) ob))
       (compiler-backend-asm-copy-part! dst off a na)
       (compiler-backend-asm-copy-part! dst ob b nb))
     (set! buf.len (+ off total))))
@@ -787,6 +805,12 @@
       [ob : i64 (+ off na)]
       [oc : i64 (+ ob nb)]
       [od : i64 (+ oc nc)]
+      (when
+        (!= buf.origins.storage 0)
+        (compiler-backend-asm-note-origin! buf (& a) off)
+        (compiler-backend-asm-note-origin! buf (& b) ob)
+        (compiler-backend-asm-note-origin! buf (& c) oc)
+        (compiler-backend-asm-note-origin! buf (& d) od))
       (compiler-backend-asm-copy-part! dst off a na)
       (compiler-backend-asm-copy-part! dst ob b nb)
       (compiler-backend-asm-copy-part! dst oc c nc)
@@ -815,6 +839,13 @@
       [oc : i64 (+ ob nb)]
       [od : i64 (+ oc nc)]
       [oe : i64 (+ od nd)]
+      (when
+        (!= buf.origins.storage 0)
+        (compiler-backend-asm-note-origin! buf (& a) off)
+        (compiler-backend-asm-note-origin! buf (& b) ob)
+        (compiler-backend-asm-note-origin! buf (& c) oc)
+        (compiler-backend-asm-note-origin! buf (& d) od)
+        (compiler-backend-asm-note-origin! buf (& e) oe))
       (compiler-backend-asm-copy-part! dst off a na)
       (compiler-backend-asm-copy-part! dst ob b nb)
       (compiler-backend-asm-copy-part! dst oc c nc)
@@ -840,6 +871,14 @@
       (let
         [len : i64 buf.len]
         [tail : i64 (- len at)]
+        (when
+          (!= buf.origins.storage 0)
+          (match (text_origins.compiler-backend-text-origin-buffer-insert!
+            (clone buf.origins)
+            (& part)
+            at)
+            [(Ok) unit]
+            [(Err message) (io.panic message)]))
         (compiler-backend-asm-buf-reserve! buf (+ len n))
         (let
           [dst : (MutPtr u8) buf.data]
@@ -854,18 +893,27 @@
                 (ptr-read (ptr-offset src (+ at i)))))
             (set! i (- i 1)))
           unit)
-        (compiler-backend-asm-buf-put! buf at part n)
+        (unsafe
+          (string.str-copy-owned-bytes-into part buf.data at n))
         (set! buf.len (+ len n))))))
 
-;; Hand the live prefix out as a String aliasing this buffer's storage. The
-;; buffer is dead after this call.
+;; Ordinary text aliases the live prefix. Annotated text is retained with its
+;; provenance by the capture owner. The buffer is dead after this call.
 (define (compiler-backend-asm-buf-finish [buf : (& buf CompilerBackendAsmBuf)]) : String
   (let
     [n : i64 buf.len]
-    (if (= n 0)
-      ""
-      (unsafe
-        (string-from-bytes (ptr-cast buf.data : (Ptr u8)) n)))))
+    [text : String
+      (if (= n 0)
+        ""
+        (unsafe
+          (string-from-bytes (ptr-cast buf.data : (Ptr u8)) n)))]
+    (if (= buf.origins.storage 0)
+      text
+      (match (text_origins.compiler-backend-text-origin-buffer-finish
+        (clone buf.origins)
+        text)
+        [(Ok finished) finished]
+        [(Err message) (io.panic message)]))))
 
 (defenum ResultCompilerBackendObject
   (Ok cobj.CompilerObjectImage)
@@ -60979,6 +61027,10 @@
             (compiler-backend-blocks-instr-count
               (compiler-backend-global-shared-view blocks))
             compiler-backend-asm-bytes-per-instr)))]
+    [_origin-capture : unit
+      (compiler-backend-asm-buf-capture!
+        (&mut out)
+        (compiler-backend-state-stack-text-origins program-index.backend-state))]
     [_
       (try
         (compiler-backend-emit-blocks-into

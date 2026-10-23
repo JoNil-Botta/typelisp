@@ -634,6 +634,12 @@ lose proof rather than recover it from matching text. Slices cannot cut an
 operand annotation; address rewrites explicitly retarget an exact annotation.
 Rejected snapshots publish no access token. The owning backend clears its
 capture before retirement, after all text users have finished or escaped.
+Body buffers retain these tokens across growth and every append form. Insertion
+orders them by final byte position, independently of token creation order, and
+cannot split an operand. The buffer accounts for every appended byte and checks
+retained operand spellings before publishing its protected result. Byte equality
+validates that transport; it never supplies an absent logical identity. A failed
+step leaves the buffer metadata unchanged, and finalization closes it once.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

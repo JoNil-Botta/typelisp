@@ -6,4 +6,5 @@
   (fixtures.text-origin-boundaries-test)
   (fixtures.text-origin-macro-test)
   (fixtures.text-origin-record-test)
+  (fixtures.text-origin-buffer-test)
   42)

@@ -36,7 +36,7 @@ if [ "${1:-}" != "--run-self-test" ]; then
     WORKDIR=${CODEGEN_TARGET_DISPATCH_DIR:-target/codegen-target-dispatch}
 fi
 
-FAMILY_RE='^src/compiler_(lower|backend|regalloc|optimize|liveness|parallel_move|abi|x64)[a-z0-9_]*[.]tl$'
+FAMILY_RE='^src/compiler_(lower|backend|regalloc|optimize|liveness|parallel_move|abi|x64|target_cfg)[a-z0-9_]*[.]tl$'
 
 TOKEN_RE='CompilerLowerMode[.](Linux|Windows)[[:alnum:]_]*|CompilerLower(Linux|Windows)[[:alnum:]_]*|lower-mode-(linux|windows)-[[:alnum:]_?-]+|CompilerBackendTarget[.](Linux|Windows)|BackendTarget(Linux|Windows)|compiler-backend-target-(linux|windows)[?]|target-(linux|windows)|(linux|windows)-x86_64'
 
@@ -381,6 +381,19 @@ EOF
     [_ ""]))
 EOF
     expect new-module fail "src/compiler_backend_unwind.tl"
+
+    # Shared target-cfg presets retain the guard after dispatch moves there.
+    write_tree "$base/target-cfg-unclassified"
+    cat > "$base/target-cfg-unclassified/src/compiler_target_cfg_core.tl" <<'EOF'
+(define (compiler-target-enable-linux-cfgs) : String "target-linux")
+EOF
+    expect target-cfg-unclassified fail "unclassified target dispatch in core module"
+    write_tree "$base/target-cfg-classified"
+    cp "$base/target-cfg-unclassified/src/compiler_target_cfg_core.tl" \
+        "$base/target-cfg-classified/src/compiler_target_cfg_core.tl"
+    printf '%s\n' 'src/compiler_target_cfg_core.tl	compiler-target-enable-linux-cfgs	policy	target-cfg	target-linux	1	Shared Linux cfg preset.' \
+        >> "$base/target-cfg-classified/scripts/inventory.tsv"
+    expect target-cfg-classified pass
 
     # The optimizer may not be classified at all.
     write_tree "$base/optimizer-row"

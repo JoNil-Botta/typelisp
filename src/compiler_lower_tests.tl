@@ -17018,6 +17018,97 @@
         (cdiag.compiler-diagnostic-render (& (deref diagnostic))))
       false]))
 
+(define (lower-test-unit-field-memory-count
+  [count : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (+
+    count
+    (match instr
+      [(or (Load _ _ _) (Gep _ _ _ _) (Word _ _ _ _) (BinOp _ _ _ _ _)) 1]
+      [_ 0])))
+
+(define (lower-test-unit-field-return-count
+  [count : i64]
+  [instr : ir.CompilerIrInstr]) : i64
+  (+
+    count
+    (match instr
+      [(Return (No)) 1]
+      [_ 0])))
+
+(test
+  compiler-lower-unit-field-reads
+  (let
+    [prefix : String
+      "(defstruct Empty (value unit))
+       (defstruct One (head unit) (number i64) (tail unit))
+       (defstruct Two (a i64) (middle unit) (b i64) (tail unit))
+       (defstruct Wide (a i64) (b i64) (c i64) (tail unit))
+       (defstruct Nested (empty Empty) (number i64)) "]
+    [cases
+      (array
+        "(define (main [x : Empty]) : unit x.value)"
+        "(define (main [x : One]) : unit x.head)"
+        "(define (main [x : One]) : unit x.tail)"
+        "(define (main [x : Two]) : unit x.middle)"
+        "(define (main [x : Two]) : unit x.tail)"
+        "(define (main [x : Wide]) : unit x.tail)"
+        "(define (main [x : Nested]) : unit x.empty.value)"
+        "(define (main [x : Nested]) : unit (let [empty : Empty x.empty] empty.value))"
+        "(define (main [x : (& x Empty)]) : unit x.value)"
+        "(define (main [x : (& x Two)]) : unit x.tail)"
+        "(define (main [x : (&mut x Wide)]) : unit x.tail)"
+        "(define (main [x : (Ptr Wide)]) : unit (unsafe (__tl_struct-get (deref x) tail)))")]
+    [modes
+      (array
+        lower.CompilerLowerMode.LinuxScalar
+        lower.CompilerLowerMode.WindowsScalar)]
+    (for [mode (iterator.range 0 (array-length modes))]
+      (for [index (iterator.range 0 (array-length cases))]
+        (let
+          [source
+            (str_cat.str-cat (clone prefix) (clone (array-ref cases index)))]
+          (match (lower.lower-compiler-source-with-mode
+            source
+            (array-ref modes mode))
+            [(Ok (Program _ functions _) _ owner)
+              (match (lower-test-function-seq-find functions "main")
+                [(Some (Function _ _ _ _ blocks _))
+                  (test.assert-i64-eq
+                    (optimize.opt-blocks-fold
+                      blocks
+                      (cast 0 : i64)
+                      lower-test-unit-field-memory-count)
+                    0
+                    "zero-sized fields have no address, load or packed-word extraction")
+                  (test.assert-i64-eq
+                    (optimize.opt-blocks-fold
+                      blocks
+                      (cast 0 : i64)
+                      lower-test-unit-field-return-count)
+                    1
+                    "unit returns carry no machine operand")]
+                [_ (test.assert-true false "unit field fixture has main")])
+              (lower.compiler-lower-arena-state-release!
+                (lower.compiler-lower-state-arenas owner))]
+            [(Err diagnostic)
+              (test.assert-true
+                false
+                (cdiag.compiler-diagnostic-render (& (deref diagnostic))))]))))))
+
+(test
+  compiler-lower-unit-field-invalid-operations
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(defstruct Empty (value unit)) (define (main [value : Empty]) : unit value.missing)"
+      "typecheck: unknown struct field Empty.missing; available fields: value")
+    "zero-sized result types do not bypass field validation")
+  (test.assert-true
+    (compiler-lower-error-ok?
+      "(defstruct Empty (value unit)) (define (main [value : Empty]) : bool (< value.value unit))"
+      "typecheck: comparison expects matching ordered scalar operands, got unit and unit")
+    "unit equality does not admit ordered unit comparisons"))
+
 (test
   compiler-lower-store-exits
   (let

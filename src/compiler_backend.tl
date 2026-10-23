@@ -27,6 +27,9 @@
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
 (import compiler_object as cobj)
+(import compiler_object_asm as object_asm)
+(import stdlib.sort)
+(import stdlib.vector)
 (import compiler_machine_x64 as mx)
 (import compiler_intern as ci)
 (import stdlib.arena)
@@ -2331,6 +2334,14 @@
 (defstruct BackendStringSeq
   (slots (__tl_dyn-array String))
   (len i64))
+
+;; Sort keys borrow stable input slots through the compiler's scalar arena
+;; handle ABI. They never escape the planner or outlive its input collection.
+(defstruct CompilerBackendLiteralKey
+  (slot-address u64))
+
+(import (stdlib.vector.vector CompilerBackendLiteralKey) as literal_vec)
+(import (stdlib.sort.vec CompilerBackendLiteralKey) as literal_sort)
 
 (defstruct BackendSymbolSeq
   (slots (__tl_dyn-array i64))
@@ -74193,65 +74204,177 @@
           (set! index (+ index 1)))
         out)]))
 
-(define (compiler-backend-emit-string-entry-into
-  [text : String]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+;; Reverse-byte descending order places every terminated suffix after an
+;; owner. A suffix of any earlier value is also a suffix of the current owner:
+;; reverse-lexicographic prefixes are contiguous, with longer values first.
+(define (compiler-backend-literal-suffix-before?
+  [left-key : CompilerBackendLiteralKey]
+  [right-key : CompilerBackendLiteralKey]) : bool
   (let
-    [suffix : String (compiler-backend-string-label-suffix text)]
-    [data-label : String (str_cat.str-cat ".L_tl_str_data_" suffix)]
-    [fat-label : String (str_cat.str-cat ".L_tl_str_" suffix)]
-    [escaped : String
-      (compiler-backend-escape-string
-        (compiler-backend-global-shared-view text))]
-    [len-text : String (string.int->string (string.string-length text))]
-    (text_buf.append
-      (text_buf.append
-        (text_buf.append
-          (text_buf.append
-            (text_buf.append
-              (text_buf.append
-                (text_buf.append
-                  (text_buf.append
-                    (text_buf.append
-                      (text_buf.append
-                        (text_buf.append
-                          buf
-                          (compiler-backend-global-shared-view data-label))
-                        ":\n    .string \"")
-                      escaped)
-                    "\"\n    .balign 8\n")
-                  fat-label)
-                ":\n    .quad ")
-              data-label)
-            "\n    .quad ")
-          len-text)
-        "\n")
-      "")))
+    [left : String
+      (unsafe
+        (ptr-read (int->ptr left-key.slot-address : (Ptr String))))]
+    [right : String
+      (unsafe
+        (ptr-read (int->ptr right-key.slot-address : (Ptr String))))]
+    [i : i64 (string.string-length left)]
+    [j : i64 (string.string-length right)]
+    (while (and (> i 0) (> j 0))
+      (-= i 1)
+      (-= j 1)
+      (let
+        [a : char (string.string-ref left i)]
+        [b : char (string.string-ref right j)]
+        (unless (= a b) (return (> a b)))))
+    (> i j)))
 
-(define (compiler-backend-emit-string-entries-into
+;; This shared plan owns every fragment and label in the destination arena.
+;; Only immutable String payloads share bytes; mutable binary constants keep
+;; their separate storage. Headers stay eight-byte aligned and every owner
+;; retains its final zero byte, including interior-NUL and empty suffixes.
+(define (compiler-backend-literal-records
   [strings : BackendStringSeq]
-  [index : i64]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>= index strings.len)
-    buf
-    (compiler-backend-emit-string-entries-into
-      (compiler-backend-global-shared-view strings)
-      (+ index 1)
-      (compiler-backend-emit-string-entry-into
-        (compiler-backend-global-array-element-shared-view strings.slots index)
-        buf))))
+  [start : i64]) : cobj.CompilerObjectDataRecordList
+  (let
+    [ordered : literal_vec.Vec
+      (literal_vec.with-capacity (- strings.len start))]
+    [i : i64 start]
+    [records : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-with-capacity
+        (+ 1 (* 6 (- strings.len start))))]
+    [owner : String ""]
+    [cursor : i64 0]
+    [active : bool false]
+    (while (< i strings.len)
+      (literal_vec.push-ref!
+        (&mut ordered)
+        (CompilerBackendLiteralKey
+          (unsafe
+            (ptr->int (ptr-offset (__tl_array-data strings.slots) i)))))
+      (+= i 1))
+    (literal_sort.sort! (&mut ordered) compiler-backend-literal-suffix-before?)
+    (set! i 0)
+    (while (< i ordered.len)
+      (let
+        [text : String
+          (unsafe
+            (ptr-read
+              (int->ptr (array-ref ordered.slots i).slot-address : (Ptr String))))]
+        [offset : i64
+          (- (string.string-length owner) (string.string-length text))]
+        (if (and
+          active
+          (>= offset 0)
+          (string.is-string-prefix-at owner text offset))
+          (begin
+            (when
+              (> offset cursor)
+              (set!
+                records
+                (cobj.compiler-object-data-record-builder-push
+                  records
+                  (Bytes (string.substring owner cursor (- offset cursor))))))
+            (set! cursor offset))
+          (begin
+            (when
+              active
+              (set!
+                records
+                (cobj.compiler-object-data-record-builder-push
+                  records
+                  (String
+                    (string.substring
+                      owner
+                      cursor
+                      (- (string.string-length owner) cursor))))))
+            (set! owner (compiler-backend-global-shared-view text))
+            (set! cursor 0)
+            (set! active true)))
+        (set!
+          records
+          (cobj.compiler-object-data-record-builder-push
+            records
+            (Label (compiler-backend-string-data-label text)))))
+      (+= i 1))
+    (when
+      active
+      (set!
+        records
+        (cobj.compiler-object-data-record-builder-push
+          records
+          (String
+            (string.substring
+              owner
+              cursor
+              (- (string.string-length owner) cursor))))))
+    (set!
+      records
+      (cobj.compiler-object-data-record-builder-push records (Align 8)))
+    (set! i 0)
+    (while (< i ordered.len)
+      (let
+        [text : String
+          (unsafe
+            (ptr-read
+              (int->ptr (array-ref ordered.slots i).slot-address : (Ptr String))))]
+        (set!
+          records
+          (cobj.compiler-object-data-record-builder-push
+            (cobj.compiler-object-data-record-builder-push
+              (cobj.compiler-object-data-record-builder-push
+                records
+                (Label (compiler-backend-string-fat-label text)))
+              (SymbolAddress (compiler-backend-string-data-label text)))
+            (I64 (string.string-length text)))))
+      (+= i 1))
+    (cobj.compiler-object-data-record-builder-finish records)))
+
+(define (compiler-backend-emit-quoted-literal!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [head : String]
+  [text : String]) : unit
+  (byte_buf_core.byte-buf-builder-append-string out head)
+  (byte_buf_core.byte-buf-builder-append-string
+    out
+    (compiler-backend-escape-string text))
+  (byte_buf_core.byte-buf-builder-append-string out "\"\n"))
 
 (define (compiler-backend-emit-string-rodata-into
   [strings : BackendStringSeq]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (if (= strings.len 0)
     buf
-    (text_buf.append
-      (compiler-backend-emit-string-entries-into
-        strings
-        0
-        (text_buf.append buf "    .section .rodata\n"))
-      "\n")))
+    (let
+      [records : cobj.CompilerObjectDataRecordList
+        (compiler-backend-literal-records strings 0)]
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity 4096)]
+      [i : i64 0]
+      (byte_buf_core.byte-buf-builder-append-string
+        (&mut out)
+        "    .section .rodata\n")
+      (while (< i records.len)
+        (match (cobj.compiler-object-data-record-list-ref (& records) i)
+          [(String text)
+            (compiler-backend-emit-quoted-literal!
+              (&mut out)
+              "    .string \""
+              text)]
+          [(Bytes text)
+            (compiler-backend-emit-quoted-literal!
+              (&mut out)
+              "    .ascii \""
+              text)]
+          [_
+            (object_asm.compiler-object-asm-render-data-record!
+              (&mut out)
+              (compiler-backend-global-array-element-shared-view
+                records.slots
+                i))])
+        (+= i 1))
+      (text_buf.append
+        buf
+        (byte_buf_core.byte-buf-builder-finish-string (& out))))))
 
 (define (compiler-backend-emit-byte-directives-into
   [bytes : String]
@@ -80925,39 +81048,41 @@ tl_shared_object_init:
   (if (>= index strings.len)
     parts
     (let
-      [text : String
-        (compiler-backend-global-array-element-shared-view strings.slots index)]
-      [data-symbol : String (compiler-backend-string-data-label text)]
-      [fat-symbol : String (compiler-backend-string-fat-label text)]
-      (compiler-backend-object-strings
-        (object_target.compiler-backend-object-add-rodata
-          (object_target.compiler-backend-object-add-rodata
+      [records : cobj.CompilerObjectDataRecordList
+        (compiler-backend-literal-records strings index)]
+      [out : object_target.CompilerBackendObjectTargetParts parts]
+      [site : String ""]
+      [i : i64 0]
+      (while (< i records.len)
+        (let
+          [record : cobj.CompilerObjectDataRecord
+            (compiler-backend-global-array-element-shared-view records.slots i)]
+          (match (& record)
+            [(Label name)
+              (set! site (string.copy (& name)))
+              (set!
+                out
+                (object_target.compiler-backend-object-symbol-local-section
+                  out
+                  (string.copy (& name))
+                  (Rodata)
+                  (Data)))]
+            [(SymbolAddress target)
+              (set!
+                out
+                (object_target.compiler-backend-object-add-rodata-relocation
+                  out
+                  (compiler-backend-global-shared-view site)
+                  (Abs64)
+                  (string.copy (& target))))]
+            [_ unit])
+          (set!
+            out
             (object_target.compiler-backend-object-add-rodata
-              (object_target.compiler-backend-object-add-rodata-relocation
-                (object_target.compiler-backend-object-add-rodata
-                  (object_target.compiler-backend-object-symbol-local-section
-                    (object_target.compiler-backend-object-add-rodata
-                      (object_target.compiler-backend-object-add-rodata
-                        (object_target.compiler-backend-object-symbol-local-section
-                          parts
-                          (compiler-backend-global-shared-view data-symbol)
-                          (Rodata)
-                          (Data))
-                        (Label
-                          (compiler-backend-global-shared-view data-symbol)))
-                      (String (string.copy (& text))))
-                    (compiler-backend-global-shared-view fat-symbol)
-                    (Rodata)
-                    (Data))
-                  (Align 8))
-                (compiler-backend-global-shared-view fat-symbol)
-                (Abs64)
-                (compiler-backend-global-shared-view data-symbol))
-              (Label fat-symbol))
-            (SymbolAddress data-symbol))
-          (I64 (string.string-length text)))
-        strings
-        (+ index 1)))))
+              out
+              (compiler-backend-global-shared-view record))))
+        (+= i 1))
+      out)))
 
 (define (compiler-backend-object-bytes
   [parts : object_target.CompilerBackendObjectTargetParts]

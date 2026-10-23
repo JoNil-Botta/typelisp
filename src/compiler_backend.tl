@@ -30,8 +30,6 @@
 (import compiler_object_asm as object_asm)
 (import stdlib.sort)
 (import stdlib.vector)
-(import (stdlib.vector.vector String) as literal_vec)
-(import (stdlib.sort.vec String) as literal_sort)
 (import compiler_machine_x64 as mx)
 (import compiler_intern as ci)
 (import stdlib.arena)
@@ -2336,6 +2334,14 @@
 (defstruct BackendStringSeq
   (slots (__tl_dyn-array String))
   (len i64))
+
+;; Sort keys borrow stable input slots through the compiler's scalar arena
+;; handle ABI. They never escape the planner or outlive its input collection.
+(defstruct CompilerBackendLiteralKey
+  (slot-address u64))
+
+(import (stdlib.vector.vector CompilerBackendLiteralKey) as literal_vec)
+(import (stdlib.sort.vec CompilerBackendLiteralKey) as literal_sort)
 
 (defstruct BackendSymbolSeq
   (slots (__tl_dyn-array i64))
@@ -74202,9 +74208,15 @@
 ;; owner. A suffix of any earlier value is also a suffix of the current owner:
 ;; reverse-lexicographic prefixes are contiguous, with longer values first.
 (define (compiler-backend-literal-suffix-before?
-  [left : String]
-  [right : String]) : bool
+  [left-key : CompilerBackendLiteralKey]
+  [right-key : CompilerBackendLiteralKey]) : bool
   (let
+    [left : String
+      (unsafe
+        (ptr-read (int->ptr left-key.slot-address : (Ptr String))))]
+    [right : String
+      (unsafe
+        (ptr-read (int->ptr right-key.slot-address : (Ptr String))))]
     [i : i64 (string.string-length left)]
     [j : i64 (string.string-length right)]
     (while (and (> i 0) (> j 0))
@@ -74236,14 +74248,18 @@
     (while (< i strings.len)
       (literal_vec.push-ref!
         (&mut ordered)
-        (compiler-backend-global-array-element-shared-view strings.slots i))
+        (CompilerBackendLiteralKey
+          (unsafe
+            (ptr->int (ptr-offset (__tl_array-data strings.slots) i)))))
       (+= i 1))
     (literal_sort.sort! (&mut ordered) compiler-backend-literal-suffix-before?)
     (set! i 0)
     (while (< i ordered.len)
       (let
         [text : String
-          (compiler-backend-global-array-element-shared-view ordered.slots i)]
+          (unsafe
+            (ptr-read
+              (int->ptr (array-ref ordered.slots i).slot-address : (Ptr String))))]
         [offset : i64
           (- (string.string-length owner) (string.string-length text))]
         (if (and
@@ -74298,7 +74314,9 @@
     (while (< i ordered.len)
       (let
         [text : String
-          (compiler-backend-global-array-element-shared-view ordered.slots i)]
+          (unsafe
+            (ptr-read
+              (int->ptr (array-ref ordered.slots i).slot-address : (Ptr String))))]
         (set!
           records
           (cobj.compiler-object-data-record-builder-push
@@ -74310,6 +74328,16 @@
             (I64 (string.string-length text)))))
       (+= i 1))
     (cobj.compiler-object-data-record-builder-finish records)))
+
+(define (compiler-backend-emit-quoted-literal!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [head : String]
+  [text : String]) : unit
+  (byte_buf_core.byte-buf-builder-append-string out head)
+  (byte_buf_core.byte-buf-builder-append-string
+    out
+    (compiler-backend-escape-string text))
+  (byte_buf_core.byte-buf-builder-append-string out "\"\n"))
 
 (define (compiler-backend-emit-string-rodata-into
   [strings : BackendStringSeq]
@@ -74326,9 +74354,23 @@
         (&mut out)
         "    .section .rodata\n")
       (while (< i records.len)
-        (object_asm.compiler-object-asm-render-data-record!
-          (&mut out)
-          (compiler-backend-global-array-element-shared-view records.slots i))
+        (match (cobj.compiler-object-data-record-list-ref (& records) i)
+          [(String text)
+            (compiler-backend-emit-quoted-literal!
+              (&mut out)
+              "    .string \""
+              text)]
+          [(Bytes text)
+            (compiler-backend-emit-quoted-literal!
+              (&mut out)
+              "    .ascii \""
+              text)]
+          [_
+            (object_asm.compiler-object-asm-render-data-record!
+              (&mut out)
+              (compiler-backend-global-array-element-shared-view
+                records.slots
+                i))])
         (+= i 1))
       (text_buf.append
         buf

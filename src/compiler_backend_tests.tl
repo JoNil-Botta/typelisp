@@ -3311,7 +3311,7 @@
     (has
       ".L_tl_str_data_l2_13861_13991:"
       ".L_tl_str_l2_13861_13991:"
-      "    .byte 0x68,0x69\n    .byte 0\n"
+      "    .string \"hi\"\n"
       "    .quad .L_tl_str_data_l2_13861_13991\n"
       "    .quad 2\n"
       "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n"
@@ -4509,7 +4509,7 @@
         (backend.backend-and8
           (asm-has? asm ".L_tl_str_data_l2_12961_16211:")
           (asm-has? asm ".L_tl_str_l2_12961_16211:")
-          (asm-has? asm "    .byte 0x61,0x7a\n    .byte 0\n")
+          (asm-has? asm "    .string \"az\"\n")
           (asm-has? asm "    .quad .L_tl_str_data_l2_12961_16211\n")
           (asm-lacks? asm "    cmpq %r11, %rax\n")
           ;; COLD-1: the passing check falls through; the abort stub is

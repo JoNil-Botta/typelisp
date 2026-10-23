@@ -1699,6 +1699,8 @@ with the linear semantic lookup and declines retired owners; link endpoint
 checks cover UTF-8/UTF-16, astral characters, CRLF and backward offsets.
 Anchor membership covers empty, singleton, unsorted and duplicate lists,
 including actual target presence and absence.
+The extraction smoke coalesces repeated source imports into one alias identity,
+retaining first-declaration order/line and every source form and doc block.
 Generated-module smoke compares
 every generated declaration/member anchor to a separately checked semantic
 index. The docs-site postprocessor expands real source examples through the

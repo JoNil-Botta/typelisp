@@ -107,6 +107,65 @@
             (& (doc_extract.doc-item-list-ref items 0)))
           2))]))
 
+(define (doc-extract-repeated-alias-ok?) : bool
+  (match (doc_extract.doc-extract-source
+    "(import stdlib.string)\n;: added docs\n(import stdlib.string)")
+    [(Extraction _ items)
+      (unless
+        (and
+          (= items.len 1)
+          (doc-item-ok?
+            (doc_extract.doc-item-list-ref items 0)
+            8
+            "string"
+            "added docs"
+            "(import stdlib.string)\n(import stdlib.string)"))
+        (return false))])
+  (match (doc_extract.doc-extract-source
+    ";: initial docs
+(import stdlib.string)
+;: output docs
+(import stdlib.io as output)
+;; ordinary comment
+;: later docs
+(import ; preserve the original form
+  stdlib.string as string)
+(import stdlib.vector as arrays)
+(import stdlib.string)")
+    [(Extraction _ items)
+      (unless (= items.len 3) (return false))
+      (let
+        [alias : doc_extract.DocItem (doc_extract.doc-item-list-ref items 0)]
+        [identity : doc_extract.DocIdentity
+          (doc_extract.doc-item-identity (& alias))]
+        (and
+          (string.eq (doc_extract.doc-item-name (& alias)) "string")
+          (string.eq
+            (doc_extract.doc-item-doc (& alias))
+            "initial docs\n\nlater docs")
+          (string.eq
+            (doc_extract.doc-item-signature (& alias))
+            "(import stdlib.string)\n(import ; preserve the original form\n  stdlib.string as string)\n(import stdlib.string)")
+          (= (doc_extract.doc-item-source-line (& alias)) 2)
+          (= (doc_extract.doc-kind-tag identity.kind) 8)
+          (string.eq identity.name "string")
+          (string.eq identity.parent "")
+          (match (& identity.origin)
+            [(Source) true]
+            [_ false])
+          (doc-item-ok?
+            (doc_extract.doc-item-list-ref items 1)
+            8
+            "output"
+            "output docs"
+            "(import stdlib.io as output)")
+          (doc-item-ok?
+            (doc_extract.doc-item-list-ref items 2)
+            8
+            "arrays"
+            ""
+            "(import stdlib.vector as arrays)")))]))
+
 (define (doc-borrowed-getters-own-results? [scoped : bool]) : bool
   (let
     [owner (arena.make)]
@@ -226,6 +285,9 @@
       (unless
         (doc-extract-source-line-smoke-ok?)
         (return (io.panic "doc-extract: declaration source line mismatch")))
+      (unless
+        (doc-extract-repeated-alias-ok?)
+        (return (io.panic "doc-extract: repeated alias identity mismatch")))
       (unless
         (and
           (doc-borrowed-getters-own-results? false)

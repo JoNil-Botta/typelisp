@@ -15,6 +15,7 @@
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.clone as clone_gen)
+(import stdlib.hashmap)
 (import stdlib.string)
 (import source_text_core as source_text)
 (import stdlib.vector)
@@ -56,6 +57,7 @@
   (ScopedItem DocIdentity String String i64))
 
 (import (vector.vector DocItem core) as doc_item_vec)
+(import (hashmap.hashmap String i64) as doc_alias_map)
 
 (defenum DocExtraction
   (Extraction String doc_item_vec.Vec))
@@ -517,6 +519,43 @@
               (set! i end))]
           [else (+= i 1)])))))
 
+;; An alias has one public identity per module even when compatibility imports
+;; repeat it. Preserve its first position/line and all later docs/source forms.
+(define (doc-extract-import-alias!
+  [items : (&mut items doc_item_vec.Vec)]
+  [aliases : (&mut aliases doc_alias_map.Map)]
+  [name : (& name str)]
+  [docs : String]
+  [signature : String]
+  [source-line : i64]) : unit
+  (let
+    [index : i64
+      (doc_alias_map.lookup-value-or
+        (doc_alias_map.get-borrowed aliases name)
+        -1)]
+    (if (and (>= index 0) (< index items.len))
+      (let
+        [replacement : DocItem
+          (let
+            [previous : (& items DocItem) (& (array-ref items.slots index))]
+            [previous-docs : String (doc-item-doc previous)]
+            (Item
+              ImportAlias
+              (string.copy name)
+              (if (= (string.string-length docs) 0)
+                previous-docs
+                (if (= (string.string-length previous-docs) 0)
+                  docs
+                  (str_cat.str-cat previous-docs "\n\n" docs)))
+              (str_cat.str-cat (doc-item-signature previous) "\n" signature)
+              (doc-item-source-line previous)))]
+        (doc_item_vec.set-ref! items index replacement))
+      (begin
+        (doc_alias_map.insert-ref! aliases (string.copy name) items.len)
+        (doc_item_vec.push-ref!
+          items
+          (Item ImportAlias (string.copy name) docs signature source-line))))))
+
 (define (doc-extract-source [src : String]) : DocExtraction
   (let
     [n : i64 (string.string-length src)]
@@ -526,6 +565,7 @@
     [pending-doc : String ""]
     [pending-has : bool false]
     [items : doc_item_vec.Vec (doc_item_vec.new)]
+    [aliases : doc_alias_map.Map (doc_alias_map.new)]
     (while (< i n)
       (let
         [line-end : i64 (source_text.line-end src i)]
@@ -588,15 +628,24 @@
                           (= (doc-kind-tag kind) 4)
                           (= (doc-kind-tag kind) 5)
                           (= (doc-kind-tag kind) 8))
-                        (doc_item_vec.push-ref!
-                          (&mut items)
-                          (Item
-                            kind
-                            (string.copy (& name))
+                        (if (= (doc-kind-tag kind) 8)
+                          (doc-extract-import-alias!
+                            (&mut items)
+                            (&mut aliases)
+                            name
                             (unsafe
                               (ptr-read (ptr-addr-of pending-doc)))
                             (string.copy (& signature))
-                            (doc-source-line-at src line-start))))
+                            (doc-source-line-at src line-start))
+                          (doc_item_vec.push-ref!
+                            (&mut items)
+                            (Item
+                              kind
+                              (string.copy (& name))
+                              (unsafe
+                                (ptr-read (ptr-addr-of pending-doc)))
+                              (string.copy (& signature))
+                              (doc-source-line-at src line-start)))))
                       (when
                         (or (= (doc-kind-tag kind) 4) (= (doc-kind-tag kind) 5))
                         (doc-extract-members!

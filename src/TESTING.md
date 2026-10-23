@@ -1014,6 +1014,13 @@ Allocations in segments added after the capture can then become unreachable;
 the fact that a global, map, or cache binding still contains their addresses
 does not keep those raw segments alive.
 
+`cfg-label-index-survives-source-pool-reset-and-reuse` in
+`compiler_optimize_tests.tl` retains a live index across partial/full source
+interner resets, reused source slots and a second index build. IR labels have
+their own spelling lifetime; the index's arrays must remain in a live caller
+arena. The test restores the ambient interner before releasing its isolated
+state. Run it at opt0/1/2.
+
 The intern persistent arena is not a substitute. A floor reset through
 `intern-compat-state-persistent-arena-reset-to-floor!` rewinds allocations
 above its mark, and a full reset replaces or destroys the arena. State that

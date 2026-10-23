@@ -110735,12 +110735,9 @@
       (set! (array-ref out p) (opt-inline-census-block-weight p offset)))
     out))
 
-;; `offset` and `entry-weight` place the body: `offset` is the loop depth its
-;; instructions would sit at, and `entry-weight` is how often the body is
-;; entered, which is what the prologue and the spill traffic pay per entry.
-;; The check's optimizer runs are MEASUREMENTS, not pipeline stages: their
-;; results are thrown away and only a bool escapes. So the developer
-;; observability hooks are silenced around them. Leaving them live would make
+;; Pricing runs do not publish their temporary bodies as pipeline output, so
+;; developer observability hooks are silenced around them. Leaving them live
+;; would make
 ;; `--trace-passes` report passes over functions the pipeline never optimized
 ;; and would push throwaway generations into the `--dump-ir` buffer, which is
 ;; what scripts/verify-ir-observability.sh reads.
@@ -110769,6 +110766,7 @@
         (set! compiler-opt-debug-verify-ir saved-verify))]
     optimized))
 
+;; `offset` places the priced body at the site's loop depth.
 (define (opt-inline-checked-plan-cost-at
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]

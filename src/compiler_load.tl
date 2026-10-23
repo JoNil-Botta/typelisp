@@ -30,6 +30,7 @@
 (import compiler_embedded_stdlib as ces)
 (import compiler_ctfe as ctfe)
 (import stdlib.string)
+(import stdlib.string_utf8 as utf8)
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
 (import tlci_core as tlci)
@@ -4595,15 +4596,48 @@
   [kind : CompilerLoadIncludeKind]
   [pools : ast.AstNodePoolContext]
   [name : i64]
-  [contents : String]) : ast.AstDecl
-  (match kind
-    [(RuntimeString)
-      (compiler-load-include-str-def-with-pools pools name contents)]
-    [(ComptimeString)
-      (compiler-load-include-str-comptime-def-with-pools pools name contents)]
-    [(LzssString)
-      (compiler-load-include-str-lzss-def-with-pools pools name (& contents))]
-    [(Binary) (compiler-load-include-bin-def-with-pools pools name contents)]))
+  [contents : String]
+  [importer-path : (& str)]
+  [include-path : (& str)]
+  [resolved : (& str)]) : ResultCompilerLoadInclude
+  ;; Runtime text includes promise the same UTF-8 contents as source literals.
+  ;; Comptime and compressed includes are compiler-owned byte payloads.
+  (when
+    (match kind
+      [(RuntimeString) true]
+      [_ false])
+    (match (utf8.validate (& contents))
+      [(Valid) unit]
+      [(Invalid error)
+        (return
+          (Err
+            (box
+              (cdiag.compiler-diagnostic-load
+                IncludeRead
+                (cdiag.compiler-diagnostic-from-source-error
+                  (string.copy resolved)
+                  (lexer.source-error-at
+                    (& contents)
+                    error.failure-offset
+                    (str_cat.str-cat
+                      "compiler-load: invalid UTF-8 include-str "
+                      (string.copy include-path)
+                      " from "
+                      (string.copy importer-path)
+                      " at byte "
+                      (string.int->string error.failure-offset)
+                      " ("
+                      (utf8.error-kind-name error.kind)
+                      ")")))))))]))
+  (Ok
+    (match kind
+      [(RuntimeString)
+        (compiler-load-include-str-def-with-pools pools name contents)]
+      [(ComptimeString)
+        (compiler-load-include-str-comptime-def-with-pools pools name contents)]
+      [(LzssString)
+        (compiler-load-include-str-lzss-def-with-pools pools name (& contents))]
+      [(Binary) (compiler-load-include-bin-def-with-pools pools name contents)])))
 
 (define (compiler-load-include-read-error
   [kind : CompilerLoadIncludeKind]
@@ -4649,15 +4683,17 @@
   [name : i64]
   [pools : ast.AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? (string.copy resolved))
-    (Ok
-      (compiler-load-include-def-with-pools
+    (compiler-load-include-def-with-pools
+      kind
+      pools
+      name
+      (compiler-load-include-contents
         kind
-        pools
-        name
-        (compiler-load-include-contents
-          kind
-          (& include-path)
-          (compiler-load-session-read-source-text resolved))))
+        (& include-path)
+        (compiler-load-session-read-source-text (string.copy resolved)))
+      (& importer-path)
+      (& include-path)
+      (& resolved))
     (match (compiler-load-embedded-stdlib-source-for-path
       (& (string.copy resolved)))
       [(CompilerEmbeddedStdlibSomeSource source)
@@ -4665,12 +4701,14 @@
           (compiler-load-active-session-state-shared-view)
           (& resolved)
           (& source))
-        (Ok
-          (compiler-load-include-def-with-pools
-            kind
-            pools
-            name
-            (compiler-load-include-contents kind (& include-path) source)))]
+        (compiler-load-include-def-with-pools
+          kind
+          pools
+          name
+          (compiler-load-include-contents kind (& include-path) source)
+          (& importer-path)
+          (& include-path)
+          (& resolved))]
       [(CompilerEmbeddedStdlibNoSource)
         (Err
           (box

@@ -3311,7 +3311,7 @@
     (has
       ".L_tl_str_data_l2_13861_13991:"
       ".L_tl_str_l2_13861_13991:"
-      "    .string \"hi\"\n"
+      "    .byte 0x68,0x69\n    .byte 0\n"
       "    .quad .L_tl_str_data_l2_13861_13991\n"
       "    .quad 2\n"
       "_tl_greeting:\n    .quad .L_tl_str_l2_13861_13991\n"
@@ -4509,7 +4509,7 @@
         (backend.backend-and8
           (asm-has? asm ".L_tl_str_data_l2_12961_16211:")
           (asm-has? asm ".L_tl_str_l2_12961_16211:")
-          (asm-has? asm "    .string \"az\"\n")
+          (asm-has? asm "    .byte 0x61,0x7a\n    .byte 0\n")
           (asm-has? asm "    .quad .L_tl_str_data_l2_12961_16211\n")
           (asm-lacks? asm "    cmpq %r11, %rax\n")
           ;; COLD-1: the passing check falls through; the abort stub is
@@ -38266,6 +38266,7 @@ b_keep:
 
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-packed-literal-records-ok?)
     (compiler-backend-signed-div-guard-shapes-ok?)
     (compiler-backend-shift-count-bounds-ok?)
     (compiler-backend-avx2-i64-reduce-source-ok?)
@@ -42748,3 +42749,157 @@ user_fn:
                 ""))))]
       [(Err _)
         (test.assert-true false "convention emission-site program failed")])))
+
+(define (compiler-backend-literal-pool-case
+  [values : (__tl_dyn-array String)]
+  [maximum-bytes : i64]) : bool
+  (let
+    [owner : arena.Arena (arena.Arena (arena.tl_arena_make_small))]
+    [items : backend.BackendStringSeq
+      (in-arena
+        owner
+        (let
+          [slots : (__tl_dyn-array String)
+            (__tl_make-array String (array-length values))]
+          (for [i (iterator.range 0 (array-length values))]
+            (set! (array-ref slots i) (string.copy (& (array-ref values i)))))
+          (backend.BackendStringSeq slots (array-length values))))]
+    [parts : object_target.CompilerBackendObjectTargetParts
+      (backend.compiler-backend-object-strings
+        (object_target.compiler-backend-object-parts-empty)
+        items
+        0)]
+    [records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish parts.rodata)]
+    [relocs : cobj.CompilerObjectRelocationList
+      (cobj.compiler-object-relocation-builder-finish parts.relocations)]
+    [symbols : cobj.CompilerObjectSymbolList
+      (cobj.compiler-object-symbol-builder-finish parts.symbols)]
+    [_released : unit
+      (unsafe
+        (arena.tl_arena_destroy (arena.raw-handle owner)))]
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity maximum-bytes)]
+    [size : i64
+      (layout.compiler-object-layout-render-data-records!
+        (&mut out)
+        (& records)
+        0)]
+    (when
+      (or
+        (> size maximum-bytes)
+        (not (= size out.len))
+        (not (= relocs.len (array-length values)))
+        (not (= symbols.len (* 2 (array-length values)))))
+      (return false))
+    (for [i (iterator.range 0 (array-length values))]
+      (let
+        [value : (& values str) (& (array-ref values i))]
+        [length : i64 (string.string-length value)]
+        [data : String (backend.compiler-backend-string-data-label value)]
+        [header : String (backend.compiler-backend-string-fat-label value)]
+        [offset : i64
+          (layout.compiler-object-layout-data-label-offset-from
+            (& records)
+            (& data)
+            0)]
+        [fat : i64
+          (layout.compiler-object-layout-data-label-offset-from
+            (& records)
+            (& header)
+            0)]
+        [pointer-ok : bool false]
+        [relocation-ok : bool false]
+        (when
+          (or
+            (< offset 0)
+            (>= (+ offset length) size)
+            (< fat 0)
+            (not (= (% fat 8) 0))
+            (> (+ fat 16) size))
+          (return false))
+        (for [j (iterator.range 0 length)]
+          (unless
+            (=
+              (array-ref out.slots (+ offset j))
+              (cast (string.string-ref value j) : u8))
+            (return false)))
+        (unless (= (array-ref out.slots (+ offset length)) 0) (return false))
+        (for [j (iterator.range 0 8)]
+          (unless
+            (=
+              (array-ref out.slots (+ fat (+ 8 j)))
+              (cast (bit-and (shr length (* j 8)) 255) : u8))
+            (return false)))
+        (for [j (iterator.range 0 (- records.len 1))]
+          (match (cobj.compiler-object-data-record-list-ref (& records) j)
+            [(Label label)
+              (when
+                (string.eq label header)
+                (match (cobj.compiler-object-data-record-list-ref
+                  (& records)
+                  (+ j 1))
+                  [(SymbolAddress target)
+                    (set! pointer-ok (string.eq target data))]
+                  [_ unit]))]
+            [_ unit]))
+        (for [j (iterator.range 0 relocs.len)]
+          (match (cobj.compiler-object-relocation-list-ref (& relocs) j)
+            [(Relocation (Rodata) site (Abs64) target)
+              (when
+                (and (string.eq site header) (string.eq target data))
+                (set! relocation-ok true))]
+            [_ unit]))
+        (unless (and pointer-ok relocation-ok) (return false))))
+    true))
+
+(define (compiler-backend-literal-pool-nul) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 3)]
+    (byte_buf_core.byte-buf-builder-push (&mut out) 97)
+    (byte_buf_core.byte-buf-builder-push (&mut out) 0)
+    (byte_buf_core.byte-buf-builder-push (&mut out) 98)
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+
+(define (compiler-backend-packed-literal-records-ok?) : bool
+  (let
+    [nul : String (compiler-backend-literal-pool-nul)]
+    [many : (__tl_dyn-array String) (__tl_make-array String 65)]
+    [budget : i64 24]
+    (for [i (iterator.range 0 64)]
+      (let
+        [value : String (str_cat.str-cat "row-" (string.int->string i) ":end")]
+        (+=
+          budget
+          (+
+            16
+            (layout.compiler-object-layout-align-offset
+              (+ (string.string-length value) 1)
+              8)))
+        (set! (array-ref many i) value)))
+    (set! (array-ref many 64) "end")
+    (and
+      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0)
+      (compiler-backend-literal-pool-case (__tl_make-array "only") 24)
+      (compiler-backend-literal-pool-case (__tl_make-array "ab" "cd" "ef") 64)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "prefix/abc" "abc" "bc" "c" "")
+        96)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "" "c" "abc" "prefix/abc" "bc")
+        96)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "cab" "dab" "ab" "b" "")
+        88)
+      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "prefixλ" "λ" "")
+        64)
+      (compiler-backend-literal-pool-case many budget))))
+
+(test
+  backend-packed-literal-records
+  (test.assert-true
+    (compiler-backend-packed-literal-records-ok?)
+    "packed literal bytes, terminal zeros and aligned pointer/length headers"))

@@ -746,6 +746,15 @@ Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;
 at opt0 those headers and bytes can belong to lower IR until emission finishes.
+Immutable String literals use one canonical record plan for assembly and direct
+objects. Reverse-byte sorting groups terminated suffixes behind a complete
+owner; labels may share suffix bytes, while every distinct String keeps its own
+eight-byte-aligned pointer/length header and exact bytes through its final zero.
+The plan copies all fragments and labels into the destination arena before the
+input owner retires. Mutable binary constants retain separate storage. Sorting
+uses the shared stable vector sort and temporary arena storage; layout tests
+pin bytes, aligned headers and absolute relocations after input retirement, and
+native opt0/1/2 tests pin complete writer output on both hosts.
 Globals, externs and source spans live outside the dedicated function-IR arena.
 
 The lowerer's checked expression dispatcher delegates complete families to

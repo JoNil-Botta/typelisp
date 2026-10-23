@@ -4153,11 +4153,7 @@
                 (& module-path)
                 stdlib-roots)
                 [(CompilerLoadSomePath root-path) (Ok root-path)]
-                [(CompilerLoadNoPath)
-                  (Err
-                    (str_cat.str-cat
-                      "compiler-load: dotted import missing module segment after package alias: "
-                      module-name))])))
+                [(CompilerLoadNoPath) (Ok fallback)])))
           (match (compiler-load-pkg-dep-lookup deps (string.copy first))
             [(CompilerLoadNoPath)
               (cond
@@ -4171,19 +4167,7 @@
                     (& (string.copy module-path))
                     stdlib-roots)
                     [(CompilerLoadSomePath root-path) (Ok root-path)]
-                    [(CompilerLoadNoPath)
-                      (if (= (compiler-pkg-deps-count deps) 0)
-                        ;; A dotted alias with no declared dependencies and no
-                        ;; local or root module is an unknown package alias;
-                        ;; with a deps graph the name may be a vendored local
-                        ;; source module.
-                        (Err
-                          (str_cat.str-cat
-                            "compiler-load: unknown package alias '"
-                            first
-                            "': pkg:"
-                            module-path))
-                        (Ok fallback))])])]
+                    [(CompilerLoadNoPath) (Ok fallback)])])]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path?
                 (& (string.copy dep-path)))
@@ -5239,6 +5223,34 @@
   [name-id : i64]) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-bind-id seen name-id 1))
 
+(define (compiler-load-duplicate-module-diagnostic [path : String]) : (Box
+    cdiag.CompilerDiagnostic)
+  (box
+    (cdiag.compiler-diagnostic-load
+      DuplicateModule
+      (cdiag.compiler-diagnostic-at-start
+        path
+        "compiler-load: duplicate module declaration"))))
+
+;; Body identities share one source-file namespace, including bodies under
+;; different parents. A later flat marker cannot reopen an earlier body.
+;; The set is scratch-owned and never escapes module-identity validation.
+(define (compiler-load-module-bodies-duplicate?
+  [decls : (& decls ast.AstDeclList)]
+  [bodies : (&mut bodies load_i64_i64_map.Map)]) : bool
+  (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+    (match (ast.ast-decl-list-ref-borrowed decls index)
+      [(Module name)
+        (when (load_i64_i64_map.contains? bodies name) (return true))]
+      [(ModuleBody name body)
+        (when (load_i64_i64_map.contains? bodies name) (return true))
+        (load_i64_i64_map.insert-ref! bodies name 1)
+        (when
+          (compiler-load-module-bodies-duplicate? (& (deref body)) bodies)
+          (return true))]
+      [_ unit]))
+  false)
+
 (define (compiler-load-decls-module-id-loop
   [path : String]
   [decls : (& ast.AstDeclList)]
@@ -5264,13 +5276,7 @@
                   fallback-id
                   (CompilerLoadSomeModuleId (ci.intern-str name) name))]
               [(CompilerLoadSomeModuleId _ _)
-                (Err
-                  (box
-                    (cdiag.compiler-diagnostic-load
-                      DuplicateModule
-                      (cdiag.compiler-diagnostic-at-start
-                        path
-                        "compiler-load: duplicate module declaration"))))])]
+                (Err (compiler-load-duplicate-module-diagnostic path))])]
           [_
             (compiler-load-decls-module-id-loop
               path
@@ -5286,24 +5292,38 @@
   (let
     [fallback : String
       (compiler-load-canonical-module-id-from-path (string.copy path))]
-    (compiler-load-decls-module-id-loop
+    (compiler-load-decls-module-id-with-fallback
       path
       decls
       fallback
-      fallback-id
-      CompilerLoadNoModuleId)))
+      fallback-id)))
 
 (define (compiler-load-decls-module-id-with-fallback
   [path : String]
   [decls : (& ast.AstDeclList)]
   [fallback : String]
   [fallback-id : i64]) : ResultCompilerLoadModuleId
-  (compiler-load-decls-module-id-loop
-    path
-    decls
-    fallback
-    fallback-id
-    CompilerLoadNoModuleId))
+  (let
+    [has-body : bool false]
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+      (match (ast.ast-decl-list-ref-borrowed decls index)
+        [(ModuleBody _ _)
+          (set! has-body true)
+          (break)]
+        [_ unit]))
+    (if (and
+      has-body
+      (with-scratch
+        (let
+          [bodies : load_i64_i64_map.Map (load_i64_i64_map.new)]
+          (compiler-load-module-bodies-duplicate? decls (&mut bodies)))))
+      (Err (compiler-load-duplicate-module-diagnostic path))
+      (compiler-load-decls-module-id-loop
+        path
+        decls
+        fallback
+        fallback-id
+        CompilerLoadNoModuleId))))
 
 (define (compiler-load-check-expected-module
   [path : (& str)]
@@ -9647,12 +9667,8 @@
                   (& rest)
                   target-module-id))
                 (Err
-                  (box
-                    (cdiag.compiler-diagnostic-load
-                      DuplicateModule
-                      (cdiag.compiler-diagnostic-at-start
-                        (string.copy importer-path)
-                        "compiler-load: duplicate module declaration"))))
+                  (compiler-load-duplicate-module-diagnostic
+                    (string.copy importer-path)))
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   (CompilerLoadTraversalContext
                     traversal.load-state

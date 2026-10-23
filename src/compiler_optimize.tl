@@ -111006,10 +111006,6 @@
   [banked-cost-in : i64]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
-    [banked-cost : i64
-      (if (>= banked-cost-in 0)
-        banked-cost-in
-        (opt-inline-checked-plan-cost pools type-segment-bases banked))]
     ;; The callee priced where the inline would put it: its instructions at the
     ;; site's depth, its prologue and its spill traffic once per site
     ;; execution.
@@ -111045,8 +111041,9 @@
         (OptInlineCheckedSpecPrice 0 false))]
     [spec-gain : i64 spec-price.gain]
     ;; The callee proof is independent of the trial caller's price. A failed
-    ;; proof cannot be rescued by pricing that caller. Traced runs still price
-    ;; it so their rejected verdicts retain the full numeric comparison.
+    ;; proof cannot be rescued by pricing either caller. Preserve an unknown
+    ;; banked cost until a candidate reaches the window. Traced runs still
+    ;; price both callers so rejected verdicts retain their numeric comparison.
     [_conditional-proof : unit
       (when
         (and
@@ -111054,8 +111051,12 @@
           (not spec-price.conditional-ok)
           (not compiler-opt-debug-trace-passes))
         (opt-inline-checked-publish-margin! false)
-        (set! opt-inline-checked-next-state-cost banked-cost)
+        (set! opt-inline-checked-next-state-cost banked-cost-in)
         (return false))]
+    [banked-cost : i64
+      (if (>= banked-cost-in 0)
+        banked-cost-in
+        (opt-inline-checked-plan-cost pools type-segment-bases banked))]
     [after : i64
       (opt-inline-checked-plan-cost pools type-segment-bases checked)]
     ;; INL-22: an sret callee's boundary is the call and the result copy.

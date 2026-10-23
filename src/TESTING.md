@@ -1695,6 +1695,9 @@ payloads, source-link preservation, private items, source changes, recovery and
 invalid reinitialization; `documentation-disabled` retains opt-out behavior.
 Its compiler-identity placeholder is filled from the actual CLI producer, so
 the public LSP corpus requires a compiler with a known producer identity.
+Bootstrap embedded-source parity covers the URL normalizer used by configured
+site bindings; `net/url.tl` is included in the compressed source payload and
+checked by the complete payload closure and exact-source verifier.
 
 ### Stage0 and the bootstrap
 

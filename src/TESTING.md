@@ -1,5 +1,15 @@
 # Selfhost compiler testing
 
+`backend-packed-literal-records` checks the physical byte and relocation contract
+for immutable literal pools: empty/singleton, independent and competing owners,
+suffix chains, input permutations, interior NUL, UTF-8 and larger collections.
+Every input retains exact bytes plus its terminal zero and an aligned pointer/length
+header after the input arena is destroyed. The backend smoke runs the same checks;
+mutable binary constants keep independent storage. Assembly and direct objects
+consume the same literal records. `packed_string_literals` compares complete
+native stdout for suffixes, competing owners, repeated, empty and UTF-8 literals
+at opt0/1/2 on both hosts.
+
 `cse-block-tables-keep-the-first-walk-state` installs address-taken facts for
 its own blocks before the raw CSE walks. A retired preceding function's facts
 must not be read. Keep the empty-state, generation and repeated-expression

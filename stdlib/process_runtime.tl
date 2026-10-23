@@ -3556,17 +3556,17 @@
 ;: validation already bounds every field/count and rejects embedded NULs.
 (define (windows-cmdline-size [command : (& command ProcessRuntimeCommand)]) : i64
   (let
-    [executable : String (command-executable command)]
-    [args : ProcessRuntimeStringList (command-argv command)]
-    [size : i64 (windows-arg-encoded-size (& executable) true)]
+    [size : i64 (windows-arg-encoded-size (& command.executable) true)]
     [i : i64 0]
     (while (and
-      (< i (array-length args.slots))
+      (< i (array-length command.argv.slots))
       (<= size windows-command-line-max-bytes))
-      (let
-        [arg : String
-          (process-runtime-string-array-shared-view (& args.slots) i)]
-        (set! size (+ size 1 (windows-arg-encoded-size (& arg) false))))
+      (set!
+        size
+        (+
+          size
+          1
+          (windows-arg-encoded-size (& (array-ref command.argv.slots i)) false)))
       (set! i (+ i 1)))
     (if (> size windows-command-line-max-bytes)
       32767
@@ -3575,11 +3575,10 @@
 ;: Reject unrepresentable argv[0] and oversized commands before any OS action.
 (define (windows-cmdline-error [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeMaybeString
   (let
-    [executable : String (command-executable command)]
     [i : i64 0]
-    (while (< i (string-length (& executable)))
+    (while (< i (string-length (& command.executable)))
       (when
-        (= (string-ref (& executable) i) '"')
+        (= (string-ref (& command.executable) i) '"')
         (return (some-string "process: Windows executable path contains quote")))
       (set! i (+ i 1)))
     (if (> (windows-cmdline-size command) windows-command-line-max-bytes)
@@ -3593,17 +3592,15 @@
     [line : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity
         (windows-cmdline-size (& command)))]
-    [executable : String (command-executable command)]
-    [argv : ProcessRuntimeStringList (command-argv command)]
     [index : i64 0]
-    (windows-append-arg (&mut line) (& executable) true)
-    (while (< index (array-length argv.slots))
-      (let
-        [text : String
-          (process-runtime-string-array-shared-view (& argv.slots) index)]
-        (byte_buf_core.byte-buf-builder-push (&mut line) (cast 32 : u8))
-        (windows-append-arg (&mut line) (& text) false)
-        (set! index (+ index 1))))
+    (windows-append-arg (&mut line) (& command.executable) true)
+    (while (< index (array-length command.argv.slots))
+      (byte_buf_core.byte-buf-builder-push (&mut line) (cast 32 : u8))
+      (windows-append-arg
+        (&mut line)
+        (& (array-ref command.argv.slots index))
+        false)
+      (set! index (+ index 1)))
     (byte_buf_core.byte-buf-builder-to-string (& line))))
 
 ;: Append the NUL-terminated C string at `addr` (including its NUL) onto a block.

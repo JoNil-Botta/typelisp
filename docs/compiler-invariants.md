@@ -1048,8 +1048,11 @@ existing provenance slots and span records. Registering those wrappers again
 would duplicate per-use re-span records. Semantic rewrites still use the
 span-updating setter, and whole-program compaction rebuilds provenance for its
 new ids. Only final macro compaction may consume source span slots as forwarding
-IDs, with a separate visited bitmap. Its child/declaration walk reconstructs
-canonical and ReSpan records from the wrappers before the source is retired;
+IDs. The consuming entry clears the aligned, fixed span-slot segments once,
+including their writable unused tails, with an unconditional fill. Zero then
+marks an unvisited expression; destination ids are stored plus one. Source
+provenance becomes unavailable before traversal: the exhaustive child/declaration
+walk reads raw rows and reconstructs canonical and ReSpan records from wrappers;
 subsequent path copies and cache clearing read no source spans. Other compaction
 callers preserve source provenance. Test builds poison the consumed source's
 shared span-base table so reads through any context view fail.

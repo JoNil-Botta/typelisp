@@ -1,12 +1,16 @@
 (import stdlib.io)
 (import stdlib.byte_buf)
 
+(include-bin mutable-bytes "packed_string_literals.in")
+
 (define (write [text : String]) : unit
   (io.stdout-write (byte_buf.str-as-bytes (& text))))
 
 ;; Whole stdout exercises the physical payload and each independent length
 ;; through the runtime writer, including repeated, empty and UTF-8 literals.
 (define (main) : i64
+  (unless (= (array-length mutable-bytes) 3) (return 1))
+  (set! (array-ref mutable-bytes 0) (cast 'e' : u8))
   (write "prefix/abc")
   (write "abc")
   (write "bc")
@@ -20,4 +24,6 @@
   (write "λ")
   (write "b")
   (write "prefix/abc")
-  42)
+  (if (= (array-ref mutable-bytes 0) (cast 'e' : u8))
+    42
+    2))

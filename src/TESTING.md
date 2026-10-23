@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`compiler-lower-unit-field-reads` requires canonical unit results without
+addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
+`unit_struct_fields` exercises empty, one/two-word and memory-class structs,
+nested empty fields, checked/raw references, destructuring, receiver effects and
+unit equality/inequality effects and early exits at opt0/1/2. Keep the separate
+unsupported tuple/array ABI checks.
+
 `cse-block-tables-keep-the-first-walk-state` installs address-taken facts for
 its own blocks before the raw CSE walks. A retired preceding function's facts
 must not be read. Keep the empty-state, generation and repeated-expression

@@ -68990,9 +68990,7 @@ return 0" true)
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "empty")
           (clone no-exprs))
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "first")
-          (clone first))
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "first") (clone first))
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "second")
           (clone second)))]

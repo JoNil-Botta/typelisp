@@ -32,7 +32,8 @@ empty write set and an unavailable table. Keep the T2-2
 same-global rejection and unrelated-global forwarding controls beside them.
 
 `compiler-ast-span-forwarding` runs the compaction fixtures with source-span
-consumption enabled: empty input, bitmap and pool-segment boundaries, shared
+consumption enabled: empty input with a populated destination, small and odd
+live tails, pool-segment boundaries, unreachable source suffixes, shared
 expressions, reordered canonical/ReSpan views, destination reuse and spans read
 after source destruction. Nonconsuming cases preserve source provenance. Test
 builds poison the consumed source's shared span-base table so later reads

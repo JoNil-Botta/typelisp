@@ -905,12 +905,12 @@ file src/main.tl
 (import math.src.lib)
 (define (main) : i64 0)
 end-file
-step selfhost-build-package-missing-alias
+step selfhost-build-package-missing-local-module
 run build --direct --manifest-path "{{dir}}/typelisp.pkg"
 exit nonzero
 stdout empty
-stderr contains compiler-load: unknown package alias 'math'
-stderr contains pkg:math/src/lib.tl
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match math[/\\]src[/\\]lib\.tl:1:1
 file typelisp.pkg
 (package
   (name "selfhost_missing_dep")

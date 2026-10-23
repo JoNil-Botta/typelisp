@@ -368,12 +368,12 @@ file src/main.tl
 (import math.src.lib)
 (define (main) : i64 0)
 end-file
-step package-missing-alias
+step package-missing-local-module
 run build --manifest-path "{{dir}}/typelisp.pkg"
 exit nonzero
 stdout empty
-stderr contains pkg:math/src/lib.tl
-stderr contains-any alias `math` || unknown package alias 'math'
+stderr contains error[E0301]: compiler-load: cannot read import
+stderr match math[/\\]src[/\\]lib\.tl:1:1
 
 # Since the tail-call forwarder inlining, `(math.inc 41)` folds to 42, so the
 # folded constant proves the upward-discovered module was compiled in.

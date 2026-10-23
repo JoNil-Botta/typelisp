@@ -22,6 +22,8 @@ Per-entry source admission and native mappings remain independent.
 Compilation deduplicates the import graph for one whole program per executable.
 Package dependencies can be compiled into archives. Batch and LSP paths reuse
 session state only within its owner and invalidation contracts.
+File and package loads share module-identity validation and typed loader
+diagnostics under the [loader contract](compiler-invariants.md#cli).
 Standalone backend target source helpers use the same executable prelude loader and
 retain declaration paths with their logical module column. Their borrowed
 `CompilerLowerRequest` carries roots, cfg names, session and executable policy; the

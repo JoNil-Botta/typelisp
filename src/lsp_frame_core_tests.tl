@@ -1535,7 +1535,7 @@
   lsp-signature-capability
   (unless
     (let
-      [rendered : String (json.stringify (lsp.lsp-initialize-result))]
+      [rendered : String (json.stringify (lsp.lsp-initialize-result false))]
       [expected : String
         "\"signatureHelpProvider\":{\"triggerCharacters\":[\" \"],\"retriggerCharacters\":[\")\"]}"]
       (string.contains (& rendered) (& expected)))

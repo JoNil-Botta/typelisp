@@ -219,6 +219,9 @@ edits. The server indexes workspace sources, with unsaved open documents
 overriding disk snapshots, and lazily caches owned semantic snapshots for
 unopened sources behind a completeness-reporting query boundary. See the extension
 [README](tools/vs-code-extension/README.md) for installation.
+Configured exact documentation sites add canonical hover and document links to
+public aliases and members; the extension opts in through
+`typelisp.documentationSites`. Unconfigured editor behavior is unchanged.
 
 ## Contributing
 

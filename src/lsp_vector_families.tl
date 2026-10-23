@@ -1,6 +1,7 @@
 ;; lsp_vector_families.tl - vector-backed LSP state collections.
 (import stdlib.vector)
 (import compiler_semantic_index)
+(import lsp_documentation_sites)
 
 (defstruct LspDeclEntry
   (kind String)
@@ -152,7 +153,8 @@
   (owner-arena i64)
   (documents lsp_document_vec.Vec)
   (workspace LspWorkspaceIndex)
-  (semantic-cache LspWorkspaceSemanticCache))
+  (semantic-cache LspWorkspaceSemanticCache)
+  (documentation-sites lsp_documentation_sites.DocumentationSites))
 
 ;; One candidate `textDocument/foldingRange` result. Positions stay 1-based
 ;; internally like every other LSP scanner here; `kind` is 0 for an unlabelled

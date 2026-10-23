@@ -296,9 +296,9 @@ grep -q 'stdlib.vector.generated.i64' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated vector module docs"
 grep -q 'generated-module-import' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated module import docs"
-grep -q 'href="#tl-stdlib_2evector_2egenerated_2ei64.generated.push-ref_21"' "$SITE/stdlib-vector.html" \
+grep -Eq 'href="#tl-stdlib_2evector_2egenerated_2ei64.define-function.push-ref_21.generated\.[^"]+"' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated push-ref! API docs"
-grep -q 'href="#tl-stdlib_2evector_2egenerated_2ei64.generated.push_21"' "$SITE/stdlib-vector.html" \
+grep -Eq 'href="#tl-stdlib_2evector_2egenerated_2ei64.defmacro.push_21.generated\.[^"]+"' "$SITE/stdlib-vector.html" \
     || fail "stdlib-vector.html is missing generated push! API docs"
 
 hidden_payload=$(find "$SITE" -mindepth 1 -maxdepth 1 -name '.*' | head -n 1)

@@ -15,6 +15,11 @@
 (import compiler_intern as ci)
 (import compiler_parse_core as parser)
 (import compiler_typecheck_core as tc)
+(import compiler_check_core as check)
+(import compiler_owned_view as owned_view)
+(import compiler_semantic_index as semantic)
+(import compiler_semantic_documentation as documentation)
+(import stdlib.iterator)
 (import (vector.vector String core) as doc_import_form_vec)
 (import (vector.vector doc_expand.DocMacroImportExample core) as doc_macro_import_example_vec)
 (import (vector.vector doc_expand.DocGeneratedTargetExample core) as doc_generated_target_example_vec)
@@ -119,10 +124,12 @@
         (= (doc_generated_target_example_vec.len (& targets)) 6)
         (= (doc_render.doc-module-list-count (clone modules)) 6)
         (string.eq
-          (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 0))
+          (doc_extract.doc-item-name
+            (& (doc_extract.doc-item-list-ref items 0)))
           "0")
         (string.eq
-          (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 5))
+          (doc_extract.doc-item-name
+            (& (doc_extract.doc-item-list-ref items 5)))
           "5")
         (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
         (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
@@ -218,8 +225,7 @@
 (define (doc-expand-smoke) : i64
   (let
     [roots : doc_svec.Vec (doc_svec.new)]
-    (match (compiler_load.compiler-load-source-with-paths-and-roots
-      "doc_expand_smoke.tl"
+    [source : String
       "(module doc.generated.fixture)
 (import stdlib.comptime)
 
@@ -239,7 +245,10 @@
       (define (value [b : (& b Box)]) : ,T
         b.value))))
 
-(import (boxmod i64) as ibox)"
+(import (boxmod i64) as ibox)"]
+    (match (compiler_load.compiler-load-source-with-paths-and-roots
+      "doc_expand_smoke.tl"
+      (string.copy (& source))
       (sym_i64_env.sym-i64-empty)
       (& roots))
       [(Ok decls paths _ _)
@@ -257,6 +266,10 @@
             pools
             intern-state)
             [(Ok modules)
+              (unless
+                (doc-expand-semantic-identities-ok? source (& modules))
+                (io.panic
+                  "doc-expand: generated semantic documentation identities disagree"))
               (let
                 [rendered : String
                   (doc_render.doc-render-module-graph-markdown modules)]
@@ -276,6 +289,83 @@
           (doc_expand.doc-cat2
             "doc-expand: load failed: "
             (cdiag.compiler-diagnostic-render (deref diag))))])))
+
+(define (doc-expand-semantic-identities-ok?
+  [source : String]
+  [modules : (& modules doc_module_vec.Vec)]) : bool
+  (match (semantic.compiler-check-source-index-with-roots-and-cfg
+    "doc_expand_smoke.tl"
+    source
+    (doc_svec.new)
+    (check.compiler-check-language-cfgs))
+    [(Ok _ index)
+      (let
+        [ok : bool true]
+        [matched : i64 0]
+        [members : i64 0]
+        (for [m (iterator.range 0 modules.len)]
+          (let
+            [module : doc_render.DocModule
+              (doc_render.doc-module-list-ref modules m)]
+            [path : String
+              (doc_render.doc-module-path
+                (owned_view.compiler-owned-shared-view module))]
+            [items : doc_item_vec.Vec
+              (doc_extract.doc-extraction-items
+                (doc_render.doc-module-docs module))]
+            (for [i (iterator.range 0 items.len)]
+              (let
+                [item : doc_extract.DocItem
+                  (doc_extract.doc-item-list-ref items i)]
+                [identity : doc_extract.DocIdentity
+                  (doc_extract.doc-item-identity (& item))]
+                [anchor : String
+                  (doc_render.doc-render-item-anchor
+                    (& (string.copy (& path)))
+                    item)]
+                [found : bool false]
+                (when
+                  (match identity.origin
+                    [(Generated _ _ _) true]
+                    [_ false])
+                  (for [r (iterator.range 0 index.len)]
+                    (let
+                      [record : semantic.CompilerSemanticRecord
+                        (semantic.compiler-semantic-source-index-get
+                          (& index)
+                          r)]
+                      (when
+                        (match record.role
+                          [(Definition) true]
+                          [_ false])
+                        (match (documentation.documentation-at (& index) r)
+                          [(None) unit]
+                          [(Some docs)
+                            (when
+                              (and
+                                (string.eq docs.module path)
+                                (= docs.source-line 0)
+                                (string.eq
+                                  anchor
+                                  (doc_render.doc-render-documentation-anchor
+                                    (& docs.module)
+                                    docs.identity)))
+                              (set! found true))]))))
+                  (if found
+                    (begin
+                      (+= matched 1)
+                      (when (not (string.eq identity.parent "")) (+= members 1)))
+                    (begin
+                      (io.print-error "doc-expand unmatched identity: ")
+                      (io.print-error (& anchor))
+                      (io.print-error "\n")
+                      (set! ok false))))))))
+        (semantic.compiler-semantic-source-index-release! (&mut index))
+        (and ok (>= matched 4) (>= members 3)))]
+    [(Partial _ index)
+      (semantic.compiler-semantic-source-index-release! (&mut index))
+      false]
+    [(Err _) false]))
 
 (define (doc-expand-ignore-fence-smoke) : i64
   (let

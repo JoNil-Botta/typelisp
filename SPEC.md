@@ -182,7 +182,8 @@ comments are discarded:
 - `;#` starts a module/file documentation line.
 - `;:` starts an outer item documentation line attached to the next supported
   top-level item: value `define`, function `define`, `extern`, `defenum`, or
-  `defstruct`.
+  `defstruct`, `defmacro`, or import alias. Immediate struct fields and enum
+  variants may have their own attached item documentation.
 - `;#` and `;:` are the only public documentation comment syntaxes.
 - `;` and `;;` are ordinary comments and are not public documentation.
 - Outer item doc lines must be contiguous. A blank line, ordinary comment,
@@ -229,10 +230,15 @@ manifest when no explicit input is supplied.
 
 The composed static documentation site emits a deterministic
 `typelisp-docs-search-index.js` beside its pages. The index records modules,
-documented declarations, declaration signatures and short documentation text,
+documented declarations, import aliases, public struct fields and enum variants,
+declaration signatures and short documentation text,
 guide pages, and guide headings in site order. Declaration identities and
 anchors are derived from module path, declaration kind, and declaration name;
-synthetic generated imports additionally include their generated form. Each
+synthetic generated imports additionally include their generated form. A
+field/variant identity also includes its owning type name. Generated declarations
+and members append the actual generator, generated item and request key as
+separately encoded fields; they retain source line zero. They do not share an
+identity with an authored declaration of the same name. Each
 component is encoded injectively: ASCII letters, digits, and `-` are kept, and
 every other byte becomes `_` followed by two lowercase hexadecimal digits.
 Encoded components are joined with `.`, which no encoded component contains, so
@@ -243,6 +249,46 @@ index carry matching compiler, source, and package identities. The client-side
 search uses no network service or third-party JavaScript, supports `/`, arrow
 keys, Escape, and normal link activation, and refuses a stale index whose
 identities differ from the page.
+
+LSP clients opt into machine-readable documentation targets by setting
+`capabilities.experimental.typelispDocumentationTargets` to `true` during
+`initialize`. The server then advertises that same experimental capability.
+Absent or false leaves the ordinary hover and document-link protocol unchanged.
+Bindings live in `initializationOptions.typelisp.documentationSites`, an array
+with these fields:
+
+| Field | Required meaning |
+| --- | --- |
+| `packageIdentity`, `sourceIdentity` | Nonempty exact package/source identities supplied by the site resolver; `main`, `master` and `HEAD` are not source identities. |
+| `compilerIdentity` | The running compiler's 40-character lowercase hexadecimal producer identity. |
+| `sourcePath`, `sourceSha256` | The canonical source path and lowercase SHA256 of its exact UTF-8 bytes. |
+| `moduleIdentity` | The checked logical module name; the root module may be empty. |
+| `docModule` | The module/path component used by that site's canonical anchor encoder. |
+| `anchors` | The canonical declaration/member anchors actually published on the selected page. |
+| `localUri` | Optional escaped `file://` page URI, without a fragment. |
+| `hostedUri`, `revision` | Optional HTTPS page URI containing its exact 40-character lowercase hexadecimal revision as a path segment, without query or fragment. |
+
+At least one page URI is required; a configured local page takes precedence.
+This mapping supplies package/revision placement and does not resolve a package
+graph. A target requires exactly one binding matching the current checked source
+path, source hash, logical module, running compiler, and published anchor.
+Ambiguous bindings, unknown compiler identities, incomplete checks, unavailable
+source, stale files/buffers and absent anchors produce no documentation target.
+Current open buffers take precedence over disk; source freshness is verified
+within each request. Malformed opted-in configuration is an invalid-params
+error (`-32602`); it does not replace the existing server configuration.
+
+An admitted hover appends a Documentation link and carries
+`data.typelispDocumentationTarget`. Documentation links carry the same data
+alongside their normal `range` and `target`; existing source-navigation links
+remain present. The target has `schemaVersion: 1`, `uri`, `anchor`, `kind`,
+`packageIdentity`, `sourceIdentity`, `compilerIdentity`, `moduleIdentity`,
+`module` (the site's `docModule`), `declaration`, `member` (or null),
+`source: {path, sha256, line}`, and `origin`. Source origin is `{kind:"source"}`;
+generated origin is `{kind:"generated", generator, item, key}`. Members name
+their owning type in `declaration`; aliases use their written binding name.
+Locals, parameters and unresolved syntax do not acquire public documentation
+identities. Top-level visibility remains the default-public rule in §4.4.2.
 
 ### 2.3 String escapes
 

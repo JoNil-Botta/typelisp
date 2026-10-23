@@ -3,16 +3,24 @@
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.string)
+(import stdlib.iterator)
+(import compiler_owned_view as owned_view)
+(import compiler_load)
+(import compiler_ast_types as ast)
+(import compiler_intern as ci)
+(import compiler_typecheck_core as tc)
+(import doc_expand)
+(import doc_extract)
+(import doc_render)
+(import doc_html)
+(import (vector.vector String) as doc_svec)
 (import stdlib.str_cat)
 (import stdlib.vector)
 (import doc_site_stdlib_manifest as stdlib_manifest)
-(import doc_site_doc_bridge as doc_bridge)
 (import (vector.vector String) as doc_site_name_vec)
 
 (define doc-site-expand-status-ok : i64
   0)
-(define doc-site-expand-current-module : String
-  "")
 (define doc-site-expand-current-output : String
   "")
 (define doc-site-expand-search-records : String
@@ -68,693 +76,50 @@
   [needle : (& needle str)]) : bool
   (< (doc-site-expand-find-prefix text needle 0) (string.string-length text)))
 
-(define (doc-site-expand-item-anchor [name : (& name str)]) : String
-  (doc_bridge.bridge-doc-render-identity-anchor
-    (& doc-site-expand-current-module)
-    "generated"
-    name))
-
-(define (doc-site-expand-json-escape-one [text : (& text str)] [idx : i64]) : String
-  (let
-    [c : char (string.string-ref text idx)]
-    (cond
-      [(= c '"') "\\\""]
-      [(= c '\\') "\\\\"]
-      [(= c '\n') "\\n"]
-      [(= c '\r') "\\r"]
-      [(= c '\t') "\\t"]
-      [(= c '<') "\\u003c"]
-      [(= c '>') "\\u003e"]
-      [(= c '&') "\\u0026"]
-      [else (string.substring text idx 1)])))
-
-(define (doc-site-expand-json-string [text : (& text str)]) : String
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length text)]
-    [out : String "\""]
-    (while (< i n)
-      (set! out (str_cat.str-cat out (doc-site-expand-json-escape-one text i)))
-      (set! i (+ i 1)))
-    (str_cat.str-cat out "\"")))
-
-(define (doc-site-expand-record!
-  [identity : String]
-  [kind : String]
-  [label : (& label str)]
-  [signature : String]
-  [doc-text : String]) : unit
-  (let
-    [href : String
-      (str_cat.str-cat
-        (string.copy (& doc-site-expand-current-output))
-        "#"
-        (string.copy (& identity)))]
-    (set!
-      doc-site-expand-search-records
-      (str_cat.str-cat
-        (string.copy (& doc-site-expand-search-records))
-        ",{\"identity\":"
-        (doc-site-expand-json-string (& identity))
-        ",\"kind\":"
-        (doc-site-expand-json-string (& kind))
-        ",\"label\":"
-        (doc-site-expand-json-string label)
-        ",\"module\":"
-        (doc-site-expand-json-string (& doc-site-expand-current-module))
-        ",\"href\":"
-        (doc-site-expand-json-string (& href))
-        ",\"signature\":"
-        (doc-site-expand-json-string (& signature))
-        ",\"docs\":"
-        (doc-site-expand-json-string (& doc-text))
-        ",\"sourceLine\":0}"))))
-
-(define (doc-site-expand-begin-module! [module-name : (& module-name str)]) : unit
-  (let
-    [module : String (string.copy module-name)]
-    [identity : String (doc_bridge.bridge-doc-render-anchor (& module))]
-    (set! doc-site-expand-current-module (string.copy (& module)))
-    (doc-site-expand-record!
-      identity
-      "module"
-      module-name
-      ""
-      "Generated module API.")))
-
-(define (doc-site-expand-html-escape-one [text : (& text str)] [idx : i64]) : String
-  (let
-    [c : char (string.string-ref text idx)]
-    (cond
-      [(= c '&') "&amp;"]
-      [(= c '<') "&lt;"]
-      [(= c '>') "&gt;"]
-      [(= c '"') "&quot;"]
-      [else (string.substring text idx 1)])))
-
-(define (doc-site-expand-html-escape [text : (& text str)]) : String
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length text)]
-    [out : String ""]
-    (while (< i n)
-      (set! out (str_cat.str-cat out (doc-site-expand-html-escape-one text i)))
-      (set! i (+ i 1)))
-    out))
-
-(define (doc-site-expand-code-block [source : (& source str)]) : String
-  (str_cat.str-cat
-    "<pre><code class=\"language-typelisp\">"
-    (doc-site-expand-html-escape source)
-    "</code></pre>\n"))
-
-(define (doc-site-expand-doc-block [doc-text : (& doc-text str)]) : String
-  (if (= (string.string-length doc-text) 0)
-    "<p class=\"tl-doc-empty\">No item docs.</p>\n"
-    (str_cat.str-cat
-      "<div class=\"tl-doc-item-text\"><p>"
-      (doc-site-expand-html-escape doc-text)
-      "</p></div>\n")))
-
-(define (doc-site-expand-nav-entry [name : (& name str)]) : String
-  (let
-    [anchor : String (doc-site-expand-item-anchor name)]
-    (str_cat.str-cat
-      "<li><a href=\"#"
-      anchor
-      "\"><code>"
-      (doc-site-expand-html-escape name)
-      "</code></a></li>\n")))
-
-(define (doc-site-expand-item
-  [kind : String]
-  [name : (& name str)]
-  [signature : String]
-  [doc-text : String]) : String
-  (let
-    [anchor : String (doc-site-expand-item-anchor name)]
-    (doc-site-expand-record!
-      (string.copy (& anchor))
-      (string.copy (& kind))
-      name
-      (string.copy (& signature))
-      (string.copy (& doc-text)))
-    (str_cat.str-cat
-      "<a id=\""
-      (string.copy (& anchor))
-      "\"></a>\n<section class=\"tl-doc-item\" data-doc-identity=\""
-      (string.copy (& anchor))
-      "\">\n<h3><a href=\"#"
-      anchor
-      "\">"
-      (doc-site-expand-html-escape name)
-      "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
-      (doc-site-expand-html-escape kind)
-      "</dd></dl>\n"
-      (doc-site-expand-code-block signature)
-      (doc-site-expand-doc-block doc-text)
-      "</section>\n")))
-
-(define (doc-site-expand-module-section
-  [module-name : (& module-name str)]
-  [nav : String]
-  [items : String]) : String
-  (let
-    [anchor : String (doc_bridge.bridge-doc-render-anchor module-name)]
-    [escaped : String (doc-site-expand-html-escape module-name)]
-    (str_cat.str-cat
-      "<section class=\"tl-doc-module\" data-module-identity=\""
-      (doc-site-expand-html-escape module-name)
-      "\" id=\""
-      (string.copy (& anchor))
-      "\">\n<h2><a href=\"#"
-      anchor
-      "\">"
-      (string.copy (& escaped))
-      "</a></h2>\n<p class=\"tl-doc-source\"><code>"
-      escaped
-      "</code></p>\n<div class=\"tl-doc-module-text\"><p>Generated module API.</p></div>\n"
-      "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
-      nav
-      "</ul>\n</nav>\n"
-      items
-      "</section>\n")))
-
-;; Keep this tool independent of src/doc_expand.tl: importing the compiler-backed
-;; expander here pulls the full compiler stack into the docs post-processor.
-(define (doc-site-expand-vector-nav) : String
-  (str_cat.str-cat
-    (doc-site-expand-nav-entry "import")
-    (doc-site-expand-nav-entry "Vec")
-    (doc-site-expand-nav-entry "Pop")
-    (doc-site-expand-nav-entry "slots")
-    (doc-site-expand-nav-entry "slots-mut")
-    (doc-site-expand-nav-entry "len")
-    (doc-site-expand-nav-entry "len-mut")
-    (doc-site-expand-nav-entry "capacity")
-    (doc-site-expand-nav-entry "is-empty?")
-    (doc-site-expand-nav-entry "with-capacity")
-    (doc-site-expand-nav-entry "new")
-    (doc-site-expand-nav-entry "get")
-    (doc-site-expand-nav-entry "last")
-    (doc-site-expand-nav-entry "set-ref!")
-    (doc-site-expand-nav-entry "set!")
-    (doc-site-expand-nav-entry "copy-range!")
-    (doc-site-expand-nav-entry "grow")
-    (doc-site-expand-nav-entry "push-ref!")
-    (doc-site-expand-nav-entry "push!")
-    (doc-site-expand-nav-entry "pop-ref!")
-    (doc-site-expand-nav-entry "pop!")
-    (doc-site-expand-nav-entry "reverse-range!")
-    (doc-site-expand-nav-entry "reverse-ref!")
-    (doc-site-expand-nav-entry "reverse!")
-    (doc-site-expand-nav-entry "fold-from")
-    (doc-site-expand-nav-entry "fold")
-    (doc-site-expand-nav-entry "map-build-from")
-    (doc-site-expand-nav-entry "map-from")
-    (doc-site-expand-nav-entry "map")
-    (doc-site-expand-nav-entry "value-eq?")
-    (doc-site-expand-nav-entry "contains-from?")
-    (doc-site-expand-nav-entry "contains?")))
-
-(define (doc-site-expand-vector-items
-  [type-name : (& type-name str)]
-  [alias : (& alias str)]) : String
-  (str_cat.str-cat
-    (doc-site-expand-item
-      "generated-module-import"
-      "import"
-      (str_cat.str-cat "(import (vector.vector " type-name ") as " alias ")")
-      "Concrete generated-module import that produced this API.")
-    (doc-site-expand-item
-      "defstruct"
-      "Vec"
-      (str_cat.str-cat
-        "(defstruct Vec\n  (slots (__tl_dyn-array "
-        type-name
-        "))\n  (len i64))")
-      "Backing storage is compiler-private; callers use Vec helpers.")
-    (doc-site-expand-item
-      "defenum"
-      "Pop"
-      (str_cat.str-cat "(defenum Pop\n  (Empty)\n  (Ok " type-name "))")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "slots"
-      (str_cat.str-cat
-        "(define (slots [v : (& v Vec)]) : (& v (__tl_dyn-array "
-        type-name
-        ")) ...)")
-      "SPMD backing borrow. Let-bind it without a caller-authored type annotation.")
-    (doc-site-expand-item
-      "define-function"
-      "slots-mut"
-      (str_cat.str-cat
-        "(define (slots-mut [v : (&mut v Vec)]) : (&mut v (__tl_dyn-array "
-        type-name
-        ")) ...)")
-      "Mutable SPMD backing borrow. Let-bind it without a caller-authored type annotation.")
-    (doc-site-expand-item
-      "define-function"
-      "len"
-      "(define (len [v : (& v Vec)]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "len-mut"
-      "(define (len-mut [v : (&mut v Vec)]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "capacity"
-      "(define (capacity [v : (& v Vec)]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "is-empty?"
-      "(define (is-empty? [v : (& v Vec)]) : bool ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "with-capacity"
-      "(define (with-capacity [capacity : i64]) : Vec ...)"
-      "")
-    (doc-site-expand-item "define-function" "new" "(define (new) : Vec ...)" "")
-    (doc-site-expand-item
-      "define-function"
-      "get"
-      (str_cat.str-cat
-        "(define (get [v : (& v Vec)] [index : i64] [fallback : "
-        type-name
-        "]) : "
-        type-name
-        " ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "last"
-      (str_cat.str-cat
-        "(define (last [v : (& v Vec)] [fallback : "
-        type-name
-        "]) : "
-        type-name
-        " ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "set-ref!"
-      (str_cat.str-cat
-        "(define (set-ref! [v : (&mut v Vec)] [index : i64] [value : "
-        type-name
-        "]) : unit ...)")
-      "Explicit mutable-reference helper for `set!`.")
-    (doc-site-expand-item
-      "defmacro"
-      "set!"
-      (str_cat.str-cat
-        "(defmacro (set! [place : comptime.Expr] [index : comptime.Expr] [value : "
-        type-name
-        "]) : unit ...)")
-      "Mutates a caller-owned storage place by expanding to `set-ref!` with an explicit mutable borrow.")
-    (doc-site-expand-item
-      "define-function"
-      "copy-range!"
-      (str_cat.str-cat
-        "(define (copy-range! [dst : (&mut dst (__tl_dyn-array "
-        type-name
-        "))] [src : (& src (__tl_dyn-array "
-        type-name
-        "))] [index : i64] [count : i64]) : unit ...)")
-      "Generated implementation helper.")
-    (doc-site-expand-item
-      "define-function"
-      "grow"
-      "(define (grow [v : (&mut v Vec)]) : unit ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "push-ref!"
-      (str_cat.str-cat
-        "(define (push-ref! [v : (&mut v Vec)] [value : "
-        type-name
-        "]) : unit ...)")
-      "Explicit mutable-reference helper for `push!`.")
-    (doc-site-expand-item
-      "defmacro"
-      "push!"
-      (str_cat.str-cat
-        "(defmacro (push! [place : comptime.Expr] [value : "
-        type-name
-        "]) : unit ...)")
-      "Mutates a caller-owned storage place by expanding to `push-ref!` with an explicit mutable borrow.")
-    (doc-site-expand-item
-      "define-function"
-      "pop-ref!"
-      "(define (pop-ref! [v : (&mut v Vec)]) : Pop ...)"
-      "Explicit mutable-reference helper for `pop!`.")
-    (doc-site-expand-item
-      "defmacro"
-      "pop!"
-      "(defmacro (pop! [place : comptime.Expr]) : Pop ...)"
-      "Mutates a caller-owned storage place by expanding to `pop-ref!` with an explicit mutable borrow.")
-    (doc-site-expand-item
-      "define-function"
-      "reverse-range!"
-      (str_cat.str-cat
-        "(define (reverse-range! [items : (&mut items (__tl_dyn-array "
-        type-name
-        "))] [lo : i64] [hi : i64]) : unit ...)")
-      "Generated implementation helper.")
-    (doc-site-expand-item
-      "define-function"
-      "reverse-ref!"
-      "(define (reverse-ref! [v : (&mut v Vec)]) : unit ...)"
-      "Explicit mutable-reference helper for `reverse!`.")
-    (doc-site-expand-item
-      "defmacro"
-      "reverse!"
-      "(defmacro (reverse! [place : comptime.Expr]) : unit ...)"
-      "Mutates a caller-owned storage place by expanding to `reverse-ref!` with an explicit mutable borrow.")
-    (doc-site-expand-item
-      "define-function"
-      "fold-from"
-      (str_cat.str-cat
-        "(define (fold-from [v : (& v Vec)] [index : i64] [acc : "
-        (string.copy type-name)
-        "] [step : (-> "
-        (string.copy type-name)
-        " "
-        (string.copy type-name)
-        " "
-        (string.copy type-name)
-        ")]) : "
-        (string.copy type-name)
-        " ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "fold"
-      (str_cat.str-cat
-        "(define (fold [v : (& v Vec)] [acc : "
-        (string.copy type-name)
-        "] [step : (-> "
-        (string.copy type-name)
-        " "
-        (string.copy type-name)
-        " "
-        (string.copy type-name)
-        ")]) : "
-        (string.copy type-name)
-        " ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "map-build-from"
-      (str_cat.str-cat
-        "(define (map-build-from [v : (& v Vec)] [index : i64] [out : (&mut out Vec)] [mapper : (-> "
-        type-name
-        " "
-        type-name
-        ")]) : unit ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "map-from"
-      (str_cat.str-cat
-        "(define (map-from [v : (& v Vec)] [index : i64] [mapper : (-> "
-        type-name
-        " "
-        type-name
-        ")]) : Vec ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "map"
-      (str_cat.str-cat
-        "(define (map [v : (& v Vec)] [mapper : (-> "
-        type-name
-        " "
-        type-name
-        ")]) : Vec ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "value-eq?"
-      (str_cat.str-cat
-        "(define (value-eq? [a : "
-        type-name
-        "] [b : "
-        type-name
-        "]) : bool ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "contains-from?"
-      (str_cat.str-cat
-        "(define (contains-from? [v : (& v Vec)] [x : "
-        type-name
-        "] [index : i64]) : bool ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "contains?"
-      (str_cat.str-cat
-        "(define (contains? [v : (& v Vec)] [x : "
-        type-name
-        "]) : bool ...)")
-      "")))
-
-(define (doc-site-expand-vector-module
-  [type-name : (& type-name str)]
-  [alias : (& alias str)]) : String
-  (let
-    [module-name : String
-      (str_cat.str-cat "stdlib.vector.generated." type-name)]
-    (doc-site-expand-begin-module! (& module-name))
-    (doc-site-expand-module-section
-      module-name
-      (doc-site-expand-vector-nav)
-      (doc-site-expand-vector-items type-name alias))))
-
-(define (doc-site-expand-vector-sections) : String
-  (str_cat.str-cat
-    (doc-site-expand-vector-module "i64" "ivec")
-    (doc-site-expand-vector-module "String" "svec")))
-
-(define (doc-site-expand-queue-nav) : String
-  (str_cat.str-cat
-    (doc-site-expand-nav-entry "import")
-    (doc-site-expand-nav-entry "Deque")
-    (doc-site-expand-nav-entry "Pop")
-    (doc-site-expand-nav-entry "slots")
-    (doc-site-expand-nav-entry "slots-mut")
-    (doc-site-expand-nav-entry "head")
-    (doc-site-expand-nav-entry "len")
-    (doc-site-expand-nav-entry "len-mut")
-    (doc-site-expand-nav-entry "capacity")
-    (doc-site-expand-nav-entry "is-empty?")
-    (doc-site-expand-nav-entry "with-capacity")
-    (doc-site-expand-nav-entry "new")
-    (doc-site-expand-nav-entry "next-index")
-    (doc-site-expand-nav-entry "prev-index")
-    (doc-site-expand-nav-entry "physical-index-from")
-    (doc-site-expand-nav-entry "physical-index")
-    (doc-site-expand-nav-entry "get")
-    (doc-site-expand-nav-entry "peek-front")
-    (doc-site-expand-nav-entry "peek-back")
-    (doc-site-expand-nav-entry "copy-live!")
-    (doc-site-expand-nav-entry "grow")
-    (doc-site-expand-nav-entry "push-back!")
-    (doc-site-expand-nav-entry "push-front!")
-    (doc-site-expand-nav-entry "pop-front!")
-    (doc-site-expand-nav-entry "pop-back!")))
-
-(define (doc-site-expand-queue-items
-  [type-name : (& type-name str)]
-  [alias : (& alias str)]) : String
-  (str_cat.str-cat
-    (doc-site-expand-item
-      "generated-module-import"
-      "import"
-      (str_cat.str-cat "(import (queue.deque " type-name ") as " alias ")")
-      "Concrete generated-module import that produced this API.")
-    (doc-site-expand-item
-      "defstruct"
-      "Deque"
-      (str_cat.str-cat
-        "(defstruct Deque\n  (slots (__tl_dyn-array "
-        type-name
-        "))\n  (head i64)\n  (len i64))")
-      "")
-    (doc-site-expand-item
-      "defenum"
-      "Pop"
-      (str_cat.str-cat "(defenum Pop\n  (Empty)\n  (Ok " type-name "))")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "slots"
-      (str_cat.str-cat
-        "(define (slots [q : (& q Deque)]) : (& q (__tl_dyn-array "
-        type-name
-        ")) ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "slots-mut"
-      (str_cat.str-cat
-        "(define (slots-mut [q : (&mut q Deque)]) : (&mut q (__tl_dyn-array "
-        type-name
-        ")) ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "head"
-      "(define (head [q : (& q Deque)]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "len"
-      "(define (len [q : (& q Deque)]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "len-mut"
-      "(define (len-mut [q : (&mut q Deque)]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "capacity"
-      "(define (capacity [q : (& q Deque)]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "is-empty?"
-      "(define (is-empty? [q : (& q Deque)]) : bool ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "with-capacity"
-      "(define (with-capacity [capacity : i64]) : Deque ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "new"
-      "(define (new) : Deque ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "next-index"
-      "(define (next-index [index : i64] [capacity : i64]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "prev-index"
-      "(define (prev-index [index : i64] [capacity : i64]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "physical-index-from"
-      "(define (physical-index-from [head : i64] [capacity : i64] [offset : i64]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "physical-index"
-      "(define (physical-index [q : (& q Deque)] [offset : i64]) : i64 ...)"
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "get"
-      (str_cat.str-cat
-        "(define (get [q : (& q Deque)] [index : i64] [fallback : "
-        type-name
-        "]) : "
-        type-name
-        " ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "peek-front"
-      (str_cat.str-cat
-        "(define (peek-front [q : (& q Deque)] [fallback : "
-        type-name
-        "]) : "
-        type-name
-        " ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "peek-back"
-      (str_cat.str-cat
-        "(define (peek-back [q : (& q Deque)] [fallback : "
-        type-name
-        "]) : "
-        type-name
-        " ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "copy-live!"
-      (str_cat.str-cat
-        "(define (copy-live! [dst : (&mut dst (__tl_dyn-array "
-        type-name
-        "))] [src : (& src (__tl_dyn-array "
-        type-name
-        "))] [head : i64] [capacity : i64] [count : i64] [index : i64]) : unit ...)")
-      "")
-    (doc-site-expand-item
-      "define-function"
-      "grow"
-      "(define (grow [q : (&mut q Deque)]) : unit ...)"
-      "")
-    (doc-site-expand-item
-      "defmacro"
-      "push-back!"
-      (str_cat.str-cat
-        "(defmacro (push-back! [place : comptime.Expr] [value : "
-        type-name
-        "]) : unit ...)")
-      "Mutates a caller-owned storage place by expanding to `push-back-ref!` with an explicit mutable borrow.")
-    (doc-site-expand-item
-      "defmacro"
-      "push-front!"
-      (str_cat.str-cat
-        "(defmacro (push-front! [place : comptime.Expr] [value : "
-        type-name
-        "]) : unit ...)")
-      "Mutates a caller-owned storage place by expanding to `push-front-ref!` with an explicit mutable borrow.")
-    (doc-site-expand-item
-      "defmacro"
-      "pop-front!"
-      "(defmacro (pop-front! [place : comptime.Expr]) : Pop ...)"
-      "Mutates a caller-owned storage place by expanding to `pop-front-ref!` with an explicit mutable borrow.")
-    (doc-site-expand-item
-      "defmacro"
-      "pop-back!"
-      "(defmacro (pop-back! [place : comptime.Expr]) : Pop ...)"
-      "Mutates a caller-owned storage place by expanding to `pop-back-ref!` with an explicit mutable borrow.")))
-
-(define (doc-site-expand-queue-module
-  [type-name : (& type-name str)]
-  [alias : (& alias str)]) : String
-  (let
-    [module-name : String
-      (str_cat.str-cat "stdlib.queue.deque.generated." type-name)]
-    (doc-site-expand-begin-module! (& module-name))
-    (doc-site-expand-module-section
-      module-name
-      (doc-site-expand-queue-nav)
-      (doc-site-expand-queue-items type-name alias))))
-
-(define (doc-site-expand-queue-sections) : String
-  (doc-site-expand-queue-module "i64" "deque_i64"))
-
+;; Render the compiler's actual expansion, including generator/item/key metadata
+;; and member identities. The site must not infer a second generated API surface.
 (define (doc-site-expand-generated-sections [source : (& source str)]) : String
-  (cond
-    [(string.eq source "stdlib/vector.tl") (doc-site-expand-vector-sections)]
-    [(string.eq source "stdlib/queue.tl") (doc-site-expand-queue-sections)]
-    [else ""]))
+  (let
+    [modules : doc_expand.ResultDocExpandedModules
+      (doc_expand.doc-expanded-generated-modules-from-source-docs-with-state-and-pools-and-intern-state
+        (compiler_load.compiler-load-serial-test-session-state)
+        (tc.tc-serial-job-state)
+        (string.copy source)
+        (doc_extract.doc-extract-file (string.copy source))
+        (doc_svec.new)
+        (ast.ast-node-pool-context-capture-active)
+        (ci.intern-compat-state-capture-active))]
+    (match modules
+      [(Err message) (io.panic message)]
+      [(Ok expanded)
+        (let
+          [sections : String ""]
+          (for [i
+            (iterator.range
+              0
+              (doc_render.doc-module-list-count
+                (owned_view.compiler-owned-shared-view expanded)))]
+            (let
+              [module : doc_render.DocModule
+                (doc_render.doc-module-list-ref (& expanded) i)]
+              [records : String
+                (doc_html.doc-html-search-records-for-module
+                  (string.copy (& doc-site-expand-current-output))
+                  (owned_view.compiler-owned-shared-view module))]
+              (unless
+                (string.eq records "")
+                (set!
+                  doc-site-expand-search-records
+                  (str_cat.str-cat
+                    (string.copy (& doc-site-expand-search-records))
+                    ","
+                    records)))
+              (set!
+                sections
+                (str_cat.str-cat
+                  sections
+                  (doc_html.doc-html-module-section module)))))
+          sections)])))
 
 (define (doc-site-expand-generated-source? [source : (& source str)]) : bool
   (or
@@ -810,7 +175,6 @@
   [site-dir : (& site-dir str)]
   [source : String]
   [output : String]) : unit
-  (set! doc-site-expand-current-module "")
   (set! doc-site-expand-current-output (string.copy (& output)))
   (set! doc-site-expand-search-records "")
   (let

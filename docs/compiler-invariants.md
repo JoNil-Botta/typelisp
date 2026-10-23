@@ -613,9 +613,14 @@ closed ownership and register-bank facts, and source-owned region membership;
 neither a stack offset nor a mnemonic proves them. Region parents precede
 children. The existing liveness CFG supplies indexed forward/reverse edges.
 The verifier rejects malformed extents, references, duplicate operations and
-missing reverse edges. A recurrence witness requires a reachable full-gang
-header and paths that return to it; child control flow participates while
-child traffic retains its own region. Warning policy belongs to #7294.
+missing reverse edges. Recurring-access counts describe header SCC membership
+only; they do not prove a round trip. An ordered witness names a same-home write
+and later read on a path which returns to the reachable full-gang header without
+visiting it between those events. In one block, operation/access keys give
+execution order. A `ReadWrite` access reads before writing and cannot witness
+itself without a nonempty inner cycle. Child control flow participates while
+child traffic retains its own region. The proof selects no owner or bank;
+allocator/vector/mask warning policy belongs to #7294.
 Facts borrow their function/job owner. Emitted and source function identities
 are distinct: inlined regions retain the callee's canonical source site. Both
 display names are owned snapshots, so rendering never consults another

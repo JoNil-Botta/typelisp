@@ -808,8 +808,14 @@ source identities across inlining, ordinary traps without fabricated sites,
 region-parent consistency, logical homes, malformed graph
 indices/reverse edges, nested regions, disconnected and acyclic control flow,
 self loops and an independent transitive-closure oracle over all 64 three-node
-graphs without self edges. Keep the v1 JSON golden, escaping and exact/spare IR
-capacity checks. The native smoke runs the same checks at opt0/1/2 on both hosts.
+graphs without self edges. The oracle separately checks ordered same-home
+write/read paths with no intervening header visit, both static event orders
+and `ReadWrite` events. Keep mutually exclusive arms, different homes,
+setup/exit-only traffic and read-before-write negatives; same-block access
+ordering, child-control paths, inner-cycle revisits and entry reachability
+remain explicit fixtures. SCC access counts are not ordered witnesses. Keep
+the v1 JSON golden, escaping and exact/spare IR capacity checks. The native
+smoke runs the same checks at opt0/1/2 on both hosts.
 The producer/report integration remains #7236; these fixtures do not certify
 actual backend ownership or publish a warning.
 

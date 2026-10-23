@@ -58,8 +58,9 @@
 
 ;; `operation` is the producer's final emitted instruction ordinal, not an IR
 ;; var or a frame offset. `access-index` distinguishes explicit/implicit memory
-;; accesses of one instruction (e.g. push from a frame home). Each pair has one
-;; owner. A read-modify-write is one access with two directions.
+;; accesses of one instruction in execution order (e.g. push reads its source
+;; before writing the implicit stack home). Each pair has one owner. Within a
+;; ReadWrite access the read precedes the write; it is not its own round trip.
 (defstruct CompilerStackTrafficEvent
   (operation i64)
   (access-index i64)
@@ -86,9 +87,21 @@
   (Ok CompilerStackTrafficOwner)
   (Err String))
 
-(defstruct CompilerStackTrafficCycle
+(defstruct CompilerStackTrafficRecurringAccesses
   (reads i64)
   (writes i64))
+
+(defenum CompilerStackTrafficRecurringResult
+  (Ok (__tl_dyn-array CompilerStackTrafficRecurringAccesses))
+  (Err String))
+
+;; Event indices name a same-home write followed by a later read before the
+;; next visit to the region header. The bool says at least one CFG edge is
+;; crossed between them. A repeated block may read an earlier static event;
+;; that requires a nonempty path which does not revisit the region header.
+(defenum CompilerStackTrafficCycle
+  (NoCycle)
+  (Ordered i64 i64 bool))
 
 (defenum CompilerStackTrafficCycleResult
   (Ok (__tl_dyn-array CompilerStackTrafficCycle))
@@ -219,6 +232,7 @@
     [homes : i64 (array-length facts.homes)]
     [previous-operation : i64 -1]
     [previous-access : i64 -1]
+    [previous-block : i64 -1]
     (when
       (or
         (< facts.function.value 0)
@@ -285,8 +299,14 @@
               (= event.operation previous-operation)
               (<= event.access-index previous-access)))
           (return (Err "stack traffic: duplicate or unordered operation")))
+        (when
+          (and
+            (= event.operation previous-operation)
+            (!= event.block previous-block))
+          (return (Err "stack traffic: operation spans multiple blocks")))
         (set! previous-operation event.operation)
         (set! previous-access event.access-index)
+        (set! previous-block event.block)
         (when
           (or (< event.block 0) (>= event.block blocks))
           (return (Err "stack traffic: unknown event block")))
@@ -347,15 +367,17 @@
     seen))
 
 ;; Precondition: `check` succeeded, and region is in range. This is a
-;; graph fact, not warning policy: owners and register banks remain explicit
-;; for #7294 to select. Both directions must be on paths that return to the
-;; same full-gang header. An acyclic header's zero-length path is not a cycle.
-(define (compiler-stack-traffic-cycles-checked
+;; inventory, not an ordered write/read proof. Mutually exclusive arms may
+;; contribute different directions on different iterations. An acyclic
+;; header's zero-length path is not recurrence.
+(define (compiler-stack-traffic-recurring-accesses-checked
   [facts : (& facts CompilerStackTraffic)]
-  [region : i64]) : (__tl_dyn-array CompilerStackTrafficCycle)
+  [region : i64]) : (__tl_dyn-array CompilerStackTrafficRecurringAccesses)
   (let
-    [cycles : (__tl_dyn-array CompilerStackTrafficCycle)
-      (__tl_make-array CompilerStackTrafficCycle (array-length facts.homes))]
+    [cycles : (__tl_dyn-array CompilerStackTrafficRecurringAccesses)
+      (__tl_make-array
+        CompilerStackTrafficRecurringAccesses
+        (array-length facts.homes))]
     (if (not
       (compiler-stack-traffic-full-gang?
         (& (array-ref facts.regions region).kind)))
@@ -401,6 +423,141 @@
                     (array-ref cycles event.home).writes
                     (+ (array-ref cycles event.home).writes 1)))))))
         cycles))))
+
+(define (compiler-stack-traffic-recurring-accesses
+  [facts : (& facts CompilerStackTraffic)]
+  [region : i64]) : CompilerStackTrafficRecurringResult
+  (match (compiler-stack-traffic-check facts)
+    [(Err message) (return (Err message))]
+    [(Ok) unit])
+  (if (or (< region 0) (>= region (array-length facts.regions)))
+    (Err "stack traffic: cycle query outside census")
+    (Ok (compiler-stack-traffic-recurring-accesses-checked facts region))))
+
+;; One search per home, not per write. Reads are visited before writes within
+;; each event. Every seed is after a reachable write and every queued block
+;; is entered in full, so even a ReadWrite event can be read only on a later
+;; event or a later block execution. Never enqueue the region header: taking
+;; that edge ends the iteration. Reverse reachability proves a return after
+;; the read; child blocks can carry paths but cannot contribute parent events.
+(define (compiler-stack-traffic-cycle-home
+  [facts : (& facts CompilerStackTraffic)]
+  [region : i64]
+  [home : i64]
+  [forward : (& (__tl_dyn-array bool))]
+  [backward : (& (__tl_dyn-array bool))]) : CompilerStackTrafficCycle
+  (let
+    [blocks : i64 (array-length facts.graph.blocks)]
+    [writes : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+    [reads : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+    [origins : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+    [queue : (__tl_dyn-array i64) (__tl_make-array i64 blocks)]
+    [head : i64 0]
+    [tail : i64 0]
+    [header : i64 (array-ref facts.regions region).header]
+    (for [block (iterator.range 0 blocks)]
+      (set! (array-ref writes block) -1)
+      (set! (array-ref reads block) -1)
+      (set! (array-ref origins block) -1))
+    (for [index (iterator.range 0 (array-length facts.events))]
+      (let
+        [event : (& facts CompilerStackTrafficEvent)
+          (& (array-ref facts.events index))]
+        (when
+          (and
+            (= event.home home)
+            (= (array-ref facts.block-regions event.block) region)
+            (array-ref forward event.block)
+            (array-ref backward event.block))
+          (when
+            (compiler-stack-traffic-read? (& event.access))
+            (when
+              (< (array-ref reads event.block) 0)
+              (set! (array-ref reads event.block) index))
+            (when
+              (>= (array-ref writes event.block) 0)
+              (return (Ordered (array-ref writes event.block) index false))))
+          (when
+            (and
+              (compiler-stack-traffic-write? (& event.access))
+              (< (array-ref writes event.block) 0))
+            (set! (array-ref writes event.block) index)))))
+    ;; Seed complete successor-block visits. A return to the write block can
+    ;; legitimately reach a statically earlier read on an inner cycle.
+    (for [block (iterator.range 0 blocks)]
+      (when
+        (>= (array-ref writes block) 0)
+        (let
+          [edges : (& facts live.CompilerLiveIndexVec)
+            (& (array-ref facts.graph.successors block))]
+          (for [edge (iterator.range 0 (array-length edges.items))]
+            (let
+              [target : i64 (array-ref edges.items edge)]
+              (when
+                (and
+                  (!= target header)
+                  (< (array-ref origins target) 0)
+                  (compiler-stack-traffic-member? facts target region)
+                  (array-ref backward target))
+                (set! (array-ref origins target) (array-ref writes block))
+                (set! (array-ref queue tail) target)
+                (set! tail (+ tail 1))))))))
+    (while (< head tail)
+      (let
+        [block : i64 (array-ref queue head)]
+        [origin : i64 (array-ref origins block)]
+        [edges : (& facts live.CompilerLiveIndexVec)
+          (& (array-ref facts.graph.successors block))]
+        (when
+          (>= (array-ref reads block) 0)
+          (return (Ordered origin (array-ref reads block) true)))
+        (for [edge (iterator.range 0 (array-length edges.items))]
+          (let
+            [target : i64 (array-ref edges.items edge)]
+            (when
+              (and
+                (!= target header)
+                (< (array-ref origins target) 0)
+                (compiler-stack-traffic-member? facts target region)
+                (array-ref backward target))
+              (set! (array-ref origins target) origin)
+              (set! (array-ref queue tail) target)
+              (set! tail (+ tail 1))))))
+      (set! head (+ head 1)))
+    (NoCycle)))
+
+;; Checked structural proof only: no allocator, bank or warning selection.
+;; Positive SCC counts are merely a prefilter; the witness additionally
+;; requires temporal order on one path before the next header visit.
+(define (compiler-stack-traffic-cycles-checked
+  [facts : (& facts CompilerStackTraffic)]
+  [region : i64]) : (__tl_dyn-array CompilerStackTrafficCycle)
+  (let
+    [counts : (__tl_dyn-array CompilerStackTrafficRecurringAccesses)
+      (compiler-stack-traffic-recurring-accesses-checked facts region)]
+    [cycles : (__tl_dyn-array CompilerStackTrafficCycle)
+      (__tl_make-array CompilerStackTrafficCycle (array-length facts.homes))]
+    [forward : (__tl_dyn-array bool)
+      (compiler-stack-traffic-reach facts region false)]
+    [backward : (__tl_dyn-array bool)
+      (compiler-stack-traffic-reach facts region true)]
+    (for [home (iterator.range 0 (array-length facts.homes))]
+      (set! (array-ref cycles home) (NoCycle))
+      (when
+        (and
+          (> (array-ref counts home).reads 0)
+          (> (array-ref counts home).writes 0))
+        (set!
+          (array-ref cycles home)
+          ;; Clone only the witness out; per-home worklists are reclaimed.
+          (with-scratch
+            (compiler-stack-traffic-cycle-home
+              facts
+              region
+              home
+              (& forward)
+              (& backward))))))
+    cycles))
 
 (define (compiler-stack-traffic-cycles
   [facts : (& facts CompilerStackTraffic)]

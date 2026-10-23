@@ -90,7 +90,7 @@
         (for [index (iterator.range 0 9)]
           (set! (array-ref block-regions index) (array-ref members index)))
         ;; Mutually exclusive arms can execute in different iterations of
-        ;; the same recurring region. A single iteration need not do both.
+        ;; the same recurring region. Inventory alone is not an ordered proof.
         (set!
           (array-ref events 6)
           (traffic.CompilerStackTrafficEvent 6 0 3 0 (Read)))
@@ -122,45 +122,204 @@
           homes
           events))]))
 
-(define (stack-traffic-cycle-assert
+(define (stack-traffic-recurring-assert
   [facts : (& traffic.CompilerStackTraffic)]
   [region : i64]
   [home : i64]
   [reads : i64]
   [writes : i64]) : unit
-  (match (traffic.compiler-stack-traffic-cycles facts region)
+  (match (traffic.compiler-stack-traffic-recurring-accesses facts region)
     [(Ok cycles)
       (test.assert-i64-eq
         (array-ref cycles home).reads
         reads
-        "cycle read count")
+        "recurring read inventory")
       (test.assert-i64-eq
         (array-ref cycles home).writes
         writes
-        "cycle write count")]
+        "recurring write inventory")]
     [(Err message) (io.panic message)]))
 
-(define (stack-traffic-cycles-test) : unit
+(define (stack-traffic-recurring-test) : unit
   (let
     [facts : traffic.CompilerStackTraffic (stack-traffic-fixture false)]
-    (stack-traffic-cycle-assert (& facts) 1 0 1 1)
+    (stack-traffic-recurring-assert (& facts) 1 0 1 1)
     ;; Ownership is retained; graph facts do not implement warning policy.
-    (stack-traffic-cycle-assert (& facts) 1 1 1 1)
-    (stack-traffic-cycle-assert (& facts) 1 2 1 2)
+    (stack-traffic-recurring-assert (& facts) 1 1 1 1)
+    (stack-traffic-recurring-assert (& facts) 1 2 1 2)
     (for [home (iterator.range 3 6)]
-      (stack-traffic-cycle-assert (& facts) 1 home 0 1))
+      (stack-traffic-recurring-assert (& facts) 1 home 0 1))
     (for [region (iterator.range 2 6)]
-      (stack-traffic-cycle-assert (& facts) region 0 0 0))
-    (stack-traffic-cycle-assert (& facts) 0 0 0 0)
+      (stack-traffic-recurring-assert (& facts) region 0 0 0))
+    (stack-traffic-recurring-assert (& facts) 0 0 0 0)
     ;; Removing the back edge makes all remaining accesses one-way.
     (set! (array-ref facts.graph.successors 4).items (__tl_make-array i64 0))
     (set! (array-ref facts.graph.predecessors 1).items (__tl_make-array i64 1))
     (set! (array-ref (array-ref facts.graph.predecessors 1).items 0) 0)
     (set! (array-ref facts.graph.predecessors 5).items (__tl_make-array i64 0))
-    (stack-traffic-cycle-assert (& facts) 1 0 0 0)))
+    (stack-traffic-recurring-assert (& facts) 1 0 0 0)))
+
+(define (stack-traffic-ordered-assert
+  [facts : (& traffic.CompilerStackTraffic)]
+  [region : i64]
+  [home : i64]
+  [write : i64]
+  [read : i64]
+  [crosses-edge : bool]) : unit
+  (match (traffic.compiler-stack-traffic-cycles facts region)
+    [(Err message) (io.panic message)]
+    [(Ok cycles)
+      (match (& (array-ref cycles home))
+        [(NoCycle) (test.assert-true (< write 0) "ordered cycle required")]
+        [(Ordered actual-write actual-read actual-edge)
+          (test.assert-i64-eq actual-write write "ordered write event")
+          (test.assert-i64-eq actual-read read "ordered read event")
+          (test.assert-true
+            (= actual-edge crosses-edge)
+            "ordered path crosses edge")])]))
+
+(define (stack-traffic-ordered-test) : unit
+  (for [spare (array false true)]
+    (for [case (iterator.range 0 22)]
+      (let
+        [facts : traffic.CompilerStackTraffic (stack-traffic-fixture spare)]
+        [events : (__tl_dyn-array traffic.CompilerStackTrafficEvent)
+          (__tl_make-array traffic.CompilerStackTrafficEvent 2)]
+        [expected-write : i64 0]
+        [expected-read : i64 1]
+        [crosses-edge : bool true]
+        (set!
+          (array-ref events 0)
+          (traffic.CompilerStackTrafficEvent 0 0 2 0 (Write)))
+        (set!
+          (array-ref events 1)
+          (traffic.CompilerStackTrafficEvent 1 0 4 0 (Read)))
+        (set! facts.events events)
+        (cond
+          ;; Different arms meet only after revisiting the header.
+          [(= case 0) (set! (array-ref facts.events 1).block 3)]
+          [(or (= case 1) (= case 7) (= case 21))
+            (set! (array-ref facts.events 0).access (Read))
+            (set! (array-ref facts.events 1).access (Write))
+            (set! (array-ref facts.events 1).block 2)]
+          [(= case 2) (set! (array-ref facts.events 1).home 1)]
+          [(= case 3) (set! (array-ref facts.events 0).block 0)]
+          [(= case 4) (set! (array-ref facts.events 1).block 5)]
+          [(or (= case 5) (= case 6))
+            (set! (array-ref facts.events 1).block 2)
+            (set! crosses-edge false)]
+          [(or (= case 8) (= case 11) (= case 20))
+            (set!
+              facts.events
+              (__tl_make-array traffic.CompilerStackTrafficEvent 1))
+            (set!
+              (array-ref facts.events 0)
+              (traffic.CompilerStackTrafficEvent
+                0
+                0
+                (if (= case 11)
+                  1
+                  2)
+                0
+                (ReadWrite)))]
+          [(= case 9) (set! (array-ref facts.events 1).access (ReadWrite))]
+          [(= case 10) (set! (array-ref facts.events 0).access (ReadWrite))]
+          [(or (= case 12) (= case 16))
+            (set!
+              (array-ref facts.events 0).block
+              (if (= case 12)
+                1
+                2))
+            (set! (array-ref facts.regions 4).kind (FullGang))
+            (set!
+              (array-ref facts.regions 4).source
+              (Site (ir.CompilerSpmdSiteId facts.function 1) "traffic"))
+            (set! (array-ref facts.regions 4).parent 1)
+            (set! (array-ref facts.regions 4).header 2)
+            (set! (array-ref facts.block-regions 2) 4)
+            (set! (array-ref facts.block-regions 7) 0)
+            (set!
+              (array-ref facts.graph.successors 1).items
+              (__tl_make-array i64 1))
+            (set! (array-ref (array-ref facts.graph.successors 1).items 0) 2)]
+          [(= case 13)
+            (set! (array-ref (array-ref facts.graph.successors 0).items 0) 7)]
+          [(= case 14)
+            (set! (array-ref facts.events 0).block 1)
+            (set! (array-ref facts.events 1).block 1)
+            (set! crosses-edge false)]
+          [(= case 15) (set! (array-ref facts.events 1).block 1)]
+          [(= case 17)
+            (set! (array-ref facts.events 0).access (ReadWrite))
+            (set! (array-ref facts.events 1).access (ReadWrite))
+            (set! (array-ref facts.events 1).block 2)
+            (set! crosses-edge false)]
+          [(= case 18) (set! (array-ref facts.events 0).block 6)]
+          [(= case 19)
+            (set!
+              (array-ref facts.graph.successors 4).items
+              (__tl_make-array i64 1))
+            (set! (array-ref (array-ref facts.graph.successors 4).items 0) 5)]
+          [else unit])
+        (when
+          (or (= case 6) (= case 7))
+          (set! (array-ref facts.events 1).operation 0)
+          (set! (array-ref facts.events 1).access-index 1))
+        (when
+          (>= case 20)
+          ;; An inner cycle can execute a read on a later block visit without
+          ;; ending the enclosing iteration. One ReadWrite then has a witness.
+          (set!
+            (array-ref facts.graph.successors 2).items
+            (__tl_make-array i64 2))
+          (set! (array-ref (array-ref facts.graph.successors 2).items 0) 2)
+          (set! (array-ref (array-ref facts.graph.successors 2).items 1) 4)
+          (set!
+            expected-write
+            (if (= case 20)
+              0
+              1))
+          (set! expected-read 0))
+        (when
+          (or
+            (< case 5)
+            (= case 7)
+            (= case 8)
+            (= case 11)
+            (= case 13)
+            (= case 15)
+            (= case 16)
+            (= case 18)
+            (= case 19))
+          (set! expected-write -1)
+          (set! expected-read -1))
+        (set!
+          facts.graph.predecessors
+          (live.compiler-live-predecessors-build (& facts.graph.successors)))
+        (stack-traffic-ordered-assert
+          (& facts)
+          1
+          0
+          expected-write
+          expected-read
+          crosses-edge))))
+  ;; The structural proof does not select owners or vector/mask banks.
+  (for [home (iterator.range 0 6)]
+    (let
+      [facts : traffic.CompilerStackTraffic (stack-traffic-fixture false)]
+      [events : (__tl_dyn-array traffic.CompilerStackTrafficEvent)
+        (__tl_make-array traffic.CompilerStackTrafficEvent 2)]
+      (set!
+        (array-ref events 0)
+        (traffic.CompilerStackTrafficEvent 0 0 2 home (Write)))
+      (set!
+        (array-ref events 1)
+        (traffic.CompilerStackTrafficEvent 1 0 4 home (Read)))
+      (set! facts.events events)
+      (stack-traffic-ordered-assert (& facts) 1 home 0 1 true))))
 
 (define (stack-traffic-invalid-test) : unit
-  (for [mutation (iterator.range 0 23)]
+  (for [mutation (iterator.range 0 24)]
     (let
       [facts : traffic.CompilerStackTraffic (stack-traffic-fixture false)]
       (cond
@@ -205,10 +364,14 @@
           (set!
             (array-ref facts.regions 1).source
             (Site (ir.CompilerSpmdSiteId facts.function -1) "traffic"))]
-        [else
+        [(= mutation 22)
           (set!
             (array-ref facts.regions 1).source
-            (Site (ir.CompilerSpmdSiteId facts.function -2) "traffic"))])
+            (Site (ir.CompilerSpmdSiteId facts.function -2) "traffic"))]
+        [else
+          (set! (array-ref facts.events 1).operation 0)
+          (set! (array-ref facts.events 1).access-index 1)
+          (set! (array-ref facts.events 1).block 3)])
       (match (traffic.compiler-stack-traffic-check (& facts))
         [(Err _) unit]
         [(Ok) (io.panic "stack traffic: malformed fact accepted")])
@@ -220,7 +383,10 @@
         [(Ok _) (io.panic "stack traffic: rendered malformed facts")])
       (match (traffic.compiler-stack-traffic-cycles (& facts) 1)
         [(Err _) unit]
-        [(Ok _) (io.panic "stack traffic: proved malformed cycle")]))))
+        [(Ok _) (io.panic "stack traffic: proved malformed cycle")])
+      (match (traffic.compiler-stack-traffic-recurring-accesses (& facts) 1)
+        [(Err _) unit]
+        [(Ok _) (io.panic "stack traffic: counted malformed recurrence")]))))
 
 (define (stack-traffic-render [facts : (& traffic.CompilerStackTraffic)]) : String
   (match (traffic.compiler-stack-traffic-render
@@ -331,7 +497,7 @@
     (set! facts.regions regions)
     (set! facts.events events)
     (set! facts.block-regions members)
-    (stack-traffic-cycle-assert (& facts) 0 0 1 1)
+    (stack-traffic-recurring-assert (& facts) 0 0 1 1)
     (match (traffic.compiler-stack-traffic-render
       (& facts)
       "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -374,8 +540,8 @@
     (set! (array-ref facts.regions 4).parent 1)
     (set! (array-ref facts.block-regions 2) 4)
     (set! (array-ref facts.block-regions 7) 0)
-    (stack-traffic-cycle-assert (& facts) 1 0 1 0)
-    (stack-traffic-cycle-assert (& facts) 4 0 0 0))
+    (stack-traffic-recurring-assert (& facts) 1 0 1 0)
+    (stack-traffic-recurring-assert (& facts) 4 0 0 0))
   (let
     [facts : traffic.CompilerStackTraffic (stack-traffic-fixture false)]
     ;; One instruction can read an explicit home and write an implicit ABI
@@ -394,7 +560,7 @@
     (set!
       (array-ref facts.regions 1).source
       (Site (ir.CompilerSpmdSiteId callee 0) "callee"))
-    (stack-traffic-cycle-assert (& facts) 1 0 1 1)
+    (stack-traffic-recurring-assert (& facts) 1 0 1 1)
     (let
       [text : String (stack-traffic-render (& facts))]
       (test.assert-true
@@ -415,6 +581,84 @@
           "\"kind\":\"cold\",\"site\":null,\"source_function\":null")
         "ordinary trap has no fabricated SPMD source"))))
 
+;; Independent transitive closures decide the ordered relation. Header-free
+;; paths exclude every edge entering block 0. A statically earlier read (or
+;; the read half of the same ReadWrite event) needs a nonempty inner path.
+(define (stack-traffic-ordered-oracle
+  [facts : traffic.CompilerStackTraffic]
+  [paths : (& (__tl_dyn-array bool))]
+  [before-header : (& (__tl_dyn-array bool))]) : unit
+  (for [write-block (iterator.range 0 3)]
+    (for [read-block (iterator.range 0 3)]
+      (for [order (iterator.range 0 3)]
+        (when
+          (or (< order 2) (= write-block read-block))
+          (let
+            [same : bool (= write-block read-block)]
+            [write-index : i64
+              (if (= order 1)
+                1
+                0)]
+            [read-index : i64
+              (if (= order 0)
+                1
+                0)]
+            [crosses : bool (or (not same) (!= order 0))]
+            [expected : bool
+              (and
+                (array-ref paths 0)
+                (or (= write-block 0) (array-ref paths write-block))
+                (or (= read-block 0) (array-ref paths (* read-block 3)))
+                (or
+                  (and same (= order 0))
+                  (and
+                    (!= read-block 0)
+                    (array-ref before-header (+ (* write-block 3) read-block)))))]
+            [events : (__tl_dyn-array traffic.CompilerStackTrafficEvent)
+              (__tl_make-array
+                traffic.CompilerStackTrafficEvent
+                (if (= order 2)
+                  1
+                  2))]
+            (if (= order 2)
+              (set!
+                (array-ref events 0)
+                (traffic.CompilerStackTrafficEvent
+                  0
+                  0
+                  write-block
+                  0
+                  (ReadWrite)))
+              (begin
+                (set!
+                  (array-ref events write-index)
+                  (traffic.CompilerStackTrafficEvent
+                    write-index
+                    0
+                    write-block
+                    0
+                    (Write)))
+                (set!
+                  (array-ref events read-index)
+                  (traffic.CompilerStackTrafficEvent
+                    read-index
+                    0
+                    read-block
+                    0
+                    (Read)))))
+            (set! facts.events events)
+            (stack-traffic-ordered-assert
+              (& facts)
+              0
+              0
+              (if expected
+                write-index
+                -1)
+              (if expected
+                read-index
+                -1)
+              crosses)))))))
+
 ;; Exhaust every directed graph on three vertices without self edges. Floyd's
 ;; transitive closure is an independent oracle for the worklist proof. Self
 ;; edges, disconnected components and region boundaries have separate cases.
@@ -423,6 +667,7 @@
     (let
       [text : text_buf.TextBuf (text_buf.empty)]
       [paths : (__tl_dyn-array bool) (__tl_make-array bool 9)]
+      [before-header : (__tl_dyn-array bool) (__tl_make-array bool 9)]
       [regions : (__tl_dyn-array traffic.CompilerStackTrafficRegion)
         (__tl_make-array traffic.CompilerStackTrafficRegion 1)]
       [homes : (__tl_dyn-array traffic.CompilerStackTrafficHome)
@@ -440,6 +685,12 @@
           [has-right : bool (!= (bit-and mask (shl 1 (+ (* block 2) 1))) 0)]
           (set! (array-ref paths (+ (* block 3) left)) has-left)
           (set! (array-ref paths (+ (* block 3) right)) has-right)
+          (set!
+            (array-ref before-header (+ (* block 3) left))
+            (and has-left (!= left 0)))
+          (set!
+            (array-ref before-header (+ (* block 3) right))
+            (and has-right (!= right 0)))
           (set!
             (array-ref events block)
             (traffic.CompilerStackTrafficEvent block 0 block 0 (ReadWrite)))
@@ -462,6 +713,14 @@
             [else (text_buf.append! text "return 0")])
           (text_buf.append! text "\n")))
       (text_buf.append! text "}")
+      (for [via (iterator.range 1 3)]
+        (for [from (iterator.range 0 3)]
+          (for [to (iterator.range 1 3)]
+            (when
+              (and
+                (array-ref before-header (+ (* from 3) via))
+                (array-ref before-header (+ (* via 3) to)))
+              (set! (array-ref before-header (+ (* from 3) to)) true)))))
       (for [via (iterator.range 0 3)]
         (for [from (iterator.range 0 3)]
           (for [to (iterator.range 0 3)]
@@ -507,10 +766,12 @@
                 members
                 homes
                 events)]
-            (stack-traffic-cycle-assert (& facts) 0 0 expected expected))]))))
+            (stack-traffic-recurring-assert (& facts) 0 0 expected expected)
+            (stack-traffic-ordered-oracle facts (& paths) (& before-header)))]))))
 
 (define (compiler-stack-traffic-self-test) : unit
-  (stack-traffic-cycles-test)
+  (stack-traffic-recurring-test)
+  (stack-traffic-ordered-test)
   (stack-traffic-invalid-test)
   (stack-traffic-render-test)
   (stack-traffic-boundaries-test)

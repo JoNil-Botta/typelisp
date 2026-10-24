@@ -1196,4 +1196,32 @@ join:
                   [else abi.compiler-reg-id-r12])))
               [(Err _) true]
               [_ false])
-            "function saves reject instruction authority, wrong function and invalid registers"))))))
+            "function saves reject instruction authority, wrong function and invalid registers")))
+      (for [kind (iterator.range 0 3)]
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          plan.entry-block
+          -1
+          (if (= kind 1)
+            (CalleeSaveRegister abi.compiler-reg-id-rbp)
+            (FramePointer)))
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq
+              home.id
+              (if (= kind 1)
+                9
+                8)
+              "ordinary frame pointer is distinct from an FPO allocated rbp save")
+            (test.assert-i64-eq home.bytes 8 "full saved frame pointer")]))
+      (test.assert-true
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          plan.entry-block
+          0
+          (FramePointer))
+          [(Err _) true]
+          [_ false])
+        "frame pointers cannot borrow an instruction scope"))))

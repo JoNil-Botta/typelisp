@@ -877,6 +877,11 @@ FPO seam deletes both old move tokens and synthesizes the final push/pop pair
 with the same resource; only surviving tokens appear in the final text.
 Pure registry tests retain exact/spare parity and reject wrong function,
 instruction scope, caller-saved/mask/vector registers and malformed registries.
+Ordinary frame-pointer fixtures cover inline, tail and shared epilogues,
+FPO removal and bare shrink-wrap bypasses across all modes/targets/debug states.
+They distinguish the ordinary frame from an allocated `%rbp` save, reject a
+missing/mismatched source-function context, preserve disabled-owner laziness,
+and require exact machine/unwind bytes without annotating CFI/SEH directives.
 `compiler_backend_stack_origins_tests.tl`
 checks actual vector load/store/folded/fallback factories and a higher-level
 vector copy with equal colored offsets but distinct logical homes. The native

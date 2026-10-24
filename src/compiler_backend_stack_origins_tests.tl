@@ -2786,16 +2786,53 @@
               "boundary capture preserves complete assembly")
             (test.assert-i64-eq
               facts.len
-              (if group?
-                2
-                1)
+              (+
+                (if group?
+                  2
+                  1)
+                (if (= path 0)
+                  1
+                  0))
               "actual boundary operand facts")
             (test.assert-i64-eq
               (array-length
                 (origins.compiler-backend-text-origins-find capture (& text)))
               facts.len
               "return/call/global parent retains every operand token")
-            (for [word (iterator.range 0 facts.len)]
+            (when
+              (= path 0)
+              (let
+                [frame : (& facts origins.CompilerBackendStackAccessOrigin)
+                  (& (array-ref facts.slots (- facts.len 1)))]
+                (test.assert-true
+                  (match (& frame.owner)
+                    [(CallAbi) true]
+                    [_ false])
+                  "return's leave belongs to its ABI frame")
+                (test.assert-true
+                  (match (& frame.anchor)
+                    [(FunctionExit) true]
+                    [_ false])
+                  "leave has an explicit function-exit authority")
+                (test.assert-true
+                  (match (& frame.access)
+                    [(Read) true]
+                    [_ false])
+                  "leave restores the frame pointer")
+                (test.assert-i64-eq
+                  frame.home-bytes
+                  8
+                  "saved frame-pointer capacity")
+                (test.assert-i64-eq
+                  frame.access-bytes
+                  8
+                  "leave reads exactly eight bytes")))
+            (for [word
+              (iterator.range
+                0
+                (if group?
+                  2
+                  1))]
               (let
                 [fact : (& facts origins.CompilerBackendStackAccessOrigin)
                   (& (array-ref facts.slots word))]
@@ -4520,3 +4557,297 @@
                 (array-ref facts.slots 0).home
                 "FPO transports the original function resource")))))
       (backend.compiler-backend-state-release-final-arenas! state))))
+
+(define (backend-stack-origins-frame-emit
+  [state : backend.CompilerBackendState]
+  [homes : regalloc.CompilerRegAssignmentTable]
+  [path : i64]
+  [windows? : bool]) : String
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (backend.compiler-backend-state-stack-text-origins state)]
+    [source-function : i64
+      (backend.compiler-backend-function-scratch-i64
+        (backend.compiler-backend-state-function-state state)
+        backend.compiler-backend-scratch-i64-current-source-function)]
+    (if (= path 4)
+      (backend.compiler-backend-return-tail-for-return-count
+        state
+        source-function
+        homes
+        10
+        1)
+      (if (= path 3)
+        (let
+          [no-push : (__tl_dyn-array String)
+            (backend.compiler-backend-rsp-rebase-make-push-regs)]
+          [result : backend.CompilerBackendRspRebaseResult
+            (backend.compiler-backend-rsp-rebase-full-result-with-saves
+              (backend.compiler-backend-inline-return-tail homes 10 state)
+              128
+              true
+              (owned_view.compiler-owned-shared-view no-push)
+              0
+              (owned_view.compiler-owned-shared-view no-push)
+              0
+              10
+              state)]
+          (unless result.ok (io.panic "frame pointer FPO fixture refused"))
+          (origins.compiler-backend-text-origins-cat
+            capture
+            (if windows?
+              (backend.compiler-backend-emit-function-entry-fpo-windows
+                (backend.compiler-backend-target-policy-new (Windows))
+                state
+                "frame_fixture"
+                128
+                homes
+                10
+                no-push
+                0)
+              (backend.compiler-backend-emit-function-entry-fpo
+                state
+                "frame_fixture"
+                128))
+            result.text))
+        (origins.compiler-backend-text-origins-cat
+          capture
+          (backend.compiler-backend-emit-function-entry
+            (backend.compiler-backend-target-policy-new
+              (if windows?
+                (Windows)
+                (Linux)))
+            "frame_fixture"
+            128
+            homes
+            10
+            false
+            state)
+          (match path
+            [0 (backend.compiler-backend-inline-return-tail homes 10 state)]
+            [1 (backend.compiler-backend-tail-jump-tail homes 10 "next" state)]
+            [_
+              (origins.compiler-backend-text-origins-cat
+                capture
+                (backend.compiler-backend-emit-save-callee-regs homes 10 state)
+                (backend.compiler-backend-return-epilogue
+                  state
+                  source-function
+                  homes
+                  10
+                  (ir_text.blocks
+                    "entry:
+  branch %0, first, second
+first:
+  return 0
+second:
+  return 1
+")))]))))))
+
+(define (backend-stack-origins-frame-test) : unit
+  (let
+    [inactive : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    (test.assert-string-eq
+      (backend.compiler-backend-frame-pointer-operand-origin
+        inactive
+        "%rbp"
+        (Write))
+      "%rbp"
+      "inactive frame factory preserves ordinary text")
+    (test.assert-i64-eq
+      (backend.compiler-backend-state-function-state-address inactive)
+      0
+      "inactive frame factory does not allocate a function owner")
+    (backend.compiler-backend-state-stack-origins-begin! inactive)
+    (test.assert-true
+      (match (backend.compiler-backend-frame-pointer-context-check inactive)
+        [(Err _) true]
+        [_ false])
+      "capture without a source function rejects")
+    (test.assert-i64-eq
+      (backend.compiler-backend-state-function-state-address inactive)
+      0
+      "rejected context does not materialize an owner")
+    (backend.compiler-backend-state-release-final-arenas! inactive))
+  (let
+    [previous-debug : bool (ir.compiler-debug-info-enabled?)]
+    (for [mode (iterator.range 0 3)]
+      (for [platform (iterator.range 0 2)]
+        (for [debug (iterator.range 0 2)]
+          (ir.compiler-debug-info-set-enabled! (= debug 1))
+          (for [path (iterator.range 0 5)]
+            (let
+              [intern : ci.InternCompatState (ci.intern-compat-state-new)]
+              [function : i64
+                (ci.intern-compat-state-intern (&mut intern) "frame_fixture")]
+              [state : backend.CompilerBackendState
+                (backend.compiler-backend-state-new
+                  (owned_view.compiler-owned-shared-view intern))]
+              [function-state : backend.CompilerBackendFunctionState
+                (backend.compiler-backend-state-function-state state)]
+              [block : i64 (ir.compiler-ir-label "frame_fixture_body")]
+              [assignment : regalloc.CompilerRegAssignment
+                (regalloc.CompilerRegAssignment
+                  7
+                  (Register cabi.compiler-reg-id-r12))]
+              [homes : regalloc.CompilerRegAssignmentTable
+                (if (= path 2)
+                  (regalloc.compiler-reg-assignments-prepend
+                    (& assignment)
+                    (regalloc.compiler-reg-assignment-table-empty))
+                  (regalloc.compiler-reg-assignment-table-empty))]
+              (backend.compiler-backend-function-state-set-bool!
+                function-state
+                backend.compiler-backend-function-bool-current-fn-win64
+                (= platform 1))
+              (backend.compiler-backend-function-state-set-current-mode!
+                function-state
+                (match mode
+                  [0 (Scalar)]
+                  [1 (Avx2)]
+                  [_ (Avx512)]))
+              (backend.compiler-backend-function-scratch-set-i64!
+                function-state
+                backend.compiler-backend-scratch-i64-current-source-function
+                function)
+              (backend.compiler-backend-function-state-set-i64!
+                function-state
+                backend.compiler-backend-function-i64-current-block-label
+                block)
+              (when
+                (= path 4)
+                (backend.compiler-backend-function-state-set-string!
+                  function-state
+                  backend.compiler-backend-function-string-shrinkwrap-bare-label
+                  (ir.compiler-ir-label-text block)))
+              (let
+                [plain : String
+                  (backend-stack-origins-frame-emit
+                    state
+                    homes
+                    path
+                    (= platform 1))]
+                (backend.compiler-backend-state-stack-origins-begin! state)
+                (test.assert-true
+                  (match (backend.compiler-backend-frame-pointer-context-check
+                    state)
+                    [(Err _) true]
+                    [_ false])
+                  "a synthetic/empty function owner cannot inherit another frame")
+                (unless
+                  (= path 4)
+                  (backend-stack-origins-install-test-plan! state false false)
+                  (test.assert-true
+                    (match (backend.compiler-backend-frame-pointer-context-check
+                      state)
+                      [(Ok) true]
+                      [_ false])
+                    "exact source-function frame plan is accepted")
+                  (backend.compiler-backend-function-scratch-set-i64!
+                    function-state
+                    backend.compiler-backend-scratch-i64-current-source-function
+                    (+ function 1))
+                  (test.assert-true
+                    (match (backend.compiler-backend-frame-pointer-context-check
+                      state)
+                      [(Err _) true]
+                      [_ false])
+                    "another source function cannot use this plan")
+                  (backend.compiler-backend-function-scratch-set-i64!
+                    function-state
+                    backend.compiler-backend-scratch-i64-current-source-function
+                    function))
+                (let
+                  [text : String
+                    (backend-stack-origins-frame-emit
+                      state
+                      homes
+                      path
+                      (= platform 1))]
+                  [capture : origins.CompilerBackendTextOrigins
+                    (backend.compiler-backend-state-stack-text-origins state)]
+                  [facts : origins.CompilerBackendStackAccessOriginList
+                    (backend.compiler-backend-state-stack-access-origins state)]
+                  [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+                    (origins.compiler-backend-text-origins-find
+                      capture
+                      (& text))]
+                  [expected : i64
+                    (match path
+                      [2 4]
+                      [3 1]
+                      [4 0]
+                      [_ 2])]
+                  (test.assert-string-eq
+                    text
+                    plain
+                    "frame annotations preserve all machine/unwind bytes")
+                  (test.assert-i64-eq
+                    facts.len
+                    expected
+                    "actual frame and callee authorities")
+                  (test.assert-i64-eq
+                    (array-length spans)
+                    (if (= path 3)
+                      0
+                      expected)
+                    "FPO deletes its provisional leave token; CFI/SEH rows issue none")
+                  (when
+                    (= path 2)
+                    (test.assert-true
+                      (!=
+                        (array-ref facts.slots 0).home
+                        (array-ref facts.slots 1).home)
+                      "shared frame and callee register are separate logical resources"))
+                  (for [index (iterator.range 0 facts.len)]
+                    (let
+                      [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                        (& (array-ref facts.slots index))]
+                      (test.assert-i64-eq
+                        fact.function.value
+                        function
+                        "actual emitted source function")
+                      (test.assert-i64-eq
+                        fact.home-bytes
+                        8
+                        "function frame or GP home capacity")
+                      (test.assert-i64-eq
+                        fact.access-bytes
+                        8
+                        "one full pointer access")
+                      (test.assert-true
+                        (match (& fact.owner)
+                          [(CallAbi) true]
+                          [_ false])
+                        "frame owner is ABI")
+                      (test.assert-true
+                        (match (& fact.bank)
+                          [(General) true]
+                          [_ false])
+                        "frame bank is GP")
+                      (test.assert-true
+                        (match (& fact.anchor)
+                          [(FunctionEntry)
+                            (match (& fact.access)
+                              [(Write) true]
+                              [_ false])]
+                          [(FunctionExit)
+                            (match (& fact.access)
+                              [(Read) true]
+                              [_ false])]
+                          [_ false])
+                        "frame direction comes from its entry/exit authority")))
+                  (when
+                    (= path 4)
+                    (test.assert-string-eq
+                      text
+                      "    ret\n"
+                      "bare shrinkwrap bypass has no frame access")))
+                (backend.compiler-backend-state-stack-origins-end! state))
+              (backend.compiler-backend-state-release-final-arenas! state))))))
+    (ir.compiler-debug-info-set-enabled! previous-debug)))
+
+(test
+  backend-stack-origins-frame-pointer-and-epilogues
+  (backend-stack-origins-frame-test))

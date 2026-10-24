@@ -15793,8 +15793,19 @@
       (if (and
         (compiler_ir_types.compiler-debug-info-enabled?)
         target-policy.linux)
-        ":\n    .cfi_startproc\n    pushq %rbp\n    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n"
-        ":\n    pushq %rbp\n")
+        ":\n    .cfi_startproc\n"
+        ":\n")
+      "    pushq "
+      (compiler-backend-frame-pointer-operand-origin
+        backend-state
+        "%rbp"
+        (Write))
+      "\n"
+      (if (and
+        (compiler_ir_types.compiler-debug-info-enabled?)
+        target-policy.linux)
+        "    .cfi_def_cfa_offset 16\n    .cfi_offset %rbp, -16\n"
+        "")
       (compiler-backend-emit-windows-seh-push-rbp target)
       "    movq %rsp, %rbp\n"
       (if (and
@@ -18030,10 +18041,9 @@
         (= address 0)
         (io.panic "stack traffic: preservation home plan was not installed"))
       (let
-        [callee? : bool
-          (match (& request.key)
-            [(CalleeSaveRegister _) true]
-            [_ false])]
+        [function-scoped? : bool
+          (home_origins.compiler-backend-preservation-key-function-scoped?
+            (& request.key))]
         [home : home_origins.CompilerBackendLogicalHome
           (unsafe
             (let
@@ -18051,10 +18061,10 @@
                   (match (home_origins.compiler-backend-home-preservation!
                     (&mut plan)
                     function
-                    (if callee?
+                    (if function-scoped?
                       plan.entry-block
                       block)
-                    (if callee?
+                    (if function-scoped?
                       -1
                       site)
                     (clone request.key))
@@ -18066,16 +18076,18 @@
           capture
           (text_origins.CompilerBackendStackAccessOrigin
             (compiler_ir_types.compiler-ir-symbol-typed-id function)
-            (if callee?
+            (if function-scoped?
               (match (& request.access)
                 [(Write) (FunctionEntry)]
                 [(Read) (FunctionExit)]
                 [(ReadWrite)
-                  (io.panic "stack traffic: callee save cannot be RMW")])
+                  (io.panic
+                    "stack traffic: function preservation cannot be RMW")])
               (SourceBlock block))
             home.id
             home.bytes
             (match (& request.key)
+              [(FramePointer) (CallAbi)]
               [(CalleeSaveRegister _) (CallAbi)]
               [(EmergencyRegister _) (EmergencyScratch)]
               [(ParallelCopySlot _) (PlannedScratch)]
@@ -18087,6 +18099,59 @@
           text)
           [(Ok result) result]
           [(Err message) (io.panic message)])))))
+
+;; A source-function plan is required. Synthetic adapter owners have no such
+;; plan and must be supported explicitly rather than inherit a caller's frame.
+(define (compiler-backend-frame-pointer-context-check
+  [state : CompilerBackendState]) : text_origins.CompilerBackendOriginCheck
+  (when
+    (= (compiler-backend-state-stack-text-origins state).storage 0)
+    (return (Ok)))
+  (unless
+    (compiler-backend-state-function-state-active? state)
+    (return (Err "stack traffic: frame pointer has no source-function owner")))
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state state)]
+    (when
+      (=
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-stack-home-plan)
+        0)
+      (return
+        (Err
+          "stack traffic: synthetic frame capture needs an explicit function plan")))
+    (let
+      [plan : home_origins.CompilerBackendHomePlan
+        (compiler-backend-stack-home-plan function-state)]
+      (unless
+        (and
+          (>= plan.entry-block 0)
+          (=
+            plan.function
+            (compiler-backend-function-scratch-i64
+              function-state
+              compiler-backend-scratch-i64-current-source-function)))
+        (return
+          (Err "stack traffic: frame pointer source-function plan differs")))))
+  (Ok))
+
+(define (compiler-backend-frame-pointer-operand-origin
+  [state : CompilerBackendState]
+  [text : String]
+  [access : stack_traffic.CompilerStackTrafficAccess]) : String
+  (match (compiler-backend-frame-pointer-context-check state)
+    [(Err message) (io.panic message)]
+    [(Ok) unit])
+  (compiler-backend-preservation-operand-origin
+    state
+    text
+    (CompilerBackendPreservationOperandRequest
+      (FramePointer)
+      (General)
+      8
+      access)))
 
 ;; Called only by an actual save/restore authority after its save-plan test.
 ;; The ABI selects the legal register and fixed saved width, never an offset.
@@ -18988,7 +19053,9 @@
   (text_origins.compiler-backend-text-origins-cat
     (compiler-backend-state-stack-text-origins backend-state)
     (compiler-backend-emit-restore-callee-regs assignments vars backend-state)
-    "    leave\n    ret\n"))
+    "    "
+    (compiler-backend-frame-pointer-operand-origin backend-state "leave" (Read))
+    "\n    ret\n"))
 
 (define (compiler-backend-tail-jump-tail
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -19000,7 +19067,12 @@
     (compiler-backend-emit-restore-callee-regs assignments vars backend-state)
     (text_origins.compiler-backend-text-origins-cat
       (compiler-backend-state-stack-text-origins backend-state)
-      "    leave\n    jmp "
+      "    "
+      (compiler-backend-frame-pointer-operand-origin
+        backend-state
+        "leave"
+        (Read))
+      "\n    jmp "
       target
       "\n"
       "")))
@@ -47432,7 +47504,8 @@
   [vars : i64]
   [blocks : compiler_ir_types.CompilerIrBlockList]) : String
   (if (compiler-backend-use-shared-return? backend-state assignments blocks)
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       (compiler-backend-return-label backend-state source-function)
       ":\n"
       (compiler-backend-inline-return-tail assignments vars backend-state)

@@ -712,9 +712,17 @@ XMM capacity, even in wider SIMD modes. Entry writes and exit reads have
 explicit anchors; they cannot inherit the last emitted source block. Frame
 moves, pop runs and FPO push/pop synthesis transport or reissue that resource
 through their actual typed plan. Deleted move tokens never become final events,
-and unwind directives issue no access. The ordinary frame-pointer push/leave,
-other implicit ABI traffic and final machine anchor reconciliation remain
-separate authorities required before a complete census can be published.
+and unwind directives issue no access.
+The ordinary frame-pointer push and `leave` restore use a separate eight-byte
+function resource, distinct from an allocated `%rbp` callee-save home. Inline,
+tail and shared epilogues transport the restore token. FPO discards that
+provisional restore with the removed instruction; a bare shrink-wrap bypass
+issues no frame access. Entry/exit anchors describe emitting authorities, not
+final CFG nodes or regions: a shrink-wrapped save may occur inside the function.
+An inactive factory allocates no owner. Capture requires the exact installed
+source-function plan; an unplanned synthetic adapter cannot inherit a caller's
+frame. Synthetic adapter ownership, other implicit ABI traffic and final
+machine anchor reconciliation remain required before a complete census.
 Parallel-copy frame temporaries use distinct typed slot keys in the same
 preservation registry. Each is one eight-byte `PlannedScratch` home with a
 `Bytes` bank: GP and floating moves transport bits through that resource, while

@@ -87,6 +87,7 @@
   (LaneBuffer))
 
 (defenum CompilerBackendPreservationKey
+  (FramePointer)
   (CalleeSaveRegister i64)
   (EmergencyRegister i64)
   (ParallelCopySlot i64)
@@ -660,6 +661,7 @@
 (define (compiler-backend-preservation-key-bytes
   [key : (& CompilerBackendPreservationKey)]) : i64
   (match key
+    [(FramePointer) 8]
     [(CalleeSaveRegister reg)
       (if (abi.compiler-abi-xmm-register-id? reg)
         16
@@ -673,6 +675,10 @@
   [left : (& CompilerBackendPreservationKey)]
   [right : (& CompilerBackendPreservationKey)]) : bool
   (match left
+    [(FramePointer)
+      (match right
+        [(FramePointer) true]
+        [_ false])]
     [(CalleeSaveRegister a)
       (match right
         [(CalleeSaveRegister b) (= a b)]
@@ -694,6 +700,15 @@
         [(FixedStaging b _) (compiler-backend-fixed-staging-key-equal? a b)]
         [_ false])]))
 
+;; Function boundaries share one resource across all emitted returns. They do
+;; not borrow an instruction site, including when a prologue is shrink wrapped.
+(define (compiler-backend-preservation-key-function-scoped?
+  [key : (& CompilerBackendPreservationKey)]) : bool
+  (match key
+    [(FramePointer) true]
+    [(CalleeSaveRegister _) true]
+    [_ false]))
+
 ;; Preservation resources follow all scalar and group-fragment IDs. The
 ;; emitting authority supplies a typed key, never a frame displacement. A
 ;; parallel-copy slot is one eight-byte word; an emergency save reserves the
@@ -707,21 +722,23 @@
   (unless
     (= function plan.function)
     (return (Err "stack traffic: preservation function differs")))
-  (match (& key)
-    [(CalleeSaveRegister _)
+  (if (compiler-backend-preservation-key-function-scoped? (& key))
+    (begin
       (unless
         (and (= site -1) (= block plan.entry-block) (>= block 0))
-        (return (Err "stack traffic: callee save needs function authority")))]
-    [_
+        (return
+          (Err "stack traffic: function preservation needs function authority"))))
+    (begin
       (unless
         (and (>= block 0) (>= site 0) (< site (array-length plan.sites)))
         (return (Err "stack traffic: preservation site is unbound")))
       (unless
         (= block (array-ref plan.sites site).block)
-        (return (Err "stack traffic: preservation block differs")))])
+        (return (Err "stack traffic: preservation block differs")))))
   (let
     [normalized : CompilerBackendPreservationKey
       (match (& key)
+        [(FramePointer) (FramePointer)]
         [(CalleeSaveRegister reg)
           (unless
             (or

@@ -1212,6 +1212,14 @@ retirement, preserving composite-prefix status and clone observations. Cfg snaps
 `sym-i64-copy` detaches the import environment's backing chain while its symbol
 IDs remain valid. Linker strings are deep-copied into the caller's arena.
 
+Composite dependency facts cover the declarations copied from admitted fragments,
+not every declaration before the last fragment. The reusable span can also contain
+context-only module/import markers and stdlib source with embedded provenance.
+Entry-owned semantic declarations force the ordinary macro/typecheck walks.
+Source expressions within an otherwise admitted span must already need no macro
+expansion, using the same structural and call gates as the ordinary expander;
+otherwise the composite facts are cleared before either walk can skip them.
+
 Runtime lowering shares the ordinary/PIC checked-pool handoff. Both ordinary
 functions and generated package SPMD specializations escape through
 `lower-function-seq-escape-to-ir-arena` before checked frontend retirement.

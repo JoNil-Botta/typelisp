@@ -921,8 +921,13 @@ body writes stay distinct even at one colored address. The actual Phi cycle
 prefix saves the old destination while reading the selected incoming group,
 retains every token through its temporary parent, and restores edge authority
 after both success and a controlled failure. Native home/producer smokes run
-these cases at opt0/1/2. Remaining access-changing rewrites, traffic owners and
-complete report acceptance are distinct.
+these cases at opt0/1/2. A boundary table exercises actual return, ordinary
+and normalized call-result stores, and global-store parents across narrow,
+wide and floating scalars plus GP, mixed and SSE two-word groups. It checks
+complete uncaptured-output parity, exact surviving operand tokens, original
+colored identities and each actual access width; no address spelling supplies
+those facts. Remaining access-changing rewrites, traffic owners and complete
+report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

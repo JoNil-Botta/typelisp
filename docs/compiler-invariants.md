@@ -691,6 +691,11 @@ actual 4/8-byte access independently of the original scalar home capacity.
 Ordinary mnemonic selection does not construct an origin descriptor.
 Scalar GP factories record only actual home loads/stores. Register moves,
 rematerialization and address-only forwarding do not authorize a home access.
+Typed scalar home reads retain their actual 1/2/4/8-byte width before the
+memory renderer formats them. That renderer transports an issued token; it
+cannot derive a home or owner from the supplied address. Return, call-result
+and global-store parents preserve those tokens, including C-ABI boolean
+normalization and mixed-bank group returns.
 Fresh auxiliary assembly buffers bind the active capture before any prefix;
 a foreign, untracked or finalized buffer cannot accept a captured operand.
 Single and paired GEP/load factories supply each consumed Load's destination

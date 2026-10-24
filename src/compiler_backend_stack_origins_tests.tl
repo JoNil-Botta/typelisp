@@ -2439,3 +2439,318 @@ join:
 (test
   backend-stack-origins-keep-group-phi-authorities
   (backend-stack-origins-group-phi-test))
+
+(define (backend-stack-origin-boundary-emit
+  [path : i64]
+  [ctx : backend.CompilerBackendEmissionContext]
+  [ty : ast.AstType]) : backend.ResultCompilerBackend
+  (match path
+    [0
+      (backend.compiler-backend-emit-return-with-return-count
+        ctx.type-segment-bases
+        ctx.source-function
+        1
+        (Some (Var 1))
+        ctx.assignments
+        ctx.vars
+        ty
+        ctx.program-index)]
+    [1
+      (backend.compiler-backend-emit-call-result-store
+        ctx.type-segment-bases
+        ctx.assignments
+        1
+        ty
+        ctx.vars
+        ctx.program-index)]
+    [3
+      (Ok
+        (backend.compiler-backend-emit-call-result-store-reg-normalize
+          ctx.assignments
+          1
+          (if (backend.compiler-backend-float-type? ty)
+            "%xmm0"
+            "%rax")
+          ty
+          true
+          ctx.backend-state))]
+    [_
+      (backend.compiler-backend-emit-instr
+        ctx
+        (No)
+        (Store (ir.compiler-ir-symbol "origin_boundary_global") (Var 1) ty))]))
+
+(define (backend-stack-origins-boundary-test) : unit
+  (for [shape (iterator.range 0 14)]
+    (for [path
+      (iterator.range
+        0
+        (if (and (>= shape 2) (<= shape 4))
+          3
+          4))]
+      (let
+        [group? : bool (and (>= shape 2) (<= shape 4))]
+        [ty : ast.AstType
+          (match shape
+            [0 (I64)]
+            [1 (F64)]
+            [2
+              (Struct
+                (ir.compiler-ir-symbol
+                  "__tl_internal_abi_group_m0__origin_boundary"))]
+            [3
+              (Struct
+                (ir.compiler-ir-symbol
+                  "__tl_internal_abi_group_m2__origin_boundary"))]
+            [4
+              (Struct
+                (ir.compiler-ir-symbol
+                  "__tl_internal_abi_group_m3__origin_boundary"))]
+            [5 (I8)]
+            [6 (U8)]
+            [7 (I16)]
+            [8 (U16)]
+            [9 (I32)]
+            [10 (U32)]
+            [11 (Bool)]
+            [12 (F32)]
+            [_ (U64)])]
+        [state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+        [function-state : backend.CompilerBackendFunctionState
+          (backend.compiler-backend-state-function-state state)]
+        [function : i64 (ir.compiler-ir-symbol "origin_boundary")]
+        [label : i64 (ir.compiler-ir-label "entry")]
+        [callee : i64 (ir.compiler-ir-symbol "origin_boundary_callee")]
+        [global : i64 (ir.compiler-ir-symbol "origin_boundary_global")]
+        [params : ir.CompilerIrParamSeq
+          (ir.CompilerIrParamSeq
+            (__tl_make-array (ir.CompilerIrParam.Param "arg" (clone ty) 7))
+            1)]
+        [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+          (__tl_make-array ir.CompilerIrInstr 4)]
+        [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+          (__tl_make-array ir.CompilerIrBlock 1)]
+        [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+        [assignment : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment 1 (Spill -64))]
+        [assignments : regalloc.CompilerRegAssignmentTable
+          (regalloc.compiler-reg-assignments-prepend
+            (& assignment)
+            (regalloc.compiler-reg-assignment-table-empty))]
+        (for [var (iterator.range 0 10)]
+          (set! (array-ref map var) var))
+        (set! (array-ref map 7) 1)
+        (set! (array-ref map 8) 1)
+        (set!
+          (array-ref instructions 0)
+          (if group?
+            (Pack
+              9
+              (ir.compiler-ir-value-seq2
+                (if (= shape 4)
+                  (F64 0)
+                  (I64 1))
+                (if (>= shape 3)
+                  (F64 0)
+                  (I64 2)))
+              (clone ty))
+            (Mov 9 (I64 1) (I64))))
+        (set! (array-ref instructions 1) (Call 8 callee (Nil) (clone ty)))
+        (set! (array-ref instructions 2) (Store global (Var 7) (clone ty)))
+        (set! (array-ref instructions 3) (Return (Some (Var 7))))
+        (set!
+          (array-ref blocks 0)
+          (Block label (ir.CompilerIrInstrSeq instructions 4)))
+        (let
+          [original : ir.CompilerIrBlockList
+            (Array (ir.CompilerIrBlockSeq blocks 1))]
+          [index : backend.CompilerBackendProgramIndex
+            (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+              state
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (ir.CompilerIrFunctionSeq
+                (__tl_make-array
+                  (ir.CompilerIrFunction.Function
+                    function
+                    (clone params)
+                    (clone ty)
+                    10
+                    (owned_view.compiler-owned-shared-view original)
+                    Ordinary))
+                1)
+              (ir.compiler-ir-extern-seq-empty)
+              (profile_state.compiler-profile-state-new))]
+          [ctx : backend.CompilerBackendEmissionContext
+            (backend.CompilerBackendEmissionContext
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (backend.compiler-backend-target-policy-new
+                backend.CompilerBackendTarget.Linux)
+              "_tl_origin_boundary"
+              function
+              (owned_view.compiler-owned-shared-view original)
+              label
+              (owned_view.compiler-owned-shared-view assignments)
+              10
+              (regalloc.compiler-reg-var-types-empty)
+              (Empty)
+              (clone ty)
+              (Plan
+                false
+                false
+                false
+                false
+                false
+                false
+                false
+                (backend.CompilerBackendRuntimeTailPlan false false false false))
+              (ir.compiler-ir-function-seq-empty)
+              (ir.compiler-ir-extern-seq-empty)
+              index
+              (ir.compiler-source-spans-empty)
+              (backend.compiler-backend-source-span-index-build-with-backend-state
+                state
+                (ir.compiler-source-spans-empty))
+              (diagnostic.compiler-diagnostic-at-start "" "")
+              (__tl_make-array i64 0)
+              state
+              function-state)]
+          [_group-homes : unit
+            (when
+              group?
+              (backend.compiler-backend-group-vars-enable!
+                state
+                (live.compiler-live-set1 1)
+                (live.compiler-live-set-empty)))]
+          [plain : String
+            (match (backend-stack-origin-boundary-emit
+              path
+              (owned_view.compiler-owned-shared-view ctx)
+              (clone ty))
+              [(Ok text) text]
+              [(Err _) (io.panic "plain boundary emitter refused")])]
+          (backend.compiler-backend-function-scratch-set-i64!
+            function-state
+            backend.compiler-backend-scratch-i64-current-source-function
+            function)
+          (backend.compiler-backend-function-state-set-i64!
+            function-state
+            backend.compiler-backend-function-i64-current-block-label
+            label)
+          (backend.compiler-backend-function-state-set-emit-current-site!
+            function-state
+            (match path
+              [0 3]
+              [1 1]
+              [3 1]
+              [_ 2]))
+          (backend.compiler-backend-state-stack-origins-begin! state)
+          (let
+            [input : home_origins.CompilerBackendHomePlanInput
+              (home_origins.CompilerBackendHomePlanInput
+                function
+                10
+                10
+                params
+                (owned_view.compiler-owned-shared-view original)
+                (regalloc.compiler-reg-remap-blocks (& map) (& original))
+                (Remap map 10)
+                (if group?
+                  (live.compiler-live-set-insert
+                    (live.compiler-live-set-insert
+                      (live.compiler-live-set1 7)
+                      8)
+                    9)
+                  (live.compiler-live-set-empty)))]
+            [plan : home_origins.CompilerBackendHomePlan
+              (match (home_origins.compiler-backend-home-plan-build (& input))
+                [(Ok result) result]
+                [(Err message) (io.panic message)])]
+            (backend.compiler-backend-stack-home-plan-install!
+              function-state
+              plan))
+          (let
+            [text : String
+              (match (backend-stack-origin-boundary-emit path ctx ty)
+                [(Ok text) text]
+                [(Err _) (io.panic "captured boundary emitter refused")])]
+            [facts : origins.CompilerBackendStackAccessOriginList
+              (backend.compiler-backend-state-stack-access-origins state)]
+            [capture : origins.CompilerBackendTextOrigins
+              (backend.compiler-backend-state-stack-text-origins state)]
+            (test.assert-string-eq
+              text
+              plain
+              "boundary capture preserves complete assembly")
+            (test.assert-i64-eq
+              facts.len
+              (if group?
+                2
+                1)
+              "actual boundary operand facts")
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find capture (& text)))
+              facts.len
+              "return/call/global parent retains every operand token")
+            (for [word (iterator.range 0 facts.len)]
+              (let
+                [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                  (& (array-ref facts.slots word))]
+                (test.assert-i64-eq
+                  fact.home
+                  (if group?
+                    (+
+                      (if (or (= path 1) (= path 3))
+                        26
+                        24)
+                      word)
+                    (if (or (= path 1) (= path 3))
+                      8
+                      7))
+                  "boundary logical home remains pre-color")
+                (test.assert-i64-eq fact.home-bytes 8 "boundary home capacity")
+                (test.assert-true
+                  (let
+                    [vector? : bool
+                      (or
+                        (= shape 1)
+                        (= shape 12)
+                        (= shape 4)
+                        (and (= shape 3) (= word 1)))]
+                    (match (& fact.bank)
+                      [(Vector) vector?]
+                      [(General) (not vector?)]
+                      [_ false]))
+                  "boundary bank is the actual typed access bank")
+                (test.assert-i64-eq
+                  fact.access-bytes
+                  (if group?
+                    8
+                    (if (or (= shape 1) (= shape 12))
+                      (if (= shape 12)
+                        4
+                        8)
+                      (if (or (= path 1) (= path 3))
+                        8
+                        (match shape
+                          [5 1]
+                          [6 1]
+                          [7 2]
+                          [8 2]
+                          [9 4]
+                          [10 4]
+                          [11 1]
+                          [_ 8]))))
+                  "actual typed access width")
+                (test.assert-true
+                  (match (& fact.access)
+                    [(Write) (or (= path 1) (= path 3))]
+                    [(Read) (and (!= path 1) (!= path 3))]
+                    [_ false])
+                  "only the call result writes the frame")))))
+        (backend.compiler-backend-state-release-final-arenas! state)))))
+
+(test
+  backend-stack-origins-survive-return-call-global-parents
+  (backend-stack-origins-boundary-test))

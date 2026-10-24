@@ -20282,11 +20282,27 @@
             [(Spill offset)
               (compiler-backend-emit-load-memory-to-reg
                 type-segment-bases
-                (compiler-backend-frame-offset-with-backend-state
-                  backend-state
-                  offset)
+                (if (=
+                  (compiler-backend-state-stack-text-origins backend-state).storage
+                  0)
+                  (compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    offset)
+                  (compiler-backend-stack-operand-origin
+                    backend-state
+                    (compiler-backend-frame-offset-with-backend-state
+                      backend-state
+                      offset)
+                    (CompilerBackendStackOperandRequest
+                      id
+                      (compiler-backend-type-size type-segment-bases ty)
+                      (General)
+                      (Read)
+                      (Whole)
+                      (Value))))
                 ty
-                reg)]
+                reg
+                backend-state)]
             ;; Rematerialise the value into `reg` (constants/addresses are i64-class,
             ;; so the immediate/leaq materialisation is width-correct for any use).
             [(Remat value)
@@ -20298,9 +20314,23 @@
         [(No)
           (compiler-backend-emit-load-memory-to-reg
             type-segment-bases
-            (compiler-backend-slot-with-backend-state backend-state id)
+            (if (=
+              (compiler-backend-state-stack-text-origins backend-state).storage
+              0)
+              (compiler-backend-slot-with-backend-state backend-state id)
+              (compiler-backend-stack-operand-origin
+                backend-state
+                (compiler-backend-slot-with-backend-state backend-state id)
+                (CompilerBackendStackOperandRequest
+                  id
+                  (compiler-backend-type-size type-segment-bases ty)
+                  (General)
+                  (Read)
+                  (Whole)
+                  (Value))))
             ty
-            reg)]))))
+            reg
+            backend-state)]))))
 
 (define (compiler-backend-address-base-register-ok?
   [home : (& home str)]
@@ -20517,15 +20547,30 @@
   [type-segment-bases : i64]
   [addr : String]
   [ty : (& compiler_ast_types.AstType)]
-  [reg : String]) : String
+  [reg : String]
+  [backend-state : CompilerBackendState]) : String
   (let
     [size : i64 (compiler-backend-type-size type-segment-bases ty)]
     (cond
-      [(= size 8) (str_cat.str-cat "    movq " addr ", " reg "\n")]
+      [(= size 8)
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          "    movq "
+          addr
+          ", "
+          reg
+          "\n")]
       [(= size 4)
         (if (compiler-backend-type-signed? ty)
-          (str_cat.str-cat "    movslq " addr ", " reg "\n")
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movslq "
+            addr
+            ", "
+            reg
+            "\n")
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    movl "
             addr
             ", "
@@ -20533,12 +20578,36 @@
             "\n"))]
       [(= size 2)
         (if (compiler-backend-type-signed? ty)
-          (str_cat.str-cat "    movswq " addr ", " reg "\n")
-          (str_cat.str-cat "    movzwq " addr ", " reg "\n"))]
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movswq "
+            addr
+            ", "
+            reg
+            "\n")
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movzwq "
+            addr
+            ", "
+            reg
+            "\n"))]
       [(= size 1)
         (if (compiler-backend-type-signed? ty)
-          (str_cat.str-cat "    movsbq " addr ", " reg "\n")
-          (str_cat.str-cat "    movzbq " addr ", " reg "\n"))]
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movsbq "
+            addr
+            ", "
+            reg
+            "\n")
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movzbq "
+            addr
+            ", "
+            reg
+            "\n"))]
       [else ""])))
 
 (define (compiler-backend-emit-load-register-to-reg
@@ -23241,7 +23310,8 @@
                 "(%rip)"
                 "")
               ty
-              reg)))]
+              reg
+              program-index.backend-state)))]
       [(GlobalAddr name)
         (Ok
           (str_cat.str-cat
@@ -33758,7 +33828,8 @@
         type-segment-bases
         addr
         ty
-        dst-home)
+        dst-home
+        backend-state)
       (let
         [load-reg : String
           (if (string.eq planned-value "")
@@ -33783,7 +33854,8 @@
             type-segment-bases
             addr
             ty
-            (compiler-backend-global-shared-view load-reg)))
+            (compiler-backend-global-shared-view load-reg)
+            backend-state))
         (compiler-backend-emit-store-var-into
           (&mut seq)
           assignments
@@ -46572,7 +46644,9 @@
   (match value
     [(No)
       (Ok
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins
+            program-index.backend-state)
           (if (=
             (compiler_ir_types.compiler-ir-symbol-id source-function)
             cbi.compiler-builtin-id-fix-main)
@@ -46603,7 +46677,9 @@
                 assignments
                 ret-ty))]
           (Ok
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins
+                program-index.backend-state)
               load
               (compiler-backend-return-tail-for-return-count
                 program-index.backend-state
@@ -46637,7 +46713,9 @@
                   program-index
                   program-index.backend-state))]
             (Ok
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins
+                  program-index.backend-state)
                 load
                 (compiler-backend-return-tail-for-return-count
                   program-index.backend-state
@@ -46656,7 +46734,9 @@
                   program-index
                   program-index.backend-state))]
             (Ok
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins
+                  program-index.backend-state)
                 load
                 (compiler-backend-return-tail-for-return-count
                   program-index.backend-state
@@ -47500,7 +47580,8 @@
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-call-result-store-dead? backend-state assignments dst)
     ""
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       (compiler-backend-call-result-normalize normalize? reg ty)
       (compiler-backend-emit-store-typed-var
         assignments
@@ -47618,7 +47699,9 @@
           (if (compiler-backend-float-type? ty)
             "%xmm0"
             "%rax")]
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins
+            program-index.backend-state)
           (compiler-backend-call-result-normalize normalize? reg ty)
           (compiler-backend-emit-store-typed-var
             assignments
@@ -51400,7 +51483,9 @@
                   ctx.backend-state)
                   [(Ok load)
                     (Ok
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          ctx.backend-state)
                         load
                         (compiler-backend-emit-group-word-move
                           reg0
@@ -55262,7 +55347,8 @@
         ctx.type-segment-bases
         addr
         load-ty
-        dst-reg)]
+        dst-reg
+        ctx.backend-state)]
     (if (string.eq staged-base "")
       (Ok load-asm)
       (let

@@ -927,7 +927,6 @@
 ;; helpers through this compatibility import.
 ;; lint-allow: unused-import
 (import stdlib.string)
-(import stdlib.text_buf)
 
 ;: Linux inherited environment array (NUL-terminated `char**`). On the freestanding
 ;: Linux entry the kernel lays out `argc`, `argv[0..]`, a NULL, then `envp[0..]`
@@ -3452,44 +3451,157 @@
 ;; ---------------------------------------------------------------------------
 ;; Windows runtime (kernel32 CreateProcessA with temp-file redirection).
 ;; ---------------------------------------------------------------------------
-;: Return true when `text` contains an ASCII space (argv-quoting trigger).
-(define (string-has-space? [text : (& text str)]) : bool
+;: Whether a Windows argument needs quoting under the Microsoft C argv rules.
+(define (windows-arg-needs-quotes? [text : (& text str)]) : bool
   (let
     [n : i64 (string-length text)]
     [i : i64 0]
-    [found : bool false]
+    [found : bool (= n 0)]
     (while (and (not found) (< i n))
-      (if (= (cast (string-ref text i) : i64) 32)
-        (set! found true)
-        (set! i (+ i 1))))
+      (let
+        [c : char (string-ref text i)]
+        (set! found (or (= c ' ') (= c '\t') (= c '"'))))
+      (set! i (+ i 1)))
     found))
 
-;: Quote a command-line argument with double quotes when it contains a space.
-(define (quote-arg [text : String]) : String
-  (if (stdlib.process_runtime.string-has-space? text)
-    (str_cat.str-cat "\"" text "\"")
-    text))
+;: The byte cap includes the final NUL and is conservative for CreateProcessA.
+;: Count before allocation; the sentinel 32767 never participates in growth.
+(define windows-command-line-max-bytes : i64
+  32766)
 
-;: Join the executable and argv into a single space-separated command line,
-;: quoting space-containing entries (the CreateProcessA `lpCommandLine`).
+;: Count one encoded argument, saturating one byte above the command-line cap.
+;: argv[0] has pathname quoting rules: backslashes are literal and quotes are
+;: rejected by the command validator rather than escaped into another path.
+(define (windows-arg-encoded-size [text : (& text str)] [program : bool]) : i64
+  (let
+    [quoted : bool (windows-arg-needs-quotes? text)]
+    [size : i64
+      (if quoted
+        2
+        0)]
+    [slashes : i64 0]
+    [i : i64 0]
+    (while (and
+      (< i (string-length text))
+      (<= size windows-command-line-max-bytes))
+      (let
+        [c : char (string-ref text i)]
+        (set! size (+ size 1))
+        (when
+          (and quoted (not program) (= c '"'))
+          (set! size (+ size slashes 1)))
+        (set!
+          slashes
+          (if (= c '\\')
+            (+ slashes 1)
+            0)))
+      (set! i (+ i 1)))
+    (when (and quoted (not program)) (set! size (+ size slashes)))
+    (if (> size windows-command-line-max-bytes)
+      32767
+      size)))
+
+;: Append a run whose count is bounded by the already validated encoded size.
+(define (windows-append-slashes
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (byte_buf_core.byte-buf-builder-push out (cast 92 : u8))
+      (set! i (+ i 1)))))
+
+;: Encode once into the final writable command buffer. Before a quote a run of
+;: n backslashes becomes 2n+1; before the closing quote it becomes 2n. Other
+;: runs are literal. Program-name quoting deliberately does not escape slashes.
+(define (windows-append-arg
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [text : (& text str)]
+  [program : bool]) : unit
+  (let
+    [quoted : bool (windows-arg-needs-quotes? text)]
+    (if (or (not quoted) program)
+      (begin
+        (when quoted (byte_buf_core.byte-buf-builder-push out (cast 34 : u8)))
+        (let
+          [i : i64 0]
+          (while (< i (string-length text))
+            (byte_buf_core.byte-buf-builder-push
+              out
+              (cast (string-ref text i) : u8))
+            (set! i (+ i 1))))
+        (when quoted (byte_buf_core.byte-buf-builder-push out (cast 34 : u8))))
+      (let
+        [i : i64 0]
+        [slashes : i64 0]
+        (byte_buf_core.byte-buf-builder-push out (cast 34 : u8))
+        (while (< i (string-length text))
+          (let
+            [c : char (string-ref text i)]
+            (if (= c '\\')
+              (set! slashes (+ slashes 1))
+              (begin
+                (windows-append-slashes
+                  out
+                  (if (= c '"')
+                    (+ (* slashes 2) 1)
+                    slashes))
+                (byte_buf_core.byte-buf-builder-push out (cast c : u8))
+                (set! slashes 0))))
+          (set! i (+ i 1)))
+        (windows-append-slashes out (* slashes 2))
+        (byte_buf_core.byte-buf-builder-push out (cast 34 : u8))))))
+
+;: Return the encoded size or the saturating over-limit sentinel. Public
+;: validation already bounds every field/count and rejects embedded NULs.
+(define (windows-cmdline-size [command : (& command ProcessRuntimeCommand)]) : i64
+  (let
+    [size : i64 (windows-arg-encoded-size (& command.executable) true)]
+    [i : i64 0]
+    (while (and
+      (< i (array-length command.argv.slots))
+      (<= size windows-command-line-max-bytes))
+      (set!
+        size
+        (+
+          size
+          1
+          (windows-arg-encoded-size (& (array-ref command.argv.slots i)) false)))
+      (set! i (+ i 1)))
+    (if (> size windows-command-line-max-bytes)
+      32767
+      size)))
+
+;: Reject unrepresentable argv[0] and oversized commands before any OS action.
+(define (windows-cmdline-error [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeMaybeString
+  (let
+    [i : i64 0]
+    (while (< i (string-length (& command.executable)))
+      (when
+        (= (string-ref (& command.executable) i) '"')
+        (return (some-string "process: Windows executable path contains quote")))
+      (set! i (+ i 1)))
+    (if (> (windows-cmdline-size command) windows-command-line-max-bytes)
+      (some-string "process: Windows command line exceeds 32767-byte limit")
+      (no-string))))
+
+;: Join validated executable/argv without a shell or intermediate argument
+;: strings. The final NUL-terminated io.c-string copy is writable for Win32.
 (define (windows-cmdline [command : ProcessRuntimeCommand]) : String
   (let
-    [line : text_buf.TextBuf
-      (text_buf.append
-        (text_buf.empty)
-        (stdlib.process_runtime.quote-arg
-          (stdlib.process_runtime.command-executable command)))]
-    [argv : ProcessRuntimeStringList
-      (stdlib.process_runtime.command-argv command)]
+    [line : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity
+        (windows-cmdline-size (& command)))]
     [index : i64 0]
-    (while (< index (array-length argv.slots))
-      (let
-        [text : String
-          (process-runtime-string-array-shared-view (& argv.slots) index)]
-        (text_buf.append! line " ")
-        (text_buf.append! line (stdlib.process_runtime.quote-arg text))
-        (set! index (+ index 1))))
-    (text_buf.render line)))
+    (windows-append-arg (&mut line) (& command.executable) true)
+    (while (< index (array-length command.argv.slots))
+      (byte_buf_core.byte-buf-builder-push (&mut line) (cast 32 : u8))
+      (windows-append-arg
+        (&mut line)
+        (& (array-ref command.argv.slots index))
+        false)
+      (set! index (+ index 1)))
+    (byte_buf_core.byte-buf-builder-to-string (& line))))
 
 ;: Append the NUL-terminated C string at `addr` (including its NUL) onto a block.
 ;: Private Windows environment block builder; `CreateProcessA` consumes only the
@@ -4026,7 +4138,12 @@
       (if (stdlib.process_runtime.command-env-policy-known? command)
         (cfg
           windows
-          (stdlib.process_runtime.windows-output command)
+          (let
+            [error : ProcessRuntimeMaybeString
+              (windows-cmdline-error (& command))]
+            (if error.present
+              (output-error (ProcessRuntimeInvalidCommand error.value))
+              (stdlib.process_runtime.windows-output command)))
           (stdlib.process_runtime.linux-output command))
         (stdlib.process_runtime.output-error
           (stdlib.process_runtime.env-policy-error))))))
@@ -4041,7 +4158,12 @@
       (if (stdlib.process_runtime.command-env-policy-known? command)
         (cfg
           windows
-          (stdlib.process_runtime.windows-inherit command)
+          (let
+            [error : ProcessRuntimeMaybeString
+              (windows-cmdline-error (& command))]
+            (if error.present
+              (output-error (ProcessRuntimeInvalidCommand error.value))
+              (stdlib.process_runtime.windows-inherit command)))
           (stdlib.process_runtime.linux-inherit command))
         (stdlib.process_runtime.output-error
           (stdlib.process_runtime.env-policy-error))))))

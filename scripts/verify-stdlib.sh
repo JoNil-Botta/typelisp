@@ -337,6 +337,7 @@ stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|prin
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-
 stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/process_argv.tl|42|-|-|-
 stdlib/tests/process_runtime_stderr.tl|42|-|-
 stdlib/tests/process_exact_env.tl|42|-|-|-
 stdlib/tests/profile_concurrent_api.tl|42|-|-|-

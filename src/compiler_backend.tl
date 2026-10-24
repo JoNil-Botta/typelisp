@@ -1420,6 +1420,81 @@
       (unsafe
         (cast (ptr->int (__tl_array-data cell)) : i64)))))
 
+(define (compiler-backend-stack-home-plan
+  [function-state : CompilerBackendFunctionState]) : home_origins.CompilerBackendHomePlan
+  (let
+    [address : i64
+      (compiler-backend-function-scratch-i64
+        function-state
+        compiler-backend-scratch-i64-stack-home-plan)]
+    (when
+      (= address 0)
+      (io.panic "stack traffic: original-home plan was not installed"))
+    (unsafe
+      (ptr-read
+        (int->ptr
+          (cast address : u64)
+          : (Ptr home_origins.CompilerBackendHomePlan))))))
+
+(defenum CompilerBackendParameterOriginsContext
+  (None)
+  (Saved i64 bool))
+
+(define (compiler-backend-parameter-origins-begin!
+  [state : CompilerBackendState]) : CompilerBackendParameterOriginsContext
+  (when
+    (= (compiler-backend-state-stack-text-origins state).storage 0)
+    (return (None)))
+  (let
+    [function-state : CompilerBackendFunctionState
+      (compiler-backend-state-function-state state)]
+    [plan : home_origins.CompilerBackendHomePlan
+      (compiler-backend-stack-home-plan function-state)]
+    [old-block : i64
+      (compiler-backend-function-state-i64
+        function-state
+        compiler-backend-function-i64-current-block-label)]
+    [old-entry : bool
+      (compiler-backend-function-scratch-bool?
+        function-state
+        compiler-backend-scratch-bool-parameter-origins)]
+    (unless
+      (and
+        (>= plan.entry-block 0)
+        (=
+          plan.function
+          (compiler-backend-function-scratch-i64
+            function-state
+            compiler-backend-scratch-i64-current-source-function)))
+      (io.panic "stack traffic: original parameter context is unbound"))
+    (compiler-backend-function-state-set-i64!
+      function-state
+      compiler-backend-function-i64-current-block-label
+      plan.entry-block)
+    (compiler-backend-function-scratch-set-bool!
+      function-state
+      compiler-backend-scratch-bool-parameter-origins
+      true)
+    (Saved old-block old-entry)))
+
+(define (compiler-backend-parameter-origins-end!
+  [state : CompilerBackendState]
+  [saved : CompilerBackendParameterOriginsContext]) : unit
+  (match saved
+    [(None) unit]
+    [(Saved block entry)
+      (let
+        [function-state : CompilerBackendFunctionState
+          (compiler-backend-state-function-state state)]
+        (compiler-backend-function-state-set-i64!
+          function-state
+          compiler-backend-function-i64-current-block-label
+          block)
+        (compiler-backend-function-scratch-set-bool!
+          function-state
+          compiler-backend-scratch-bool-parameter-origins
+          entry))]))
+
 (define (compiler-backend-stack-operand-origin
   [state : CompilerBackendState]
   [operand : CompilerBackendStackOperand]
@@ -1441,20 +1516,13 @@
         (compiler-backend-function-state-i64
           function-state
           compiler-backend-function-i64-current-block-label)]
-      [address : i64
-        (compiler-backend-function-scratch-i64
+      [entry? : bool
+        (compiler-backend-function-scratch-bool?
           function-state
-          compiler-backend-scratch-i64-stack-home-plan)]
-      (when
-        (= address 0)
-        (io.panic "stack traffic: original-home plan was not installed"))
+          compiler-backend-scratch-bool-parameter-origins)]
       (let
         [plan : home_origins.CompilerBackendHomePlan
-          (unsafe
-            (ptr-read
-              (int->ptr
-                (cast address : u64)
-                : (Ptr home_origins.CompilerBackendHomePlan))))]
+          (compiler-backend-stack-home-plan function-state)]
         [home : home_origins.CompilerBackendLogicalHome
           (match (home_origins.compiler-backend-home-plan-resolve
             (& plan)
@@ -1465,8 +1533,16 @@
               compiler-backend-function-i64-emit-current-site)
             operand.var
             (match (& access)
-              [(Read) (home_origins.CompilerBackendHomeQuery.AnyUse)]
-              [(Write) (home_origins.CompilerBackendHomeQuery.Definition)]
+              [(Read)
+                (when
+                  entry?
+                  (io.panic
+                    "stack traffic: parameter initialization cannot authorize a home read"))
+                (home_origins.CompilerBackendHomeQuery.AnyUse)]
+              [(Write)
+                (if entry?
+                  (home_origins.CompilerBackendHomeQuery.Parameter)
+                  (home_origins.CompilerBackendHomeQuery.Definition))]
               [(ReadWrite)
                 (io.panic "stack traffic: RMW needs two explicit logical homes")]))
             [(Ok result) result]
@@ -2635,8 +2711,10 @@
 ;; tier borrows an occupied register (see compiler-backend-scavenge-reg).
 (define compiler-backend-scratch-bool-pair-emission : i64
   6)
-(define compiler-backend-scratch-bool-count : i64
+(define compiler-backend-scratch-bool-parameter-origins : i64
   7)
+(define compiler-backend-scratch-bool-count : i64
+  8)
 (define compiler-backend-scratch-i64-array-emergency-regs : i64
   0)
 (define compiler-backend-scratch-i64-array-const-hoist-site-points : i64
@@ -72358,30 +72436,38 @@
               (compiler-backend-frame-slot-referenced-reset! function-state)]
             [spills
               (try
-                (if identity-tail-forwarder?
-                  (ResultCompilerBackend.Ok "")
-                  (if (compiler-backend-spmd-private-function?
-                    program-index.backend-state
-                    name)
-                    (compiler-backend-emit-spmd-private-param-spills
-                      type-segment-bases
-                      target
-                      assignments
-                      (compiler-backend-global-shared-view emit-params)
-                      slot-vars
-                      program-index.backend-state)
-                    (compiler-backend-emit-param-spills
-                      type-segment-bases
-                      target
-                      assignments
-                      (compiler-backend-global-shared-view emit-params)
-                      0
-                      0
-                      0
-                      0
-                      program-index
-                      slot-vars
-                      program-index.backend-state))))]
+                (let
+                  [entry-context : CompilerBackendParameterOriginsContext
+                    (compiler-backend-parameter-origins-begin! backend-state)]
+                  [result : ResultCompilerBackend
+                    (if identity-tail-forwarder?
+                      (ResultCompilerBackend.Ok "")
+                      (if (compiler-backend-spmd-private-function?
+                        program-index.backend-state
+                        name)
+                        (compiler-backend-emit-spmd-private-param-spills
+                          type-segment-bases
+                          target
+                          assignments
+                          (compiler-backend-global-shared-view emit-params)
+                          slot-vars
+                          program-index.backend-state)
+                        (compiler-backend-emit-param-spills
+                          type-segment-bases
+                          target
+                          assignments
+                          (compiler-backend-global-shared-view emit-params)
+                          0
+                          0
+                          0
+                          0
+                          program-index
+                          slot-vars
+                          program-index.backend-state)))]
+                  (compiler-backend-parameter-origins-end!
+                    backend-state
+                    entry-context)
+                  result))]
             [_addr-forward : unit
               (compiler-backend-addr-of-forwarding-enable!
                 program-index.backend-state

@@ -475,6 +475,138 @@
   backend-stack-origins-cover-scalar-broadcasts
   (backend-stack-origins-splat-test))
 
+(define (backend-stack-origins-parameter-test) : unit
+  (let
+    [plain : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    (test.assert-true
+      (match (backend.compiler-backend-parameter-origins-begin! plain)
+        [(None) true]
+        [_ false])
+      "inactive entry capture is empty")
+    (test.assert-true
+      (not (backend.compiler-backend-state-function-state-active? plain))
+      "inactive entry context does not allocate function state")
+    (backend.compiler-backend-state-release-final-arenas! plain))
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [params : (__tl_dyn-array ir.CompilerIrParam)
+      (__tl_make-array ir.CompilerIrParam 3)]
+    [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+      (__tl_make-array ir.CompilerIrBlock 3)]
+    (for [var (iterator.range 0 10)]
+      (set! (array-ref map var) var))
+    (set! (array-ref map 7) 1)
+    (set! (array-ref map 8) 1)
+    (set! (array-ref params 0) (Param "arg" (I64) 7))
+    (set!
+      (array-ref blocks 0)
+      (Block 10 (ir.compiler-ir-instr-seq1 (Mov 8 (Var 7) (I64)))))
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      44)
+    (backend.compiler-backend-function-state-set-i64!
+      function-state
+      backend.compiler-backend-function-i64-current-block-label
+      30)
+    (backend.compiler-backend-function-state-set-emit-current-site!
+      function-state
+      0)
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (let
+      [original : ir.CompilerIrBlockList
+        (Array (ir.CompilerIrBlockSeq blocks 1))]
+      [placed : ir.CompilerIrBlockList
+        (regalloc.compiler-reg-remap-blocks (& map) (& original))]
+      [input : home_origins.CompilerBackendHomePlanInput
+        (home_origins.CompilerBackendHomePlanInput
+          44
+          10
+          10
+          (ir.CompilerIrParamSeq params 1)
+          original
+          placed
+          (Remap map 10)
+          (live.compiler-live-set-empty))]
+      (match (home_origins.compiler-backend-home-plan-build (& input))
+        [(Ok result)
+          (backend.compiler-backend-stack-home-plan-install!
+            function-state
+            result)]
+        [(Err message) (io.panic message)]))
+    (let
+      [entry : backend.CompilerBackendParameterOriginsContext
+        (backend.compiler-backend-parameter-origins-begin! state)]
+      [nested : backend.CompilerBackendParameterOriginsContext
+        (backend.compiler-backend-parameter-origins-begin! state)]
+      [entry-text : String
+        (backend.compiler-backend-stack-operand-origin
+          state
+          (backend.CompilerBackendStackOperand 1 "-64(%rbp)")
+          8
+          (General)
+          (Write))]
+      (backend.compiler-backend-parameter-origins-end! state nested)
+      (test.assert-true
+        (backend.compiler-backend-function-scratch-bool?
+          function-state
+          backend.compiler-backend-scratch-bool-parameter-origins)
+        "nested entry restoration keeps outer authority")
+      (backend.compiler-backend-parameter-origins-end! state entry)
+      (test.assert-i64-eq
+        (backend.compiler-backend-function-state-i64
+          function-state
+          backend.compiler-backend-function-i64-current-block-label)
+        30
+        "entry context restores prior block")
+      (test.assert-true
+        (not
+          (backend.compiler-backend-function-scratch-bool?
+            function-state
+            backend.compiler-backend-scratch-bool-parameter-origins))
+        "entry context restores body authority")
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (let
+        [body-text : String
+          (backend.compiler-backend-stack-operand-origin
+            state
+            (backend.CompilerBackendStackOperand 1 "-64(%rbp)")
+            8
+            (General)
+            (Write))]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        (test.assert-string-eq
+          entry-text
+          body-text
+          "same emitted parameter/body address")
+        (test.assert-i64-eq facts.len 2 "two explicitly scoped writes")
+        (test.assert-i64-eq
+          (array-ref facts.slots 0).home
+          7
+          "incoming parameter identity")
+        (test.assert-i64-eq
+          (array-ref facts.slots 1).home
+          8
+          "body definition identity")
+        (test.assert-i64-eq
+          (array-ref facts.slots 0).block
+          10
+          "entry block attribution")))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-distinguish-entry-parameter-authority
+  (backend-stack-origins-parameter-test))
+
 (define (backend-stack-origins-producer-test) : unit
   (let
     [intern : ci.InternCompatState (ci.intern-compat-state-new)]

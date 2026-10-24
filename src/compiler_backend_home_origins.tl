@@ -12,6 +12,7 @@
 
 (defenum CompilerBackendHomePosition
   (Definition)
+  (Parameter)
   ;; AddrOf's storage authority is distinct from a value read.
   (Address)
   ;; The canonical IR operand visitor's constructor order, including literals.
@@ -46,6 +47,7 @@
 
 (defenum CompilerBackendHomeQuery
   (Definition)
+  (Parameter)
   (Address)
   (AnyUse)
   (Use i64))
@@ -61,6 +63,8 @@
 
 (defstruct CompilerBackendHomePlan
   (function i64)
+  (entry-block i64)
+  (parameters CompilerBackendHomeBindingList)
   (sites (__tl_dyn-array CompilerBackendHomeSite))
   (bytes (__tl_dyn-array i64)))
 
@@ -206,6 +210,10 @@
                 (match (& binding.position)
                   [(Definition) true]
                   [_ false])]
+              [(Parameter)
+                (match (& binding.position)
+                  [(Parameter) true]
+                  [_ false])]
               [(Address)
                 (match (& binding.position)
                   [(Address) true]
@@ -242,6 +250,10 @@
   [left : (& CompilerBackendHomePosition)]
   [right : (& CompilerBackendHomePosition)]) : bool
   (match left
+    [(Parameter)
+      (match right
+        [(Parameter) true]
+        [_ false])]
     [(Address)
       (match right
         [(Address) true]
@@ -303,6 +315,13 @@
       (ir.compiler-ir-block-list-view (& input.original))]
     [placed : (& input (Slice ir.CompilerIrBlock))
       (ir.compiler-ir-block-list-view (& input.placed))]
+    [parameters : CompilerBackendHomeBindingBuilder
+      (CompilerBackendHomeBindingBuilder
+        (compiler-backend-home-binding-list-new)
+        0
+        "")]
+    [parameter-seen : (__tl_dyn-array bool)
+      (__tl_make-array bool input.logical-count)]
     [indices : block_index.Map
       (block_index.with-capacity (+ (* 2 (array-length original)) 1))]
     [seen : (__tl_dyn-array bool)
@@ -314,6 +333,36 @@
     [cursor : i64 0]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
     [bytes : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
+    (unless
+      (and
+        (>= input.params.len 0)
+        (<= input.params.len (array-length input.params.slots)))
+      (return (Err "stack traffic: invalid original parameter extent")))
+    (for [index (iterator.range 0 input.params.len)]
+      (match (ir.compiler-ir-param-seq-ref input.params index)
+        [(Param _ _ logical)
+          (compiler-backend-home-binding-add!
+            (&mut parameters)
+            (& input.coloring)
+            input.logical-count
+            logical
+            (Parameter))
+          (unless
+            (string.eq (& parameters.error) "")
+            (return (Err parameters.error)))
+          (when
+            (or
+              (array-ref parameter-seen logical)
+              (>=
+                (array-ref parameters.bindings.slots index).emitted
+                input.emitted-count))
+            (return
+              (Err
+                "stack traffic: original parameter has no unique emitted home")))
+          (set! (array-ref parameter-seen logical) true)]))
+    (when
+      (and (> input.params.len 0) (= (array-length placed) 0))
+      (return (Err "stack traffic: original parameters have no entry block")))
     (for [index (iterator.range 0 (array-length original))]
       (match (& (array-ref original index))
         [(Block label _)
@@ -382,7 +431,16 @@
           (> capacity 1152921504606846975)
           (return (Err "stack traffic: original home capacity overflows")))
         (set! (array-ref bytes var) (* 8 capacity))))
-    (Ok (CompilerBackendHomePlan input.function sites bytes))))
+    (Ok
+      (CompilerBackendHomePlan
+        input.function
+        (if (> (array-length placed) 0)
+          (match (& (array-ref placed 0))
+            [(Block label _) label])
+          -1)
+        parameters.bindings
+        sites
+        bytes))))
 
 (define (compiler-backend-home-plan-resolve
   [plan : (& plan CompilerBackendHomePlan)]
@@ -392,22 +450,41 @@
   [emitted : i64]
   [query : CompilerBackendHomeQuery]) : CompilerBackendPlannedHomeResult
   (unless
-    (and
-      (= function plan.function)
-      (>= site 0)
-      (< site (array-length plan.sites)))
+    (= function plan.function)
     (return (Err "stack traffic: original-home emission site is unbound")))
   (let
-    [entry : (& plan CompilerBackendHomeSite) (& (array-ref plan.sites site))]
+    [logical : i64
+      (match (& query)
+        [(Parameter)
+          (unless
+            (and (>= block 0) (= block plan.entry-block))
+            (return
+              (Err "stack traffic: original parameter entry block differs")))
+          (match (compiler-backend-home-resolve
+            (& plan.parameters)
+            emitted
+            query)
+            [(Ok result) result]
+            [(Err message) (return (Err message))])]
+        [_
+          (unless
+            (and (>= site 0) (< site (array-length plan.sites)))
+            (return
+              (Err "stack traffic: original-home emission site is unbound")))
+          (let
+            [entry : (& plan CompilerBackendHomeSite)
+              (& (array-ref plan.sites site))]
+            (unless
+              (= block entry.block)
+              (return
+                (Err "stack traffic: original-home emission block differs")))
+            (match (compiler-backend-home-resolve
+              (& entry.bindings)
+              emitted
+              query)
+              [(Ok result) result]
+              [(Err message) (return (Err message))]))])]
     (unless
-      (= block entry.block)
-      (return (Err "stack traffic: original-home emission block differs")))
-    (let
-      [logical : i64
-        (match (compiler-backend-home-resolve (& entry.bindings) emitted query)
-          [(Ok result) result]
-          [(Err message) (return (Err message))])]
-      (unless
-        (and (>= logical 0) (< logical (array-length plan.bytes)))
-        (return (Err "stack traffic: original home has no allocation capacity")))
-      (Ok (CompilerBackendLogicalHome logical (array-ref plan.bytes logical))))))
+      (and (>= logical 0) (< logical (array-length plan.bytes)))
+      (return (Err "stack traffic: original home has no allocation capacity")))
+    (Ok (CompilerBackendLogicalHome logical (array-ref plan.bytes logical)))))

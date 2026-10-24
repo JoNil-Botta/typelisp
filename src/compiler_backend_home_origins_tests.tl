@@ -186,11 +186,123 @@
             [_ false])
           "raw storage home bounds are checked")))))
 
+(define (home-origin-parameter-test) : unit
+  (let
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [params : (__tl_dyn-array ir.CompilerIrParam)
+      (__tl_make-array ir.CompilerIrParam 3)]
+    [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+      (__tl_make-array ir.CompilerIrBlock 3)]
+    (for [index (iterator.range 0 10)]
+      (set! (array-ref map index) index))
+    (set! (array-ref map 7) 1)
+    (set! (array-ref map 8) 1)
+    (set! (array-ref params 0) (Param "arg" (I64) 7))
+    (set!
+      (array-ref blocks 0)
+      (Block 10 (ir.compiler-ir-instr-seq1 (Mov 8 (Var 7) (I64)))))
+    (let
+      [original : ir.CompilerIrBlockList
+        (Array (ir.CompilerIrBlockSeq blocks 1))]
+      [placed : ir.CompilerIrBlockList
+        (regalloc.compiler-reg-remap-blocks (& map) (& original))]
+      [input : homes.CompilerBackendHomePlanInput
+        (homes.CompilerBackendHomePlanInput
+          44
+          10
+          10
+          (ir.CompilerIrParamSeq params 1)
+          original
+          placed
+          (Remap map 10)
+          (live.compiler-live-set-empty))]
+      [plan : homes.CompilerBackendHomePlan
+        (match (homes.compiler-backend-home-plan-build (& input))
+          [(Ok result) result]
+          [(Err message) (io.panic message)])]
+      (for [kind (iterator.range 0 3)]
+        (match (homes.compiler-backend-home-plan-resolve
+          (& plan)
+          44
+          10
+          (if (= kind 0)
+            -1
+            0)
+          1
+          (if (= kind 0)
+            (Parameter)
+            (if (= kind 1)
+              (Definition)
+              (AnyUse))))
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq
+              home.id
+              (if (= kind 1)
+                8
+                7)
+              "entry versus body identity")
+            (test.assert-i64-eq home.bytes 8 "scalar parameter capacity")]))
+      (test.assert-true
+        (match (homes.compiler-backend-home-plan-resolve
+          (& plan)
+          44
+          20
+          0
+          1
+          (Parameter))
+          [(Err _) true]
+          [_ false])
+        "parameter authority requires its entry block")
+      (test.assert-true
+        (match (homes.compiler-backend-home-plan-resolve
+          (& plan)
+          44
+          10
+          -1
+          1
+          (Definition))
+          [(Err _) true]
+          [_ false])
+        "body definition cannot substitute for parameter authority")
+      (home-query-error (& plan.parameters) 1 (AnyUse))
+      (for [invalid (iterator.range 0 4)]
+        (let
+          [bad : homes.CompilerBackendHomePlanInput (clone input)]
+          [bad-params : (__tl_dyn-array ir.CompilerIrParam)
+            (__tl_make-array ir.CompilerIrParam 2)]
+          (set!
+            (array-ref bad-params 0)
+            (Param
+              "arg"
+              (I64)
+              (if (= invalid 2)
+                10
+                7)))
+          (set! (array-ref bad-params 1) (Param "duplicate" (I64) 7))
+          (set!
+            bad.params
+            (ir.CompilerIrParamSeq
+              bad-params
+              (if (= invalid 0)
+                -1
+                (if (= invalid 1)
+                  3
+                  (if (= invalid 3)
+                    2
+                    1)))))
+          (test.assert-true
+            (match (homes.compiler-backend-home-plan-build (& bad))
+              [(Err _) true]
+              [_ false])
+            "invalid parameter extent, ID or duplicate rejects"))))))
+
 (define (home-origin-tests) : unit
   (home-origin-coloring-test)
   (home-origin-ambiguous-use-test)
   (home-origin-plan-test)
-  (home-origin-address-test))
+  (home-origin-address-test)
+  (home-origin-parameter-test))
 
 (test home-origins-survive-noninjective-coloring (home-origin-tests))
 

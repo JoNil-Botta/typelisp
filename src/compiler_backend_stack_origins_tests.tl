@@ -5394,3 +5394,269 @@ second:
 (test
   backend-stack-origins-tail-stack-slots
   (backend-stack-origins-tail-slot-test))
+
+(define (backend-stack-origins-c-memory-plan!
+  [state : backend.CompilerBackendState]) : unit
+  (let
+    [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr 37)]
+    [fn : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [label : i64 (ir.compiler-ir-label "aggregate_copy_entry")]
+    (for [i (iterator.range 0 36)]
+      (set!
+        (array-ref instructions i)
+        (Call
+          (+ i 1)
+          (ir.compiler-ir-symbol "aggregate_copy_target")
+          (ir.compiler-ir-call-args-from-seq
+            (& (ir.compiler-ir-value-seq1 (Var 0))))
+          (I64))))
+    (set! (array-ref instructions 36) (Return (Some (I64 0))))
+    (let
+      [blocks : ir.CompilerIrBlockList
+        (Array
+          (ir.CompilerIrBlockSeq
+            (__tl_make-array
+              (ir.CompilerIrBlock.Block
+                label
+                (ir.CompilerIrInstrSeq instructions 37)))
+            1))]
+      [params : ir.CompilerIrParamSeq
+        (ir.CompilerIrParamSeq
+          (__tl_make-array (ir.CompilerIrParam.Param "pointer" (I64) 0))
+          1)]
+      [input : home_origins.CompilerBackendHomePlanInput
+        (home_origins.CompilerBackendHomePlanInput
+          44
+          37
+          37
+          params
+          (owned_view.compiler-owned-shared-view blocks)
+          blocks
+          (None)
+          (live.compiler-live-set-empty))]
+      [plan : home_origins.CompilerBackendHomePlan
+        (match (home_origins.compiler-backend-home-plan-build (& input))
+          [(Ok result) result]
+          [(Err message) (io.panic message)])]
+      (backend.compiler-backend-function-scratch-set-i64!
+        fn
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        fn
+        backend.compiler-backend-function-i64-current-block-label
+        label)
+      (backend.compiler-backend-stack-home-plan-install! fn plan))))
+
+(define (backend-stack-origins-c-memory-test) : unit
+  (let
+    [valid : backend.CompilerBackendCMemoryStackCopy
+      (backend.CompilerBackendCMemoryStackCopy 2 24 16 "%r10" "%xmm2")]
+    (for [invalid (iterator.range 0 10)]
+      (let
+        [bad : backend.CompilerBackendCMemoryStackCopy (clone valid)]
+        (cond
+          [(= invalid 0) (set! bad.stack-word -1)]
+          [(= invalid 1) (set! bad.bytes -1)]
+          [(= invalid 2) (set! bad.bytes 9223372036854775807)]
+          [(= invalid 3) (set! bad.dst-offset -1)]
+          [(= invalid 4) (set! bad.dst-offset 9223372036854775807)]
+          [(= invalid 9) (set! bad.stack-word 1152921504606846975)]
+          [else unit])
+        (test.assert-true
+          (match (backend.compiler-backend-c-memory-stack-copy-check
+            (& bad)
+            (cond [(= invalid 5) -1] [(= invalid 6) 25] [else 0])
+            (cond [(= invalid 7) -1] [(= invalid 8) 23] [else 24]))
+            [(Err _) true]
+            [_ false])
+          "malformed copy range rejects before tokens are published"))))
+  (for [platform (iterator.range 0 2)]
+    (for [mode (iterator.range 0 3)]
+      (let
+        [state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+        [fn : backend.CompilerBackendFunctionState
+          (backend.compiler-backend-state-function-state state)]
+        [plain-state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+        [plain-fn : backend.CompilerBackendFunctionState
+          (backend.compiler-backend-state-function-state plain-state)]
+        [assignment : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r9))]
+        [homes : regalloc.CompilerRegAssignmentTable
+          (regalloc.compiler-reg-assignments-prepend
+            (& assignment)
+            (regalloc.compiler-reg-assignment-table-empty))]
+        [target : backend.CompilerBackendTarget
+          (if (= platform 0)
+            (Linux)
+            (Windows))]
+        [last-home : i64 -1]
+        (backend.compiler-backend-function-state-set-current-mode!
+          fn
+          (match mode
+            [0 (Scalar)]
+            [1 (Avx2)]
+            [_ (Avx512)]))
+        (backend.compiler-backend-function-state-set-current-mode!
+          plain-fn
+          (match mode
+            [0 (Scalar)]
+            [1 (Avx2)]
+            [_ (Avx512)]))
+        (for [size (iterator.range 0 36)]
+          (let
+            [plain : String
+              (match (backend.compiler-backend-emit-c-memory-stack-arg
+                (ast.ast-node-pool-reader-type-segment-bases)
+                target
+                (Platform)
+                (owned_view.compiler-owned-shared-view homes)
+                (Var 0)
+                2
+                size
+                plain-state)
+                [(Ok result) result]
+                [(Err _) (io.panic "ordinary aggregate refused")])]
+            (when
+              (= size 0)
+              (backend.compiler-backend-state-stack-origins-begin! state)
+              (backend-stack-origins-c-memory-plan! state))
+            (backend.compiler-backend-function-state-set-emit-current-site!
+              fn
+              size)
+            (let
+              [text : String
+                (match (backend.compiler-backend-emit-c-memory-stack-arg
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  target
+                  (Platform)
+                  (owned_view.compiler-owned-shared-view homes)
+                  (Var 0)
+                  2
+                  size
+                  state)
+                  [(Ok result) result]
+                  [(Err _) (io.panic "captured aggregate refused")])]
+              [capture : origins.CompilerBackendTextOrigins
+                (backend.compiler-backend-state-stack-text-origins state)]
+              [facts : origins.CompilerBackendStackAccessOriginList
+                (backend.compiler-backend-state-stack-access-origins state)]
+              [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+                (origins.compiler-backend-text-origins-find capture (& text))]
+              [offset : i64 0]
+              [home : i64 -1]
+              [wide : i64 (/ size 16)]
+              [tail : i64 (% size 16)]
+              [count : i64
+                (+
+                  wide
+                  (+
+                    (if (!= (bit-and tail 8) 0)
+                      1
+                      0)
+                    (+
+                      (if (!= (bit-and tail 4) 0)
+                        1
+                        0)
+                      (+
+                        (if (!= (bit-and tail 2) 0)
+                          1
+                          0)
+                        (if (!= (bit-and tail 1) 0)
+                          1
+                          0)))))]
+              (test.assert-string-eq
+                text
+                plain
+                "all aggregate copy machine bytes preserved")
+              (test.assert-i64-eq
+                (array-length spans)
+                count
+                "binary tail decomposition counts actual stores")
+              (for [i (iterator.range 0 (array-length spans))]
+                (let
+                  [span : (& spans origins.CompilerBackendTextOrigin)
+                    (& (array-ref spans i))]
+                  [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                    (& (array-ref facts.slots span.token))]
+                  [width : i64
+                    (if (< i wide)
+                      16
+                      0)]
+                  (when
+                    (= width 0)
+                    (for [bit (iterator.range 0 4)]
+                      (let
+                        [value : i64 (shr 8 bit)]
+                        (when
+                          (and (= width 0) (!= (bit-and tail value) 0))
+                          (set! width value)
+                          (set! tail (- tail value))))))
+                  (test.assert-i64-eq
+                    fact.function.value
+                    44
+                    "actual source function")
+                  (when (< home 0) (set! home fact.home))
+                  (test.assert-i64-eq
+                    fact.home
+                    home
+                    "one logical by-value aggregate")
+                  (test.assert-i64-eq
+                    fact.home-bytes
+                    (* 8 (/ (+ size 7) 8))
+                    "ABI word-rounded capacity")
+                  (test.assert-i64-eq
+                    fact.access-bytes
+                    width
+                    "exact store width")
+                  (test.assert-true
+                    (match (& fact.bank)
+                      [(Vector) (>= width 4)]
+                      [(General) (< width 4)]
+                      [_ false])
+                    "actual XMM or low GP sub-register bank")
+                  (test.assert-true
+                    (match (& fact.owner)
+                      [(CallAbi) true]
+                      [_ false])
+                    "aggregate is ABI traffic")
+                  (test.assert-true
+                    (match (& fact.access)
+                      [(Write) true]
+                      [_ false])
+                    "copy destination is written")
+                  (let
+                    [address : String
+                      (string.int->string
+                        (+
+                          (if (= platform 0)
+                            16
+                            48)
+                          offset))]
+                    [expected : String (string.concat (& address) "(%rsp)")]
+                    (test.assert-string-eq
+                      span.expected
+                      expected
+                      "layout only renders the typed operand"))
+                  (+= offset width)))
+              (test.assert-i64-eq
+                offset
+                size
+                "no overread-width store in one/two-byte tails")
+              (when
+                (> size 0)
+                (test.assert-true
+                  (!= home last-home)
+                  "distinct source call sites stay distinct")
+                (set! last-home home)))))
+        (backend.compiler-backend-state-stack-origins-end! state)
+        (backend.compiler-backend-state-release-final-arenas! state)
+        (backend.compiler-backend-state-release-final-arenas! plain-state)))))
+
+(test
+  backend-stack-origins-c-memory-aggregate-copies
+  (backend-stack-origins-c-memory-test))

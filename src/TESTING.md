@@ -901,8 +901,16 @@ and reject negative slots. Actual adapter templates verify outgoing scalar,
 floating and group words. Tail fixtures cover immediate, floating and local
 sources plus register-sourced XMM parallel stores on both targets, requiring
 complete ordinary/captured byte equality and surviving read/write operands.
-Bulk C copies, implicit call/return traffic and final report acceptance remain
-separate.
+Bulk-copy fixtures compare complete ordinary/captured strings for object sizes
+0–35 in both layouts and all three backend modes. An independent binary tail
+inventory checks every 16/8/4/2/1-byte store, exact operand ranges, shared
+aggregate capacity, actual bank/direction and distinct source-call identities.
+Zero bytes issue no destination event; padding is never reported as a write.
+Malformed offsets/extents, arithmetic overflow, unaligned capacities and
+capacity drift reject. Native opt0/1/2 invokes the same library fixtures;
+this does not execute the emitted foreign-call code or replace final report
+and whole-compiler acceptance. Implicit call/return and user/local traffic
+remain separate.
 `compiler_backend_stack_origins_tests.tl`
 checks actual vector load/store/folded/fallback factories and a higher-level
 vector copy with equal colored offsets but distinct logical homes. The native

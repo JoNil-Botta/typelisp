@@ -1,6 +1,7 @@
 (import compiler_backend_stack_origins_tests as fixtures)
 
 (define (main) : i64
+  (fixtures.backend-stack-origins-c-memory-test)
   (fixtures.backend-stack-origins-tail-slot-test)
   (fixtures.backend-stack-origins-adapter-test)
   (fixtures.backend-stack-origins-frame-test)

@@ -91,6 +91,7 @@
   (FramePointer)
   (IncomingStackSlot i64)
   (OutgoingStackSlot i64)
+  (OutgoingAggregate i64 i64)
   (TailStackSlot i64)
   (CalleeSaveRegister i64)
   (EmergencyRegister i64)
@@ -746,6 +747,7 @@
     [(FramePointer) 8]
     [(IncomingStackSlot _) 8]
     [(OutgoingStackSlot _) 8]
+    [(OutgoingAggregate _ bytes) bytes]
     [(TailStackSlot _) 8]
     [(CalleeSaveRegister reg)
       (if (abi.compiler-abi-xmm-register-id? reg)
@@ -771,6 +773,10 @@
     [(OutgoingStackSlot a)
       (match right
         [(OutgoingStackSlot b) (= a b)]
+        [_ false])]
+    [(OutgoingAggregate a _)
+      (match right
+        [(OutgoingAggregate b _) (= a b)]
         [_ false])]
     [(TailStackSlot a)
       (match right
@@ -843,6 +849,16 @@
     [normalized : CompilerBackendPreservationKey
       (match (& key)
         [(FramePointer) (FramePointer)]
+        [(OutgoingAggregate slot bytes)
+          (unless
+            (and
+              (>= slot 0)
+              (<= slot 1152921504606846975)
+              (> bytes 0)
+              (= (% bytes 8) 0)
+              (<= bytes (- 9223372036854775807 (* slot 8))))
+            (return (Err "stack traffic: invalid outgoing aggregate extent")))
+          (OutgoingAggregate slot bytes)]
         [(OutgoingStackSlot slot)
           (when
             (< slot 0)

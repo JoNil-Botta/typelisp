@@ -743,8 +743,17 @@ addresses. Register-sourced parallel stores retain their actual GP/XMM bank
 and 4/8-byte access; their ABI word capacity stays eight bytes. Group words
 remain separate resources. Ordinary and direct-tail marshalling, recursive
 parents and the top-level tail-call result preserve those write tokens.
-Bulk C aggregate copy destinations, implicit call/return traffic, other owners
-and final machine anchor reconciliation remain required for a complete census.
+Bulk by-value aggregate destinations carry the marshaller's ABI start-word and
+word-rounded reserved extent in one typed copy request. A distinct aggregate
+resource cannot alias an ordinary scalar stack word at the same ordinal.
+Its store events retain the actual 16/8/4/2/1-byte width and XMM/GP bank; the
+padding is capacity, never an invented write. The recursive request preserves
+the complete object extent, and capture rejects inconsistent ranges, alignment,
+capacity drift and arithmetic overflow before publishing malformed facts.
+The layout displacement only renders the operand. Pointer loads and recursive
+copy composition transport existing source tokens and new destination tokens.
+Implicit call/return traffic, user/local owners and final machine anchor
+reconciliation remain required for a complete census.
 Parallel-copy frame temporaries use distinct typed slot keys in the same
 preservation registry. Each is one eight-byte `PlannedScratch` home with a
 `Bytes` bank: GP and floating moves transport bits through that resource, while

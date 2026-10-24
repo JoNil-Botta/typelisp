@@ -18110,6 +18110,7 @@
               [(FramePointer) (CallAbi)]
               [(IncomingStackSlot _) (CallAbi)]
               [(OutgoingStackSlot _) (CallAbi)]
+              [(OutgoingAggregate _ _) (CallAbi)]
               [(TailStackSlot _) (CallAbi)]
               [(CalleeSaveRegister _) (CallAbi)]
               [(EmergencyRegister _) (EmergencyScratch)]
@@ -35179,124 +35180,209 @@
     "movq"
     "movd"))
 
+(defstruct CompilerBackendCMemoryStackCopy
+  (stack-word i64)
+  (bytes i64)
+  (dst-offset i64)
+  (src-reg String)
+  (xmm-scratch String))
+
+;; The ABI ordinal and object extent are authority; the destination offset
+;; only renders the selected layout. Recursion must retain the complete extent.
+(define (compiler-backend-c-memory-stack-copy-check
+  [request : (& CompilerBackendCMemoryStackCopy)]
+  [offset : i64]
+  [remaining : i64]) : text_origins.CompilerBackendOriginCheck
+  (unless
+    (and
+      (>= request.stack-word 0)
+      (<= request.stack-word 1152921504606846975)
+      (>= request.bytes 0)
+      (<= request.bytes 9223372036854775800)
+      (<=
+        (* 8 (compiler-backend-stack-slots-for-size request.bytes))
+        (- 9223372036854775807 (* request.stack-word 8)))
+      (>= request.dst-offset 0)
+      (<= request.dst-offset (- 9223372036854775807 request.bytes))
+      (>= offset 0)
+      (<= offset request.bytes)
+      (= remaining (- request.bytes offset)))
+    (return (Err "stack traffic: invalid ABI aggregate copy range")))
+  (Ok))
+
+(define (compiler-backend-c-memory-stack-copy-operand
+  [request : (& CompilerBackendCMemoryStackCopy)]
+  [offset : i64]
+  [chunk : i64]
+  [state : CompilerBackendState]) : String
+  (compiler-backend-preservation-operand-origin
+    state
+    (compiler-backend-c-memory-stack-dst-address request.dst-offset offset)
+    (CompilerBackendPreservationOperandRequest
+      (OutgoingAggregate
+        request.stack-word
+        (* 8 (compiler-backend-stack-slots-for-size request.bytes)))
+      (if (>= chunk 4)
+        (Vector)
+        (General))
+      chunk
+      (Write))))
+
 (define (compiler-backend-emit-c-memory-stack-copy-chunks
   [type-segment-bases : i64]
-  [dst-offset : i64]
-  [src-reg : String]
-  [xmm-scratch : String]
+  [request : CompilerBackendCMemoryStackCopy]
   [copy-offset : i64]
-  [remaining : i64]) : String
-  (if (<= remaining 0)
-    ""
-    (if (>= remaining 16)
-      (str_cat.str-cat
-        (str_cat.str-cat
-          "    movups "
-          (compiler-backend-copy-address
-            copy-offset
-            (compiler-backend-global-shared-view src-reg))
-          ", "
-          xmm-scratch
-          "\n")
-        (str_cat.str-cat
-          (str_cat.str-cat
+  [remaining : i64]
+  [backend-state : CompilerBackendState]) : String
+  (when
+    (!= (compiler-backend-state-stack-text-origins backend-state).storage 0)
+    (match (compiler-backend-c-memory-stack-copy-check
+      (& request)
+      copy-offset
+      remaining)
+      [(Ok) unit]
+      [(Err message) (io.panic message)]))
+  (let
+    [src-reg : String (compiler-backend-global-shared-view request.src-reg)]
+    [xmm-scratch : String
+      (compiler-backend-global-shared-view request.xmm-scratch)]
+    (if (<= remaining 0)
+      ""
+      (if (>= remaining 16)
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    movups "
-            xmm-scratch
+            (compiler-backend-copy-address
+              copy-offset
+              (compiler-backend-global-shared-view src-reg))
             ", "
-            (compiler-backend-c-memory-stack-dst-address dst-offset copy-offset)
-            "\n")
-          (compiler-backend-emit-c-memory-stack-copy-chunks
-            type-segment-bases
-            dst-offset
-            src-reg
             xmm-scratch
-            (+ copy-offset 16)
-            (- remaining 16))))
-      (let
-        [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
-        (if (< chunk 4)
-          ;; XMM `movd` is a four-byte transfer even when the logical tail is
-          ;; one or two bytes.  Use the low GP sub-register of the source-stage
-          ;; register (`src-reg`) for an exact tail transfer.  When a further
-          ;; chunk follows, preserve and restore that stage pointer in
-          ;; `xmm-scratch` so no additional GP scratch is needed.
-          (let
-            [chunk-ty : compiler_ast_types.AstType
-              (compiler-backend-copy-chunk-type chunk)]
-            [suffix : String
-              (compiler-backend-int-instruction-suffix
-                type-segment-bases
-                (compiler-backend-global-shared-view chunk-ty))]
-            [part : String
-              (compiler-backend-sized-reg
-                type-segment-bases
-                (compiler-backend-global-shared-view src-reg)
-                chunk-ty)]
-            [preserve? : bool (> remaining chunk)]
-            (str_cat.str-cat
-              (if preserve?
-                (str_cat.str-cat "    movq " src-reg ", " xmm-scratch "\n")
-                "")
-              "    mov"
-              suffix
-              " "
-              (compiler-backend-copy-address
+            "\n")
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              "    movups "
+              xmm-scratch
+              ", "
+              (compiler-backend-c-memory-stack-copy-operand
+                (& request)
                 copy-offset
-                (compiler-backend-global-shared-view src-reg))
-              ", "
-              part
-              "\n"
-              "    mov"
-              suffix
-              " "
-              part
-              ", "
-              (compiler-backend-c-memory-stack-dst-address
-                dst-offset
-                copy-offset)
-              "\n"
-              (if preserve?
-                (str_cat.str-cat "    movq " xmm-scratch ", " src-reg "\n")
-                "")
-              (compiler-backend-emit-c-memory-stack-copy-chunks
-                type-segment-bases
-                dst-offset
-                src-reg
-                xmm-scratch
-                (+ copy-offset chunk)
-                (- remaining chunk))))
-          (let
-            [mnemonic : String
-              (compiler-backend-c-memory-stack-xmm-mnemonic chunk)]
-            (str_cat.str-cat
-              (str_cat.str-cat
-                "    "
-                mnemonic
+                16
+                backend-state)
+              "\n")
+            (compiler-backend-emit-c-memory-stack-copy-chunks
+              type-segment-bases
+              (compiler-backend-global-shared-view request)
+              (+ copy-offset 16)
+              (- remaining 16)
+              backend-state)))
+        (let
+          [chunk : i64 (compiler-backend-copy-chunk-size remaining)]
+          (if (< chunk 4)
+            ;; XMM `movd` is a four-byte transfer even when the logical tail is
+            ;; one or two bytes.  Use the low GP sub-register of the source-stage
+            ;; register (`src-reg`) for an exact tail transfer.  When a further
+            ;; chunk follows, preserve and restore that stage pointer in
+            ;; `xmm-scratch` so no additional GP scratch is needed.
+            (let
+              [chunk-ty : compiler_ast_types.AstType
+                (compiler-backend-copy-chunk-type chunk)]
+              [suffix : String
+                (compiler-backend-int-instruction-suffix
+                  type-segment-bases
+                  (compiler-backend-global-shared-view chunk-ty))]
+              [part : String
+                (compiler-backend-sized-reg
+                  type-segment-bases
+                  (compiler-backend-global-shared-view src-reg)
+                  chunk-ty)]
+              [preserve? : bool (> remaining chunk)]
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
+                (if preserve?
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
+                    "    movq "
+                    src-reg
+                    ", "
+                    xmm-scratch
+                    "\n")
+                  "")
+                "    mov"
+                suffix
                 " "
                 (compiler-backend-copy-address
                   copy-offset
                   (compiler-backend-global-shared-view src-reg))
                 ", "
-                xmm-scratch
-                "\n")
-              (str_cat.str-cat
-                (str_cat.str-cat
+                part
+                "\n"
+                "    mov"
+                suffix
+                " "
+                part
+                ", "
+                (compiler-backend-c-memory-stack-copy-operand
+                  (& request)
+                  copy-offset
+                  chunk
+                  backend-state)
+                "\n"
+                (if preserve?
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
+                    "    movq "
+                    xmm-scratch
+                    ", "
+                    src-reg
+                    "\n")
+                  "")
+                (compiler-backend-emit-c-memory-stack-copy-chunks
+                  type-segment-bases
+                  (compiler-backend-global-shared-view request)
+                  (+ copy-offset chunk)
+                  (- remaining chunk)
+                  backend-state)))
+            (let
+              [mnemonic : String
+                (compiler-backend-c-memory-stack-xmm-mnemonic chunk)]
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins backend-state)
                   "    "
                   mnemonic
                   " "
-                  xmm-scratch
+                  (compiler-backend-copy-address
+                    copy-offset
+                    (compiler-backend-global-shared-view src-reg))
                   ", "
-                  (compiler-backend-c-memory-stack-dst-address
-                    dst-offset
-                    copy-offset)
-                  "\n")
-                (compiler-backend-emit-c-memory-stack-copy-chunks
-                  type-segment-bases
-                  dst-offset
-                  src-reg
                   xmm-scratch
-                  (+ copy-offset chunk)
-                  (- remaining chunk))))))))))
+                  "\n")
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins backend-state)
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
+                    "    "
+                    mnemonic
+                    " "
+                    xmm-scratch
+                    ", "
+                    (compiler-backend-c-memory-stack-copy-operand
+                      (& request)
+                      copy-offset
+                      chunk
+                      backend-state)
+                    "\n")
+                  (compiler-backend-emit-c-memory-stack-copy-chunks
+                    type-segment-bases
+                    (compiler-backend-global-shared-view request)
+                    (+ copy-offset chunk)
+                    (- remaining chunk)
+                    backend-state))))))))))
 
 (define (compiler-backend-emit-copy-bytes-avoid
   [type-segment-bases : i64]
@@ -36237,16 +36323,24 @@
           value
           (compiler-backend-global-shared-view src-reg)
           backend-state))]
-    (Ok
-      (str_cat.str-cat
-        src-asm
-        (compiler-backend-emit-c-memory-stack-copy-chunks
-          type-segment-bases
+    (let
+      [request : CompilerBackendCMemoryStackCopy
+        (CompilerBackendCMemoryStackCopy
+          stack-idx
+          size
           dst-offset
           src-reg
-          copy-xmm
-          0
-          size)))))
+          copy-xmm)]
+      (Ok
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          src-asm
+          (compiler-backend-emit-c-memory-stack-copy-chunks
+            type-segment-bases
+            request
+            0
+            size
+            backend-state))))))
 
 (define (compiler-backend-emit-load-from-gep
   [type-segment-bases : i64]

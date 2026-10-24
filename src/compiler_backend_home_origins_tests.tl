@@ -1383,6 +1383,43 @@ join:
                   (+ 6 (+ (* site 4) (+ (* area 2) slot)))
                   "call sites, areas and ABI ordinals never alias")
                 (test.assert-i64-eq home.bytes 8 "one outgoing ABI word")])))))
+    (for [site (iterator.range 0 2)]
+      (for [repeat (iterator.range 0 2)]
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          plan.entry-block
+          site
+          (OutgoingAggregate 0 24))
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq
+              home.id
+              (+ 14 site)
+              "one aggregate extent per actual call site")
+            (test.assert-i64-eq home.bytes 24 "reserved ABI extent")])))
+    (for [invalid (iterator.range 0 7)]
+      (test.assert-true
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          plan.entry-block
+          0
+          (OutgoingAggregate
+            (cond
+              [(= invalid 0) -1]
+              [(= invalid 1) 1152921504606846975]
+              [else 0])
+            (cond
+              [(= invalid 2) 0]
+              [(= invalid 3) 7]
+              [(= invalid 4) -8]
+              [(= invalid 5) 32]
+              [(= invalid 6) 9223372036854775800]
+              [else 24])))
+          [(Err _) true]
+          [_ false])
+        "aggregate extent rejects invalid ordinal/alignment/overflow and capacity drift"))
     (for [kind (iterator.range 0 2)]
       (test.assert-true
         (match (homes.compiler-backend-home-preservation!

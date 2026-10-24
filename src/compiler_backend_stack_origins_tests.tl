@@ -17,6 +17,7 @@
 (import stdlib.string)
 (import stdlib.io)
 (import stdlib.iterator)
+(import stdlib.text_buf)
 
 (define (backend-stack-origin-read
   [state : backend.CompilerBackendState]
@@ -5039,7 +5040,9 @@ second:
                 [facts : origins.CompilerBackendStackAccessOriginList
                   (backend.compiler-backend-state-stack-access-origins state)]
                 [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
-                  (origins.compiler-backend-text-origins-find capture (& text))]
+                  (origins.compiler-backend-text-origins-access-spans
+                    capture
+                    (& text))]
                 [frame-home : i64 -1]
                 [synthetic : i64 -1]
                 [writes : i64 0]
@@ -5051,6 +5054,36 @@ second:
                   text
                   plain
                   "adapter capture changes no assembly bytes")
+                (let
+                  [buffer : text_buf.TextBuf
+                    (text_buf.append
+                      (text_buf.append (text_buf.empty) ".text\n")
+                      (owned_view.compiler-owned-shared-view text))]
+                  [rendered : String
+                    (backend.compiler-backend-render-assembly-buffer
+                      state
+                      buffer)]
+                  (test.assert-string-eq
+                    rendered
+                    (string.concat3-borrowed ".text\n" (& text) "")
+                    "final buffer render preserves actual adapter bytes")
+                  (match (backend.compiler-backend-final-stack-functions
+                    state
+                    rendered)
+                    [(Err message) (io.panic message)]
+                    [(Ok functions)
+                      (test.assert-i64-eq
+                        (array-length functions)
+                        1
+                        "one actual generated adapter extent")
+                      (test.assert-i64-eq
+                        (array-length (array-ref functions 0).accesses)
+                        (array-length spans)
+                        "every retained adapter access belongs to its final emitted instruction")
+                      (test.assert-i64-eq
+                        (array-ref functions 0).function.value
+                        (array-ref facts.slots 0).function.value
+                        "the final reader uses generated identity rather than label spelling")]))
                 (test.assert-i64-eq
                   (backend.compiler-backend-state-function-state-address state)
                   outer-address

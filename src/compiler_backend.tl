@@ -59,6 +59,7 @@
   (capture text_origins.CompilerBackendTextOrigins))
 
 (defstruct CompilerBackendFinalStackPartition
+  (function compiler_ir_types.CompilerIrSymbolId)
   (blocks i64)
   (operations (__tl_dyn-array text_origins.CompilerBackendFinalOperation))
   (accesses (__tl_dyn-array text_origins.CompilerBackendFinalAccess)))
@@ -167,7 +168,11 @@
             [(Err message) (Err message)]
             [(Ok accesses)
               (Ok
-                (CompilerBackendFinalStackPartition blocks operations accesses))]))))))
+                (CompilerBackendFinalStackPartition
+                  request.function
+                  blocks
+                  operations
+                  accesses))]))))))
 
 (define compiler-backend-rsp-rebase-ok-metric : i64
   149)
@@ -76096,6 +76101,13 @@
   [scratch : i64]) : ResultCompilerBackend
   (let
     [backend-state : CompilerBackendState program-index.backend-state]
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins backend-state)]
+    [function : i64
+      (if (= capture.storage 0)
+        -1
+        (match (& func)
+          [(Function name _ _ _ _ _) name]))]
     [result : ResultCompilerBackend
       (if (compiler-backend-emit-function-direct?
         (compiler-backend-global-shared-view func))
@@ -76154,7 +76166,18 @@
     ;; the remaining global sentinels in the caller arena; function-owned
     ;; cleanup above deliberately stays inactive after retirement.
     (compiler-backend-clear-function-emit-state! backend-state)
-    result))
+    (match result
+      [(Err message) (Err message)]
+      [(Ok text)
+        (if (= capture.storage 0)
+          (Ok text)
+          (compiler-backend-origin-text-result
+            (text_origins.compiler-backend-text-origins-function
+              capture
+              (text_origins.CompilerBackendFunctionOriginRequest
+                (compiler_ir_types.compiler-ir-symbol-typed-id function)
+                (compiler-backend-function-symbol-index program-index function)
+                text))))])))
 
 (define (compiler-backend-emit-functions-buffer-raw-into
   [type-segment-bases : i64]
@@ -76830,11 +76853,30 @@
       (match emitted
         [(Ok head) (Ok (compiler-backend-emergency-wrap head backend-state))]
         [(Err message) (Err message)])]
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins backend-state)]
+    [registered : ResultCompilerBackend
+      (match wrapped
+        [(Err message) (Err message)]
+        [(Ok text)
+          (if (= capture.storage 0)
+            (Ok text)
+            (compiler-backend-origin-text-result
+              (text_origins.compiler-backend-text-origins-function
+                capture
+                (text_origins.CompilerBackendFunctionOriginRequest
+                  (compiler_ir_types.compiler-ir-symbol-typed-id
+                    (compiler-backend-function-scratch-i64
+                      function-state
+                      compiler-backend-scratch-i64-current-source-function))
+                  (compiler-backend-closure-entry-label
+                    (compiler-backend-symbol-text-index program-index name))
+                  text))))])]
     (compiler-backend-clear-function-owned-state! backend-state)
     (compiler-backend-state-set-function-state-address!
       backend-state
       previous-address)
-    wrapped))
+    registered))
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
   [type-segment-bases : i64]
@@ -96495,3 +96537,62 @@ tl_shared_object_init:
     String)
   (compiler-backend-string-array-shared-view
     (& compiler-backend-rsp-rebase-no-push)))
+
+;; Final diagnostic consumers need the chunk identities, not an untracked
+;; equal-byte render. The standard TextBuf walker supplies original order.
+(define (compiler-backend-render-assembly-buffer
+  [state : CompilerBackendState]
+  [buffer : text_buf.TextBuf]) : String
+  (let
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins state)]
+    (if (= capture.storage 0)
+      (text_buf.render buffer)
+      (let
+        [chunks : text_buf.TextBufChunkList buffer.chunks]
+        [count : i64 (text_buf.chunk-count (& chunks) 0)]
+        [parts : (__tl_dyn-array String) (__tl_make-array String count)]
+        (text_buf.chunks-fill-array-rev chunks (&mut parts) (- count 1))
+        (text_origins.compiler-backend-text-origins-concat
+          capture
+          (slice-view parts 0 count))))))
+
+(defenum CompilerBackendFinalStackFunctionsResult
+  (Ok (__tl_dyn-array CompilerBackendFinalStackPartition))
+  (Err String))
+
+;; The emitter's surviving boundaries, rather than assembly symbol guesses,
+;; select every function. Runtime text without a source-function authority is
+;; outside this source-function census; an owned access outside a range rejects.
+(define (compiler-backend-final-stack-functions
+  [state : CompilerBackendState]
+  [text : String]) : CompilerBackendFinalStackFunctionsResult
+  (let
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins state)]
+    [ranges : (__tl_dyn-array text_origins.CompilerBackendFunctionOriginRange)
+      (match (text_origins.compiler-backend-text-origins-function-ranges
+        capture
+        (& text))
+        [(Ok result) result]
+        [(Err message) (return (Err message))])]
+    [result : (__tl_dyn-array CompilerBackendFinalStackPartition)
+      (__tl_make-array CompilerBackendFinalStackPartition (array-length ranges))]
+    (for [i (iterator.range 0 (array-length ranges))]
+      (let
+        [range : (& ranges text_origins.CompilerBackendFunctionOriginRange)
+          (& (array-ref ranges i))]
+        [body : String
+          (match (text_origins.compiler-backend-text-origins-slice
+            capture
+            (& text)
+            range.start
+            (- range.end range.start))
+            [(Ok result) result]
+            [(Err message) (return (Err message))])]
+        (match (compiler-backend-final-stack-partition
+          state
+          (CompilerBackendFinalStackRequest body (clone range.function) capture))
+          [(Ok partition) (set! (array-ref result i) partition)]
+          [(Err message) (return (Err message))])))
+    (Ok result)))

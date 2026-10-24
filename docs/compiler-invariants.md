@@ -663,6 +663,17 @@ before writes and retains distinct folded homes at one operand. Source anchors
 remain separate from final block IDs. Typed facts are revalidated without
 minting new tokens. This does not establish missing-access completeness or
 source-to-final-region qualification; the final machine producer must do both.
+The actual source-function and closure-adapter emitters also register their
+typed function identity at the chosen entry label and final existing newline.
+These invisible boundaries use the same protected text transport as accesses;
+they never create an assembly directive or memory fact. Registration retains
+every emitted identity, including functions without stack operands. The final
+buffer reader preserves chunk annotations and requires each registered function
+exactly once, with paired, ordered boundaries and only its own accesses inside.
+Lost annotations, duplicate or nested extents and foreign access identities
+reject rather than infer a function from label spelling or equal bytes. Access
+consumers explicitly exclude boundary tokens. This extent proof does not
+resolve final CFG edges, identify missing memory accesses or qualify regions.
 The backend now constructs instruction extents from its shared final-line
 parser for one registered function. Label aliases create no empty blocks, and
 labels or post-transfer instructions start new groups. Returning calls remain

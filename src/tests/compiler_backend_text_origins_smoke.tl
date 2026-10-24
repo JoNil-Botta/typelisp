@@ -11,4 +11,5 @@
   (fixtures.text-origin-replace-test)
   (fixtures.text-origin-range-buffer-test)
   (fixtures.text-origin-final-test)
+  (fixtures.text-origin-function-test)
   42)

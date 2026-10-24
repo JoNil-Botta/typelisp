@@ -961,3 +961,260 @@
     (origins.compiler-backend-text-origins-release! (&mut capture))))
 
 (test text-origins-final-instruction-reconciliation (text-origin-final-test))
+
+(define (text-origin-function-test) : unit
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [operand : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-record
+          capture
+          (origins.CompilerBackendStackAccessOrigin
+            (ir.CompilerIrSymbolId 44)
+            (SourceBlock 30)
+            7
+            8
+            (UserLocal)
+            (General)
+            8
+            (Read))
+          "-8(%rsp)"))]
+    [body : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        ".type f, @function\nf:\n    movq "
+        operand
+        ", %rax\n    ret\n")]
+    [first : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-function
+          capture
+          (origins.CompilerBackendFunctionOriginRequest
+            (ir.CompilerIrSymbolId 44)
+            "f"
+            (owned_view.compiler-owned-shared-view body))))]
+    [second : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-function
+          capture
+          (origins.CompilerBackendFunctionOriginRequest
+            (ir.CompilerIrSymbolId 45)
+            "g"
+            "g:\n    ret\n")))]
+    [text : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        ".text\n"
+        first
+        "\n"
+        second)]
+    [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+      (origins.compiler-backend-text-origins-find capture (& text))]
+    (test.assert-string-eq first body "boundaries change no emitted bytes")
+    (test.assert-i64-eq
+      (array-length spans)
+      5
+      "two boundaries per function plus one real access")
+    (test.assert-i64-eq
+      (array-length
+        (origins.compiler-backend-text-origins-access-spans capture (& text)))
+      1
+      "function IDs are never interpreted as access tokens")
+    (test.assert-i64-eq
+      (origins.compiler-backend-text-origins-accesses capture).len
+      1
+      "function registration invents no memory accesses")
+    (match (origins.compiler-backend-text-origins-function-ranges
+      capture
+      (& text))
+      [(Err message) (io.panic message)]
+      [(Ok ranges)
+        (test.assert-i64-eq
+          (array-length ranges)
+          2
+          "also enumerate functions without stack accesses")
+        (test.assert-i64-eq
+          (array-ref ranges 0).function.value
+          44
+          "actual first emitter identity")
+        (test.assert-i64-eq
+          (array-ref ranges 1).function.value
+          45
+          "actual second emitter identity")
+        (test.assert-string-eq
+          (string.substring
+            (& text)
+            (array-ref ranges 1).start
+            (- (array-ref ranges 1).end (array-ref ranges 1).start))
+          second
+          "extent includes the final existing newline")])
+    (let
+      [snapshot : origins.CompilerBackendTextOriginSnapshot
+        (origins.compiler-backend-text-origins-snapshot capture (& text))]
+      [copy : String (string.copy (& text))]
+      (test.assert-true
+        (match (origins.compiler-backend-text-origins-function-ranges
+          capture
+          (& copy))
+          [(Err _) true]
+          [_ false])
+        "losing all annotations cannot silently become an empty census")
+      (let
+        [restored : String
+          (text-origin-test-ok
+            (origins.compiler-backend-text-origins-restore-copy
+              capture
+              snapshot
+              copy))]
+        (test.assert-true
+          (match (origins.compiler-backend-text-origins-function-ranges
+            capture
+            (& restored))
+            [(Ok ranges) (= (array-length ranges) 2)]
+            [_ false])
+          "explicit clone-out restores both kinds of authority")))
+    (for [invalid (iterator.range 0 7)]
+      (let
+        [saved : origins.CompilerBackendTextOrigin (clone (array-ref spans 0))]
+        [saved-end : origins.CompilerBackendTextOrigin
+          (clone (array-ref spans 4))]
+        [bad : String
+          (cond
+            [(= invalid 0) (string.copy (& text))]
+            [(= invalid 1)
+              (origins.compiler-backend-text-origins-cat
+                capture
+                first
+                first
+                second)]
+            [(= invalid 2)
+              (text-origin-test-ok
+                (origins.compiler-backend-text-origins-slice
+                  capture
+                  (& text)
+                  0
+                  (- (string.string-length text) 1)))]
+            [else
+              (cond
+                [(= invalid 3) (set! (array-ref spans 0).kind (FunctionEnd))]
+                [(= invalid 4) (set! (array-ref spans 0).token 45)]
+                [(= invalid 5) (set! (array-ref spans 4).token 44)]
+                [else
+                  (set!
+                    (array-ref spans 0).start
+                    (+ (array-ref spans 0).start 1))])
+              (owned_view.compiler-owned-shared-view text)])]
+        (test.assert-true
+          (match (origins.compiler-backend-text-origins-function-ranges
+            capture
+            (& bad))
+            [(Err _) true]
+            [_ false])
+          "lost, duplicate, truncated, orphan, foreign and changed boundaries reject")
+        (set! (array-ref spans 0) saved)
+        (set! (array-ref spans 4) saved-end)))
+    (let
+      [facts : origins.CompilerBackendStackAccessOriginList
+        (origins.compiler-backend-text-origins-accesses capture)]
+      (set! (array-ref facts.slots 0).function (ir.CompilerIrSymbolId 45))
+      (test.assert-true
+        (match (origins.compiler-backend-text-origins-function-ranges
+          capture
+          (& text))
+          [(Err _) true]
+          [_ false])
+        "an operand cannot cross its actual emitter's function boundary")
+      (set! (array-ref facts.slots 0).function (ir.CompilerIrSymbolId 44)))
+    (let
+      [first-spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+        (origins.compiler-backend-text-origins-find capture (& first))]
+      [label : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-slice
+            capture
+            (& first)
+            (array-ref first-spans 0).start
+            2))]
+      (text-origin-test-error
+        (origins.compiler-backend-text-origins-retarget
+          capture
+          (clone label)
+          "h:"))
+      (text-origin-test-error
+        (origins.compiler-backend-text-origins-readback capture (& label) "h:"))
+      (let
+        [end : String
+          (text-origin-test-ok
+            (origins.compiler-backend-text-origins-slice
+              capture
+              (& first)
+              (- (string.string-length first) 1)
+              1))]
+        [other-start : String
+          (text-origin-test-ok
+            (origins.compiler-backend-text-origins-slice capture (& second) 0 2))]
+        [other-end : String
+          (text-origin-test-ok
+            (origins.compiler-backend-text-origins-slice
+              capture
+              (& second)
+              (- (string.string-length second) 1)
+              1))]
+        (for [invalid (iterator.range 0 3)]
+          (let
+            [bad : String
+              (cond
+                [(= invalid 0)
+                  (origins.compiler-backend-text-origins-cat
+                    capture
+                    label
+                    other-start
+                    end
+                    other-end)]
+                [(= invalid 1)
+                  (origins.compiler-backend-text-origins-cat
+                    capture
+                    label
+                    other-end
+                    other-start
+                    end)]
+                [else
+                  (origins.compiler-backend-text-origins-cat
+                    capture
+                    operand
+                    text)])]
+            (test.assert-true
+              (match (origins.compiler-backend-text-origins-function-ranges
+                capture
+                (& bad))
+                [(Err _) true]
+                [_ false])
+              "exact nested or interleaved boundaries and an outside access reject")))))
+    (text-origin-test-error
+      (origins.compiler-backend-text-origins-function
+        capture
+        (origins.CompilerBackendFunctionOriginRequest
+          (ir.CompilerIrSymbolId 46)
+          "f"
+          (owned_view.compiler-owned-shared-view first))))
+    (for [invalid (iterator.range 0 7)]
+      (text-origin-test-error
+        (origins.compiler-backend-text-origins-function
+          capture
+          (origins.CompilerBackendFunctionOriginRequest
+            (ir.CompilerIrSymbolId
+              (cond [(= invalid 0) -1] [(= invalid 1) 44] [else 46]))
+            (cond [(= invalid 2) ""] [(= invalid 3) "bad symbol"] [else "h"])
+            (cond
+              [(= invalid 4) "h:\n    ret"]
+              [(= invalid 5) "missing:\n"]
+              [(= invalid 6) "h:\nh:\n"]
+              [else "h:\n    ret\n"])))))
+    (test.assert-i64-eq
+      (origins.compiler-backend-text-origins-functions capture).len
+      2
+      "failed registrations leave no orphan function identity")
+    (origins.compiler-backend-text-origins-release! (&mut capture))))
+
+(test text-origins-final-function-boundaries (text-origin-function-test))

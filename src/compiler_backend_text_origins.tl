@@ -84,10 +84,16 @@
   compiler-dense-list-unused-shared-zero-storage
   append-from)
 
+(defenum CompilerBackendTextOriginKind
+  (Access)
+  (FunctionStart)
+  (FunctionEnd))
+
 (defstruct CompilerBackendTextOrigin
   (start i64)
   (end i64)
   (token i64)
+  (kind CompilerBackendTextOriginKind)
   (expected String))
 
 (define (compiler-backend-text-origin-shift
@@ -97,6 +103,7 @@
     (+ origin.start offset)
     (+ origin.end offset)
     origin.token
+    (clone origin.kind)
     (owned_view.compiler-owned-string-place-shared-view origin.expected)))
 
 (defstruct CompilerBackendTextOriginList
@@ -116,10 +123,24 @@
   (text String)
   (origins (__tl_dyn-array CompilerBackendTextOrigin)))
 
+(defstruct CompilerBackendFunctionOriginList
+  (slots (__tl_dyn-array i64))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  i64
+  CompilerBackendFunctionOriginList
+  compiler-backend-function-origin-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  append-from)
+
 (defstruct CompilerBackendTextOriginData
   (index origin_index.Map)
   (entries origin_entries.Vec)
-  (accesses CompilerBackendStackAccessOriginList))
+  (accesses CompilerBackendStackAccessOriginList)
+  (functions CompilerBackendFunctionOriginList))
 
 ;; The owner retains EVERY indexed allocation, including intermediate text,
 ;; until consumption ends. A rewound emitter scratch arena therefore cannot
@@ -255,7 +276,8 @@
           (CompilerBackendTextOriginData
             (origin_index.with-capacity 16)
             (origin_entries.with-capacity 16)
-            (compiler-backend-stack-access-origin-list-new)))
+            (compiler-backend-stack-access-origin-list-new)
+            (compiler-backend-function-origin-list-new)))
         (CompilerBackendTextOrigins
           (unsafe
             (ptr->int (__tl_array-data cell)))
@@ -411,6 +433,7 @@
           0
           (string.string-length (& copy))
           token
+          (Access)
           (owned_view.compiler-owned-shared-view copy)))
       (Ok (compiler-backend-text-origins-publish capture copy origins)))))
 
@@ -512,6 +535,9 @@
       [origin : (& source CompilerBackendTextOrigin) (& (array-ref source 0))]
       (unless
         (and
+          (match (& origin.kind)
+            [(Access) true]
+            [_ false])
           (= origin.start 0)
           (= origin.end (string.string-length (& operand))))
         (return (Err "stack traffic: address rewrite needs one exact origin")))
@@ -613,6 +639,9 @@
     (unless
       (and
         (= (array-length spans) 1)
+        (match (& (array-ref spans 0).kind)
+          [(Access) true]
+          [_ false])
         (= (array-ref spans 0).start 0)
         (= (array-ref spans 0).end (string.string-length written)))
       (return (Err "stack traffic: readback needs one exact stored operand")))
@@ -926,7 +955,7 @@
   (let
     [length : i64 (string.string-length text)]
     [spans : (__tl_dyn-array CompilerBackendTextOrigin)
-      (compiler-backend-text-origins-find capture text)]
+      (compiler-backend-text-origins-access-spans capture text)]
     [accesses : CompilerBackendStackAccessOriginList
       (compiler-backend-text-origins-accesses capture)]
     [result : (__tl_dyn-array CompilerBackendFinalAccess)
@@ -1027,3 +1056,291 @@
       (and (= cursor (array-length spans)) (= written (array-length spans)))
       (return (Err "stack traffic: operand has no final instruction")))
     (Ok result)))
+
+;; Access consumers must not reinterpret control-boundary tokens as home IDs.
+;; Transport itself keeps every kind, including invisible function boundaries.
+(define (compiler-backend-text-origins-access-spans
+  [capture : CompilerBackendTextOrigins]
+  [text : (& text str)]) : (__tl_dyn-array CompilerBackendTextOrigin)
+  (let
+    [source : (__tl_dyn-array CompilerBackendTextOrigin)
+      (compiler-backend-text-origins-find capture text)]
+    [count : i64 0]
+    (for [i (iterator.range 0 (array-length source))]
+      (when
+        (match (& (array-ref source i).kind)
+          [(Access) true]
+          [_ false])
+        (+= count 1)))
+    (when (= count (array-length source)) (return source))
+    (in-arena
+      (arena.Arena capture.owner)
+      (let
+        [result : (__tl_dyn-array CompilerBackendTextOrigin)
+          (__tl_make-array CompilerBackendTextOrigin count)]
+        [cursor : i64 0]
+        (for [i (iterator.range 0 (array-length source))]
+          (when
+            (match (& (array-ref source i).kind)
+              [(Access) true]
+              [_ false])
+            (set!
+              (array-ref result cursor)
+              (compiler-backend-text-origin-shift (& (array-ref source i)) 0))
+            (+= cursor 1)))
+        result))))
+
+(defstruct CompilerBackendFunctionOriginRequest
+  (function ir.CompilerIrSymbolId)
+  (symbol String)
+  (text String))
+
+;; The actual function emitter supplies identity and its chosen entry symbol.
+;; Matching validates that authority's placement; it cannot recover identity
+;; for arbitrary equal-looking assembly. End is an existing final newline,
+;; never an extra assembly directive or a fabricated memory access.
+(define (compiler-backend-text-origins-function
+  [capture : CompilerBackendTextOrigins]
+  [request : CompilerBackendFunctionOriginRequest]) : CompilerBackendOriginTextResult
+  (when (= capture.storage 0) (return (Ok request.text)))
+  (let
+    [length : i64 (string.string-length request.text)]
+    [size : i64 (string.string-length request.symbol)]
+    (when (= length 0) (return (Ok request.text)))
+    (when
+      (or
+        (< request.function.value 0)
+        (= size 0)
+        (!= (string.string-ref (& request.text) (- length 1)) '\n'))
+      (return
+        (Err
+          "stack traffic: function boundary needs a complete emitted function")))
+    (for [i (iterator.range 0 size)]
+      (let
+        [byte : char (string.string-ref (& request.symbol) i)]
+        (when
+          (or
+            (= byte '\n')
+            (= byte '\r')
+            (= byte '\t')
+            (= byte ' ')
+            (= byte ':'))
+          (return (Err "stack traffic: invalid emitted function symbol")))))
+    (let
+      [label : String (str_cat.str-cat request.symbol ":")]
+      [start : i64 -1]
+      [source : (__tl_dyn-array CompilerBackendTextOrigin)
+        (compiler-backend-text-origins-find capture (& request.text))]
+      (for [at (iterator.range 0 (- length (+ size 1)))]
+        (when
+          (and
+            (or (= at 0) (= (string.string-ref (& request.text) (- at 1)) '\n'))
+            (string.is-string-prefix-at (& request.text) (& label) at)
+            (= (string.string-ref (& request.text) (+ at (+ size 1))) '\n'))
+          (when
+            (>= start 0)
+            (return (Err "stack traffic: duplicate emitted function entry")))
+          (set! start at)))
+      (when
+        (< start 0)
+        (return (Err "stack traffic: emitted function entry is missing")))
+      (let
+        [functions : CompilerBackendFunctionOriginList
+          (compiler-backend-text-origins-functions capture)]
+        (for [i (iterator.range 0 functions.len)]
+          (when
+            (= (array-ref functions.slots i) request.function.value)
+            (return
+              (Err
+                "stack traffic: function was already emitted in this capture")))))
+      (for [i (iterator.range 0 (array-length source))]
+        (let
+          [span : (& source CompilerBackendTextOrigin) (& (array-ref source i))]
+          (unless
+            (and
+              (match (& span.kind)
+                [(Access) true]
+                [_ false])
+              (>= span.start (+ start (+ size 1)))
+              (<= span.end (- length 1)))
+            (return
+              (Err
+                "stack traffic: function registration crosses existing origins")))))
+      (in-arena
+        (arena.Arena capture.owner)
+        (let
+          [copy : String (string.copy (& request.text))]
+          [spans : (__tl_dyn-array CompilerBackendTextOrigin)
+            (__tl_make-array
+              CompilerBackendTextOrigin
+              (+ 2 (array-length source)))]
+          (set!
+            (array-ref spans 0)
+            (CompilerBackendTextOrigin
+              start
+              (+ start (+ size 1))
+              request.function.value
+              (FunctionStart)
+              (string.copy (& label))))
+          (for [i (iterator.range 0 (array-length source))]
+            (set!
+              (array-ref spans (+ i 1))
+              (compiler-backend-text-origin-shift (& (array-ref source i)) 0)))
+          (set!
+            (array-ref spans (+ 1 (array-length source)))
+            (CompilerBackendTextOrigin
+              (- length 1)
+              length
+              request.function.value
+              (FunctionEnd)
+              "\n"))
+          (let
+            [published : String
+              (compiler-backend-text-origins-publish capture copy spans)]
+            (unsafe
+              (let
+                [destination : (MutPtr CompilerBackendTextOriginData)
+                  (int->ptr
+                    capture.storage
+                    : (MutPtr CompilerBackendTextOriginData))]
+                [data : CompilerBackendTextOriginData (ptr-read destination)]
+                (compiler-backend-function-origin-list-push
+                  (&mut data.functions)
+                  request.function.value)
+                (ptr-write! destination data)))
+            (Ok published)))))))
+
+(defstruct CompilerBackendFunctionOriginRange
+  (function ir.CompilerIrSymbolId)
+  (start i64)
+  (end i64))
+
+(defenum CompilerBackendFunctionOriginRangesResult
+  (Ok (__tl_dyn-array CompilerBackendFunctionOriginRange))
+  (Err String))
+
+;; Boundaries must survive the same final byte transport as their operands.
+;; An orphan, nested/repeated function or interleaved owner cannot be a census.
+(define (compiler-backend-text-origins-function-ranges
+  [capture : CompilerBackendTextOrigins]
+  [text : (& text str)]) : CompilerBackendFunctionOriginRangesResult
+  (when
+    (= capture.storage 0)
+    (return (Err "stack traffic: function ranges require an active capture")))
+  (let
+    [spans : (__tl_dyn-array CompilerBackendTextOrigin)
+      (compiler-backend-text-origins-find capture text)]
+    [facts : CompilerBackendStackAccessOriginList
+      (compiler-backend-text-origins-accesses capture)]
+    [functions : CompilerBackendFunctionOriginList
+      (compiler-backend-text-origins-functions capture)]
+    [count : i64 0]
+    [length : i64 (string.string-length text)]
+    (for [i (iterator.range 0 (array-length spans))]
+      (when
+        (match (& (array-ref spans i).kind)
+          [(FunctionStart) true]
+          [_ false])
+        (+= count 1)))
+    (unless
+      (= count functions.len)
+      (return (Err "stack traffic: final function boundary coverage differs")))
+    (let
+      [result : (__tl_dyn-array CompilerBackendFunctionOriginRange)
+        (__tl_make-array CompilerBackendFunctionOriginRange count)]
+      [seen : origin_index.Map (origin_index.with-capacity (+ 1 (* 2 count)))]
+      [active : i64 -1]
+      [begin : i64 -1]
+      [cursor : i64 0]
+      [previous-start : i64 0]
+      (for [i (iterator.range 0 (array-length spans))]
+        (let
+          [span : (& spans CompilerBackendTextOrigin) (& (array-ref spans i))]
+          (unless
+            (and
+              (>= span.start previous-start)
+              (> span.end span.start)
+              (<= span.end length)
+              (>= span.token 0)
+              (string.eq
+                (& span.expected)
+                (string.substring-view text span.start (- span.end span.start))))
+            (return
+              (Err "stack traffic: final function boundary witness changed")))
+          (set! previous-start span.start)
+          (match (& span.kind)
+            [(FunctionStart)
+              (unless
+                (and
+                  (< active 0)
+                  (=
+                    (string.string-ref
+                      (& span.expected)
+                      (- (string.string-length span.expected) 1))
+                    ':'))
+                (return
+                  (Err "stack traffic: nested or malformed function start")))
+              (unless
+                (origin_index.insert-if-absent-ref!
+                  (&mut seen)
+                  span.token
+                  cursor)
+                (return (Err "stack traffic: repeated final function identity")))
+              (set! active span.token)
+              (set! begin span.start)]
+            [(FunctionEnd)
+              (unless
+                (and
+                  (= active span.token)
+                  (>= active 0)
+                  (string.eq (& span.expected) "\n"))
+                (return
+                  (Err "stack traffic: orphan or mismatched final function end")))
+              (set!
+                (array-ref result cursor)
+                (CompilerBackendFunctionOriginRange
+                  (ir.CompilerIrSymbolId active)
+                  begin
+                  span.end))
+              (+= cursor 1)
+              (set! active -1)]
+            [(Access)
+              (unless
+                (and (>= active 0) (< span.token facts.len))
+                (return
+                  (Err
+                    "stack traffic: stack access has no emitted function boundary")))
+              (let
+                [fact : (& facts CompilerBackendStackAccessOrigin)
+                  (& (array-ref facts.slots span.token))]
+                (match (compiler-backend-stack-access-origin-check fact)
+                  [(Ok) unit]
+                  [(Err message) (return (Err message))])
+                (unless
+                  (= fact.function.value active)
+                  (return
+                    (Err
+                      "stack traffic: final access crosses function ownership"))))])))
+      (unless
+        (and (< active 0) (= cursor count))
+        (return (Err "stack traffic: final function end is missing")))
+      (for [i (iterator.range 0 functions.len)]
+        (match (origin_index.get-borrowed
+          (& seen)
+          (array-ref functions.slots i))
+          [(LookupFound _) unit]
+          [(LookupMissing)
+            (return
+              (Err "stack traffic: final function identity was not emitted"))]))
+      (Ok result))))
+
+(define (compiler-backend-text-origins-functions
+  [capture : CompilerBackendTextOrigins]) : CompilerBackendFunctionOriginList
+  (if (= capture.storage 0)
+    (compiler-backend-function-origin-list-new)
+    (unsafe
+      (let
+        [data : CompilerBackendTextOriginData
+          (ptr-read
+            (int->ptr capture.storage : (Ptr CompilerBackendTextOriginData)))]
+        data.functions))))

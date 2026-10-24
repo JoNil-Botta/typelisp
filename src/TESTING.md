@@ -943,7 +943,13 @@ through labels/aliases, directives/comments, branch fallthrough, indirect
 jumps, returns, known noreturn aborts, traps and loop instructions. Returning
 calls stay in their block; a final line without newline is retained. These
 checks bind actual parser extents to emitter facts, not resolved CFG edges or
-missing-access completeness. `compiler_backend_home_origins_tests.tl`
+missing-access completeness. Function-boundary fixtures include a function
+without memory accesses, transactional registration failures, lost and repeated
+annotations, truncated or foreign boundaries, crossing access ownership and
+explicit snapshot restoration. Boundary tokens cannot become memory accesses.
+Actual adapter fixtures bind their generated identity and every retained access
+through the final chunk renderer and instruction partition on both targets.
+`compiler_backend_home_origins_tests.tl`
 pairs original instructions with the real noninjective frame-color remapper,
 including separate use/definition identities, repeated versus ambiguous uses,
 literal operand positions, raw address storage and changed operands. Address-taken parameter storage is

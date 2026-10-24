@@ -752,7 +752,14 @@ the complete object extent, and capture rejects inconsistent ranges, alignment,
 capacity drift and arithmetic overflow before publishing malformed facts.
 The layout displacement only renders the operand. Pointer loads and recursive
 copy composition transport existing source tokens and new destination tokens.
-Implicit call/return traffic, user/local owners and final machine anchor
+Original `Alloc` and address-taken storage is `UserLocal`, independently of the pointer
+result, colored aliases and physical offsets. Direct initialization, reads and
+writes retain that owner; group fragments inherit it from the whole object.
+The address-producing LEA is not a storage read. A spilled pointer result is
+ordinary allocator traffic and its actual store retains a separate token.
+Malformed storage extents and foreign adapter authority reject. This direct
+home classification does not prove indirect pointer aliases. Implicit
+call/return traffic, indirect local accesses and final machine anchor
 reconciliation remain required for a complete census.
 Parallel-copy frame temporaries use distinct typed slot keys in the same
 preservation registry. Each is one eight-byte `PlannedScratch` home with a

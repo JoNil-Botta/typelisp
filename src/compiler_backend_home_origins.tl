@@ -5,6 +5,7 @@
 (import compiler_liveness as live)
 (import compiler_owned_view as owned_view)
 (import compiler_abi as abi)
+(import compiler_stack_traffic as traffic)
 (import stdlib.dense_list as dense_list)
 (import stdlib.iterator)
 (import stdlib.string)
@@ -129,6 +130,7 @@
   (sites (__tl_dyn-array CompilerBackendHomeSite))
   (bytes (__tl_dyn-array i64))
   (groups (__tl_dyn-array bool))
+  (local-storage (__tl_dyn-array bool))
   (preservations CompilerBackendPreservationHomeList))
 
 (defstruct CompilerBackendHomePlanInput
@@ -428,6 +430,8 @@
     [words : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
     [bytes : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
     [groups : (__tl_dyn-array bool) (__tl_make-array bool input.logical-count)]
+    [local-storage : (__tl_dyn-array bool)
+      (__tl_make-array bool input.logical-count)]
     (unless
       (and
         (>= input.params.len 0)
@@ -460,13 +464,27 @@
       (return (Err "stack traffic: original parameters have no entry block")))
     (for [index (iterator.range 0 (array-length original))]
       (match (& (array-ref original index))
-        [(Block label _)
+        [(Block label instructions)
           (when
             (or
               (< label 0)
               (not
                 (block_index.insert-if-absent-ref! (&mut indices) label index)))
-            (return (Err "stack traffic: duplicate or invalid original block")))]))
+            (return (Err "stack traffic: duplicate or invalid original block")))
+          (unless
+            (and
+              (>= instructions.len 0)
+              (<= instructions.len (array-length instructions.slots)))
+            (return (Err "stack traffic: invalid original instruction extent")))
+          (for [offset (iterator.range 0 instructions.len)]
+            (match (& (array-ref instructions.slots offset))
+              [(or (Alloc storage _) (AddrOf _ storage))
+                (unless
+                  (and (>= storage 0) (< storage input.logical-count))
+                  (return
+                    (Err "stack traffic: local storage is outside its function")))
+                (set! (array-ref local-storage storage) true)]
+              [_ unit]))]))
     (for [index (iterator.range 0 (array-length placed))]
       (match (& (array-ref placed index))
         [(Block label instructions)
@@ -550,6 +568,7 @@
         sites
         bytes
         groups
+        local-storage
         (compiler-backend-preservation-home-list-new)))))
 
 ;; The adapter factory supplies its real parameter ordinals and storage shapes.
@@ -603,7 +622,35 @@
         (__tl_make-array CompilerBackendHomeSite 0)
         bytes
         groups
+        (__tl_make-array bool params.len)
         (compiler-backend-preservation-home-list-new)))))
+
+;; Alloc and address-taking identify original local storage. Its pointer
+;; result is a different home; neither coloring nor an equal offset transfers
+;; this owner. Fragments inherit their whole object's owner before splitting.
+(define (compiler-backend-home-plan-owner
+  [plan : (& plan CompilerBackendHomePlan)]
+  [whole : CompilerBackendLogicalHome]) : traffic.CompilerStackTrafficOwnerResult
+  (unless
+    (and
+      (= (array-length plan.local-storage) (array-length plan.bytes))
+      (>= whole.id 0)
+      (< whole.id (array-length plan.bytes))
+      (> whole.bytes 0)
+      (= whole.bytes (array-ref plan.bytes whole.id)))
+    (return (Err "stack traffic: original home has no storage owner")))
+  (match (& plan.kind)
+    [(ClosureAdapter)
+      (when
+        (array-ref plan.local-storage whole.id)
+        (return
+          (Err "stack traffic: adapter home has no source storage authority")))
+      (Ok (CallAbi))]
+    [(Source)
+      (Ok
+        (if (array-ref plan.local-storage whole.id)
+          (UserLocal)
+          (Allocator)))]))
 
 (define (compiler-backend-home-plan-resolve
   [plan : (& plan CompilerBackendHomePlan)]

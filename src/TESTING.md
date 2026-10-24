@@ -935,7 +935,15 @@ reload's new read of the stored home. Wrong-direction and read-only derivation
 requests reject without orphan access records. `compiler_backend_home_origins_tests.tl`
 pairs original instructions with the real noninjective frame-color remapper,
 including separate use/definition identities, repeated versus ambiguous uses,
-literal operand positions, raw address storage and changed operands. Placed
+literal operand positions, raw address storage and changed operands. Address-taken parameter storage is
+user-local, as is explicit Alloc storage without AddrOf, while pointers, copied
+values and aliased colors remain distinct;
+spare address instructions cannot change a live home. Malformed owner extents,
+capacities and adapter authority reject. Actual GP/f32 initialization, AddrOf
+pointer spills and direct reload/copy factories retain exactly one token per
+access across both target policies, three backend modes and assigned/stack-only
+homes, with exact inactive-byte parity. These fixtures do not claim indirect
+pointer-access ownership. Placed
 block reordering, live/spare prefixes, invalid identities/extents and malformed
 or duplicate placement are checked. Original scalar, group, vector and mask
 capacities come from the allocator census. Actual emitter factories retain

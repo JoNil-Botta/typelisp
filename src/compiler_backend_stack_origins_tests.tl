@@ -5660,3 +5660,232 @@ second:
 (test
   backend-stack-origins-c-memory-aggregate-copies
   (backend-stack-origins-c-memory-test))
+
+(define (backend-stack-origins-local-emit
+  [state : backend.CompilerBackendState]
+  [homes : regalloc.CompilerRegAssignmentTable]
+  [step : i64]
+  [floating? : bool]) : String
+  (let
+    [ty : ast.AstType
+      (if floating?
+        (F32)
+        (I64))]
+    [value : ir.CompilerIrValue (Var 1)]
+    (cond
+      [(= step 1)
+        (match (backend.compiler-backend-emit-addr-of homes 2 1 state)
+          [(Ok text) text]
+          [(Err _) (io.panic "local fixture emission refused")])]
+      [(= step 2)
+        (if floating?
+          (backend.compiler-backend-emit-load-float-var
+            homes
+            1
+            ty
+            "%xmm3"
+            state)
+          (match (backend.compiler-backend-emit-load-value
+            homes
+            (& value)
+            "%r10"
+            state)
+            [(Ok text) text]
+            [(Err _) (io.panic "local fixture emission refused")]))]
+      [else
+        (let
+          [var : i64
+            (if (= step 0)
+              1
+              3)]
+          (if floating?
+            (backend.compiler-backend-emit-store-float-var
+              homes
+              var
+              "%xmm3"
+              (& ty)
+              state)
+            (backend.compiler-backend-emit-store-var homes var "%r10" state)))])))
+
+(define (backend-stack-origins-local-test) : unit
+  (for [platform (iterator.range 0 2)]
+    (for [mode (iterator.range 0 3)]
+      (for [assigned (iterator.range 0 2)]
+        (for [shape (iterator.range 0 2)]
+          (let
+            [state : backend.CompilerBackendState
+              (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+            [fn : backend.CompilerBackendFunctionState
+              (backend.compiler-backend-state-function-state state)]
+            [ty : ast.AstType
+              (if (= shape 0)
+                (I64)
+                (F32))]
+            [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+              (__tl_make-array ir.CompilerIrInstr 4)]
+            [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+            [homes : regalloc.CompilerRegAssignmentTable
+              (regalloc.compiler-reg-assignment-table-empty)]
+            (backend.compiler-backend-function-state-set-current-mode!
+              fn
+              (match mode
+                [0 (Scalar)]
+                [1 (Avx2)]
+                [_ (Avx512)]))
+            (backend.compiler-backend-state-set-emission-target-policy!
+              state
+              (backend.compiler-backend-target-policy-new
+                (if (= platform 0)
+                  (Linux)
+                  (Windows))))
+            (set!
+              (array-ref instructions 0)
+              (Mov
+                7
+                (if (= shape 0)
+                  (I64 1)
+                  (F64 0))
+                (clone ty)))
+            (set! (array-ref instructions 1) (AddrOf 8 7))
+            (set! (array-ref instructions 2) (Mov 9 (Var 7) (clone ty)))
+            (set! (array-ref instructions 3) (Return (Some (Var 9))))
+            (for [i (iterator.range 0 10)]
+              (set! (array-ref map i) i))
+            (set! (array-ref map 7) 1)
+            (set! (array-ref map 8) 2)
+            (set! (array-ref map 9) 3)
+            (when
+              (> assigned 0)
+              (for [i (iterator.range 1 4)]
+                (let
+                  [assignment : regalloc.CompilerRegAssignment
+                    (regalloc.CompilerRegAssignment i (Spill (- -48 (* 16 i))))]
+                  (set!
+                    homes
+                    (regalloc.compiler-reg-assignments-prepend
+                      (& assignment)
+                      homes)))))
+            (let
+              [blocks : ir.CompilerIrBlockList
+                (Array
+                  (ir.CompilerIrBlockSeq
+                    (__tl_make-array
+                      (ir.CompilerIrBlock.Block
+                        10
+                        (ir.CompilerIrInstrSeq instructions 4)))
+                    1))]
+              [input : home_origins.CompilerBackendHomePlanInput
+                (home_origins.CompilerBackendHomePlanInput
+                  44
+                  10
+                  10
+                  (ir.compiler-ir-param-seq-empty)
+                  (owned_view.compiler-owned-shared-view blocks)
+                  (regalloc.compiler-reg-remap-blocks (& map) (& blocks))
+                  (Remap map 10)
+                  (live.compiler-live-set-empty))]
+              [plan : home_origins.CompilerBackendHomePlan
+                (match (home_origins.compiler-backend-home-plan-build (& input))
+                  [(Ok result) result]
+                  [(Err message) (io.panic message)])]
+              (backend.compiler-backend-function-scratch-set-i64!
+                fn
+                backend.compiler-backend-scratch-i64-current-source-function
+                44)
+              (backend.compiler-backend-function-state-set-i64!
+                fn
+                backend.compiler-backend-function-i64-current-block-label
+                10)
+              (let
+                [plain : (__tl_dyn-array String) (__tl_make-array String 4)]
+                (for [step (iterator.range 0 4)]
+                  (backend.compiler-backend-function-state-set-emit-current-site!
+                    fn
+                    (if (= step 3)
+                      2
+                      step))
+                  (set!
+                    (array-ref plain step)
+                    (backend-stack-origins-local-emit
+                      state
+                      (owned_view.compiler-owned-shared-view homes)
+                      step
+                      (> shape 0))))
+                (backend.compiler-backend-state-stack-origins-begin! state)
+                (backend.compiler-backend-stack-home-plan-install! fn plan)
+                (for [step (iterator.range 0 4)]
+                  (backend.compiler-backend-function-state-set-emit-current-site!
+                    fn
+                    (if (= step 3)
+                      2
+                      step))
+                  (let
+                    [text : String
+                      (backend-stack-origins-local-emit
+                        state
+                        (owned_view.compiler-owned-shared-view homes)
+                        step
+                        (> shape 0))]
+                    [capture : origins.CompilerBackendTextOrigins
+                      (backend.compiler-backend-state-stack-text-origins state)]
+                    (test.assert-string-eq
+                      text
+                      (array-ref plain step)
+                      "local ownership does not change machine bytes")
+                    (test.assert-i64-eq
+                      (array-length
+                        (origins.compiler-backend-text-origins-find
+                          capture
+                          (& text)))
+                      1
+                      "AddrOf carries only its pointer-home write; LEA is not a storage read")))
+                (let
+                  [facts : origins.CompilerBackendStackAccessOriginList
+                    (backend.compiler-backend-state-stack-access-origins state)]
+                  [expected : (Array i64 4) (array 7 8 7 9)]
+                  (test.assert-i64-eq
+                    facts.len
+                    4
+                    "each direct access attributed exactly once")
+                  (for [i (iterator.range 0 4)]
+                    (let
+                      [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                        (& (array-ref facts.slots i))]
+                      (test.assert-i64-eq
+                        fact.home
+                        (array-ref expected i)
+                        "storage and pointer keep distinct original homes")
+                      (test.assert-i64-eq
+                        fact.home-bytes
+                        8
+                        "local scalar allocation capacity")
+                      (test.assert-i64-eq
+                        fact.access-bytes
+                        (if (and (> shape 0) (!= i 1))
+                          4
+                          8)
+                        "actual memory width")
+                      (test.assert-true
+                        (match (& fact.owner)
+                          [(UserLocal) (or (= i 0) (= i 2))]
+                          [(Allocator) (or (= i 1) (= i 3))]
+                          [_ false])
+                        "addressed object is user storage; pointer and copied value stay allocator homes")
+                      (test.assert-true
+                        (match (& fact.bank)
+                          [(Vector) (and (> shape 0) (!= i 1))]
+                          [(General) (or (= shape 0) (= i 1))]
+                          [_ false])
+                        "actual bank independent of owner")
+                      (test.assert-true
+                        (match (& fact.access)
+                          [(Read) (= i 2)]
+                          [(Write) (!= i 2)]
+                          [_ false])
+                        "direct read/write order")))))
+              (backend.compiler-backend-clear-function-owned-state! state)
+              (backend.compiler-backend-state-release-final-arenas! state))))))))
+
+(test
+  backend-stack-origins-addressed-local-ownership
+  (backend-stack-origins-local-test))

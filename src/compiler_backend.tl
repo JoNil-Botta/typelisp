@@ -1817,9 +1817,11 @@
               (SourceBlock block))
             home.id
             home.bytes
-            (if adapter?
-              (CallAbi)
-              (Allocator))
+            (match (home_origins.compiler-backend-home-plan-owner
+              (& plan)
+              whole)
+              [(Ok owner) owner]
+              [(Err message) (io.panic message)])
             bank
             bytes
             access)
@@ -34068,7 +34070,7 @@
                   ", "
                   (compiler_abi.compiler-abi-register-spelling home)
                   "\n")]
-              [(Spill offset)
+              [(Spill _)
                 (let
                   [addr-reg : String
                     (compiler-backend-scavenge-reg
@@ -34077,18 +34079,14 @@
                       0
                       "%r8"
                       backend-state)]
-                  (str_cat.str-cat
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
                     (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
-                    (str_cat.str-cat
-                      "    movq "
+                    (compiler-backend-emit-store-var
+                      assignments
+                      dst
                       addr-reg
-                      ", "
-                      (compiler-backend-frame-offset-with-backend-state
-                        backend-state
-                        offset)
-                      "\n"
-                      ""
-                      "")))]
+                      backend-state)))]
               ;; The address-of result is defined by CompilerIrInstr.AddrOf, never a remat
               ;; Mov; unreachable.
               [(Remat _) ""])]
@@ -34101,7 +34099,8 @@
                   0
                   "%r8"
                   backend-state)]
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
                 (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
                 (compiler-backend-emit-store-var
                   assignments

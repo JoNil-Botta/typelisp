@@ -304,6 +304,7 @@
   (home-origin-ambiguous-use-test)
   (home-origin-plan-test)
   (home-origin-address-test)
+  (home-origin-local-owner-test)
   (home-origin-parameter-test)
   (home-origin-phi-test)
   (home-origin-group-fragment-test)
@@ -1433,3 +1434,102 @@ join:
           [(Err _) true]
           [_ false])
         "negative call ABI ordinal rejects"))))
+
+(define (home-origin-local-owner-test) : unit
+  (for [spare (iterator.range 0 2)]
+    (let
+      [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+        (__tl_make-array ir.CompilerIrInstr (+ 4 (* spare 2)))]
+      [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (__tl_make-array ir.CompilerIrBlock (+ 1 spare))]
+      [params : ir.CompilerIrParamSeq
+        (ir.CompilerIrParamSeq
+          (__tl_make-array (ir.CompilerIrParam.Param "local" (I64) 0))
+          1)]
+      [map : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      (set! (array-ref instructions 0) (AddrOf 2 0))
+      (set! (array-ref instructions 1) (Mov 1 (Var 0) (I64)))
+      (set! (array-ref instructions 2) (Alloc 3 (I64)))
+      (set! (array-ref instructions 3) (Return (Some (Var 1))))
+      (when (> spare 0) (set! (array-ref instructions 4) (AddrOf 2 1)))
+      (set!
+        (array-ref blocks 0)
+        (Block 10 (ir.CompilerIrInstrSeq instructions 4)))
+      (for [i (iterator.range 0 4)]
+        (set! (array-ref map i) i))
+      (set! (array-ref map 1) 0)
+      (let
+        [original : ir.CompilerIrBlockList
+          (Array (ir.CompilerIrBlockSeq blocks 1))]
+        [input : homes.CompilerBackendHomePlanInput
+          (homes.CompilerBackendHomePlanInput
+            44
+            4
+            4
+            params
+            (owned_view.compiler-owned-shared-view original)
+            (regalloc.compiler-reg-remap-blocks (& map) (& original))
+            (Remap map 4)
+            (live.compiler-live-set-empty))]
+        [plan : homes.CompilerBackendHomePlan
+          (match (homes.compiler-backend-home-plan-build (& input))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (for [id (iterator.range 0 4)]
+          (match (homes.compiler-backend-home-plan-owner
+            (& plan)
+            (homes.CompilerBackendLogicalHome id 8))
+            [(Err message) (io.panic message)]
+            [(Ok owner)
+              (test.assert-true
+                (match owner
+                  [(UserLocal) (or (= id 0) (= id 3))]
+                  [(Allocator) (and (!= id 0) (!= id 3))]
+                  [_ false])
+                "only actual Alloc/AddrOf storage owns local traffic; not pointer, alias color or spare instruction")]))
+        (match (homes.compiler-backend-home-plan-resolve
+          (& plan)
+          44
+          10
+          1
+          0
+          (Definition))
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq
+              home.id
+              1
+              "equal color does not transfer storage ownership")
+            (test.assert-i64-eq
+              home.bytes
+              8
+              "copied scalar retains its actual capacity")])
+        (for [invalid (iterator.range 0 5)]
+          (let
+            [bad : homes.CompilerBackendHomePlan (clone plan)]
+            [whole : homes.CompilerBackendLogicalHome
+              (homes.CompilerBackendLogicalHome 0 8)]
+            (cond
+              [(= invalid 0) (set! bad.local-storage (__tl_make-array bool 0))]
+              [(= invalid 1) (set! whole.id -1)]
+              [(= invalid 2) (set! whole.id 4)]
+              [(= invalid 3) (set! whole.bytes 16)]
+              [else (set! bad.kind (ClosureAdapter))])
+            (test.assert-true
+              (match (homes.compiler-backend-home-plan-owner (& bad) whole)
+                [(Err _) true]
+                [_ false])
+              "malformed extent, whole capacity and foreign adapter authority reject")))
+        (let
+          [bad : homes.CompilerBackendHomePlanInput (clone input)]
+          [malformed : (__tl_dyn-array ir.CompilerIrBlock)
+            (__tl_make-array ir.CompilerIrBlock 1)]
+          (set!
+            (array-ref malformed 0)
+            (Block 10 (ir.compiler-ir-instr-seq1 (AddrOf 2 4))))
+          (set! bad.original (Array (ir.CompilerIrBlockSeq malformed 1)))
+          (test.assert-true
+            (match (homes.compiler-backend-home-plan-build (& bad))
+              [(Err _) true]
+              [_ false])
+            "addressed local storage is bounds checked before indexing"))))))

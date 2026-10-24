@@ -949,8 +949,14 @@ including boolean loads, narrow integer lanes and the qword register-only route.
 They compare complete captured/uncaptured text and check every surviving token's
 owner, capacity, access width and final read/write order. Invalid lane extents
 reject before multiplication; exact/spare pure resources retain separate typed
-and instruction-site identities. Remaining access-changing rewrites, traffic
-owners and complete report acceptance are distinct.
+and instruction-site identities. Variable-shift fixtures cover signed/unsigned
+left/right word shifts on AVX2 and byte shifts on AVX2/AVX-512. They check every
+final input/group/permutation access against a separate semantic sequence,
+including repeated packing writes, partial index initialization and narrower
+widening reads. Pure malformed-key/capacity and access-boundary assertions share
+their body with the native home smoke; both home and producer smokes run at
+opt0/1/2. Remaining access-changing rewrites, traffic owners and complete report
+acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

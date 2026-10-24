@@ -724,6 +724,14 @@ recursive control-generating parents. The qword register-only tail route issues
 no buffer access. Reuse of the same frame region by another instruction does
 not reuse this logical resource; neither a byte position nor an address spelling
 establishes its identity.
+Word/byte variable-shift fallback sequences issue separate fixed bit-buffer
+keys for each input, widened result group and permutation row. The emitting
+route supplies the 32/64-byte planned capacity and each actual widening,
+packing or four-byte initialization access. A query cannot change a resource's
+capacity, even when the typed key and instruction site match. Bounds checks
+subtract only after proving the access fits the plan, so malformed large
+offsets cannot wrap into an accepted range. Group assembly and packing parents
+preserve operand tokens independently of their construction order.
 Fresh auxiliary assembly buffers bind the active capture before any prefix;
 a foreign, untracked or finalized buffer cannot accept a captured operand.
 Single and paired GEP/load factories supply each consumed Load's destination

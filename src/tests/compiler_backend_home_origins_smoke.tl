@@ -2,4 +2,5 @@
 
 (define (main) : i64
   (fixtures.home-origin-tests)
+  (fixtures.home-origin-fixed-staging-test)
   42)

@@ -3567,3 +3567,216 @@
       (backend.compiler-backend-state-release-final-arenas! state))))
 
 (test backend-stack-origins-fixed-lane-buffer (backend-stack-origins-lane-test))
+
+(define (backend-stack-origins-shift-emission
+  [state : backend.CompilerBackendState]
+  [kind : i64]) : String
+  (let
+    [shape : i64 (/ kind 4)]
+    [signed? : bool (= (% kind 2) 0)]
+    [ty : ast.AstType
+      (if (= shape 0)
+        (if signed?
+          (I16)
+          (U16))
+        (if signed?
+          (I8)
+          (U8)))]
+    [op : ir.CompilerIrBinOp
+      (if (< (% kind 4) 2)
+        (Shl (clone ty))
+        (Shr (clone ty)))]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-empty)]
+    [diag : diagnostic.CompilerDiagnostic
+      (diagnostic.compiler-diagnostic-at-start "" "")]
+    (for [index (iterator.range 0 3)]
+      (let
+        [home : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment
+            index
+            (Register (cabi.compiler-abi-vector-register-id (+ 6 index))))]
+        (set!
+          assignments
+          (regalloc.compiler-reg-assignments-prepend (& home) assignments))))
+    (match (if (= shape 0)
+      (backend.compiler-backend-emit-avx2-word-vector-shift
+        assignments
+        2
+        op
+        (Var 0)
+        (Var 1)
+        ty
+        diag
+        state)
+      (backend.compiler-backend-emit-byte-vector-shift
+        assignments
+        2
+        op
+        (Var 0)
+        (Var 1)
+        ty
+        (if (= shape 2)
+          "zmm"
+          "ymm")
+        diag
+        state))
+      [(Ok text) text]
+      [(Err _) (io.panic "shift staging emitter refused fixture")])))
+
+(define (backend-stack-origins-shift-test) : unit
+  (for [invalid (iterator.range 0 8)]
+    (let
+      [request : backend.CompilerBackendShiftStagingOperandRequest
+        (backend.CompilerBackendShiftStagingOperandRequest
+          (Operand 0)
+          (if (= invalid 0)
+            16
+            32)
+          (cond
+            [(= invalid 1) -1]
+            [(= invalid 2) 9223372036854775807]
+            [(= invalid 3) 120]
+            [else 0])
+          (cond
+            [(= invalid 4) 0]
+            [(= invalid 5) -1]
+            [(= invalid 6) 64]
+            [else 32])
+          (Read))]
+      (test.assert-true
+        (not
+          (backend.compiler-backend-shift-staging-extent-valid?
+            (if (= invalid 7)
+              -1
+              128)
+            (& request)))
+        "invalid capacity, width or planned offset rejects without overflow")))
+  (for [kind (iterator.range 0 12)]
+    (let
+      [shape : i64 (/ kind 4)]
+      [bytes : i64
+        (if (= shape 2)
+          64
+          32)]
+      [groups : i64
+        (if (= shape 0)
+          2
+          4)]
+      [group-bytes : i64 (/ bytes groups)]
+      [expected : i64 (cond [(= shape 0) 10] [(= shape 1) 25] [else 27])]
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-function-state-set-current-mode!
+        function-state
+        (if (= shape 2)
+          (Avx512)
+          (Avx2)))
+      (backend.compiler-backend-simd-scratch-plan!
+        function-state
+        (if (= shape 0)
+          128
+          (* bytes 7))
+        192)
+      (let
+        [plain : String (backend-stack-origins-shift-emission state kind)]
+        (backend.compiler-backend-state-stack-origins-begin! state)
+        (backend-stack-origins-install-test-plan! state true false)
+        (let
+          [text : String (backend-stack-origins-shift-emission state kind)]
+          [capture : origins.CompilerBackendTextOrigins
+            (backend.compiler-backend-state-stack-text-origins state)]
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+            (origins.compiler-backend-text-origins-find capture (& text))]
+          [packed-homes : (Array i64 8) (array 2 3 2 4 5 3 2 3)]
+          (test.assert-string-eq
+            text
+            plain
+            "fixed shift capture changes no assembly byte")
+          (test.assert-i64-eq
+            facts.len
+            expected
+            "all shift staging accesses are issued")
+          (test.assert-i64-eq
+            (array-length spans)
+            expected
+            "grouping and packing parents retain every token")
+          (for [event (iterator.range 0 expected)]
+            (let
+              [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                (& (array-ref facts.slots (array-ref spans event).token))]
+              [widening-end : i64 (+ 2 (* groups 3))]
+              [post : i64 (- event widening-end)]
+              [ordinal : i64
+                (cond
+                  [(< event 2) event]
+                  [(< event widening-end)
+                    (if (= (% (- event 2) 3) 2)
+                      (+ 2 (/ (- event 2) 3))
+                      (% (- event 2) 3))]
+                  [(= shape 0) (+ 2 post)]
+                  [(< post 8) (array-ref packed-homes post)]
+                  [else 6])]
+              [width : i64
+                (cond
+                  [(< event 2) bytes]
+                  [(< event widening-end)
+                    (if (= (% (- event 2) 3) 2)
+                      bytes
+                      group-bytes)]
+                  [(or (= shape 0) (< post 8)) bytes]
+                  [(= event (- expected 1)) group-bytes]
+                  [else 4])]
+              [write? : bool
+                (cond
+                  [(< event 2) true]
+                  [(< event widening-end) (= (% (- event 2) 3) 2)]
+                  [(= shape 0) false]
+                  [(< post 8) (or (= post 2) (= post 5))]
+                  [else (< event (- expected 1))])]
+              (test.assert-i64-eq
+                fact.home
+                (+ 30 ordinal)
+                "typed operand/result/permutation homes follow actual access order")
+              (test.assert-i64-eq
+                fact.home-bytes
+                bytes
+                "planned capacity survives narrow accesses")
+              (test.assert-i64-eq
+                fact.access-bytes
+                width
+                "actual widening, packing or index width")
+              (test.assert-true
+                (match (& fact.owner)
+                  [(FixedScratch) true]
+                  [_ false])
+                "shift staging is distinct from allocator or emergency traffic")
+              (test.assert-true
+                (match (& fact.bank)
+                  [(Bytes) true]
+                  [_ false])
+                "staged bits have no allocator register bank")
+              (test.assert-true
+                (match (& fact.access)
+                  [(Write) write?]
+                  [(Read) (not write?)]
+                  [_ false])
+                "save, widening, packing and permutation access directions"))))
+        (backend.compiler-backend-state-stack-origins-end! state))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-fixed-shift-buffers
+  (backend-stack-origins-shift-test))

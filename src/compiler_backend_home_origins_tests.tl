@@ -893,8 +893,7 @@ join:
             [_ false])
           "GP push/pop authority rejects vector registers")))))
 
-(test
-  backend-home-fixed-lane-resource
+(define (home-origin-fixed-staging-test) : unit
   (for [spare (iterator.range 0 2)]
     (let
       [instructions : (__tl_dyn-array ir.CompilerIrInstr)
@@ -945,4 +944,101 @@ join:
                 (if (= request 3)
                   8
                   32)
-                "fixed buffer capacity is independent of each access width")]))))))
+                "fixed buffer capacity is independent of each access width")]))
+        (for [request (iterator.range 0 7)]
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            10
+            (if (= request 6)
+              1
+              0)
+            (ShiftStaging
+              (cond
+                [(= request 6) (Operand 0)]
+                [(< request 3)
+                  (Operand
+                    (if (= request 2)
+                      1
+                      0))]
+                [(< request 5)
+                  (Result
+                    (if (= request 3)
+                      0
+                      3))]
+                [else (Permutation)])
+              (if (= request 6)
+                64
+                32)))
+            [(Err message) (io.panic message)]
+            [(Ok home)
+              (test.assert-i64-eq
+                home.id
+                (+
+                  33
+                  (if (= request 0)
+                    0
+                    (- request 1)))
+                "shift resource identity is semantic, typed and site-local")
+              (test.assert-i64-eq
+                home.bytes
+                (if (= request 6)
+                  64
+                  32)
+                "shift resource retains the planned vector capacity")]))
+        (let
+          [count : i64 plan.preservations.len]
+          [slots : (__tl_dyn-array homes.CompilerBackendPreservationHome)
+            (__tl_make-array
+              homes.CompilerBackendPreservationHome
+              (+ count (* spare 3)))]
+          (for [index (iterator.range 0 count)]
+            (set!
+              (array-ref slots index)
+              (clone (array-ref plan.preservations.slots index))))
+          (set!
+            plan.preservations
+            (homes.CompilerBackendPreservationHomeList slots count)))
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          10
+          0
+          (ShiftStaging (Permutation) 32))
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq home.id 37 "exact/spare fixed resource lookup")])
+        (for [invalid (iterator.range 0 7)]
+          (test.assert-true
+            (match (homes.compiler-backend-home-preservation!
+              (&mut plan)
+              44
+              10
+              0
+              (ShiftStaging
+                (cond
+                  [(< invalid 2)
+                    (Operand
+                      (if (= invalid 0)
+                        -1
+                        2))]
+                  [(< invalid 4)
+                    (Result
+                      (if (= invalid 2)
+                        -1
+                        4))]
+                  [else (Permutation)])
+                (cond
+                  [(= invalid 4) 16]
+                  [(= invalid 5) 0]
+                  [(= invalid 6) 64]
+                  [else 32])))
+              [(Err _) true]
+              [_ false])
+            "malformed shift key or changed capacity rejects"))
+        (test.assert-i64-eq
+          plan.preservations.len
+          9
+          "failed query publishes no resource")))))
+
+(test backend-home-fixed-lane-resource (home-origin-fixed-staging-test))

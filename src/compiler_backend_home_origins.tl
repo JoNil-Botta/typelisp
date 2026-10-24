@@ -73,12 +73,18 @@
 
 ;; A preservation resource is issued at its emitting authority, independently
 ;; of its current frame displacement. Separate IR sites never share its home.
+(defenum CompilerBackendShiftStagingKey
+  (Operand i64)
+  (Result i64)
+  (Permutation))
+
 (defenum CompilerBackendPreservationKey
   (EmergencyRegister i64)
   (ParallelCopySlot i64)
   (ParallelCopyRegister i64)
   ;; One instruction-local, untyped 32-byte AVX2 lane buffer.
-  (SimdLaneStaging))
+  (SimdLaneStaging)
+  (ShiftStaging CompilerBackendShiftStagingKey i64))
 
 (defstruct CompilerBackendPreservationHome
   (site i64)
@@ -599,6 +605,32 @@
       (return (Err "stack traffic: original group fragment identity overflows")))
     (Ok (CompilerBackendLogicalHome (+ count (+ (* 2 home.id) word)) 8))))
 
+(define (compiler-backend-shift-staging-key-equal?
+  [left : (& CompilerBackendShiftStagingKey)]
+  [right : (& CompilerBackendShiftStagingKey)]) : bool
+  (match left
+    [(Operand a)
+      (match right
+        [(Operand b) (= a b)]
+        [_ false])]
+    [(Result a)
+      (match right
+        [(Result b) (= a b)]
+        [_ false])]
+    [(Permutation)
+      (match right
+        [(Permutation) true]
+        [_ false])]))
+
+(define (compiler-backend-preservation-key-bytes
+  [key : (& CompilerBackendPreservationKey)]) : i64
+  (match key
+    [(EmergencyRegister _) 64]
+    [(ParallelCopySlot _) 8]
+    [(ParallelCopyRegister _) 8]
+    [(SimdLaneStaging) 32]
+    [(ShiftStaging _ bytes) bytes]))
+
 (define (compiler-backend-preservation-key-equal?
   [left : (& CompilerBackendPreservationKey)]
   [right : (& CompilerBackendPreservationKey)]) : bool
@@ -618,6 +650,10 @@
     [(SimdLaneStaging)
       (match right
         [(SimdLaneStaging) true]
+        [_ false])]
+    [(ShiftStaging a _)
+      (match right
+        [(ShiftStaging b _) (compiler-backend-shift-staging-key-equal? a b)]
         [_ false])]))
 
 ;; Preservation resources follow all scalar and group-fragment IDs. The
@@ -644,6 +680,16 @@
     [normalized : CompilerBackendPreservationKey
       (match (& key)
         [(SimdLaneStaging) (SimdLaneStaging)]
+        [(ShiftStaging part bytes)
+          (unless
+            (and
+              (or (= bytes 32) (= bytes 64))
+              (match part
+                [(Operand index) (and (>= index 0) (< index 2))]
+                [(Result index) (and (>= index 0) (< index 4))]
+                [(Permutation) true]))
+            (return (Err "stack traffic: invalid shift staging authority")))
+          (ShiftStaging (clone part) bytes)]
         [(ParallelCopySlot slot)
           (when
             (< slot 0)
@@ -695,6 +741,11 @@
               (>= found 0)
               (return
                 (Err "stack traffic: duplicate preservation home authority")))
+            (unless
+              (=
+                (compiler-backend-preservation-key-bytes (& entry.key))
+                (compiler-backend-preservation-key-bytes (& normalized)))
+              (return (Err "stack traffic: preservation capacity changed")))
             (set! found index)))
         (+= index 1))
       (let
@@ -713,11 +764,7 @@
         (Ok
           (CompilerBackendLogicalHome
             (+ (* count 3) ordinal)
-            (match normalized
-              [(EmergencyRegister _) 64]
-              [(ParallelCopySlot _) 8]
-              [(ParallelCopyRegister _) 8]
-              [(SimdLaneStaging) 32])))))))
+            (compiler-backend-preservation-key-bytes (& normalized))))))))
 
 ;; Phi copies execute on the predecessor edge, but read the selected target
 ;; Phi input and define its result. The marshaller supplies its actual target

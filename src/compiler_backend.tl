@@ -1683,25 +1683,31 @@
       (let
         [plan : home_origins.CompilerBackendHomePlan
           (compiler-backend-stack-home-plan function-state)]
+        [adapter? : bool
+          (match (& plan.kind)
+            [(ClosureAdapter) true]
+            [(Source) false])]
         [phi? : bool
           (compiler-backend-function-scratch-bool?
             function-state
             compiler-backend-scratch-bool-phi-origins)]
         [site : i64
-          (if phi?
-            (compiler-backend-function-scratch-i64
-              function-state
-              compiler-backend-scratch-i64-phi-origin-site)
-            (let
-              [override : i64
-                (compiler-backend-function-scratch-i64
-                  function-state
-                  compiler-backend-scratch-i64-origin-site)]
-              (if (> override 0)
-                (- override 1)
-                (compiler-backend-function-state-i64
-                  function-state
-                  compiler-backend-function-i64-emit-current-site))))]
+          (if adapter?
+            -1
+            (if phi?
+              (compiler-backend-function-scratch-i64
+                function-state
+                compiler-backend-scratch-i64-phi-origin-site)
+              (let
+                [override : i64
+                  (compiler-backend-function-scratch-i64
+                    function-state
+                    compiler-backend-scratch-i64-origin-site)]
+                (if (> override 0)
+                  (- override 1)
+                  (compiler-backend-function-state-i64
+                    function-state
+                    compiler-backend-function-i64-emit-current-site)))))]
         [whole : home_origins.CompilerBackendLogicalHome
           (match (home_origins.compiler-backend-home-plan-resolve
             (& plan)
@@ -1719,12 +1725,14 @@
                     "stack traffic: parameter initialization cannot authorize a home read"))
                 (match (& request.authority)
                   [(Value)
-                    (if phi?
-                      (home_origins.CompilerBackendHomeQuery.Use
-                        (compiler-backend-function-scratch-i64
-                          function-state
-                          compiler-backend-scratch-i64-phi-origin-use))
-                      (home_origins.CompilerBackendHomeQuery.AnyUse))]
+                    (if adapter?
+                      (home_origins.CompilerBackendHomeQuery.AdapterParameterRead)
+                      (if phi?
+                        (home_origins.CompilerBackendHomeQuery.Use
+                          (compiler-backend-function-scratch-i64
+                            function-state
+                            compiler-backend-scratch-i64-phi-origin-use))
+                        (home_origins.CompilerBackendHomeQuery.AnyUse)))]
                   [(PhiDestination)
                     (unless
                       phi?
@@ -1804,10 +1812,14 @@
           capture
           (text_origins.CompilerBackendStackAccessOrigin
             (compiler_ir_types.compiler-ir-symbol-typed-id function)
-            (SourceBlock block)
+            (if adapter?
+              (AdapterBody)
+              (SourceBlock block))
             home.id
             home.bytes
-            (Allocator)
+            (if adapter?
+              (CallAbi)
+              (Allocator))
             bank
             bytes
             access)
@@ -18064,9 +18076,12 @@
                     (if function-scoped?
                       plan.entry-block
                       block)
-                    (if function-scoped?
-                      -1
-                      site)
+                    (match (& plan.kind)
+                      [(ClosureAdapter) -1]
+                      [(Source)
+                        (if function-scoped?
+                          -1
+                          site)])
                     (clone request.key))
                     [(Ok home) home]
                     [(Err message) (io.panic message)]))]
@@ -18083,7 +18098,9 @@
                 [(ReadWrite)
                   (io.panic
                     "stack traffic: function preservation cannot be RMW")])
-              (SourceBlock block))
+              (match (compiler-backend-stack-home-plan function-state).kind
+                [(ClosureAdapter) (AdapterBody)]
+                [(Source) (SourceBlock block)]))
             home.id
             home.bytes
             (match (& request.key)
@@ -18100,8 +18117,7 @@
           [(Ok result) result]
           [(Err message) (io.panic message)])))))
 
-;; A source-function plan is required. Synthetic adapter owners have no such
-;; plan and must be supported explicitly rather than inherit a caller's frame.
+;; Every emitted function requires its own installed plan, including adapters.
 (define (compiler-backend-frame-pointer-context-check
   [state : CompilerBackendState]) : text_origins.CompilerBackendOriginCheck
   (when
@@ -18109,7 +18125,7 @@
     (return (Ok)))
   (unless
     (compiler-backend-state-function-state-active? state)
-    (return (Err "stack traffic: frame pointer has no source-function owner")))
+    (return (Err "stack traffic: frame pointer has no emitted-function owner")))
   (let
     [function-state : CompilerBackendFunctionState
       (compiler-backend-state-function-state state)]
@@ -18120,8 +18136,7 @@
           compiler-backend-scratch-i64-stack-home-plan)
         0)
       (return
-        (Err
-          "stack traffic: synthetic frame capture needs an explicit function plan")))
+        (Err "stack traffic: frame capture needs an explicit function plan")))
     (let
       [plan : home_origins.CompilerBackendHomePlan
         (compiler-backend-stack-home-plan function-state)]
@@ -18134,7 +18149,7 @@
               function-state
               compiler-backend-scratch-i64-current-source-function)))
         (return
-          (Err "stack traffic: frame pointer source-function plan differs")))))
+          (Err "stack traffic: frame pointer emitted-function plan differs")))))
   (Ok))
 
 (define (compiler-backend-frame-pointer-operand-origin
@@ -76199,6 +76214,45 @@
   (let
     [params : compiler_ir_types.CompilerIrParamSeq
       (compiler-backend-param-list-from-types type-segment-bases param-types 0)]
+    [_origins : unit
+      (when
+        (!=
+          (compiler-backend-state-stack-text-origins
+            program-index.backend-state).storage
+          0)
+        (let
+          [state : CompilerBackendState program-index.backend-state]
+          [function-state : CompilerBackendFunctionState
+            (compiler-backend-state-function-state state)]
+          [intern : ci.InternCompatState (compiler-backend-state-intern state)]
+          ;; Canonical generated-domain identity, distinct from the target's
+          ;; source symbol even when a source name has the same spelling.
+          [function : i64
+            (ci.intern-compat-state-generated-canonical-name
+              (&mut intern)
+              (compiler-backend-closure-entry-label
+                (compiler-backend-symbol-text-index program-index name)))]
+          [groups : compiler_liveness.CompilerLiveI64Set
+            (compiler-backend-type-list-group-vars
+              type-segment-bases
+              param-types
+              program-index)]
+          [home-plan : home_origins.CompilerBackendHomePlan
+            (match (home_origins.compiler-backend-home-plan-adapter
+              function
+              (& params)
+              (& groups))
+              [(Ok result) result]
+              [(Err message) (io.panic message)])]
+          (compiler-backend-function-scratch-set-i64!
+            function-state
+            compiler-backend-scratch-i64-current-source-function
+            function)
+          (compiler-backend-function-state-set-i64!
+            function-state
+            compiler-backend-function-i64-current-block-label
+            0)
+          (compiler-backend-stack-home-plan-install! function-state home-plan)))]
     [vars : i64 (compiler-backend-type-list-count param-types)]
     [args : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.compiler-ir-call-args-from-seq
@@ -76242,20 +76296,26 @@
         program-index)]
     [diag : compiler_diagnostic.CompilerDiagnostic
       (compiler_diagnostic.compiler-diagnostic-at-start "" "")]
-    [spills
-      (try
-        (compiler-backend-emit-param-spills
-          type-segment-bases
-          target
-          (compiler_regalloc.compiler-reg-assignment-table-empty)
-          params
-          1
-          0
-          1
-          0
-          program-index
-          vars
-          program-index.backend-state))]
+    [parameter-context : CompilerBackendParameterOriginsContext
+      (compiler-backend-parameter-origins-begin! program-index.backend-state)]
+    [spills-result : ResultCompilerBackend
+      (compiler-backend-emit-param-spills
+        type-segment-bases
+        target
+        (compiler_regalloc.compiler-reg-assignment-table-empty)
+        params
+        1
+        0
+        1
+        0
+        program-index
+        vars
+        program-index.backend-state)]
+    [_parameter-end : unit
+      (compiler-backend-parameter-origins-end!
+        program-index.backend-state
+        parameter-context)]
+    [spills (try spills-result)]
     [args-asm
       (try
         (compiler-backend-emit-call-args
@@ -76276,7 +76336,8 @@
           vars
           program-index.backend-state))]
     (Ok
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins program-index.backend-state)
         (compiler-backend-emit-function-entry
           (compiler-backend-state-emission-target-policy
             program-index.backend-state)
@@ -76295,7 +76356,9 @@
         ;; the rbp prologue (fpo=false) -- their raw epilogue resets
         ;; rsp from rbp and they never home values in %rbp.
         (compiler-backend-rsp-rebase
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins
+              program-index.backend-state)
             spills
             (compiler-backend-emit-call-space-sub call-space)
             args-asm
@@ -76304,14 +76367,28 @@
               target
               extern-call-info
               param-types)
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins
+                program-index.backend-state)
               "    call "
               (compiler-backend-call-symbol-index name plan program-index)
               "\n"
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins
+                  program-index.backend-state)
                 (compiler-backend-emit-call-space-add call-space)
-                (str_cat.str-cat
-                  "    movq %rbp, %rsp\n    popq %rbp\n    ret\n"
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins
+                    program-index.backend-state)
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins
+                      program-index.backend-state)
+                    "    movq %rbp, %rsp\n    popq "
+                    (compiler-backend-frame-pointer-operand-origin
+                      program-index.backend-state
+                      "%rbp"
+                      (Read))
+                    "\n    ret\n")
                   (if (and
                     (compiler_ir_types.compiler-debug-info-enabled?)
                     (compiler-backend-target-elf? target))

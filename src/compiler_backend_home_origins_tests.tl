@@ -308,7 +308,8 @@
   (home-origin-phi-test)
   (home-origin-group-fragment-test)
   (home-origin-emergency-test)
-  (home-origin-callee-test))
+  (home-origin-callee-test)
+  (home-origin-adapter-test))
 
 (test home-origins-survive-noninjective-coloring (home-origin-tests))
 
@@ -1225,3 +1226,92 @@ join:
           [(Err _) true]
           [_ false])
         "frame pointers cannot borrow an instruction scope"))))
+
+(define (home-origin-adapter-test) : unit
+  (for [spare (iterator.range 0 2)]
+    (let
+      [slots : (__tl_dyn-array ir.CompilerIrParam)
+        (__tl_make-array ir.CompilerIrParam (+ 2 (* spare 3)))]
+      [groups : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+      (set! (array-ref slots 0) (Param "a" (I64) 0))
+      (set! (array-ref slots 1) (Param "b" (I64) 1))
+      (set! groups (live.compiler-live-set-insert groups 1))
+      (let
+        [params : ir.CompilerIrParamSeq (ir.CompilerIrParamSeq slots 2)]
+        [plan : homes.CompilerBackendHomePlan
+          (match (homes.compiler-backend-home-plan-adapter
+            44
+            (& params)
+            (& groups))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (test.assert-i64-eq
+          (array-length plan.sites)
+          0
+          "adapter invents no IR sites")
+        (test.assert-i64-eq
+          (array-length plan.bytes)
+          2
+          "logical parameter extent")
+        (for [var (iterator.range 0 2)]
+          (for [read (iterator.range 0 2)]
+            (match (homes.compiler-backend-home-plan-resolve
+              (& plan)
+              44
+              0
+              -1
+              var
+              (if (= read 0)
+                (Parameter)
+                (AdapterParameterRead)))
+              [(Err message) (io.panic message)]
+              [(Ok home)
+                (test.assert-i64-eq home.id var "parameter ordinal identity")
+                (test.assert-i64-eq
+                  home.bytes
+                  (* 8 (+ var 1))
+                  "actual storage shape")])))
+        (for [invalid (iterator.range 0 6)]
+          (test.assert-true
+            (match (homes.compiler-backend-home-plan-resolve
+              (& plan)
+              (if (= invalid 0)
+                45
+                44)
+              (if (= invalid 1)
+                1
+                0)
+              (if (= invalid 2)
+                0
+                -1)
+              (if (= invalid 3)
+                2
+                0)
+              (cond
+                [(= invalid 4) (AnyUse)]
+                [(= invalid 5) (Definition)]
+                [else (Parameter)]))
+              [(Err _) true]
+              [_ false])
+            "adapter rejects foreign function, invented sites and source queries"))
+        (for [read (iterator.range 0 2)]
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            0
+            -1
+            (FramePointer))
+            [(Err message) (io.panic message)]
+            [(Ok home)
+              (test.assert-i64-eq home.id 6 "one synthetic function frame")]))
+        (let
+          [bad : ir.CompilerIrParamSeq (clone params)]
+          (set! (array-ref bad.slots 1) (Param "b" (I64) 0))
+          (test.assert-true
+            (match (homes.compiler-backend-home-plan-adapter
+              44
+              (& bad)
+              (& groups))
+              [(Err _) true]
+              [_ false])
+            "adapter factory rejects noncanonical parameter ordinals"))))))

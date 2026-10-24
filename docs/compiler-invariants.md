@@ -720,9 +720,16 @@ provisional restore with the removed instruction; a bare shrink-wrap bypass
 issues no frame access. Entry/exit anchors describe emitting authorities, not
 final CFG nodes or regions: a shrink-wrapped save may occur inside the function.
 An inactive factory allocates no owner. Capture requires the exact installed
-source-function plan; an unplanned synthetic adapter cannot inherit a caller's
-frame. Synthetic adapter ownership, other implicit ABI traffic and final
-machine anchor reconciliation remain required before a complete census.
+emitted-function plan. Closure adapters have a separate canonical generated
+symbol and a signature-derived plan with no invented IR sites. Their local
+parameter homes are `CallAbi` marshalling resources; group fragments require
+the program's actual representation facts. A typed adapter-body anchor cannot
+inherit a source block. The owned adapter factory restores a nested caller's
+owner and plan, or restores the production ownerless state, after emergency
+wrapping. Parameter stores, forwarded local reads and the explicit frame pop
+retain their tokens through concatenation and rsp rebasing. Incoming/outgoing
+ABI stack areas, other implicit traffic and final machine anchor reconciliation
+remain required before a complete census.
 Parallel-copy frame temporaries use distinct typed slot keys in the same
 preservation registry. Each is one eight-byte `PlannedScratch` home with a
 `Bytes` bank: GP and floating moves transport bits through that resource, while

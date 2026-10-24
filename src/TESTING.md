@@ -882,6 +882,16 @@ FPO removal and bare shrink-wrap bypasses across all modes/targets/debug states.
 They distinguish the ordinary frame from an allocated `%rbp` save, reject a
 missing/mismatched source-function context, preserve disabled-owner laziness,
 and require exact machine/unwind bytes without annotating CFI/SEH directives.
+Adapter fixtures compare complete ordinary/captured templates on Linux and
+Windows with zero, scalar, floating and explicitly represented two-word group
+signatures. They exercise ownerless production entry and nested caller states
+in all three caller backend modes, checking exact owner/plan restoration,
+distinct generated versus equal-spelling source identities, and surviving
+parameter/frame tokens. Pure plans check exact/spare parameter extents and
+reject wrong functions, invented IR sites, source queries and noncanonical
+parameter ordinals. The shared native smoke calls these fixtures at opt0/1/2.
+These local marshalling facts do not establish incoming/outgoing ABI-area
+coverage or final report acceptance.
 `compiler_backend_stack_origins_tests.tl`
 checks actual vector load/store/folded/fallback factories and a higher-level
 vector copy with equal colored offsets but distinct logical homes. The native

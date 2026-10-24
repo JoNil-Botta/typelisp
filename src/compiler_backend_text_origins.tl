@@ -54,6 +54,7 @@
 ;; and exit traffic cannot inherit whichever IR block was emitted last.
 (defenum CompilerBackendStackAccessAnchor
   (SourceBlock i64)
+  (AdapterBody)
   (FunctionEntry)
   (FunctionExit))
 
@@ -179,6 +180,7 @@
       (not
         (match (& access.anchor)
           [(SourceBlock block) (>= block 0)]
+          [(AdapterBody) true]
           [(FunctionEntry)
             (and
               (match (& access.owner)

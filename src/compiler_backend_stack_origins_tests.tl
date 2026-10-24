@@ -4851,3 +4851,229 @@ second:
 (test
   backend-stack-origins-frame-pointer-and-epilogues
   (backend-stack-origins-frame-test))
+
+(define (backend-stack-origins-adapter-test) : unit
+  (builtin_ids.compiler-builtin-initialize-for-parse!)
+  (for [platform (iterator.range 0 2)]
+    (for [mode (iterator.range 0 3)]
+      (for [shape (iterator.range 0 4)]
+        (for [nested (iterator.range 0 2)]
+          (let
+            [intern : ci.InternCompatState (ci.intern-compat-state-new)]
+            [name : i64
+              (ci.intern-compat-state-intern (&mut intern) "adapter_target")]
+            [collision : i64
+              (ci.intern-compat-state-intern
+                (&mut intern)
+                ".L_tl_fn_entry_adapter_target")]
+            [state : backend.CompilerBackendState
+              (backend.compiler-backend-state-new
+                (owned_view.compiler-owned-shared-view intern))]
+            [outer : backend.CompilerBackendFunctionState
+              (if (= nested 1)
+                (backend.compiler-backend-state-function-state state)
+                (backend.compiler-backend-function-state-new))]
+            [outer-address : i64
+              (backend.compiler-backend-state-function-state-address state)]
+            [target : backend.CompilerBackendTarget
+              (if (= platform 0)
+                (Linux)
+                (Windows))]
+            [types : ast.AstTypeList (ast.ast-type-list-with-capacity 9)]
+            [ty : ast.AstType
+              (match shape
+                [1 (I64)]
+                [2 (F32)]
+                [_
+                  (Struct
+                    (ir.compiler-ir-symbol
+                      "__tl_internal_abi_group_m0__adapter"))])]
+            [index : backend.CompilerBackendProgramIndex
+              (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+                state
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (if (= shape 3)
+                  (ir.CompilerIrFunctionSeq
+                    (__tl_make-array
+                      (ir.CompilerIrFunction.Function
+                        name
+                        (ir.compiler-ir-param-seq-empty)
+                        (clone ty)
+                        1
+                        (ir.CompilerIrBlockList.Array
+                          (ir.CompilerIrBlockSeq
+                            (__tl_make-array
+                              (ir.CompilerIrBlock.Block
+                                (ir.compiler-ir-label "adapter_pack")
+                                (ir.CompilerIrInstrSeq
+                                  (__tl_make-array
+                                    (ir.CompilerIrInstr.Pack
+                                      0
+                                      (ir.compiler-ir-value-seq2
+                                        (I64 1)
+                                        (I64 2))
+                                      (clone ty))
+                                    (ir.CompilerIrInstr.Return (Some (Var 0))))
+                                  2)))
+                            1))
+                        Ordinary))
+                    1)
+                  (ir.compiler-ir-function-seq-empty))
+                (ir.compiler-ir-extern-seq-empty)
+                (profile_state.compiler-profile-state-new))]
+            [runtime : backend.CompilerBackendRuntimePlan
+              (match (backend.compiler-backend-runtime-plan-with-backend-state
+                state
+                (Program
+                  (ir.compiler-ir-global-seq-empty)
+                  (ir.compiler-ir-function-seq-empty)
+                  (ir.compiler-ir-extern-seq-empty)))
+                [(Ok result) result]
+                [(Err _) (io.panic "adapter runtime refused")])]
+            (backend.compiler-backend-state-set-emission-target-policy!
+              state
+              (backend.compiler-backend-target-policy-new target))
+            (backend.compiler-backend-function-state-set-current-mode!
+              outer
+              (match mode
+                [0 (Scalar)]
+                [1 (Avx2)]
+                [_ (Avx512)]))
+            (backend.compiler-backend-function-scratch-set-i64!
+              outer
+              backend.compiler-backend-scratch-i64-current-source-function
+              name)
+            (backend.compiler-backend-function-state-set-i64!
+              outer
+              backend.compiler-backend-function-i64-current-block-label
+              10)
+            (for [param
+              (iterator.range
+                0
+                (if (= shape 0)
+                  0
+                  9))]
+              (ast.ast-type-list-push
+                (&mut types)
+                (ast.ast-node-pool-reader-type-push (& ty))))
+            (let
+              [plain : String
+                (match (backend.compiler-backend-emit-closure-entry-adapter-owned
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  target
+                  name
+                  (owned_view.compiler-owned-shared-view types)
+                  (I64)
+                  runtime
+                  (ir.compiler-ir-function-seq-empty)
+                  (ir.compiler-ir-extern-seq-empty)
+                  index)
+                  [(Ok text) text]
+                  [(Err _) (io.panic "ordinary adapter refused")])]
+              (backend.compiler-backend-state-stack-origins-begin! state)
+              (when
+                (= nested 1)
+                (backend-stack-origins-install-test-plan! state false false))
+              (let
+                [before : i64
+                  (backend.compiler-backend-function-scratch-i64
+                    outer
+                    backend.compiler-backend-scratch-i64-stack-home-plan)]
+                [text : String
+                  (match (backend.compiler-backend-emit-closure-entry-adapter-owned
+                    (ast.ast-node-pool-reader-type-segment-bases)
+                    target
+                    name
+                    (owned_view.compiler-owned-shared-view types)
+                    (I64)
+                    runtime
+                    (ir.compiler-ir-function-seq-empty)
+                    (ir.compiler-ir-extern-seq-empty)
+                    index)
+                    [(Ok result) result]
+                    [(Err _) (io.panic "captured adapter refused")])]
+                [capture : origins.CompilerBackendTextOrigins
+                  (backend.compiler-backend-state-stack-text-origins state)]
+                [facts : origins.CompilerBackendStackAccessOriginList
+                  (backend.compiler-backend-state-stack-access-origins state)]
+                [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+                  (origins.compiler-backend-text-origins-find capture (& text))]
+                [frame-home : i64 -1]
+                [synthetic : i64 -1]
+                [writes : i64 0]
+                [reads : i64 0]
+                [frame : i64 0]
+                (test.assert-string-eq
+                  text
+                  plain
+                  "adapter capture changes no assembly bytes")
+                (test.assert-i64-eq
+                  (backend.compiler-backend-state-function-state-address state)
+                  outer-address
+                  "adapter restores actual caller owner")
+                (test.assert-i64-eq
+                  (backend.compiler-backend-function-scratch-i64
+                    outer
+                    backend.compiler-backend-scratch-i64-stack-home-plan)
+                  before
+                  "adapter cannot borrow or replace caller's plan")
+                (test.assert-true
+                  (> (array-length spans) 0)
+                  "adapter retains final operand tokens")
+                (for [i (iterator.range 0 (array-length spans))]
+                  (let
+                    [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                      (& (array-ref facts.slots (array-ref spans i).token))]
+                    (when (< synthetic 0) (set! synthetic fact.function.value))
+                    (test.assert-i64-eq
+                      fact.function.value
+                      synthetic
+                      "one emitted adapter authority")
+                    (test.assert-true
+                      (and (!= synthetic name) (!= synthetic collision))
+                      "adapter differs from target and equal-spelling source symbol")
+                    (match (& fact.anchor)
+                      [(FunctionEntry)
+                        (set! frame-home fact.home)
+                        (+= frame 1)]
+                      [(FunctionExit)
+                        (test.assert-i64-eq
+                          fact.home
+                          frame-home
+                          "actual frame push/pop resource")
+                        (+= frame 1)]
+                      [(AdapterBody)
+                        (when
+                          (match (& fact.owner)
+                            [(CallAbi) true]
+                            [_ false])
+                          (test.assert-i64-eq
+                            fact.home-bytes
+                            8
+                            "one parameter word")
+                          (match (& fact.access)
+                            [(Write) (+= writes 1)]
+                            [(Read) (+= reads 1)]
+                            [_
+                              (test.assert-true
+                                false
+                                "adapter parameter is not RMW")]))]
+                      [_
+                        (test.assert-true
+                          false
+                          "adapter cannot inherit a source block")])))
+                (test.assert-i64-eq frame 2 "one real frame push and pop")
+                (test.assert-i64-eq
+                  writes
+                  (cond [(= shape 0) 0] [(= shape 3) 18] [else 9])
+                  "explicit Pack representation authorizes both parameter words")
+                (test.assert-i64-eq
+                  reads
+                  writes
+                  "forwarding reads those same local words"))
+              (backend.compiler-backend-state-stack-origins-end! state))
+            (backend.compiler-backend-state-release-final-arenas! state)))))))
+
+(test
+  backend-stack-origins-synthetic-adapter-owner
+  (backend-stack-origins-adapter-test))

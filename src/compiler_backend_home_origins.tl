@@ -50,6 +50,7 @@
   (Definition)
   (Parameter)
   (Address)
+  (AdapterParameterRead)
   (AnyUse)
   (Use i64))
 
@@ -111,7 +112,13 @@
   compiler-dense-list-unused-shared-zero-storage
   append-from)
 
+(defenum CompilerBackendHomePlanKind
+  (Source)
+  ;; One emitted forwarding body, with no allocator or fabricated IR sites.
+  (ClosureAdapter))
+
 (defstruct CompilerBackendHomePlan
+  (kind CompilerBackendHomePlanKind)
   (function i64)
   (entry-block i64)
   (parameters CompilerBackendHomeBindingList)
@@ -266,6 +273,7 @@
                 (match (& binding.position)
                   [(Parameter) true]
                   [_ false])]
+              [(AdapterParameterRead) false]
               [(Address)
                 (match (& binding.position)
                   [(Address) true]
@@ -528,6 +536,7 @@
           (live.compiler-live-set-contains? (& input.groups) var))))
     (Ok
       (CompilerBackendHomePlan
+        (Source)
         input.function
         (if (> (array-length placed) 0)
           (match (& (array-ref placed 0))
@@ -535,6 +544,59 @@
           -1)
         parameters.bindings
         sites
+        bytes
+        groups
+        (compiler-backend-preservation-home-list-new)))))
+
+;; The adapter factory supplies its real parameter ordinals and storage shapes.
+;; Its local homes are ABI marshalling resources, not colored allocator values.
+(define (compiler-backend-home-plan-adapter
+  [function : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [group-vars : (& live.CompilerLiveI64Set)]) : CompilerBackendHomePlanResult
+  (unless
+    (and
+      (>= function 0)
+      (>= params.len 0)
+      (<= params.len (array-length params.slots)))
+    (return (Err "stack traffic: invalid adapter parameter extent")))
+  (let
+    [bindings : CompilerBackendHomeBindingList
+      (compiler-backend-home-binding-list-new)]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 params.len)]
+    [bytes : (__tl_dyn-array i64) (__tl_make-array i64 params.len)]
+    [groups : (__tl_dyn-array bool) (__tl_make-array bool params.len)]
+    (for [index (iterator.range 0 params.len)]
+      (match (ir.compiler-ir-param-seq-ref params index)
+        [(Param _ _ var)
+          (unless
+            (= var index)
+            (return (Err "stack traffic: adapter parameter ordinal differs")))
+          (compiler-backend-home-binding-list-push
+            (&mut bindings)
+            (CompilerBackendHomeBinding var var (Parameter)))]))
+    (regalloc.compiler-reg-vector-stack-words-params! params (&mut words))
+    (for [var (iterator.range 0 params.len)]
+      (let
+        [group? : bool (live.compiler-live-set-contains? group-vars var)]
+        [size : i64
+          (regalloc.compiler-reg-vector-stack-words-for-var (& words) var)]
+        [capacity : i64
+          (if (and group? (< size 2))
+            2
+            size)]
+        (when
+          (> capacity 1152921504606846975)
+          (return (Err "stack traffic: adapter home capacity overflows")))
+        (set! (array-ref bytes var) (* 8 capacity))
+        (set! (array-ref groups var) group?)))
+    (Ok
+      (CompilerBackendHomePlan
+        (ClosureAdapter)
+        function
+        0
+        bindings
+        (__tl_make-array CompilerBackendHomeSite 0)
         bytes
         groups
         (compiler-backend-preservation-home-list-new)))))
@@ -549,6 +611,23 @@
   (unless
     (= function plan.function)
     (return (Err "stack traffic: original-home emission site is unbound")))
+  (match (& plan.kind)
+    [(ClosureAdapter)
+      (unless
+        (and
+          (= block 0)
+          (= site -1)
+          (match (& query)
+            [(Parameter) true]
+            [(AdapterParameterRead) true]
+            [_ false]))
+        (return (Err "stack traffic: adapter home needs marshalling authority")))
+      (set! query (Parameter))]
+    [(Source)
+      (match (& query)
+        [(AdapterParameterRead)
+          (return (Err "stack traffic: source home has no adapter authority"))]
+        [_ unit])])
   (let
     [logical : i64
       (match (& query)
@@ -729,12 +808,18 @@
         (return
           (Err "stack traffic: function preservation needs function authority"))))
     (begin
-      (unless
-        (and (>= block 0) (>= site 0) (< site (array-length plan.sites)))
-        (return (Err "stack traffic: preservation site is unbound")))
-      (unless
-        (= block (array-ref plan.sites site).block)
-        (return (Err "stack traffic: preservation block differs")))))
+      (match (& plan.kind)
+        [(ClosureAdapter)
+          (unless
+            (and (= block 0) (= site -1))
+            (return (Err "stack traffic: adapter preservation body differs")))]
+        [(Source)
+          (unless
+            (and (>= block 0) (>= site 0) (< site (array-length plan.sites)))
+            (return (Err "stack traffic: preservation site is unbound")))
+          (unless
+            (= block (array-ref plan.sites site).block)
+            (return (Err "stack traffic: preservation block differs")))])))
   (let
     [normalized : CompilerBackendPreservationKey
       (match (& key)

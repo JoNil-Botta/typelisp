@@ -73,18 +73,23 @@
 
 ;; A preservation resource is issued at its emitting authority, independently
 ;; of its current frame displacement. Separate IR sites never share its home.
-(defstruct CompilerBackendEmergencyHome
-  (site i64)
-  (reg i64))
+(defenum CompilerBackendPreservationKey
+  (EmergencyRegister i64)
+  (ParallelCopySlot i64)
+  (ParallelCopyRegister i64))
 
-(defstruct CompilerBackendEmergencyHomeList
-  (slots (__tl_dyn-array CompilerBackendEmergencyHome))
+(defstruct CompilerBackendPreservationHome
+  (site i64)
+  (key CompilerBackendPreservationKey))
+
+(defstruct CompilerBackendPreservationHomeList
+  (slots (__tl_dyn-array CompilerBackendPreservationHome))
   (len i64))
 
 (dense_list.compiler-dense-list-operations
-  CompilerBackendEmergencyHome
-  CompilerBackendEmergencyHomeList
-  compiler-backend-emergency-home-list
+  CompilerBackendPreservationHome
+  CompilerBackendPreservationHomeList
+  compiler-backend-preservation-home-list
   caller-provided-fallback
   zero-capacity
   compiler-dense-list-unused-shared-zero-storage
@@ -97,7 +102,7 @@
   (sites (__tl_dyn-array CompilerBackendHomeSite))
   (bytes (__tl_dyn-array i64))
   (groups (__tl_dyn-array bool))
-  (emergency CompilerBackendEmergencyHomeList))
+  (preservations CompilerBackendPreservationHomeList))
 
 (defstruct CompilerBackendHomePlanInput
   (function i64)
@@ -516,7 +521,7 @@
         sites
         bytes
         groups
-        (compiler-backend-emergency-home-list-new)))))
+        (compiler-backend-preservation-home-list-new)))))
 
 (define (compiler-backend-home-plan-resolve
   [plan : (& plan CompilerBackendHomePlan)]
@@ -592,72 +597,119 @@
       (return (Err "stack traffic: original group fragment identity overflows")))
     (Ok (CompilerBackendLogicalHome (+ count (+ (* 2 home.id) word)) 8))))
 
-;; The emergency emitter preserves one borrowed register across an IR site's
-;; emitted sequence. Its reserved frame resource is 64 bytes, even for a GP or
-;; narrow SIMD save. Register parking and elision never call this authority.
-;; IDs follow all scalar and two-word fragment IDs; coloring and slot reuse
-;; cannot alias this resource with an allocator home or another site's save.
-(define (compiler-backend-home-emergency!
+(define (compiler-backend-preservation-key-equal?
+  [left : (& CompilerBackendPreservationKey)]
+  [right : (& CompilerBackendPreservationKey)]) : bool
+  (match left
+    [(EmergencyRegister a)
+      (match right
+        [(EmergencyRegister b) (= a b)]
+        [_ false])]
+    [(ParallelCopySlot a)
+      (match right
+        [(ParallelCopySlot b) (= a b)]
+        [_ false])]
+    [(ParallelCopyRegister a)
+      (match right
+        [(ParallelCopyRegister b) (= a b)]
+        [_ false])]))
+
+;; Preservation resources follow all scalar and group-fragment IDs. The
+;; emitting authority supplies a typed key, never a frame displacement. A
+;; parallel-copy slot is one eight-byte word; an emergency save reserves the
+;; widest physical bank. Slot reuse at another IR site cannot alias either.
+(define (compiler-backend-home-preservation!
   [plan : (&mut plan CompilerBackendHomePlan)]
   [function : i64]
   [block : i64]
   [site : i64]
-  [reg : i64]) : CompilerBackendPlannedHomeResult
+  [key : CompilerBackendPreservationKey]) : CompilerBackendPlannedHomeResult
   (unless
     (and
       (= function plan.function)
       (>= block 0)
       (>= site 0)
       (< site (array-length plan.sites)))
-    (return (Err "stack traffic: emergency preservation site is unbound")))
+    (return (Err "stack traffic: preservation site is unbound")))
   (unless
     (= block (array-ref plan.sites site).block)
-    (return (Err "stack traffic: emergency preservation block differs")))
-  (unless
-    (or
-      (and
-        (>= reg abi.compiler-reg-id-rax)
-        (<= reg abi.compiler-reg-id-r15)
-        (!= reg abi.compiler-reg-id-rsp)
-        (!= reg abi.compiler-reg-id-rbp))
-      (abi.compiler-abi-xmm-register-id? reg)
-      (abi.compiler-abi-vector-register-id? reg))
-    (return (Err "stack traffic: invalid emergency preservation register")))
-  (unless
-    (and
-      (>= plan.emergency.len 0)
-      (<= plan.emergency.len (array-length plan.emergency.slots)))
-    (return (Err "stack traffic: invalid emergency home extent")))
+    (return (Err "stack traffic: preservation block differs")))
   (let
-    [physical : i64 (abi.compiler-abi-register-ownership-id reg)]
-    [index : i64 0]
-    [found : i64 -1]
-    [count : i64 (array-length plan.bytes)]
-    (while (< index plan.emergency.len)
-      (let
-        [entry : CompilerBackendEmergencyHome
-          (clone (array-ref plan.emergency.slots index))]
-        (when
-          (and (= entry.site site) (= entry.reg physical))
+    [normalized : CompilerBackendPreservationKey
+      (match (& key)
+        [(ParallelCopySlot slot)
           (when
-            (>= found 0)
-            (return (Err "stack traffic: duplicate emergency home authority")))
-          (set! found index)))
-      (+= index 1))
+            (< slot 0)
+            (return (Err "stack traffic: invalid parallel-copy slot")))
+          (ParallelCopySlot slot)]
+        [(ParallelCopyRegister reg)
+          (unless
+            (and
+              (>= reg abi.compiler-reg-id-rax)
+              (<= reg abi.compiler-reg-id-r15)
+              (!= reg abi.compiler-reg-id-rsp)
+              (!= reg abi.compiler-reg-id-rbp))
+            (return
+              (Err "stack traffic: invalid parallel-copy preservation register")))
+          (ParallelCopyRegister reg)]
+        [(EmergencyRegister reg)
+          (unless
+            (or
+              (and
+                (>= reg abi.compiler-reg-id-rax)
+                (<= reg abi.compiler-reg-id-r15)
+                (!= reg abi.compiler-reg-id-rsp)
+                (!= reg abi.compiler-reg-id-rbp))
+              (abi.compiler-abi-xmm-register-id? reg)
+              (abi.compiler-abi-vector-register-id? reg))
+            (return
+              (Err "stack traffic: invalid emergency preservation register")))
+          (EmergencyRegister (abi.compiler-abi-register-ownership-id reg))])]
+    (unless
+      (and
+        (>= plan.preservations.len 0)
+        (<= plan.preservations.len (array-length plan.preservations.slots)))
+      (return (Err "stack traffic: invalid preservation home extent")))
     (let
-      [ordinal : i64
-        (if (>= found 0)
-          found
-          plan.emergency.len)]
-      (when
-        (> count (/ (- 9223372036854775807 ordinal) 3))
-        (return (Err "stack traffic: emergency home identity overflows")))
-      (when
-        (< found 0)
-        (compiler-backend-emergency-home-list-push
-          (&mut plan.emergency)
-          (CompilerBackendEmergencyHome site physical)))
-      (Ok (CompilerBackendLogicalHome (+ (* count 3) ordinal) 64)))))
+      [index : i64 0]
+      [found : i64 -1]
+      [count : i64 (array-length plan.bytes)]
+      (while (< index plan.preservations.len)
+        (let
+          [entry : CompilerBackendPreservationHome
+            (clone (array-ref plan.preservations.slots index))]
+          (when
+            (and
+              (= entry.site site)
+              (compiler-backend-preservation-key-equal?
+                (& entry.key)
+                (& normalized)))
+            (when
+              (>= found 0)
+              (return
+                (Err "stack traffic: duplicate preservation home authority")))
+            (set! found index)))
+        (+= index 1))
+      (let
+        [ordinal : i64
+          (if (>= found 0)
+            found
+            plan.preservations.len)]
+        (when
+          (> count (/ (- 9223372036854775807 ordinal) 3))
+          (return (Err "stack traffic: preservation home identity overflows")))
+        (when
+          (< found 0)
+          (compiler-backend-preservation-home-list-push
+            (&mut plan.preservations)
+            (CompilerBackendPreservationHome site (clone normalized))))
+        (Ok
+          (CompilerBackendLogicalHome
+            (+ (* count 3) ordinal)
+            (match normalized
+              [(EmergencyRegister _) 64]
+              [(ParallelCopySlot _) 8]
+              [(ParallelCopyRegister _) 8])))))))
 
 ;; Phi copies execute on the predecessor edge, but read the selected target
 ;; Phi input and define its result. The marshaller supplies its actual target

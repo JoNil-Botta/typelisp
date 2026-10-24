@@ -2294,147 +2294,244 @@
   (backend-stack-origins-group-test))
 
 (define (backend-stack-origins-group-phi-test) : unit
-  (let
-    [state : backend.CompilerBackendState
-      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
-    [index : backend.CompilerBackendProgramIndex
-      (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
-        state
-        (ast.ast-node-pool-reader-type-segment-bases)
-        (ir.compiler-ir-function-seq-empty)
-        (ir.compiler-ir-extern-seq-empty)
-        (profile_state.compiler-profile-state-new))]
-    [function-state : backend.CompilerBackendFunctionState
-      (backend.compiler-backend-state-function-state state)]
-    [original : ir.CompilerIrBlockList
-      (ir_text.blocks
-        "entry:
-  jump join
-other:
-  jump join
-join:
-  %7 = phi [%9, entry], [%10, other] : i64
-  %8 = phi [%10, entry], [%9, other] : i64
-  return %7
-")]
-    [map : (__tl_dyn-array i64) (__tl_make-array i64 12)]
-    [a : regalloc.CompilerRegAssignment
-      (regalloc.CompilerRegAssignment 1 (Spill -64))]
-    [b : regalloc.CompilerRegAssignment
-      (regalloc.CompilerRegAssignment 2 (Spill -80))]
-    [assignments : regalloc.CompilerRegAssignmentTable
-      (regalloc.compiler-reg-assignments-prepend
-        (& a)
-        (regalloc.compiler-reg-assignments-prepend
-          (& b)
-          (regalloc.compiler-reg-assignment-table-empty)))]
-    [groups : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
-    (for [var (iterator.range 0 12)]
-      (set! (array-ref map var) var))
-    (for [var (iterator.range 7 11)]
-      (set! groups (live.compiler-live-set-insert groups var)))
-    (set! (array-ref map 7) 1)
-    (set! (array-ref map 8) 2)
-    (set! (array-ref map 9) 2)
-    (set! (array-ref map 10) 1)
-    (backend.compiler-backend-function-scratch-set-i64!
-      function-state
-      backend.compiler-backend-scratch-i64-current-source-function
-      44)
-    (backend.compiler-backend-group-vars-enable!
-      state
-      (live.compiler-live-set-insert (live.compiler-live-set1 1) 2)
-      (live.compiler-live-set-empty))
-    (backend.compiler-backend-state-stack-origins-begin! state)
+  (for [kind (iterator.range 0 4)]
     (let
-      [input : home_origins.CompilerBackendHomePlanInput
-        (home_origins.CompilerBackendHomePlanInput
-          44
-          12
-          12
-          (ir.compiler-ir-param-seq-empty)
-          (owned_view.compiler-owned-shared-view original)
-          (regalloc.compiler-reg-remap-blocks (& map) (& original))
-          (Remap map 12)
-          groups)]
-      [plan : home_origins.CompilerBackendHomePlan
-        (match (home_origins.compiler-backend-home-plan-build (& input))
-          [(Ok result) result]
-          [(Err message) (io.panic message)])]
-      (backend.compiler-backend-function-state-set-i64!
-        function-state
-        backend.compiler-backend-function-i64-current-block-label
-        (array-ref plan.sites 0).block)
-      (backend.compiler-backend-stack-home-plan-install! function-state plan))
-    (backend.compiler-backend-function-state-set-current-phi-target-point!
-      state
-      4)
-    (backend.compiler-backend-function-state-set-emit-current-site!
-      function-state
-      0)
-    (let
-      [text : String
-        (match (backend.compiler-backend-emit-phi-cycle-prefix
+      [ty : ast.AstType
+        (cond [(= kind 2) (F32)] [(= kind 3) (F64)] [else (I64)])]
+      [type-name : String
+        (cond [(= kind 2) "f32"] [(= kind 3) "f64"] [else "i64"])]
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [index : backend.CompilerBackendProgramIndex
+        (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+          state
           (ast.ast-node-pool-reader-type-segment-bases)
-          assignments
-          1
-          (Value (Var 2))
-          (I64)
-          ""
-          index
-          12
-          state)
-          [(Ok text) text]
-          [(Err _) (io.panic "group phi cycle refused")])]
-      [facts : origins.CompilerBackendStackAccessOriginList
-        (backend.compiler-backend-state-stack-access-origins state)]
-      [capture : origins.CompilerBackendTextOrigins
-        (backend.compiler-backend-state-stack-text-origins state)]
-      (test.assert-i64-eq
-        facts.len
-        6
-        "two old-destination saves plus four copy operands")
-      (test.assert-i64-eq
-        (array-length
-          (origins.compiler-backend-text-origins-find capture (& text)))
-        6
-        "cycle prefix transports all original fragment tokens")
-      (for [event (iterator.range 0 6)]
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty)
+          (profile_state.compiler-profile-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [original : ir.CompilerIrBlockList
+        (ir_text.blocks
+          (string.concat3
+            "entry:\n  jump join\nother:\n  jump join\njoin:\n  %7 = phi [%9, entry], [%10, other] : "
+            (clone type-name)
+            (string.concat3
+              "\n  %8 = phi [%10, entry], [%9, other] : "
+              type-name
+              "\n  return %7\n")))]
+      [map : (__tl_dyn-array i64) (__tl_make-array i64 12)]
+      [a : regalloc.CompilerRegAssignment
+        (regalloc.CompilerRegAssignment 1 (Spill -64))]
+      [b : regalloc.CompilerRegAssignment
+        (regalloc.CompilerRegAssignment 2 (Spill -80))]
+      [assignments : regalloc.CompilerRegAssignmentTable
+        (regalloc.compiler-reg-assignments-prepend
+          (& a)
+          (regalloc.compiler-reg-assignments-prepend
+            (& b)
+            (regalloc.compiler-reg-assignment-table-empty)))]
+      [groups : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+      (for [var (iterator.range 0 12)]
+        (set! (array-ref map var) var))
+      (when
+        (= kind 0)
+        (for [var (iterator.range 7 11)]
+          (set! groups (live.compiler-live-set-insert groups var))))
+      (set! (array-ref map 7) 1)
+      (set! (array-ref map 8) 2)
+      (set! (array-ref map 9) 2)
+      (set! (array-ref map 10) 1)
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (when
+        (= kind 0)
+        (backend.compiler-backend-group-vars-enable!
+          state
+          (live.compiler-live-set-insert (live.compiler-live-set1 1) 2)
+          (live.compiler-live-set-empty)))
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (let
+        [input : home_origins.CompilerBackendHomePlanInput
+          (home_origins.CompilerBackendHomePlanInput
+            44
+            12
+            12
+            (ir.compiler-ir-param-seq-empty)
+            (owned_view.compiler-owned-shared-view original)
+            (regalloc.compiler-reg-remap-blocks (& map) (& original))
+            (Remap map 12)
+            groups)]
+        [plan : home_origins.CompilerBackendHomePlan
+          (match (home_origins.compiler-backend-home-plan-build (& input))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (backend.compiler-backend-function-state-set-i64!
+          function-state
+          backend.compiler-backend-function-i64-current-block-label
+          (array-ref plan.sites 0).block)
+        (backend.compiler-backend-stack-home-plan-install! function-state plan))
+      (backend.compiler-backend-function-state-set-current-phi-target-point!
+        state
+        4)
+      (backend.compiler-backend-function-state-set-emit-current-site!
+        function-state
+        0)
+      (let
+        [text : String
+          (match (backend.compiler-backend-emit-phi-cycle-prefix
+            (ast.ast-node-pool-reader-type-segment-bases)
+            assignments
+            1
+            (Value (Var 2))
+            (clone ty)
+            ""
+            index
+            12
+            state)
+            [(Ok text) text]
+            [(Err _) (io.panic "group phi cycle refused")])]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
         (test.assert-i64-eq
-          (array-ref facts.slots event).home
-          (+
-            (if (or (= event 2) (= event 3))
-              30
-              26)
-            (% event 2))
-          "save uses Phi definition, copy read uses exact incoming operand")))
-    (test.assert-true
-      (not
-        (backend.compiler-backend-function-scratch-bool?
-          function-state
-          backend.compiler-backend-scratch-bool-phi-origins))
-      "successful cycle restores caller Phi context")
-    (test.assert-true
-      (match (backend.compiler-backend-emit-phi-cycle-prefix
-        (ast.ast-node-pool-reader-type-segment-bases)
-        assignments
-        1
-        (Value (Bool true))
-        (I64)
-        ""
-        index
-        12
-        state)
-        [(Err _) true]
-        [_ false])
-      "controlled cycle error is retained")
-    (test.assert-true
-      (not
-        (backend.compiler-backend-function-scratch-bool?
-          function-state
-          backend.compiler-backend-scratch-bool-phi-origins))
-      "failed cycle restores caller Phi context")
-    (backend.compiler-backend-state-release-final-arenas! state)))
+          facts.len
+          (if (= kind 0)
+            8
+            6)
+          "old-destination reads, planned writes and four copy operands")
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-find capture (& text)))
+          (if (= kind 0)
+            8
+            6)
+          "cycle prefix transports allocator and planned fragment tokens")
+        (let
+          [expected : (Array i64 8)
+            (if (= kind 0)
+              (array 26 36 27 37 30 31 26 27)
+              (array 7 36 9 7 37 37 0 0))]
+          (for [event
+            (iterator.range
+              0
+              (if (= kind 0)
+                8
+                6))]
+            (test.assert-i64-eq
+              (array-ref facts.slots event).home
+              (array-ref expected event)
+              "typed old destination, planned slot and exact incoming homes"))))
+      (when
+        (> kind 0)
+        (let
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          (for [event (iterator.range 4 6)]
+            (let
+              [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                (& (array-ref facts.slots event))]
+              (test.assert-true
+                (match (& fact.owner)
+                  [(EmergencyScratch) (> kind 1)]
+                  [(PlannedScratch) (= kind 1)]
+                  [_ false])
+                "float emergency and GP planned preservation stay distinct")
+              (test.assert-i64-eq
+                fact.home-bytes
+                (if (= kind 1)
+                  8
+                  64)
+                "preservation capacity comes from the actual resource")
+              (test.assert-i64-eq
+                fact.access-bytes
+                (if (= kind 1)
+                  8
+                  16)
+                "GP push/pop or scalar-mode full XMM preservation width")
+              (test.assert-true
+                (match (& fact.access)
+                  [(Write) (= event 4)]
+                  [(Read) (= event 5)]
+                  [_ false])
+                "one preservation save and one restore")))))
+      (let
+        [restored : String
+          (match (backend.compiler-backend-emit-phi-copy-item
+            (ast.ast-node-pool-reader-type-segment-bases)
+            assignments
+            (backend.CompilerBackendPhiCopy.Copy
+              2
+              (backend.CompilerBackendPhiSource.Temp
+                cabi.compiler-reg-id-invalid)
+              (clone ty))
+            index
+            12
+            state)
+            [(Ok text) text]
+            [(Err _) (io.panic "planned Phi restore refused")])]
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+          (origins.compiler-backend-text-origins-find capture (& restored))]
+        [expected : (Array i64 4)
+          (if (= kind 0)
+            (array 37 29 36 28)
+            (array 36 8 0 0))]
+        (test.assert-i64-eq
+          (array-length spans)
+          (if (= kind 0)
+            4
+            2)
+          "actual Phi temporary restore retains every operand")
+        (for [event (iterator.range 0 (array-length spans))]
+          (let
+            [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+              (& (array-ref facts.slots (array-ref spans event).token))]
+            (test.assert-i64-eq
+              fact.home
+              (array-ref expected event)
+              "temporary read and selected Phi definition remain distinct")
+            (test.assert-i64-eq
+              fact.access-bytes
+              (if (= kind 2)
+                4
+                8)
+              "typed Phi scalar or word width"))))
+      (test.assert-true
+        (not
+          (backend.compiler-backend-function-scratch-bool?
+            function-state
+            backend.compiler-backend-scratch-bool-phi-origins))
+        "successful cycle restores caller Phi context")
+      (when
+        (= kind 0)
+        (test.assert-true
+          (match (backend.compiler-backend-emit-phi-cycle-prefix
+            (ast.ast-node-pool-reader-type-segment-bases)
+            assignments
+            1
+            (Value (Bool true))
+            (I64)
+            ""
+            index
+            12
+            state)
+            [(Err _) true]
+            [_ false])
+          "controlled cycle error is retained"))
+      (test.assert-true
+        (not
+          (backend.compiler-backend-function-scratch-bool?
+            function-state
+            backend.compiler-backend-scratch-bool-phi-origins))
+        "failed cycle restores caller Phi context")
+      (backend.compiler-backend-state-release-final-arenas! state))))
 
 (test
   backend-stack-origins-keep-group-phi-authorities
@@ -2995,3 +3092,283 @@ join:
 (test
   backend-stack-origins-emergency-resources
   (backend-stack-origins-emergency-test))
+
+(define (backend-stack-origins-parallel-emission
+  [state : backend.CompilerBackendState]
+  [kind : i64]
+  [save? : bool]) : String
+  (let
+    [memory? : bool (or (= kind 1) (= kind 4) (= kind 5))]
+    [float? : bool (and (>= kind 2) (<= kind 5))]
+    [bytes : i64
+      (if (or (= kind 2) (= kind 4))
+        4
+        8)]
+    [ty : ast.AstType
+      (if (= bytes 4)
+        (F32)
+        (F64))]
+    [operand : String
+      (if memory?
+        (backend.compiler-backend-stack-operand-origin
+          state
+          "-64(%rbp)"
+          (backend.CompilerBackendStackOperandRequest
+            1
+            bytes
+            (if float?
+              (Vector)
+              (General))
+            (if save?
+              (Read)
+              (Write))
+            (Whole)
+            (Value)))
+        (if float?
+          "%xmm2"
+          "%r9"))]
+    (cond
+      [(< kind 2)
+        (if save?
+          (backend.compiler-backend-emit-phi-temp-slot-save-gp operand 0 state)
+          (backend.compiler-backend-emit-phi-temp-slot-restore-gp
+            operand
+            0
+            state))]
+      [(< kind 6)
+        (if save?
+          (backend.compiler-backend-emit-phi-float-temp-save operand ty state)
+          (backend.compiler-backend-emit-phi-float-temp-restore
+            operand
+            ty
+            state))]
+      [else
+        (let
+          [reg : i64
+            (if (= kind 6)
+              cabi.compiler-reg-id-r9
+              (cabi.compiler-abi-xmm-register-id 2))]
+          (if save?
+            (backend.compiler-backend-emit-arg-cycle-temp-save reg state)
+            (match (backend.compiler-backend-emit-arg-move
+              (regalloc.compiler-reg-assignment-table-empty)
+              (backend.CompilerBackendArgMove.BackendArgMove
+                reg
+                (backend.CompilerBackendArgMoveSource.BackendArgMoveStackPop))
+              state)
+              [(Ok text) text]
+              [(Err _) (io.panic "parallel arg temp reload refused")])))])))
+
+(define (backend-stack-origins-parallel-test) : unit
+  (let
+    [plain : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [reg : String
+      (backend.compiler-backend-parallel-copy-register-operand
+        plain
+        "%r9"
+        (Read))]
+    (test.assert-string-eq reg "%r9" "inactive preservation keeps its operand")
+    (test.assert-true
+      (not (backend.compiler-backend-state-function-state-active? plain))
+      "inactive preservation does not materialize metadata or function state")
+    (backend.compiler-backend-state-release-final-arenas! plain))
+  (for [kind (iterator.range 0 8)]
+    (let
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [plain-save : String
+        (backend-stack-origins-parallel-emission state kind true)]
+      [plain-restore : String
+        (backend-stack-origins-parallel-emission state kind false)]
+      [memory? : bool (or (= kind 1) (= kind 4) (= kind 5))]
+      [bytes : i64
+        (if (or (= kind 2) (= kind 4))
+          4
+          8)]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-function-state-set-emit-current-site!
+        function-state
+        0)
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (backend-stack-origins-install-scalar-plan!
+        state
+        10
+        (cond [(< kind 2) (I64)] [(= bytes 4) (F32)] [else (F64)]))
+      (let
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [save : String
+          (backend-stack-origins-parallel-emission state kind true)]
+        [restore : String
+          (backend-stack-origins-parallel-emission state kind false)]
+        [text : String
+          (origins.compiler-backend-text-origins-cat capture save restore)]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+          (origins.compiler-backend-text-origins-find capture (& text))]
+        (test.assert-string-eq
+          save
+          plain-save
+          "parallel-copy save bytes unchanged")
+        (test.assert-string-eq
+          restore
+          plain-restore
+          "parallel-copy restore bytes unchanged")
+        (test.assert-i64-eq
+          facts.len
+          (if memory?
+            4
+            2)
+          "actual allocator and planned temp operands")
+        (test.assert-i64-eq
+          (array-length spans)
+          facts.len
+          "all temporary and allocator tokens survive final concatenation")
+        (for [event (iterator.range 0 (array-length spans))]
+          (let
+            [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+              (& (array-ref facts.slots (array-ref spans event).token))]
+            [temp? : bool (or (not memory?) (or (= event 1) (= event 2)))]
+            (test.assert-i64-eq
+              fact.home
+              (if temp?
+                30
+                (if (= event 0)
+                  7
+                  8))
+              "source, temporary, reload and destination remain distinct")
+            (test.assert-i64-eq
+              fact.access-bytes
+              bytes
+              "typed actual transfer width")
+            (test.assert-i64-eq
+              fact.home-bytes
+              8
+              "scalar or planned word capacity")
+            (test.assert-true
+              (match (& fact.owner)
+                [(PlannedScratch) temp?]
+                [(Allocator) (not temp?)]
+                [_ false])
+              "planned preservation is separate from allocator traffic")
+            (when
+              temp?
+              (test.assert-true
+                (match (& fact.bank)
+                  [(Bytes) true]
+                  [_ false])
+                "parallel-copy temp is untyped bit storage"))
+            (test.assert-true
+              (match (& fact.access)
+                [(Read)
+                  (if memory?
+                    (or (= event 0) (= event 2))
+                    (= event 1))]
+                [(Write)
+                  (if memory?
+                    (or (= event 1) (= event 3))
+                    (= event 0))]
+                [_ false])
+              "final access order reflects actual data transfer"))))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-planned-parallel-resources
+  (backend-stack-origins-parallel-test))
+
+(define (backend-stack-origins-arg-cycle-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [moves : backend.CompilerBackendArgMoveSeq
+      (backend.compiler-backend-arg-move-seq-with-capacity 2)]
+    [first : i64 (cabi.compiler-abi-xmm-register-id 0)]
+    [second : i64 (cabi.compiler-abi-xmm-register-id 1)]
+    (backend.compiler-backend-arg-move-push!
+      (&mut moves)
+      (backend.CompilerBackendArgMove.BackendArgMove
+        first
+        (backend.CompilerBackendArgMoveSource.BackendArgMoveReg second)))
+    (backend.compiler-backend-arg-move-push!
+      (&mut moves)
+      (backend.CompilerBackendArgMove.BackendArgMove
+        second
+        (backend.CompilerBackendArgMoveSource.BackendArgMoveReg first)))
+    (let
+      [plain : String
+        (match (backend.compiler-backend-emit-arg-move-list
+          (regalloc.compiler-reg-assignment-table-empty)
+          (clone moves)
+          state)
+          [(Ok text) text]
+          [(Err _) (io.panic "plain arg cycle refused")])]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-function-state-set-emit-current-site!
+        function-state
+        0)
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (backend-stack-origins-install-scalar-plan! state 10 (F64))
+      (let
+        [text : String
+          (match (backend.compiler-backend-emit-arg-move-list
+            (regalloc.compiler-reg-assignment-table-empty)
+            moves
+            state)
+            [(Ok text) text]
+            [(Err _) (io.panic "captured arg cycle refused")])]
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+          (origins.compiler-backend-text-origins-find capture (& text))]
+        (test.assert-string-eq text plain "actual arg cycle bytes unchanged")
+        (test.assert-i64-eq facts.len 2 "one planned save and one reload")
+        (test.assert-i64-eq
+          (array-length spans)
+          2
+          "recursive arg parents retain both accesses")
+        (for [event (iterator.range 0 2)]
+          (let
+            [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+              (& (array-ref facts.slots (array-ref spans event).token))]
+            (test.assert-i64-eq
+              fact.home
+              30
+              "actual cycle uses one planned slot")
+            (test.assert-true
+              (match (& fact.owner)
+                [(PlannedScratch) true]
+                [_ false])
+              "cycle break keeps planned owner")
+            (test.assert-true
+              (match (& fact.access)
+                [(Write) (= event 0)]
+                [(Read) (= event 1)]
+                [_ false])
+              "text order is save then reload despite recursive emission order"))))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-through-actual-arg-cycle
+  (backend-stack-origins-arg-cycle-test))

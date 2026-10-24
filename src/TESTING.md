@@ -938,7 +938,12 @@ GP/SIMD widths, paired same-site resources and distinct resources at a reused
 frame offset. They retain every token through recursive save/restore parents,
 exercise registry growth across instruction-scratch destruction, and exclude
 register parking and elision. Pure resource tests cover exact/spare storage,
-vector-family aliases and malformed sites/registers/registries. Remaining
+vector-family aliases and malformed sites/registers/registries. Planned-copy
+tests cover GP/F32/F64 register and memory routes, exact
+allocator/temporary operand order, and the recursive XMM argument-cycle
+emitter. The existing actual Phi-edge table also checks scalar, float and
+group cycle saves/restores with selected-definition authority. Typed planned
+slot keys cannot alias equal-numbered emergency registers. Remaining
 access-changing rewrites, traffic owners and complete
 report acceptance are distinct.
 

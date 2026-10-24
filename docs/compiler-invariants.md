@@ -704,6 +704,18 @@ sites, and register parking or an elided save issues no stack access. The
 capture arena owns registry growth across instruction-scratch rewinds. Save,
 restore and their recursive parents transport the issued operand identities;
 neither a displacement nor a rendered opcode can establish this owner.
+Parallel-copy frame temporaries use distinct typed slot keys in the same
+preservation registry. Each is one eight-byte `PlannedScratch` home with a
+`Bytes` bank: GP and floating moves transport bits through that resource, while
+their actual 4/8-byte widths remain explicit. Phi saves read the old selected
+definition and restores write the selected new definition; neither becomes the
+temporary's owner. Argument-cycle recursion may issue a reload token before
+its save token, so final text order determines operation order. Source and
+destination allocation homes remain distinct from the temporary even when
+their colored addresses coincide.
+The GP Phi staging bracket's implicit `push`/`pop` accesses use a separate
+typed planned-register key. They cannot alias an equal-numbered frame slot or
+emergency frame save, and their memory direction is issued at the bracket.
 Fresh auxiliary assembly buffers bind the active capture before any prefix;
 a foreign, untracked or finalized buffer cannot accept a captured operand.
 Single and paired GEP/load factories supply each consumed Load's destination

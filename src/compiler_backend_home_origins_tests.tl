@@ -701,6 +701,19 @@ join:
               [_ false])
             "group extent mismatch rejects"))))))
 
+(define (home-emergency-query!
+  [plan : (&mut homes.CompilerBackendHomePlan)]
+  [function : i64]
+  [block : i64]
+  [site : i64]
+  [reg : i64]) : homes.CompilerBackendPlannedHomeResult
+  (homes.compiler-backend-home-preservation!
+    plan
+    function
+    block
+    site
+    (EmergencyRegister reg)))
+
 (define (home-origin-emergency-test) : unit
   (for [spare (iterator.range 0 2)]
     (let
@@ -738,7 +751,7 @@ join:
                 [(= request 2) abi.compiler-reg-id-r10]
                 [(= request 3) (abi.compiler-abi-xmm-register-id 2)]
                 [else (abi.compiler-abi-vector-register-id 2)])]
-            (match (homes.compiler-backend-home-emergency!
+            (match (home-emergency-query!
               (&mut plan)
               44
               10
@@ -758,20 +771,22 @@ join:
                   "emergency resources follow scalar and group namespaces")
                 (test.assert-i64-eq home.bytes 64 "reserved emergency capacity")])))
         (test.assert-i64-eq
-          plan.emergency.len
+          plan.preservations.len
           4
           "vector aliases share the site's preservation resource")
         (let
-          [slots : (__tl_dyn-array homes.CompilerBackendEmergencyHome)
+          [slots : (__tl_dyn-array homes.CompilerBackendPreservationHome)
             (__tl_make-array
-              homes.CompilerBackendEmergencyHome
+              homes.CompilerBackendPreservationHome
               (+ 4 (* 3 spare)))]
           (for [index (iterator.range 0 4)]
             (set!
               (array-ref slots index)
-              (clone (array-ref plan.emergency.slots index))))
-          (set! plan.emergency (homes.CompilerBackendEmergencyHomeList slots 4)))
-        (match (homes.compiler-backend-home-emergency!
+              (clone (array-ref plan.preservations.slots index))))
+          (set!
+            plan.preservations
+            (homes.CompilerBackendPreservationHomeList slots 4)))
+        (match (home-emergency-query!
           (&mut plan)
           44
           10
@@ -783,14 +798,14 @@ join:
         (for [invalid (iterator.range 0 10)]
           (let
             [bad : homes.CompilerBackendHomePlan (clone plan)]
-            (when (= invalid 8) (set! bad.emergency.len 100))
+            (when (= invalid 8) (set! bad.preservations.len 100))
             (when
               (= invalid 9)
               (set!
-                (array-ref bad.emergency.slots 1)
-                (clone (array-ref bad.emergency.slots 0))))
+                (array-ref bad.preservations.slots 1)
+                (clone (array-ref bad.preservations.slots 0))))
             (test.assert-true
-              (match (homes.compiler-backend-home-emergency!
+              (match (home-emergency-query!
                 (&mut bad)
                 (if (= invalid 0)
                   45
@@ -809,10 +824,10 @@ join:
                 [_ false])
               "unbound, malformed or unsupported emergency authority rejects")))
         (test.assert-i64-eq
-          plan.emergency.len
+          plan.preservations.len
           4
           "failed clones cannot edit original")
-        (match (homes.compiler-backend-home-emergency!
+        (match (home-emergency-query!
           (&mut plan)
           44
           10
@@ -820,4 +835,60 @@ join:
           abi.compiler-reg-id-r9)
           [(Err message) (io.panic message)]
           [(Ok home)
-            (test.assert-i64-eq home.id 30 "original resource remains bound")])))))
+            (test.assert-i64-eq home.id 30 "original resource remains bound")])
+        (for [request (iterator.range 0 3)]
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            10
+            0
+            (ParallelCopySlot
+              (if (= request 1)
+                0
+                abi.compiler-reg-id-r9)))
+            [(Err message) (io.panic message)]
+            [(Ok home)
+              (test.assert-i64-eq
+                home.id
+                (if (= request 1)
+                  35
+                  34)
+                "planned slots cannot alias equal-numbered emergency registers")
+              (test.assert-i64-eq home.bytes 8 "parallel-copy word capacity")]))
+        (test.assert-true
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            10
+            0
+            (ParallelCopySlot -1))
+            [(Err _) true]
+            [_ false])
+          "negative planned slot rejects")
+        (test.assert-i64-eq
+          plan.preservations.len
+          6
+          "failed slot query publishes no resource")
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          10
+          0
+          (ParallelCopyRegister abi.compiler-reg-id-r9))
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq
+              home.id
+              36
+              "implicit planned save has a distinct typed key")
+            (test.assert-i64-eq home.bytes 8 "push/pop preserves one GP word")])
+        (test.assert-true
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            10
+            0
+            (ParallelCopyRegister (abi.compiler-abi-xmm-register-id 2)))
+            [(Err _) true]
+            [_ false])
+          "GP push/pop authority rejects vector registers")))))

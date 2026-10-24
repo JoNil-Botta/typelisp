@@ -382,10 +382,6 @@
   (var i64)
   (text String))
 
-(defenum CompilerBackendMaybeStackOperand
-  (No)
-  (Some String))
-
 (defenum CompilerBackendMaybeStackHomeOperand
   (No)
   (Some CompilerBackendStackOperand))
@@ -6575,37 +6571,30 @@
 (define (compiler-backend-stack-memory-operand
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [value : compiler_ir_types.CompilerIrValue]
-  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackOperand
+  [backend-state : CompilerBackendState]) : CompilerBackendMaybeStackHomeOperand
   (match value
     [(Var var-id)
       (if (>= (compiler-backend-forwarded-addr-of-src backend-state var-id) 0)
         (No)
-        (match (compiler-backend-emit-assignment-lookup
-          backend-state
-          assignments
-          var-id)
-          [(Some location)
-            (match location
-              [(Spill offset)
-                (Some
-                  (compiler-backend-frame-offset-with-backend-state
-                    backend-state
-                    offset))]
-              [_ (No)])]
-          [(No)
-            (Some
-              (compiler-backend-slot-with-backend-state backend-state var-id))]))]
+        (compiler-backend-var-stack-operand assignments var-id backend-state))]
     [_ (No)]))
 
-(define (compiler-backend-splat-memory-mnemonic
-  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : String
+;; One typed form owns both the emitted spelling and its actual scalar read
+;; width. A broadcast's vector destination does not widen that memory access.
+(defstruct CompilerBackendSplatMemoryOp
+  (mnemonic String)
+  (bytes i64)
+  (bank stack_traffic.CompilerStackTrafficBank))
+
+(define (compiler-backend-splat-memory-op
+  [elem-ty : (& elem-ty compiler_ast_types.AstType)]) : CompilerBackendSplatMemoryOp
   (match elem-ty
-    [(F64) "vbroadcastsd"]
-    [(F32) "vbroadcastss"]
-    [(or (I32) (U32)) "vpbroadcastd"]
-    [(or (I16) (U16)) "vpbroadcastw"]
-    [(or (I8) (U8)) "vpbroadcastb"]
-    [_ "vpbroadcastq"]))
+    [(F64) (CompilerBackendSplatMemoryOp "vbroadcastsd" 8 (Vector))]
+    [(F32) (CompilerBackendSplatMemoryOp "vbroadcastss" 4 (Vector))]
+    [(or (I32) (U32)) (CompilerBackendSplatMemoryOp "vpbroadcastd" 4 (General))]
+    [(or (I16) (U16)) (CompilerBackendSplatMemoryOp "vpbroadcastw" 2 (General))]
+    [(or (I8) (U8)) (CompilerBackendSplatMemoryOp "vpbroadcastb" 1 (General))]
+    [_ (CompilerBackendSplatMemoryOp "vpbroadcastq" 8 (General))]))
 
 (define (compiler-backend-splat-memory-load
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -6614,13 +6603,24 @@
   [backend-state : CompilerBackendState]) : CompilerBackendMaybeAsm
   (match (compiler-backend-stack-memory-operand assignments value backend-state)
     [(Some operand)
-      (Some
-        (str_cat.str-cat
-          "    "
-          (compiler-backend-splat-memory-mnemonic elem-ty)
-          " "
-          operand
-          ", "))]
+      (let
+        [op : CompilerBackendSplatMemoryOp
+          (compiler-backend-splat-memory-op elem-ty)]
+        [text : String
+          (compiler-backend-stack-operand-origin
+            backend-state
+            operand
+            op.bytes
+            op.bank
+            (Read))]
+        (Some
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    "
+            op.mnemonic
+            " "
+            text
+            ", ")))]
     [(No) (No)]))
 
 ;; AVX-512 broadcasts a GPR directly; AVX2 moves it into XMM first.
@@ -10306,7 +10306,13 @@
       (compiler-backend-global-shared-view carry)
       elem-ty
       backend-state)
-      [(Some asm) (Ok (str_cat.str-cat asm work0 "\n"))]
+      [(Some asm)
+        (Ok
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            asm
+            work0
+            "\n"))]
       [(No)
         (let
           [exclude : (__tl_dyn-array String)
@@ -10331,7 +10337,8 @@
                 gp-reg
                 backend-state))]
           (Ok
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               carry-asm
               "    "
               (match (& elem-ty)

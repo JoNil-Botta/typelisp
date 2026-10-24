@@ -664,8 +664,7 @@ storage slot is checked separately and never authorizes a value read. Function,
 block and site must match the installed scratch-owned plan, which is cleared
 before scratch retirement. Home capacity comes from the allocator's original
 vector/mask/group storage census, independently of each emitted access width;
-an access wider than that capacity cannot publish a token. Compact mask moves\nrecord their typed mask bank and 2/4/8-byte width independently of that larger\nreservation. Vector and mask emitters share one typed allocator-home lookup.\nInactive emission
-allocates no instruction-home plan and does not change coloring or placement.
+an access wider than that capacity cannot publish a token. Compact mask moves\nrecord their typed mask bank and 2/4/8-byte width independently of that larger\nreservation. Vector and mask emitters share one typed allocator-home lookup.\nA folded scalar broadcast keeps its scalar home identity and access width;\nits vector destination does not turn the read into a vector-width access. One\ntyped opcode descriptor supplies both the mnemonic and width, and the scalar\noperand type supplies its general or floating-register bank. Address-only\nforwarded values and literals cannot authorize a stack read.\nInactive emission\nallocates no instruction-home plan and does not change coloring or placement.
 An RMW fold retains separate ordered read and write tokens at the same emitted
 operand, including distinct logical homes that share one physical address.
 Their typed source records must prove compatible access directions, function

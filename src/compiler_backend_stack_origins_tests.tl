@@ -302,6 +302,179 @@
   backend-stack-origins-cover-compact-mask-homes
   (backend-stack-origins-mask-test))
 
+(define (backend-stack-origins-splat-test) : unit
+  (for [kind (iterator.range 0 10)]
+    (let
+      [ty : ast.AstType
+        (match kind
+          [0 (F64)]
+          [1 (F32)]
+          [2 (I32)]
+          [3 (U32)]
+          [4 (I16)]
+          [5 (U16)]
+          [6 (I8)]
+          [7 (U8)]
+          [8 (I64)]
+          [_ (U64)])]
+      [bytes : i64
+        (cond
+          [(< kind 1) 8]
+          [(< kind 4) 4]
+          [(< kind 6) 2]
+          [(< kind 8) 1]
+          [else 8])]
+      [mnemonic : String
+        (cond
+          [(= kind 0) "vbroadcastsd"]
+          [(= kind 1) "vbroadcastss"]
+          [(< kind 4) "vpbroadcastd"]
+          [(< kind 6) "vpbroadcastw"]
+          [(< kind 8) "vpbroadcastb"]
+          [else "vpbroadcastq"])]
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+      [params : (__tl_dyn-array ir.CompilerIrParam)
+        (__tl_make-array ir.CompilerIrParam 1)]
+      [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (__tl_make-array ir.CompilerIrBlock 1)]
+      [assignment : regalloc.CompilerRegAssignment
+        (regalloc.CompilerRegAssignment 1 (Spill -64))]
+      [homes : regalloc.CompilerRegAssignmentTable
+        (regalloc.compiler-reg-assignments-prepend
+          (& assignment)
+          (regalloc.compiler-reg-assignment-table-empty))]
+      (for [var (iterator.range 0 10)]
+        (set! (array-ref map var) var))
+      (set! (array-ref map 7) 1)
+      (set! (array-ref map 8) 2)
+      (set! (array-ref params 0) (Param "arg" (clone ty) 7))
+      (set!
+        (array-ref blocks 0)
+        (Block 10 (ir.compiler-ir-instr-seq1 (Splat 8 (Var 7) 4 (clone ty)))))
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-function-state-set-emit-current-site!
+        function-state
+        0)
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (let
+        [original : ir.CompilerIrBlockList
+          (Array (ir.CompilerIrBlockSeq blocks 1))]
+        [placed : ir.CompilerIrBlockList
+          (regalloc.compiler-reg-remap-blocks (& map) (& original))]
+        [input : home_origins.CompilerBackendHomePlanInput
+          (home_origins.CompilerBackendHomePlanInput
+            44
+            10
+            10
+            (ir.CompilerIrParamSeq params 1)
+            original
+            placed
+            (Remap map 10)
+            (live.compiler-live-set-empty))]
+        (match (home_origins.compiler-backend-home-plan-build (& input))
+          [(Ok result)
+            (backend.compiler-backend-stack-home-plan-install!
+              function-state
+              result)]
+          [(Err message) (io.panic message)]))
+      (let
+        [prefix : String
+          (match (backend.compiler-backend-splat-memory-load
+            (owned_view.compiler-owned-shared-view homes)
+            (Var 1)
+            (& ty)
+            state)
+            [(Some text) text]
+            [_ (io.panic "scalar stack broadcast refused")])]
+        [parent : String
+          (match (backend.compiler-backend-avx2-vector-prefix-numeric-carry
+            homes
+            (Var 1)
+            (clone ty)
+            "%xmm2"
+            state)
+            [(Ok text) text]
+            [(Err _) (io.panic "broadcast parent refused")])]
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [accesses : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        (test.assert-string-eq
+          prefix
+          (string.concat3 "    " (clone mnemonic) " -64(%rbp), ")
+          "scalar broadcast prefix bytes")
+        (test.assert-string-eq
+          parent
+          (string.concat3 "    " mnemonic " -64(%rbp), %ymm2\n")
+          "broadcast parent exact bytes")
+        (test.assert-i64-eq
+          accesses.len
+          2
+          "one scalar read per actual emitter call")
+        (for [index (iterator.range 0 2)]
+          (let
+            [access : (& accesses origins.CompilerBackendStackAccessOrigin)
+              (& (array-ref accesses.slots index))]
+            (test.assert-i64-eq access.home 7 "scalar pre-color home")
+            (test.assert-i64-eq
+              access.home-bytes
+              8
+              "scalar allocation capacity")
+            (test.assert-i64-eq
+              access.access-bytes
+              bytes
+              "scalar memory read width")
+            (test.assert-true
+              (match (& access.access)
+                [(Read) true]
+                [_ false])
+              "broadcast reads its home")
+            (test.assert-true
+              (match (& access.bank)
+                [(Vector) (< kind 2)]
+                [(General) (>= kind 2)]
+                [_ false])
+              "bank comes from scalar operand type")))
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-find capture (& prefix)))
+          1
+          "partial instruction preserves read identity")
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-find capture (& parent)))
+          1
+          "completed broadcast preserves read identity")
+        (test.assert-true
+          (match (backend.compiler-backend-splat-memory-load
+            (regalloc.compiler-reg-assignment-table-empty)
+            (I64 1)
+            (& ty)
+            state)
+            [(No) true]
+            [_ false])
+          "literal is not a stack read")
+        (test.assert-i64-eq
+          (backend.compiler-backend-state-stack-access-origins state).len
+          2
+          "refused non-memory input publishes nothing"))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-cover-scalar-broadcasts
+  (backend-stack-origins-splat-test))
+
 (define (backend-stack-origins-producer-test) : unit
   (let
     [intern : ci.InternCompatState (ci.intern-compat-state-new)]

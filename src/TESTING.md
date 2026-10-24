@@ -890,7 +890,7 @@ block reordering, live/spare prefixes, invalid identities/extents and malformed
 or duplicate placement are checked. Original scalar, group, vector and mask
 capacities come from the allocator census. Actual emitter factories retain
 homes7/8 when both become color1 at the same physical offset; cleanup clears
-the scratch plan. Compact-mask fixtures check all kmov widths, the larger\nreservation, distinct pre-color homes and GPR-parent origin transport. Native\nhome and producer smokes call these cases at opt0/1/2.
+the scratch plan. Compact-mask fixtures check all kmov widths, the larger\nreservation, distinct pre-color homes and GPR-parent origin transport. Native\nhome and producer smokes call these cases at opt0/1/2. Table-driven folded\nbroadcast cases cover ten scalar types, scalar capacity versus read width,\noriginal colored identity and both prefix and completed-instruction transport.\nLiteral input refuses the memory route without creating a token.
 Remaining access-changing
 rewrites, traffic owners and complete report acceptance are distinct.
 

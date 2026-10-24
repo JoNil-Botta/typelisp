@@ -17393,13 +17393,15 @@ f:
         (compiler-backend-stack-splat-dst-only-assignments)
         (Var 1)
         backend-state)
-        [(Some operand) (string.eq operand "-16(%rbp)")]
+        [(Some operand)
+          (and (= operand.var 1) (string.eq operand.text "-16(%rbp)"))]
         [(No) false])
       (match (backend.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-spill-assignments -40)
         (Var 1)
         backend-state)
-        [(Some operand) (string.eq operand "-40(%rbp)")]
+        [(Some operand)
+          (and (= operand.var 1) (string.eq operand.text "-40(%rbp)"))]
         [(No) false])
       (match (backend.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-register-assignments)

@@ -3372,3 +3372,198 @@
 (test
   backend-stack-origins-through-actual-arg-cycle
   (backend-stack-origins-arg-cycle-test))
+
+(define (backend-stack-origins-lane-emission
+  [state : backend.CompilerBackendState]
+  [kind : i64]) : String
+  (let
+    [label : i64
+      (backend.compiler-backend-function-state-i64
+        (backend.compiler-backend-state-function-state state)
+        backend.compiler-backend-function-i64-current-block-label)]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-empty)]
+    [lanes : i64
+      (cond
+        [(= kind 0) 4]
+        [(or (= kind 1) (= kind 6)) 8]
+        [(or (= kind 2) (= kind 4) (= kind 7)) 16]
+        [else 32])]
+    [diag : diagnostic.CompilerDiagnostic
+      (diagnostic.compiler-diagnostic-at-start "" "")]
+    (for [index (iterator.range 0 3)]
+      (let
+        [home : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment
+            index
+            (Register
+              (if (= index 0)
+                cabi.compiler-reg-id-rdi
+                (cabi.compiler-abi-vector-register-id (+ 5 index)))))]
+        (set!
+          assignments
+          (regalloc.compiler-reg-assignments-prepend (& home) assignments))))
+    (match (cond
+      [(< kind 4)
+        (backend.compiler-backend-emit-avx2-tail-mask
+          (ast.ast-node-pool-reader-type-segment-bases)
+          "lane_origin"
+          label
+          assignments
+          1
+          (I64 0)
+          (I64 3)
+          lanes
+          diag
+          state)]
+      [(< kind 7)
+        (backend.compiler-backend-emit-avx2-predicated-load
+          (ast.ast-node-pool-reader-type-segment-bases)
+          "lane_origin"
+          label
+          assignments
+          1
+          (Var 0)
+          (I64 0)
+          (Var 2)
+          lanes
+          (cond [(= kind 6) (Bool)] [(= lanes 16) (I16)] [else (I8)])
+          diag
+          state)]
+      [else
+        (backend.compiler-backend-emit-avx2-predicated-store
+          (ast.ast-node-pool-reader-type-segment-bases)
+          "lane_origin"
+          label
+          assignments
+          (Var 0)
+          (I64 0)
+          (Var 1)
+          (Var 2)
+          lanes
+          (if (= lanes 16)
+            (I16)
+            (I8))
+          diag
+          state)])
+      [(Ok text) text]
+      [(Err _) (io.panic "lane staging emitter refused fixture")])))
+
+(define (backend-stack-origins-lane-test) : unit
+  (for [invalid (iterator.range 0 6)]
+    (test.assert-true
+      (not
+        (backend.compiler-backend-avx2-lane-stack-access-valid?
+          (cond
+            [(= invalid 0) -1]
+            [(= invalid 1) 32]
+            [(= invalid 2) 9223372036854775807]
+            [else 0])
+          (cond
+            [(< invalid 3) 1]
+            [(= invalid 3) 0]
+            [(= invalid 4) 16]
+            [else -1])))
+      "invalid fixed lane extent rejects before address arithmetic"))
+  (for [kind (iterator.range 0 9)]
+    (let
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        (ir.compiler-ir-label "lane_entry"))
+      (backend.compiler-backend-function-state-set-current-mode!
+        function-state
+        (Avx2))
+      (backend.compiler-backend-simd-scratch-plan! function-state 32 192)
+      (let
+        [plain : String (backend-stack-origins-lane-emission state kind)]
+        (backend.compiler-backend-state-stack-origins-begin! state)
+        (backend-stack-origins-install-test-plan! state true false)
+        (let
+          [text : String (backend-stack-origins-lane-emission state kind)]
+          [capture : origins.CompilerBackendTextOrigins
+            (backend.compiler-backend-state-stack-text-origins state)]
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+            (origins.compiler-backend-text-origins-find capture (& text))]
+          [lanes : i64
+            (cond
+              [(= kind 0) 0]
+              [(or (= kind 1) (= kind 6)) 8]
+              [(or (= kind 2) (= kind 4) (= kind 7)) 16]
+              [else 32])]
+          [expected : i64
+            (if (= kind 0)
+              0
+              (+
+                lanes
+                (if (< kind 7)
+                  2
+                  1)))]
+          (test.assert-string-eq
+            text
+            plain
+            "capturing fixed staging changes no bytes")
+          (test.assert-i64-eq
+            facts.len
+            expected
+            "every real lane-buffer access is issued")
+          (test.assert-i64-eq
+            (array-length spans)
+            expected
+            "recursive lane parents retain all final access tokens")
+          (for [event (iterator.range 0 expected)]
+            (let
+              [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                (& (array-ref facts.slots (array-ref spans event).token))]
+              [whole? : bool
+                (or (= event 0) (and (< kind 7) (= event (- expected 1))))]
+              (test.assert-i64-eq
+                fact.home
+                30
+                "one typed site-local bit buffer")
+              (test.assert-i64-eq
+                fact.home-bytes
+                32
+                "fixed lane buffer capacity")
+              (test.assert-i64-eq
+                fact.access-bytes
+                (if whole?
+                  32
+                  (/ 32 lanes))
+                "actual whole or lane access width")
+              (test.assert-true
+                (match (& fact.owner)
+                  [(FixedScratch) true]
+                  [_ false])
+                "lane staging is neither allocator nor emergency traffic")
+              (test.assert-true
+                (match (& fact.bank)
+                  [(Bytes) true]
+                  [_ false])
+                "fixed staging preserves untyped vector bits")
+              (test.assert-true
+                (match (& fact.access)
+                  [(Write)
+                    (if (< kind 7)
+                      (< event (- expected 1))
+                      (= event 0))]
+                  [(Read)
+                    (if (< kind 7)
+                      (= event (- expected 1))
+                      (> event 0))]
+                  [_ false])
+                "final order binds initialization, conditional lanes and reload"))))
+        (backend.compiler-backend-state-stack-origins-end! state))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test backend-stack-origins-fixed-lane-buffer (backend-stack-origins-lane-test))

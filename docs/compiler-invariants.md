@@ -716,6 +716,14 @@ their colored addresses coincide.
 The GP Phi staging bracket's implicit `push`/`pop` accesses use a separate
 typed planned-register key. They cannot alias an equal-numbered frame slot or
 emergency frame save, and their memory direction is issued at the bracket.
+AVX2 predicated narrow loads/stores and non-qword tail masks issue a typed
+instruction-local `FixedScratch` lane buffer. Its 32-byte `Bytes` capacity is
+separate from each whole-vector or 1/2/4/8-byte lane access. Initialization,
+conditional lane accesses and final reloads retain their tokens through the
+recursive control-generating parents. The qword register-only tail route issues
+no buffer access. Reuse of the same frame region by another instruction does
+not reuse this logical resource; neither a byte position nor an address spelling
+establishes its identity.
 Fresh auxiliary assembly buffers bind the active capture before any prefix;
 a foreign, untracked or finalized buffer cannot accept a captured operand.
 Single and paired GEP/load factories supply each consumed Load's destination

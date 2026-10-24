@@ -943,9 +943,14 @@ tests cover GP/F32/F64 register and memory routes, exact
 allocator/temporary operand order, and the recursive XMM argument-cycle
 emitter. The existing actual Phi-edge table also checks scalar, float and
 group cycle saves/restores with selected-definition authority. Typed planned
-slot keys cannot alias equal-numbered emergency registers. Remaining
-access-changing rewrites, traffic owners and complete
-report acceptance are distinct.
+slot keys cannot alias equal-numbered emergency registers. Fixed lane-buffer
+fixtures exercise the actual AVX2 tail-mask and predicated load/store emitters,
+including boolean loads, narrow integer lanes and the qword register-only route.
+They compare complete captured/uncaptured text and check every surviving token's
+owner, capacity, access width and final read/write order. Invalid lane extents
+reject before multiplication; exact/spare pure resources retain separate typed
+and instruction-site identities. Remaining access-changing rewrites, traffic
+owners and complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

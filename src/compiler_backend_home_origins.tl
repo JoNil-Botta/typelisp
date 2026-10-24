@@ -76,7 +76,9 @@
 (defenum CompilerBackendPreservationKey
   (EmergencyRegister i64)
   (ParallelCopySlot i64)
-  (ParallelCopyRegister i64))
+  (ParallelCopyRegister i64)
+  ;; One instruction-local, untyped 32-byte AVX2 lane buffer.
+  (SimdLaneStaging))
 
 (defstruct CompilerBackendPreservationHome
   (site i64)
@@ -612,6 +614,10 @@
     [(ParallelCopyRegister a)
       (match right
         [(ParallelCopyRegister b) (= a b)]
+        [_ false])]
+    [(SimdLaneStaging)
+      (match right
+        [(SimdLaneStaging) true]
         [_ false])]))
 
 ;; Preservation resources follow all scalar and group-fragment IDs. The
@@ -637,6 +643,7 @@
   (let
     [normalized : CompilerBackendPreservationKey
       (match (& key)
+        [(SimdLaneStaging) (SimdLaneStaging)]
         [(ParallelCopySlot slot)
           (when
             (< slot 0)
@@ -709,7 +716,8 @@
             (match normalized
               [(EmergencyRegister _) 64]
               [(ParallelCopySlot _) 8]
-              [(ParallelCopyRegister _) 8])))))))
+              [(ParallelCopyRegister _) 8]
+              [(SimdLaneStaging) 32])))))))
 
 ;; Phi copies execute on the predecessor edge, but read the selected target
 ;; Phi input and define its result. The marshaller supplies its actual target

@@ -892,3 +892,57 @@ join:
             [(Err _) true]
             [_ false])
           "GP push/pop authority rejects vector registers")))))
+
+(test
+  backend-home-fixed-lane-resource
+  (for [spare (iterator.range 0 2)]
+    (let
+      [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+        (__tl_make-array ir.CompilerIrInstr (+ 2 spare))]
+      [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (__tl_make-array ir.CompilerIrBlock (+ 1 spare))]
+      (set! (array-ref instructions 0) (Mov 8 (Var 7) (I64)))
+      (set! (array-ref instructions 1) (Mov 9 (Var 8) (I64)))
+      (set!
+        (array-ref blocks 0)
+        (Block 10 (ir.CompilerIrInstrSeq instructions 2)))
+      (let
+        [original : ir.CompilerIrBlockList
+          (Array (ir.CompilerIrBlockSeq blocks 1))]
+        [input : homes.CompilerBackendHomePlanInput
+          (homes.CompilerBackendHomePlanInput
+            44
+            10
+            10
+            (ir.compiler-ir-param-seq-empty)
+            (owned_view.compiler-owned-shared-view original)
+            original
+            (None)
+            (live.compiler-live-set-empty))]
+        [plan : homes.CompilerBackendHomePlan
+          (match (homes.compiler-backend-home-plan-build (& input))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (for [request (iterator.range 0 4)]
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            10
+            (if (= request 2)
+              1
+              0)
+            (if (= request 3)
+              (ParallelCopySlot 0)
+              (SimdLaneStaging)))
+            [(Err message) (io.panic message)]
+            [(Ok home)
+              (test.assert-i64-eq
+                home.id
+                (+ 30 (cond [(< request 2) 0] [(= request 2) 1] [else 2]))
+                "fixed buffer identity follows its site and typed authority")
+              (test.assert-i64-eq
+                home.bytes
+                (if (= request 3)
+                  8
+                  32)
+                "fixed buffer capacity is independent of each access width")]))))))

@@ -13764,11 +13764,39 @@
     [(= lane-bytes 1) "movb"]
     [else ""]))
 
+(define (compiler-backend-avx2-lane-stack-access-valid?
+  [lane : i64]
+  [lane-bytes : i64]) : bool
+  (and
+    (or
+      (= lane-bytes 1)
+      (= lane-bytes 2)
+      (= lane-bytes 4)
+      (= lane-bytes 8)
+      (= lane-bytes 32))
+    (>= lane 0)
+    (< lane (/ 32 lane-bytes))))
+
+;; Lane and whole-vector accesses share the explicitly issued bit buffer.
+;; Their byte positions describe the access, never the resource's identity.
 (define (compiler-backend-avx2-lane-stack-address
   [backend-state : CompilerBackendState]
   [lane : i64]
-  [lane-bytes : i64]) : String
-  (compiler-backend-simd-scratch-address backend-state (* lane lane-bytes)))
+  [lane-bytes : i64]
+  [access : stack_traffic.CompilerStackTrafficAccess]) : String
+  (when
+    (!= (compiler-backend-state-stack-text-origins backend-state).storage 0)
+    (unless
+      (compiler-backend-avx2-lane-stack-access-valid? lane lane-bytes)
+      (io.panic "stack traffic: invalid fixed lane-buffer access")))
+  (compiler-backend-preservation-operand-origin
+    backend-state
+    (compiler-backend-simd-scratch-address backend-state (* lane lane-bytes))
+    (CompilerBackendPreservationOperandRequest
+      (SimdLaneStaging)
+      (Bytes)
+      lane-bytes
+      access)))
 
 (define (compiler-backend-avx2-lane-memory-address
   [addr : String]
@@ -13812,12 +13840,17 @@
             1
             lane-bytes))]
       [slot : String
-        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
+        (compiler-backend-avx2-lane-stack-address
+          backend-state
+          lane
+          lane-bytes
+          (Write))]
       [lane-asm : String
         (if (match (& elem-ty)
           [(Bool) true]
           [_ false])
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    testl $"
             (string.int->string bit)
             ", %r11d\n    je "
@@ -13833,7 +13866,8 @@
             "\n"
             skip-label
             ":\n")
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    testl $"
             (string.int->string bit)
             ", %r11d\n    je "
@@ -13861,7 +13895,10 @@
         (+ lane 1)
         lanes
         elem-ty
-        (str_cat.str-cat acc lane-asm)
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          acc
+          lane-asm)
         backend-state))))
 
 (define (compiler-backend-avx2-predicated-store-lanes
@@ -13893,9 +13930,14 @@
           lane
           lane-bytes)]
       [slot : String
-        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
+        (compiler-backend-avx2-lane-stack-address
+          backend-state
+          lane
+          lane-bytes
+          (Read))]
       [lane-asm : String
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
           "    testl $"
           (string.int->string bit)
           ", %r11d\n    je "
@@ -13923,7 +13965,10 @@
         (+ lane 1)
         lanes
         elem-ty
-        (str_cat.str-cat acc lane-asm)
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          acc
+          lane-asm)
         backend-state))))
 
 (define (compiler-backend-avx2-predicated-bool-store-lanes
@@ -14042,21 +14087,27 @@
                             instr-diag
                             compiler-backend-simd-scratch-lane-staging-bytes
                             (Ok
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 mask-asm
                                 addr-asm
                                 "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-avx2-lane-stack-address
                                   backend-state
-                                  0)
+                                  0
+                                  32
+                                  (Write))
                                 "\n    vpmovmskb "
                                 mask-reg
                                 ", %r11d\n"
                                 lanes-asm
                                 "    vmovdqu "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-avx2-lane-stack-address
                                   backend-state
-                                  0)
+                                  0
+                                  32
+                                  (Read))
                                 ", "
                                 dst-reg
                                 "\n"
@@ -14068,7 +14119,9 @@
                                   dst-reg
                                   backend-state)))))
                         (Ok
-                          (str_cat.str-cat
+                          (text_origins.compiler-backend-text-origins-cat
+                            (compiler-backend-state-stack-text-origins
+                              backend-state)
                             mask-asm
                             addr-asm
                             "    "
@@ -14158,7 +14211,9 @@
                         (match value-use
                           [(Use value-asm value-reg)
                             (Ok
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 value-asm
                                 mask-asm
                                 addr-asm
@@ -14202,16 +14257,20 @@
                                   instr-diag
                                   compiler-backend-simd-scratch-lane-staging-bytes
                                   (Ok
-                                    (str_cat.str-cat
+                                    (text_origins.compiler-backend-text-origins-cat
+                                      (compiler-backend-state-stack-text-origins
+                                        backend-state)
                                       value-asm
                                       mask-asm
                                       addr-asm
                                       "    vmovdqu "
                                       value-reg
                                       ", "
-                                      (compiler-backend-simd-scratch-address
+                                      (compiler-backend-avx2-lane-stack-address
                                         backend-state
-                                        0)
+                                        0
+                                        32
+                                        (Write))
                                       "\n    vpmovmskb "
                                       mask-reg
                                       ", %r11d\n"
@@ -14230,7 +14289,9 @@
                                         ""
                                         backend-state))))
                                 (Ok
-                                  (str_cat.str-cat
+                                  (text_origins.compiler-backend-text-origins-cat
+                                    (compiler-backend-state-stack-text-origins
+                                      backend-state)
                                     value-asm
                                     mask-asm
                                     addr-asm
@@ -14359,9 +14420,14 @@
           [(= lane-bytes 2) "movw"]
           [else "movb"])]
       [slot : String
-        (compiler-backend-avx2-lane-stack-address backend-state lane lane-bytes)]
+        (compiler-backend-avx2-lane-stack-address
+          backend-state
+          lane
+          lane-bytes
+          (Write))]
       [lane-asm : String
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
           "    leaq "
           (string.int->string lane)
           "(%r8), %r10\n    cmpq %r9, %r10\n    jge "
@@ -14379,7 +14445,10 @@
         dst
         (+ lane 1)
         lanes
-        (str_cat.str-cat acc lane-asm)
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          acc
+          lane-asm)
         backend-state))))
 
 (define (compiler-backend-avx2-qword-tail-mask-asm [dst-reg : (& dst-reg str)]) : String
@@ -14434,16 +14503,21 @@
                     0
                     compiler-backend-simd-scratch-lane-staging-bytes)
                   (Ok
-                    (str_cat.str-cat
+                    (text_origins.compiler-backend-text-origins-cat
+                      (compiler-backend-state-stack-text-origins backend-state)
                       index-asm
                       end-asm
                       (if (= lanes 4)
                         (compiler-backend-avx2-qword-tail-mask-asm dst-reg)
-                        (str_cat.str-cat
+                        (text_origins.compiler-backend-text-origins-cat
+                          (compiler-backend-state-stack-text-origins
+                            backend-state)
                           "    vpxor %ymm0, %ymm0, %ymm0\n    vmovdqu %ymm0, "
-                          (compiler-backend-simd-scratch-address
+                          (compiler-backend-avx2-lane-stack-address
                             backend-state
-                            0)
+                            0
+                            32
+                            (Write))
                           "\n"
                           (compiler-backend-avx2-tail-mask-fill-lanes
                             function
@@ -14454,9 +14528,11 @@
                             ""
                             backend-state)
                           "    vmovdqu "
-                          (compiler-backend-simd-scratch-address
+                          (compiler-backend-avx2-lane-stack-address
                             backend-state
-                            0)
+                            0
+                            32
+                            (Read))
                           ", "
                           dst-reg
                           "\n"))
@@ -17579,7 +17655,7 @@
           compiler-backend-scratch-i64-stack-home-plan)]
       (when
         (= address 0)
-        (io.panic "stack traffic: emergency home plan was not installed"))
+        (io.panic "stack traffic: preservation home plan was not installed"))
       (let
         [home : home_origins.CompilerBackendLogicalHome
           (unsafe
@@ -17615,7 +17691,8 @@
             (match (& request.key)
               [(EmergencyRegister _) (EmergencyScratch)]
               [(ParallelCopySlot _) (PlannedScratch)]
-              [(ParallelCopyRegister _) (PlannedScratch)])
+              [(ParallelCopyRegister _) (PlannedScratch)]
+              [(SimdLaneStaging) (FixedScratch)])
             request.bank
             request.bytes
             request.access)

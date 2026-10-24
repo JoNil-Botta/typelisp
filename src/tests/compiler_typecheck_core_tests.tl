@@ -44,6 +44,252 @@
 ;; lint-allow: unused-import
 (import compiler_typecheck_core.TcTypeEnvStore)
 
+(define (tc-module-carry-test-decls
+  [pools : ast.AstNodePoolContext]
+  [source : (& str)]) : ast.AstDeclList
+  (match (parser.parse-ast-source-with-cfg-and-pools
+    source
+    (parser.compiler-cfg-empty)
+    pools)
+    [(Ok (Program decls)) (ast.ast-decl-list-box-shared-view decls)]
+    [_ (io.panic "module carry fixture did not parse")]))
+
+;; The oracle always walks every source row, starting from a fresh name
+;; map; it never reads or carries a cached module view.
+(define (tc-module-carry-test-rebuild
+  [ctx : tc_core.TcContext]
+  [base : tc_core.TcTypeEnv]
+  [old : ast.AstDeclList]
+  [delta : ast.AstDeclList]) : tc_core.TcTypeEnv
+  (let
+    [seen : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 4)]
+    [env : tc_core.TcTypeEnv base]
+    [lists : (Array ast.AstDeclList 2) (array old delta)]
+    (for [part (iterator.range 0 2)]
+      (let
+        [decls : ast.AstDeclList
+          (tc_core.tc-global-array-element-shared-view lists part)]
+        (for [index (iterator.range 0 (ast.ast-decl-list-len (& decls)))]
+          (set!
+            env
+            (match (tc_core.tc-module-local-env-add-decl
+              ctx
+              env
+              (&mut seen)
+              (ast.ast-decl-list-ref decls index))
+              [(Ok value) value]
+              [_ (io.panic "canonical module-view rebuild failed")])))))
+    (tc_core.tc-env-with-cache-layer-over-explicit env)))
+
+(define (tc-module-carry-test-lookup-equal?
+  [left : tc_core.TcTypeEnv]
+  [right : tc_core.TcTypeEnv]
+  [name : i64]) : bool
+  (match (tc_core.tc-lookup-unsafe-key-id left name)
+    [(Ok ty unsafe?)
+      (match (tc_core.tc-lookup-unsafe-key-id right name)
+        [(Ok expected expected-unsafe?)
+          (and (= unsafe? expected-unsafe?) (tc_core.tc-type-eq ty expected))]
+        [_ false])]
+    [(Err _)
+      (match (tc_core.tc-lookup-unsafe-key-id right name)
+        [(Err _) true]
+        [_ false])]))
+
+(test
+  macro-module-env-carry-rebuild-fallback-and-scratch-ownership
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [cases
+      (array
+        "fresh"
+        "unsafe"
+        "growth"
+        "collision"
+        "dotted"
+        "nominal"
+        "pending"
+        "flat"
+        "store"
+        "unresolved"
+        "arena"
+        "root"
+        "head"
+        "absent")]
+    (for [case-index (iterator.range 0 (array-length cases))]
+      (let
+        [mode : (& cases str) (& (array-ref cases case-index))]
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 8 8)]
+        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+        [module-id : i64 (ci.intern "carry-owner")]
+        [ctx : tc_core.TcContext
+          (tc_core.tc-context-new-with-source-names-and-job-state
+            (ast.ast-program (ast.ast-decl-list-new))
+            (csym.compiler-symbols-empty)
+            (csym.compiler-registries-empty)
+            "carry-owner"
+            module-id
+            pools
+            (ci.intern-source-name-session-capture-active-handle)
+            job)]
+        [state : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job)]
+        [old : ast.AstDeclList
+          (tc-module-carry-test-decls pools "(unsafe (define (kept) : i64 19))")]
+        [source : String
+          (cond
+            [(string.eq mode "unsafe") "(unsafe (define (fresh) : bool true))"]
+            [(string.eq mode "collision") "(define (kept) : bool true)"]
+            [(string.eq mode "dotted") "(define (other.fresh) : bool true)"]
+            [(string.eq mode "nominal") "(defstruct NewType (x i64))"]
+            [else "(define (fresh) : bool true)"])]
+        [_grow : unit
+          (when
+            (string.eq mode "growth")
+            (for [index (iterator.range 0 70)]
+              (set!
+                source
+                (str_cat.str-cat
+                  source
+                  "\n(define (fresh-"
+                  (string.int->string index)
+                  ") : i64 1)"))))]
+        [delta : ast.AstDeclList (tc-module-carry-test-decls pools (& source))]
+        [base : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id
+            (tc_core.tc-empty-env-with-job-state job)
+            (tc_core.tc-module-name-id-by-id module-id (ci.intern "kept"))
+            (tc_core.tc-fn0 (I64)))]
+        ;; The ordinary top-env keys are independent from the local overlay.
+        [top : tc_core.TcTypeEnv
+          (if (string.eq mode "nominal")
+            (tc_core.tc-bind-id base (ci.intern "canonical-top-delta") (Bool))
+            (match (tc_core.tc-extend-top-env-for-splice
+              ctx
+              base
+              (tc_core.tc-global-shared-view delta)
+              "carry-owner"
+              module-id)
+              [(Ok env) env]
+              [_ (io.panic "canonical top-env delta failed")]))]
+        [home : arena.Arena (arena.current)]
+        [scratch : arena.Arena (arena.make)]
+        [seen : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 4)]
+        [_enter-old-view : unit
+          (unsafe
+            (arena.set! scratch))]
+        [view : tc_core.TcTypeEnv
+          (match (tc_core.tc-module-local-env-add-decl
+            ctx
+            base
+            (&mut seen)
+            (ast.ast-decl-list-ref old 0))
+            [(Ok env) env]
+            [_ (io.panic "initial module view failed")])]
+        (when
+          (string.eq mode "unresolved")
+          (set!
+            view
+            (tc_core.tc-bind-id
+              view
+              (ci.intern "waiting")
+              (Var (ci.intern "later.T")))))
+        (tc_core.tc-macro-module-env-cache-storage-ensure! state)
+        (let
+          [data : (MutPtr tc_core.TcMacroModuleEnvStateData)
+            (tc_core.tc-macro-module-env-state-ptr state)]
+          (unsafe
+            (set! (deref data).macro-cache-store base.store)
+            (set!
+              (deref data).macro-cache-head
+              (if (string.eq mode "head")
+                (+ base.head 1)
+                base.head))))
+        (tc_core.tc-macro-module-env-cache-insert!
+          state
+          module-id
+          (tc_core.tc-env-with-cache-layer-over-explicit view)
+          (if (string.eq mode "pending")
+            (ci.intern "later.T")
+            -1)
+          (tc_core.tc-macro-module-env-seen-own base (& seen))
+          (not (string.eq mode "flat")))
+        (when
+          (string.eq mode "absent")
+          (tc_core.tc-macro-module-env-cache-clear! state))
+        (when
+          (string.eq mode "store")
+          (set! top (tc_core.tc-empty-env-with-job-state job)))
+        (unless
+          (string.eq mode "arena")
+          (unsafe
+            (arena.set! home)))
+        (tc_core.macro-module-env-carry!
+          ctx
+          base
+          top
+          (tc_core.tc-global-shared-view delta)
+          "carry-owner"
+          (if (string.eq mode "root")
+            cbi.compiler-builtin-id-fix-empty
+            module-id))
+        (unsafe
+          (arena.set! home))
+        (unsafe
+          (arena.destroy scratch))
+        (let
+          [data : tc_core.TcMacroModuleEnvStateData
+            (tc_core.tc-macro-module-env-state-data state)]
+          [carried? : bool
+            (and
+              (= data.macro-cache-store top.store)
+              (= data.macro-cache-head top.head)
+              (= data.macro-cache-len 1))]
+          [expected-carry? : bool (< case-index 3)]
+          (test.assert-true (= carried? expected-carry?) (string.copy mode))
+          (when
+            carried?
+            (let
+              [actual : tc_core.TcTypeEnv (array-ref data.macro-cache-values 0)]
+              [expected : tc_core.TcTypeEnv
+                (tc-module-carry-test-rebuild
+                  ctx
+                  top
+                  (tc_core.tc-global-shared-view old)
+                  (tc_core.tc-global-shared-view delta))]
+              [names
+                (array
+                  (ci.intern "kept")
+                  (ci.intern "fresh")
+                  (ci.intern "missing")
+                  (tc_core.tc-module-name-id-by-id
+                    module-id
+                    (ci.intern "fresh")))]
+              (for [index (iterator.range 0 (array-length names))]
+                (test.assert-true
+                  (tc-module-carry-test-lookup-equal?
+                    actual
+                    expected
+                    (array-ref names index))
+                  (string.copy mode)))
+              (let
+                [continued : tc_i64_i64_map.Map
+                  (tc_core.tc-global-array-element-shared-view
+                    data.macro-cache-seen
+                    0)]
+                (test.assert-true
+                  (not
+                    (tc_core.macro-module-env-splice-fresh?
+                      ctx
+                      (& continued)
+                      (& delta)))
+                  "continued names survive scratch retirement")))))
+        (tc_core.tc-job-state-retire-owned-storage! job)
+        (ast.ast-node-pool-context-install! installed)
+        (ast.ast-node-pool-context-destroy-storage! pools)))))
+
 (define (tc-hygiene-span-line?
   [pools : ast.AstNodePoolContext]
   [id : i64]

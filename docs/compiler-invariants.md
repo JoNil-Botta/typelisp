@@ -966,6 +966,22 @@ index. The `macro-segmented-program-events` test and the generated-declaration
 typecheck cases cover the event index and the re-resolution boundary; the
 `expansions` compiler-scaling row measures expansions within one module.
 
+A cached segmented module view may continue across a splice containing only
+fresh, undotted function declarations in that non-root module. Carrying replays
+the existing local overlay onto the new top environment, preserving unsafe
+marker bindings, then applies only the new rows through the canonical local
+binder. The continued name map records root shadows and every previously
+decided local name, including always-bound unsafe functions. A collision,
+unqualified-import overlay, unresolved overlay type or pending alias, changed
+store, detached base, root/flat view, or other declaration form retains the
+canonical rebuild. Pending-name resolution-generation checks remain active.
+Publication runs only in the environment store's owner, after the
+generational expansion returns. Replayed overlay types are cloned there;
+new cache payloads and name-map growth also belong to that owner. A different
+ambient arena retains the rebuild, without changing generation bookkeeping.
+The old view is unpublished before a delta can fail. Only the expansion
+module is retained; other module cache entries remain invalidated.
+
 Unqualified import-cache invalidation resolves its existing key-array descriptor
 once, then clears every module-key slot unconditionally. The descriptor stays
 stable throughout the clear. Name/value slots remain unreadable until their

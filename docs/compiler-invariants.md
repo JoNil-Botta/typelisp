@@ -2264,6 +2264,32 @@ is a valid but different key. The key stays the immediate source-view payload,
 and an unwrapped view is keyed without reading any pool. The
 `tc-call-arg-fact-key-pool-isolation` inline test covers it.
 
+### SSA renaming
+
+SSA construction keeps the current definition and presence bit in a compact
+slot for each candidate variable. A dominator child checkpoints the scalar
+undo log; leaving that child restores the previous values before its sibling
+runs. Fresh variable numbering and the dominator child order remain stable.
+
+Block exits capture only versions requested by inserted or pre-existing phi
+inputs. Predecessor-indexed rows retain scalar versions and presence bits,
+so later stack rollback cannot change an earlier edge. Constants and
+non-candidate inputs are preserved; an unavailable candidate version becomes
+the existing typed undef value. No block retains a full rename environment.
+
+Phi sites keep their newest-first logical order over physical append storage.
+A label-head index and links visit exactly that label's sites in the original
+order. The renamed-block index likewise translates physical positions back to
+logical positions, preserving materialization and value numbering. The
+definition-block table owns its membership arrays and updates a consumed entry
+in place; it must not clone the whole membership array for each definition.
+
+These tables own their storage and label keys rather than retaining a borrowed
+CFG index. The existing 4,096-block admission limit and conservative refusals
+remain unchanged. `ssa-indexed-label-links-preserve-newest-first` and the
+optimizer smoke's `dense-storage` test cover indexed ordering, duplicates,
+growth, missing edges, unbound variables and sibling rollback.
+
 ### Package direct-object routing
 
 Package route preflight reads live declarations once, before lowering.

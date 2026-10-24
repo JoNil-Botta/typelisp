@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
+phi links, capacity growth, missing labels and renamed-block logical positions.
+The optimizer smoke's `dense-storage` test also checks edge captures before
+rollback, independent sibling versions, missing predecessors and unbound
+candidate variables. Keep both entry points when changing SSA storage; the
+fixed-source compiler/benchmark and CFG scaling comparisons require complete
+SSA IR (including value numbering) and raw assembly equality.
+
 `backend-packed-literal-records` checks the physical byte and relocation contract
 for immutable literal pools: empty/singleton, independent and competing owners,
 suffix chains, input permutations, interior NUL, UTF-8 and larger collections.

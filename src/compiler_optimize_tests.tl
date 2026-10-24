@@ -1530,42 +1530,6 @@
     [(RenameBlock label _) (= label expected-label)]
     [_ false]))
 
-(define (opt-dense-test-ssa-block-outs
-  [outs : opt.OptSsaBlockOuts]
-  [next : i64]
-  [last : i64]) : opt.OptSsaBlockOuts
-  (if (> next last)
-    outs
-    (opt-dense-test-ssa-block-outs
-      (opt.opt-ssa-block-outs-prepend
-        outs
-        next
-        (&
-          (opt.opt-ssa-env-bind
-            (opt.opt-ssa-env-register
-              (opt.opt-ssa-env-with-capacity (+ next 1) 1 1)
-              next)
-            next
-            (+ 1000 next))))
-      (+ next 1)
-      last)))
-
-(define (opt-dense-test-ssa-block-out-newest?
-  [outs : (& outs opt.OptSsaBlockOuts)]) : bool
-  (match (opt.opt-ssa-env-snapshot-lookup
-    (& (opt.opt-ssa-block-out-lookup outs 4))
-    99)
-    [(Some current) (= current 123)]
-    [(None) false]))
-
-(define (opt-dense-test-ssa-block-out-is?
-  [outs : (& outs opt.OptSsaBlockOuts)]
-  [index : i64]
-  [expected-label : i64]) : bool
-  (match (opt.opt-ssa-block-outs-ref outs index)
-    [(BlockOut label _) (= label expected-label)]
-    [_ false]))
-
 (define (opt-dense-test-ssa-env-register-range
   [env : opt.OptSsaRenameEnv]
   [next : i64]
@@ -1603,24 +1567,47 @@
     [(Some _) false]
     [(None) true]))
 
-(define (opt-dense-test-ssa-snapshot-value?
-  [outs : (& outs opt.OptSsaBlockOuts)]
-  [label : i64]
-  [var : i64]
+(define (opt-dense-test-ssa-edge-table) : opt.OptSsaEdgeUses
+  (let
+    [by-label : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 2)]
+    [vars : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    [offsets : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [entries : (__tl_dyn-array i64) (__tl_make-array i64 6)]
+    (opt_i64_i64_map.insert-ref! (&mut by-label) 10 1)
+    (opt_i64_i64_map.insert-ref! (&mut by-label) 20 2)
+    (set! (array-ref vars 0) 3)
+    (set! (array-ref vars 1) 12)
+    (set! (array-ref vars 2) 3)
+    (set! (array-ref vars 3) 12)
+    (set! (array-ref vars 4) 3)
+    (set! (array-ref vars 5) 15)
+    (set! (array-ref offsets 1) 2)
+    (set! (array-ref offsets 2) 5)
+    (for [row (iterator.range 0 4)]
+      (set! (array-ref entries row) row))
+    (set! (array-ref entries 4) 5)
+    (opt.OptSsaEdgeUses
+      by-label
+      vars
+      (__tl_make-array i64 6)
+      (__tl_make-array bool 6)
+      (__tl_make-array i64 0)
+      (__tl_make-array i64 2)
+      offsets
+      entries)))
+
+(define (opt-dense-test-ssa-edge-value?
+  [uses : (& uses opt.OptSsaEdgeUses)]
+  [row : i64]
   [expected : i64]) : bool
-  (match (opt.opt-ssa-env-snapshot-lookup
-    (& (opt.opt-ssa-block-out-lookup outs label))
-    var)
+  (match (opt.opt-ssa-edge-uses-lookup uses row)
     [(Some current) (= current expected)]
     [(None) false]))
 
-(define (opt-dense-test-ssa-snapshot-missing?
-  [outs : opt.OptSsaBlockOuts]
-  [label : i64]
-  [var : i64]) : bool
-  (match (opt.opt-ssa-env-snapshot-lookup
-    (& (opt.opt-ssa-block-out-lookup outs label))
-    var)
+(define (opt-dense-test-ssa-edge-missing?
+  [uses : (& uses opt.OptSsaEdgeUses)]
+  [row : i64]) : bool
+  (match (opt.opt-ssa-edge-uses-lookup uses row)
     [(Some _) false]
     [(None) true]))
 
@@ -1640,8 +1627,11 @@
     [checkpoint : i64 (opt.opt-ssa-env-checkpoint base)]
     [branch-a : opt.OptSsaRenameEnv
       (opt.opt-ssa-env-bind (opt.opt-ssa-env-bind base 3 303) 12 312)]
-    [outs-a : opt.OptSsaBlockOuts
-      (opt.opt-ssa-block-outs-prepend (opt-ssa-block-outs-new) 10 (& branch-a))]
+    [outs-a : opt.OptSsaEdgeUses
+      (opt.opt-ssa-edge-uses-capture
+        (opt-dense-test-ssa-edge-table)
+        10
+        (& branch-a))]
     [restored : opt.OptSsaRenameEnv
       (opt.opt-ssa-env-rollback branch-a checkpoint)]
     [restored-ok? : bool
@@ -1655,17 +1645,21 @@
         (opt-dense-test-ssa-env-missing? restored 16))]
     [branch-b : opt.OptSsaRenameEnv
       (opt.opt-ssa-env-bind (opt.opt-ssa-env-bind restored 3 403) 12 412)]
-    [outs : opt.OptSsaBlockOuts
-      (opt.opt-ssa-block-outs-prepend outs-a 20 (& branch-b))]
+    [outs : opt.OptSsaEdgeUses
+      (opt.opt-ssa-edge-uses-capture
+        (opt.opt-ssa-edge-uses-capture outs-a 20 (& branch-b))
+        99
+        (& branch-b))]
     (and
       (= checkpoint 12)
       (= registered-count 13)
       restored-ok?
-      (opt-dense-test-ssa-snapshot-value? outs 10 3 303)
-      (opt-dense-test-ssa-snapshot-value? outs 10 12 312)
-      (opt-dense-test-ssa-snapshot-value? outs 20 3 403)
-      (opt-dense-test-ssa-snapshot-value? outs 20 12 412)
-      (opt-dense-test-ssa-snapshot-missing? outs 99 3))))
+      (opt-dense-test-ssa-edge-value? outs 0 303)
+      (opt-dense-test-ssa-edge-value? outs 1 312)
+      (opt-dense-test-ssa-edge-value? outs 2 403)
+      (opt-dense-test-ssa-edge-value? outs 3 412)
+      (opt-dense-test-ssa-edge-missing? outs 4)
+      (opt-dense-test-ssa-edge-missing? outs 5))))
 
 (define (opt-dense-test-ssa-var-block-index) : opt.OptCfgIndex
   (opt.opt-cfg-index-build
@@ -1776,18 +1770,7 @@
         (opt-dense-test-ssa-rename-blocks (opt-ssa-rename-blocks-new) 1 8)
         4
         (& ssa-renamed-body))]
-    [ssa-outs-independent : opt.OptSsaBlockOuts (opt-ssa-block-outs-new)]
-    [ssa-outs : opt.OptSsaBlockOuts
-      (opt.opt-ssa-block-outs-prepend
-        (opt-dense-test-ssa-block-outs (opt-ssa-block-outs-new) 1 8)
-        4
-        (&
-          (opt.opt-ssa-env-bind
-            (opt.opt-ssa-env-register
-              (opt.opt-ssa-env-with-capacity 100 1 1)
-              99)
-            99
-            123)))]
+    [ssa-edges : opt.OptSsaEdgeUses (opt-dense-test-ssa-edge-table)]
     [ssa-var-block-index : opt.OptCfgIndex (opt-dense-test-ssa-var-block-index)]
     [ssa-var-blocks : opt.OptSsaVarBlocks
       (opt-dense-test-ssa-var-blocks ssa-var-block-index)]
@@ -1925,17 +1908,12 @@
       [(not (opt-dense-test-ssa-rename-block-newest? ssa-renamed)) 43]
       [(not (opt-dense-test-ssa-rename-block-is? ssa-renamed 1 8)) 44]
       [(not (opt-dense-test-ssa-rename-block-is? ssa-renamed 8 1)) 45]
-      [(not (= (opt.opt-ssa-block-outs-count ssa-outs) 9)) 46]
-      [(not (= (opt.opt-ssa-block-outs-count ssa-outs-independent) 0)) 47]
-      [(not (opt-dense-test-ssa-block-out-newest? ssa-outs)) 48]
-      [(not (opt-dense-test-ssa-block-out-is? ssa-outs 1 8)) 49]
-      [(not (opt-dense-test-ssa-block-out-is? ssa-outs 8 1)) 50]
-      [(match (opt.opt-ssa-env-snapshot-lookup
-          (& (opt.opt-ssa-block-out-lookup ssa-outs-independent 1))
-          1)
-          [(Some _) true]
-          [(None) false])
-        51]
+      [(not (= (array-length ssa-edges.vars) 6)) 46]
+      [(not (opt-dense-test-ssa-edge-missing? ssa-edges 0)) 47]
+      [(not (= (array-ref ssa-edges.offsets 0) 0)) 48]
+      [(not (= (array-ref ssa-edges.offsets 1) 2)) 49]
+      [(not (= (array-ref ssa-edges.offsets 2) 5)) 50]
+      [(not (opt-dense-test-ssa-edge-missing? ssa-edges 4)) 51]
       [(not (= (opt.opt-label-count ssa-var-eight-labels) 2)) 52]
       [(not
           (=
@@ -80471,7 +80449,74 @@ return 0" true)
     items))
 
 (define (opt-ssa-rename-blocks-new) : opt.OptSsaRenameBlocks
-  (opt.OptSsaRenameBlocks (opt_ssa_dense_vec.with-capacity 4)))
+  (opt.opt-ssa-rename-blocks-with-capacity 4))
+
+(test
+  ssa-indexed-label-links-preserve-newest-first
+  (let
+    [sites : opt.OptSsaPhiSites
+      (opt.opt-ssa-phi-sites-prepend
+        (opt.opt-ssa-phi-sites-prepend
+          (opt.opt-ssa-phi-sites-prepend
+            (opt-dense-test-ssa-sites (opt.opt-ssa-phi-sites-new) 1 8)
+            90
+            104
+            (I64)
+            290)
+          91
+          999
+          (I64)
+          291)
+        92
+        104
+        (I64)
+        292)]
+    [body : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq-empty)]
+    [blocks : opt.OptSsaRenameBlocks
+      (opt-ssa-rename-blocks-prepend
+        (opt-dense-test-ssa-rename-blocks (opt-ssa-rename-blocks-new) 1 8)
+        4
+        (& body))]
+    (test.assert-i64-eq
+      (opt.opt-ssa-phi-sites-first-for-label (& sites) 104)
+      0
+      "newest site")
+    (test.assert-i64-eq
+      (opt.opt-ssa-phi-sites-next-for-label (& sites) 0)
+      2
+      "skip other label")
+    (test.assert-i64-eq
+      (opt.opt-ssa-phi-sites-next-for-label (& sites) 2)
+      7
+      "link survives growth")
+    (test.assert-i64-eq
+      (opt.opt-ssa-phi-sites-next-for-label (& sites) 7)
+      -1
+      "oldest site")
+    (test.assert-i64-eq
+      (opt.opt-ssa-phi-sites-first-for-label (& sites) 999)
+      1
+      "single site")
+    (test.assert-i64-eq
+      (opt.opt-ssa-phi-sites-first-for-label (& sites) 1000)
+      -1
+      "missing site")
+    (test.assert-i64-eq
+      (opt.opt-ssa-rename-blocks-lookup-index (& blocks) 4)
+      0
+      "newest duplicate")
+    (test.assert-i64-eq
+      (opt.opt-ssa-rename-blocks-lookup-index (& blocks) 8)
+      1
+      "latest unique")
+    (test.assert-i64-eq
+      (opt.opt-ssa-rename-blocks-lookup-index (& blocks) 1)
+      8
+      "earliest block")
+    (test.assert-i64-eq
+      (opt.opt-ssa-rename-blocks-lookup-index (& blocks) 9)
+      -1
+      "missing block")))
 
 (define (opt-ssa-rename-blocks-prepend
   [blocks : opt.OptSsaRenameBlocks]
@@ -80481,9 +80526,6 @@ return 0" true)
     blocks
     label
     (ir.CompilerIrInstrSeq (clone instrs.slots) instrs.len)))
-
-(define (opt-ssa-block-outs-new) : opt.OptSsaBlockOuts
-  (opt.OptSsaBlockOuts (opt_ssa_dense_vec.with-capacity 4)))
 
 (define (opt-ssa-rewrite-spmd-call-args
   [env : opt.OptSsaRenameEnv]

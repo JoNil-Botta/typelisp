@@ -13730,33 +13730,39 @@
   (entry-count i64)
   (change-count i64))
 
-(defstruct OptSsaRenameSnapshot
-  (by-var (__tl_dyn-array i64))
-  (current (__tl_dyn-array i64))
+(defstruct OptSsaEdgeUses
+  (by-label opt_i64_i64_map.Map)
+  (vars (__tl_dyn-array i64))
+  (values (__tl_dyn-array i64))
   (present (__tl_dyn-array bool))
-  (entry-count i64))
+  (site-starts (__tl_dyn-array i64))
+  (block-phi-starts (__tl_dyn-array i64))
+  (offsets (__tl_dyn-array i64))
+  (entries (__tl_dyn-array i64)))
 
 (defenum OptSsaDenseEntry
   (PhiSite i64 i64 ast.AstType i64)
-  (RenameBlock i64 ir.CompilerIrInstrSeq)
-  (BlockOut i64 OptSsaRenameSnapshot))
+  (RenameBlock i64 ir.CompilerIrInstrSeq))
 
 (import (vector.vector OptSsaDenseEntry core) as opt_ssa_dense_vec)
 
 (defstruct OptSsaPhiSites
-  (items opt_ssa_dense_vec.Vec))
+  (items opt_ssa_dense_vec.Vec)
+  (by-label opt_i64_i64_map.Map)
+  (next opt_dense_i64_vec.Vec))
 
 (defstruct OptSsaRenameBlocks
-  (items opt_ssa_dense_vec.Vec))
+  (items opt_ssa_dense_vec.Vec)
+  (by-label opt_i64_i64_map.Map))
 
-(defstruct OptSsaBlockOuts
-  (items opt_ssa_dense_vec.Vec))
-
-;; These three SSA sequences share one generated dense backend. Physical push
+;; These SSA sequences share one generated dense backend. Physical push
 ;; is logical Cons/prepend, so indexed consumers read from the live end toward
 ;; zero and keep a newest-first lookup and phi emission order.
 (define (opt-ssa-phi-sites-new) : OptSsaPhiSites
-  (OptSsaPhiSites (opt_ssa_dense_vec.with-capacity 4)))
+  (OptSsaPhiSites
+    (opt_ssa_dense_vec.with-capacity 4)
+    (opt_i64_i64_map.with-capacity 4)
+    (opt_dense_i64_vec.with-capacity 4)))
 
 (define (opt-ssa-phi-sites-count [sites : (& sites OptSsaPhiSites)]) : i64
   (opt_ssa_dense_vec.len (& sites.items)))
@@ -13769,10 +13775,18 @@
   [phi-var : i64]) : OptSsaPhiSites
   (let
     [items : opt_ssa_dense_vec.Vec sites.items]
+    [by-label : opt_i64_i64_map.Map sites.by-label]
+    [next : opt_dense_i64_vec.Vec sites.next]
+    [previous : i64 (opt_i64_i64_map.get-value-or (& by-label) label 0)]
+    (opt_dense_i64_vec.push-ref! (&mut next) previous)
+    (opt_i64_i64_map.insert-ref!
+      (&mut by-label)
+      label
+      (+ (opt_ssa_dense_vec.len (& items)) 1))
     (opt_ssa_dense_vec.push-ref!
       (&mut items)
       (OptSsaDenseEntry.PhiSite var label ty phi-var))
-    (OptSsaPhiSites items)))
+    (OptSsaPhiSites items by-label next)))
 
 (define (opt-ssa-phi-sites-ref [sites : (& sites OptSsaPhiSites)] [index : i64]) : OptSsaDenseEntry
   (let
@@ -13781,8 +13795,32 @@
       (opt_ssa_dense_vec.slots (& items))
       (- (- (opt_ssa_dense_vec.len (& items)) index) 1))))
 
+(define (opt-ssa-phi-sites-first-for-label
+  [sites : (& sites OptSsaPhiSites)]
+  [label : i64]) : i64
+  (let
+    [head : i64 (opt_i64_i64_map.get-value-or (& sites.by-label) label 0)]
+    (if (= head 0)
+      (- 0 1)
+      (- (opt-ssa-phi-sites-count sites) head))))
+
+;; Links use one-based physical offsets, so vector growth preserves them.
+;; Converting at the boundary retains the global newest-first logical order.
+(define (opt-ssa-phi-sites-next-for-label
+  [sites : (& sites OptSsaPhiSites)]
+  [index : i64]) : i64
+  (let
+    [count : i64 (opt-ssa-phi-sites-count sites)]
+    [head : i64
+      (array-ref (opt_dense_i64_vec.slots (& sites.next)) (- (- count index) 1))]
+    (if (= head 0)
+      (- 0 1)
+      (- count head))))
+
 (define (opt-ssa-rename-blocks-with-capacity [capacity : i64]) : OptSsaRenameBlocks
-  (OptSsaRenameBlocks (opt_ssa_dense_vec.with-capacity capacity)))
+  (OptSsaRenameBlocks
+    (opt_ssa_dense_vec.with-capacity capacity)
+    (opt_i64_i64_map.with-capacity capacity)))
 
 (define (opt-ssa-rename-blocks-count [blocks : (& blocks OptSsaRenameBlocks)]) : i64
   (opt_ssa_dense_vec.len (& blocks.items)))
@@ -13793,43 +13831,21 @@
   [instrs : ir.CompilerIrInstrSeq]) : OptSsaRenameBlocks
   (let
     [items : opt_ssa_dense_vec.Vec blocks.items]
+    [by-label : opt_i64_i64_map.Map blocks.by-label]
+    (opt_i64_i64_map.insert-ref!
+      (&mut by-label)
+      label
+      (+ (opt_ssa_dense_vec.len (& items)) 1))
     (opt_ssa_dense_vec.push-ref!
       (&mut items)
       (OptSsaDenseEntry.RenameBlock label instrs))
-    (OptSsaRenameBlocks items)))
+    (OptSsaRenameBlocks items by-label)))
 
 (define (opt-ssa-rename-blocks-ref
   [blocks : (& blocks OptSsaRenameBlocks)]
   [index : i64]) : OptSsaDenseEntry
   (let
     [items (& blocks.items)]
-    (array-ref
-      (opt_ssa_dense_vec.slots (& items))
-      (- (- (opt_ssa_dense_vec.len (& items)) index) 1))))
-
-(define (opt-ssa-block-outs-with-capacity [capacity : i64]) : OptSsaBlockOuts
-  (OptSsaBlockOuts (opt_ssa_dense_vec.with-capacity capacity)))
-
-(define (opt-ssa-block-outs-count [outs : (& outs OptSsaBlockOuts)]) : i64
-  (opt_ssa_dense_vec.len (& outs.items)))
-
-(define (opt-ssa-block-outs-prepend
-  [outs : OptSsaBlockOuts]
-  [label : i64]
-  [env : (& OptSsaRenameEnv)]) : OptSsaBlockOuts
-  (let
-    [items : opt_ssa_dense_vec.Vec outs.items]
-    (opt_ssa_dense_vec.push-ref!
-      (&mut items)
-      (OptSsaDenseEntry.BlockOut
-        label
-        (opt-ssa-env-snapshot
-          (owned_view.compiler-owned-reference-shared-view env))))
-    (OptSsaBlockOuts items)))
-
-(define (opt-ssa-block-outs-ref [outs : (& outs OptSsaBlockOuts)] [index : i64]) : OptSsaDenseEntry
-  (let
-    [items (& outs.items)]
     (array-ref
       (opt_ssa_dense_vec.slots (& items))
       (- (- (opt_ssa_dense_vec.len (& items)) index) 1))))
@@ -13843,7 +13859,7 @@
     (__tl_dyn-array bool)))
 
 (defenum OptSsaRenameState
-  (State OptSsaRenameBlocks OptSsaBlockOuts i64))
+  (State OptSsaRenameBlocks OptSsaEdgeUses i64))
 
 (defenum OptSsaInstrResult
   (Result ir.CompilerIrInstr OptSsaRenameEnv i64))
@@ -14183,14 +14199,18 @@
       (if (> slot 0)
         (let
           [entry-index : i64 (- slot 1)]
-          [entry : OptSsaVarBlockEntry (clone (array-ref entries entry-index))]
-          [members : (__tl_dyn-array bool) entry.members]
-          [labels : OptLabelSet entry.labels]
+          [entry : (&mut entries OptSsaVarBlockEntry)
+            (&mut (array-ref entries entry-index))]
+          [labels : OptLabelSet (clone entry.labels)]
+          ;; The consumed table owns this entry. Retain its membership array
+          ;; while appending definitions, rather than cloning it per block.
           (set!
-            (array-ref entries entry-index)
-            (OptSsaVarBlockEntry
-              (opt-ssa-label-add-with-members index (&mut members) labels label)
-              members))
+            entry.labels
+            (opt-ssa-label-add-with-members
+              index
+              (&mut entry.members)
+              labels
+              label))
           (OptSsaVarBlocks by-var entries entry-count))
         (if (>= entry-count (array-length entries))
           (string.tl_oob_abort)
@@ -14523,8 +14543,8 @@
 ;; present slots are one-based. The current mapping is mutated during the
 ;; dominator walk, while the parallel change arrays form an exact-capacity undo
 ;; log. A child checkpoints the log and rolls it back before its sibling runs.
-;; Block exits clone only the compact current/presence prefixes, so retained
-;; predecessor snapshots cannot alias later mutations.
+;; Block exits capture only requested phi-edge versions into disjoint rows;
+;; those scalar captures cannot alias the later undo-log mutations.
 (define (opt-ssa-env-with-capacity
   [var-capacity : i64]
   [entry-capacity : i64]
@@ -14617,31 +14637,175 @@
       (set! out.change-count checkpoint)
       out)))
 
-(define (opt-ssa-env-snapshot [env : OptSsaRenameEnv]) : OptSsaRenameSnapshot
-  (OptSsaRenameSnapshot
-    env.by-var
-    (clone env.current)
-    (clone env.present)
-    env.entry-count))
-
-(define (opt-ssa-env-snapshot-empty) : OptSsaRenameSnapshot
-  (OptSsaRenameSnapshot
-    (__tl_make-array i64 0)
-    (__tl_make-array i64 0)
-    (__tl_make-array bool 0)
-    0))
-
-(define (opt-ssa-env-snapshot-lookup
-  [snapshot : (& OptSsaRenameSnapshot)]
-  [var : i64]) : option_i64.Option
+;; Each row is one eventual phi input, not a copy of a block environment.
+;; The predecessor CSR visits precisely the rows to capture at that block's
+;; exit. Rows without a reachable binding retain explicit absence, and later
+;; rollback cannot change a captured version.
+(define (opt-ssa-edge-uses-block-id
+  [uses : (& uses OptSsaEdgeUses)]
+  [label : i64]) : option_i64.Option
   (let
-    [slot : i64 (opt-ssa-env-slot snapshot.by-var var)]
-    (if (or
-      (< slot 0)
-      (>= slot snapshot.entry-count)
-      (not (array-ref snapshot.present slot)))
+    [slot : i64 (opt_i64_i64_map.get-value-or (& uses.by-label) label 0)]
+    (if (= slot 0)
       (None)
-      (Some (array-ref snapshot.current slot)))))
+      (Some (- slot 1)))))
+
+(define (opt-ssa-edge-uses-set!
+  [uses : (&mut uses OptSsaEdgeUses)]
+  [pred-ids : (&mut pred-ids (__tl_dyn-array i64))]
+  [position : i64]
+  [pred : i64]
+  [var : i64]) : unit
+  (set! (array-ref uses.vars position) var)
+  (when
+    (>= var 0)
+    (match (opt-ssa-edge-uses-block-id uses pred)
+      [(Some id) (set! (array-ref pred-ids position) (+ id 1))]
+      [(None) unit])))
+
+(define (opt-ssa-edge-uses-new
+  [index : (& index OptCfgIndex)]
+  [pred-map : (& pred-map OptPredMap)]
+  [facts : (& facts OptSsaFacts)]
+  [sites : (& sites OptSsaPhiSites)]) : OptSsaEdgeUses
+  (let
+    [block-count : i64 (opt-cfg-index-block-count index)]
+    [site-count : i64 (opt-ssa-phi-sites-count sites)]
+    [count : i64 0]
+    (for [site (iterator.range 0 site-count)]
+      (match (opt-ssa-phi-sites-ref sites site)
+        [(PhiSite _ label _ _)
+          (+= count (opt-label-count (opt-pred-map-lookup pred-map label)))]
+        [_ (string.tl_oob_abort)]))
+    (for [id (iterator.range 0 block-count)]
+      (match (opt-cfg-index-block index id)
+        [(Some (Block _ instrs))
+          (for [i
+            (iterator.range 0 (ir.compiler-ir-instr-seq-count (& instrs)))]
+            (match (ir.compiler-ir-instr-seq-borrow instrs i)
+              [(Phi _ inputs _) (+= count inputs.len)]
+              [_ unit]))]
+        [(No) unit]))
+    (let
+      [uses : OptSsaEdgeUses
+        (OptSsaEdgeUses
+          (opt_i64_i64_map.with-capacity block-count)
+          (__tl_make-array i64 count)
+          (__tl_make-array i64 count)
+          (__tl_make-array bool count)
+          (__tl_make-array i64 (+ site-count 1))
+          (__tl_make-array i64 block-count)
+          (__tl_make-array i64 (+ block-count 1))
+          (__tl_make-array i64 count))]
+      [pred-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [position : i64 0]
+      (for [id (iterator.range 0 block-count)]
+        (match (opt-cfg-index-block index id)
+          [(Some (Block label _))
+            (when
+              (= (opt_i64_i64_map.get-value-or (& uses.by-label) label 0) 0)
+              (opt_i64_i64_map.insert-ref! (&mut uses.by-label) label (+ id 1)))]
+          [(No) unit]))
+      (for [site (iterator.range 0 site-count)]
+        (set! (array-ref uses.site-starts site) position)
+        (match (opt-ssa-phi-sites-ref sites site)
+          [(PhiSite var label _ _)
+            (let
+              [preds : OptLabelSet (opt-pred-map-lookup pred-map label)]
+              (for [p (iterator.range 0 (opt-label-count preds))]
+                (opt-ssa-edge-uses-set!
+                  (&mut uses)
+                  (&mut pred-ids)
+                  position
+                  (opt-label-ref preds p)
+                  var)
+                (+= position 1)))]
+          [_ (string.tl_oob_abort)]))
+      (set! (array-ref uses.site-starts site-count) position)
+      (for [id (iterator.range 0 block-count)]
+        (set! (array-ref uses.block-phi-starts id) position)
+        (match (opt-cfg-index-block index id)
+          [(Some (Block _ instrs))
+            (for [i
+              (iterator.range 0 (ir.compiler-ir-instr-seq-count (& instrs)))]
+              (match (ir.compiler-ir-instr-seq-borrow instrs i)
+                [(Phi _ inputs _)
+                  (for [p (iterator.range 0 inputs.len)]
+                    (let
+                      [input (ir.compiler-ir-phi-input-seq-borrow inputs p)]
+                      [value : ir.CompilerIrValue input.value]
+                      [var : i64
+                        (match (compiler-opt-global-shared-view value)
+                          [(Var v)
+                            (if (opt-ssa-candidate? facts v)
+                              v
+                              (- 0 1))]
+                          [_ (- 0 1)])]
+                      (opt-ssa-edge-uses-set!
+                        (&mut uses)
+                        (&mut pred-ids)
+                        position
+                        input.label
+                        var)
+                      (+= position 1)))]
+                [_ unit]))]
+          [(No) unit]))
+      (unless (= position count) (string.tl_oob_abort))
+      (for [row (iterator.range 0 count)]
+        (let
+          [pred : i64 (array-ref pred-ids row)]
+          (when (> pred 0) (+= (array-ref uses.offsets pred) 1))))
+      (for [id (iterator.range 0 block-count)]
+        (let
+          [previous : i64 (array-ref uses.offsets id)]
+          (+= (array-ref uses.offsets (+ id 1)) previous)))
+      (let
+        [heads : (__tl_dyn-array i64) (clone uses.offsets)]
+        (for [row (iterator.range 0 count)]
+          (let
+            [pred : i64 (array-ref pred-ids row)]
+            (when
+              (> pred 0)
+              (let
+                [id : i64 (- pred 1)]
+                [slot : i64 (array-ref heads id)]
+                (set! (array-ref uses.entries slot) row)
+                (+= (array-ref heads id) 1)))))
+        uses))))
+
+(define (opt-ssa-edge-uses-capture
+  [uses : OptSsaEdgeUses]
+  [label : i64]
+  [env : (& env OptSsaRenameEnv)]) : OptSsaEdgeUses
+  (match (opt-ssa-edge-uses-block-id (& uses) label)
+    [(None) uses]
+    [(Some id)
+      (let
+        [out : OptSsaEdgeUses uses]
+        (for [slot
+          (iterator.range
+            (array-ref out.offsets id)
+            (array-ref out.offsets (+ id 1)))]
+          (let
+            [row : i64 (array-ref out.entries slot)]
+            (match (opt-ssa-env-lookup env (array-ref out.vars row))
+              [(Some value)
+                (set! (array-ref out.values row) value)
+                (set! (array-ref out.present row) true)]
+              [(None) (set! (array-ref out.present row) false)])))
+        out)]))
+
+(define (opt-ssa-edge-uses-lookup [uses : (& uses OptSsaEdgeUses)] [row : i64]) : option_i64.Option
+  (if (array-ref uses.present row)
+    (Some (array-ref uses.values row))
+    (None)))
+
+(define (opt-ssa-edge-uses-block-start
+  [uses : (& uses OptSsaEdgeUses)]
+  [label : i64]) : i64
+  (match (opt-ssa-edge-uses-block-id uses label)
+    [(Some id) (array-ref uses.block-phi-starts id)]
+    [(None) (string.tl_oob_abort)]))
 
 (define (opt-ssa-env-candidate-count-from
   [facts : (& facts OptSsaFacts)]
@@ -14735,7 +14899,7 @@
   [label : i64]
   [env : OptSsaRenameEnv]
   [index : i64]) : OptSsaRenameEnv
-  (if (>= index (opt-ssa-phi-sites-count sites))
+  (if (< index 0)
     env
     (match (opt-ssa-phi-sites-ref sites index)
       [(PhiSite var site-label _ phi-var)
@@ -14745,14 +14909,18 @@
           (if (= label site-label)
             (opt-ssa-env-bind env var phi-var)
             env)
-          (+ index 1))]
+          (opt-ssa-phi-sites-next-for-label sites index))]
       [_ (string.tl_oob_abort)])))
 
 (define (opt-ssa-env-bind-phis
   [sites : (& sites OptSsaPhiSites)]
   [label : i64]
   [env : OptSsaRenameEnv]) : OptSsaRenameEnv
-  (opt-ssa-env-bind-phis-from sites label env 0))
+  (opt-ssa-env-bind-phis-from
+    sites
+    label
+    env
+    (opt-ssa-phi-sites-first-for-label sites label)))
 
 (define (opt-ssa-rewrite-value
   [env : (& OptSsaRenameEnv)]
@@ -14841,11 +15009,7 @@
 (define (opt-ssa-rename-blocks-contains-from?
   [blocks : (& blocks OptSsaRenameBlocks)]
   [label : i64]) : bool
-  (for [index (iterator.range 0 (opt-ssa-rename-blocks-count blocks))]
-    (match (opt-ssa-rename-blocks-ref blocks index)
-      [(RenameBlock block-label _) (when (= block-label label) (return true))]
-      [_ (return (string.tl_oob_abort))]))
-  false)
+  (> (opt_i64_i64_map.get-value-or (& blocks.by-label) label 0) 0))
 
 (define (opt-ssa-rename-blocks-contains?
   [blocks : (& OptSsaRenameBlocks)]
@@ -14855,32 +15019,16 @@
 (define (opt-ssa-rename-blocks-lookup-index-from
   [blocks : (& blocks OptSsaRenameBlocks)]
   [label : i64]) : i64
-  (for [index (iterator.range 0 (opt-ssa-rename-blocks-count blocks))]
-    (match (opt-ssa-rename-blocks-ref blocks index)
-      [(RenameBlock block-label instrs)
-        (when (= block-label label) (return index))]
-      [_ (return (string.tl_oob_abort))]))
-  -1)
+  (let
+    [head : i64 (opt_i64_i64_map.get-value-or (& blocks.by-label) label 0)]
+    (if (= head 0)
+      (- 0 1)
+      (- (opt-ssa-rename-blocks-count blocks) head))))
 
 (define (opt-ssa-rename-blocks-lookup-index
   [blocks : (& blocks OptSsaRenameBlocks)]
   [label : i64]) : i64
   (opt-ssa-rename-blocks-lookup-index-from blocks label))
-
-(define (opt-ssa-block-out-lookup-from
-  [outs : (& outs OptSsaBlockOuts)]
-  [label : i64]) : OptSsaRenameSnapshot
-  (for [index (iterator.range 0 (opt-ssa-block-outs-count outs))]
-    (match (opt-ssa-block-outs-ref outs index)
-      [(BlockOut out-label snapshot)
-        (when (= out-label label) (return snapshot))]
-      [_ (return (string.tl_oob_abort))]))
-  (opt-ssa-env-snapshot-empty))
-
-(define (opt-ssa-block-out-lookup
-  [outs : (& outs OptSsaBlockOuts)]
-  [label : i64]) : OptSsaRenameSnapshot
-  (opt-ssa-block-out-lookup-from outs label))
 
 (define (opt-ssa-rename-state-add-block
   [state : (& OptSsaRenameState)]
@@ -14895,7 +15043,7 @@
           blocks
           label
           (owned_view.compiler-owned-reference-shared-view instrs))
-        (opt-ssa-block-outs-prepend outs label env)
+        (opt-ssa-edge-uses-capture outs label env)
         next-var)]))
 
 (define (opt-ssa-rename-tree-work
@@ -15136,12 +15284,12 @@
             (&
               (State
                 (opt-ssa-rename-blocks-with-capacity block-capacity)
-                (opt-ssa-block-outs-with-capacity block-capacity)
+                (opt-ssa-edge-uses-new (& index) context.pred-map facts sites)
                 frame))))]
       [(None)
         (State
           (opt-ssa-rename-blocks-with-capacity block-capacity)
-          (opt-ssa-block-outs-with-capacity block-capacity)
+          (opt-ssa-edge-uses-new (& index) context.pred-map facts sites)
           frame)])))
 
 ;; Dead-path phi input: a candidate var can reach a phi over an edge on which
@@ -15164,23 +15312,22 @@
 
 (define (opt-ssa-phi-inputs
   [preds : OptLabelSet]
-  [outs : (& outs OptSsaBlockOuts)]
-  [var : i64]
+  [outs : (& outs OptSsaEdgeUses)]
+  [row : i64]
   [ty : (& ty ast.AstType)]) : ir.CompilerIrPhiInputSeq
   (match preds
     [(Nil) (ir.compiler-ir-phi-input-seq-empty)]
     [(Dense _ _)
       (let
         [pred : i64 (opt-label-ref preds 0)]
-        [snapshot : OptSsaRenameSnapshot (opt-ssa-block-out-lookup outs pred)]
         [value : ir.CompilerIrValue
-          (match (opt-ssa-env-snapshot-lookup (& snapshot) var)
+          (match (opt-ssa-edge-uses-lookup outs row)
             [(Some current) (Var current)]
             [(None) (opt-ssa-phi-undef-input ty)])]
         (ir.compiler-ir-phi-input-seq-prepend
           value
           pred
-          (& (opt-ssa-phi-inputs (opt-label-tail preds) outs var ty))))]))
+          (& (opt-ssa-phi-inputs (opt-label-tail preds) outs (+ row 1) ty))))]))
 
 ;; Append this label's inserted phis to `builder`, in phi-site order. The old
 ;; shape recursed to the end of `sites` first and consed each phi onto the
@@ -15190,15 +15337,15 @@
 ;; rather than reverse changes nothing it returns.
 (define (opt-ssa-push-phis-for-label-from!
   [pred-map : (& pred-map OptPredMap)]
-  [outs : (& outs OptSsaBlockOuts)]
+  [outs : (& outs OptSsaEdgeUses)]
   [sites : (& sites OptSsaPhiSites)]
   [label : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [index : i64]) : unit
   (unless
-    (>= index (opt-ssa-phi-sites-count sites))
+    (< index 0)
     (match (opt-ssa-phi-sites-ref sites index)
-      [(PhiSite var site-label ty phi-var)
+      [(PhiSite _ site-label ty phi-var)
         (if (= site-label label)
           (ir.compiler-ir-instr-builder-push!
             (&mut builder)
@@ -15207,7 +15354,7 @@
               (opt-ssa-phi-inputs
                 (opt-pred-map-lookup pred-map label)
                 outs
-                var
+                (array-ref outs.site-starts index)
                 ty)
               ty))
           unit)]
@@ -15218,22 +15365,28 @@
       sites
       label
       (&mut builder)
-      (+ index 1))))
+      (opt-ssa-phi-sites-next-for-label sites index))))
 
 (define (opt-ssa-push-phis-for-label!
   [pred-map : (& pred-map OptPredMap)]
-  [outs : (& outs OptSsaBlockOuts)]
+  [outs : (& outs OptSsaEdgeUses)]
   [sites : (& sites OptSsaPhiSites)]
   [label : i64]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (opt-ssa-push-phis-for-label-from! pred-map outs sites label (&mut builder) 0))
+  (opt-ssa-push-phis-for-label-from!
+    pred-map
+    outs
+    sites
+    label
+    (&mut builder)
+    (opt-ssa-phi-sites-first-for-label sites label)))
 
 (define (opt-ssa-materialize-blocks
   [blocks : (& ir.CompilerIrBlockList)]
   [pred-map : (& pred-map OptPredMap)]
   [facts : (& OptSsaFacts)]
   [renamed : (& renamed OptSsaRenameBlocks)]
-  [outs : (& outs OptSsaBlockOuts)]
+  [outs : (& outs OptSsaEdgeUses)]
   [sites : (& sites OptSsaPhiSites)]) : ir.CompilerIrBlockList
   (opt-blocks-map
     (owned_view.compiler-owned-reference-shared-view blocks)
@@ -15248,7 +15401,7 @@
   [pred-map : (& pred-map OptPredMap)]
   [facts : OptSsaFacts]
   [renamed : (& renamed OptSsaRenameBlocks)]
-  [outs : (& outs OptSsaBlockOuts)]
+  [outs : (& outs OptSsaEdgeUses)]
   [sites : (& sites OptSsaPhiSites)]
   [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
   (match block
@@ -15267,7 +15420,8 @@
                 (& facts)
                 outs
                 (& instrs)
-                (&mut builder))]
+                (&mut builder)
+                (opt-ssa-edge-uses-block-start outs label))]
             [_ (string.tl_oob_abort)]))
         (Block label (ir.compiler-ir-instr-builder-to-seq builder)))]))
 
@@ -15276,15 +15430,16 @@
 ;; construction with phis AND multi-def `set!` locals. The renamer passes
 ;; such phis through untouched (their inputs are edge uses that must NOT be
 ;; rewritten with the current block env); the materializer rewrites each
-;; input with the PREDECESSOR's out-env below, exactly like the inserted phi
+;; input with its captured PREDECESSOR edge version, exactly like inserted phi
 ;; sites, so the renamed defs reach the pre-existing joins per edge. A
 ;; candidate input with no binding on some edge is the dead-path case and
 ;; takes the typed undef constant (see opt-ssa-phi-undef-input).
 (define (opt-ssa-rewrite-preexisting-phi-inputs
   [facts : (& facts OptSsaFacts)]
-  [outs : (& outs OptSsaBlockOuts)]
+  [outs : (& outs OptSsaEdgeUses)]
   [inputs : ir.CompilerIrPhiInputSeq]
-  [ty : (& ty ast.AstType)]) : ir.CompilerIrPhiInputSeq
+  [ty : (& ty ast.AstType)]
+  [row : i64]) : ir.CompilerIrPhiInputSeq
   (let
     [phi-inputs-at-16078-3 : ir.CompilerIrPhiInputSeq inputs]
     (if (<= phi-inputs-at-16078-3.len 0)
@@ -15303,25 +15458,31 @@
           (match (compiler-opt-global-shared-view value)
             [(Var v)
               (if (opt-ssa-candidate? facts v)
-                (match (opt-ssa-env-snapshot-lookup
-                  (& (opt-ssa-block-out-lookup outs pred))
-                  v)
+                (match (opt-ssa-edge-uses-lookup outs row)
                   [(Some current) (Var current)]
                   [(None) (opt-ssa-phi-undef-input ty)])
                 value)]
             [_ value])
           pred
-          (& (opt-ssa-rewrite-preexisting-phi-inputs facts outs rest ty)))))))
+          (&
+            (opt-ssa-rewrite-preexisting-phi-inputs
+              facts
+              outs
+              rest
+              ty
+              (+ row 1))))))))
 
 ;; Append the renamed block body to `builder`, rewriting pre-existing phi
 ;; inputs. Instructions are rewritten in order, head first.
 (define (opt-ssa-push-rewritten-preexisting-instrs!
   [facts : (& OptSsaFacts)]
-  [outs : (& outs OptSsaBlockOuts)]
+  [outs : (& outs OptSsaEdgeUses)]
   [instrs : (& ir.CompilerIrInstrSeq)]
-  [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
+  [builder : (&mut builder ir.CompilerIrInstrBuilder)]
+  [input-start : i64]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [input-row : i64 input-start]
     (for [index (iterator.range 0 count)]
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
@@ -15329,10 +15490,20 @@
           builder
           (match (compiler-opt-global-shared-view instr)
             [(Phi dst inputs ty)
-              (ir.CompilerIrInstr.Phi
-                dst
-                (opt-ssa-rewrite-preexisting-phi-inputs facts outs inputs ty)
-                ty)]
+              (let
+                [input-count : i64 inputs.len]
+                [out : ir.CompilerIrInstr
+                  (ir.CompilerIrInstr.Phi
+                    dst
+                    (opt-ssa-rewrite-preexisting-phi-inputs
+                      facts
+                      outs
+                      inputs
+                      ty
+                      input-row)
+                    ty)]
+                (+= input-row input-count)
+                out)]
             [_ instr]))))))
 
 ;; A pre-existing phi whose DST is itself a rename candidate would need its
@@ -15427,12 +15598,9 @@
             (&
               (str_cat.str-cat (ir.compiler-ir-label-text entry) "__ssa_entry"))))))))
 
-;; SSA retains one compact environment snapshot per predecessor block. That is
-;; a profitable trade for ordinary functions, but source-generated stress
-;; inputs can contain tens of thousands of short-circuit blocks and turn the
-;; snapshots plus later materialization lookups into a disproportionate cost.
-;; Refuse those pathological CFGs before construction; the pre-SSA IR remains
-;; valid and every later non-SSA optimization still gets its normal chance.
+;; Keep the existing bound on CFG analysis and SSA construction. Inputs above
+;; it retain valid pre-SSA IR and the later non-SSA passes, independent of the
+;; compact edge-capture representation used within the bound.
 (define (opt-ssa-block-budget) : i64
   4096)
 

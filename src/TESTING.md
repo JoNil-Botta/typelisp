@@ -937,7 +937,13 @@ reconciliation fixtures cover exact/spare instruction partitions, RMW homes
 issued in reverse token order, two final clones, explicit ReadWrite semantics,
 malformed/cut/orphan ranges, foreign functions, absent capture, untyped markers
 and revalidation of changed retained facts. Source anchors remain distinct from
-final CFG blocks, and reconciling creates no new emitter token. `compiler_backend_home_origins_tests.tl`
+final CFG blocks, and reconciling creates no new emitter token. Shared final-line
+partition fixtures independently enumerate instruction ordinals and leaders
+through labels/aliases, directives/comments, branch fallthrough, indirect
+jumps, returns, known noreturn aborts, traps and loop instructions. Returning
+calls stay in their block; a final line without newline is retained. These
+checks bind actual parser extents to emitter facts, not resolved CFG edges or
+missing-access completeness. `compiler_backend_home_origins_tests.tl`
 pairs original instructions with the real noninjective frame-color remapper,
 including separate use/definition identities, repeated versus ambiguous uses,
 literal operand positions, raw address storage and changed operands. Address-taken parameter storage is

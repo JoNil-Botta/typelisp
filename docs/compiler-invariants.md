@@ -663,6 +663,13 @@ before writes and retains distinct folded homes at one operand. Source anchors
 remain separate from final block IDs. Typed facts are revalidated without
 minting new tokens. This does not establish missing-access completeness or
 source-to-final-region qualification; the final machine producer must do both.
+The backend now constructs instruction extents from its shared final-line
+parser for one registered function. Label aliases create no empty blocks, and
+labels or post-transfer instructions start new groups. Returning calls remain
+in their block; known noreturn abort calls and explicit traps end it. A final
+line needs no newline. This partition feeds retained-access reconciliation
+directly. It is not a resolved edge graph, an opcode/missing-access audit or
+proof that the caller supplied the correct function extent.
 Frame coloring renumbers IR values before the factories run. Capture pairs the
 uncolored rewritten instruction's canonical definition/use positions with the
 actual colored instruction, by typed block label and placed instruction index.

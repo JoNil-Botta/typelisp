@@ -5889,3 +5889,152 @@ second:
 (test
   backend-stack-origins-addressed-local-ownership
   (backend-stack-origins-local-test))
+
+(define (backend-stack-origins-machine-partition-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [operand : String
+      (backend.compiler-backend-origin-invariant-text
+        (origins.compiler-backend-text-origins-record
+          capture
+          (origins.CompilerBackendStackAccessOrigin
+            (ir.CompilerIrSymbolId 44)
+            (SourceBlock 30)
+            7
+            8
+            (UserLocal)
+            (General)
+            8
+            (Read))
+          "-8(%rsp)"))]
+    [load : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        "    movq "
+        operand
+        ", %rax\n")]
+    [text : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        ".text\n.globl f\nf:\n.Lalias:\n    # metadata\n\n    nop\n"
+        load
+        "    jz .Lcold\n    addq $1, %rax\n    jmp .Lexit\n.Lcold:\n"
+        load
+        "    call tl_oob_abort\n    nop\n.Lexit:\n    ret\n    ud2\n    nop")]
+    (match (backend.compiler-backend-final-stack-partition
+      state
+      (backend.CompilerBackendFinalStackRequest
+        (owned_view.compiler-owned-shared-view text)
+        (ir.CompilerIrSymbolId 44)
+        capture))
+      [(Err message) (io.panic message)]
+      [(Ok partition)
+        (test.assert-i64-eq
+          partition.blocks
+          7
+          "labels, branch, return, noreturn and trap boundaries; no empty alias block")
+        (test.assert-i64-eq
+          (array-length partition.operations)
+          11
+          "only actual instruction lines, including final line without newline")
+        (let
+          [blocks : (Array i64 11) (array 0 0 0 1 1 2 2 3 4 5 6)]
+          (for [i (iterator.range 0 11)]
+            (test.assert-i64-eq
+              (array-ref partition.operations i).block
+              (array-ref blocks i)
+              "independent final leader inventory")))
+        (test.assert-i64-eq
+          (array-length partition.accesses)
+          2
+          "only two actual retained reads")
+        (for [i (iterator.range 0 2)]
+          (let
+            [event : (& partition origins.CompilerBackendFinalAccess)
+              (& (array-ref partition.accesses i))]
+            (test.assert-i64-eq
+              event.operation
+              (if (= i 0)
+                1
+                5)
+              "parser instruction ordinal binds the retained operand")
+            (test.assert-i64-eq
+              event.block
+              (if (= i 0)
+                0
+                2)
+              "final blocks follow machine text")
+            (test.assert-true
+              (match (& event.origin.anchor)
+                [(SourceBlock b) (= b 30)]
+                [_ false])
+              "machine blocks do not replace source anchors")))])
+    (let
+      [terminals : (Array String 11)
+        (array
+          "jne .Lend"
+          "jmp *%rax"
+          "jrcxz .Lend"
+          "ret"
+          "retq"
+          "ud2"
+          "loop .Lend"
+          "loope .Lend"
+          "loopne .Lend"
+          "call tl_oob_abort_at"
+          "call normal_callee")]
+      (for [i (iterator.range 0 11)]
+        (let
+          [body : String
+            (origins.compiler-backend-text-origins-cat
+              capture
+              "    "
+              (owned_view.compiler-owned-shared-view (array-ref terminals i))
+              "\n    nop")]
+          (match (backend.compiler-backend-final-stack-partition
+            state
+            (backend.CompilerBackendFinalStackRequest
+              body
+              (ir.CompilerIrSymbolId 44)
+              capture))
+            [(Err message) (io.panic message)]
+            [(Ok partition)
+              (test.assert-i64-eq
+                (array-length partition.operations)
+                2
+                "control instruction and actual continuation")
+              (test.assert-i64-eq
+                partition.blocks
+                (if (= i 10)
+                  1
+                  2)
+                "returning call is not a control boundary")
+              (test.assert-i64-eq
+                (array-length partition.accesses)
+                0
+                "no fabricated call/return stack fact")]))))
+    (for [invalid (iterator.range 0 2)]
+      (test.assert-true
+        (match (backend.compiler-backend-final-stack-partition
+          state
+          (backend.CompilerBackendFinalStackRequest
+            (owned_view.compiler-owned-shared-view text)
+            (ir.CompilerIrSymbolId
+              (if (= invalid 0)
+                45
+                44))
+            (if (= invalid 1)
+              (origins.compiler-backend-text-origins-disabled)
+              capture)))
+          [(Err _) true]
+          [_ false])
+        "partition cannot bypass function/capture qualification"))
+    (origins.compiler-backend-text-origins-release! (&mut capture))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-final-machine-boundaries
+  (backend-stack-origins-machine-partition-test))

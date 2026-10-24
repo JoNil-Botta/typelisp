@@ -52,6 +52,123 @@
 
 (define compiler-backend-phi-xmm-cycle-register-metric : i64
   147)
+
+(defstruct CompilerBackendFinalStackRequest
+  (text String)
+  (function compiler_ir_types.CompilerIrSymbolId)
+  (capture text_origins.CompilerBackendTextOrigins))
+
+(defstruct CompilerBackendFinalStackPartition
+  (blocks i64)
+  (operations (__tl_dyn-array text_origins.CompilerBackendFinalOperation))
+  (accesses (__tl_dyn-array text_origins.CompilerBackendFinalAccess)))
+
+(defenum CompilerBackendFinalStackPartitionResult
+  (Ok CompilerBackendFinalStackPartition)
+  (Err String))
+
+;; This consumes ONE registered function's final text, after all rewrites.
+;; Existing line/flow classification supplies instruction boundaries; it cannot
+;; supply ownership or source-region membership. Labels and post-transfer
+;; instructions start blocks, while adjacent label aliases create no empty one.
+;; Edge resolution and unmatched-access decoding remain separate obligations.
+(define (compiler-backend-final-stack-partition
+  [state : CompilerBackendState]
+  [request : CompilerBackendFinalStackRequest]) : CompilerBackendFinalStackPartitionResult
+  (let
+    [length : i64 (string.string-length request.text)]
+    (when
+      (>= length 2147483648)
+      (return (Err "stack traffic: final function exceeds line-parser extent")))
+    (let
+      [data : (Ptr u8)
+        (unsafe
+          (string-data request.text))]
+      [lines : i64 0]
+      [cursor : i64 0]
+      [stream : CompilerBackendStreamState
+        (compiler-backend-state-stream-state state)]
+      [context : CompilerBackendPeepholeParseContext
+        (CompilerBackendPeepholeParseContext state.address stream.address data)]
+      (while (< cursor length)
+        (+= lines 1)
+        (set!
+          cursor
+          (+
+            1
+            (compiler-backend-peephole-scan-byte-range data cursor length 10))))
+      (let
+        [storage : (__tl_dyn-array text_origins.CompilerBackendFinalOperation)
+          (__tl_make-array text_origins.CompilerBackendFinalOperation lines)]
+        [count : i64 0]
+        [block : i64 0]
+        [leader? : bool true]
+        (set! cursor 0)
+        (while (< cursor length)
+          (let
+            [end : i64
+              (compiler-backend-peephole-scan-byte-range data cursor length 10)]
+            [line : CompilerBackendPeepholeLine
+              (compiler-backend-peephole-parse-line
+                context
+                (compiler-backend-global-shared-view request.text)
+                cursor
+                end
+                (< end length)
+                false)]
+            [record : CompilerBackendPeepholeLineRecord
+              (compiler-backend-peephole-line-record
+                (compiler-backend-global-shared-view line))]
+            [kind : i64 (compiler-backend-peephole-record-kind (& record))]
+            (cond
+              [(= kind compiler-backend-sweep-line-kind-label)
+                (set! leader? true)]
+              [(= kind compiler-backend-sweep-line-kind-instruction)
+                (when (and leader? (> count 0)) (+= block 1))
+                (set!
+                  (array-ref storage count)
+                  (text_origins.CompilerBackendFinalOperation cursor end block))
+                (+= count 1)
+                (let
+                  [m : i64
+                    (compiler-backend-peephole-desc-mnemonic-start (& line))]
+                  [mend : i64
+                    (+ m (compiler-backend-peephole-desc-mnemonic-len (& line)))]
+                  [first : i64 (compiler-backend-peephole-byte-at data m)]
+                  (set!
+                    leader?
+                    (or
+                      (= first 106)
+                      (compiler-backend-peephole-desc-noreturn-abort? (& line))
+                      (compiler-backend-peephole-range-eq? data m mend "ret")
+                      (compiler-backend-peephole-range-eq? data m mend "retq")
+                      (compiler-backend-peephole-range-eq? data m mend "ud2")
+                      (compiler-backend-peephole-range-eq? data m mend "loop")
+                      (compiler-backend-peephole-range-eq? data m mend "loope")
+                      (compiler-backend-peephole-range-eq? data m mend "loopne"))))]
+              [else unit])
+            (set! cursor (+ end 1))))
+        (let
+          [blocks : i64
+            (if (= count 0)
+              0
+              (+ block 1))]
+          [operations : (__tl_dyn-array
+            text_origins.CompilerBackendFinalOperation)
+            (__tl_make-array text_origins.CompilerBackendFinalOperation count)]
+          (for [i (iterator.range 0 count)]
+            (set! (array-ref operations i) (clone (array-ref storage i))))
+          (match (text_origins.compiler-backend-text-origins-final-accesses
+            request.capture
+            (& request.text)
+            request.function
+            blocks
+            (slice-view operations 0 count))
+            [(Err message) (Err message)]
+            [(Ok accesses)
+              (Ok
+                (CompilerBackendFinalStackPartition blocks operations accesses))]))))))
+
 (define compiler-backend-rsp-rebase-ok-metric : i64
   149)
 (define compiler-backend-rsp-rebase-keep-metric : i64

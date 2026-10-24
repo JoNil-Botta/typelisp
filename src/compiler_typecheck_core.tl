@@ -12216,6 +12216,11 @@
   (macro-cache-capacity i64)
   (macro-cache-module-ids (__tl_dyn-array i64))
   (macro-cache-values (__tl_dyn-array TcTypeEnv))
+  ;; A carry continues the view's name decisions in its environment-store
+  ;; owner. Flat views and unqualified-import overlays are not carried.
+  (macro-cache-seen (__tl_dyn-array tc_i64_i64_map.Map))
+  ;; 0 rebuilds; 1 has a generation-owned overlay; 2 owns its carried view.
+  (macro-cache-carry-state (__tl_dyn-array i64))
   (macro-cache-len i64)
   (hygiene-cache-arena i64)
   (hygiene-cache-arena-root i64)
@@ -12236,6 +12241,8 @@
     256
     (__tl_make-array i64 0)
     (__tl_make-array TcTypeEnv 0)
+    (__tl_make-array tc_i64_i64_map.Map 0)
+    (__tl_make-array i64 0)
     0
     0
     0
@@ -31042,6 +31049,12 @@
           [(or (DefFn _ name _ _ _ _) (Extern _ name _ _ _))
             (let
               [ty : ast.AstType (try (tc-top-decl-type ctx inner))]
+              ;; This name is always bound. Record that decision too, so a
+              ;; continued view rejects a later splice colliding with it.
+              (tc_i64_i64_map.insert-ref!
+                seen
+                (tc-env-name-key-id (tc-context-structural-session ctx) name)
+                1)
               (Ok (tc-module-view-bind-unsafe-id ctx env name ty)))]
           [_ (Ok env)]))]
     [(Def decl-meta name _ _)
@@ -94045,7 +94058,8 @@
   (add? bool)
   (module i64)
   (ok bool)
-  (message String))
+  (message String)
+  (carry? bool))
 
 (define (macro-segmented-module-walk-row!
   [ctx : TcContext]
@@ -94067,6 +94081,12 @@
       (cond
         [(or (not walk.ok) (not (= walk.module walk.interest))) env]
         [walk.add?
+          (match (ast.ast-decl-list-ref-borrowed decls index)
+            [(Import _ (Spec _ _ _ (Some alias) _))
+              (when
+                (= alias cbi.compiler-builtin-id-fix-empty)
+                (set! walk.carry? false))]
+            [_ unit])
           (match (tc-module-local-env-add-decl
             ctx
             env
@@ -94185,10 +94205,22 @@
         (set! start 0)))
     cur-env))
 
+(defenum ResultMacroModuleEnvWithSeen
+  (Ok TcTypeEnv tc_i64_i64_map.Map bool)
+  (Err String))
+
 (define (macro-segmented-module-local-env-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [target-module-id : i64]) : ResultTcEnv
+  (match (macro-segmented-module-local-env-and-seen ctx env target-module-id)
+    [(Ok local-env _ _) (Ok local-env)]
+    [(Err message) (Err message)]))
+
+(define (macro-segmented-module-local-env-and-seen
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [target-module-id : i64]) : ResultMacroModuleEnvWithSeen
   (let
     [data : MacroSegmentedProgramViewData
       (macro-segmented-prefix-events-sync! (tc-context-job-state ctx))]
@@ -94203,7 +94235,8 @@
         false
         cbi.compiler-builtin-id-fix-empty
         true
-        "")]
+        ""
+        true)]
     [_shadows : TcTypeEnv
       (macro-segmented-module-walk! ctx (& data) (&mut shadows) (&mut seen) env)]
     [adds : MacroSegmentedModuleWalk
@@ -94212,11 +94245,12 @@
         true
         cbi.compiler-builtin-id-fix-empty
         true
-        "")]
+        ""
+        true)]
     [local-env : TcTypeEnv
       (macro-segmented-module-walk! ctx (& data) (&mut adds) (&mut seen) env)]
     (if adds.ok
-      (Ok local-env)
+      (Ok local-env seen adds.carry?)
       (Err adds.message))))
 
 (define (macro-expand-scratch-program
@@ -110991,6 +111025,14 @@
               (deref data).macro-cache-values
               (__tl_make-array TcTypeEnv (deref data).macro-cache-capacity))
             (set!
+              (deref data).macro-cache-seen
+              (__tl_make-array
+                tc_i64_i64_map.Map
+                (deref data).macro-cache-capacity))
+            (set!
+              (deref data).macro-cache-carry-state
+              (__tl_make-array i64 (deref data).macro-cache-capacity))
+            (set!
               (deref data).macro-cache-pending-names
               (__tl_make-array i64 (deref data).macro-cache-capacity))
             (set!
@@ -111029,6 +111071,12 @@
         (array-ref (deref data).macro-cache-values index)
         (array-ref (deref data).macro-cache-values last))
       (set!
+        (array-ref (deref data).macro-cache-seen index)
+        (array-ref (deref data).macro-cache-seen last))
+      (set!
+        (array-ref (deref data).macro-cache-carry-state index)
+        (array-ref (deref data).macro-cache-carry-state last))
+      (set!
         (array-ref (deref data).macro-cache-pending-names index)
         (array-ref (deref data).macro-cache-pending-names last))
       (set!
@@ -111040,7 +111088,9 @@
   [state : TcMacroState]
   [module-id : i64]
   [env : TcTypeEnv]
-  [pending-name : i64]) : unit
+  [pending-name : i64]
+  [seen : tc_i64_i64_map.Map]
+  [carry-state : i64]) : unit
   (let
     [_ensure : unit (tc-macro-module-env-cache-storage-ensure! state)]
     [data : (MutPtr TcMacroModuleEnvStateData)
@@ -111059,6 +111109,14 @@
             (deref data).macro-cache-len)
           env)
         (set!
+          (array-ref (deref data).macro-cache-seen (deref data).macro-cache-len)
+          seen)
+        (set!
+          (array-ref
+            (deref data).macro-cache-carry-state
+            (deref data).macro-cache-len)
+          carry-state)
+        (set!
           (array-ref
             (deref data).macro-cache-pending-names
             (deref data).macro-cache-len)
@@ -111069,6 +111127,17 @@
             (deref data).macro-cache-len)
           tc-top-env-resolution-generation)
         (set! (deref data).macro-cache-len (+ (deref data).macro-cache-len 1))))))
+
+;; The walk allocates in a macro-generation arena. Its continued name map
+;; must instead outlive that generation, with the persistent view's store.
+(define (tc-macro-module-env-seen-own
+  [env : TcTypeEnv]
+  [seen : (& seen tc_i64_i64_map.Map)]) : tc_i64_i64_map.Map
+  (in-arena
+    (arena.Arena (tc-chain-store-owner env.store))
+    (if (= (tc_i64_i64_map.len seen) 0)
+      (tc_i64_i64_map.with-capacity 64)
+      (tc-moved-clone-id-map seen))))
 
 (define (tc-macro-module-local-env-id
   [ctx : TcContext]
@@ -111126,14 +111195,39 @@
             ;; the top environment's owner arena. Do not switch the ambient
             ;; macro-generation arena here: doing so breaks the generation's
             ;; allocator bookkeeping.
-            (let
-              [env (try (tc-module-local-env-id ctx top-env module module-id))]
-              (tc-macro-module-env-cache-insert!
-                state
-                module-id
-                env
-                tc-module-view-pending-name)
-              (Ok env))))))))
+            (if (macro-segmented-program-active? (tc-context-job-state ctx))
+              (match (macro-segmented-module-local-env-and-seen
+                (tc-context-with-module-id ctx module module-id)
+                top-env
+                module-id)
+                [(Ok local-env seen carry?)
+                  (let
+                    [env : TcTypeEnv
+                      (tc-env-with-cache-layer-over-explicit local-env)]
+                    (tc-macro-module-env-cache-insert!
+                      state
+                      module-id
+                      env
+                      tc-module-view-pending-name
+                      (if carry?
+                        (tc-macro-module-env-seen-own top-env (& seen))
+                        (tc-global-shared-view tc-moved-shared-empty-id-map))
+                      (if carry?
+                        1
+                        0))
+                    (Ok env))]
+                [(Err message) (Err message)])
+              (let
+                [env
+                  (try (tc-module-local-env-id ctx top-env module module-id))]
+                (tc-macro-module-env-cache-insert!
+                  state
+                  module-id
+                  env
+                  tc-module-view-pending-name
+                  (clone tc-moved-shared-empty-id-map)
+                  0)
+                (Ok env)))))))))
 
 (define (macro-env-for-module
   [ctx : TcContext]
@@ -114211,6 +114305,195 @@
           module-id))]
     (Ok (tc-env-with-cache-layer-over-explicit splice-env))))
 
+;; New ordinary function names cannot change the module's earlier shadowing
+;; decisions. Dotted names, repeated names and all other declaration forms
+;; keep the canonical rebuild, including imports and nominal type changes.
+(define (macro-module-env-splice-fresh?
+  [ctx : TcContext]
+  [seen : (& seen tc_i64_i64_map.Map)]
+  [decls : (& decls ast.AstDeclList)]) : bool
+  (match (ast.ast-decl-list-step decls)
+    [(Nil) true]
+    [(Cons decl rest)
+      (let
+        [inner : ast.AstDecl (ast.ast-decl-unwrapped (& decl))]
+        (match inner
+          [(DefFn _ name _ _ _ _)
+            (and
+              (not (ci.intern-dotted? name))
+              (not
+                (tc_i64_i64_map.contains?
+                  seen
+                  (tc-env-name-key-id (tc-context-structural-session ctx) name)))
+              (macro-module-env-splice-fresh? ctx seen (& rest)))]
+          [_ false]))]))
+
+(define (macro-module-env-add-rows
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [seen : (&mut seen tc_i64_i64_map.Map)]
+  [decls : ast.AstDeclList]) : ResultTcEnv
+  (match (ast.ast-decl-list-step decls)
+    [(Nil) (Ok env)]
+    [(Cons decl rest)
+      (macro-module-env-add-rows
+        ctx
+        (try (tc-module-local-env-add-decl ctx env seen decl))
+        seen
+        rest)]))
+
+;; Collect the complete overlay above `base`, newest first. Following each
+;; cache's full spine retains unsafe marker binds as well as ordinary binds.
+;; A detached base or an unresolved overlay type requires a fresh rebuild.
+(define (macro-module-env-overlay-scan
+  [ctx : TcContext]
+  [view : TcTypeEnv]
+  [base : TcTypeEnv]
+  [keys : (&mut keys (__tl_dyn-array i64))]
+  [types : (&mut types (__tl_dyn-array ast.AstType))]
+  [fill? : bool]) : i64
+  (let
+    [cur : TcTypeEnv view]
+    [count : i64 0]
+    (while (not (and (= cur.store base.store) (= cur.head base.head)))
+      (match (tc-type-env-spine-step cur)
+        [(Done) (return -1)]
+        [(Cache rest) (set! cur rest)]
+        [(Bind key ty rest)
+          (when
+            (tc-type-needs-resolution-for-context?
+              ctx
+              (tc-global-shared-view ty))
+            (return -1))
+          (when
+            fill?
+            (set! (array-ref keys count) key)
+            (set! (array-ref types count) ty))
+          (+= count 1)
+          (set! cur rest)]))
+    count))
+
+;; The first carry copies the generation-owned local overlay into its store
+;; owner. Later carries place only the new top-env delta above that owned
+;; view, then add the splice's local names. A qualified delta key colliding
+;; with an old local name requires a rebuild: locals must shadow top binds.
+;; Root shadows, unqualified imports,
+;; pending aliases, a changed store and name collisions retain the rebuild.
+;; The continued map and env share their persistent store owner; generations
+;; may reclaim neither. Other modules' cached views are invalidated as before.
+;; Publication runs in that owner, after the generational expansion returns;
+;; cloned overlay types cannot retain boxes in the retired generation.
+(define (macro-module-env-carry!
+  [ctx : TcContext]
+  [base : TcTypeEnv]
+  [top-env : TcTypeEnv]
+  [splice : ast.AstDeclList]
+  [module : String]
+  [module-id : i64]) : unit
+  (let
+    [state : TcMacroState (tc-context-macro-state ctx)]
+    [data : (MutPtr TcMacroModuleEnvStateData)
+      (tc-macro-module-env-state-ptr state)]
+    (unsafe
+      (when
+        (or
+          (!= base.store top-env.store)
+          (!= (arena.tl_arena_current) (tc-chain-store-owner base.store))
+          (!= (deref data).macro-cache-store base.store)
+          (!= (deref data).macro-cache-head base.head)
+          (csym.compiler-symbol-root-module-id? module-id))
+        (return unit))
+      (let
+        [index : i64 (tc-macro-module-env-cache-index state module-id 0)]
+        (when
+          (or
+            (< index 0)
+            (not
+              (or
+                (= (array-ref (deref data).macro-cache-carry-state index) 1)
+                (= (array-ref (deref data).macro-cache-carry-state index) 2)))
+            (!=
+              (array-ref (deref data).macro-cache-pending-generations index)
+              tc-top-env-resolution-generation)
+            (>= (array-ref (deref data).macro-cache-pending-names index) 0))
+          (return unit))
+        (let
+          [module-ctx : TcContext
+            (tc-context-with-module-id ctx module module-id)]
+          [seen : tc_i64_i64_map.Map
+            (tc-global-array-element-shared-view
+              (deref data).macro-cache-seen
+              index)]
+          [view : TcTypeEnv (array-ref (deref data).macro-cache-values index)]
+          [owned? : bool
+            (= (array-ref (deref data).macro-cache-carry-state index) 2)]
+          [overlay : TcTypeEnv
+            (if owned?
+              top-env
+              view)]
+          [keys : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+          [types : (__tl_dyn-array ast.AstType) (__tl_make-array ast.AstType 0)]
+          [count : i64
+            (macro-module-env-overlay-scan
+              module-ctx
+              overlay
+              base
+              (&mut keys)
+              (&mut types)
+              false)]
+          (unless
+            (and
+              (>= count 0)
+              (macro-module-env-splice-fresh? module-ctx (& seen) (& splice)))
+            (return unit))
+          (set! keys (__tl_make-array i64 count))
+          (set! types (__tl_make-array ast.AstType count))
+          (macro-module-env-overlay-scan
+            module-ctx
+            overlay
+            base
+            (&mut keys)
+            (&mut types)
+            true)
+          (let
+            [replayed : TcTypeEnv
+              (if owned?
+                view
+                top-env)]
+            [position : i64 count]
+            (while (> position 0)
+              (-= position 1)
+              (when
+                (and
+                  owned?
+                  (tc_i64_i64_map.contains? (& seen) (array-ref keys position)))
+                (return unit))
+              (set!
+                replayed
+                (tc-bind-id
+                  replayed
+                  (array-ref keys position)
+                  (clone (array-ref types position)))))
+            ;; A failed delta must not publish the partially continued map.
+            (set! (deref data).macro-cache-store top-env.store)
+            (set! (deref data).macro-cache-head top-env.head)
+            (set! (deref data).macro-cache-len 0)
+            (set! tc-module-view-pending-name -1)
+            (match (macro-module-env-add-rows
+              module-ctx
+              replayed
+              (&mut seen)
+              splice)
+              [(Err _) unit]
+              [(Ok rows-env)
+                (tc-macro-module-env-cache-insert!
+                  state
+                  module-id
+                  (tc-env-with-cache-layer-over-explicit rows-env)
+                  tc-module-view-pending-name
+                  seen
+                  2)])))))))
+
 (define (macro-splice-top-env
   [ctx : TcContext]
   [_program : ast.AstProgram]
@@ -114314,8 +114597,18 @@
                 next-decls
                 (tc-global-shared-view module)
                 module-id
-                env-plan)
+                (tc-global-shared-view env-plan))
                 [(Ok top-env)
+                  (match env-plan
+                    [(Extend base-env splice)
+                      (macro-module-env-carry!
+                        next-ctx
+                        base-env
+                        top-env
+                        splice
+                        (tc-global-shared-view module)
+                        module-id)]
+                    [_ unit])
                   (tc-hygiene-reset-active-top-env! state top-env)
                   (tc-context-capture-active-pools! next-ctx)
                   (macro-expand-ctfe-env-build-once! next-ctx)

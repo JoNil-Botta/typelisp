@@ -524,6 +524,19 @@ The paired `generated_cfg_missing_decls_import_reject.tl` and
 `generated_cfg_missing_module_import_reject.tl` safety fixtures require enabled,
 unused generated imports to reach the resolver for both result kinds.
 
+`decls_module_env_carry` runs repeated function-only declaration splices at
+opt0/1/2, retaining predecessor calls, a root-name collision, generated-import
+types and unsafe markers. The
+`macro-module-env-carry-rebuild-fallback-and-scratch-ownership` inline test
+compares carried lookups, missing names and unsafety with a fresh canonical
+row walk. It also checks name-map growth across scratch retirement and the
+collision, dotted-name, nominal, pending-alias, flat-view, changed-store,
+unresolved-overlay and foreign-arena rebuild boundaries.
+It then carries three further deltas through the owned view, comparing every
+old and new local/qualified binding and unsafe marker with the canonical
+rebuild, and rejects qualified-local collisions, unresolved/detached top
+deltas and changed resolution generations.
+
 ## Global call borrow effects
 
 The original `inline_aggregate_global_live_borrow_reject.tl` escape shape

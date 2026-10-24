@@ -1033,6 +1033,7 @@ exit_operand_consumers|all|0,1,2|tests/integration/exit_operand_consumers.tl|42|
 reference_place_read|all|0,1,2|tests/integration/reference_place_read.tl|42|-|-|-|-
 
 decls_module_scopes|all|0,1,2|tests/integration/decls_module_scopes.tl|42|-|-|decls_generated_import_dep.tl|-
+decls_module_env_carry|all|0,1,2|tests/integration/decls_module_env_carry.tl|42|-|-|decls_module_env_carry_dep.tl|-
 serialize_module_scopes|all|0,1,2|tests/integration/serialize_module_scopes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl|-
 decls_explicit_module_scopes|all|0,1,2|tests/integration/decls_explicit_module_scopes.tl|42|-|-|-|-
 decls_self_target_scopes|all|0,1,2|tests/integration/decls_self_target_scopes.tl|42|-|-|-|-

@@ -38,7 +38,8 @@ module/import event index and symbol map before the next expansion context is
 published; see the [import invariants](compiler-invariants.md#architecture).
 
 Fresh function-only splices may carry the expansion module's cached local
-view over the new top environment. Its bindings and continued name map belong
+view across top-environment changes. The first carry owns the old overlay;
+later carries add only the new top bindings and local rows. Its bindings and continued name map belong
 to the persistent environment-store owner; scratch generations cannot own
 either. The [macro invariants](compiler-invariants.md#architecture) define the
 conservative rebuild boundary and pending-alias invalidation.

@@ -525,6 +525,10 @@ compares carried lookups, missing names and unsafety with a fresh canonical
 row walk. It also checks name-map growth across scratch retirement and the
 collision, dotted-name, nominal, pending-alias, flat-view, changed-store,
 unresolved-overlay and foreign-arena rebuild boundaries.
+It then carries three further deltas through the owned view, comparing every
+old and new local/qualified binding and unsafe marker with the canonical
+rebuild, and rejects qualified-local collisions, unresolved/detached top
+deltas and changed resolution generations.
 
 ## Global call borrow effects
 

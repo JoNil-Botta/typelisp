@@ -662,9 +662,24 @@ homes. Distinct original uses sharing a color require an explicit operand index;
 there is no fallback from a role string or a physical offset. AddrOf's raw
 storage slot is checked separately and never authorizes a value read. Function,
 block and site must match the installed scratch-owned plan, which is cleared
-before scratch retirement. Home capacity comes from the allocator's original
+before scratch retirement. Parameter initialization uses a separate typed
+parameter binding, not the definition at whichever body site was last active.
+Its dynamic scope selects the actual entry block and restores the previous
+block and authority before propagating an error result. Nested scopes restore
+their parent; disabled capture does not create function state. A parameter
+initialization cannot authorize a home read.
+Home capacity comes from the allocator's original
 vector/mask/group storage census, independently of each emitted access width;
-an access wider than that capacity cannot publish a token. Compact mask moves\nrecord their typed mask bank and 2/4/8-byte width independently of that larger\nreservation. Vector and mask emitters share one typed allocator-home lookup.\nA folded scalar broadcast keeps its scalar home identity and access width;\nits vector destination does not turn the read into a vector-width access. One\ntyped opcode descriptor supplies both the mnemonic and width, and the scalar\noperand type supplies its general or floating-register bank. Address-only\nforwarded values and literals cannot authorize a stack read.\nInactive emission\nallocates no instruction-home plan and does not change coloring or placement.
+an access wider than that capacity cannot publish a token. Compact mask moves
+record their typed mask bank and 2/4/8-byte width independently of that larger
+reservation. Vector and mask emitters share one typed allocator-home lookup.
+A folded scalar broadcast keeps its scalar home identity and access width;
+its vector destination does not turn the read into a vector-width access. One
+typed opcode descriptor supplies both the mnemonic and width, and the scalar
+operand type supplies its general or floating-register bank. Address-only
+forwarded values and literals cannot authorize a stack read.
+Inactive emission
+allocates no instruction-home plan and does not change coloring or placement.
 An RMW fold retains separate ordered read and write tokens at the same emitted
 operand, including distinct logical homes that share one physical address.
 Their typed source records must prove compatible access directions, function

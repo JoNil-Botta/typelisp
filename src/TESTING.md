@@ -890,7 +890,16 @@ block reordering, live/spare prefixes, invalid identities/extents and malformed
 or duplicate placement are checked. Original scalar, group, vector and mask
 capacities come from the allocator census. Actual emitter factories retain
 homes7/8 when both become color1 at the same physical offset; cleanup clears
-the scratch plan. Compact-mask fixtures check all kmov widths, the larger\nreservation, distinct pre-color homes and GPR-parent origin transport. Native\nhome and producer smokes call these cases at opt0/1/2. Table-driven folded\nbroadcast cases cover ten scalar types, scalar capacity versus read width,\noriginal colored identity and both prefix and completed-instruction transport.\nLiteral input refuses the memory route without creating a token. Parameter\nfixtures distinguish an incoming parameter from a body definition sharing its\ncolor, check invalid/spare parameter prefixes and IDs, and reject cross-block\nor body-site substitution. Actual factory fixtures exercise nested entry scopes,\nblock/authority restoration and disabled-capture state allocation.
+the scratch plan. Compact-mask fixtures check all kmov widths, the larger
+reservation, distinct pre-color homes and GPR-parent origin transport. Native
+home and producer smokes call these cases at opt0/1/2. Table-driven folded
+broadcast cases cover ten scalar types, scalar capacity versus read width,
+original colored identity and both prefix and completed-instruction transport.
+Literal input refuses the memory route without creating a token. Parameter
+fixtures distinguish an incoming parameter from a body definition sharing its
+color, check invalid/spare parameter prefixes and IDs, and reject cross-block
+or body-site substitution. Actual factory fixtures exercise nested entry scopes,
+block/authority restoration and disabled-capture state allocation.
 Remaining access-changing
 rewrites, traffic owners and complete report acceptance are distinct.
 

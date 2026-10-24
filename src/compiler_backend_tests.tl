@@ -23942,6 +23942,7 @@ f:
         (& (I64))
         index
         0
+        -1
         index.backend-state)
         [(Ok asm)
           (and (string.eq asm "    movq $9, 8(%r12)\n") (asm-lacks? asm "%r10"))]

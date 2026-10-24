@@ -1,6 +1,8 @@
 (import compiler_backend_stack_origins_tests as fixtures)
 
 (define (main) : i64
+  (fixtures.backend-stack-origins-site-context-test)
+  (fixtures.backend-stack-origins-float-test)
   (fixtures.backend-stack-origins-parameter-test)
   (fixtures.backend-stack-origins-splat-test)
   (fixtures.backend-stack-origins-mask-test)

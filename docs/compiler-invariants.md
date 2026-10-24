@@ -668,6 +668,14 @@ Its dynamic scope selects the actual entry block and restores the previous
 block and authority before propagating an error result. Nested scopes restore
 their parent; disabled capture does not create function state. A parameter
 initialization cannot authorize a home read.
+Phi marshalling retains the target entry ordinal and the selected predecessor's
+canonical operand index. Its reads and writes bind to that target Phi, while
+the emitted access stays in the actual predecessor block. Changed predecessor
+labels, ambiguous destinations and missing edges cannot establish authority.
+A fused GEP/store supplies the consumed store's exact value site separately
+from its address site. Provenance scopes preserve the fusion head's label and
+scavenge coordinates and restore their parent before returning an error.
+Other fused parents must provide their own exact operand sites.
 Home capacity comes from the allocator's original
 vector/mask/group storage census, independently of each emitted access width;
 an access wider than that capacity cannot publish a token. Compact mask moves
@@ -678,6 +686,9 @@ its vector destination does not turn the read into a vector-width access. One
 typed opcode descriptor supplies both the mnemonic and width, and the scalar
 operand type supplies its general or floating-register bank. Address-only
 forwarded values and literals cannot authorize a stack read.
+Scalar floating loads, stores and folded operands record their XMM bank and
+actual 4/8-byte access independently of the original scalar home capacity.
+Ordinary mnemonic selection does not construct an origin descriptor.
 Inactive emission
 allocates no instruction-home plan and does not change coloring or placement.
 An RMW fold retains separate ordered read and write tokens at the same emitted

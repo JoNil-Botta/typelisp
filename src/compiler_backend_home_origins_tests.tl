@@ -1,5 +1,6 @@
 (import compiler_backend_home_origins as homes)
 (import compiler_ir_types as ir)
+(import compiler_ir_text as ir_text)
 (import compiler_regalloc as regalloc)
 (import compiler_liveness as live)
 (import compiler_owned_view as owned_view)
@@ -302,7 +303,8 @@
   (home-origin-ambiguous-use-test)
   (home-origin-plan-test)
   (home-origin-address-test)
-  (home-origin-parameter-test))
+  (home-origin-parameter-test)
+  (home-origin-phi-test))
 
 (test home-origins-survive-noninjective-coloring (home-origin-tests))
 
@@ -497,3 +499,99 @@
               [(Err _) true]
               [_ false])
             "changed mapped operand rejects"))))))
+
+(define (home-origin-phi-test) : unit
+  (let
+    [original : ir.CompilerIrBlockList
+      (ir_text.blocks
+        "entry:
+  jump join
+other:
+  jump join
+join:
+  %7 = phi [%1, entry], [%2, other] : f64
+  %8 = phi [%2, entry], [%1, other] : f64
+  return %7
+")]
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (for [index (iterator.range 0 10)]
+      (set! (array-ref map index) index))
+    (set! (array-ref map 1) 3)
+    (set! (array-ref map 2) 4)
+    (set! (array-ref map 7) 3)
+    (set! (array-ref map 8) 4)
+    (let
+      [input : homes.CompilerBackendHomePlanInput
+        (homes.CompilerBackendHomePlanInput
+          44
+          10
+          10
+          (ir.compiler-ir-param-seq-empty)
+          (owned_view.compiler-owned-shared-view original)
+          (regalloc.compiler-reg-remap-blocks (& map) (& original))
+          (Remap map 10)
+          (live.compiler-live-set-empty))]
+      [plan : homes.CompilerBackendHomePlan
+        (match (homes.compiler-backend-home-plan-build (& input))
+          [(Ok result) result]
+          [(Err message) (io.panic message)])]
+      [target : i64 (array-ref plan.sites 2).block]
+      (for [edge (iterator.range 0 2)]
+        (let
+          [from : i64 (array-ref plan.sites edge).block]
+          (match (homes.compiler-backend-home-phi-site (& plan) 2 from 3)
+            [(Err message) (io.panic message)]
+            [(Ok site use)
+              (test.assert-i64-eq site 2 "exact target Phi")
+              (test.assert-i64-eq use edge "exact predecessor operand")
+              (home-query-ok
+                (& (array-ref plan.sites site).bindings)
+                3
+                (Definition)
+                7)
+              (home-query-ok
+                (& (array-ref plan.sites site).bindings)
+                (+ 3 edge)
+                (Use use)
+                (+ 1 edge))
+              (test.assert-true
+                (match (homes.compiler-backend-home-plan-resolve
+                  (& plan)
+                  44
+                  target
+                  site
+                  (- 4 edge)
+                  (Use use))
+                  [(Err _) true]
+                  [_ false])
+                "another predecessor cannot authorize the same emitted color")])))
+      (for [bad (iterator.range 0 5)]
+        (test.assert-true
+          (match (homes.compiler-backend-home-phi-site
+            (& plan)
+            (cond [(= bad 0) -1] [(= bad 1) 0] [(= bad 2) 3] [else 2])
+            (if (= bad 3)
+              999999
+              (array-ref plan.sites 0).block)
+            (if (= bad 4)
+              9
+              3))
+            [(Err _) true]
+            [_ false])
+          "unknown edge/destination or non-entry instruction rejects"))
+      (let
+        [before : ir.CompilerIrInstr
+          (ir_text.instr "%7 = phi [%1, entry], [%2, other] : f64")]
+        [changed : ir.CompilerIrInstr
+          (ir_text.instr "%7 = phi [%1, other], [%2, entry] : f64")]
+        [identity : regalloc.CompilerRegColoring (None)]
+        (test.assert-true
+          (match (homes.compiler-backend-home-bindings-checked
+            (& before)
+            (& changed)
+            (& identity)
+            10
+            10)
+            [(Err _) true]
+            [_ false])
+          "equal operand colors do not authorize changed predecessor labels")))))

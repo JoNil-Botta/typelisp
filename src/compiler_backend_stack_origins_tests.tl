@@ -8,6 +8,7 @@
 (import compiler_stack_traffic as traffic)
 (import compiler_intern as ci)
 (import compiler_abi as cabi)
+(import compiler_profile_state as profile_state)
 (import compiler_diagnostic as diagnostic)
 (import compiler_owned_view as owned_view)
 (import stdlib.test)
@@ -475,6 +476,50 @@
   backend-stack-origins-cover-scalar-broadcasts
   (backend-stack-origins-splat-test))
 
+(define (backend-stack-origins-install-scalar-plan!
+  [state : backend.CompilerBackendState]
+  [block : i64]
+  [ty : ast.AstType]) : unit
+  (let
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [params : (__tl_dyn-array ir.CompilerIrParam)
+      (__tl_make-array ir.CompilerIrParam 3)]
+    [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+      (__tl_make-array ir.CompilerIrBlock 3)]
+    (for [var (iterator.range 0 10)]
+      (set! (array-ref map var) var))
+    (set! (array-ref map 7) 1)
+    (set! (array-ref map 8) 1)
+    (set! (array-ref params 0) (Param "arg" (clone ty) 7))
+    (set!
+      (array-ref blocks 0)
+      (Block block (ir.compiler-ir-instr-seq1 (Mov 8 (Var 7) ty))))
+    (let
+      [original : ir.CompilerIrBlockList
+        (Array (ir.CompilerIrBlockSeq blocks 1))]
+      [placed : ir.CompilerIrBlockList
+        (regalloc.compiler-reg-remap-blocks (& map) (& original))]
+      [input : home_origins.CompilerBackendHomePlanInput
+        (home_origins.CompilerBackendHomePlanInput
+          (backend.compiler-backend-function-scratch-i64
+            function-state
+            backend.compiler-backend-scratch-i64-current-source-function)
+          10
+          10
+          (ir.CompilerIrParamSeq params 1)
+          original
+          placed
+          (Remap map 10)
+          (live.compiler-live-set-empty))]
+      (match (home_origins.compiler-backend-home-plan-build (& input))
+        [(Ok result)
+          (backend.compiler-backend-stack-home-plan-install!
+            function-state
+            result)]
+        [(Err message) (io.panic message)]))))
+
 (define (backend-stack-origins-parameter-test) : unit
   (let
     [plain : backend.CompilerBackendState
@@ -493,19 +538,6 @@
       (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
     [function-state : backend.CompilerBackendFunctionState
       (backend.compiler-backend-state-function-state state)]
-    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
-    [params : (__tl_dyn-array ir.CompilerIrParam)
-      (__tl_make-array ir.CompilerIrParam 3)]
-    [blocks : (__tl_dyn-array ir.CompilerIrBlock)
-      (__tl_make-array ir.CompilerIrBlock 3)]
-    (for [var (iterator.range 0 10)]
-      (set! (array-ref map var) var))
-    (set! (array-ref map 7) 1)
-    (set! (array-ref map 8) 1)
-    (set! (array-ref params 0) (Param "arg" (I64) 7))
-    (set!
-      (array-ref blocks 0)
-      (Block 10 (ir.compiler-ir-instr-seq1 (Mov 8 (Var 7) (I64)))))
     (backend.compiler-backend-function-scratch-set-i64!
       function-state
       backend.compiler-backend-scratch-i64-current-source-function
@@ -518,27 +550,7 @@
       function-state
       0)
     (backend.compiler-backend-state-stack-origins-begin! state)
-    (let
-      [original : ir.CompilerIrBlockList
-        (Array (ir.CompilerIrBlockSeq blocks 1))]
-      [placed : ir.CompilerIrBlockList
-        (regalloc.compiler-reg-remap-blocks (& map) (& original))]
-      [input : home_origins.CompilerBackendHomePlanInput
-        (home_origins.CompilerBackendHomePlanInput
-          44
-          10
-          10
-          (ir.CompilerIrParamSeq params 1)
-          original
-          placed
-          (Remap map 10)
-          (live.compiler-live-set-empty))]
-      (match (home_origins.compiler-backend-home-plan-build (& input))
-        [(Ok result)
-          (backend.compiler-backend-stack-home-plan-install!
-            function-state
-            result)]
-        [(Err message) (io.panic message)]))
+    (backend-stack-origins-install-scalar-plan! state 10 (I64))
     (let
       [entry : backend.CompilerBackendParameterOriginsContext
         (backend.compiler-backend-parameter-origins-begin! state)]
@@ -547,7 +559,8 @@
       [entry-text : String
         (backend.compiler-backend-stack-operand-origin
           state
-          (backend.CompilerBackendStackOperand 1 "-64(%rbp)")
+          1
+          "-64(%rbp)"
           8
           (General)
           (Write))]
@@ -578,7 +591,8 @@
         [body-text : String
           (backend.compiler-backend-stack-operand-origin
             state
-            (backend.CompilerBackendStackOperand 1 "-64(%rbp)")
+            1
+            "-64(%rbp)"
             8
             (General)
             (Write))]
@@ -606,6 +620,199 @@
 (test
   backend-stack-origins-distinguish-entry-parameter-authority
   (backend-stack-origins-parameter-test))
+
+(define (backend-stack-origins-float-test) : unit
+  (for [kind (iterator.range 0 2)]
+    (for [fallback (iterator.range 0 2)]
+      (let
+        [ty : ast.AstType
+          (if (= kind 0)
+            (F32)
+            (F64))]
+        [mov : String
+          (if (= kind 0)
+            "movss"
+            "movsd")]
+        [bytes : i64
+          (if (= kind 0)
+            4
+            8)]
+        [address : String
+          (if (= fallback 0)
+            "-64(%rbp)"
+            "-16(%rbp)")]
+        [state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+        [function-state : backend.CompilerBackendFunctionState
+          (backend.compiler-backend-state-function-state state)]
+        [assignment : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment 1 (Spill -64))]
+        [homes : regalloc.CompilerRegAssignmentTable
+          (if (= fallback 0)
+            (regalloc.compiler-reg-assignments-prepend
+              (& assignment)
+              (regalloc.compiler-reg-assignment-table-empty))
+            (regalloc.compiler-reg-assignment-table-empty))]
+        [plain-read : String
+          (backend.compiler-backend-emit-load-float-var
+            (owned_view.compiler-owned-shared-view homes)
+            1
+            (clone ty)
+            "%xmm2"
+            state)]
+        [plain-write : String
+          (backend.compiler-backend-emit-store-float-var
+            (owned_view.compiler-owned-shared-view homes)
+            1
+            "%xmm2"
+            (& ty)
+            state)]
+        [plain-folded : String
+          (backend.compiler-backend-float-value-memory-operand
+            (owned_view.compiler-owned-shared-view homes)
+            (Var 1)
+            (& ty)
+            state)]
+        (test.assert-i64-eq
+          (backend.compiler-backend-state-stack-access-origins state).len
+          0
+          "inactive scalar emission needs no home plan or origin list")
+        (backend.compiler-backend-function-scratch-set-i64!
+          function-state
+          backend.compiler-backend-scratch-i64-current-source-function
+          44)
+        (backend.compiler-backend-function-state-set-i64!
+          function-state
+          backend.compiler-backend-function-i64-current-block-label
+          10)
+        (backend.compiler-backend-function-state-set-emit-current-site!
+          function-state
+          0)
+        (backend.compiler-backend-state-stack-origins-begin! state)
+        (backend-stack-origins-install-scalar-plan! state 10 (clone ty))
+        (let
+          [read : String
+            (backend.compiler-backend-emit-load-float-var
+              (owned_view.compiler-owned-shared-view homes)
+              1
+              (clone ty)
+              "%xmm2"
+              state)]
+          [write : String
+            (backend.compiler-backend-emit-store-float-var
+              (owned_view.compiler-owned-shared-view homes)
+              1
+              "%xmm2"
+              (& ty)
+              state)]
+          [entry : backend.CompilerBackendParameterOriginsContext
+            (backend.compiler-backend-parameter-origins-begin! state)]
+          [entry-write : String
+            (backend.compiler-backend-emit-store-float-var
+              (owned_view.compiler-owned-shared-view homes)
+              1
+              "%xmm2"
+              (& ty)
+              state)]
+          (backend.compiler-backend-parameter-origins-end! state entry)
+          (let
+            [folded : String
+              (backend.compiler-backend-float-value-memory-operand
+                homes
+                (Var 1)
+                (& ty)
+                state)]
+            [capture : origins.CompilerBackendTextOrigins
+              (backend.compiler-backend-state-stack-text-origins state)]
+            [facts : origins.CompilerBackendStackAccessOriginList
+              (backend.compiler-backend-state-stack-access-origins state)]
+            (test.assert-string-eq
+              read
+              plain-read
+              "capture preserves scalar load")
+            (test.assert-string-eq
+              write
+              plain-write
+              "capture preserves scalar store")
+            (test.assert-string-eq
+              folded
+              plain-folded
+              "capture preserves folded scalar")
+            (test.assert-string-eq
+              read
+              (string.concat5
+                "    "
+                (clone mov)
+                " "
+                (clone address)
+                ", %xmm2\n")
+              "scalar floating load exact bytes")
+            (test.assert-string-eq
+              write
+              (string.concat5 "    " mov " %xmm2, " (clone address) "\n")
+              "scalar floating store exact bytes")
+            (test.assert-string-eq
+              entry-write
+              write
+              "entry initialization exact bytes")
+            (test.assert-string-eq
+              folded
+              address
+              "folded scalar floating operand")
+            (test.assert-i64-eq
+              facts.len
+              4
+              "one typed record per actual operand")
+            (for [index (iterator.range 0 4)]
+              (let
+                [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                  (& (array-ref facts.slots index))]
+                (test.assert-i64-eq
+                  fact.home
+                  (if (= index 1)
+                    8
+                    7)
+                  "entry and body use their own pre-color identities")
+                (test.assert-i64-eq
+                  fact.home-bytes
+                  8
+                  "scalar floating home capacity")
+                (test.assert-i64-eq
+                  fact.access-bytes
+                  bytes
+                  "actual floating access width")
+                (test.assert-true
+                  (match (& fact.bank)
+                    [(Vector) true]
+                    [_ false])
+                  "floating allocation bank")))
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find capture (& read)))
+              1
+              "scalar load retains identity")
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find capture (& write)))
+              1
+              "scalar store retains identity")
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find
+                  capture
+                  (& entry-write)))
+              1
+              "entry store retains identity")
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find capture (& folded)))
+              1
+              "folded operand retains identity")))
+        (backend.compiler-backend-state-release-final-arenas! state)))))
+
+(test
+  backend-stack-origins-cover-scalar-floating-homes
+  (backend-stack-origins-float-test))
 
 (define (backend-stack-origins-producer-test) : unit
   (let
@@ -1492,3 +1699,124 @@
 (test
   backend-stack-origins-rmw-keeps-logical-homes
   (backend-stack-origins-rmw-test))
+
+;; Invoke the production fused store, rather than expanding its local macro
+;; across a module boundary.
+(define (backend-stack-origins-site-context-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [index : backend.CompilerBackendProgramIndex
+      (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+        state
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty)
+        (profile_state.compiler-profile-state-new))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [assignment : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment
+        0
+        (Register (cabi.compiler-abi-register-id-from-spelling "%r12")))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignments-prepend
+        (& assignment)
+        (regalloc.compiler-reg-assignment-table-empty))]
+    [plain : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-store-to-gep
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (owned_view.compiler-owned-shared-view homes)
+        (Var 0)
+        (I64 1)
+        (F64)
+        (& (Var 1))
+        (& (F64))
+        index
+        0
+        -1
+        state)]
+    (test.assert-true
+      (match plain
+        [(Ok _) true]
+        [_ false])
+      "disabled origin context needs no home plan")
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      44)
+    (backend.compiler-backend-function-state-set-i64!
+      function-state
+      backend.compiler-backend-function-i64-current-block-label
+      10)
+    (backend-stack-origins-install-scalar-plan! state 10 (F64))
+    (backend.compiler-backend-function-state-set-emit-current-site!
+      function-state
+      17)
+    (for [kind (iterator.range 0 3)]
+      (let
+        [previous : i64
+          (if (= kind 0)
+            0
+            1)]
+        (backend.compiler-backend-function-scratch-set-i64!
+          function-state
+          backend.compiler-backend-scratch-i64-origin-site
+          previous)
+        (let
+          [value : ir.CompilerIrValue
+            (if (= kind 2)
+              (Bool true)
+              (Var 1))]
+          [result : backend.ResultCompilerBackend
+            (backend.compiler-backend-emit-store-to-gep
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (owned_view.compiler-owned-shared-view homes)
+              (Var 0)
+              (I64 1)
+              (F64)
+              (& value)
+              (& (F64))
+              (owned_view.compiler-owned-shared-view index)
+              0
+              0
+              state)]
+          (test.assert-true
+            (match result
+              [(Ok text)
+                (test.assert-i64-eq
+                  (array-length
+                    (origins.compiler-backend-text-origins-find
+                      (backend.compiler-backend-state-stack-text-origins state)
+                      (& text)))
+                  1
+                  "stored source origin survives the actual fused parent")
+                (!= kind 2)]
+              [(Err _) (= kind 2)])
+            "exact operand site or controlled unsupported-value error")
+          (test.assert-i64-eq
+            (backend.compiler-backend-function-scratch-i64
+              function-state
+              backend.compiler-backend-scratch-i64-origin-site)
+            previous
+            "success and error restore outer provenance scope")
+          (test.assert-i64-eq
+            (backend.compiler-backend-function-state-emit-current-site
+              function-state)
+            17
+            "label identity stays at the fusion head"))))
+    (let
+      [facts : origins.CompilerBackendStackAccessOriginList
+        (backend.compiler-backend-state-stack-access-origins state)]
+      (test.assert-i64-eq facts.len 2 "error publishes no operand record")
+      (for [i (iterator.range 0 2)]
+        (test.assert-i64-eq
+          (array-ref facts.slots i).home
+          7
+          "scope selects the original stored value")))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-scope-consumed-instruction-site
+  (backend-stack-origins-site-context-test))

@@ -56,10 +56,19 @@
   (Ok i64)
   (Err String))
 
+(defenum CompilerBackendHomePhiInputs
+  (None)
+  (Inputs ir.CompilerIrPhiInputSeq))
+
+(defenum CompilerBackendHomePhiSiteResult
+  (Ok i64 i64)
+  (Err String))
+
 (defstruct CompilerBackendHomeSite
   (block i64)
   (instruction i64)
-  (bindings CompilerBackendHomeBindingList))
+  (bindings CompilerBackendHomeBindingList)
+  (phi-inputs CompilerBackendHomePhiInputs))
 
 (defstruct CompilerBackendHomePlan
   (function i64)
@@ -275,6 +284,36 @@
   [coloring : (& regalloc.CompilerRegColoring)]
   [logical-count : i64]
   [emitted-count : i64]) : CompilerBackendHomeBindingsResult
+  (match original
+    [(Phi _ inputs _)
+      (match emitted
+        [(Phi _ after _)
+          (unless
+            (and
+              (>= inputs.start 0)
+              (>= inputs.len 0)
+              (<= inputs.start (array-length inputs.slots))
+              (<= inputs.len (- (array-length inputs.slots) inputs.start))
+              (>= after.start 0)
+              (>= after.len 0)
+              (<= after.start (array-length after.slots))
+              (<= after.len (- (array-length after.slots) after.start))
+              (= inputs.len after.len))
+            (return (Err "stack traffic: remapped phi input extent differs")))
+          (for [incoming (iterator.range 0 inputs.len)]
+            (unless
+              (and
+                (>= (ir.compiler-ir-phi-input-seq-ref inputs incoming).label 0)
+                (=
+                  (ir.compiler-ir-phi-input-seq-ref inputs incoming).label
+                  (ir.compiler-ir-phi-input-seq-ref after incoming).label))
+              (return (Err "stack traffic: remapped phi predecessor differs"))))]
+        [_ (return (Err "stack traffic: remapped phi instruction differs"))])]
+    [_
+      (match emitted
+        [(Phi _ _ _)
+          (return (Err "stack traffic: remapped phi instruction differs"))]
+        [_ unit])])
   (let
     [expected : CompilerBackendHomeBindingList
       (try (compiler-backend-home-bindings original coloring logical-count))]
@@ -404,7 +443,16 @@
                         [(Err message) (return (Err message))])]
                     (set!
                       (array-ref sites cursor)
-                      (CompilerBackendHomeSite label offset bindings))
+                      (CompilerBackendHomeSite
+                        label
+                        offset
+                        bindings
+                        (match (& (array-ref before.slots offset))
+                          [(Phi _ inputs _)
+                            (Inputs
+                              (owned_view.compiler-owned-reference-shared-view
+                                inputs))]
+                          [_ (None)])))
                     (+= cursor 1)))]))]))
     ;; Reuse the exact allocator storage-shape census. In particular a mask's
     ;; reserved home may be wider than one emitted compact mask access.
@@ -488,3 +536,59 @@
       (and (>= logical 0) (< logical (array-length plan.bytes)))
       (return (Err "stack traffic: original home has no allocation capacity")))
     (Ok (CompilerBackendLogicalHome logical (array-ref plan.bytes logical)))))
+
+;; Phi copies execute on the predecessor edge, but read the selected target
+;; Phi input and define its result. The marshaller supplies its actual target
+;; entry ordinal; matching a destination in any other block is not authority.
+(define (compiler-backend-home-phi-site
+  [plan : (& plan CompilerBackendHomePlan)]
+  [target-site : i64]
+  [from-block : i64]
+  [dst : i64]) : CompilerBackendHomePhiSiteResult
+  (unless
+    (and
+      (>= target-site 0)
+      (< target-site (array-length plan.sites))
+      (= (array-ref plan.sites target-site).instruction 0))
+    (return (Err "stack traffic: phi target entry is unbound")))
+  (let
+    [target : i64 (array-ref plan.sites target-site).block]
+    [found-site : i64 -1]
+    [found-use : i64 -1]
+    [cursor : i64 target-site]
+    [done : bool false]
+    (while (and (not done) (< cursor (array-length plan.sites)))
+      (let
+        [site : (& plan CompilerBackendHomeSite)
+          (& (array-ref plan.sites cursor))]
+        (if (!= site.block target)
+          (set! done true)
+          (match (& site.phi-inputs)
+            [(None) (set! done true)]
+            [(Inputs inputs)
+              (match (compiler-backend-home-resolve
+                (& site.bindings)
+                dst
+                (Definition))
+                [(Err _) unit]
+                [(Ok _)
+                  (when
+                    (>= found-site 0)
+                    (return
+                      (Err
+                        "stack traffic: phi destination has multiple original sites")))
+                  (set! found-site cursor)
+                  (for [index (iterator.range 0 inputs.len)]
+                    (when
+                      (=
+                        (ir.compiler-ir-phi-input-seq-ref inputs index).label
+                        from-block)
+                      (when
+                        (>= found-use 0)
+                        (return
+                          (Err "stack traffic: phi predecessor is ambiguous")))
+                      (set! found-use index)))])]))
+        (+= cursor 1)))
+    (if (and (>= found-site 0) (>= found-use 0))
+      (Ok found-site found-use)
+      (Err "stack traffic: phi edge has no original operand authority"))))

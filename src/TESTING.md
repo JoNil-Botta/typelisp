@@ -900,6 +900,13 @@ fixtures distinguish an incoming parameter from a body definition sharing its
 color, check invalid/spare parameter prefixes and IDs, and reject cross-block
 or body-site substitution. Actual factory fixtures exercise nested entry scopes,
 block/authority restoration and disabled-capture state allocation.
+Scalar-floating tables cover f32/f64, assigned spills and stack-only homes,
+parameter/body identities, folded reads and exact inactive-output parity.
+Phi cases retain the selected predecessor's input independently of a result
+with the same emitted color, reject changed labels and unknown edges, and
+require the target entry. The actual fused-store factory checks the consumed
+value's provenance, unchanged label coordinates, nested scope restoration and
+restoration after a controlled unsupported-value error.
 Remaining access-changing
 rewrites, traffic owners and complete report acceptance are distinct.
 

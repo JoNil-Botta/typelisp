@@ -350,6 +350,34 @@
     [suffix : String
       (text-origin-test-ok
         (origins.compiler-backend-text-origins-mark capture "Z" 23))]
+    (test.assert-true
+      (origins.compiler-backend-text-origin-buffer-capture-matches?
+        buffer
+        capture)
+      "fresh buffer belongs to its capture")
+    (let
+      [other : origins.CompilerBackendTextOrigins
+        (origins.compiler-backend-text-origins-new)]
+      [disabled : origins.CompilerBackendTextOrigins
+        (origins.compiler-backend-text-origins-disabled)]
+      (test.assert-true
+        (not
+          (origins.compiler-backend-text-origin-buffer-capture-matches?
+            buffer
+            other))
+        "foreign capture cannot adopt a buffer")
+      (test.assert-true
+        (not
+          (origins.compiler-backend-text-origin-buffer-capture-matches?
+            (origins.CompilerBackendTextOriginBuffer 0)
+            capture))
+        "an untracked prefix cannot adopt an active capture")
+      (test.assert-true
+        (origins.compiler-backend-text-origin-buffer-capture-matches?
+          (origins.CompilerBackendTextOriginBuffer 0)
+          disabled)
+        "ordinary buffer remains disabled")
+      (origins.compiler-backend-text-origins-release! (&mut other)))
     (text-origin-check-ok
       (origins.compiler-backend-text-origin-buffer-note! buffer "p" 0))
     (text-origin-check-error
@@ -392,6 +420,12 @@
           (origins.compiler-backend-text-origins-slice capture (& text) 3 0))
         ""
         "zero-length slice publishes no partial origin"))
+    (test.assert-true
+      (not
+        (origins.compiler-backend-text-origin-buffer-capture-matches?
+          buffer
+          capture))
+      "a finished buffer cannot accept more home operands")
     (text-origin-check-error
       (origins.compiler-backend-text-origin-buffer-note! buffer "later" 7))
     (text-origin-check-error

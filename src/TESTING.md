@@ -907,6 +907,12 @@ with the same emitted color, reject changed labels and unknown edges, and
 require the target entry. The actual fused-store factory checks the consumed
 value's provenance, unchanged label coordinates, nested scope restoration and
 restoration after a controlled unsupported-value error.
+Scalar GP fixtures exercise explicit spills and stack-only homes, distinct
+pre-color read/write/parameter identities and fresh-buffer transport. Actual
+single and paired GEP/load factories preserve separate original destinations
+with full inactive-output parity. Buffer association tests reject foreign,
+untracked and finalized destinations. Both origin fixture families run natively
+at opt0/1/2.
 Remaining access-changing
 rewrites, traffic owners and complete report acceptance are distinct.
 

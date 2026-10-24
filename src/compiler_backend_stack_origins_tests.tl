@@ -4,6 +4,7 @@
 (import compiler_backend_home_origins as home_origins)
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
+(import compiler_ir_text as ir_text)
 (import compiler_ast_types as ast)
 (import compiler_stack_traffic as traffic)
 (import compiler_intern as ci)
@@ -1820,3 +1821,266 @@
 (test
   backend-stack-origins-scope-consumed-instruction-site
   (backend-stack-origins-site-context-test))
+
+(define (backend-stack-origins-general-test) : unit
+  (for [fallback (iterator.range 0 2)]
+    (let
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [assignment : regalloc.CompilerRegAssignment
+        (regalloc.CompilerRegAssignment 1 (Spill -64))]
+      [homes : regalloc.CompilerRegAssignmentTable
+        (if (= fallback 0)
+          (regalloc.compiler-reg-assignments-prepend
+            (& assignment)
+            (regalloc.compiler-reg-assignment-table-empty))
+          (regalloc.compiler-reg-assignment-table-empty))]
+      [address : String
+        (if (= fallback 0)
+          "-64(%rbp)"
+          "-16(%rbp)")]
+      [plain : String
+        (backend.compiler-backend-emit-store-var
+          (owned_view.compiler-owned-shared-view homes)
+          1
+          "%r8"
+          state)]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (backend-stack-origins-install-scalar-plan! state 10 (I64))
+      (backend.compiler-backend-function-state-set-emit-current-site!
+        function-state
+        0)
+      (let
+        [read : String
+          (match (backend.compiler-backend-emit-load-value
+            (owned_view.compiler-owned-shared-view homes)
+            (& (Var 1))
+            "%r8"
+            state)
+            [(Ok text) text]
+            [(Err _) (io.panic "scalar GP load refused")])]
+        [write : String
+          (backend.compiler-backend-emit-store-var
+            (owned_view.compiler-owned-shared-view homes)
+            1
+            "%r8"
+            state)]
+        [entry : backend.CompilerBackendParameterOriginsContext
+          (backend.compiler-backend-parameter-origins-begin! state)]
+        [entry-write : String
+          (backend.compiler-backend-emit-store-var homes 1 "%r8" state)]
+        (backend.compiler-backend-parameter-origins-end! state entry)
+        (test.assert-string-eq
+          read
+          (string.concat3 "    movq " (clone address) ", %r8\n")
+          "actual scalar GP read bytes")
+        (test.assert-string-eq
+          write
+          (string.concat3 "    movq %r8, " address "\n")
+          "actual scalar GP write bytes")
+        (test.assert-string-eq
+          write
+          plain
+          "capture preserves ordinary scalar store")
+        (test.assert-string-eq entry-write write "entry store bytes")
+        (let
+          [capture : origins.CompilerBackendTextOrigins
+            (backend.compiler-backend-state-stack-text-origins state)]
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          (test.assert-i64-eq facts.len 3 "one record per actual home access")
+          (for [i (iterator.range 0 3)]
+            (let
+              [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                (& (array-ref facts.slots i))]
+              (test.assert-i64-eq
+                fact.home
+                (if (= i 1)
+                  8
+                  7)
+                "pre-color GP home")
+              (test.assert-i64-eq fact.access-bytes 8 "actual GP access width")
+              (test.assert-i64-eq fact.home-bytes 8 "scalar GP capacity")
+              (test.assert-true
+                (match (& fact.bank)
+                  [(General) true]
+                  [_ false])
+                "GP bank")))
+          (let
+            [texts : (Array String 3) (array read write entry-write)]
+            (for [i (iterator.range 0 3)]
+              (test.assert-i64-eq
+                (array-length
+                  (origins.compiler-backend-text-origins-find
+                    capture
+                    (& (array-ref texts i))))
+                1
+                "fresh GP buffer preserves the operand")))))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-cover-scalar-general-homes
+  (backend-stack-origins-general-test))
+
+(define (backend-stack-origins-fused-load-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [original : ir.CompilerIrBlockList
+      (ir_text.blocks
+        "entry:
+  %6 = gep %0, 0 : i64
+  %7 = load %6 : i64
+  %9 = gep %0, 1 : i64
+  %8 = load %9 : i64
+")]
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [base : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment
+        0
+        (Register (cabi.compiler-abi-register-id-from-spelling "%r12")))]
+    [first : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 1 (Spill -64))]
+    [second : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 2 (Spill -72))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignments-prepend
+        (& base)
+        (regalloc.compiler-reg-assignments-prepend
+          (& first)
+          (regalloc.compiler-reg-assignments-prepend
+            (& second)
+            (regalloc.compiler-reg-assignment-table-empty))))]
+    [plain : String
+      (match (backend.compiler-backend-emit-load-from-gep-pair
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (owned_view.compiler-owned-shared-view homes)
+        (Var 0)
+        (I64 0)
+        (I64)
+        1
+        (I64)
+        (I64 1)
+        (I64)
+        2
+        (I64)
+        -1
+        -1
+        state)
+        [(Ok text) text]
+        [(Err _) (io.panic "ordinary load pair refused")])]
+    (for [i (iterator.range 0 10)]
+      (set! (array-ref map i) i))
+    (set! (array-ref map 6) 3)
+    (set! (array-ref map 7) 1)
+    (set! (array-ref map 8) 2)
+    (set! (array-ref map 9) 4)
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      44)
+    (let
+      [input : home_origins.CompilerBackendHomePlanInput
+        (home_origins.CompilerBackendHomePlanInput
+          44
+          10
+          10
+          (ir.compiler-ir-param-seq-empty)
+          (owned_view.compiler-owned-shared-view original)
+          (regalloc.compiler-reg-remap-blocks (& map) (& original))
+          (Remap map 10)
+          (live.compiler-live-set-empty))]
+      [plan : home_origins.CompilerBackendHomePlan
+        (match (home_origins.compiler-backend-home-plan-build (& input))
+          [(Ok result) result]
+          [(Err message) (io.panic message)])]
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        (array-ref plan.sites 0).block)
+      (backend.compiler-backend-stack-home-plan-install! function-state plan))
+    (backend.compiler-backend-function-state-set-emit-current-site!
+      function-state
+      0)
+    (let
+      [pair : String
+        (match (backend.compiler-backend-emit-load-from-gep-pair
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (owned_view.compiler-owned-shared-view homes)
+          (Var 0)
+          (I64 0)
+          (I64)
+          1
+          (I64)
+          (I64 1)
+          (I64)
+          2
+          (I64)
+          1
+          3
+          state)
+          [(Ok text) text]
+          [(Err _) (io.panic "captured load pair refused")])]
+      [single : String
+        (match (backend.compiler-backend-emit-load-from-gep
+          (ast.ast-node-pool-reader-type-segment-bases)
+          homes
+          1
+          (Var 0)
+          (I64 0)
+          (I64)
+          (I64)
+          0
+          1
+          state)
+          [(Ok text) text]
+          [(Err _) (io.panic "captured single load refused")])]
+      [capture : origins.CompilerBackendTextOrigins
+        (backend.compiler-backend-state-stack-text-origins state)]
+      [facts : origins.CompilerBackendStackAccessOriginList
+        (backend.compiler-backend-state-stack-access-origins state)]
+      (test.assert-string-eq
+        pair
+        plain
+        "pair capture preserves all emitted bytes")
+      (test.assert-i64-eq
+        (array-length
+          (origins.compiler-backend-text-origins-find capture (& pair)))
+        2
+        "both pair destinations retain their consumed Load sites")
+      (test.assert-i64-eq
+        (array-length
+          (origins.compiler-backend-text-origins-find capture (& single)))
+        1
+        "single destination retains its consumed Load site")
+      (test.assert-i64-eq facts.len 3 "three actual destination writes")
+      (for [i (iterator.range 0 3)]
+        (test.assert-i64-eq
+          (array-ref facts.slots i).home
+          (if (= i 1)
+            8
+            7)
+          "distinct original Load definitions"))
+      (test.assert-i64-eq
+        (backend.compiler-backend-function-state-emit-current-site
+          function-state)
+        0
+        "pair does not change the fusion head"))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-bind-fused-load-destinations
+  (backend-stack-origins-fused-load-test))

@@ -654,6 +654,23 @@
         (unsafe
           (ptr->int (__tl_array-data cell)))))))
 
+;; A producer may append captured operands only to a live buffer belonging
+;; to that same capture. Byte equality cannot recover a missing association.
+(define (compiler-backend-text-origin-buffer-capture-matches?
+  [buffer : CompilerBackendTextOriginBuffer]
+  [capture : CompilerBackendTextOrigins]) : bool
+  (when (= capture.storage 0) (return (= buffer.storage 0)))
+  (when (= buffer.storage 0) (return false))
+  (unsafe
+    (let
+      [data : CompilerBackendTextOriginBufferData
+        (ptr-read
+          (int->ptr buffer.storage : (Ptr CompilerBackendTextOriginBufferData)))]
+      (and
+        (not data.finished)
+        (= data.capture.storage capture.storage)
+        (= data.capture.owner capture.owner)))))
+
 ;; Every append accounts for its bytes, including unannotated text. This makes
 ;; a missed buffer write detectable at finalization rather than shifting facts.
 (define (compiler-backend-text-origin-buffer-note!

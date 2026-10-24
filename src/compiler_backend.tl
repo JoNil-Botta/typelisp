@@ -658,12 +658,29 @@
 (define (compiler-backend-asm-buf-capture!
   [buf : (&mut buf CompilerBackendAsmBuf)]
   [capture : text_origins.CompilerBackendTextOrigins]) : unit
+  (when (= capture.storage 0) (return unit))
   (unless
     (and (= buf.len 0) (= buf.origins.storage 0))
     (io.panic "backend: origin capture needs a fresh assembly buffer"))
   (set!
     buf.origins
     (text_origins.compiler-backend-text-origin-buffer-new capture)))
+
+(define (compiler-backend-asm-require-origin-capture!
+  [buf : (& buf CompilerBackendAsmBuf)]
+  [state : CompilerBackendState]) : unit
+  (let
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins state)]
+    (when
+      (and
+        (!= capture.storage 0)
+        (not
+          (text_origins.compiler-backend-text-origin-buffer-capture-matches?
+            (clone buf.origins)
+            capture)))
+      (io.panic
+        "stack traffic: home access requires its own live captured buffer"))))
 
 (define (compiler-backend-asm-note-origin!
   [buf : (& buf CompilerBackendAsmBuf)]
@@ -1602,7 +1619,7 @@
           compiler-backend-scratch-i64-origin-site
           (+ origin-site 1))
         (let
-          [origin-result : ResultCompilerBackend ,body]
+          [origin-result ,body]
           (compiler-backend-function-scratch-set-i64!
             origin-function-state
             compiler-backend-scratch-i64-origin-site
@@ -1715,6 +1732,14 @@
                     [(Read) "read"]
                     [(Write) "write"]
                     [(ReadWrite) "read-write"])))])]
+        (when
+          (and
+            (> home.bytes 8)
+            (match (& bank)
+              [(General) true]
+              [_ false]))
+          (io.panic
+            "stack traffic: partial aggregate access needs an explicit logical fragment"))
         (match (text_origins.compiler-backend-text-origins-record
           capture
           (text_origins.CompilerBackendStackAccessOrigin
@@ -16295,9 +16320,19 @@
               (compiler-backend-asm-append5
                 out
                 "    movq "
-                (compiler-backend-frame-offset-with-backend-state
-                  backend-state
-                  offset)
+                (begin
+                  (compiler-backend-asm-require-origin-capture!
+                    out
+                    backend-state)
+                  (compiler-backend-stack-operand-origin
+                    backend-state
+                    var-id
+                    (compiler-backend-frame-offset-with-backend-state
+                      backend-state
+                      offset)
+                    8
+                    (General)
+                    (Read)))
                 ", "
                 reg
                 "\n")]
@@ -16315,7 +16350,15 @@
           (compiler-backend-asm-append5
             out
             "    movq "
-            (compiler-backend-slot-with-backend-state backend-state var-id)
+            (begin
+              (compiler-backend-asm-require-origin-capture! out backend-state)
+              (compiler-backend-stack-operand-origin
+                backend-state
+                var-id
+                (compiler-backend-slot-with-backend-state backend-state var-id)
+                8
+                (General)
+                (Read)))
             ", "
             reg
             "\n")]))))
@@ -16351,9 +16394,17 @@
             "    movq "
             reg
             ", "
-            (compiler-backend-frame-offset-with-backend-state
-              backend-state
-              offset)
+            (begin
+              (compiler-backend-asm-require-origin-capture! out backend-state)
+              (compiler-backend-stack-operand-origin
+                backend-state
+                var-id
+                (compiler-backend-frame-offset-with-backend-state
+                  backend-state
+                  offset)
+                8
+                (General)
+                (Write)))
             "\n")]
         ;; Rematerialised value: its single def store is dead (every use
         ;; recomputes), so emit nothing.
@@ -16364,7 +16415,15 @@
         "    movq "
         reg
         ", "
-        (compiler-backend-slot-with-backend-state backend-state var-id)
+        (begin
+          (compiler-backend-asm-require-origin-capture! out backend-state)
+          (compiler-backend-stack-operand-origin
+            backend-state
+            var-id
+            (compiler-backend-slot-with-backend-state backend-state var-id)
+            8
+            (General)
+            (Write)))
         "\n")]))
 
 (define (compiler-backend-emit-store-var
@@ -16376,6 +16435,10 @@
     [line : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity
         compiler-backend-asm-line-capacity)]
+    [_origin-capture : unit
+      (compiler-backend-asm-buf-capture!
+        (&mut line)
+        (compiler-backend-state-stack-text-origins backend-state))]
     (compiler-backend-emit-store-var-into
       (&mut line)
       assignments
@@ -20070,6 +20133,10 @@
     [line : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity
         compiler-backend-asm-line-capacity)]
+    [_origin-capture : unit
+      (compiler-backend-asm-buf-capture!
+        (&mut line)
+        (compiler-backend-state-stack-text-origins backend-state))]
     [_
       (try
         (compiler-backend-emit-load-value-into
@@ -33360,6 +33427,10 @@
         [seq : CompilerBackendAsmBuf
           (compiler-backend-asm-buf-with-capacity
             compiler-backend-asm-seq-capacity)]
+        [_origin-capture : unit
+          (compiler-backend-asm-buf-capture!
+            (&mut seq)
+            (compiler-backend-state-stack-text-origins backend-state))]
         (compiler-backend-asm-append
           (&mut seq)
           (compiler-backend-emit-load-memory-to-reg
@@ -34809,6 +34880,7 @@
   [elem-ty : compiler_ast_types.AstType]
   [load-ty : compiler_ast_types.AstType]
   [gep-disp : i64]
+  [load-site : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(Some n)
@@ -34875,28 +34947,36 @@
               (ResultCompilerBackend.Ok "")))]
         (Ok
           (if (compiler-backend-float-type? load-ty)
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               base-asm
-              (compiler-backend-emit-load-float-address-to-var
-                assignments
-                dst
-                addr
-                load-ty
-                backend-state))
-            (str_cat.str-cat
+              (compiler-backend-at-origin-site
+                backend-state
+                load-site
+                (compiler-backend-emit-load-float-address-to-var
+                  assignments
+                  dst
+                  addr
+                  load-ty
+                  backend-state)))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               base-asm
-              (compiler-backend-emit-load-scalar-address-to-var
-                type-segment-bases
-                assignments
-                dst
-                addr
-                load-ty
-                (compiler-backend-one-exclude base-reg)
-                (if (string.eq rip "")
-                  1
-                  0)
-                ""
-                backend-state)))))]
+              (compiler-backend-at-origin-site
+                backend-state
+                load-site
+                (compiler-backend-emit-load-scalar-address-to-var
+                  type-segment-bases
+                  assignments
+                  dst
+                  addr
+                  load-ty
+                  (compiler-backend-one-exclude base-reg)
+                  (if (string.eq rip "")
+                    1
+                    0)
+                  ""
+                  backend-state))))))]
     [(None)
       ;; Dynamic-index load. For SIB scales, use allocator-owned operand homes
       ;; directly in the memory operand whenever they exist; copying an already
@@ -34967,7 +35047,12 @@
             "")]
         [load-addr : String
           (if (string.eq addr "")
-            (str_cat.str-cat "(" base-reg ")" "")
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              "("
+              base-reg
+              ")"
+              "")
             addr)]
         [base-asm
           (try
@@ -34989,30 +35074,38 @@
                 backend-state)))]
         (Ok
           (if (compiler-backend-float-type? load-ty)
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               base-asm
               offset-asm
               addr-asm
-              (compiler-backend-emit-load-float-address-to-var
-                assignments
-                dst
-                load-addr
-                load-ty
-                backend-state))
-            (str_cat.str-cat
+              (compiler-backend-at-origin-site
+                backend-state
+                load-site
+                (compiler-backend-emit-load-float-address-to-var
+                  assignments
+                  dst
+                  load-addr
+                  load-ty
+                  backend-state)))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               base-asm
               offset-asm
               addr-asm
-              (compiler-backend-emit-load-scalar-address-to-var
-                type-segment-bases
-                assignments
-                dst
-                load-addr
-                load-ty
-                (compiler-backend-two-exclude base-reg index-reg)
-                2
-                ""
-                backend-state)))))]))
+              (compiler-backend-at-origin-site
+                backend-state
+                load-site
+                (compiler-backend-emit-load-scalar-address-to-var
+                  type-segment-bases
+                  assignments
+                  dst
+                  load-addr
+                  load-ty
+                  (compiler-backend-two-exclude base-reg index-reg)
+                  2
+                  ""
+                  backend-state))))))]))
 
 ;; Evaluate BODY with the pair-emission flag set (the sibling-reordering load
 ;; families), restoring the flag's previous value afterwards.
@@ -35050,6 +35143,7 @@
   [load-ty : compiler_ast_types.AstType]
   [base-reg : String]
   [sibling-home : String]
+  [load-site : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-with-pair-emission
     (compiler-backend-state-function-state backend-state)
@@ -35070,35 +35164,43 @@
             [(Ok base-asm)
               (ResultCompilerBackend.Ok
                 (if (compiler-backend-float-type? load-ty)
-                  (str_cat.str-cat
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
                     base-asm
-                    (compiler-backend-emit-load-float-address-to-var
-                      assignments
-                      dst
-                      addr
-                      load-ty
-                      backend-state))
-                  (str_cat.str-cat
+                    (compiler-backend-at-origin-site
+                      backend-state
+                      load-site
+                      (compiler-backend-emit-load-float-address-to-var
+                        assignments
+                        dst
+                        addr
+                        load-ty
+                        backend-state)))
+                  (text_origins.compiler-backend-text-origins-cat
+                    (compiler-backend-state-stack-text-origins backend-state)
                     base-asm
                     ;; The pair head's emergency restore runs after both loads; if
                     ;; this spilled first load borrows the sibling result home, the
                     ;; restore clobbers the second load before its consumer.
-                    (compiler-backend-emit-load-scalar-address-to-var
-                      type-segment-bases
-                      assignments
-                      dst
-                      addr
-                      load-ty
-                      (if (string.eq sibling-home "")
-                        (compiler-backend-one-exclude base-reg)
-                        (compiler-backend-two-exclude
-                          base-reg
-                          (compiler-backend-global-shared-view sibling-home)))
-                      (if (string.eq sibling-home "")
-                        1
-                        2)
-                      ""
-                      backend-state))))]
+                    (compiler-backend-at-origin-site
+                      backend-state
+                      load-site
+                      (compiler-backend-emit-load-scalar-address-to-var
+                        type-segment-bases
+                        assignments
+                        dst
+                        addr
+                        load-ty
+                        (if (string.eq sibling-home "")
+                          (compiler-backend-one-exclude base-reg)
+                          (compiler-backend-two-exclude
+                            base-reg
+                            (compiler-backend-global-shared-view sibling-home)))
+                        (if (string.eq sibling-home "")
+                          1
+                          2)
+                        ""
+                        backend-state)))))]
             [(Err message) (ResultCompilerBackend.Err message)]))]
       [(None)
         (ResultCompilerBackend.Err
@@ -35118,6 +35220,7 @@
   [load-ty : compiler_ast_types.AstType]
   [base-reg : String]
   [sibling-home : String]
+  [load-site : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-with-pair-emission
     (compiler-backend-state-function-state backend-state)
@@ -35133,12 +35236,15 @@
               (compiler-backend-global-shared-view base-reg))]
           (ResultCompilerBackend.Ok
             (if (compiler-backend-float-type? load-ty)
-              (compiler-backend-emit-load-float-address-to-var
-                assignments
-                dst
-                addr
-                load-ty
-                backend-state)
+              (compiler-backend-at-origin-site
+                backend-state
+                load-site
+                (compiler-backend-emit-load-float-address-to-var
+                  assignments
+                  dst
+                  addr
+                  load-ty
+                  backend-state))
               ;; M-D clobber fix (companion to emit-load-from-gep-pair's base guard):
               ;; a SPILLED 2nd-load dst stages through a scavenged scratch, and this
               ;; whole gep-pair is ONE emergency-wrap head. `sibling-home` is the 1st
@@ -35147,22 +35253,25 @@
               ;; landing there would be OVERWRITTEN by the wrap's restore, dropping the
               ;; 1st word. Exclude it too; "" (a register-homed sibling absent, or
               ;; itself spilled) keeps the base-only set.
-              (compiler-backend-emit-load-scalar-address-to-var
-                type-segment-bases
-                assignments
-                dst
-                addr
-                load-ty
-                (if (string.eq sibling-home "")
-                  (compiler-backend-one-exclude base-reg)
-                  (compiler-backend-two-exclude
-                    base-reg
-                    (compiler-backend-global-shared-view sibling-home)))
-                (if (string.eq sibling-home "")
-                  1
-                  2)
-                ""
-                backend-state))))]
+              (compiler-backend-at-origin-site
+                backend-state
+                load-site
+                (compiler-backend-emit-load-scalar-address-to-var
+                  type-segment-bases
+                  assignments
+                  dst
+                  addr
+                  load-ty
+                  (if (string.eq sibling-home "")
+                    (compiler-backend-one-exclude base-reg)
+                    (compiler-backend-two-exclude
+                      base-reg
+                      (compiler-backend-global-shared-view sibling-home)))
+                  (if (string.eq sibling-home "")
+                    1
+                    2)
+                  ""
+                  backend-state)))))]
       [(None)
         (ResultCompilerBackend.Err
           (box
@@ -35184,6 +35293,8 @@
   [elem-ty1 : compiler_ast_types.AstType]
   [load-dst1 : i64]
   [load-ty1 : compiler_ast_types.AstType]
+  [first-load-site : i64]
+  [second-load-site : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (compiler-backend-with-pair-emission
     (compiler-backend-state-function-state backend-state)
@@ -35243,6 +35354,7 @@
         load-ty0
         (compiler-backend-global-shared-view base-reg)
         dst1-home
+        first-load-site
         backend-state)
         [(Ok first-asm)
           (match (compiler-backend-emit-load-from-gep-r10-live
@@ -35254,9 +35366,14 @@
             load-ty1
             base-reg
             dst0-home
+            second-load-site
             backend-state)
             [(Ok second-asm)
-              (ResultCompilerBackend.Ok (str_cat.str-cat first-asm second-asm))]
+              (ResultCompilerBackend.Ok
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins backend-state)
+                  first-asm
+                  second-asm))]
             [(Err message) (ResultCompilerBackend.Err message)])]
         [(Err message) (ResultCompilerBackend.Err message)]))))
 
@@ -42228,6 +42345,10 @@
   (let
     [out : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    [_origin-capture : unit
+      (compiler-backend-asm-buf-capture!
+        (&mut out)
+        (compiler-backend-state-stack-text-origins backend-state))]
     [_
       (try
         (compiler-backend-emit-call-args-parallel-into
@@ -42386,6 +42507,10 @@
       (owned_view.compiler-owned-reference-shared-view func-diag)]
     [seq : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    [_origin-capture : unit
+      (compiler-backend-asm-buf-capture!
+        (&mut seq)
+        (compiler-backend-state-stack-text-origins backend-state))]
     [_
       (try
         (compiler-backend-emit-call-args-into
@@ -42485,6 +42610,10 @@
   (let
     [seq : CompilerBackendAsmBuf
       (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    [_origin-capture : unit
+      (compiler-backend-asm-buf-capture!
+        (&mut seq)
+        (compiler-backend-state-stack-text-origins backend-state))]
     [_
       (try
         (compiler-backend-emit-call-args-with-override-into
@@ -47726,6 +47855,10 @@
           [seq : CompilerBackendAsmBuf
             (compiler-backend-asm-buf-with-capacity
               compiler-backend-asm-seq-capacity)]
+          [_origin-capture : unit
+            (compiler-backend-asm-buf-capture!
+              (&mut seq)
+              (compiler-backend-state-stack-text-origins backend-state))]
           (compiler-backend-asm-append
             (&mut seq)
             (compiler-backend-emit-call-space-sub call-space))
@@ -55816,6 +55949,18 @@
                                         elem-ty2
                                         load-dst2
                                         load-ty2
+                                        (-
+                                          (-
+                                            (compiler-backend-function-state-emit-instr-post-base
+                                              ctx.function-state)
+                                            (- instrs.len index))
+                                          1)
+                                        (-
+                                          (-
+                                            (compiler-backend-function-state-emit-instr-post-base
+                                              ctx.function-state)
+                                            (- instrs.len after-load2))
+                                          1)
                                         ctx.backend-state)
                                       instrs
                                       after-load2
@@ -55832,6 +55977,12 @@
                                   elem-ty
                                   load-ty
                                   gep-fold-disp
+                                  (-
+                                    (-
+                                      (compiler-backend-function-state-emit-instr-post-base
+                                        ctx.function-state)
+                                      (- instrs.len index))
+                                    1)
                                   ctx.backend-state)
                                 instrs
                                 index
@@ -55849,6 +56000,12 @@
                                 elem-ty
                                 load-ty
                                 gep-fold-disp
+                                (-
+                                  (-
+                                    (compiler-backend-function-state-emit-instr-post-base
+                                      ctx.function-state)
+                                    (- instrs.len index))
+                                  1)
                                 ctx.backend-state)
                               instrs
                               index
@@ -55865,6 +56022,12 @@
                           elem-ty
                           load-ty
                           gep-fold-disp
+                          (-
+                            (-
+                              (compiler-backend-function-state-emit-instr-post-base
+                                ctx.function-state)
+                              (- instrs.len index))
+                            1)
                           ctx.backend-state)
                         instrs
                         index
@@ -55882,6 +56045,12 @@
                         elem-ty
                         load-ty
                         gep-fold-disp
+                        (-
+                          (-
+                            (compiler-backend-function-state-emit-instr-post-base
+                              ctx.function-state)
+                            (- instrs.len index))
+                          1)
                         ctx.backend-state)
                       instrs
                       index
@@ -55898,6 +56067,12 @@
                     elem-ty
                     load-ty
                     gep-fold-disp
+                    (-
+                      (-
+                        (compiler-backend-function-state-emit-instr-post-base
+                          ctx.function-state)
+                        (- instrs.len index))
+                      1)
                     ctx.backend-state)
                   instrs
                   index
@@ -55915,6 +56090,12 @@
                   elem-ty
                   load-ty
                   gep-fold-disp
+                  (-
+                    (-
+                      (compiler-backend-function-state-emit-instr-post-base
+                        ctx.function-state)
+                      (- instrs.len index))
+                    1)
                   ctx.backend-state)
                 instrs
                 index
@@ -55931,6 +56112,12 @@
             elem-ty
             load-ty
             gep-fold-disp
+            (-
+              (-
+                (compiler-backend-function-state-emit-instr-post-base
+                  ctx.function-state)
+                (- instrs.len index))
+              1)
             ctx.backend-state)
           instrs
           index
@@ -55948,6 +56135,12 @@
           elem-ty
           load-ty
           gep-fold-disp
+          (-
+            (-
+              (compiler-backend-function-state-emit-instr-post-base
+                ctx.function-state)
+              (- instrs.len index))
+            1)
           ctx.backend-state)
         instrs
         index

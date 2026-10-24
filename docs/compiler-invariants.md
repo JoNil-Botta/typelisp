@@ -689,6 +689,13 @@ forwarded values and literals cannot authorize a stack read.
 Scalar floating loads, stores and folded operands record their XMM bank and
 actual 4/8-byte access independently of the original scalar home capacity.
 Ordinary mnemonic selection does not construct an origin descriptor.
+Scalar GP factories record only actual home loads/stores. Register moves,
+rematerialization and address-only forwarding do not authorize a home access.
+Fresh auxiliary assembly buffers bind the active capture before any prefix;
+a foreign, untracked or finalized buffer cannot accept a captured operand.
+Single and paired GEP/load factories supply each consumed Load's destination
+site separately from address formation. A scalar read of a larger aggregate
+requires an explicit logical fragment; its capacity cannot stand in for one.
 Inactive emission
 allocates no instruction-home plan and does not change coloring or placement.
 An RMW fold retains separate ordered read and write tokens at the same emitted

@@ -4,6 +4,7 @@
 (import compiler_regalloc as regalloc)
 (import compiler_liveness as live)
 (import compiler_owned_view as owned_view)
+(import compiler_abi as abi)
 (import stdlib.test)
 (import stdlib.io)
 (import stdlib.iterator)
@@ -305,7 +306,8 @@
   (home-origin-address-test)
   (home-origin-parameter-test)
   (home-origin-phi-test)
-  (home-origin-group-fragment-test))
+  (home-origin-group-fragment-test)
+  (home-origin-emergency-test))
 
 (test home-origins-survive-noninjective-coloring (home-origin-tests))
 
@@ -698,3 +700,124 @@ join:
               [(Err _) true]
               [_ false])
             "group extent mismatch rejects"))))))
+
+(define (home-origin-emergency-test) : unit
+  (for [spare (iterator.range 0 2)]
+    (let
+      [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+        (__tl_make-array ir.CompilerIrInstr (+ 2 (* 3 spare)))]
+      [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (__tl_make-array ir.CompilerIrBlock (+ 1 spare))]
+      (set! (array-ref instructions 0) (Mov 8 (Var 7) (I64)))
+      (set! (array-ref instructions 1) (Mov 9 (Var 8) (I64)))
+      (set!
+        (array-ref blocks 0)
+        (Block 10 (ir.CompilerIrInstrSeq instructions 2)))
+      (let
+        [original : ir.CompilerIrBlockList
+          (Array (ir.CompilerIrBlockSeq blocks 1))]
+        [input : homes.CompilerBackendHomePlanInput
+          (homes.CompilerBackendHomePlanInput
+            44
+            10
+            10
+            (ir.compiler-ir-param-seq-empty)
+            (owned_view.compiler-owned-shared-view original)
+            original
+            (None)
+            (live.compiler-live-set-empty))]
+        [plan : homes.CompilerBackendHomePlan
+          (match (homes.compiler-backend-home-plan-build (& input))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (for [request (iterator.range 0 5)]
+          (let
+            [reg : i64
+              (cond
+                [(< request 2) abi.compiler-reg-id-r9]
+                [(= request 2) abi.compiler-reg-id-r10]
+                [(= request 3) (abi.compiler-abi-xmm-register-id 2)]
+                [else (abi.compiler-abi-vector-register-id 2)])]
+            (match (homes.compiler-backend-home-emergency!
+              (&mut plan)
+              44
+              10
+              (if (= request 1)
+                1
+                0)
+              reg)
+              [(Err message) (io.panic message)]
+              [(Ok home)
+                (test.assert-i64-eq
+                  home.id
+                  (+
+                    30
+                    (if (= request 4)
+                      3
+                      request))
+                  "emergency resources follow scalar and group namespaces")
+                (test.assert-i64-eq home.bytes 64 "reserved emergency capacity")])))
+        (test.assert-i64-eq
+          plan.emergency.len
+          4
+          "vector aliases share the site's preservation resource")
+        (let
+          [slots : (__tl_dyn-array homes.CompilerBackendEmergencyHome)
+            (__tl_make-array
+              homes.CompilerBackendEmergencyHome
+              (+ 4 (* 3 spare)))]
+          (for [index (iterator.range 0 4)]
+            (set!
+              (array-ref slots index)
+              (clone (array-ref plan.emergency.slots index))))
+          (set! plan.emergency (homes.CompilerBackendEmergencyHomeList slots 4)))
+        (match (homes.compiler-backend-home-emergency!
+          (&mut plan)
+          44
+          10
+          0
+          abi.compiler-reg-id-r9)
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq home.id 30 "exact/spare lookup parity")])
+        (for [invalid (iterator.range 0 10)]
+          (let
+            [bad : homes.CompilerBackendHomePlan (clone plan)]
+            (when (= invalid 8) (set! bad.emergency.len 100))
+            (when
+              (= invalid 9)
+              (set!
+                (array-ref bad.emergency.slots 1)
+                (clone (array-ref bad.emergency.slots 0))))
+            (test.assert-true
+              (match (homes.compiler-backend-home-emergency!
+                (&mut bad)
+                (if (= invalid 0)
+                  45
+                  44)
+                (if (= invalid 1)
+                  11
+                  10)
+                (cond [(= invalid 2) -1] [(= invalid 3) 2] [else 0])
+                (cond
+                  [(= invalid 4) -1]
+                  [(= invalid 5) abi.compiler-reg-id-rsp]
+                  [(= invalid 6) abi.compiler-reg-id-rbp]
+                  [(= invalid 7) (abi.compiler-abi-mask-register-id 1)]
+                  [else abi.compiler-reg-id-r9]))
+                [(Err _) true]
+                [_ false])
+              "unbound, malformed or unsupported emergency authority rejects")))
+        (test.assert-i64-eq
+          plan.emergency.len
+          4
+          "failed clones cannot edit original")
+        (match (homes.compiler-backend-home-emergency!
+          (&mut plan)
+          44
+          10
+          0
+          abi.compiler-reg-id-r9)
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq home.id 30 "original resource remains bound")])))))

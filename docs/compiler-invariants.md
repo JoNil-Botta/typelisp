@@ -696,6 +696,14 @@ memory renderer formats them. That renderer transports an issued token; it
 cannot derive a home or owner from the supplied address. Return, call-result
 and global-store parents preserve those tokens, including C-ABI boolean
 normalization and mixed-bank group returns.
+Frame-backed emergency preservation has its own site/register resource after
+the scalar and group-home namespaces. The actual save and restore authorities
+issue `EmergencyScratch` accesses with 64-byte capacity and the selected
+8/16/32/64-byte GP or SIMD access. Frame-slot reuse cannot merge distinct IR
+sites, and register parking or an elided save issues no stack access. The
+capture arena owns registry growth across instruction-scratch rewinds. Save,
+restore and their recursive parents transport the issued operand identities;
+neither a displacement nor a rendered opcode can establish this owner.
 Fresh auxiliary assembly buffers bind the active capture before any prefix;
 a foreign, untracked or finalized buffer cannot accept a captured operand.
 Single and paired GEP/load factories supply each consumed Load's destination

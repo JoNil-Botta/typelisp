@@ -4,6 +4,7 @@
 (import compiler_regalloc as regalloc)
 (import compiler_liveness as live)
 (import compiler_owned_view as owned_view)
+(import compiler_abi as abi)
 (import stdlib.dense_list as dense_list)
 (import stdlib.iterator)
 (import stdlib.string)
@@ -70,13 +71,33 @@
   (bindings CompilerBackendHomeBindingList)
   (phi-inputs CompilerBackendHomePhiInputs))
 
+;; A preservation resource is issued at its emitting authority, independently
+;; of its current frame displacement. Separate IR sites never share its home.
+(defstruct CompilerBackendEmergencyHome
+  (site i64)
+  (reg i64))
+
+(defstruct CompilerBackendEmergencyHomeList
+  (slots (__tl_dyn-array CompilerBackendEmergencyHome))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerBackendEmergencyHome
+  CompilerBackendEmergencyHomeList
+  compiler-backend-emergency-home-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  append-from)
+
 (defstruct CompilerBackendHomePlan
   (function i64)
   (entry-block i64)
   (parameters CompilerBackendHomeBindingList)
   (sites (__tl_dyn-array CompilerBackendHomeSite))
   (bytes (__tl_dyn-array i64))
-  (groups (__tl_dyn-array bool)))
+  (groups (__tl_dyn-array bool))
+  (emergency CompilerBackendEmergencyHomeList))
 
 (defstruct CompilerBackendHomePlanInput
   (function i64)
@@ -494,7 +515,8 @@
         parameters.bindings
         sites
         bytes
-        groups))))
+        groups
+        (compiler-backend-emergency-home-list-new)))))
 
 (define (compiler-backend-home-plan-resolve
   [plan : (& plan CompilerBackendHomePlan)]
@@ -569,6 +591,73 @@
       (> home.id (/ (- (- 9223372036854775807 count) word) 2))
       (return (Err "stack traffic: original group fragment identity overflows")))
     (Ok (CompilerBackendLogicalHome (+ count (+ (* 2 home.id) word)) 8))))
+
+;; The emergency emitter preserves one borrowed register across an IR site's
+;; emitted sequence. Its reserved frame resource is 64 bytes, even for a GP or
+;; narrow SIMD save. Register parking and elision never call this authority.
+;; IDs follow all scalar and two-word fragment IDs; coloring and slot reuse
+;; cannot alias this resource with an allocator home or another site's save.
+(define (compiler-backend-home-emergency!
+  [plan : (&mut plan CompilerBackendHomePlan)]
+  [function : i64]
+  [block : i64]
+  [site : i64]
+  [reg : i64]) : CompilerBackendPlannedHomeResult
+  (unless
+    (and
+      (= function plan.function)
+      (>= block 0)
+      (>= site 0)
+      (< site (array-length plan.sites)))
+    (return (Err "stack traffic: emergency preservation site is unbound")))
+  (unless
+    (= block (array-ref plan.sites site).block)
+    (return (Err "stack traffic: emergency preservation block differs")))
+  (unless
+    (or
+      (and
+        (>= reg abi.compiler-reg-id-rax)
+        (<= reg abi.compiler-reg-id-r15)
+        (!= reg abi.compiler-reg-id-rsp)
+        (!= reg abi.compiler-reg-id-rbp))
+      (abi.compiler-abi-xmm-register-id? reg)
+      (abi.compiler-abi-vector-register-id? reg))
+    (return (Err "stack traffic: invalid emergency preservation register")))
+  (unless
+    (and
+      (>= plan.emergency.len 0)
+      (<= plan.emergency.len (array-length plan.emergency.slots)))
+    (return (Err "stack traffic: invalid emergency home extent")))
+  (let
+    [physical : i64 (abi.compiler-abi-register-ownership-id reg)]
+    [index : i64 0]
+    [found : i64 -1]
+    [count : i64 (array-length plan.bytes)]
+    (while (< index plan.emergency.len)
+      (let
+        [entry : CompilerBackendEmergencyHome
+          (clone (array-ref plan.emergency.slots index))]
+        (when
+          (and (= entry.site site) (= entry.reg physical))
+          (when
+            (>= found 0)
+            (return (Err "stack traffic: duplicate emergency home authority")))
+          (set! found index)))
+      (+= index 1))
+    (let
+      [ordinal : i64
+        (if (>= found 0)
+          found
+          plan.emergency.len)]
+      (when
+        (> count (/ (- 9223372036854775807 ordinal) 3))
+        (return (Err "stack traffic: emergency home identity overflows")))
+      (when
+        (< found 0)
+        (compiler-backend-emergency-home-list-push
+          (&mut plan.emergency)
+          (CompilerBackendEmergencyHome site physical)))
+      (Ok (CompilerBackendLogicalHome (+ (* count 3) ordinal) 64)))))
 
 ;; Phi copies execute on the predecessor edge, but read the selected target
 ;; Phi input and define its result. The marshaller supplies its actual target

@@ -1,6 +1,7 @@
 (import compiler_backend_stack_origins_tests as fixtures)
 
 (define (main) : i64
+  (fixtures.backend-stack-origins-emergency-test)
   (fixtures.backend-stack-origins-boundary-test)
   (fixtures.backend-stack-origins-group-phi-test)
   (fixtures.backend-stack-origins-group-test)

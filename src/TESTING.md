@@ -933,7 +933,13 @@ and normalized call-result stores, and global-store parents across narrow,
 wide and floating scalars plus GP, mixed and SSE two-word groups. It checks
 complete uncaptured-output parity, exact surviving operand tokens, original
 colored identities and each actual access width; no address spelling supplies
-those facts. Remaining access-changing rewrites, traffic owners and complete
+those facts. Emergency preservation fixtures check all three backend modes,
+GP/SIMD widths, paired same-site resources and distinct resources at a reused
+frame offset. They retain every token through recursive save/restore parents,
+exercise registry growth across instruction-scratch destruction, and exclude
+register parking and elision. Pure resource tests cover exact/spare storage,
+vector-family aliases and malformed sites/registers/registries. Remaining
+access-changing rewrites, traffic owners and complete
 report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source

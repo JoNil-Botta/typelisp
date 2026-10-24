@@ -1418,6 +1418,16 @@
   (let
     [capture : text_origins.CompilerBackendTextOrigins
       (compiler-backend-state-stack-text-origins state)]
+    ;; The plan may reference a preservation registry in the capture arena.
+    ;; Unpublish it without materializing an inactive function owner.
+    (when
+      (and
+        (!= capture.storage 0)
+        (compiler-backend-state-function-state-active? state))
+      (compiler-backend-function-scratch-set-i64!
+        (compiler-backend-state-function-state state)
+        compiler-backend-scratch-i64-stack-home-plan
+        0))
     (unsafe
       (set!
         (deref (compiler-backend-state-ptr state)).stack-text-origins
@@ -17532,33 +17542,136 @@
     function-state
     (compiler_abi.compiler-abi-register-id-from-spelling reg)))
 
+;; Only frame-backed emergency saves call this factory. The site/register
+;; resource comes from the preservation authority, never from OFFSET's text.
+(define (compiler-backend-emergency-operand-origin
+  [state : CompilerBackendState]
+  [text : String]
+  [reg : i64]
+  [access : stack_traffic.CompilerStackTrafficAccess]) : String
+  (let
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins state)]
+    (when (= capture.storage 0) (return text))
+    (let
+      [function-state : CompilerBackendFunctionState
+        (compiler-backend-state-function-state state)]
+      [function : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-current-source-function)]
+      [block : i64
+        (compiler-backend-function-state-i64
+          function-state
+          compiler-backend-function-i64-current-block-label)]
+      [site : i64
+        (compiler-backend-function-state-i64
+          function-state
+          compiler-backend-function-i64-emit-current-site)]
+      [address : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-stack-home-plan)]
+      (when
+        (= address 0)
+        (io.panic "stack traffic: emergency home plan was not installed"))
+      (let
+        [home : home_origins.CompilerBackendLogicalHome
+          (unsafe
+            (let
+              [destination : (MutPtr home_origins.CompilerBackendHomePlan)
+                (int->ptr
+                  (cast address : u64)
+                  : (MutPtr home_origins.CompilerBackendHomePlan))]
+              [plan : home_origins.CompilerBackendHomePlan
+                (ptr-read destination)]
+              [result
+                : home_origins.CompilerBackendLogicalHome
+                ;; Registry growth crosses per-instruction scratch rewinds.
+                (in-arena
+                  (arena.Arena capture.owner)
+                  (match (home_origins.compiler-backend-home-emergency!
+                    (&mut plan)
+                    function
+                    block
+                    site
+                    reg)
+                    [(Ok home) home]
+                    [(Err message) (io.panic message)]))]
+              (ptr-write! destination plan)
+              result))]
+        [vector? : bool
+          (>= (compiler_regalloc.compiler-reg-xmm-family-index reg) 0)]
+        [bytes : i64
+          (if vector?
+            (match (compiler-backend-function-state-current-mode function-state)
+              [(Scalar) 16]
+              [(Avx2) 32]
+              [(Avx512) 64])
+            8)]
+        (match (text_origins.compiler-backend-text-origins-record
+          capture
+          (text_origins.CompilerBackendStackAccessOrigin
+            (compiler_ir_types.compiler-ir-symbol-typed-id function)
+            block
+            home.id
+            home.bytes
+            (EmergencyScratch)
+            (if vector?
+              (Vector)
+              (General))
+            bytes
+            access)
+          text)
+          [(Ok result) result]
+          [(Err message) (io.panic message)])))))
+
 (define (compiler-backend-emergency-reg-save-asm
   [reg : i64]
   [offset : i64]
   [backend-state : CompilerBackendState]) : String
   (let
     [slot : String
-      (compiler-backend-frame-offset-with-backend-state backend-state offset)]
+      (compiler-backend-emergency-operand-origin
+        backend-state
+        (compiler-backend-frame-offset-with-backend-state backend-state offset)
+        reg
+        (Write))]
     [reg-name : String (compiler_abi.compiler-abi-register-spelling reg)]
     (if (>= (compiler_regalloc.compiler-reg-xmm-family-index reg) 0)
       (match (compiler-backend-function-state-current-mode
         (compiler-backend-state-function-state backend-state))
-        [(Scalar) (str_cat.str-cat "    movdqu " reg-name ", " slot "\n")]
+        [(Scalar)
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movdqu "
+            reg-name
+            ", "
+            slot
+            "\n")]
         [(Avx2)
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    vmovdqu "
             (compiler-backend-vector-home-to-reg reg "ymm")
             ", "
             slot
             "\n")]
         [(Avx512)
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    vmovdqu64 "
             (compiler-backend-vector-home-to-reg reg "zmm")
             ", "
             slot
             "\n")])
-      (str_cat.str-cat "    movq " reg-name ", " slot "\n"))))
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
+        "    movq "
+        reg-name
+        ", "
+        slot
+        "\n"))))
 
 (define (compiler-backend-emergency-reg-restore-asm
   [reg : i64]
@@ -17566,27 +17679,46 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [slot : String
-      (compiler-backend-frame-offset-with-backend-state backend-state offset)]
+      (compiler-backend-emergency-operand-origin
+        backend-state
+        (compiler-backend-frame-offset-with-backend-state backend-state offset)
+        reg
+        (Read))]
     [reg-name : String (compiler_abi.compiler-abi-register-spelling reg)]
     (if (>= (compiler_regalloc.compiler-reg-xmm-family-index reg) 0)
       (match (compiler-backend-function-state-current-mode
         (compiler-backend-state-function-state backend-state))
-        [(Scalar) (str_cat.str-cat "    movdqu " slot ", " reg-name "\n")]
+        [(Scalar)
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movdqu "
+            slot
+            ", "
+            reg-name
+            "\n")]
         [(Avx2)
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    vmovdqu "
             slot
             ", "
             (compiler-backend-vector-home-to-reg reg "ymm")
             "\n")]
         [(Avx512)
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    vmovdqu64 "
             slot
             ", "
             (compiler-backend-vector-home-to-reg reg "zmm")
             "\n")])
-      (str_cat.str-cat "    movq " slot ", " reg-name "\n"))))
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
+        "    movq "
+        slot
+        ", "
+        reg-name
+        "\n"))))
 
 ;; T1-6 (b): one pending save, at its recorded park location -- an XMM register
 ;; (frame-free) or the classic 64-byte frame slot.
@@ -17650,7 +17782,8 @@
   [backend-state : CompilerBackendState]) : String
   (if (>= index count)
     ""
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       (compiler-backend-emergency-entry-save-asm
         function-state
         index
@@ -17667,7 +17800,8 @@
   [backend-state : CompilerBackendState]) : String
   (if (< index 0)
     ""
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       (compiler-backend-emergency-entry-restore-asm
         function-state
         index

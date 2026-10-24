@@ -2754,3 +2754,244 @@ join:
 (test
   backend-stack-origins-survive-return-call-global-parents
   (backend-stack-origins-boundary-test))
+
+(define (backend-stack-origins-emergency-test) : unit
+  (for [mode (iterator.range 0 3)]
+    (let
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [gp : i64 cabi.compiler-reg-id-r9]
+      [vec : i64 (cabi.compiler-abi-xmm-register-id 2)]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-function-state-set-current-mode!
+        function-state
+        (cond [(= mode 0) (Scalar)] [(= mode 1) (Avx2)] [else (Avx512)]))
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-emergency-slot-offset
+        -64)
+      (backend.compiler-backend-emergency-add-id! function-state gp)
+      (backend.compiler-backend-emergency-add-id! function-state vec)
+      (backend.compiler-backend-emergency-commit-slot-form! function-state)
+      (let
+        [plain-save : String
+          (backend.compiler-backend-emergency-save-asm function-state 0 2 state)]
+        [plain-restore : String
+          (backend.compiler-backend-emergency-restore-asm
+            function-state
+            1
+            state)]
+        (backend.compiler-backend-state-stack-origins-begin! state)
+        (backend-stack-origins-install-test-plan! state true false)
+        (let
+          [capture : origins.CompilerBackendTextOrigins
+            (backend.compiler-backend-state-stack-text-origins state)]
+          [save : String
+            (backend.compiler-backend-emergency-save-asm
+              function-state
+              0
+              2
+              state)]
+          [restore : String
+            (backend.compiler-backend-emergency-restore-asm
+              function-state
+              1
+              state)]
+          [text : String
+            (origins.compiler-backend-text-origins-cat capture save restore)]
+          [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+            (origins.compiler-backend-text-origins-find capture (& text))]
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          (test.assert-string-eq
+            save
+            plain-save
+            "emergency save bytes unchanged")
+          (test.assert-string-eq
+            restore
+            plain-restore
+            "emergency restore bytes unchanged")
+          (test.assert-i64-eq
+            facts.len
+            4
+            "two frame-backed saves and two restores")
+          (test.assert-i64-eq
+            (array-length spans)
+            4
+            "recursive emergency parents retain every operand")
+          (for [index (iterator.range 0 4)]
+            (let
+              [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                (& (array-ref facts.slots index))]
+              [vector? : bool (or (= index 1) (= index 2))]
+              (test.assert-i64-eq
+                fact.home
+                (if vector?
+                  31
+                  30)
+                "same site and register pairs save with restore")
+              (test.assert-i64-eq
+                fact.home-bytes
+                64
+                "frame preservation capacity")
+              (test.assert-i64-eq
+                fact.access-bytes
+                (if vector?
+                  (cond [(= mode 0) 16] [(= mode 1) 32] [else 64])
+                  8)
+                "actual GP or mode-selected vector access width")
+              (test.assert-i64-eq
+                (array-ref spans index).token
+                index
+                "final text binds original access ordinal")
+              (test.assert-true
+                (match (& fact.owner)
+                  [(EmergencyScratch) true]
+                  [_ false])
+                "emergency preservation is never an allocator spill")
+              (test.assert-true
+                (match (& fact.bank)
+                  [(General) (not vector?)]
+                  [(Vector) vector?]
+                  [_ false])
+                "preservation bank comes from the borrowed register")
+              (test.assert-true
+                (match (& fact.access)
+                  [(Write) (< index 2)]
+                  [(Read) (>= index 2)]
+                  [_ false])
+                "save writes and restore reads")))
+          (backend.compiler-backend-function-state-set-emit-current-site!
+            function-state
+            1)
+          (let
+            [later : String
+              (backend.compiler-backend-emergency-reg-save-asm gp -64 state)]
+            [next : origins.CompilerBackendStackAccessOriginList
+              (backend.compiler-backend-state-stack-access-origins state)]
+            (test.assert-i64-eq
+              (array-ref next.slots 4).home
+              32
+              "another site cannot alias a reused physical preservation slot")
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find capture (& later)))
+              1
+              "later save keeps its new token"))
+          (let
+            [locs : (__tl_dyn-array i64)
+              (backend.compiler-backend-function-scratch-i64-array
+                function-state
+                backend.compiler-backend-scratch-i64-array-emergency-save-locs)]
+            (for [kind (iterator.range 0 2)]
+              (set!
+                (array-ref locs 0)
+                (if (= kind 0)
+                  (cabi.compiler-abi-xmm-register-id 4)
+                  backend.compiler-backend-emergency-loc-elided))
+              (let
+                [park-save : String
+                  (backend.compiler-backend-emergency-entry-save-asm
+                    function-state
+                    0
+                    state)]
+                [park-restore : String
+                  (backend.compiler-backend-emergency-entry-restore-asm
+                    function-state
+                    0
+                    state)]
+                (test.assert-i64-eq
+                  (array-length
+                    (origins.compiler-backend-text-origins-find
+                      capture
+                      (& park-save)))
+                  0
+                  "register parking/elision has no stack write")
+                (test.assert-i64-eq
+                  (array-length
+                    (origins.compiler-backend-text-origins-find
+                      capture
+                      (& park-restore)))
+                  0
+                  "register parking/elision has no stack read"))))
+          (test.assert-i64-eq
+            (backend.compiler-backend-state-stack-access-origins state).len
+            5
+            "register-only preservation publishes no home access")
+          (backend.compiler-backend-function-state-set-emit-current-site!
+            function-state
+            0)
+          (for [reg
+            (iterator.range
+              cabi.compiler-reg-id-r8
+              (+ cabi.compiler-reg-id-r15 1))]
+            (with-scratch
+              (let
+                [saved : String
+                  (backend.compiler-backend-emergency-reg-save-asm
+                    reg
+                    -64
+                    state)]
+                (test.assert-true
+                  (> (string.string-length saved) 0)
+                  "temporary emission creates a preservation resource"))))
+          (for [reg
+            (iterator.range
+              cabi.compiler-reg-id-r8
+              (+ cabi.compiler-reg-id-r15 1))]
+            (let
+              [restored : String
+                (backend.compiler-backend-emergency-reg-restore-asm
+                  reg
+                  -64
+                  state)]
+              [all : origins.CompilerBackendStackAccessOriginList
+                (backend.compiler-backend-state-stack-access-origins state)]
+              [index : i64 (- reg cabi.compiler-reg-id-r8)]
+              (test.assert-i64-eq
+                (array-ref all.slots (+ 5 index)).home
+                (array-ref all.slots (+ 13 index)).home
+                "registry growth survives instruction scratch destruction")
+              (test.assert-i64-eq
+                (array-length
+                  (origins.compiler-backend-text-origins-find
+                    capture
+                    (& restored)))
+                1
+                "restored operand retains its own issued token")))))
+      (backend.compiler-backend-state-stack-origins-end! state)
+      (test.assert-i64-eq
+        (backend.compiler-backend-function-scratch-i64
+          function-state
+          backend.compiler-backend-scratch-i64-stack-home-plan)
+        0
+        "capture retirement unpublishes its registry owner")
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (backend-stack-origins-install-test-plan! state true false)
+      (let
+        [fresh : String
+          (backend.compiler-backend-emergency-reg-save-asm gp -64 state)]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        (test.assert-true
+          (> (string.string-length fresh) 0)
+          "fresh capture emits save")
+        (test.assert-i64-eq facts.len 1 "fresh capture has no retired accesses")
+        (test.assert-i64-eq
+          (array-ref facts.slots 0).home
+          30
+          "fresh function plan does not reuse a retired registry"))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-emergency-resources
+  (backend-stack-origins-emergency-test))

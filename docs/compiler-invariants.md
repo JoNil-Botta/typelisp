@@ -674,6 +674,15 @@ Lost annotations, duplicate or nested extents and foreign access identities
 reject rather than infer a function from label spelling or equal bytes. Access
 consumers explicitly exclude boundary tokens. This extent proof does not
 resolve final CFG edges, identify missing memory accesses or qualify regions.
+The closed local-control reader resolves named aliases and nearest numeric
+forward/backward labels over those same final instruction bounds. It reuses the
+shared line index, parser, branch-symbol helpers and canonical liveness graph
+builder; successor sets collapse equal taken/fallthrough targets. Returning
+calls fall through, while recognized runtime aborts, returns and traps do not.
+Unresolved, external or indirect transfers require explicit emitter authority;
+embedded data, unqualified layout directives and function falloff reject. This
+reader alone is not a complete machine decoder or source-region proof, and its
+unsupported cases must remain errors until their authorities are supplied.
 The backend now constructs instruction extents from its shared final-line
 parser for one registered function. Label aliases create no empty blocks, and
 labels or post-transfer instructions start new groups. Returning calls remain

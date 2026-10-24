@@ -949,6 +949,14 @@ annotations, truncated or foreign boundaries, crossing access ownership and
 explicit snapshot restoration. Boundary tokens cannot become memory accesses.
 Actual adapter fixtures bind their generated identity and every retained access
 through the final chunk renderer and instruction partition on both targets.
+Closed local-control fixtures independently enumerate the complete forward and
+reverse edge matrix for named aliases, repeated numeric forward/back references,
+conditional fallthrough, a self loop and unreachable code. Count-register branch
+aliases, duplicate-edge collapse and line-index growth retain exact graph nodes.
+Missing/duplicate labels, targets without instructions, empty or falling-off
+functions, indirect/external/unknown transfers and unqualified data reject.
+These are local closed-control checks; full emitter escape, data and source-region
+qualification remain separate.
 `compiler_backend_home_origins_tests.tl`
 pairs original instructions with the real noninjective frame-color remapper,
 including separate use/definition identities, repeated versus ambiguous uses,

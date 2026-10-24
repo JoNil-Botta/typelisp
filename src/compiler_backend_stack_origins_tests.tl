@@ -6071,3 +6071,147 @@ second:
 (test
   backend-stack-origins-final-machine-boundaries
   (backend-stack-origins-machine-partition-test))
+
+(define (backend-stack-origins-machine-graph-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [text : String
+      "f:\n1:\n    jz 2f\n.Lalias:\n    nop\n    jmp 1f\n1:\n    loop 1b\n2:\n    ret\n.Ldead:\n    ud2"]
+    (match (backend.compiler-backend-final-stack-graph
+      state
+      (backend.CompilerBackendFinalStackRequest
+        text
+        (ir.CompilerIrSymbolId 44)
+        capture))
+      [(Err message) (io.panic message)]
+      [(Ok control)
+        (test.assert-i64-eq
+          control.partition.blocks
+          5
+          "aliases do not invent graph nodes")
+        (test.assert-i64-eq
+          (array-length control.partition.operations)
+          6
+          "actual final instruction count")
+        (for [from (iterator.range 0 5)]
+          (for [to (iterator.range 0 5)]
+            (let
+              [expected : bool
+                (or
+                  (and (= from 0) (or (= to 1) (= to 3)))
+                  (and (= from 1) (= to 2))
+                  (and (= from 2) (or (= to 2) (= to 3))))]
+              [successors : live.CompilerLiveIndexVec
+                (clone (array-ref control.graph.successors from))]
+              [predecessors : live.CompilerLiveIndexVec
+                (clone (array-ref control.graph.predecessors to))]
+              [forward : bool false]
+              [reverse : bool false]
+              (for [i (iterator.range 0 (array-length successors.items))]
+                (when (= (array-ref successors.items i) to) (set! forward true)))
+              (for [i (iterator.range 0 (array-length predecessors.items))]
+                (when
+                  (= (array-ref predecessors.items i) from)
+                  (set! reverse true)))
+              (test.assert-true
+                (= expected forward)
+                "independent direct/numeric/fallthrough edge matrix")
+              (test.assert-true
+                (= expected reverse)
+                "canonical builder's reverse edges agree"))))])
+    (let
+      [buffer : text_buf.TextBuf (text_buf.append (text_buf.empty) "f:\n")]
+      (for [i (iterator.range 0 64)]
+        (text_buf.append!
+          buffer
+          (string.concat3 ".Lalias" (string.int->string i) ":\n")))
+      (text_buf.append! buffer "    ret\n")
+      (match (backend.compiler-backend-final-stack-graph
+        state
+        (backend.CompilerBackendFinalStackRequest
+          (text_buf.render buffer)
+          (ir.CompilerIrSymbolId 44)
+          capture))
+        [(Err message) (io.panic message)]
+        [(Ok control)
+          (test.assert-i64-eq
+            control.partition.blocks
+            1
+            "index growth and many aliases retain one actual block")
+          (test.assert-i64-eq
+            (array-length control.graph.successors)
+            1
+            "no phantom graph nodes from spare line capacity")]))
+    (match (backend.compiler-backend-final-stack-graph
+      state
+      (backend.CompilerBackendFinalStackRequest
+        "f:\n    jz .Lnext\n.Lnext:\n    ret\n"
+        (ir.CompilerIrSymbolId 44)
+        capture))
+      [(Err message) (io.panic message)]
+      [(Ok control)
+        (test.assert-i64-eq
+          (array-length (array-ref control.graph.successors 0).items)
+          1
+          "taken and fallthrough to one block form one canonical edge")])
+    (let
+      [invalid : (Array String 12)
+        (array
+          "f:\n    jmp external\n"
+          "f:\n    jmp *%rax\n"
+          "f:\n    jmp 1f\n"
+          "f:\n    jmp 1b\n"
+          "f:\n.Lx:\n    ret\n.Lx:\n    ret\n"
+          "f:\n    jmp .Lend\n.Lend:\n"
+          "f:\n    nop"
+          "f:\n    junknown f\n    ret\n"
+          "f:\n    .quad 0\n    ret\n"
+          "f:\n    jz f\n"
+          ""
+          "f:\n01:\n    jmp 01b\n")]
+      (for [i (iterator.range 0 12)]
+        (test.assert-true
+          (match (backend.compiler-backend-final-stack-graph
+            state
+            (backend.CompilerBackendFinalStackRequest
+              (owned_view.compiler-owned-shared-view (array-ref invalid i))
+              (ir.CompilerIrSymbolId 44)
+              capture))
+            [(Err _) true]
+            [_ false])
+          "external/indirect/unresolved/duplicate/data/falloff/unknown flow cannot become a closed graph")))
+    (let
+      [mnemonics : (Array String 4) (array "loopz" "loopnz" "jecxz" "jrcxz")]
+      (for [i (iterator.range 0 4)]
+        (let
+          [body : String
+            (origins.compiler-backend-text-origins-cat
+              capture
+              "f:\n    "
+              (owned_view.compiler-owned-shared-view (array-ref mnemonics i))
+              " f\n    ret\n")]
+          (match (backend.compiler-backend-final-stack-graph
+            state
+            (backend.CompilerBackendFinalStackRequest
+              body
+              (ir.CompilerIrSymbolId 44)
+              capture))
+            [(Err message) (io.panic message)]
+            [(Ok control)
+              (test.assert-i64-eq
+                control.partition.blocks
+                2
+                "count branches end their actual block")
+              (test.assert-i64-eq
+                (array-length (array-ref control.graph.successors 0).items)
+                2
+                "count branch has both exact local target and fallthrough")]))))
+    (origins.compiler-backend-text-origins-release! (&mut capture))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-final-machine-graph
+  (backend-stack-origins-machine-graph-test))

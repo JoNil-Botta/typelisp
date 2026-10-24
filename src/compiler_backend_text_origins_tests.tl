@@ -288,7 +288,7 @@
         (Vector)
         32
         (Read))]
-    (for [invalid (iterator.range 0 10)]
+    (for [invalid (iterator.range 0 12)]
       (let
         [bad : origins.CompilerBackendStackAccessOrigin (clone access)]
         (cond
@@ -300,6 +300,11 @@
           [(= invalid 5) (set! bad.home-bytes 16)]
           [(= invalid 6) (set! bad.anchor (FunctionEntry))]
           [(= invalid 7) (set! bad.anchor (FunctionExit))]
+          [(= invalid 10) (set! bad.anchor (FunctionParameters))]
+          [(= invalid 11)
+            (set! bad.anchor (FunctionParameters))
+            (set! bad.owner (CallAbi))
+            (set! bad.access (Write))]
           [else
             (set! bad.owner (CallAbi))
             (set!

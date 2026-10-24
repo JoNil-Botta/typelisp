@@ -890,8 +890,13 @@ distinct generated versus equal-spelling source identities, and surviving
 parameter/frame tokens. Pure plans check exact/spare parameter extents and
 reject wrong functions, invented IR sites, source queries and noncanonical
 parameter ordinals. The shared native smoke calls these fixtures at opt0/1/2.
-These local marshalling facts do not establish incoming/outgoing ABI-area
-coverage or final report acceptance.
+Incoming-area tests distinguish caller-area reads from local initialization,
+check separate ordinal resources and invalid negative slots, and reject wrong
+parameter-anchor owners/directions. Actual adapter parents cover scalar and
+floating bank overflow and both aggregate words; an independent ABI inventory
+includes SysV's whole-aggregate fit boundary. Source entry and inactive-owner
+fixtures check the same authority without borrowing a synthetic plan.
+Outgoing-area completeness and final report acceptance remain separate.
 `compiler_backend_stack_origins_tests.tl`
 checks actual vector load/store/folded/fallback factories and a higher-level
 vector copy with equal colored offsets but distinct logical homes. The native

@@ -18092,12 +18092,15 @@
           (text_origins.CompilerBackendStackAccessOrigin
             (compiler_ir_types.compiler-ir-symbol-typed-id function)
             (if function-scoped?
-              (match (& request.access)
-                [(Write) (FunctionEntry)]
-                [(Read) (FunctionExit)]
-                [(ReadWrite)
-                  (io.panic
-                    "stack traffic: function preservation cannot be RMW")])
+              (match (& request.key)
+                [(IncomingStackSlot _) (FunctionParameters)]
+                [_
+                  (match (& request.access)
+                    [(Write) (FunctionEntry)]
+                    [(Read) (FunctionExit)]
+                    [(ReadWrite)
+                      (io.panic
+                        "stack traffic: function preservation cannot be RMW")])])
               (match (compiler-backend-stack-home-plan function-state).kind
                 [(ClosureAdapter) (AdapterBody)]
                 [(Source) (SourceBlock block)]))
@@ -18105,6 +18108,7 @@
             home.bytes
             (match (& request.key)
               [(FramePointer) (CallAbi)]
+              [(IncomingStackSlot _) (CallAbi)]
               [(CalleeSaveRegister _) (CallAbi)]
               [(EmergencyRegister _) (EmergencyScratch)]
               [(ParallelCopySlot _) (PlannedScratch)]
@@ -18116,6 +18120,33 @@
           text)
           [(Ok result) result]
           [(Err message) (io.panic message)])))))
+
+;; The ABI marshaller supplies its sequential stack-word ordinal, not an
+;; address-derived identity. The parameter area is distinct from local homes.
+(define (compiler-backend-incoming-stack-operand-origin
+  [state : CompilerBackendState]
+  [text : String]
+  [slot : i64]
+  [bank : stack_traffic.CompilerStackTrafficBank]
+  [bytes : i64]) : String
+  (when
+    (!= (compiler-backend-state-stack-text-origins state).storage 0)
+    (match (compiler-backend-frame-pointer-context-check state)
+      [(Err message) (io.panic message)]
+      [(Ok) unit])
+    (unless
+      (compiler-backend-function-scratch-bool?
+        (compiler-backend-state-function-state state)
+        compiler-backend-scratch-bool-parameter-origins)
+      (io.panic "stack traffic: incoming ABI read has no parameter context")))
+  (compiler-backend-preservation-operand-origin
+    state
+    text
+    (CompilerBackendPreservationOperandRequest
+      (IncomingStackSlot slot)
+      bank
+      bytes
+      (Read))))
 
 ;; Every emitted function requires its own installed plan, including adapters.
 (define (compiler-backend-frame-pointer-context-check
@@ -21352,8 +21383,10 @@
 (define (compiler-backend-emit-load-float-memory
   [addr : String]
   [reg : (& reg str)]
-  [ty : (& ty compiler_ast_types.AstType)]) : String
-  (str_cat.str-cat
+  [ty : (& ty compiler_ast_types.AstType)]
+  [backend-state : CompilerBackendState]) : String
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins backend-state)
     "    "
     (compiler-backend-float-move ty)
     " "
@@ -23978,9 +24011,20 @@
               (General)))
           backend-state))]
     (compiler-backend-emit-group-word-copy
-      (compiler-backend-frame-offset-with-backend-state
+      (compiler-backend-incoming-stack-operand-origin
         backend-state
-        (compiler-backend-incoming-stack-arg-offset target stack-idx))
+        (compiler-backend-frame-offset-with-backend-state
+          backend-state
+          (compiler-backend-incoming-stack-arg-offset target stack-idx))
+        stack-idx
+        (if (compiler-backend-group-word-sse?
+          type-segment-bases
+          program-index
+          ty
+          word-index)
+          (Vector)
+          (General))
+        8)
       dst
       (compiler-backend-group-word-sse?
         type-segment-bases
@@ -34596,7 +34640,11 @@
             (text_origins.compiler-backend-text-origins-cat
               (compiler-backend-state-stack-text-origins backend-state)
               ptr-asm
-              (compiler-backend-emit-load-float-memory base-mem load-reg ty)
+              (compiler-backend-emit-load-float-memory
+                base-mem
+                load-reg
+                ty
+                backend-state)
               store-asm))
           (text_origins.compiler-backend-text-origins-cat
             (compiler-backend-state-stack-text-origins backend-state)
@@ -34633,7 +34681,7 @@
         (owned_view.compiler-owned-shared-view dst-home))]
     (text_origins.compiler-backend-text-origins-cat
       (compiler-backend-state-stack-text-origins backend-state)
-      (compiler-backend-emit-load-float-memory addr load-reg ty)
+      (compiler-backend-emit-load-float-memory addr load-reg ty backend-state)
       (if (string.eq dst-home "")
         (compiler-backend-emit-store-float-var
           assignments
@@ -63977,11 +64025,20 @@
                   (ResultCompilerBackend.Ok
                     (let
                       [addr : String
-                        (compiler-backend-frame-offset-with-backend-state
+                        (compiler-backend-incoming-stack-operand-origin
                           backend-state
-                          (compiler-backend-incoming-stack-arg-offset
-                            target
-                            stack-idx))]
+                          (compiler-backend-frame-offset-with-backend-state
+                            backend-state
+                            (compiler-backend-incoming-stack-arg-offset
+                              target
+                              stack-idx))
+                          stack-idx
+                          (if is-float
+                            (Vector)
+                            (General))
+                          (if is-float
+                            (compiler-backend-float-access-bytes ty)
+                            (compiler-backend-type-size type-segment-bases ty)))]
                       (if is-float
                         (compiler-backend-emit-load-float-address-to-var
                           assignments
@@ -64438,11 +64495,20 @@
                   (Ok
                     (let
                       [addr : String
-                        (compiler-backend-frame-offset-with-backend-state
+                        (compiler-backend-incoming-stack-operand-origin
                           backend-state
-                          (compiler-backend-incoming-stack-arg-offset
-                            target
-                            stack-idx))]
+                          (compiler-backend-frame-offset-with-backend-state
+                            backend-state
+                            (compiler-backend-incoming-stack-arg-offset
+                              target
+                              stack-idx))
+                          stack-idx
+                          (if is-float
+                            (Vector)
+                            (General))
+                          (if is-float
+                            (compiler-backend-float-access-bytes ty)
+                            (compiler-backend-type-size type-segment-bases ty)))]
                       [exclude-n : i64
                         (compiler-backend-param-register-exclude-count
                           backend-state

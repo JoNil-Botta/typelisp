@@ -727,9 +727,17 @@ the program's actual representation facts. A typed adapter-body anchor cannot
 inherit a source block. The owned adapter factory restores a nested caller's
 owner and plan, or restores the production ownerless state, after emergency
 wrapping. Parameter stores, forwarded local reads and the explicit frame pop
-retain their tokens through concatenation and rsp rebasing. Incoming/outgoing
-ABI stack areas, other implicit traffic and final machine anchor reconciliation
-remain required before a complete census.
+retain their tokens through concatenation and rsp rebasing.
+Incoming parameter reads use distinct function-scoped ABI stack-word resources,
+issued from the marshaller's sequential ABI ordinal rather than a displacement
+or a local variable's colored slot. Their explicit parameter anchor requires a
+read from an active parameter context; it cannot inherit a body block or become
+a frame restore. Capacity is eight bytes per ABI word, while actual scalar and
+floating read widths remain explicit. Group words retain separate ordinals and
+SysV's all-or-stack register-fit rule. Shared scalar, float and group-copy
+parents transport the marked addresses without changing machine bytes.
+Outgoing ABI areas, other implicit traffic and final machine anchor
+reconciliation remain required before a complete census.
 Parallel-copy frame temporaries use distinct typed slot keys in the same
 preservation registry. Each is one eight-byte `PlannedScratch` home with a
 `Bytes` bank: GP and floating moves transport bits through that resource, while

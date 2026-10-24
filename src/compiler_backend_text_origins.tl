@@ -55,6 +55,7 @@
 (defenum CompilerBackendStackAccessAnchor
   (SourceBlock i64)
   (AdapterBody)
+  (FunctionParameters)
   (FunctionEntry)
   (FunctionExit))
 
@@ -181,6 +182,14 @@
         (match (& access.anchor)
           [(SourceBlock block) (>= block 0)]
           [(AdapterBody) true]
+          [(FunctionParameters)
+            (and
+              (match (& access.owner)
+                [(CallAbi) true]
+                [_ false])
+              (match (& access.access)
+                [(Read) true]
+                [_ false]))]
           [(FunctionEntry)
             (and
               (match (& access.owner)

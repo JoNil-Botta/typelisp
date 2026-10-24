@@ -1216,6 +1216,30 @@ join:
                 8)
               "ordinary frame pointer is distinct from an FPO allocated rbp save")
             (test.assert-i64-eq home.bytes 8 "full saved frame pointer")]))
+      (for [slot (iterator.range 0 3)]
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          plan.entry-block
+          -1
+          (IncomingStackSlot slot))
+          [(Err message) (io.panic message)]
+          [(Ok home)
+            (test.assert-i64-eq
+              home.id
+              (+ 10 slot)
+              "incoming ABI ordinals are distinct from frame/callee/local homes")
+            (test.assert-i64-eq home.bytes 8 "one ABI stack word")]))
+      (test.assert-true
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          plan.entry-block
+          -1
+          (IncomingStackSlot -1))
+          [(Err _) true]
+          [_ false])
+        "negative ABI ordinal rejects")
       (test.assert-true
         (match (homes.compiler-backend-home-preservation!
           (&mut plan)

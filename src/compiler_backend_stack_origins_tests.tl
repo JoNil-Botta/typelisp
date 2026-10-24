@@ -531,6 +531,15 @@
         [(None) true]
         [_ false])
       "inactive entry capture is empty")
+    (test.assert-string-eq
+      (backend.compiler-backend-incoming-stack-operand-origin
+        plain
+        "16(%rbp)"
+        0
+        (General)
+        8)
+      "16(%rbp)"
+      "inactive incoming factory preserves bytes")
     (test.assert-true
       (not (backend.compiler-backend-state-function-state-active? plain))
       "inactive entry context does not allocate function state")
@@ -625,6 +634,39 @@
             [_ -1])
           10
           "entry block attribution")))
+    (let
+      [entry : backend.CompilerBackendParameterOriginsContext
+        (backend.compiler-backend-parameter-origins-begin! state)]
+      [incoming : String
+        (backend.compiler-backend-incoming-stack-operand-origin
+          state
+          "16(%rbp)"
+          0
+          (General)
+          8)]
+      [facts : origins.CompilerBackendStackAccessOriginList
+        (backend.compiler-backend-state-stack-access-origins state)]
+      [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+        (& (array-ref facts.slots 2))]
+      (test.assert-i64-eq facts.len 3 "source entry has a distinct ABI read")
+      (test.assert-i64-eq fact.function.value 44 "source function authority")
+      (test.assert-i64-eq
+        fact.home
+        30
+        "incoming area cannot alias a colored local")
+      (test.assert-true
+        (match (& fact.anchor)
+          [(FunctionParameters) true]
+          [_ false])
+        "source incoming area uses parameter authority")
+      (test.assert-i64-eq
+        (array-length
+          (origins.compiler-backend-text-origins-find
+            (backend.compiler-backend-state-stack-text-origins state)
+            (& incoming)))
+        1
+        "source ABI operand retains its token")
+      (backend.compiler-backend-parameter-origins-end! state entry))
     (backend.compiler-backend-state-release-final-arenas! state)))
 
 (test
@@ -5003,6 +5045,7 @@ second:
                 [writes : i64 0]
                 [reads : i64 0]
                 [frame : i64 0]
+                [incoming : i64 0]
                 (test.assert-string-eq
                   text
                   plain
@@ -5042,6 +5085,23 @@ second:
                           frame-home
                           "actual frame push/pop resource")
                         (+= frame 1)]
+                      [(FunctionParameters)
+                        (+= incoming 1)
+                        (test.assert-i64-eq
+                          fact.home-bytes
+                          8
+                          "ABI stack word capacity")
+                        (test.assert-i64-eq
+                          fact.access-bytes
+                          (if (= shape 2)
+                            4
+                            8)
+                          "actual incoming read width")
+                        (test.assert-true
+                          (match (& fact.access)
+                            [(Read) true]
+                            [_ false])
+                          "incoming ABI area is read, not the local initialization")]
                       [(AdapterBody)
                         (when
                           (match (& fact.owner)
@@ -5063,6 +5123,34 @@ second:
                           false
                           "adapter cannot inherit a source block")])))
                 (test.assert-i64-eq frame 2 "one real frame push and pop")
+                (let
+                  [abi : cabi.CompilerRegTargetAbi
+                    (if (= platform 0)
+                      (Linux)
+                      (Windows))]
+                  [words : i64 (cond [(= shape 0) 0] [(= shape 3) 18] [else 9])]
+                  [registers : i64
+                    (if (= shape 2)
+                      (-
+                        (cabi.compiler-abi-float-arg-register-count
+                          abi
+                          (Internal))
+                        (if (= platform 1)
+                          1
+                          0))
+                      (-
+                        (cabi.compiler-abi-gp-arg-register-count abi (Internal))
+                        1))]
+                  ;; SysV admits an aggregate only when both words fit.
+                  (when
+                    (and (= shape 3) (= platform 0))
+                    (set! registers (* 2 (/ registers 2))))
+                  (test.assert-i64-eq
+                    incoming
+                    (if (> words registers)
+                      (- words registers)
+                      0)
+                    "independent ABI register inventory predicts every stack read"))
                 (test.assert-i64-eq
                   writes
                   (cond [(= shape 0) 0] [(= shape 3) 18] [else 9])

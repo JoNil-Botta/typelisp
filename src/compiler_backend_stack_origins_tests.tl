@@ -6638,3 +6638,147 @@ second:
 (test
   backend-stack-origins-emitted-tail-authority
   (backend-stack-origins-tail-test))
+
+(define (backend-stack-origins-bounds-data-test) : unit
+  (builtin_ids.compiler-builtin-initialize-for-parse!)
+  (for [platform (iterator.range 0 2)]
+    (for [constant (iterator.range 0 2)]
+      (let
+        [state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+        [function-state : backend.CompilerBackendFunctionState
+          (backend.compiler-backend-state-function-state state)]
+        [index : backend.CompilerBackendProgramIndex
+          (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+            state
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (ir.compiler-ir-function-seq-empty)
+            (ir.compiler-ir-extern-seq-empty)
+            (profile_state.compiler-profile-state-new))]
+        [call-space : i64
+          (if (= platform 0)
+            0
+            32)]
+        [runtime : backend.CompilerBackendRuntimePlan
+          (match (backend.compiler-backend-runtime-plan-with-backend-state
+            state
+            (Program
+              (ir.compiler-ir-global-seq-empty)
+              (ir.compiler-ir-function-seq-empty)
+              (ir.compiler-ir-extern-seq-empty)))
+            [(Ok result) result]
+            [(Err _) (io.panic "bounds fixture runtime refused")])]
+        (backend.compiler-backend-state-set-emission-target-policy!
+          state
+          (backend.compiler-backend-target-policy-new
+            (if (= platform 0)
+              (Linux)
+              (Windows))))
+        (backend.compiler-backend-function-state-set-bool!
+          function-state
+          backend.compiler-backend-function-bool-current-fn-win64
+          (= platform 1))
+        (backend.compiler-backend-function-state-set-bool!
+          function-state
+          backend.compiler-backend-function-bool-abort-site-active
+          true)
+        (backend.compiler-backend-function-state-set-string!
+          function-state
+          backend.compiler-backend-function-string-abort-site-path
+          "bounds_fixture")
+        (backend.compiler-backend-function-scratch-set-i64!
+          function-state
+          backend.compiler-backend-scratch-i64-current-source-function
+          44)
+        (let
+          [plain : String
+            (if (= constant 0)
+              (backend.compiler-backend-bounds-check-asm
+                ""
+                ""
+                "%r9"
+                "%r8"
+                call-space
+                ".Lok"
+                runtime
+                index)
+              (backend.compiler-backend-bounds-check-const-index-asm
+                ""
+                "%r9"
+                "$0"
+                call-space
+                ".Lok"
+                runtime
+                index))]
+          ;; Both emitters must name the same original descriptor to compare
+          ;; bytes; this resets only this fixture's ordinary/captured counter.
+          (backend.compiler-backend-state-set-abort-site-counter! state 0)
+          (backend.compiler-backend-state-stack-origins-begin! state)
+          (let
+            [capture : origins.CompilerBackendTextOrigins
+              (backend.compiler-backend-state-stack-text-origins state)]
+            [text : String
+              (if (= constant 0)
+                (backend.compiler-backend-bounds-check-asm
+                  ""
+                  ""
+                  "%r9"
+                  "%r8"
+                  call-space
+                  ".Lok"
+                  runtime
+                  index)
+                (backend.compiler-backend-bounds-check-const-index-asm
+                  ""
+                  "%r9"
+                  "$0"
+                  call-space
+                  ".Lok"
+                  runtime
+                  index))]
+            [body : String
+              (origins.compiler-backend-text-origins-cat
+                capture
+                "f:\n"
+                text
+                "    ret\n")]
+            (test.assert-string-eq
+              text
+              plain
+              "actual bounds parents preserve ordinary bytes on both targets")
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find capture (& text)))
+              6
+              "all six actual descriptor line witnesses cross both bounds parents")
+            (match (backend.compiler-backend-final-stack-graph
+              state
+              (backend.CompilerBackendFinalStackRequest
+                body
+                (ir.CompilerIrSymbolId 44)
+                capture))
+              [(Err message) (io.panic message)]
+              [(Ok control)
+                (test.assert-i64-eq
+                  control.partition.blocks
+                  4
+                  "check, noreturn, data skip and continuation are exact blocks")
+                (test.assert-i64-eq
+                  (array-length control.partition.accesses)
+                  0
+                  "data witnesses are not memory access facts")])
+            (test.assert-true
+              (match (backend.compiler-backend-final-stack-graph
+                state
+                (backend.CompilerBackendFinalStackRequest
+                  (string.concat3 "f:\n" (string.copy (& text)) "    ret\n")
+                  (ir.CompilerIrSymbolId 44)
+                  capture))
+                [(Err _) true]
+                [_ false])
+              "the same unmarked descriptor bytes cannot acquire authority"))
+          (backend.compiler-backend-state-release-final-arenas! state))))))
+
+(test
+  backend-stack-origins-bounds-data-transport
+  (backend-stack-origins-bounds-data-test))

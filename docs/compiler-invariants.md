@@ -701,6 +701,9 @@ separate final events; frame-pointer rewriting preserves the same witness.
 These control events create no memory facts. Lost/partial/foreign witnesses
 cannot authorize external or indirect flow. Indirect local dispatch and other
 data emitters still require their distinct authorities.
+The ordinary and constant-index bounds-check builders preserve the actual
+descriptor line witnesses through their abort tail and comparison parents;
+raw equal-looking descriptor bytes cannot substitute for that transport.
 The backend now constructs instruction extents from its shared final-line
 parser for one registered function. Label aliases create no empty blocks, and
 labels or post-transfer instructions start new groups. Returning calls remain

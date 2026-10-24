@@ -5,6 +5,7 @@
   (fixtures.backend-stack-origins-machine-graph-test)
   (fixtures.backend-stack-origins-data-test)
   (fixtures.backend-stack-origins-tail-test)
+  (fixtures.backend-stack-origins-bounds-data-test)
   (fixtures.backend-stack-origins-local-test)
   (fixtures.backend-stack-origins-c-memory-test)
   (fixtures.backend-stack-origins-tail-slot-test)

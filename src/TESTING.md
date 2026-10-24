@@ -970,6 +970,9 @@ ordinal/block and retained source anchor, function registration and cloned
 adapter events without memory facts. Invalid identities/anchors/opcodes,
 partial or multiple statements and lost/foreign witnesses reject; unmarked
 indirect/external transfers remain errors.
+Bounds descriptor transport fixtures exercise ordinary and constant-index
+builders on both target ABIs, compare complete unmarked/captured bytes and
+verify all six data-line witnesses, exact graph blocks and lost-marker rejection.
 `compiler_backend_home_origins_tests.tl`
 pairs original instructions with the real noninjective frame-color remapper,
 including separate use/definition identities, repeated versus ambiguous uses,

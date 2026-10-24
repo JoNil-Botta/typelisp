@@ -33886,27 +33886,51 @@
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : String
   (if (compiler-backend-abort-site-active? program-index.backend-state)
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins program-index.backend-state)
       (compiler-backend-abort-call-three-asm
         "tl_oob_abort_at"
         "bounds"
-        (str_cat.str-cat "    pushq " length-operand "\n")
-        (str_cat.str-cat "    pushq " index-operand "\n")
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins
+            program-index.backend-state)
+          "    pushq "
+          length-operand
+          "\n")
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins
+            program-index.backend-state)
+          "    pushq "
+          index-operand
+          "\n")
         call-space
         program-index.backend-state)
-      (str_cat.str-cat ok-symbol ":\n"))
-    (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins program-index.backend-state)
+        ok-symbol
+        ":\n"))
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins program-index.backend-state)
       (compiler-backend-emit-call-space-sub call-space)
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins program-index.backend-state)
         "    call "
         (compiler-backend-call-symbol-index
           cbi.compiler-builtin-id-tl-oob-abort
           plan
           program-index)
         "\n"
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins
+            program-index.backend-state)
           (compiler-backend-emit-call-space-add call-space)
-          (str_cat.str-cat ok-symbol ":\n" "" ""))
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins
+              program-index.backend-state)
+            ok-symbol
+            ":\n"
+            ""
+            ""))
         ""))))
 
 (define (compiler-backend-bounds-check-asm
@@ -33918,10 +33942,12 @@
   [ok-symbol : String]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : String
-  (str_cat.str-cat
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins program-index.backend-state)
     index-asm
     length-asm
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins program-index.backend-state)
       "    cmpq "
       length-operand
       ", "
@@ -33953,9 +33979,11 @@
   [ok-symbol : String]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]) : String
-  (str_cat.str-cat
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins program-index.backend-state)
     length-asm
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins program-index.backend-state)
       "    cmpq "
       index-imm
       ", "

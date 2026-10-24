@@ -87,6 +87,10 @@
           (string-data request.text))]
       [lines : i64 0]
       [cursor : i64 0]
+      [spans : (__tl_dyn-array text_origins.CompilerBackendTextOrigin)
+        (text_origins.compiler-backend-text-origins-find
+          request.capture
+          (& request.text))]
       [stream : CompilerBackendStreamState
         (compiler-backend-state-stream-state state)]
       [context : CompilerBackendPeepholeParseContext
@@ -123,7 +127,33 @@
             [kind : i64 (compiler-backend-peephole-record-kind (& record))]
             (cond
               [(= kind compiler-backend-sweep-line-kind-label)
-                (set! leader? true)]
+                (let
+                  [code-label? : bool true]
+                  (for [i (iterator.range 0 (array-length spans))]
+                    (let
+                      [span : (& spans text_origins.CompilerBackendTextOrigin)
+                        (& (array-ref spans i))]
+                      (when
+                        (and
+                          (= span.start cursor)
+                          (match (& span.kind)
+                            [(DataLine _) true]
+                            [_ false]))
+                        (unless
+                          (and
+                            (= span.token request.function.value)
+                            (= span.end end)
+                            (string.eq
+                              (& span.expected)
+                              (string.substring-view
+                                (& request.text)
+                                cursor
+                                (- end cursor))))
+                          (return
+                            (Err
+                              "stack traffic: final data label witness changed")))
+                        (set! code-label? false))))
+                  (when code-label? (set! leader? true)))]
               [(= kind compiler-backend-sweep-line-kind-instruction)
                 (when (and leader? (> count 0)) (+= block 1))
                 (set!
@@ -20721,29 +20751,54 @@
       (compiler-backend-state-emission-target-policy backend-state).shared-object]
     ;; Under the shared-object code model the descriptor's path word needs a
     ;; load-time relocation, so it lives in `.data.rel.ro` instead of inline.
-    (str_cat.str-cat
-      (if shared-object
-        "    .pushsection .data.rel.ro,\"aw\",@progbits\n    .balign 8\n"
-        (str_cat.str-cat "    jmp " end-label "\n    .balign 8\n"))
-      label
-      ":\n    .quad "
-      (compiler-backend-string-data-label path)
-      "\n    .quad "
-      (string.int->string (string.string-length path))
-      "\n    .quad "
-      (string.int->string
-        (compiler-backend-function-state-i64
-          function-state
-          compiler-backend-function-i64-abort-site-line))
-      "\n    .quad "
-      (string.int->string
-        (compiler-backend-function-state-i64
-          function-state
-          compiler-backend-function-i64-abort-site-column))
-      "\n"
-      (if shared-object
-        "    .popsection\n"
-        (str_cat.str-cat end-label ":\n")))))
+    (let
+      [prefix : String
+        (if shared-object
+          "    .pushsection .data.rel.ro,\"aw\",@progbits\n"
+          (str_cat.str-cat "    jmp " end-label "\n"))]
+      [suffix : String
+        (if shared-object
+          "    .popsection\n"
+          (str_cat.str-cat end-label ":\n"))]
+      [text : String
+        (str_cat.str-cat
+          prefix
+          "    .balign 8\n"
+          label
+          ":\n    .quad "
+          (compiler-backend-string-data-label path)
+          "\n    .quad "
+          (string.int->string (string.string-length path))
+          "\n    .quad "
+          (string.int->string
+            (compiler-backend-function-state-i64
+              function-state
+              compiler-backend-function-i64-abort-site-line))
+          "\n    .quad "
+          (string.int->string
+            (compiler-backend-function-state-i64
+              function-state
+              compiler-backend-function-i64-abort-site-column))
+          "\n"
+          suffix)]
+      (compiler-backend-origin-invariant-text
+        (text_origins.compiler-backend-text-origins-data
+          (compiler-backend-state-stack-text-origins backend-state)
+          (text_origins.CompilerBackendDataOriginRequest
+            (compiler_ir_types.compiler-ir-symbol-typed-id
+              (compiler-backend-function-scratch-i64
+                function-state
+                compiler-backend-scratch-i64-current-source-function))
+            (if shared-object
+              (OtherSection)
+              (InlineData))
+            (compiler-backend-global-shared-view text)
+            (if shared-object
+              0
+              (string.string-length prefix))
+            (if shared-object
+              (string.string-length text)
+              (- (string.string-length text) (string.string-length suffix)))))))))
 
 ;; SAVE-SECOND runs before SAVE-FIRST. The top of stack is therefore the first
 ;; reported value and can be popped straight into ABI argument 1.
@@ -20757,7 +20812,8 @@
   (let
     [label : String
       (compiler-backend-abort-site-next-label backend-state suffix)]
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       save-second
       save-first
       (compiler-backend-abort-site-load-arg0 backend-state label)
@@ -20788,7 +20844,8 @@
   (let
     [label : String
       (compiler-backend-abort-site-next-label backend-state suffix)]
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       save-width
       save-count
       (compiler-backend-abort-site-load-arg0 backend-state label)
@@ -20860,7 +20917,8 @@
           "\n"
           (compiler-backend-abort-site-load-arg0 backend-state label)
           "    call tl_panic_at\n")]
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         (string.replace asm needle replacement)
         (compiler-backend-abort-site-descriptor-after-call backend-state label)))))
 
@@ -96700,6 +96758,47 @@ tl_shared_object_init:
       [context : CompilerBackendPeepholeParseContext
         (CompilerBackendPeepholeParseContext state.address stream.address data)]
       [operation : i64 0]
+      [data-lines : backend_i64_i64_map.Map
+        (backend_i64_i64_map.with-capacity (+ count 1))]
+      [data-count : i64 0]
+      [used-data : i64 0]
+      [pending-data? : bool false]
+      [previous-flow : i64 0]
+      [data-flags : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      [inline-data-flags : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      [blocked-labels : (__tl_dyn-array bool) (__tl_make-array bool count)]
+      [all-spans : (__tl_dyn-array text_origins.CompilerBackendTextOrigin)
+        (text_origins.compiler-backend-text-origins-find
+          request.capture
+          (& request.text))]
+      (for [i (iterator.range 0 (array-length all-spans))]
+        (let
+          [span : (& all-spans text_origins.CompilerBackendTextOrigin)
+            (& (array-ref all-spans i))]
+          (when
+            (match (& span.kind)
+              [(DataLine _) true]
+              [_ false])
+            (unless
+              (and
+                (= span.token request.function.value)
+                (>= span.start 0)
+                (> span.end span.start)
+                (<= span.end length)
+                (string.eq
+                  (& span.expected)
+                  (string.substring-view
+                    (& request.text)
+                    span.start
+                    (- span.end span.start))))
+              (return
+                (Err
+                  "stack traffic: final data witness changed or crosses function ownership")))
+            (when
+              (backend_i64_i64_map.contains? (& data-lines) span.start)
+              (return (Err "stack traffic: duplicate final data line witness")))
+            (backend_i64_i64_map.insert-ref! (&mut data-lines) span.start i)
+            (+= data-count 1))))
       (for [i (iterator.range 0 count)]
         (let
           [start : i64 (array-ref starts i)]
@@ -96720,6 +96819,27 @@ tl_shared_object_init:
           [last : i64 (compiler-backend-cold-line-last data first end)]
           (set! (array-ref next-op i) operation)
           (set! (array-ref resolved i) -1)
+          (match (backend_i64_i64_map.get (& data-lines) start)
+            [(LookupMissing) unit]
+            [(LookupFound index)
+              (let
+                [span : (& all-spans text_origins.CompilerBackendTextOrigin)
+                  (& (array-ref all-spans index))]
+                (unless
+                  (and
+                    (= span.end end)
+                    (!= kind compiler-backend-sweep-line-kind-instruction))
+                  (return
+                    (Err
+                      "stack traffic: data witness is not one complete noninstruction line")))
+                (set! (array-ref data-flags i) true)
+                (when
+                  (match (& span.kind)
+                    [(DataLine (InlineData)) true]
+                    [_ false])
+                  (set! (array-ref inline-data-flags i) true)
+                  (set! pending-data? true))
+                (+= used-data 1))])
           (cond
             [(= kind compiler-backend-sweep-line-kind-label)
               (unless
@@ -96752,6 +96872,16 @@ tl_shared_object_init:
                     i))
                 (set! (array-ref names i) name))]
             [(= kind compiler-backend-sweep-line-kind-instruction)
+              (when
+                pending-data?
+                (unless
+                  (and
+                    (> operation 0)
+                    (or (= previous-flow 1) (= previous-flow 3)))
+                  (return
+                    (Err
+                      "stack traffic: final control falls through emitted data")))
+                (set! pending-data? false))
               (unless
                 (and
                   (< operation (array-length partition.operations))
@@ -96767,6 +96897,7 @@ tl_shared_object_init:
                   (return
                     (Err "stack traffic: unsupported final control transfer")))
                 (set! (array-ref flow i) which)
+                (set! previous-flow which)
                 (when
                   (or (= which 1) (= which 2))
                   (let
@@ -96795,6 +96926,7 @@ tl_shared_object_init:
                 (= (compiler-backend-peephole-byte-at data first) 46))
               (unless
                 (or
+                  (array-ref data-flags i)
                   (compiler-backend-cold-prefix? data first last ".cfi_")
                   (compiler-backend-cold-prefix? data first last ".seh_")
                   (compiler-backend-cold-prefix? data first last ".loc ")
@@ -96810,6 +96942,29 @@ tl_shared_object_init:
       (unless
         (= operation (array-length partition.operations))
         (return (Err "stack traffic: final control lost an instruction")))
+      (unless
+        (= used-data data-count)
+        (return (Err "stack traffic: final data witness has no line")))
+      (let
+        [data-before-instruction? : bool false]
+        (for [step (iterator.range 0 count)]
+          (let
+            [i : i64 (- (- count 1) step)]
+            (when
+              (and
+                (< (array-ref next-op i) (array-length partition.operations))
+                (=
+                  (array-ref starts i)
+                  (array-ref partition.operations (array-ref next-op i)).start))
+              (set! data-before-instruction? false))
+            (when
+              (array-ref inline-data-flags i)
+              (set! data-before-instruction? true))
+            (when
+              (> (string.string-length (array-ref names i)) 0)
+              (set!
+                (array-ref blocked-labels i)
+                (or (array-ref data-flags i) data-before-instruction?))))))
       ;; Reverse and forward scans bind numeric f/b references without parsing
       ;; their value or confusing repeated numeric definitions with aliases.
       (for [direction (iterator.range 0 2)]
@@ -96898,6 +97053,11 @@ tl_shared_object_init:
                             (return
                               (Err
                                 "stack traffic: unresolved or external final transfer needs emitter authority"))]))
+                      (when
+                        (array-ref blocked-labels label)
+                        (return
+                          (Err
+                            "stack traffic: final branch targets emitted data")))
                       (let
                         [target-op : i64 (array-ref next-op label)]
                         (when

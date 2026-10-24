@@ -683,6 +683,16 @@ Unresolved, external or indirect transfers require explicit emitter authority;
 embedded data, unqualified layout directives and function falloff reject. This
 reader alone is not a complete machine decoder or source-region proof, and its
 unsupported cases must remain errors until their authorities are supplied.
+The actual abort-descriptor emitter tags each data line with its function and
+whether it occupies inline code bytes or a separate noncode section. Protected
+transport retains these witnesses without adding memory accesses. Tagged data
+labels never create instruction leaders or valid branch destinations. Inline
+data cannot be entered by fallthrough; relocated data does not interrupt text
+fallthrough. Relocated authority requires the complete supported `.data.rel.ro`
+push/pop envelope and data-only interior, rejecting nested/wrong sections and
+multiple statements. Missing, foreign or changed witnesses fail closed. Other
+data emitters, remaining transport parents and escaping controls still need
+their own authority before the full final graph can be accepted.
 The backend now constructs instruction extents from its shared final-line
 parser for one registered function. Label aliases create no empty blocks, and
 labels or post-transfer instructions start new groups. Returning calls remain

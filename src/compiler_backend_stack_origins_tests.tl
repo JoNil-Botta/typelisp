@@ -6215,3 +6215,211 @@ second:
 (test
   backend-stack-origins-final-machine-graph
   (backend-stack-origins-machine-graph-test))
+
+(define (backend-stack-origins-data-case [shared-object : bool]) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    (let
+      [policy : backend.CompilerBackendTargetPolicy
+        (backend.compiler-backend-state-emission-target-policy state)]
+      (set! policy.shared-object shared-object)
+      (backend.compiler-backend-state-set-emission-target-policy! state policy))
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      44)
+    (let
+      [plain : String
+        (backend.compiler-backend-abort-site-descriptor-after-call
+          state
+          ".Ldata")]
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (let
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [descriptor : String
+          (backend.compiler-backend-abort-site-descriptor-after-call
+            state
+            ".Ldata")]
+        [body : String
+          (origins.compiler-backend-text-origins-cat
+            capture
+            (if shared-object
+              "f:\n    nop\n"
+              "f:\n    call tl_panic_at\n")
+            descriptor
+            "    ret\n")]
+        [registered : String
+          (backend.compiler-backend-origin-invariant-text
+            (origins.compiler-backend-text-origins-function
+              capture
+              (origins.CompilerBackendFunctionOriginRequest
+                (ir.CompilerIrSymbolId 44)
+                "f"
+                body)))]
+        (test.assert-string-eq
+          plain
+          descriptor
+          "data authority changes no actual descriptor bytes")
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-find capture (& descriptor)))
+          (if shared-object
+            8
+            6)
+          "alignment, actual label and four descriptor words have separate line witnesses")
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-access-spans
+              capture
+              (& registered)))
+          0
+          "descriptor data never creates a stack access")
+        (test.assert-true
+          (match (origins.compiler-backend-text-origins-function-ranges
+            capture
+            (& registered))
+            [(Ok ranges) (= (array-length ranges) 1)]
+            [_ false])
+          "actual function registration retains data under its emitting identity")
+        (match (backend.compiler-backend-final-stack-graph
+          state
+          (backend.CompilerBackendFinalStackRequest
+            (owned_view.compiler-owned-shared-view registered)
+            (ir.CompilerIrSymbolId 44)
+            capture))
+          [(Err message) (io.panic message)]
+          [(Ok control)
+            (test.assert-i64-eq
+              control.partition.blocks
+              (if shared-object
+                1
+                3)
+              "noreturn, unreachable skip and continuation remain distinct")
+            (test.assert-i64-eq
+              (array-length (array-ref control.graph.successors 0).items)
+              0
+              "noreturn does not enter descriptor")
+            (unless
+              shared-object
+              (test.assert-i64-eq
+                (array-length (array-ref control.graph.successors 1).items)
+                1
+                "explicit skip bypasses every data line"))])
+        (let
+          [branch-to-data : String
+            (origins.compiler-backend-text-origins-cat
+              capture
+              "f:\n    jmp .Ldata\n"
+              descriptor
+              "    ret\n")]
+          (test.assert-true
+            (match (backend.compiler-backend-final-stack-graph
+              state
+              (backend.CompilerBackendFinalStackRequest
+                branch-to-data
+                (ir.CompilerIrSymbolId 44)
+                capture))
+              [(Err _) true]
+              [_ false])
+            "a branch cannot enter either actual inline or relocated descriptor"))
+        (let
+          [invalid-relocated : (Array String 3)
+            (array
+              ".quad 0\n"
+              "    .pushsection .text\n    .quad 0\n    .popsection\n"
+              "    .pushsection .data.rel.ro,\"aw\",@progbits\n    .popsection\n    .quad 0\n    .popsection\n")]
+          (for [i (iterator.range 0 3)]
+            (let
+              [bad : String
+                (owned_view.compiler-owned-shared-view
+                  (array-ref invalid-relocated i))]
+              (test.assert-true
+                (match (origins.compiler-backend-text-origins-data
+                  capture
+                  (origins.CompilerBackendDataOriginRequest
+                    (ir.CompilerIrSymbolId 44)
+                    (OtherSection)
+                    (owned_view.compiler-owned-shared-view bad)
+                    0
+                    (string.string-length bad)))
+                  [(Err _) true]
+                  [_ false])
+                "relocated authority cannot hide missing/wrong/nested section switches"))))
+        (for [invalid (iterator.range 0 5)]
+          (let
+            [raw-data : String
+              (if (= invalid 4)
+                "    nop\n"
+                ".Ldatum:\n    .quad 0\n")]
+            [marked : String
+              (backend.compiler-backend-origin-invariant-text
+                (origins.compiler-backend-text-origins-data
+                  capture
+                  (origins.CompilerBackendDataOriginRequest
+                    (ir.CompilerIrSymbolId
+                      (if (= invalid 2)
+                        45
+                        44))
+                    (InlineData)
+                    (owned_view.compiler-owned-shared-view raw-data)
+                    0
+                    (string.string-length raw-data))))]
+            [text : String
+              (origins.compiler-backend-text-origins-cat
+                capture
+                (cond
+                  [(= invalid 0) "f:\n    nop\n"]
+                  [(= invalid 1) "f:\n    jmp .Ldatum\n"]
+                  [else "f:\n    jmp .Ldone\n"])
+                (if (= invalid 3)
+                  (string.copy (& marked))
+                  marked)
+                ".Ldone:\n    ret\n")]
+            (test.assert-true
+              (match (backend.compiler-backend-final-stack-graph
+                state
+                (backend.CompilerBackendFinalStackRequest
+                  text
+                  (ir.CompilerIrSymbolId 44)
+                  capture))
+                [(Err _) true]
+                [_ false])
+              "fallthrough/branch into data, foreign ownership, lost marker and marked instruction reject")))
+        (for [invalid (iterator.range 0 4)]
+          (test.assert-true
+            (match (origins.compiler-backend-text-origins-data
+              capture
+              (origins.CompilerBackendDataOriginRequest
+                (ir.CompilerIrSymbolId 44)
+                (InlineData)
+                (if (= invalid 3)
+                  "\n"
+                  ".quad 0\n")
+                (if (= invalid 0)
+                  1
+                  0)
+                (cond
+                  [(= invalid 1) 7]
+                  [(= invalid 2) 99]
+                  [(= invalid 3) 1]
+                  [else 8])))
+              [(Err _) true]
+              [_ false])
+            "partial lines, out-of-range and empty data reject without publishing facts"))
+        (test.assert-i64-eq
+          (backend.compiler-backend-state-stack-access-origins state).len
+          0
+          "all accepted and rejected data requests leave the memory fact census unchanged")))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(define (backend-stack-origins-data-test) : unit
+  (backend-stack-origins-data-case false)
+  (backend-stack-origins-data-case true))
+
+(test
+  backend-stack-origins-emitted-data-authority
+  (backend-stack-origins-data-test))

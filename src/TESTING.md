@@ -957,6 +957,13 @@ Missing/duplicate labels, targets without instructions, empty or falling-off
 functions, indirect/external/unknown transfers and unqualified data reject.
 These are local closed-control checks; full emitter escape, data and source-region
 qualification remain separate.
+Actual abort-descriptor fixtures compare captured and ordinary bytes for both
+inline and relocated forms. They verify legal text fallthrough across relocated
+data, explicit skips over inline data, no phantom code blocks or memory facts,
+and rejection of branches into either descriptor. Foreign/lost witnesses,
+tagged instructions, partial/empty ranges, and missing/wrong/nested section
+envelopes reject. Real graph diagnostics retain unresolved cases as pending;
+their successful collection is not full graph acceptance.
 `compiler_backend_home_origins_tests.tl`
 pairs original instructions with the real noninjective frame-color remapper,
 including separate use/definition identities, repeated versus ambiguous uses,

@@ -84,8 +84,13 @@
   compiler-dense-list-unused-shared-zero-storage
   append-from)
 
+(defenum CompilerBackendDataLocation
+  (InlineData)
+  (OtherSection))
+
 (defenum CompilerBackendTextOriginKind
   (Access)
+  (DataLine CompilerBackendDataLocation)
   (FunctionStart)
   (FunctionEnd))
 
@@ -1160,6 +1165,7 @@
             (and
               (match (& span.kind)
                 [(Access) true]
+                [(DataLine _) (= span.token request.function.value)]
                 [_ false])
               (>= span.start (+ start (+ size 1)))
               (<= span.end (- length 1)))
@@ -1320,7 +1326,12 @@
                   (= fact.function.value active)
                   (return
                     (Err
-                      "stack traffic: final access crosses function ownership"))))])))
+                      "stack traffic: final access crosses function ownership"))))]
+            [(DataLine _)
+              (unless
+                (and (>= active 0) (= span.token active))
+                (return
+                  (Err "stack traffic: final data crosses function ownership")))])))
       (unless
         (and (< active 0) (= cursor count))
         (return (Err "stack traffic: final function end is missing")))
@@ -1344,3 +1355,108 @@
           (ptr-read
             (int->ptr capture.storage : (Ptr CompilerBackendTextOriginData)))]
         data.functions))))
+
+(defstruct CompilerBackendDataOriginRequest
+  (function ir.CompilerIrSymbolId)
+  (location CompilerBackendDataLocation)
+  (text String)
+  (start i64)
+  (end i64))
+
+;; Only an actual data emitter supplies this authority. Separate line witnesses
+;; survive the existing per-line blits without making data a memory access.
+(define (compiler-backend-text-origins-data
+  [capture : CompilerBackendTextOrigins]
+  [request : CompilerBackendDataOriginRequest]) : CompilerBackendOriginTextResult
+  (when (= capture.storage 0) (return (Ok request.text)))
+  (let
+    [length : i64 (string.string-length request.text)]
+    [lines : i64 0]
+    [relocated? : bool
+      (match (& request.location)
+        [(OtherSection) true]
+        [_ false])]
+    (unless
+      (and
+        (>= request.function.value 0)
+        (>= request.start 0)
+        (> request.end request.start)
+        (<= request.end length)
+        (or
+          (= request.start 0)
+          (= (string.string-ref (& request.text) (- request.start 1)) '\n'))
+        (= (string.string-ref (& request.text) (- request.end 1)) '\n'))
+      (return
+        (Err "stack traffic: emitted data needs complete lines and a function")))
+    (when
+      relocated?
+      (let
+        [header : String "    .pushsection .data.rel.ro,\"aw\",@progbits\n"]
+        [footer : String "    .popsection\n"]
+        (unless
+          (and
+            (>=
+              (- request.end request.start)
+              (+ (string.string-length header) (string.string-length footer)))
+            (string.is-string-prefix-at
+              (& request.text)
+              (& header)
+              request.start)
+            (string.is-string-prefix-at
+              (& request.text)
+              (& footer)
+              (- request.end (string.string-length footer))))
+          (return
+            (Err
+              "stack traffic: relocated data needs its complete noncode section envelope")))))
+    (when
+      (>
+        (array-length
+          (compiler-backend-text-origins-find capture (& request.text)))
+        0)
+      (return (Err "stack traffic: data cannot replace existing origins")))
+    (for [i (iterator.range request.start request.end)]
+      (when
+        (= (string.string-ref (& request.text) i) ';')
+        (return
+          (Err
+            "stack traffic: data witness cannot contain multiple assembly statements")))
+      (when (= (string.string-ref (& request.text) i) '\n') (+= lines 1)))
+    (in-arena
+      (arena.Arena capture.owner)
+      (let
+        [copy : String (string.copy (& request.text))]
+        [spans : (__tl_dyn-array CompilerBackendTextOrigin)
+          (__tl_make-array CompilerBackendTextOrigin lines)]
+        [start : i64 request.start]
+        [cursor : i64 0]
+        (for [i (iterator.range request.start request.end)]
+          (when
+            (= (string.string-ref (& copy) i) '\n')
+            (when
+              (= i start)
+              (return
+                (Err "stack traffic: emitted data contains an empty line")))
+            (when
+              (and relocated? (!= start request.start) (!= (+ i 1) request.end))
+              (unless
+                (or
+                  (string.is-string-prefix-at (& copy) "    .quad " start)
+                  (string.eq
+                    (string.substring-view (& copy) start (- i start))
+                    "    .balign 8")
+                  (= (string.string-ref (& copy) (- i 1)) ':'))
+                (return
+                  (Err
+                    "stack traffic: relocated data contains an unsupported section or instruction line"))))
+            (set!
+              (array-ref spans cursor)
+              (CompilerBackendTextOrigin
+                start
+                i
+                request.function.value
+                (DataLine (clone request.location))
+                (string.substring (& copy) start (- i start))))
+            (set! start (+ i 1))
+            (+= cursor 1)))
+        (Ok (compiler-backend-text-origins-publish capture copy spans))))))

@@ -654,6 +654,18 @@ transport annotations from surviving source ranges, and dropped records
 transport none. Cold outlining appends annotations in its actual output order;
 its synthesized branch/label bytes also count toward the final extent check.
 These transfers do not infer new memory accesses or finish the census audit.
+Frame coloring renumbers IR values before the factories run. Capture pairs the
+uncolored rewritten instruction's canonical definition/use positions with the
+actual colored instruction, by typed block label and placed instruction index.
+The same emitted color can therefore name different original read and write
+homes. Distinct original uses sharing a color require an explicit operand index;
+there is no fallback from a role string or a physical offset. AddrOf's raw
+storage slot is checked separately and never authorizes a value read. Function,
+block and site must match the installed scratch-owned plan, which is cleared
+before scratch retirement. Home capacity comes from the allocator's original
+vector/mask/group storage census, independently of each emitted access width;
+an access wider than that capacity cannot publish a token. Inactive emission
+allocates no instruction-home plan and does not change coloring or placement.
 An RMW fold retains separate ordered read and write tokens at the same emitted
 operand, including distinct logical homes that share one physical address.
 Their typed source records must prove compatible access directions, function

@@ -1,6 +1,8 @@
 (import compiler_backend as backend)
 (import compiler_backend_text_origins as origins)
 (import compiler_regalloc as regalloc)
+(import compiler_backend_home_origins as home_origins)
+(import compiler_liveness as live)
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
 (import compiler_stack_traffic as traffic)
@@ -29,6 +31,137 @@
     [(Ok use)
       (match use
         [(Use text _) text])]))
+
+(define (backend-stack-origins-install-test-plan!
+  [state : backend.CompilerBackendState]
+  [color? : bool]) : unit
+  (let
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [block : i64
+      (backend.compiler-backend-function-state-i64
+        function-state
+        backend.compiler-backend-function-i64-current-block-label)]
+    [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr 3)]
+    [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+      (__tl_make-array ir.CompilerIrBlock 1)]
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (set! (array-ref instructions 0) (Splat 7 (I64 1) 4 (I64)))
+    (set! (array-ref instructions 1) (Splat 9 (I64 2) 4 (I64)))
+    (set!
+      (array-ref instructions 2)
+      (VectorBinOp
+        (box
+          (ir.CompilerIrInstrVectorBinOpPayload 8 (Add) (Var 7) (Var 9) 4 (I64)))))
+    (set!
+      (array-ref blocks 0)
+      (Block block (ir.CompilerIrInstrSeq instructions 3)))
+    (for [index (iterator.range 0 10)]
+      (set! (array-ref map index) index))
+    (when
+      color?
+      (set! (array-ref map 7) 1)
+      (set! (array-ref map 8) 1)
+      (set! (array-ref map 9) 2))
+    (let
+      [original : ir.CompilerIrBlockList
+        (Array (ir.CompilerIrBlockSeq blocks 1))]
+      [placed : ir.CompilerIrBlockList
+        (regalloc.compiler-reg-remap-blocks (& map) (& original))]
+      [input : home_origins.CompilerBackendHomePlanInput
+        (home_origins.CompilerBackendHomePlanInput
+          (backend.compiler-backend-function-scratch-i64
+            function-state
+            backend.compiler-backend-scratch-i64-current-source-function)
+          10
+          10
+          (ir.compiler-ir-param-seq-empty)
+          original
+          placed
+          (Remap map 10)
+          (live.compiler-live-set-empty))]
+      (match (home_origins.compiler-backend-home-plan-build (& input))
+        [(Ok result)
+          (backend.compiler-backend-stack-home-plan-install!
+            function-state
+            result)]
+        [(Err message) (io.panic message)]))
+    (backend.compiler-backend-function-state-set-emit-current-site!
+      function-state
+      2)))
+
+(define (backend-stack-origins-colored-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [home : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 1 (Spill -64))]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignments-prepend
+        (& home)
+        (regalloc.compiler-reg-assignment-table-empty))]
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      44)
+    (backend.compiler-backend-function-state-set-i64!
+      function-state
+      backend.compiler-backend-function-i64-current-block-label
+      10)
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (backend-stack-origins-install-test-plan! state true)
+    (let
+      [read : String
+        (backend-stack-origin-read
+          state
+          (owned_view.compiler-owned-shared-view assignments)
+          1)]
+      [write : String
+        (backend.compiler-backend-vector-store-dst
+          assignments
+          1
+          "ymm"
+          (ast.AstType.F32)
+          "%ymm14"
+          state)]
+      [accesses : origins.CompilerBackendStackAccessOriginList
+        (backend.compiler-backend-state-stack-access-origins state)]
+      (test.assert-string-eq
+        read
+        "    vmovups -64(%rbp), %ymm14\n"
+        "colored read bytes")
+      (test.assert-string-eq
+        write
+        "    vmovups %ymm14, -64(%rbp)\n"
+        "colored write bytes")
+      (test.assert-i64-eq accesses.len 2 "two accesses share the emitted color")
+      (test.assert-i64-eq
+        (array-ref accesses.slots 0).home
+        7
+        "original read home")
+      (test.assert-i64-eq
+        (array-ref accesses.slots 1).home
+        8
+        "original write home")
+      (test.assert-i64-eq
+        (array-ref accesses.slots 0).home-bytes
+        32
+        "original allocation capacity"))
+    (backend.compiler-backend-clear-function-owned-state! state)
+    (test.assert-i64-eq
+      (backend.compiler-backend-function-scratch-i64
+        function-state
+        backend.compiler-backend-scratch-i64-stack-home-plan)
+      0
+      "cleanup clears scratch plan before retirement")
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-retain-pre-color-identities
+  (backend-stack-origins-colored-test))
 
 (define (backend-stack-origins-producer-test) : unit
   (let
@@ -74,6 +207,7 @@
       0
       "ordinary emission allocates no origin list")
     (backend.compiler-backend-state-stack-origins-begin! state)
+    (backend-stack-origins-install-test-plan! state false)
     (let
       [capture : origins.CompilerBackendTextOrigins
         (backend.compiler-backend-state-stack-text-origins state)]
@@ -124,6 +258,10 @@
         (array-ref accesses.slots 0).access-bytes
         32
         "emitter-selected access width")
+      (test.assert-i64-eq
+        (array-ref accesses.slots 0).home-bytes
+        32
+        "capacity comes from the original allocation plan")
       (test.assert-true
         (match (& (array-ref accesses.slots 0).access)
           [(Read) true]
@@ -317,6 +455,7 @@
       backend.compiler-backend-function-i64-current-block-label
       (ir.compiler-ir-label "frame_block"))
     (backend.compiler-backend-state-stack-origins-begin! state)
+    (backend-stack-origins-install-test-plan! state false)
     (let
       [capture : origins.CompilerBackendTextOrigins
         (backend.compiler-backend-state-stack-text-origins state)]
@@ -740,6 +879,7 @@
               (ir.compiler-ir-symbol-typed-id 0)
               2
               7
+              8
               (Allocator)
               (General)
               8
@@ -752,6 +892,7 @@
             (origins.CompilerBackendStackAccessOrigin
               (ir.compiler-ir-symbol-typed-id 0)
               2
+              8
               8
               (Allocator)
               (General)

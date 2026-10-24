@@ -56,6 +56,7 @@
   (function ir.CompilerIrSymbolId)
   (block i64)
   (home i64)
+  (home-bytes i64)
   (owner stack_traffic.CompilerStackTrafficOwner)
   (bank stack_traffic.CompilerStackTrafficBank)
   (access-bytes i64)
@@ -170,6 +171,8 @@
       (< access.function.value 0)
       (< access.block 0)
       (< access.home 0)
+      (<= access.home-bytes 0)
+      (> access.access-bytes access.home-bytes)
       (<= access.access-bytes 0))
     (return (Err "stack traffic: invalid emitter access origin")))
   (when (= capture.storage 0) (return (Ok operand)))
@@ -591,6 +594,7 @@
             (clone origin.function)
             origin.block
             origin.home
+            origin.home-bytes
             (clone origin.owner)
             (clone origin.bank)
             origin.access-bytes

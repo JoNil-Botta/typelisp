@@ -1,0 +1,387 @@
+(import compiler_backend_home_origins as homes)
+(import compiler_ir_types as ir)
+(import compiler_regalloc as regalloc)
+(import compiler_liveness as live)
+(import compiler_owned_view as owned_view)
+(import stdlib.test)
+(import stdlib.io)
+(import stdlib.iterator)
+
+(define (home-bindings-ok [result : homes.CompilerBackendHomeBindingsResult]) : homes.CompilerBackendHomeBindingList
+  (match result
+    [(Ok bindings) bindings]
+    [(Err message) (io.panic message)]))
+
+(define (home-query-ok
+  [bindings : (& homes.CompilerBackendHomeBindingList)]
+  [emitted : i64]
+  [query : homes.CompilerBackendHomeQuery]
+  [expected : i64]) : unit
+  (match (homes.compiler-backend-home-resolve bindings emitted query)
+    [(Ok actual) (test.assert-i64-eq actual expected "original logical home")]
+    [(Err message) (io.panic message)]))
+
+(define (home-query-error
+  [bindings : (& homes.CompilerBackendHomeBindingList)]
+  [emitted : i64]
+  [query : homes.CompilerBackendHomeQuery]) : unit
+  (test.assert-true
+    (match (homes.compiler-backend-home-resolve bindings emitted query)
+      [(Err _) true]
+      [_ false])
+    "ambiguous or unbound original home rejects"))
+
+(define (home-origin-coloring-test) : unit
+  (let
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [instr : ir.CompilerIrInstr (Mov 2 (Var 1) (I64))]
+    (set! (array-ref map 0) 2)
+    (set! (array-ref map 1) 0)
+    (set! (array-ref map 2) 0)
+    (set! (array-ref map 3) 1)
+    (let
+      [coloring : regalloc.CompilerRegColoring
+        (Remap (owned_view.compiler-owned-shared-view map) 3)]
+      [actual : ir.CompilerIrInstr
+        (regalloc.compiler-reg-remap-instr (& map) (& instr))]
+      [bindings : homes.CompilerBackendHomeBindingList
+        (home-bindings-ok
+          (homes.compiler-backend-home-bindings (& instr) (& coloring) 4))]
+      (test.assert-true
+        (match actual
+          [(Mov dst (Var src) _) (and (= dst 0) (= src 0))]
+          [_ false])
+        "real coloring aliases the emitted IDs")
+      (test.assert-true
+        (match (& instr)
+          [(Mov dst (Var src) _) (and (= dst 2) (= src 1))]
+          [_ false])
+        "real remapper leaves original instruction intact")
+      (home-query-ok (& bindings) 0 (AnyUse) 1)
+      (home-query-ok (& bindings) 0 (Definition) 2)
+      (home-query-ok (& bindings) 0 (Use 0) 1)
+      (home-query-error (& bindings) 0 (Use 1))
+      (home-query-error (& bindings) 3 (AnyUse))
+      (home-query-error (& bindings) -1 (AnyUse))
+      (home-query-error (& bindings) 0 (Use -1))
+      (let
+        [exact : (__tl_dyn-array homes.CompilerBackendHomeBinding)
+          (__tl_make-array homes.CompilerBackendHomeBinding bindings.len)]
+        [spare : (__tl_dyn-array homes.CompilerBackendHomeBinding)
+          (__tl_make-array homes.CompilerBackendHomeBinding (+ bindings.len 3))]
+        (for [index (iterator.range 0 bindings.len)]
+          (set!
+            (array-ref exact index)
+            (clone (array-ref bindings.slots index)))
+          (set!
+            (array-ref spare index)
+            (clone (array-ref bindings.slots index))))
+        (let
+          [exact-view : homes.CompilerBackendHomeBindingList
+            (homes.CompilerBackendHomeBindingList exact bindings.len)]
+          [spare-view : homes.CompilerBackendHomeBindingList
+            (homes.CompilerBackendHomeBindingList spare bindings.len)]
+          (home-query-ok (& exact-view) 0 (AnyUse) 1)
+          (home-query-ok (& spare-view) 0 (Definition) 2)))
+      (set! (array-ref map 1) 3)
+      (home-query-ok (& bindings) 0 (AnyUse) 1)
+      (let
+        [other : homes.CompilerBackendHomeBindingList
+          (home-bindings-ok
+            (homes.compiler-backend-home-bindings (& instr) (& coloring) 4))]
+        (home-query-ok (& other) 3 (AnyUse) 1)
+        (home-query-ok (& bindings) 0 (AnyUse) 1)))
+    (let
+      [identity : regalloc.CompilerRegColoring (None)]
+      [bindings : homes.CompilerBackendHomeBindingList
+        (home-bindings-ok
+          (homes.compiler-backend-home-bindings (& instr) (& identity) 4))]
+      (home-query-ok (& bindings) 1 (AnyUse) 1)
+      (home-query-ok (& bindings) 2 (Definition) 2))))
+
+(define (home-origin-ambiguous-use-test) : unit
+  (let
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [instr : ir.CompilerIrInstr (BinOp 3 (Add) (Var 1) (Var 2) (I64))]
+    (set! (array-ref map 0) 2)
+    (set! (array-ref map 1) 0)
+    (set! (array-ref map 2) 0)
+    (set! (array-ref map 3) 1)
+    (let
+      [coloring : regalloc.CompilerRegColoring
+        (Remap (owned_view.compiler-owned-shared-view map) 3)]
+      [bindings : homes.CompilerBackendHomeBindingList
+        (home-bindings-ok
+          (homes.compiler-backend-home-bindings (& instr) (& coloring) 4))]
+      (home-query-error (& bindings) 0 (AnyUse))
+      (home-query-ok (& bindings) 0 (Use 0) 1)
+      (home-query-ok (& bindings) 0 (Use 1) 2)
+      (home-query-ok (& bindings) 1 (Definition) 3)
+      (let
+        [repeated : ir.CompilerIrInstr (BinOp 3 (Add) (Var 1) (Var 1) (I64))]
+        [repeated-bindings : homes.CompilerBackendHomeBindingList
+          (home-bindings-ok
+            (homes.compiler-backend-home-bindings (& repeated) (& coloring) 4))]
+        (home-query-ok (& repeated-bindings) 0 (AnyUse) 1))
+      (let
+        [literal : ir.CompilerIrInstr (BinOp 3 (Add) (I64 5) (Var 2) (I64))]
+        [literal-bindings : homes.CompilerBackendHomeBindingList
+          (home-bindings-ok
+            (homes.compiler-backend-home-bindings (& literal) (& coloring) 4))]
+        (home-query-error (& literal-bindings) 0 (Use 0))
+        (home-query-ok (& literal-bindings) 0 (Use 1) 2))
+      (test.assert-true
+        (match (homes.compiler-backend-home-bindings (& instr) (& coloring) 2)
+          [(Err _) true]
+          [_ false])
+        "original IDs cannot exceed logical extent")
+      (set! (array-ref map 1) -1)
+      (test.assert-true
+        (match (homes.compiler-backend-home-bindings (& instr) (& coloring) 4)
+          [(Err _) true]
+          [_ false])
+        "unmapped live use rejects"))))
+
+(define (home-origin-address-test) : unit
+  (let
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    [original : ir.CompilerIrInstr (AddrOf 3 7)]
+    (for [index (iterator.range 0 10)]
+      (set! (array-ref map index) index))
+    (set! (array-ref map 7) 1)
+    (let
+      [emitted : ir.CompilerIrInstr
+        (regalloc.compiler-reg-remap-instr (& map) (& original))]
+      [coloring : regalloc.CompilerRegColoring (Remap map 10)]
+      [bindings : homes.CompilerBackendHomeBindingList
+        (home-bindings-ok
+          (homes.compiler-backend-home-bindings-checked
+            (& original)
+            (& emitted)
+            (& coloring)
+            10
+            10))]
+      (home-query-ok (& bindings) 1 (Address) 7)
+      (home-query-error (& bindings) 1 (AnyUse))
+      (let
+        [wrong : ir.CompilerIrInstr (AddrOf 3 2)]
+        (test.assert-true
+          (match (homes.compiler-backend-home-bindings-checked
+            (& original)
+            (& wrong)
+            (& coloring)
+            10
+            10)
+            [(Err _) true]
+            [_ false])
+          "changed storage identity rejects"))
+      (let
+        [wrong : ir.CompilerIrInstr (AddrOf 3 10)]
+        (test.assert-true
+          (match (homes.compiler-backend-home-bindings
+            (& wrong)
+            (& coloring)
+            10)
+            [(Err _) true]
+            [_ false])
+          "raw storage home bounds are checked")))))
+
+(define (home-origin-tests) : unit
+  (home-origin-coloring-test)
+  (home-origin-ambiguous-use-test)
+  (home-origin-plan-test)
+  (home-origin-address-test))
+
+(test home-origins-survive-noninjective-coloring (home-origin-tests))
+
+(define (home-origin-plan-query
+  [plan : (& homes.CompilerBackendHomePlan)]
+  [block : i64]
+  [site : i64]
+  [emitted : i64]
+  [query : homes.CompilerBackendHomeQuery]
+  [logical : i64]) : unit
+  (match (homes.compiler-backend-home-plan-resolve
+    plan
+    44
+    block
+    site
+    emitted
+    query)
+    [(Err message) (io.panic message)]
+    [(Ok home)
+      (test.assert-i64-eq
+        home.id
+        logical
+        "instruction-scoped pre-color identity")
+      (test.assert-i64-eq
+        home.bytes
+        32
+        "capacity comes from original vector layout")]))
+
+(define (home-origin-plan-test) : unit
+  (let
+    [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+      (__tl_make-array ir.CompilerIrInstr 7)]
+    [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+      (__tl_make-array ir.CompilerIrBlock 5)]
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+    (set! (array-ref instructions 0) (Splat 7 (I64 1) 4 (I64)))
+    (set! (array-ref instructions 1) (Splat 9 (I64 2) 4 (I64)))
+    (set!
+      (array-ref instructions 2)
+      (VectorBinOp
+        (box
+          (ir.CompilerIrInstrVectorBinOpPayload 8 (Add) (Var 7) (Var 9) 4 (I64)))))
+    (set! (array-ref instructions 3) (TailMask 4 (I64 0) (I64 64) 4))
+    (set! (array-ref instructions 4) (Branch (Bool true) 20 30))
+    (set!
+      (array-ref blocks 0)
+      (Block 10 (ir.CompilerIrInstrSeq instructions 5)))
+    (set!
+      (array-ref blocks 1)
+      (Block 20 (ir.compiler-ir-instr-seq1 (Return (Some (Var 8))))))
+    (set!
+      (array-ref blocks 2)
+      (Block 30 (ir.compiler-ir-instr-seq1 (Return (Some (Var 8))))))
+    (for [index (iterator.range 0 10)]
+      (set! (array-ref remap index) index))
+    (set! (array-ref remap 7) 1)
+    (set! (array-ref remap 8) 1)
+    (set! (array-ref remap 9) 2)
+    (let
+      [original : ir.CompilerIrBlockList
+        (Array (ir.CompilerIrBlockSeq blocks 3))]
+      [colored : ir.CompilerIrBlockList
+        (regalloc.compiler-reg-remap-blocks (& remap) (& original))]
+      [view : (& colored (Slice ir.CompilerIrBlock))
+        (ir.compiler-ir-block-list-view (& colored))]
+      [placed-blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (__tl_make-array ir.CompilerIrBlock 3)]
+      (set! (array-ref placed-blocks 0) (clone (array-ref view 0)))
+      (set! (array-ref placed-blocks 1) (clone (array-ref view 2)))
+      (set! (array-ref placed-blocks 2) (clone (array-ref view 1)))
+      (let
+        [input : homes.CompilerBackendHomePlanInput
+          (homes.CompilerBackendHomePlanInput
+            44
+            10
+            10
+            (ir.compiler-ir-param-seq-empty)
+            original
+            (Array (ir.CompilerIrBlockSeq placed-blocks 3))
+            (Remap remap 10)
+            (live.compiler-live-set1 0))]
+        [plan : homes.CompilerBackendHomePlan
+          (match (homes.compiler-backend-home-plan-build (& input))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (test.assert-i64-eq
+          (array-length plan.sites)
+          7
+          "only live placed instruction prefixes")
+        (test.assert-i64-eq
+          (array-ref plan.bytes 0)
+          16
+          "original register-group capacity")
+        (test.assert-i64-eq
+          (array-ref plan.bytes 3)
+          8
+          "ordinary scalar home capacity")
+        (test.assert-i64-eq
+          (array-ref plan.bytes 4)
+          32
+          "planned mask reservation exceeds compact access")
+        (home-origin-plan-query (& plan) 10 2 1 (AnyUse) 7)
+        (home-origin-plan-query (& plan) 10 2 1 (Definition) 8)
+        (home-origin-plan-query (& plan) 20 6 1 (AnyUse) 8)
+        (test.assert-true
+          (match (homes.compiler-backend-home-plan-resolve
+            (& plan)
+            45
+            10
+            2
+            1
+            (AnyUse))
+            [(Err _) true]
+            [_ false])
+          "wrong function cannot reuse a plan")
+        (test.assert-true
+          (match (homes.compiler-backend-home-plan-resolve
+            (& plan)
+            44
+            20
+            2
+            1
+            (AnyUse))
+            [(Err _) true]
+            [_ false])
+          "wrong block cannot reuse a site")
+        (test.assert-true
+          (match (homes.compiler-backend-home-plan-resolve
+            (& plan)
+            44
+            10
+            7
+            1
+            (AnyUse))
+            [(Err _) true]
+            [_ false])
+          "out-of-range site rejects")
+        (for [invalid (iterator.range 0 6)]
+          (let
+            [bad : homes.CompilerBackendHomePlanInput (clone input)]
+            (cond
+              [(= invalid 0) (set! bad.function -1)]
+              [(= invalid 1) (set! bad.emitted-count 1)]
+              [(= invalid 2) (set! bad.logical-count 7)]
+              [else
+                (let
+                  [bad-blocks : (__tl_dyn-array ir.CompilerIrBlock)
+                    (__tl_make-array ir.CompilerIrBlock 2)]
+                  (set!
+                    (array-ref bad-blocks 0)
+                    (Block
+                      (if (= invalid 3)
+                        99
+                        10)
+                      (ir.compiler-ir-instr-seq-empty)))
+                  (when
+                    (= invalid 5)
+                    (let
+                      [placed : (& input (Slice ir.CompilerIrBlock))
+                        (ir.compiler-ir-block-list-view (& input.placed))]
+                      (set!
+                        (array-ref bad-blocks 0)
+                        (clone (array-ref placed 0)))))
+                  (set!
+                    (array-ref bad-blocks 1)
+                    (clone (array-ref bad-blocks 0)))
+                  (set!
+                    bad.placed
+                    (Array
+                      (ir.CompilerIrBlockSeq
+                        bad-blocks
+                        (if (= invalid 5)
+                          2
+                          1)))))])
+            (test.assert-true
+              (match (homes.compiler-backend-home-plan-build (& bad))
+                [(Err _) true]
+                [_ false])
+              "invalid paired placement rejects")))
+        ;; The actual remapped input is immutable to the plan. A changed
+        ;; producer operand must fail a fresh paired check, never match by slot.
+        (let
+          [wrong : ir.CompilerIrInstr (Mov 1 (Var 2) (I64))]
+          [right : ir.CompilerIrInstr (Mov 8 (Var 7) (I64))]
+          (test.assert-true
+            (match (homes.compiler-backend-home-bindings-checked
+              (& right)
+              (& wrong)
+              (& input.coloring)
+              10
+              10)
+              [(Err _) true]
+              [_ false])
+            "changed mapped operand rejects"))))))

@@ -882,7 +882,16 @@ source identity at distinct final positions while branch splicing preserves
 all retained ranges. Actual RMW-2/RMW-3 folds check exact uncaptured-output
 parity, distinct load/store homes at one folded operand and the synthesized
 reload's new read of the stored home. Wrong-direction and read-only derivation
-requests reject without orphan access records. Remaining access-changing
+requests reject without orphan access records. `compiler_backend_home_origins_tests.tl`
+pairs original instructions with the real noninjective frame-color remapper,
+including separate use/definition identities, repeated versus ambiguous uses,
+literal operand positions, raw address storage and changed operands. Placed
+block reordering, live/spare prefixes, invalid identities/extents and malformed
+or duplicate placement are checked. Original scalar, group, vector and mask
+capacities come from the allocator census. Actual emitter factories retain
+homes7/8 when both become color1 at the same physical offset; cleanup clears
+the scratch plan. Native home and producer smokes call these cases at opt0/1/2.
+Remaining access-changing
 rewrites, traffic owners and complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source

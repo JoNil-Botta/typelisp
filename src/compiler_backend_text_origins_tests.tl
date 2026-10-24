@@ -283,18 +283,21 @@
         (ir.CompilerIrSymbolId 0)
         3
         7
+        32
         (Allocator)
         (Vector)
         32
         (Read))]
-    (for [invalid (iterator.range 0 4)]
+    (for [invalid (iterator.range 0 6)]
       (let
         [bad : origins.CompilerBackendStackAccessOrigin (clone access)]
         (cond
           [(= invalid 0) (set! bad.function (ir.CompilerIrSymbolId -1))]
           [(= invalid 1) (set! bad.block -1)]
           [(= invalid 2) (set! bad.home -1)]
-          [else (set! bad.access-bytes 0)])
+          [(= invalid 3) (set! bad.access-bytes 0)]
+          [(= invalid 4) (set! bad.home-bytes 0)]
+          [else (set! bad.home-bytes 16)])
         (text-origin-test-error
           (origins.compiler-backend-text-origins-record capture bad "-64(%rbp)"))))
     (test.assert-i64-eq

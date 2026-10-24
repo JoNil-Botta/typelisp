@@ -48,6 +48,7 @@
 (import compiler_owned_view as owned_view)
 (import compiler_stack_traffic as stack_traffic)
 (import compiler_backend_text_origins as text_origins)
+(import compiler_backend_home_origins as home_origins)
 
 (define compiler-backend-phi-xmm-cycle-register-metric : i64
   147)
@@ -1410,6 +1411,19 @@
         (text_origins.compiler-backend-text-origins-disabled)))
     (text_origins.compiler-backend-text-origins-release! (&mut capture))))
 
+(define (compiler-backend-stack-home-plan-install!
+  [function-state : CompilerBackendFunctionState]
+  [plan : home_origins.CompilerBackendHomePlan]) : unit
+  (let
+    [cell : (__tl_dyn-array home_origins.CompilerBackendHomePlan)
+      (__tl_make-array home_origins.CompilerBackendHomePlan 1)]
+    (set! (array-ref cell 0) plan)
+    (compiler-backend-function-scratch-set-i64!
+      function-state
+      compiler-backend-scratch-i64-stack-home-plan
+      (unsafe
+        (cast (ptr->int (__tl_array-data cell)) : i64)))))
+
 (define (compiler-backend-stack-operand-origin
   [state : CompilerBackendState]
   [operand : CompilerBackendStackOperand]
@@ -1422,24 +1436,58 @@
     (let
       [function-state : CompilerBackendFunctionState
         (compiler-backend-state-function-state state)]
-      (match (text_origins.compiler-backend-text-origins-record
-        capture
-        (text_origins.CompilerBackendStackAccessOrigin
-          (compiler_ir_types.compiler-ir-symbol-typed-id
-            (compiler-backend-function-scratch-i64
+      [function : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-current-source-function)]
+      [block : i64
+        (compiler-backend-function-state-i64
+          function-state
+          compiler-backend-function-i64-current-block-label)]
+      [address : i64
+        (compiler-backend-function-scratch-i64
+          function-state
+          compiler-backend-scratch-i64-stack-home-plan)]
+      (when
+        (= address 0)
+        (io.panic "stack traffic: original-home plan was not installed"))
+      (let
+        [plan : home_origins.CompilerBackendHomePlan
+          (unsafe
+            (ptr-read
+              (int->ptr
+                (cast address : u64)
+                : (Ptr home_origins.CompilerBackendHomePlan))))]
+        [home : home_origins.CompilerBackendLogicalHome
+          (match (home_origins.compiler-backend-home-plan-resolve
+            (& plan)
+            function
+            block
+            (compiler-backend-function-state-i64
               function-state
-              compiler-backend-scratch-i64-current-source-function))
-          (compiler-backend-function-state-i64
-            function-state
-            compiler-backend-function-i64-current-block-label)
-          operand.var
-          (Allocator)
-          (Vector)
-          bytes
-          access)
-        operand.text)
-        [(Ok text) text]
-        [(Err message) (io.panic message)]))))
+              compiler-backend-function-i64-emit-current-site)
+            operand.var
+            (match (& access)
+              [(Read) (home_origins.CompilerBackendHomeQuery.AnyUse)]
+              [(Write) (home_origins.CompilerBackendHomeQuery.Definition)]
+              [(ReadWrite)
+                (io.panic "stack traffic: RMW needs two explicit logical homes")]))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (match (text_origins.compiler-backend-text-origins-record
+          capture
+          (text_origins.CompilerBackendStackAccessOrigin
+            (compiler_ir_types.compiler-ir-symbol-typed-id function)
+            block
+            home.id
+            home.bytes
+            (Allocator)
+            (Vector)
+            bytes
+            access)
+          operand.text)
+          [(Ok text) text]
+          [(Err message) (io.panic message)])))))
 
 (define (compiler-backend-vector-access-bytes [width : (& str)]) : i64
   (cond
@@ -2560,8 +2608,10 @@
   17)
 (define compiler-backend-scratch-i64-simd-scratch-used-bytes : i64
   18)
-(define compiler-backend-scratch-i64-count : i64
+(define compiler-backend-scratch-i64-stack-home-plan : i64
   19)
+(define compiler-backend-scratch-i64-count : i64
+  20)
 (define compiler-backend-scratch-bool-emergency-pending : i64
   0)
 (define compiler-backend-scratch-bool-emergency-used : i64
@@ -71832,6 +71882,13 @@
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
                   (& rewritten-reg-plan)))])]
+        ;; Keep the pre-color IR authority alive while the exact same coloring
+        ;; and placed instruction stream are paired below. No ordinary plan is
+        ;; allocated when capture is inactive.
+        [origin-original : compiler_ir_types.CompilerIrBlockList
+          (if (= origin-capture.storage 0)
+            (compiler_ir_types.compiler-ir-block-list-empty)
+            (compiler-backend-global-shared-view rewritten-blocks))]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view coloring)
             [(None) rewritten-blocks]
@@ -71846,6 +71903,30 @@
         ;; text that comes out.
         [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
           (compiler-backend-placement-blocks function-state colored-blocks)]
+        [_origin-home-plan : unit
+          (when
+            (!= origin-capture.storage 0)
+            (let
+              [input : home_origins.CompilerBackendHomePlanInput
+                (home_origins.CompilerBackendHomePlanInput
+                  name
+                  scratch-vars
+                  emit-vars
+                  (compiler-backend-global-shared-view params)
+                  origin-original
+                  (compiler-backend-global-shared-view emit-blocks-list)
+                  (compiler-backend-global-shared-view coloring)
+                  (compiler-backend-global-shared-view fn-group-vars))]
+              (match (home_origins.compiler-backend-home-plan-build (& input))
+                [(Ok result)
+                  (compiler-backend-stack-home-plan-install!
+                    function-state
+                    result)]
+                [(Err message)
+                  (return
+                    (compiler-backend-instr-error
+                      (compiler-backend-global-shared-view func-diag)
+                      message))])))]
         [emit-params : compiler_ir_types.CompilerIrParamSeq
           (match (compiler-backend-global-shared-view coloring)
             [(None) params]

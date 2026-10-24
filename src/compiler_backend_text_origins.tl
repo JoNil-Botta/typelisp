@@ -169,12 +169,10 @@
             (int->ptr capture.storage : (Ptr CompilerBackendTextOriginData)))]
         data.accesses))))
 
-;; Publish the typed snapshot and its protected text as one synchronous step.
-;; A failed mark cannot leave an orphan access in the job's token inventory.
-(define (compiler-backend-text-origins-record
-  [capture : CompilerBackendTextOrigins]
-  [access : CompilerBackendStackAccessOrigin]
-  [operand : String]) : CompilerBackendOriginTextResult
+;; Shared validation for issuance and final-stream reconciliation. Final users
+;; recheck the retained fact instead of trusting a mutable array descriptor.
+(define (compiler-backend-stack-access-origin-check
+  [access : (& access CompilerBackendStackAccessOrigin)]) : CompilerBackendOriginCheck
   (when
     (or
       (< access.function.value 0)
@@ -211,6 +209,17 @@
       (> access.access-bytes access.home-bytes)
       (<= access.access-bytes 0))
     (return (Err "stack traffic: invalid emitter access origin")))
+  (Ok))
+
+;; Publish the typed snapshot and its protected text as one synchronous step.
+;; A failed mark cannot leave an orphan access in the job's token inventory.
+(define (compiler-backend-text-origins-record
+  [capture : CompilerBackendTextOrigins]
+  [access : CompilerBackendStackAccessOrigin]
+  [operand : String]) : CompilerBackendOriginTextResult
+  (match (compiler-backend-stack-access-origin-check (& access))
+    [(Ok) unit]
+    [(Err message) (return (Err message))])
   (when (= capture.storage 0) (return (Ok operand)))
   (let
     [token : i64 (compiler-backend-text-origins-accesses capture).len]
@@ -880,3 +889,141 @@
                 (& (array-ref data.origins.slots index))
                 0)))
           (Ok (compiler-backend-text-origins-publish data.capture copy spans)))))))
+
+;; The final machine parser supplies instruction extents and CFG blocks after
+;; every rewrite. Byte ranges establish containment only, never an owner or a
+;; source region. Directives, labels and deleted instructions have no entry.
+(defstruct CompilerBackendFinalOperation
+  (start i64)
+  (end i64)
+  (block i64))
+
+(defstruct CompilerBackendFinalAccess
+  (operation i64)
+  (access-index i64)
+  (block i64)
+  (origin CompilerBackendStackAccessOrigin))
+
+(defenum CompilerBackendFinalAccessResult
+  (Ok (__tl_dyn-array CompilerBackendFinalAccess))
+  (Err String))
+
+;; Repeated tokens at different final positions are real clones. Within one
+;; operation reads precede memory writes; an RMW fact contains its own ordered
+;; read/write. Equal-range RMW operands retain their typed read and write homes.
+;; This reconciles retained facts only: missing-access decoding and source/CFG
+;; region qualification remain the final machine producer's responsibility.
+(define (compiler-backend-text-origins-final-accesses
+  [capture : CompilerBackendTextOrigins]
+  [text : (& text str)]
+  [function : ir.CompilerIrSymbolId]
+  [blocks : i64]
+  [operations : (& operations (Slice CompilerBackendFinalOperation))]) : CompilerBackendFinalAccessResult
+  (when
+    (or (= capture.storage 0) (< function.value 0) (< blocks 0))
+    (return
+      (Err "stack traffic: final stream needs an active function capture")))
+  (let
+    [length : i64 (string.string-length text)]
+    [spans : (__tl_dyn-array CompilerBackendTextOrigin)
+      (compiler-backend-text-origins-find capture text)]
+    [accesses : CompilerBackendStackAccessOriginList
+      (compiler-backend-text-origins-accesses capture)]
+    [result : (__tl_dyn-array CompilerBackendFinalAccess)
+      (__tl_make-array CompilerBackendFinalAccess (array-length spans))]
+    [previous : i64 0]
+    [cursor : i64 0]
+    [written : i64 0]
+    (for [i (iterator.range 0 (array-length operations))]
+      (let
+        [op : (& operations CompilerBackendFinalOperation)
+          (& (array-ref operations i))]
+        (unless
+          (and
+            (>= op.start previous)
+            (> op.end op.start)
+            (<= op.end length)
+            (>= op.block 0)
+            (< op.block blocks))
+          (return (Err "stack traffic: invalid final operation partition")))
+        (set! previous op.end)))
+    (for [i (iterator.range 0 (array-length spans))]
+      (let
+        [span : (& spans CompilerBackendTextOrigin) (& (array-ref spans i))]
+        (unless
+          (and
+            (>= span.start 0)
+            (> span.end span.start)
+            (<= span.end length)
+            (>= span.token 0)
+            (< span.token accesses.len)
+            (string.eq
+              (& span.expected)
+              (string.substring-view text span.start (- span.end span.start))))
+          (return
+            (Err "stack traffic: final operand has no exact typed witness")))
+        (when
+          (> i 0)
+          (let
+            [prior : (& spans CompilerBackendTextOrigin)
+              (& (array-ref spans (- i 1)))]
+            (unless
+              (or
+                (>= span.start prior.end)
+                (and (= span.start prior.start) (= span.end prior.end)))
+              (return
+                (Err "stack traffic: final operand ranges overlap ambiguously")))))
+        (let
+          [origin : (& accesses CompilerBackendStackAccessOrigin)
+            (& (array-ref accesses.slots span.token))]
+          (match (compiler-backend-stack-access-origin-check origin)
+            [(Ok) unit]
+            [(Err message) (return (Err message))])
+          (unless
+            (= origin.function.value function.value)
+            (return
+              (Err "stack traffic: final operand belongs to another function"))))))
+    (for [operation (iterator.range 0 (array-length operations))]
+      (let
+        [op : (& operations CompilerBackendFinalOperation)
+          (& (array-ref operations operation))]
+        [begin : i64 cursor]
+        [index : i64 0]
+        (while (and
+          (< cursor (array-length spans))
+          (< (array-ref spans cursor).start op.end))
+          (let
+            [span : (& spans CompilerBackendTextOrigin)
+              (& (array-ref spans cursor))]
+            (unless
+              (and (>= span.start op.start) (<= span.end op.end))
+              (return
+                (Err
+                  "stack traffic: operand crosses or misses a final instruction"))))
+          (+= cursor 1))
+        (for [phase (iterator.range 0 2)]
+          (for [at (iterator.range begin cursor)]
+            (let
+              [origin : (& accesses CompilerBackendStackAccessOrigin)
+                (& (array-ref accesses.slots (array-ref spans at).token))]
+              (when
+                (=
+                  phase
+                  (if (stack_traffic.compiler-stack-traffic-read?
+                    (& origin.access))
+                    0
+                    1))
+                (set!
+                  (array-ref result written)
+                  (CompilerBackendFinalAccess
+                    operation
+                    index
+                    op.block
+                    (clone
+                      (array-ref accesses.slots (array-ref spans at).token))))
+                (+= written 1)
+                (+= index 1)))))))
+    (unless
+      (and (= cursor (array-length spans)) (= written (array-length spans)))
+      (return (Err "stack traffic: operand has no final instruction")))
+    (Ok result)))

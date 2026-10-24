@@ -682,3 +682,282 @@
 (test
   text-origins-range-buffer-validates-before-append
   (text-origin-range-buffer-test))
+
+(define (text-origin-final-test) : unit
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [fact : origins.CompilerBackendStackAccessOrigin
+      (origins.CompilerBackendStackAccessOrigin
+        (ir.CompilerIrSymbolId 44)
+        (SourceBlock 30)
+        8
+        8
+        (Allocator)
+        (General)
+        8
+        (Write))]
+    [write : String
+      (text-origin-test-ok
+        (origins.compiler-backend-text-origins-record
+          capture
+          (clone fact)
+          "-8(%rsp)"))]
+    (set! fact.home 7)
+    (set! fact.access (Read))
+    (let
+      [read : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-record capture fact "-8(%rsp)"))]
+      [merged : String
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-merge-accesses
+            capture
+            (owned_view.compiler-owned-shared-view read)
+            (owned_view.compiler-owned-shared-view write)
+            "-8(%rsp)"))]
+      [prefix : String ".text\nf:\n"]
+      [nop : String "    nop\n"]
+      [rmw : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "    addq $1, "
+          merged
+          "\n")]
+      [gap : String "\n.Lcold:\n"]
+      [load : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "    movq "
+          read
+          ", %rax\n")]
+      [text : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          prefix
+          nop
+          rmw
+          gap
+          load
+          load)]
+      [rmw-start : i64
+        (+ (string.string-length prefix) (string.string-length nop))]
+      [load-start : i64
+        (+ rmw-start (+ (string.string-length rmw) (string.string-length gap)))]
+      [operations : (__tl_dyn-array origins.CompilerBackendFinalOperation)
+        (__tl_make-array origins.CompilerBackendFinalOperation 6)]
+      (set!
+        (array-ref operations 0)
+        (origins.CompilerBackendFinalOperation
+          (string.string-length prefix)
+          (- rmw-start 1)
+          0))
+      (set!
+        (array-ref operations 1)
+        (origins.CompilerBackendFinalOperation
+          rmw-start
+          (- (+ rmw-start (string.string-length rmw)) 1)
+          0))
+      (set!
+        (array-ref operations 2)
+        (origins.CompilerBackendFinalOperation
+          load-start
+          (- (+ load-start (string.string-length load)) 1)
+          1))
+      (set!
+        (array-ref operations 3)
+        (origins.CompilerBackendFinalOperation
+          (+ load-start (string.string-length load))
+          (- (string.string-length text) 1)
+          1))
+      (set!
+        (array-ref operations 4)
+        (origins.CompilerBackendFinalOperation -1 -1 -1))
+      (for [spare (iterator.range 0 2)]
+        (let
+          [count : i64
+            (if (= spare 0)
+              4
+              6)]
+          [copy : (__tl_dyn-array origins.CompilerBackendFinalOperation)
+            (__tl_make-array origins.CompilerBackendFinalOperation count)]
+          (for [i (iterator.range 0 count)]
+            (set! (array-ref copy i) (clone (array-ref operations i))))
+          (match (origins.compiler-backend-text-origins-final-accesses
+            capture
+            (& text)
+            (ir.CompilerIrSymbolId 44)
+            2
+            (slice-view copy 0 4))
+            [(Err message) (io.panic message)]
+            [(Ok events)
+              (test.assert-i64-eq
+                (array-length events)
+                4
+                "surviving RMW pair and both actual tail clones")
+              (for [i (iterator.range 0 4)]
+                (let
+                  [event : (& events origins.CompilerBackendFinalAccess)
+                    (& (array-ref events i))]
+                  (test.assert-i64-eq
+                    event.operation
+                    (if (< i 2)
+                      1
+                      i)
+                    "final instruction order ignores labels and directives")
+                  (test.assert-i64-eq
+                    event.access-index
+                    (if (= i 1)
+                      1
+                      0)
+                    "read before write, independent of token issuance")
+                  (test.assert-i64-eq
+                    event.block
+                    (if (< i 2)
+                      0
+                      1)
+                    "one final block for every access of an instruction")
+                  (test.assert-i64-eq
+                    event.origin.home
+                    (if (= i 1)
+                      8
+                      7)
+                    "RMW preserves distinct pre-color homes")
+                  (test.assert-true
+                    (match (& event.origin.anchor)
+                      [(SourceBlock b) (= b 30)]
+                      [_ false])
+                    "source authority is retained rather than replaced by final CFG block")
+                  (test.assert-true
+                    (match (& event.origin.access)
+                      [(Read) (!= i 1)]
+                      [(Write) (= i 1)]
+                      [_ false])
+                    "clones and folded accesses retain exact directions")))])))
+      (for [invalid (iterator.range 0 10)]
+        (let
+          [bad : (__tl_dyn-array origins.CompilerBackendFinalOperation)
+            (clone operations)]
+          (cond
+            [(= invalid 0) (set! (array-ref bad 0).start -1)]
+            [(= invalid 1) (set! (array-ref bad 0).end (array-ref bad 0).start)]
+            [(= invalid 2)
+              (set! (array-ref bad 1).start (array-ref bad 0).start)]
+            [(= invalid 3) (set! (array-ref bad 1).block -1)]
+            [(= invalid 4) (set! (array-ref bad 1).block 2)]
+            [(= invalid 5) (set! (array-ref bad 1).end (+ rmw-start 15))]
+            [(= invalid 6)
+              (set! (array-ref bad 3).end (+ 1 (string.string-length text)))]
+            [else unit])
+          (test.assert-true
+            (match (origins.compiler-backend-text-origins-final-accesses
+              (if (= invalid 9)
+                (origins.compiler-backend-text-origins-disabled)
+                capture)
+              (& text)
+              (ir.CompilerIrSymbolId
+                (if (= invalid 7)
+                  45
+                  44))
+              2
+              (slice-view
+                bad
+                0
+                (if (= invalid 8)
+                  3
+                  4)))
+              [(Err _) true]
+              [_ false])
+            "invalid partitions, cut/orphan operands, foreign function and absent capture reject")))
+      (let
+        [untyped : String
+          (text-origin-test-ok
+            (origins.compiler-backend-text-origins-mark capture "-8(%rsp)" 99))]
+        [line : String
+          (origins.compiler-backend-text-origins-cat
+            capture
+            "    movq "
+            untyped
+            ", %rax\n")]
+        [op : (__tl_dyn-array origins.CompilerBackendFinalOperation)
+          (__tl_make-array
+            (origins.CompilerBackendFinalOperation
+              0
+              (- (string.string-length line) 1)
+              0))]
+        (test.assert-true
+          (match (origins.compiler-backend-text-origins-final-accesses
+            capture
+            (& line)
+            (ir.CompilerIrSymbolId 44)
+            1
+            (slice-view op 0 1))
+            [(Err _) true]
+            [_ false])
+          "text marker without typed issuer cannot become a final event"))
+      (test.assert-i64-eq
+        (origins.compiler-backend-text-origins-accesses capture).len
+        2
+        "reconciliation does not mint emitter tokens")
+      (let
+        [accesses : origins.CompilerBackendStackAccessOriginList
+          (origins.compiler-backend-text-origins-accesses capture)]
+        (set! (array-ref accesses.slots 0).access-bytes 0)
+        (test.assert-true
+          (match (origins.compiler-backend-text-origins-final-accesses
+            capture
+            (& text)
+            (ir.CompilerIrSymbolId 44)
+            2
+            (slice-view operations 0 4))
+            [(Err _) true]
+            [_ false])
+          "retained mutable-array facts are revalidated")
+        (set! (array-ref accesses.slots 0).access-bytes 8))
+      (let
+        [operand : String
+          (text-origin-test-ok
+            (origins.compiler-backend-text-origins-record
+              capture
+              (origins.CompilerBackendStackAccessOrigin
+                (ir.CompilerIrSymbolId 44)
+                (SourceBlock 30)
+                9
+                8
+                (UserLocal)
+                (General)
+                8
+                (ReadWrite))
+              "-16(%rsp)"))]
+        [line : String
+          (origins.compiler-backend-text-origins-cat
+            capture
+            "    notq "
+            operand
+            "\n")]
+        [op : (__tl_dyn-array origins.CompilerBackendFinalOperation)
+          (__tl_make-array
+            (origins.CompilerBackendFinalOperation
+              0
+              (- (string.string-length line) 1)
+              0))]
+        (match (origins.compiler-backend-text-origins-final-accesses
+          capture
+          (& line)
+          (ir.CompilerIrSymbolId 44)
+          1
+          (slice-view op 0 1))
+          [(Err message) (io.panic message)]
+          [(Ok events)
+            (test.assert-i64-eq
+              (array-length events)
+              1
+              "one RMW fact remains one event")
+            (test.assert-true
+              (match (& (array-ref events 0).origin.access)
+                [(ReadWrite) true]
+                [_ false])
+              "single-access read-before-write semantics remain explicit")])))
+    (origins.compiler-backend-text-origins-release! (&mut capture))))
+
+(test text-origins-final-instruction-reconciliation (text-origin-final-test))

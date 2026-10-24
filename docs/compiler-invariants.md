@@ -655,6 +655,14 @@ transport annotations from surviving source ranges, and dropped records
 transport none. Cold outlining appends annotations in its actual output order;
 its synthesized branch/label bytes also count toward the final extent check.
 These transfers do not infer new memory accesses or finish the census audit.
+Final reconciliation accepts explicit instruction extents and final CFG blocks.
+Every retained token must fit exactly one instruction of its emitting function;
+labels, directive gaps, crossing ranges, foreign functions and untyped markers
+cannot become events. Reconciliation preserves final clones, orders reads
+before writes and retains distinct folded homes at one operand. Source anchors
+remain separate from final block IDs. Typed facts are revalidated without
+minting new tokens. This does not establish missing-access completeness or
+source-to-final-region qualification; the final machine producer must do both.
 Frame coloring renumbers IR values before the factories run. Capture pairs the
 uncolored rewritten instruction's canonical definition/use positions with the
 actual colored instruction, by typed block label and placed instruction index.

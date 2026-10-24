@@ -9,6 +9,7 @@
 (import compiler_stack_traffic as traffic)
 (import compiler_intern as ci)
 (import compiler_abi as cabi)
+(import compiler_builtin_ids as builtin_ids)
 (import compiler_profile_state as profile_state)
 (import compiler_diagnostic as diagnostic)
 (import compiler_owned_view as owned_view)
@@ -3627,8 +3628,8 @@
 (define (backend-stack-origins-shift-test) : unit
   (for [invalid (iterator.range 0 8)]
     (let
-      [request : backend.CompilerBackendShiftStagingOperandRequest
-        (backend.CompilerBackendShiftStagingOperandRequest
+      [request : backend.CompilerBackendFixedStagingOperandRequest
+        (backend.CompilerBackendFixedStagingOperandRequest
           (Operand 0)
           (if (= invalid 0)
             16
@@ -3646,7 +3647,7 @@
           (Read))]
       (test.assert-true
         (not
-          (backend.compiler-backend-shift-staging-extent-valid?
+          (backend.compiler-backend-fixed-staging-extent-valid?
             (if (= invalid 7)
               -1
               128)
@@ -3780,3 +3781,384 @@
 (test
   backend-stack-origins-fixed-shift-buffers
   (backend-stack-origins-shift-test))
+
+(define (backend-stack-origins-fixed-state [wide? : bool] [planned : i64]) : backend.CompilerBackendState
+  (builtin_ids.compiler-builtin-initialize-for-parse!)
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new
+        (ci.intern-compat-state-capture-active))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      44)
+    (backend.compiler-backend-function-state-set-i64!
+      function-state
+      backend.compiler-backend-function-i64-current-block-label
+      (ir.compiler-ir-label "fixed_buffer_entry"))
+    (backend.compiler-backend-function-state-set-current-mode!
+      function-state
+      (if wide?
+        (Avx512)
+        (Avx2)))
+    (backend.compiler-backend-simd-scratch-plan! function-state planned 192)
+    state))
+
+(define (backend-stack-origins-fixed-element [kind : i64]) : ast.AstType
+  (match (% kind 6)
+    [0 (I32)]
+    [1 (U32)]
+    [2 (F32)]
+    [3 (I64)]
+    [4 (U64)]
+    [_ (F64)]))
+
+(define (backend-stack-origins-gather-emission
+  [state : backend.CompilerBackendState]
+  [kind : i64]) : String
+  (let
+    [wide? : bool (>= kind 6)]
+    [dword? : bool (< (% kind 6) 3)]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-empty)]
+    (for [index (iterator.range 0 3)]
+      (let
+        [home : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment
+            index
+            (Register
+              (cond
+                [(= index 0) cabi.compiler-reg-id-rdi]
+                [(= index 1) cabi.compiler-reg-id-rsi]
+                [else (cabi.compiler-abi-vector-register-id 6)])))]
+        (set! homes (regalloc.compiler-reg-assignments-prepend (& home) homes))))
+    (match (backend.compiler-backend-emit-gather-load
+      (ast.ast-node-pool-reader-type-segment-bases)
+      homes
+      2
+      (Var 0)
+      (Var 1)
+      (I64 0)
+      false
+      (*
+        (if wide?
+          8
+          4)
+        (if dword?
+          2
+          1))
+      (backend-stack-origins-fixed-element kind)
+      (diagnostic.compiler-diagnostic-at-start "" "")
+      state)
+      [(Ok text) text]
+      [(Err _) (io.panic "gather fixture refused")])))
+
+(define (backend-stack-origins-gather-test) : unit
+  (for [kind (iterator.range 0 12)]
+    (let
+      [wide? : bool (>= kind 6)]
+      [dword? : bool (< (% kind 6) 3)]
+      [expected : i64
+        (if dword?
+          (if wide?
+            5
+            7)
+          (if wide?
+            0
+            2))]
+      [bytes : i64
+        (if wide?
+          64
+          32)]
+      [state : backend.CompilerBackendState
+        (backend-stack-origins-fixed-state
+          wide?
+          (if dword?
+            128
+            (if wide?
+              0
+              32)))]
+      [plain : String (backend-stack-origins-gather-emission state kind)]
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (backend-stack-origins-install-test-plan! state true false)
+      (let
+        [text : String (backend-stack-origins-gather-emission state kind)]
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+          (origins.compiler-backend-text-origins-find capture (& text))]
+        (test.assert-string-eq
+          text
+          plain
+          "gather capture preserves complete assembly")
+        (test.assert-i64-eq
+          facts.len
+          expected
+          "only actual staged gather accesses")
+        (test.assert-i64-eq
+          (array-length spans)
+          expected
+          "all gather parents retain their tokens")
+        (for [event (iterator.range 0 expected)]
+          (let
+            [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+              (& (array-ref facts.slots (array-ref spans event).token))]
+            [ordinal : i64
+              (if (not dword?)
+                0
+                (if wide?
+                  (if (or (= event 0) (= event 2))
+                    0
+                    1)
+                  (cond
+                    [(or (= event 0) (= event 6)) 0]
+                    [(or (= event 1) (= event 3)) 1]
+                    [else 2])))]
+            [partial? : bool
+              (and
+                dword?
+                (if wide?
+                  (or (= event 1) (= event 3))
+                  (or (= event 2) (= event 4))))]
+            [write? : bool
+              (if (not dword?)
+                (= event 0)
+                (if wide?
+                  (or (< event 2) (= event 3))
+                  (or (< event 3) (= event 4))))]
+            (test.assert-i64-eq
+              fact.home
+              (+ 30 ordinal)
+              "mask, index and tuple remain separate")
+            (test.assert-i64-eq
+              fact.home-bytes
+              bytes
+              "gather buffer capacity follows its mode")
+            (test.assert-i64-eq
+              fact.access-bytes
+              (if partial?
+                (/ bytes 2)
+                bytes)
+              "result half writes differ from complete tuple reload")
+            (test.assert-true
+              (match (& fact.owner)
+                [(FixedScratch) true]
+                [_ false])
+              "gather staging is not allocator traffic")
+            (test.assert-true
+              (match (& fact.bank)
+                [(Bytes) true]
+                [_ false])
+              "fixed gather bit storage")
+            (test.assert-true
+              (match (& fact.access)
+                [(Write) write?]
+                [(Read) (not write?)]
+                [_ false])
+              "actual gather store/read order"))))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(define (backend-stack-origins-shuffle-emission
+  [state : backend.CompilerBackendState]
+  [kind : i64]) : String
+  (let
+    [wide? : bool (>= kind 6)]
+    [dword? : bool (< (% kind 6) 3)]
+    [lanes : i64
+      (*
+        (if wide?
+          8
+          4)
+        (if dword?
+          2
+          1))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignment-table-empty)]
+    [index : backend.CompilerBackendProgramIndex
+      (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+        state
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty)
+        (profile_state.compiler-profile-state-new))]
+    [plan : backend.CompilerBackendRuntimePlan
+      (match (backend.compiler-backend-runtime-plan-with-backend-state
+        state
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          (ir.compiler-ir-function-seq-empty)
+          (ir.compiler-ir-extern-seq-empty)))
+        [(Ok result) result]
+        [(Err _) (io.panic "empty runtime plan refused")])]
+    (for [id (iterator.range 0 4)]
+      (let
+        [home : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment
+            id
+            (Register (cabi.compiler-abi-vector-register-id (+ 6 id))))]
+        (set! homes (regalloc.compiler-reg-assignments-prepend (& home) homes))))
+    (match (backend.compiler-backend-emit-vector-shuffle
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (Linux)
+      "fixed_shuffle"
+      (backend.compiler-backend-function-state-i64
+        (backend.compiler-backend-state-function-state state)
+        backend.compiler-backend-function-i64-current-block-label)
+      homes
+      3
+      (Var 0)
+      (Var 1)
+      (if dword?
+        (Some (Var 2))
+        (No))
+      (I64 lanes)
+      lanes
+      (backend-stack-origins-fixed-element kind)
+      plan
+      index
+      (diagnostic.compiler-diagnostic-at-start "" ""))
+      [(Ok text) text]
+      [(Err _) (io.panic "shuffle fixture refused")])))
+
+(define (backend-stack-origins-shuffle-test) : unit
+  (for [kind (iterator.range 0 12)]
+    (let
+      [wide? : bool (>= kind 6)]
+      [dword? : bool (< (% kind 6) 3)]
+      [bytes : i64
+        (if wide?
+          64
+          32)]
+      [selector-count : i64
+        (if dword?
+          2
+          1)]
+      [selector-lanes : i64 (/ bytes 8)]
+      [lanes : i64 (* selector-count selector-lanes)]
+      [per-lane : i64
+        (if (or dword? wide?)
+          2
+          3)]
+      [lane-start : i64 (+ 2 (* 2 selector-count))]
+      [lane-end : i64 (+ lane-start (* lanes per-lane))]
+      [expected : i64 (+ lane-end 2)]
+      [state : backend.CompilerBackendState
+        (backend-stack-origins-fixed-state wide? (* bytes (+ selector-count 2)))]
+      [plain : String (backend-stack-origins-shuffle-emission state kind)]
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (backend-stack-origins-install-test-plan! state true false)
+      (let
+        [text : String (backend-stack-origins-shuffle-emission state kind)]
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [facts : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+          (origins.compiler-backend-text-origins-find capture (& text))]
+        (test.assert-string-eq
+          text
+          plain
+          "shuffle capture preserves complete assembly")
+        (test.assert-i64-eq
+          facts.len
+          expected
+          "no speculative high-selector fact")
+        (test.assert-i64-eq
+          (array-length spans)
+          expected
+          "shuffle checks and recursion retain every operand")
+        (let
+          [source-home : i64
+            (array-ref facts.slots (array-ref spans 0).token).home]
+          [low-home : i64
+            (array-ref facts.slots (array-ref spans 1).token).home]
+          [high-home : i64
+            (if dword?
+              (array-ref facts.slots (array-ref spans 2).token).home
+              -1)]
+          [index-home : i64
+            (array-ref facts.slots (array-ref spans (- lane-start 1)).token).home]
+          (test.assert-true
+            (and
+              (!= source-home low-home)
+              (!= source-home index-home)
+              (!= low-home index-home)
+              (or
+                (not dword?)
+                (and
+                  (!= high-home source-home)
+                  (!= high-home low-home)
+                  (!= high-home index-home))))
+            "fixed shuffle roles are disjoint")
+          (for [event (iterator.range 0 expected)]
+            (let
+              [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                (& (array-ref facts.slots (array-ref spans event).token))]
+              [lane? : bool (and (>= event lane-start) (< event lane-end))]
+              [part : i64 (% (- event lane-start) per-lane)]
+              [lane : i64 (/ (- event lane-start) per-lane)]
+              [selector? : bool (and lane? (= part 0))]
+              [home : i64
+                (cond
+                  [(or (= event 0) (= event (- expected 1))) source-home]
+                  [(or (= event 1) (= event (+ selector-count 1))) low-home]
+                  [(and dword? (or (= event 2) (= event 4))) high-home]
+                  [selector?
+                    (if (< lane selector-lanes)
+                      low-home
+                      high-home)]
+                  [else index-home])]
+              [width : i64
+                (if lane?
+                  (if selector?
+                    8
+                    (if (and wide? (not dword?))
+                      8
+                      4))
+                  bytes)]
+              [write? : bool
+                (or
+                  (<= event selector-count)
+                  (= event (- lane-start 1))
+                  (and lane? (not selector?)))]
+              (test.assert-i64-eq
+                fact.home
+                home
+                "actual selector/index/source access sequence")
+              (test.assert-i64-eq
+                fact.home-bytes
+                bytes
+                "fixed shuffle vector capacity")
+              (test.assert-i64-eq
+                fact.access-bytes
+                width
+                "actual selector and packed-index access width")
+              (test.assert-true
+                (match (& fact.owner)
+                  [(FixedScratch) true]
+                  [_ false])
+                "shuffle fixed owner")
+              (test.assert-true
+                (match (& fact.bank)
+                  [(Bytes) true]
+                  [_ false])
+                "shuffle bit storage")
+              (test.assert-true
+                (match (& fact.access)
+                  [(Write) write?]
+                  [(Read) (not write?)]
+                  [_ false])
+                "selector save/check and index initialization/copy/reload")))))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-fixed-gather-buffers
+  (backend-stack-origins-gather-test))
+
+(test
+  backend-stack-origins-fixed-shuffle-buffers
+  (backend-stack-origins-shuffle-test))

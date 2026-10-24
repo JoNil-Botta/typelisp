@@ -955,8 +955,16 @@ final input/group/permutation access against a separate semantic sequence,
 including repeated packing writes, partial index initialization and narrower
 widening reads. Pure malformed-key/capacity and access-boundary assertions share
 their body with the native home smoke; both home and producer smokes run at
-opt0/1/2. Remaining access-changing rewrites, traffic owners and complete report
-acceptance are distinct.
+opt0/1/2. Gather and shuffle emitter tables cover signed/unsigned integer and
+floating dword/qword layouts on AVX2/AVX-512. Gather cases distinguish destructive
+mask saves, high-index saves, result-half stores and complete tuple loads,
+including the unstaged AVX-512 qword route. Shuffle cases check low/high selector
+save/check accesses, recursive lane copies, split AVX2 qword-index writes and
+full source/index reloads against a separate semantic sequence. One-selector
+routes issue no unused high-selector fact. The fixed-key companion rejects
+invalid selector ordinals and role-specific capacities, with every assertion
+shared by native smokes. Remaining access-changing rewrites, traffic owners and
+complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

@@ -6041,9 +6041,9 @@
                                   "    "
                                   widen
                                   " "
-                                  (compiler-backend-shift-staging-operand
+                                  (compiler-backend-fixed-staging-operand
                                     backend-state
-                                    (CompilerBackendShiftStagingOperandRequest
+                                    (CompilerBackendFixedStagingOperandRequest
                                       (Operand 0)
                                       vector-bytes
                                       word-offset
@@ -6054,9 +6054,9 @@
                                   "\n    "
                                   widen
                                   " "
-                                  (compiler-backend-shift-staging-operand
+                                  (compiler-backend-fixed-staging-operand
                                     backend-state
-                                    (CompilerBackendShiftStagingOperandRequest
+                                    (CompilerBackendFixedStagingOperandRequest
                                       (Operand 1)
                                       vector-bytes
                                       (+ vector-bytes word-offset)
@@ -6077,9 +6077,9 @@
                                   " "
                                   tmp0
                                   ", "
-                                  (compiler-backend-shift-staging-operand
+                                  (compiler-backend-fixed-staging-operand
                                     backend-state
-                                    (CompilerBackendShiftStagingOperandRequest
+                                    (CompilerBackendFixedStagingOperandRequest
                                       (Result group)
                                       vector-bytes
                                       result-offset
@@ -6102,9 +6102,9 @@
                                 " "
                                 lhs-reg
                                 ", "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Operand 0)
                                     vector-bytes
                                     0
@@ -6115,9 +6115,9 @@
                                 " "
                                 rhs-reg
                                 ", "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Operand 1)
                                     vector-bytes
                                     vector-bytes
@@ -6138,9 +6138,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 0)
                                     vector-bytes
                                     result-base
@@ -6157,9 +6157,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 1)
                                     vector-bytes
                                     (+ result-base vector-bytes)
@@ -6311,9 +6311,9 @@
                                   "    "
                                   widen
                                   " "
-                                  (compiler-backend-shift-staging-operand
+                                  (compiler-backend-fixed-staging-operand
                                     backend-state
-                                    (CompilerBackendShiftStagingOperandRequest
+                                    (CompilerBackendFixedStagingOperandRequest
                                       (Operand 0)
                                       vector-bytes
                                       byte-offset
@@ -6324,9 +6324,9 @@
                                   "\n    "
                                   widen
                                   " "
-                                  (compiler-backend-shift-staging-operand
+                                  (compiler-backend-fixed-staging-operand
                                     backend-state
-                                    (CompilerBackendShiftStagingOperandRequest
+                                    (CompilerBackendFixedStagingOperandRequest
                                       (Operand 1)
                                       vector-bytes
                                       (+ vector-bytes byte-offset)
@@ -6347,9 +6347,9 @@
                                   " "
                                   tmp0
                                   ", "
-                                  (compiler-backend-shift-staging-operand
+                                  (compiler-backend-fixed-staging-operand
                                     backend-state
-                                    (CompilerBackendShiftStagingOperandRequest
+                                    (CompilerBackendFixedStagingOperandRequest
                                       (Result group)
                                       vector-bytes
                                       result-offset
@@ -6372,9 +6372,9 @@
                                 " "
                                 lhs-reg
                                 ", "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Operand 0)
                                     vector-bytes
                                     0
@@ -6385,9 +6385,9 @@
                                 " "
                                 rhs-reg
                                 ", "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Operand 1)
                                     vector-bytes
                                     vector-bytes
@@ -6423,9 +6423,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 0)
                                     vector-bytes
                                     group-base
@@ -6444,9 +6444,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 1)
                                     vector-bytes
                                     (+ group-base vector-bytes)
@@ -6473,9 +6473,9 @@
                                 " "
                                 tmp1
                                 ", "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 0)
                                     vector-bytes
                                     group-base
@@ -6484,9 +6484,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 2)
                                     vector-bytes
                                     (+ group-base (* vector-bytes 2))
@@ -6505,9 +6505,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 3)
                                     vector-bytes
                                     (+ group-base (* vector-bytes 3))
@@ -6534,9 +6534,9 @@
                                 " "
                                 tmp1
                                 ", "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 1)
                                     vector-bytes
                                     (+ group-base vector-bytes)
@@ -6545,9 +6545,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 0)
                                     vector-bytes
                                     group-base
@@ -6558,9 +6558,9 @@
                                 "\n    "
                                 dword-move
                                 " "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Result 1)
                                     vector-bytes
                                     (+ group-base vector-bytes)
@@ -6575,18 +6575,18 @@
                                 ", "
                                 tmp1
                                 "\n    movl $50462976, "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Permutation)
                                     vector-bytes
                                     index-offset
                                     4
                                     (Write)))
                                 "\n    movl $117835012, "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Permutation)
                                     vector-bytes
                                     (+ index-offset 4)
@@ -6597,18 +6597,18 @@
                                     (compiler-backend-state-stack-text-origins
                                       backend-state)
                                     "\n    movl $185207048, "
-                                    (compiler-backend-shift-staging-operand
+                                    (compiler-backend-fixed-staging-operand
                                       backend-state
-                                      (CompilerBackendShiftStagingOperandRequest
+                                      (CompilerBackendFixedStagingOperandRequest
                                         (Permutation)
                                         vector-bytes
                                         (+ index-offset 8)
                                         4
                                         (Write)))
                                     "\n    movl $252579084, "
-                                    (compiler-backend-shift-staging-operand
+                                    (compiler-backend-fixed-staging-operand
                                       backend-state
-                                      (CompilerBackendShiftStagingOperandRequest
+                                      (CompilerBackendFixedStagingOperandRequest
                                         (Permutation)
                                         vector-bytes
                                         (+ index-offset 12)
@@ -6616,9 +6616,9 @@
                                         (Write))))
                                   "")
                                 "\n    vpmovzxbd "
-                                (compiler-backend-shift-staging-operand
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (CompilerBackendShiftStagingOperandRequest
+                                  (CompilerBackendFixedStagingOperandRequest
                                     (Permutation)
                                     vector-bytes
                                     index-offset
@@ -9426,13 +9426,17 @@
                         instr-diag
                         stack-bytes
                         (Ok
-                          (str_cat.str-cat
+                          (text_origins.compiler-backend-text-origins-cat
+                            (compiler-backend-state-stack-text-origins
+                              backend-state)
                             index-asm
                             "    vmovdqu "
                             index-addr
                             ", %ymm15\n"
                             (if dword
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    vmovdqu 32"
                                 index-addr
                                 ", %ymm14\n")
@@ -9440,16 +9444,28 @@
                             "    vmovdqu "
                             mask-reg
                             ", "
-                            (compiler-backend-simd-scratch-address
+                            (compiler-backend-fixed-staging-operand
                               backend-state
-                              0)
+                              (CompilerBackendFixedStagingOperandRequest
+                                (GatherMask)
+                                32
+                                0
+                                32
+                                (Write)))
                             "\n"
                             (if dword
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    vmovdqu %ymm14, "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  64)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherIndex)
+                                    32
+                                    64
+                                    32
+                                    (Write)))
                                 "\n")
                               "")
                             adjust.first
@@ -9484,13 +9500,20 @@
                               (owned_view.compiler-owned-shared-view dst-reg))
                             "\n"
                             (if dword
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    vmovdqu "
                                 dst-xmm
                                 ", "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  result-off)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherResult)
+                                    32
+                                    result-off
+                                    16
+                                    (Write)))
                                 "\n    vpxor "
                                 dst-reg
                                 ", "
@@ -9504,9 +9527,14 @@
                                 ", "
                                 mask-reg
                                 "\n    vmovdqu "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  64)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherIndex)
+                                    32
+                                    64
+                                    32
+                                    (Read)))
                                 ", %ymm15\n"
                                 adjust.second
                                 base-asm
@@ -9521,21 +9549,36 @@
                                 "\n    vmovdqu "
                                 dst-xmm
                                 ", "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  (+ result-off 16))
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherResult)
+                                    32
+                                    (+ result-off 16)
+                                    16
+                                    (Write)))
                                 "\n    vmovdqu "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  result-off)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherResult)
+                                    32
+                                    result-off
+                                    32
+                                    (Read)))
                                 ", "
                                 dst-reg
                                 "\n")
                               "")
                             "    vmovdqu "
-                            (compiler-backend-simd-scratch-address
+                            (compiler-backend-fixed-staging-operand
                               backend-state
-                              0)
+                              (CompilerBackendFixedStagingOperandRequest
+                                (GatherMask)
+                                32
+                                0
+                                32
+                                (Read)))
                             ", "
                             mask-reg
                             "\n"
@@ -9635,23 +9678,34 @@
                         instr-diag
                         (compiler-backend-simd-scratch-gather-bytes false dword)
                         (Ok
-                          (str_cat.str-cat
+                          (text_origins.compiler-backend-text-origins-cat
+                            (compiler-backend-state-stack-text-origins
+                              backend-state)
                             index-asm
                             "    vmovdqu64 "
                             index-addr
                             ", %zmm15\n"
                             (if dword
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    vmovdqu64 64"
                                 index-addr
                                 ", %zmm14\n")
                               "")
                             (if dword
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    vmovdqu64 %zmm14, "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  0)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherIndex)
+                                    64
+                                    0
+                                    64
+                                    (Write)))
                                 "\n")
                               "")
                             adjust.first
@@ -9676,13 +9730,20 @@
                               (owned_view.compiler-owned-shared-view dst-reg))
                             "{%k7}\n"
                             (if dword
-                              (str_cat.str-cat
+                              (text_origins.compiler-backend-text-origins-cat
+                                (compiler-backend-state-stack-text-origins
+                                  backend-state)
                                 "    vmovdqu32 "
                                 dst-ymm
                                 ", "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  64)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherResult)
+                                    64
+                                    64
+                                    32
+                                    (Write)))
                                 "\n    kxnorw %k7, %k7, %k7\n    vpxord "
                                 dst-reg
                                 ", "
@@ -9690,9 +9751,14 @@
                                 ", "
                                 dst-reg
                                 "\n    vmovdqu64 "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  0)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherIndex)
+                                    64
+                                    0
+                                    64
+                                    (Read)))
                                 ", %zmm15\n"
                                 adjust.second
                                 base-asm
@@ -9705,13 +9771,23 @@
                                 "{%k7}\n    vmovdqu32 "
                                 dst-ymm
                                 ", "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  96)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherResult)
+                                    64
+                                    96
+                                    32
+                                    (Write)))
                                 "\n    vmovdqu32 "
-                                (compiler-backend-simd-scratch-address
+                                (compiler-backend-fixed-staging-operand
                                   backend-state
-                                  64)
+                                  (CompilerBackendFixedStagingOperandRequest
+                                    (GatherResult)
+                                    64
+                                    64
+                                    64
+                                    (Read)))
                                 ", "
                                 dst-reg
                                 "\n")
@@ -9806,30 +9882,58 @@
     ""
     (let
       [selector-slot : String
-        (compiler-backend-simd-scratch-address
+        (compiler-backend-fixed-staging-operand
           backend-state
-          (compiler-backend-shuffle-selector-offset
-            lane
-            selector-lanes
-            width-bytes))]
+          (CompilerBackendFixedStagingOperandRequest
+            (ShuffleSelector
+              (if (< lane selector-lanes)
+                0
+                1))
+            width-bytes
+            (compiler-backend-shuffle-selector-offset
+              lane
+              selector-lanes
+              width-bytes)
+            8
+            (Read)))]
       [index-slot : String
-        (compiler-backend-simd-scratch-address
+        (compiler-backend-fixed-staging-operand
           backend-state
-          (+
-            index-offset
-            (if dword
-              (* lane 4)
-              (* lane 8))))]
+          (CompilerBackendFixedStagingOperandRequest
+            (ShuffleIndex)
+            width-bytes
+            (+
+              index-offset
+              (if dword
+                (* lane 4)
+                (* lane 8)))
+            (if (and (not dword) avx512)
+              8
+              4)
+            (Write)))]
       [value-reg32 : String
         (compiler-backend-reg-part
           (compiler-backend-global-shared-view value-reg)
           4)]
       [copy-asm : String
         (if dword
-          (str_cat.str-cat "    movl " value-reg32 ", " index-slot "\n")
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
+            "    movl "
+            value-reg32
+            ", "
+            index-slot
+            "\n")
           (if avx512
-            (str_cat.str-cat "    movq " value-reg ", " index-slot "\n")
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              "    movq "
+              value-reg
+              ", "
+              index-slot
+              "\n")
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               "    shll $1, "
               value-reg32
               "\n    movl "
@@ -9841,11 +9945,17 @@
               "\n    movl "
               value-reg32
               ", "
-              (compiler-backend-simd-scratch-address
+              (compiler-backend-fixed-staging-operand
                 backend-state
-                (+ index-offset (* lane 8) 4))
+                (CompilerBackendFixedStagingOperandRequest
+                  (ShuffleIndex)
+                  width-bytes
+                  (+ index-offset (* lane 8) 4)
+                  4
+                  (Write)))
               "\n")))]
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         "    movq "
         selector-slot
         ", "
@@ -9875,7 +9985,8 @@
   [high-slot : (& high-slot str)]
   [active-reg : String]
   [value-reg : String]
-  [abort-label : (& abort-label str)]) : String
+  [abort-label : (& abort-label str)]
+  [backend-state : CompilerBackendState]) : String
   (let
     [active-reg32 : String
       (compiler-backend-reg-part
@@ -9886,7 +9997,8 @@
         (compiler-backend-global-shared-view value-reg)
         4)]
     (if avx512
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         "    leaq -1("
         active-reg
         "), "
@@ -9899,7 +10011,8 @@
         value-reg32
         "\n"
         (if (> selector-count 1)
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    vmovdqu64 "
             high-slot
             ", %zmm1\n    vpcmpuq $6, %zmm0, %zmm1, %k7\n    kmovw %k7, "
@@ -9917,7 +10030,8 @@
         "\n    jne "
         abort-label
         "\n")
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         "    leaq -1("
         active-reg
         "), "
@@ -9936,7 +10050,8 @@
         value-reg32
         "\n"
         (if (> selector-count 1)
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    vmovdqu "
             high-slot
             ", %ymm1\n    vpmovmskb %ymm1, "
@@ -10130,7 +10245,9 @@
                                           [(Ok high-use)
                                             (match high-use
                                               [(Use load-asm high-reg)
-                                                (str_cat.str-cat
+                                                (text_origins.compiler-backend-text-origins-cat
+                                                  (compiler-backend-state-stack-text-origins
+                                                    program-index.backend-state)
                                                   load-asm
                                                   "    "
                                                   (let
@@ -10142,15 +10259,22 @@
                                                   " "
                                                   high-reg
                                                   ", "
-                                                  (compiler-backend-simd-scratch-address
+                                                  (compiler-backend-fixed-staging-operand
                                                     program-index.backend-state
-                                                    width-bytes)
+                                                    (CompilerBackendFixedStagingOperandRequest
+                                                      (ShuffleSelector 1)
+                                                      width-bytes
+                                                      width-bytes
+                                                      width-bytes
+                                                      (Write)))
                                                   "\n")])]
                                           [(Err _) ""])]
                                       [(No) ""])]
                                   [zero-index-asm : String
                                     (if avx512
-                                      (str_cat.str-cat
+                                      (text_origins.compiler-backend-text-origins-cat
+                                        (compiler-backend-state-stack-text-origins
+                                          program-index.backend-state)
                                         "    vpxord "
                                         index-reg
                                         ", "
@@ -10160,11 +10284,18 @@
                                         "\n    vmovdqu64 "
                                         index-reg
                                         ", "
-                                        (compiler-backend-simd-scratch-address
+                                        (compiler-backend-fixed-staging-operand
                                           program-index.backend-state
-                                          index-offset)
+                                          (CompilerBackendFixedStagingOperandRequest
+                                            (ShuffleIndex)
+                                            width-bytes
+                                            index-offset
+                                            width-bytes
+                                            (Write)))
                                         "\n")
-                                      (str_cat.str-cat
+                                      (text_origins.compiler-backend-text-origins-cat
+                                        (compiler-backend-state-stack-text-origins
+                                          program-index.backend-state)
                                         "    vpxor "
                                         index-reg
                                         ", "
@@ -10174,12 +10305,19 @@
                                         "\n    vmovdqu "
                                         index-reg
                                         ", "
-                                        (compiler-backend-simd-scratch-address
+                                        (compiler-backend-fixed-staging-operand
                                           program-index.backend-state
-                                          index-offset)
+                                          (CompilerBackendFixedStagingOperandRequest
+                                            (ShuffleIndex)
+                                            width-bytes
+                                            index-offset
+                                            width-bytes
+                                            (Write)))
                                         "\n"))]
                                   [permute : String
-                                    (str_cat.str-cat
+                                    (text_origins.compiler-backend-text-origins-cat
+                                      (compiler-backend-state-stack-text-origins
+                                        program-index.backend-state)
                                       "    "
                                       (if dword
                                         "vpermd"
@@ -10187,9 +10325,14 @@
                                           "vpermq"
                                           "vpermd"))
                                       " "
-                                      (compiler-backend-simd-scratch-address
+                                      (compiler-backend-fixed-staging-operand
                                         program-index.backend-state
-                                        source-offset)
+                                        (CompilerBackendFixedStagingOperandRequest
+                                          (ShuffleSource)
+                                          width-bytes
+                                          source-offset
+                                          width-bytes
+                                          (Read)))
                                       ", "
                                       index-reg
                                       ", "
@@ -10200,7 +10343,9 @@
                                     instr-diag
                                     stack-bytes
                                     (Ok
-                                      (str_cat.str-cat
+                                      (text_origins.compiler-backend-text-origins-cat
+                                        (compiler-backend-state-stack-text-origins
+                                          program-index.backend-state)
                                         source-asm
                                         active-asm
                                         "    "
@@ -10210,9 +10355,14 @@
                                         " "
                                         source-reg
                                         ", "
-                                        (compiler-backend-simd-scratch-address
+                                        (compiler-backend-fixed-staging-operand
                                           program-index.backend-state
-                                          source-offset)
+                                          (CompilerBackendFixedStagingOperandRequest
+                                            (ShuffleSource)
+                                            width-bytes
+                                            source-offset
+                                            width-bytes
+                                            (Write)))
                                         "\n"
                                         low-asm
                                         "    "
@@ -10225,24 +10375,42 @@
                                         " "
                                         low-reg
                                         ", "
-                                        (compiler-backend-simd-scratch-address
+                                        (compiler-backend-fixed-staging-operand
                                           program-index.backend-state
-                                          0)
+                                          (CompilerBackendFixedStagingOperandRequest
+                                            (ShuffleSelector 0)
+                                            width-bytes
+                                            0
+                                            width-bytes
+                                            (Write)))
                                         "\n"
                                         high-asm
                                         (compiler-backend-shuffle-vector-check-asm
                                           avx512
                                           selector-count
-                                          (compiler-backend-simd-scratch-address
+                                          (compiler-backend-fixed-staging-operand
                                             program-index.backend-state
-                                            0)
-                                          (compiler-backend-simd-scratch-address
-                                            program-index.backend-state
-                                            width-bytes)
+                                            (CompilerBackendFixedStagingOperandRequest
+                                              (ShuffleSelector 0)
+                                              width-bytes
+                                              0
+                                              width-bytes
+                                              (Read)))
+                                          (if (> selector-count 1)
+                                            (compiler-backend-fixed-staging-operand
+                                              program-index.backend-state
+                                              (CompilerBackendFixedStagingOperandRequest
+                                                (ShuffleSelector 1)
+                                                width-bytes
+                                                width-bytes
+                                                width-bytes
+                                                (Read)))
+                                            "")
                                           active-reg
                                           (compiler-backend-global-shared-view
                                             value-reg)
-                                          abort-label)
+                                          abort-label
+                                          program-index.backend-state)
                                         zero-index-asm
                                         (compiler-backend-shuffle-index-lane-copy-asm
                                           0
@@ -10278,9 +10446,14 @@
                                             width
                                             elem-ty))
                                         " "
-                                        (compiler-backend-simd-scratch-address
+                                        (compiler-backend-fixed-staging-operand
                                           program-index.backend-state
-                                          index-offset)
+                                          (CompilerBackendFixedStagingOperandRequest
+                                            (ShuffleIndex)
+                                            width-bytes
+                                            index-offset
+                                            width-bytes
+                                            (Read)))
                                         ", "
                                         index-reg
                                         "\n"
@@ -13928,12 +14101,12 @@
     (unless
       (compiler-backend-avx2-lane-stack-access-valid? lane lane-bytes)
       (io.panic "stack traffic: invalid fixed lane-buffer access")))
-  (compiler-backend-preservation-operand-origin
+  (compiler-backend-fixed-staging-operand
     backend-state
-    (compiler-backend-simd-scratch-address backend-state (* lane lane-bytes))
-    (CompilerBackendPreservationOperandRequest
-      (SimdLaneStaging)
-      (Bytes)
+    (CompilerBackendFixedStagingOperandRequest
+      (LaneBuffer)
+      32
+      (* lane lane-bytes)
       lane-bytes
       access)))
 
@@ -17831,8 +18004,7 @@
               [(EmergencyRegister _) (EmergencyScratch)]
               [(ParallelCopySlot _) (PlannedScratch)]
               [(ParallelCopyRegister _) (PlannedScratch)]
-              [(SimdLaneStaging) (FixedScratch)]
-              [(ShiftStaging _ _) (FixedScratch)])
+              [(FixedStaging _ _) (FixedScratch)])
             request.bank
             request.bytes
             request.access)
@@ -17840,16 +18012,16 @@
           [(Ok result) result]
           [(Err message) (io.panic message)])))))
 
-(defstruct CompilerBackendShiftStagingOperandRequest
-  (part home_origins.CompilerBackendShiftStagingKey)
+(defstruct CompilerBackendFixedStagingOperandRequest
+  (part home_origins.CompilerBackendFixedStagingKey)
   (capacity i64)
   (offset i64)
   (bytes i64)
   (access stack_traffic.CompilerStackTrafficAccess))
 
-(define (compiler-backend-shift-staging-extent-valid?
+(define (compiler-backend-fixed-staging-extent-valid?
   [planned : i64]
-  [request : (& CompilerBackendShiftStagingOperandRequest)]) : bool
+  [request : (& CompilerBackendFixedStagingOperandRequest)]) : bool
   (and
     (or (= request.capacity 32) (= request.capacity 64))
     (> request.bytes 0)
@@ -17858,9 +18030,9 @@
     (<= request.bytes planned)
     (<= request.offset (- planned request.bytes))))
 
-(define (compiler-backend-shift-staging-operand
+(define (compiler-backend-fixed-staging-operand
   [state : CompilerBackendState]
-  [request : CompilerBackendShiftStagingOperandRequest]) : String
+  [request : CompilerBackendFixedStagingOperandRequest]) : String
   (when
     (!= (compiler-backend-state-stack-text-origins state).storage 0)
     (let
@@ -17869,13 +18041,13 @@
           (compiler-backend-state-function-state state)
           compiler-backend-scratch-i64-simd-scratch-bytes)]
       (unless
-        (compiler-backend-shift-staging-extent-valid? planned (& request))
-        (io.panic "stack traffic: invalid shift staging access extent"))))
+        (compiler-backend-fixed-staging-extent-valid? planned (& request))
+        (io.panic "stack traffic: invalid fixed staging access extent"))))
   (compiler-backend-preservation-operand-origin
     state
     (compiler-backend-simd-scratch-address state request.offset)
     (CompilerBackendPreservationOperandRequest
-      (ShiftStaging request.part request.capacity)
+      (FixedStaging request.part request.capacity)
       (Bytes)
       request.bytes
       request.access)))

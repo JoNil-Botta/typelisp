@@ -18823,7 +18823,9 @@ f:
         "-64(%rbp)"
         "%r10"
         "%r11"
-        ".L_abort")]
+        ".L_abort"
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))]
     [avx512 : String
       (backend.compiler-backend-shuffle-vector-check-asm
         true
@@ -18832,7 +18834,9 @@ f:
         "-128(%rbp)"
         "%r10"
         "%r11"
-        ".L_abort")]
+        ".L_abort"
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active)))]
     (and
       (backend.backend-and8
         (= (backend.compiler-backend-string-count avx2 "vpcmpgtq") 2)

@@ -932,7 +932,7 @@ join:
               0)
             (if (= request 3)
               (ParallelCopySlot 0)
-              (SimdLaneStaging)))
+              (FixedStaging (LaneBuffer) 32)))
             [(Err message) (io.panic message)]
             [(Ok home)
               (test.assert-i64-eq
@@ -953,7 +953,7 @@ join:
             (if (= request 6)
               1
               0)
-            (ShiftStaging
+            (FixedStaging
               (cond
                 [(= request 6) (Operand 0)]
                 [(< request 3)
@@ -1004,7 +1004,7 @@ join:
           44
           10
           0
-          (ShiftStaging (Permutation) 32))
+          (FixedStaging (Permutation) 32))
           [(Err message) (io.panic message)]
           [(Ok home)
             (test.assert-i64-eq home.id 37 "exact/spare fixed resource lookup")])
@@ -1015,7 +1015,7 @@ join:
               44
               10
               0
-              (ShiftStaging
+              (FixedStaging
                 (cond
                   [(< invalid 2)
                     (Operand
@@ -1039,6 +1039,60 @@ join:
         (test.assert-i64-eq
           plan.preservations.len
           9
-          "failed query publishes no resource")))))
+          "failed query publishes no resource")
+        (for [kind (iterator.range 0 8)]
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            10
+            0
+            (FixedStaging
+              (cond
+                [(= kind 0) (GatherMask)]
+                [(= kind 1) (GatherIndex)]
+                [(= kind 2) (GatherResult)]
+                [(= kind 3) (ShuffleSelector 0)]
+                [(= kind 4) (ShuffleSelector 1)]
+                [(= kind 5) (ShuffleIndex)]
+                [(= kind 6) (ShuffleSource)]
+                [else (LaneBuffer)])
+              (if (= kind 1)
+                64
+                32)))
+            [(Err message) (io.panic message)]
+            [(Ok home)
+              (test.assert-i64-eq
+                home.id
+                (if (= kind 7)
+                  30
+                  (+ 39 kind))
+                "every fixed staging role has a distinct semantic key")]))
+        (for [invalid (iterator.range 0 5)]
+          (test.assert-true
+            (match (homes.compiler-backend-home-preservation!
+              (&mut plan)
+              44
+              10
+              0
+              (FixedStaging
+                (cond
+                  [(< invalid 2)
+                    (ShuffleSelector
+                      (if (= invalid 0)
+                        -1
+                        2))]
+                  [(= invalid 2) (GatherMask)]
+                  [(= invalid 3) (LaneBuffer)]
+                  [else (GatherIndex)])
+                (if (= invalid 4)
+                  32
+                  64)))
+              [(Err _) true]
+              [_ false])
+            "unsupported selector, fixed capacity or later capacity drift rejects"))
+        (test.assert-i64-eq
+          plan.preservations.len
+          16
+          "no malformed fixed resource is published")))))
 
 (test backend-home-fixed-lane-resource (home-origin-fixed-staging-test))

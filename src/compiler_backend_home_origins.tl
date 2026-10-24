@@ -73,18 +73,23 @@
 
 ;; A preservation resource is issued at its emitting authority, independently
 ;; of its current frame displacement. Separate IR sites never share its home.
-(defenum CompilerBackendShiftStagingKey
+(defenum CompilerBackendFixedStagingKey
   (Operand i64)
   (Result i64)
-  (Permutation))
+  (Permutation)
+  (GatherMask)
+  (GatherIndex)
+  (GatherResult)
+  (ShuffleSelector i64)
+  (ShuffleIndex)
+  (ShuffleSource)
+  (LaneBuffer))
 
 (defenum CompilerBackendPreservationKey
   (EmergencyRegister i64)
   (ParallelCopySlot i64)
   (ParallelCopyRegister i64)
-  ;; One instruction-local, untyped 32-byte AVX2 lane buffer.
-  (SimdLaneStaging)
-  (ShiftStaging CompilerBackendShiftStagingKey i64))
+  (FixedStaging CompilerBackendFixedStagingKey i64))
 
 (defstruct CompilerBackendPreservationHome
   (site i64)
@@ -605,9 +610,9 @@
       (return (Err "stack traffic: original group fragment identity overflows")))
     (Ok (CompilerBackendLogicalHome (+ count (+ (* 2 home.id) word)) 8))))
 
-(define (compiler-backend-shift-staging-key-equal?
-  [left : (& CompilerBackendShiftStagingKey)]
-  [right : (& CompilerBackendShiftStagingKey)]) : bool
+(define (compiler-backend-fixed-staging-key-equal?
+  [left : (& CompilerBackendFixedStagingKey)]
+  [right : (& CompilerBackendFixedStagingKey)]) : bool
   (match left
     [(Operand a)
       (match right
@@ -620,6 +625,34 @@
     [(Permutation)
       (match right
         [(Permutation) true]
+        [_ false])]
+    [(GatherMask)
+      (match right
+        [(GatherMask) true]
+        [_ false])]
+    [(GatherIndex)
+      (match right
+        [(GatherIndex) true]
+        [_ false])]
+    [(GatherResult)
+      (match right
+        [(GatherResult) true]
+        [_ false])]
+    [(ShuffleSelector a)
+      (match right
+        [(ShuffleSelector b) (= a b)]
+        [_ false])]
+    [(ShuffleIndex)
+      (match right
+        [(ShuffleIndex) true]
+        [_ false])]
+    [(ShuffleSource)
+      (match right
+        [(ShuffleSource) true]
+        [_ false])]
+    [(LaneBuffer)
+      (match right
+        [(LaneBuffer) true]
         [_ false])]))
 
 (define (compiler-backend-preservation-key-bytes
@@ -628,8 +661,7 @@
     [(EmergencyRegister _) 64]
     [(ParallelCopySlot _) 8]
     [(ParallelCopyRegister _) 8]
-    [(SimdLaneStaging) 32]
-    [(ShiftStaging _ bytes) bytes]))
+    [(FixedStaging _ bytes) bytes]))
 
 (define (compiler-backend-preservation-key-equal?
   [left : (& CompilerBackendPreservationKey)]
@@ -647,13 +679,9 @@
       (match right
         [(ParallelCopyRegister b) (= a b)]
         [_ false])]
-    [(SimdLaneStaging)
+    [(FixedStaging a _)
       (match right
-        [(SimdLaneStaging) true]
-        [_ false])]
-    [(ShiftStaging a _)
-      (match right
-        [(ShiftStaging b _) (compiler-backend-shift-staging-key-equal? a b)]
+        [(FixedStaging b _) (compiler-backend-fixed-staging-key-equal? a b)]
         [_ false])]))
 
 ;; Preservation resources follow all scalar and group-fragment IDs. The
@@ -679,17 +707,23 @@
   (let
     [normalized : CompilerBackendPreservationKey
       (match (& key)
-        [(SimdLaneStaging) (SimdLaneStaging)]
-        [(ShiftStaging part bytes)
+        [(FixedStaging part bytes)
           (unless
             (and
               (or (= bytes 32) (= bytes 64))
               (match part
                 [(Operand index) (and (>= index 0) (< index 2))]
                 [(Result index) (and (>= index 0) (< index 4))]
-                [(Permutation) true]))
-            (return (Err "stack traffic: invalid shift staging authority")))
-          (ShiftStaging (clone part) bytes)]
+                [(Permutation) true]
+                [(GatherMask) (= bytes 32)]
+                [(GatherIndex) true]
+                [(GatherResult) true]
+                [(ShuffleSelector index) (and (>= index 0) (< index 2))]
+                [(ShuffleIndex) true]
+                [(ShuffleSource) true]
+                [(LaneBuffer) (= bytes 32)]))
+            (return (Err "stack traffic: invalid fixed staging authority")))
+          (FixedStaging (clone part) bytes)]
         [(ParallelCopySlot slot)
           (when
             (< slot 0)

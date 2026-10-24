@@ -732,6 +732,15 @@ capacity, even when the typed key and instruction site match. Bounds checks
 subtract only after proving the access fits the plan, so malformed large
 offsets cannot wrap into an accepted range. Group assembly and packing parents
 preserve operand tokens independently of their construction order.
+The same fixed-buffer request carries gather and shuffle staging. A gather's
+destructive-mask save, high-index save and reassembled result tuple have distinct
+keys, including separate result-half stores and a complete tuple reload. The
+AVX-512 qword route issues no fixed-buffer access. A shuffle distinguishes its
+low/high selector vectors, initialized index row and source vector. Selector
+checks and recursive lane copies transport each access explicitly; an absent
+high selector issues no speculative access. Capacity is invariant for a key at
+one IR site. The raw SIMD address formatter remains behind this typed factory;
+its displacement never authorizes a home.
 Fresh auxiliary assembly buffers bind the active capture before any prefix;
 a foreign, untracked or finalized buffer cannot accept a captured operand.
 Single and paired GEP/load factories supply each consumed Load's destination

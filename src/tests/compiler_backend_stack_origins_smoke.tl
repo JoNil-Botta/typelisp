@@ -1,6 +1,8 @@
 (import compiler_backend_stack_origins_tests as fixtures)
 
 (define (main) : i64
+  (fixtures.backend-stack-origins-gather-test)
+  (fixtures.backend-stack-origins-shuffle-test)
   (fixtures.backend-stack-origins-shift-test)
   (fixtures.backend-stack-origins-lane-test)
   (fixtures.backend-stack-origins-arg-cycle-test)

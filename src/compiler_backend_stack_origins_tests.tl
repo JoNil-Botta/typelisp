@@ -34,7 +34,8 @@
 
 (define (backend-stack-origins-install-test-plan!
   [state : backend.CompilerBackendState]
-  [color? : bool]) : unit
+  [color? : bool]
+  [mask? : bool]) : unit
   (let
     [function-state : backend.CompilerBackendFunctionState
       (backend.compiler-backend-state-function-state state)]
@@ -47,13 +48,25 @@
     [blocks : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock 1)]
     [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
-    (set! (array-ref instructions 0) (Splat 7 (I64 1) 4 (I64)))
-    (set! (array-ref instructions 1) (Splat 9 (I64 2) 4 (I64)))
-    (set!
-      (array-ref instructions 2)
-      (VectorBinOp
-        (box
-          (ir.CompilerIrInstrVectorBinOpPayload 8 (Add) (Var 7) (Var 9) 4 (I64)))))
+    (if mask?
+      (begin
+        (set! (array-ref instructions 0) (TailMask 7 (I64 0) (I64 64) 64))
+        (set! (array-ref instructions 1) (TailMask 9 (I64 0) (I64 64) 64))
+        (set! (array-ref instructions 2) (MaskBinOp 8 (And) (Var 7) (Var 9) 64)))
+      (begin
+        (set! (array-ref instructions 0) (Splat 7 (I64 1) 4 (I64)))
+        (set! (array-ref instructions 1) (Splat 9 (I64 2) 4 (I64)))
+        (set!
+          (array-ref instructions 2)
+          (VectorBinOp
+            (box
+              (ir.CompilerIrInstrVectorBinOpPayload
+                8
+                (Add)
+                (Var 7)
+                (Var 9)
+                4
+                (I64)))))))
     (set!
       (array-ref blocks 0)
       (Block block (ir.CompilerIrInstrSeq instructions 3)))
@@ -112,7 +125,7 @@
       backend.compiler-backend-function-i64-current-block-label
       10)
     (backend.compiler-backend-state-stack-origins-begin! state)
-    (backend-stack-origins-install-test-plan! state true)
+    (backend-stack-origins-install-test-plan! state true false)
     (let
       [read : String
         (backend-stack-origin-read
@@ -163,6 +176,132 @@
   backend-stack-origins-retain-pre-color-identities
   (backend-stack-origins-colored-test))
 
+(define (backend-stack-origins-mask-test) : unit
+  (for [width (iterator.range 0 3)]
+    (let
+      [lanes : i64
+        (if (= width 0)
+          16
+          (if (= width 1)
+            32
+            64))]
+      [bytes : i64
+        (if (= width 0)
+          2
+          (if (= width 1)
+            4
+            8))]
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [assignment : regalloc.CompilerRegAssignment
+        (regalloc.CompilerRegAssignment 1 (Spill -64))]
+      [homes : regalloc.CompilerRegAssignmentTable
+        (regalloc.compiler-reg-assignments-prepend
+          (& assignment)
+          (regalloc.compiler-reg-assignment-table-empty))]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (backend-stack-origins-install-test-plan! state true true)
+      (let
+        [read : String
+          (match (backend.compiler-backend-avx512-mask-source-into-gpr
+            (owned_view.compiler-owned-shared-view homes)
+            (Var 1)
+            "fixture"
+            lanes
+            (if (= width 2)
+              "%rax"
+              "%eax")
+            state)
+            [(Err message) (io.panic message)]
+            [(Ok use)
+              (match use
+                [(Use text _) text])])]
+        [write : String
+          (backend.compiler-backend-avx512-mask-store-dst
+            homes
+            1
+            lanes
+            "%k7"
+            state)]
+        [capture : origins.CompilerBackendTextOrigins
+          (backend.compiler-backend-state-stack-text-origins state)]
+        [spelling : String
+          (string.concat
+            "kmov"
+            (if (= width 0)
+              "w"
+              (if (= width 1)
+                "d"
+                "q")))]
+        [accesses : origins.CompilerBackendStackAccessOriginList
+          (backend.compiler-backend-state-stack-access-origins state)]
+        (test.assert-string-eq
+          read
+          (string.concat5
+            "    "
+            (owned_view.compiler-owned-shared-view spelling)
+            " -64(%rbp), %k7\n    "
+            (owned_view.compiler-owned-shared-view spelling)
+            (if (= width 2)
+              " %k7, %rax\n"
+              " %k7, %eax\n"))
+          "captured compact mask load and parent bytes")
+        (test.assert-string-eq
+          write
+          (string.concat3 "    " spelling " %k7, -64(%rbp)\n")
+          "captured compact mask store bytes")
+        (test.assert-i64-eq
+          accesses.len
+          2
+          "both mask operands carry typed origins")
+        (test.assert-i64-eq
+          (array-ref accesses.slots 0).home
+          7
+          "pre-color mask read")
+        (test.assert-i64-eq
+          (array-ref accesses.slots 1).home
+          8
+          "pre-color mask write")
+        (for [index (iterator.range 0 2)]
+          (let
+            [origin : (& accesses origins.CompilerBackendStackAccessOrigin)
+              (& (array-ref accesses.slots index))]
+            (test.assert-i64-eq origin.home-bytes 32 "planned mask reservation")
+            (test.assert-i64-eq
+              origin.access-bytes
+              bytes
+              "actual compact mask access")
+            (test.assert-true
+              (match (& origin.bank)
+                [(Mask) true]
+                [_ false])
+              "typed mask bank")))
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-find capture (& read)))
+          1
+          "mask load identity survives GPR parent")
+        (test.assert-i64-eq
+          (array-length
+            (origins.compiler-backend-text-origins-find capture (& write)))
+          1
+          "mask store identity survives renderer"))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-cover-compact-mask-homes
+  (backend-stack-origins-mask-test))
+
 (define (backend-stack-origins-producer-test) : unit
   (let
     [intern : ci.InternCompatState (ci.intern-compat-state-new)]
@@ -207,7 +346,7 @@
       0
       "ordinary emission allocates no origin list")
     (backend.compiler-backend-state-stack-origins-begin! state)
-    (backend-stack-origins-install-test-plan! state false)
+    (backend-stack-origins-install-test-plan! state false false)
     (let
       [capture : origins.CompilerBackendTextOrigins
         (backend.compiler-backend-state-stack-text-origins state)]
@@ -455,7 +594,7 @@
       backend.compiler-backend-function-i64-current-block-label
       (ir.compiler-ir-label "frame_block"))
     (backend.compiler-backend-state-stack-origins-begin! state)
-    (backend-stack-origins-install-test-plan! state false)
+    (backend-stack-origins-install-test-plan! state false false)
     (let
       [capture : origins.CompilerBackendTextOrigins
         (backend.compiler-backend-state-stack-text-origins state)]

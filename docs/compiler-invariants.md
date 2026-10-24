@@ -693,6 +693,14 @@ push/pop envelope and data-only interior, rejecting nested/wrong sections and
 multiple statements. Missing, foreign or changed witnesses fail closed. Other
 data emitters, remaining transport parents and escaping controls still need
 their own authority before the full final graph can be accepted.
+Actual direct and closure tail-call epilogues mark the complete emitted jump
+with its function and source-block or adapter anchor. The final reader validates
+that protected instruction and records its final operation/block as an exit,
+including recursive tails whose symbol is also locally defined. Clones retain
+separate final events; frame-pointer rewriting preserves the same witness.
+These control events create no memory facts. Lost/partial/foreign witnesses
+cannot authorize external or indirect flow. Indirect local dispatch and other
+data emitters still require their distinct authorities.
 The backend now constructs instruction extents from its shared final-line
 parser for one registered function. Label aliases create no empty blocks, and
 labels or post-transfer instructions start new groups. Returning calls remain

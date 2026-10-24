@@ -91,6 +91,7 @@
 (defenum CompilerBackendTextOriginKind
   (Access)
   (DataLine CompilerBackendDataLocation)
+  (TailExit CompilerBackendStackAccessAnchor)
   (FunctionStart)
   (FunctionEnd))
 
@@ -1166,6 +1167,7 @@
               (match (& span.kind)
                 [(Access) true]
                 [(DataLine _) (= span.token request.function.value)]
+                [(TailExit _) (= span.token request.function.value)]
                 [_ false])
               (>= span.start (+ start (+ size 1)))
               (<= span.end (- length 1)))
@@ -1331,7 +1333,16 @@
               (unless
                 (and (>= active 0) (= span.token active))
                 (return
-                  (Err "stack traffic: final data crosses function ownership")))])))
+                  (Err "stack traffic: final data crosses function ownership")))]
+            [(TailExit anchor)
+              (unless
+                (and
+                  (>= active 0)
+                  (= span.token active)
+                  (compiler-backend-tail-exit-anchor-valid? anchor))
+                (return
+                  (Err
+                    "stack traffic: final tail exit crosses function ownership")))])))
       (unless
         (and (< active 0) (= cursor count))
         (return (Err "stack traffic: final function end is missing")))
@@ -1459,4 +1470,67 @@
                 (string.substring (& copy) start (- i start))))
             (set! start (+ i 1))
             (+= cursor 1)))
+        (Ok (compiler-backend-text-origins-publish capture copy spans))))))
+
+(defstruct CompilerBackendTailExitRequest
+  (function ir.CompilerIrSymbolId)
+  (anchor CompilerBackendStackAccessAnchor)
+  (text String))
+
+(define (compiler-backend-tail-exit-anchor-valid?
+  [anchor : (& anchor CompilerBackendStackAccessAnchor)]) : bool
+  (match anchor
+    [(SourceBlock block) (>= block 0)]
+    [(AdapterBody) true]
+    [_ false]))
+
+;; A TailCall emitter, rather than a missing local label, proves this jump
+;; leaves the current function. The whole instruction is a protected witness;
+;; it carries no invented memory access or target-derived source identity.
+(define (compiler-backend-text-origins-tail-exit
+  [capture : CompilerBackendTextOrigins]
+  [request : CompilerBackendTailExitRequest]) : CompilerBackendOriginTextResult
+  (when (= capture.storage 0) (return (Ok request.text)))
+  (let
+    [length : i64 (string.string-length request.text)]
+    (unless
+      (and
+        (>= request.function.value 0)
+        (compiler-backend-tail-exit-anchor-valid? (& request.anchor))
+        (or
+          (and
+            (> length 8)
+            (string.is-string-prefix-at (& request.text) "    jmp " 0))
+          (and
+            (> length 9)
+            (string.is-string-prefix-at (& request.text) "    jmpq " 0))))
+      (return
+        (Err "stack traffic: tail exit needs an emitted jump and source anchor")))
+    (for [i (iterator.range 0 length)]
+      (let
+        [byte : char (string.string-ref (& request.text) i)]
+        (when
+          (or (= byte '\n') (= byte '\r') (= byte ';'))
+          (return
+            (Err "stack traffic: tail exit must be one complete instruction")))))
+    (when
+      (>
+        (array-length
+          (compiler-backend-text-origins-find capture (& request.text)))
+        0)
+      (return (Err "stack traffic: tail exit cannot replace existing origins")))
+    (in-arena
+      (arena.Arena capture.owner)
+      (let
+        [copy : String (string.copy (& request.text))]
+        [spans : (__tl_dyn-array CompilerBackendTextOrigin)
+          (__tl_make-array CompilerBackendTextOrigin 1)]
+        (set!
+          (array-ref spans 0)
+          (CompilerBackendTextOrigin
+            0
+            length
+            request.function.value
+            (TailExit (clone request.anchor))
+            (string.copy (& copy))))
         (Ok (compiler-backend-text-origins-publish capture copy spans))))))

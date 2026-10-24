@@ -964,6 +964,12 @@ and rejection of branches into either descriptor. Foreign/lost witnesses,
 tagged instructions, partial/empty ranges, and missing/wrong/nested section
 envelopes reject. Real graph diagnostics retain unresolved cases as pending;
 their successful collection is not full graph acceptance.
+Tail-exit fixtures compare ordinary/captured direct, closure and recursive tail
+epilogues, including frame-pointer rewriting. They bind the exact final jump
+ordinal/block and retained source anchor, function registration and cloned
+adapter events without memory facts. Invalid identities/anchors/opcodes,
+partial or multiple statements and lost/foreign witnesses reject; unmarked
+indirect/external transfers remain errors.
 `compiler_backend_home_origins_tests.tl`
 pairs original instructions with the real noninjective frame-color remapper,
 including separate use/definition identities, repeated versus ambiguous uses,

@@ -19264,11 +19264,61 @@
     (compiler-backend-frame-pointer-operand-origin backend-state "leave" (Read))
     "\n    ret\n"))
 
+(define (compiler-backend-tail-exit-origin
+  [state : CompilerBackendState]
+  [text : String]) : String
+  (let
+    [capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins state)]
+    (when (= capture.storage 0) (return text))
+    (match (compiler-backend-frame-pointer-context-check state)
+      [(Err message) (io.panic message)]
+      [(Ok) unit])
+    (let
+      [function-state : CompilerBackendFunctionState
+        (compiler-backend-state-function-state state)]
+      (compiler-backend-origin-invariant-text
+        (text_origins.compiler-backend-text-origins-tail-exit
+          capture
+          (text_origins.CompilerBackendTailExitRequest
+            (compiler_ir_types.compiler-ir-symbol-typed-id
+              (compiler-backend-function-scratch-i64
+                function-state
+                compiler-backend-scratch-i64-current-source-function))
+            (match (compiler-backend-stack-home-plan function-state).kind
+              [(ClosureAdapter) (AdapterBody)]
+              [(Source)
+                (SourceBlock
+                  (compiler-backend-function-state-i64
+                    function-state
+                    compiler-backend-function-i64-current-block-label))])
+            text))))))
+
 (define (compiler-backend-tail-jump-tail
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [target : String]
   [backend-state : CompilerBackendState]) : String
+  ;; Keep ordinary emission's single concatenation per original layer: forming
+  ;; a complete protected jump must not allocate a provisional ordinary string.
+  (when
+    (= (compiler-backend-state-stack-text-origins backend-state).storage 0)
+    (return
+      (str_cat.str-cat
+        (compiler-backend-emit-restore-callee-regs
+          assignments
+          vars
+          backend-state)
+        (str_cat.str-cat
+          "    "
+          (compiler-backend-frame-pointer-operand-origin
+            backend-state
+            "leave"
+            (Read))
+          "\n    jmp "
+          target
+          "\n"
+          ""))))
   (text_origins.compiler-backend-text-origins-cat
     (compiler-backend-state-stack-text-origins backend-state)
     (compiler-backend-emit-restore-callee-regs assignments vars backend-state)
@@ -19279,8 +19329,10 @@
         backend-state
         "leave"
         (Read))
-      "\n    jmp "
-      target
+      "\n"
+      (compiler-backend-tail-exit-origin
+        backend-state
+        (str_cat.str-cat "    jmp " target))
       "\n"
       "")))
 
@@ -58797,7 +58849,9 @@
                         "")]
                     (if register-only
                       (Ok
-                        (str_cat.str-cat
+                        (text_origins.compiler-backend-text-origins-cat
+                          (compiler-backend-state-stack-text-origins
+                            backend-state)
                           args-asm
                           descriptor-asm
                           (compiler-backend-tail-jump-tail
@@ -96641,9 +96695,15 @@ tl_shared_object_init:
           [(Err message) (return (Err message))])))
     (Ok result)))
 
+(defstruct CompilerBackendFinalTailExit
+  (operation i64)
+  (block i64)
+  (anchor text_origins.CompilerBackendStackAccessAnchor))
+
 (defstruct CompilerBackendFinalStackControl
   (partition CompilerBackendFinalStackPartition)
-  (graph compiler_liveness.CompilerLiveBlockGraph))
+  (graph compiler_liveness.CompilerLiveBlockGraph)
+  (tail-exits (__tl_dyn-array CompilerBackendFinalTailExit)))
 
 (defenum CompilerBackendFinalStackControlResult
   (Ok CompilerBackendFinalStackControl)
@@ -96762,6 +96822,10 @@ tl_shared_object_init:
         (backend_i64_i64_map.with-capacity (+ count 1))]
       [data-count : i64 0]
       [used-data : i64 0]
+      [tail-lines : backend_i64_i64_map.Map
+        (backend_i64_i64_map.with-capacity (+ count 1))]
+      [tail-count : i64 0]
+      [used-tails : i64 0]
       [pending-data? : bool false]
       [previous-flow : i64 0]
       [data-flags : (__tl_dyn-array bool) (__tl_make-array bool count)]
@@ -96798,293 +96862,360 @@ tl_shared_object_init:
               (backend_i64_i64_map.contains? (& data-lines) span.start)
               (return (Err "stack traffic: duplicate final data line witness")))
             (backend_i64_i64_map.insert-ref! (&mut data-lines) span.start i)
-            (+= data-count 1))))
-      (for [i (iterator.range 0 count)]
-        (let
-          [start : i64 (array-ref starts i)]
-          [end : i64 (- (array-ref starts (+ i 1)) 1)]
-          [line : CompilerBackendPeepholeLine
-            (compiler-backend-peephole-parse-line
-              context
-              (compiler-backend-global-shared-view request.text)
-              start
-              end
-              (< end length)
-              false)]
-          [record : CompilerBackendPeepholeLineRecord
-            (compiler-backend-peephole-line-record
-              (compiler-backend-global-shared-view line))]
-          [kind : i64 (compiler-backend-peephole-record-kind (& record))]
-          [first : i64 (compiler-backend-layout-skip-spaces data start end)]
-          [last : i64 (compiler-backend-cold-line-last data first end)]
-          (set! (array-ref next-op i) operation)
-          (set! (array-ref resolved i) -1)
-          (match (backend_i64_i64_map.get (& data-lines) start)
-            [(LookupMissing) unit]
-            [(LookupFound index)
-              (let
-                [span : (& all-spans text_origins.CompilerBackendTextOrigin)
-                  (& (array-ref all-spans index))]
-                (unless
-                  (and
-                    (= span.end end)
-                    (!= kind compiler-backend-sweep-line-kind-instruction))
-                  (return
-                    (Err
-                      "stack traffic: data witness is not one complete noninstruction line")))
-                (set! (array-ref data-flags i) true)
-                (when
-                  (match (& span.kind)
-                    [(DataLine (InlineData)) true]
-                    [_ false])
-                  (set! (array-ref inline-data-flags i) true)
-                  (set! pending-data? true))
-                (+= used-data 1))])
-          (cond
-            [(= kind compiler-backend-sweep-line-kind-label)
+            (+= data-count 1))
+          (match (& span.kind)
+            [(TailExit anchor)
               (unless
                 (and
-                  (> last first)
-                  (= (compiler-backend-peephole-byte-at data (- last 1)) 58))
-                (return (Err "stack traffic: malformed final control label")))
-              (let
-                [name : String
-                  (string.substring (& request.text) first (- (- last 1) first))]
-                (when
-                  (and
-                    (compiler-backend-final-digits? (& name))
-                    (> (string.string-length name) 1)
-                    (= (string.string-ref (& name) 0) '0'))
-                  (return
-                    (Err
-                      "stack traffic: noncanonical numeric label needs decoder authority")))
-                (unless
-                  (compiler-backend-final-digits? (& name))
-                  (when
-                    (backend_string_i64_map.contains?
-                      (& named)
-                      (compiler-backend-global-shared-view name))
-                    (return
-                      (Err "stack traffic: duplicate final control label")))
-                  (backend_string_i64_map.insert-ref!
-                    (&mut named)
-                    (compiler-backend-global-shared-view name)
-                    i))
-                (set! (array-ref names i) name))]
-            [(= kind compiler-backend-sweep-line-kind-instruction)
+                  (= span.token request.function.value)
+                  (text_origins.compiler-backend-tail-exit-anchor-valid? anchor)
+                  (>= span.start 0)
+                  (> span.end span.start)
+                  (<= span.end length)
+                  (string.eq
+                    (& span.expected)
+                    (string.substring-view
+                      (& request.text)
+                      span.start
+                      (- span.end span.start))))
+                (return
+                  (Err
+                    "stack traffic: final tail witness changed or crosses function ownership")))
               (when
-                pending-data?
+                (backend_i64_i64_map.contains? (& tail-lines) span.start)
+                (return (Err "stack traffic: duplicate final tail witness")))
+              (backend_i64_i64_map.insert-ref! (&mut tail-lines) span.start i)
+              (+= tail-count 1)]
+            [_ unit])))
+      (let
+        [tail-exits : (__tl_dyn-array CompilerBackendFinalTailExit)
+          (__tl_make-array CompilerBackendFinalTailExit tail-count)]
+        (for [i (iterator.range 0 count)]
+          (let
+            [start : i64 (array-ref starts i)]
+            [end : i64 (- (array-ref starts (+ i 1)) 1)]
+            [line : CompilerBackendPeepholeLine
+              (compiler-backend-peephole-parse-line
+                context
+                (compiler-backend-global-shared-view request.text)
+                start
+                end
+                (< end length)
+                false)]
+            [record : CompilerBackendPeepholeLineRecord
+              (compiler-backend-peephole-line-record
+                (compiler-backend-global-shared-view line))]
+            [kind : i64 (compiler-backend-peephole-record-kind (& record))]
+            [first : i64 (compiler-backend-layout-skip-spaces data start end)]
+            [last : i64 (compiler-backend-cold-line-last data first end)]
+            (set! (array-ref next-op i) operation)
+            (set! (array-ref resolved i) -1)
+            (match (backend_i64_i64_map.get (& data-lines) start)
+              [(LookupMissing) unit]
+              [(LookupFound index)
+                (let
+                  [span : (& all-spans text_origins.CompilerBackendTextOrigin)
+                    (& (array-ref all-spans index))]
+                  (unless
+                    (and
+                      (= span.end end)
+                      (!= kind compiler-backend-sweep-line-kind-instruction))
+                    (return
+                      (Err
+                        "stack traffic: data witness is not one complete noninstruction line")))
+                  (set! (array-ref data-flags i) true)
+                  (when
+                    (match (& span.kind)
+                      [(DataLine (InlineData)) true]
+                      [_ false])
+                    (set! (array-ref inline-data-flags i) true)
+                    (set! pending-data? true))
+                  (+= used-data 1))])
+            (cond
+              [(= kind compiler-backend-sweep-line-kind-label)
                 (unless
                   (and
-                    (> operation 0)
-                    (or (= previous-flow 1) (= previous-flow 3)))
+                    (> last first)
+                    (= (compiler-backend-peephole-byte-at data (- last 1)) 58))
+                  (return (Err "stack traffic: malformed final control label")))
+                (let
+                  [name : String
+                    (string.substring
+                      (& request.text)
+                      first
+                      (- (- last 1) first))]
+                  (when
+                    (and
+                      (compiler-backend-final-digits? (& name))
+                      (> (string.string-length name) 1)
+                      (= (string.string-ref (& name) 0) '0'))
+                    (return
+                      (Err
+                        "stack traffic: noncanonical numeric label needs decoder authority")))
+                  (unless
+                    (compiler-backend-final-digits? (& name))
+                    (when
+                      (backend_string_i64_map.contains?
+                        (& named)
+                        (compiler-backend-global-shared-view name))
+                      (return
+                        (Err "stack traffic: duplicate final control label")))
+                    (backend_string_i64_map.insert-ref!
+                      (&mut named)
+                      (compiler-backend-global-shared-view name)
+                      i))
+                  (set! (array-ref names i) name))]
+              [(= kind compiler-backend-sweep-line-kind-instruction)
+                (when
+                  pending-data?
+                  (unless
+                    (and
+                      (> operation 0)
+                      (or (= previous-flow 1) (= previous-flow 3)))
+                    (return
+                      (Err
+                        "stack traffic: final control falls through emitted data")))
+                  (set! pending-data? false))
+                (unless
+                  (and
+                    (< operation (array-length partition.operations))
+                    (= start (array-ref partition.operations operation).start)
+                    (= end (array-ref partition.operations operation).end))
                   (return
                     (Err
-                      "stack traffic: final control falls through emitted data")))
-                (set! pending-data? false))
-              (unless
-                (and
-                  (< operation (array-length partition.operations))
-                  (= start (array-ref partition.operations operation).start)
-                  (= end (array-ref partition.operations operation).end))
-                (return
-                  (Err
-                    "stack traffic: final control and instruction partitions disagree")))
-              (let
-                [which : i64 (compiler-backend-final-flow-kind (& line))]
-                (when
-                  (< which 0)
+                      "stack traffic: final control and instruction partitions disagree")))
+                (let
+                  [which : i64 (compiler-backend-final-flow-kind (& line))]
+                  (match (backend_i64_i64_map.get (& tail-lines) start)
+                    [(LookupMissing) unit]
+                    [(LookupFound index)
+                      (let
+                        [span : (&
+                          all-spans
+                          text_origins.CompilerBackendTextOrigin)
+                          (& (array-ref all-spans index))]
+                        (unless
+                          (and (= which 1) (= span.end end))
+                          (return
+                            (Err
+                              "stack traffic: tail witness is not one complete jump")))
+                        (set!
+                          (array-ref tail-exits used-tails)
+                          (CompilerBackendFinalTailExit
+                            operation
+                            (array-ref partition.operations operation).block
+                            (match (& span.kind)
+                              [(TailExit anchor) (clone anchor)]
+                              [_
+                                (io.panic
+                                  "stack traffic: tail witness kind changed")])))
+                        (+= used-tails 1)
+                        (set! which 3))])
+                  (when
+                    (< which 0)
+                    (return
+                      (Err "stack traffic: unsupported final control transfer")))
+                  (set! (array-ref flow i) which)
+                  (set! previous-flow which)
+                  (when
+                    (or (= which 1) (= which 2))
+                    (let
+                      [operand : i64
+                        (compiler-backend-layout-skip-spaces
+                          data
+                          (+
+                            (compiler-backend-peephole-desc-mnemonic-start
+                              (& line))
+                            (compiler-backend-peephole-desc-mnemonic-len
+                              (& line)))
+                          last)]
+                      (unless
+                        (compiler-backend-layout-bare-symbol? data operand last)
+                        (return
+                          (Err
+                            "stack traffic: final indirect transfer needs emitter authority")))
+                      (set!
+                        (array-ref targets i)
+                        (string.substring
+                          (& request.text)
+                          operand
+                          (- last operand)))))
+                  (+= operation 1))]
+              [(and
+                  (< first last)
+                  (= (compiler-backend-peephole-byte-at data first) 46))
+                (unless
+                  (or
+                    (array-ref data-flags i)
+                    (compiler-backend-cold-prefix? data first last ".cfi_")
+                    (compiler-backend-cold-prefix? data first last ".seh_")
+                    (compiler-backend-cold-prefix? data first last ".loc ")
+                    (compiler-backend-cold-prefix? data first last ".cv_loc ")
+                    (compiler-backend-cold-prefix? data first last ".type ")
+                    (compiler-backend-cold-prefix? data first last ".size ")
+                    (compiler-backend-cold-prefix? data first last ".globl ")
+                    (compiler-backend-peephole-range-eq?
+                      data
+                      first
+                      last
+                      ".text"))
                   (return
-                    (Err "stack traffic: unsupported final control transfer")))
-                (set! (array-ref flow i) which)
-                (set! previous-flow which)
-                (when
-                  (or (= which 1) (= which 2))
-                  (let
-                    [operand : i64
-                      (compiler-backend-layout-skip-spaces
-                        data
-                        (+
-                          (compiler-backend-peephole-desc-mnemonic-start
-                            (& line))
-                          (compiler-backend-peephole-desc-mnemonic-len (& line)))
-                        last)]
-                    (unless
-                      (compiler-backend-layout-bare-symbol? data operand last)
-                      (return
-                        (Err
-                          "stack traffic: final indirect transfer needs emitter authority")))
-                    (set!
-                      (array-ref targets i)
-                      (string.substring
-                        (& request.text)
-                        operand
-                        (- last operand)))))
-                (+= operation 1))]
-            [(and
-                (< first last)
-                (= (compiler-backend-peephole-byte-at data first) 46))
-              (unless
-                (or
-                  (array-ref data-flags i)
-                  (compiler-backend-cold-prefix? data first last ".cfi_")
-                  (compiler-backend-cold-prefix? data first last ".seh_")
-                  (compiler-backend-cold-prefix? data first last ".loc ")
-                  (compiler-backend-cold-prefix? data first last ".cv_loc ")
-                  (compiler-backend-cold-prefix? data first last ".type ")
-                  (compiler-backend-cold-prefix? data first last ".size ")
-                  (compiler-backend-cold-prefix? data first last ".globl ")
-                  (compiler-backend-peephole-range-eq? data first last ".text"))
-                (return
-                  (Err
-                    "stack traffic: final data or layout directive needs decoder authority")))]
-            [else unit])))
-      (unless
-        (= operation (array-length partition.operations))
-        (return (Err "stack traffic: final control lost an instruction")))
-      (unless
-        (= used-data data-count)
-        (return (Err "stack traffic: final data witness has no line")))
-      (let
-        [data-before-instruction? : bool false]
-        (for [step (iterator.range 0 count)]
+                    (Err
+                      "stack traffic: final data or layout directive needs decoder authority")))]
+              [else unit])))
+        (unless
+          (= operation (array-length partition.operations))
+          (return (Err "stack traffic: final control lost an instruction")))
+        (unless
+          (= used-data data-count)
+          (return (Err "stack traffic: final data witness has no line")))
+        (unless
+          (= used-tails tail-count)
+          (return (Err "stack traffic: final tail witness has no instruction")))
+        (let
+          [data-before-instruction? : bool false]
+          (for [step (iterator.range 0 count)]
+            (let
+              [i : i64 (- (- count 1) step)]
+              (when
+                (and
+                  (< (array-ref next-op i) (array-length partition.operations))
+                  (=
+                    (array-ref starts i)
+                    (array-ref partition.operations (array-ref next-op i)).start))
+                (set! data-before-instruction? false))
+              (when
+                (array-ref inline-data-flags i)
+                (set! data-before-instruction? true))
+              (when
+                (> (string.string-length (array-ref names i)) 0)
+                (set!
+                  (array-ref blocked-labels i)
+                  (or (array-ref data-flags i) data-before-instruction?))))))
+        ;; Reverse and forward scans bind numeric f/b references without parsing
+        ;; their value or confusing repeated numeric definitions with aliases.
+        (for [direction (iterator.range 0 2)]
           (let
-            [i : i64 (- (- count 1) step)]
+            [numeric : backend_string_i64_map.Map
+              (backend_string_i64_map.with-capacity (+ count 1))]
+            (for [step (iterator.range 0 count)]
+              (let
+                [i : i64
+                  (if (= direction 0)
+                    step
+                    (- (- count 1) step))]
+                [name : String
+                  (compiler-backend-global-array-element-shared-view names i)]
+                [target : String
+                  (compiler-backend-global-array-element-shared-view targets i)]
+                [size : i64 (string.string-length target)]
+                (when
+                  (compiler-backend-final-digits? (& name))
+                  (backend_string_i64_map.insert-ref! (&mut numeric) name i))
+                (when
+                  (> size 1)
+                  (let
+                    [digits : String (string.substring (& target) 0 (- size 1))]
+                    [suffix : char (string.string-ref (& target) (- size 1))]
+                    (when
+                      (and
+                        (compiler-backend-final-digits? (& digits))
+                        (=
+                          suffix
+                          (if (= direction 0)
+                            'b'
+                            'f')))
+                      (match (backend_string_i64_map.get (& numeric) digits)
+                        [(LookupFound label)
+                          (set! (array-ref resolved i) label)]
+                        [(LookupMissing)
+                          (return
+                            (Err
+                              "stack traffic: missing directional numeric label"))]))))))))
+        (let
+          [blocks : (__tl_dyn-array compiler_liveness.CompilerLiveBlock)
+            (__tl_make-array
+              compiler_liveness.CompilerLiveBlock
+              partition.blocks)]
+          (for [b (iterator.range 0 partition.blocks)]
+            (set!
+              (array-ref blocks b)
+              (compiler_liveness.CompilerLiveBlock
+                b
+                (compiler_liveness.compiler-live-set-empty)
+                (compiler_liveness.compiler-live-set-empty)
+                (compiler_liveness.compiler-live-set-empty)
+                (compiler_liveness.compiler-live-set-empty)
+                Nil
+                (compiler_liveness.compiler-live-instr-set-vec-empty))))
+          (for [i (iterator.range 0 count)]
             (when
               (and
                 (< (array-ref next-op i) (array-length partition.operations))
                 (=
                   (array-ref starts i)
                   (array-ref partition.operations (array-ref next-op i)).start))
-              (set! data-before-instruction? false))
-            (when
-              (array-ref inline-data-flags i)
-              (set! data-before-instruction? true))
-            (when
-              (> (string.string-length (array-ref names i)) 0)
-              (set!
-                (array-ref blocked-labels i)
-                (or (array-ref data-flags i) data-before-instruction?))))))
-      ;; Reverse and forward scans bind numeric f/b references without parsing
-      ;; their value or confusing repeated numeric definitions with aliases.
-      (for [direction (iterator.range 0 2)]
-        (let
-          [numeric : backend_string_i64_map.Map
-            (backend_string_i64_map.with-capacity (+ count 1))]
-          (for [step (iterator.range 0 count)]
-            (let
-              [i : i64
-                (if (= direction 0)
-                  step
-                  (- (- count 1) step))]
-              [name : String
-                (compiler-backend-global-array-element-shared-view names i)]
-              [target : String
-                (compiler-backend-global-array-element-shared-view targets i)]
-              [size : i64 (string.string-length target)]
-              (when
-                (compiler-backend-final-digits? (& name))
-                (backend_string_i64_map.insert-ref! (&mut numeric) name i))
-              (when
-                (> size 1)
-                (let
-                  [digits : String (string.substring (& target) 0 (- size 1))]
-                  [suffix : char (string.string-ref (& target) (- size 1))]
-                  (when
-                    (and
-                      (compiler-backend-final-digits? (& digits))
-                      (=
-                        suffix
-                        (if (= direction 0)
-                          'b'
-                          'f')))
-                    (match (backend_string_i64_map.get (& numeric) digits)
-                      [(LookupFound label) (set! (array-ref resolved i) label)]
-                      [(LookupMissing)
-                        (return
-                          (Err
-                            "stack traffic: missing directional numeric label"))]))))))))
-      (let
-        [blocks : (__tl_dyn-array compiler_liveness.CompilerLiveBlock)
-          (__tl_make-array compiler_liveness.CompilerLiveBlock partition.blocks)]
-        (for [b (iterator.range 0 partition.blocks)]
-          (set!
-            (array-ref blocks b)
-            (compiler_liveness.CompilerLiveBlock
-              b
-              (compiler_liveness.compiler-live-set-empty)
-              (compiler_liveness.compiler-live-set-empty)
-              (compiler_liveness.compiler-live-set-empty)
-              (compiler_liveness.compiler-live-set-empty)
-              Nil
-              (compiler_liveness.compiler-live-instr-set-vec-empty))))
-        (for [i (iterator.range 0 count)]
-          (when
-            (and
-              (< (array-ref next-op i) (array-length partition.operations))
-              (=
-                (array-ref starts i)
-                (array-ref partition.operations (array-ref next-op i)).start))
-            (let
-              [op : i64 (array-ref next-op i)]
-              [b : i64 (array-ref partition.operations op).block]
-              [last? : bool
-                (or
-                  (= (+ op 1) (array-length partition.operations))
-                  (!= b (array-ref partition.operations (+ op 1)).block))]
-              (when
-                last?
-                (let
-                  [which : i64 (array-ref flow i)]
-                  [successors : compiler_liveness.CompilerLiveLabelSet Nil]
-                  (when
-                    (or (= which 1) (= which 2))
-                    (let
-                      [label : i64 (array-ref resolved i)]
-                      (when
-                        (< label 0)
-                        (match (backend_string_i64_map.get
-                          (& named)
-                          (compiler-backend-global-array-element-shared-view
-                            targets
-                            i))
-                          [(LookupFound found) (set! label found)]
-                          [(LookupMissing)
-                            (return
-                              (Err
-                                "stack traffic: unresolved or external final transfer needs emitter authority"))]))
-                      (when
-                        (array-ref blocked-labels label)
-                        (return
-                          (Err
-                            "stack traffic: final branch targets emitted data")))
+              (let
+                [op : i64 (array-ref next-op i)]
+                [b : i64 (array-ref partition.operations op).block]
+                [last? : bool
+                  (or
+                    (= (+ op 1) (array-length partition.operations))
+                    (!= b (array-ref partition.operations (+ op 1)).block))]
+                (when
+                  last?
+                  (let
+                    [which : i64 (array-ref flow i)]
+                    [successors : compiler_liveness.CompilerLiveLabelSet Nil]
+                    (when
+                      (or (= which 1) (= which 2))
                       (let
-                        [target-op : i64 (array-ref next-op label)]
+                        [label : i64 (array-ref resolved i)]
                         (when
-                          (>= target-op (array-length partition.operations))
+                          (< label 0)
+                          (match (backend_string_i64_map.get
+                            (& named)
+                            (compiler-backend-global-array-element-shared-view
+                              targets
+                              i))
+                            [(LookupFound found) (set! label found)]
+                            [(LookupMissing)
+                              (return
+                                (Err
+                                  "stack traffic: unresolved or external final transfer needs emitter authority"))]))
+                        (when
+                          (array-ref blocked-labels label)
                           (return
                             (Err
-                              "stack traffic: final branch targets no instruction")))
-                        (set!
-                          successors
-                          (compiler_liveness.compiler-live-label-set-insert
+                              "stack traffic: final branch targets emitted data")))
+                        (let
+                          [target-op : i64 (array-ref next-op label)]
+                          (when
+                            (>= target-op (array-length partition.operations))
+                            (return
+                              (Err
+                                "stack traffic: final branch targets no instruction")))
+                          (set!
                             successors
-                            (array-ref partition.operations target-op).block)))))
-                  (when
-                    (or (= which 0) (= which 2))
+                            (compiler_liveness.compiler-live-label-set-insert
+                              successors
+                              (array-ref partition.operations target-op).block)))))
                     (when
-                      (>= (+ b 1) partition.blocks)
-                      (return
-                        (Err
-                          "stack traffic: final fallthrough leaves the function")))
-                    (set!
-                      successors
-                      (compiler_liveness.compiler-live-label-set-insert
+                      (or (= which 0) (= which 2))
+                      (when
+                        (>= (+ b 1) partition.blocks)
+                        (return
+                          (Err
+                            "stack traffic: final fallthrough leaves the function")))
+                      (set!
                         successors
-                        (+ b 1))))
-                  (set! (array-ref blocks b).successors successors))))))
-        (Ok
-          (CompilerBackendFinalStackControl
-            partition
-            (compiler_liveness.compiler-live-block-graph-build-from-array
-              blocks)))))))
+                        (compiler_liveness.compiler-live-label-set-insert
+                          successors
+                          (+ b 1))))
+                    (set! (array-ref blocks b).successors successors))))))
+          (Ok
+            (CompilerBackendFinalStackControl
+              partition
+              (compiler_liveness.compiler-live-block-graph-build-from-array
+                blocks)
+              tail-exits)))))))

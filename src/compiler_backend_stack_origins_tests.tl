@@ -4813,7 +4813,7 @@ second:
                   [facts : origins.CompilerBackendStackAccessOriginList
                     (backend.compiler-backend-state-stack-access-origins state)]
                   [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
-                    (origins.compiler-backend-text-origins-find
+                    (origins.compiler-backend-text-origins-access-spans
                       capture
                       (& text))]
                   [expected : i64
@@ -6423,3 +6423,218 @@ second:
 (test
   backend-stack-origins-emitted-data-authority
   (backend-stack-origins-data-test))
+
+(define (backend-stack-origins-tail-emit
+  [state : backend.CompilerBackendState]
+  [target : String]
+  [fpo? : bool]) : String
+  (let
+    [text : String
+      (backend.compiler-backend-tail-jump-tail
+        (regalloc.compiler-reg-assignment-table-empty)
+        10
+        target
+        state)]
+    (if fpo?
+      (let
+        [empty : (__tl_dyn-array String)
+          (backend.compiler-backend-rsp-rebase-make-push-regs)]
+        [result : backend.CompilerBackendRspRebaseResult
+          (backend.compiler-backend-rsp-rebase-full-result-with-saves
+            text
+            128
+            true
+            (owned_view.compiler-owned-shared-view empty)
+            0
+            (owned_view.compiler-owned-shared-view empty)
+            0
+            10
+            state)]
+        (unless result.ok (io.panic "tail FPO fixture refused"))
+        result.text)
+      text)))
+
+(define (backend-stack-origins-tail-test) : unit
+  (for [shape (iterator.range 0 3)]
+    (for [fpo (iterator.range 0 2)]
+      (let
+        [state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+        [function-state : backend.CompilerBackendFunctionState
+          (backend.compiler-backend-state-function-state state)]
+        [target : String
+          (match shape
+            [0 "external"]
+            [1 "*(%r11)"]
+            [_ "f"])]
+        (backend.compiler-backend-function-scratch-set-i64!
+          function-state
+          backend.compiler-backend-scratch-i64-current-source-function
+          44)
+        (backend.compiler-backend-function-state-set-i64!
+          function-state
+          backend.compiler-backend-function-i64-current-block-label
+          17)
+        (let
+          [plain : String
+            (backend-stack-origins-tail-emit
+              state
+              (owned_view.compiler-owned-shared-view target)
+              (= fpo 1))]
+          (backend.compiler-backend-state-stack-origins-begin! state)
+          (backend-stack-origins-install-test-plan! state false false)
+          (let
+            [capture : origins.CompilerBackendTextOrigins
+              (backend.compiler-backend-state-stack-text-origins state)]
+            [tail : String
+              (backend-stack-origins-tail-emit state target (= fpo 1))]
+            [body : String
+              (origins.compiler-backend-text-origins-cat capture "f:\n" tail)]
+            [registered : String
+              (backend.compiler-backend-origin-invariant-text
+                (origins.compiler-backend-text-origins-function
+                  capture
+                  (origins.CompilerBackendFunctionOriginRequest
+                    (ir.CompilerIrSymbolId 44)
+                    "f"
+                    body)))]
+            (test.assert-string-eq
+              plain
+              tail
+              "typed tail and FPO preserve every ordinary byte")
+            (test.assert-true
+              (match (origins.compiler-backend-text-origins-function-ranges
+                capture
+                (& registered))
+                [(Ok ranges) (= (array-length ranges) 1)]
+                [_ false])
+              "tail witness belongs to its registered emitted function")
+            (match (backend.compiler-backend-final-stack-graph
+              state
+              (backend.CompilerBackendFinalStackRequest
+                registered
+                (ir.CompilerIrSymbolId 44)
+                capture))
+              [(Err message) (io.panic message)]
+              [(Ok control)
+                (test.assert-i64-eq
+                  (array-length control.tail-exits)
+                  1
+                  "one actual tail operation")
+                (test.assert-i64-eq
+                  (array-length (array-ref control.graph.successors 0).items)
+                  0
+                  "emitter-proven direct, closure and recursive tails leave this function")
+                (test.assert-i64-eq
+                  (array-ref control.tail-exits 0).operation
+                  (- (array-length control.partition.operations) 1)
+                  "tail binds final instruction ordinal")
+                (test.assert-i64-eq
+                  (array-ref control.tail-exits 0).block
+                  0
+                  "tail binds actual final block")
+                (test.assert-true
+                  (match (& (array-ref control.tail-exits 0).anchor)
+                    [(SourceBlock b) (= b 17)]
+                    [_ false])
+                  "source anchor survives FPO without becoming a machine block")])
+            (when
+              (and (= shape 0) (= fpo 0))
+              (for [bad (iterator.range 0 6)]
+                (test.assert-true
+                  (match (origins.compiler-backend-text-origins-tail-exit
+                    capture
+                    (origins.CompilerBackendTailExitRequest
+                      (ir.CompilerIrSymbolId
+                        (if (= bad 0)
+                          -1
+                          44))
+                      (cond
+                        [(= bad 1) (SourceBlock -1)]
+                        [(= bad 2) (FunctionEntry)]
+                        [else (AdapterBody)])
+                      (match bad
+                        [3 "    call external"]
+                        [4 "    jmp external\n"]
+                        [5 "    jmp external; ret"]
+                        [_ "    jmp external"])))
+                    [(Err _) true]
+                    [_ false])
+                  "foreign identity, invalid anchor, wrong opcode and partial/multiple statements reject"))
+              (let
+                [leaf : String
+                  (backend.compiler-backend-origin-invariant-text
+                    (origins.compiler-backend-text-origins-tail-exit
+                      capture
+                      (origins.CompilerBackendTailExitRequest
+                        (ir.CompilerIrSymbolId 44)
+                        (AdapterBody)
+                        "    jmp external")))]
+                [cloned : String
+                  (origins.compiler-backend-text-origins-cat
+                    capture
+                    "f:\n"
+                    leaf
+                    "\n"
+                    leaf
+                    "\n")]
+                (match (backend.compiler-backend-final-stack-graph
+                  state
+                  (backend.CompilerBackendFinalStackRequest
+                    cloned
+                    (ir.CompilerIrSymbolId 44)
+                    capture))
+                  [(Err message) (io.panic message)]
+                  [(Ok control)
+                    (test.assert-i64-eq
+                      (array-length control.partition.accesses)
+                      0
+                      "tails invent no memory access")
+                    (test.assert-i64-eq
+                      (array-length control.tail-exits)
+                      2
+                      "cloned tails each bind one actual instruction")
+                    (for [i (iterator.range 0 2)]
+                      (test.assert-i64-eq
+                        (array-ref control.tail-exits i).operation
+                        i
+                        "clone order is final operation order")
+                      (test.assert-true
+                        (match (& (array-ref control.tail-exits i).anchor)
+                          [(AdapterBody) true]
+                          [_ false])
+                        "adapter authority survives cloning"))])
+                (test.assert-true
+                  (match (origins.compiler-backend-text-origins-slice
+                    capture
+                    (& leaf)
+                    1
+                    (- (string.string-length leaf) 1))
+                    [(Err _) true]
+                    [_ false])
+                  "a partial copied tail cannot inherit complete instruction authority")
+                (for [bad (iterator.range 0 2)]
+                  (test.assert-true
+                    (match (backend.compiler-backend-final-stack-graph
+                      state
+                      (backend.CompilerBackendFinalStackRequest
+                        (origins.compiler-backend-text-origins-cat
+                          capture
+                          "f:\n"
+                          (if (= bad 0)
+                            (string.copy (& leaf))
+                            (owned_view.compiler-owned-shared-view leaf))
+                          "\n")
+                        (ir.CompilerIrSymbolId
+                          (if (= bad 0)
+                            44
+                            45))
+                        capture))
+                      [(Err _) true]
+                      [_ false])
+                    "lost tail witness or wrong function cannot authorize an external transfer")))))
+          (backend.compiler-backend-state-release-final-arenas! state))))))
+
+(test
+  backend-stack-origins-emitted-tail-authority
+  (backend-stack-origins-tail-test))

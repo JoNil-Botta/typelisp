@@ -1804,7 +1804,7 @@
           capture
           (text_origins.CompilerBackendStackAccessOrigin
             (compiler_ir_types.compiler-ir-symbol-typed-id function)
-            block
+            (SourceBlock block)
             home.id
             home.bytes
             (Allocator)
@@ -15580,32 +15580,50 @@
                 idx)]
             [unwind-offset : i64 (+ frame slot-offset)]
             [save-line : String
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
                 "    movdqu "
                 reg
                 ", "
-                (compiler-backend-frame-offset-with-backend-state
+                (compiler-backend-callee-save-operand-origin
                   backend-state
-                  slot-offset)
+                  (compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    slot-offset)
+                  reg-id
+                  (Write))
                 "\n")]
             [unwind-line : String
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
                 "    .seh_savexmm "
                 reg
                 ", "
                 (string.int->string unwind-offset)
                 "\n")]
-            (str_cat.str-cat save-line unwind-line tail))
-          (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              save-line
+              unwind-line
+              tail))
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    movdqu "
-            (compiler-backend-win64-xmm-callee-slot
-              assignments
-              vars
-              idx
-              backend-state)
+            (compiler-backend-callee-save-operand-origin
+              backend-state
+              (compiler-backend-win64-xmm-callee-slot
+                assignments
+                vars
+                idx
+                backend-state)
+              reg-id
+              (Read))
             ", "
             reg
-            (str_cat.str-cat "\n" tail)))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              "\n"
+              tail)))
         tail))))
 
 (define (compiler-backend-emit-save-win64-xmm-callee-regs
@@ -15664,16 +15682,29 @@
               vars
               idx)]
           [rsp-offset : i64 (+ rsp-bias slot-offset)]
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    movdqu "
             reg
             ", "
-            (str_cat.str-cat
-              (string.int->string rsp-offset)
-              "(%rsp)\n    .seh_savexmm "
+            (compiler-backend-callee-save-operand-origin
+              backend-state
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
+                (string.int->string rsp-offset)
+                "(%rsp)")
+              reg-id
+              (Write))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              "\n    .seh_savexmm "
               reg
               ", ")
-            (str_cat.str-cat (string.int->string rsp-offset) "\n" tail)))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              (string.int->string rsp-offset)
+              "\n"
+              tail)))
         tail))))
 
 (define (compiler-backend-emit-windows-seh-prologue-tail
@@ -15684,9 +15715,11 @@
   [end-prologue : bool]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-target-seh-unwind? target)
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       (if (> frame 0)
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
           "    .seh_stackalloc "
           (string.int->string frame)
           "\n"
@@ -15753,7 +15786,8 @@
   [backend-state : CompilerBackendState]) : String
   (let
     [target : CompilerBackendTarget target-policy.target]
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       (compiler-backend-emit-windows-seh-proc target symbol)
       symbol
       (if (and
@@ -16239,7 +16273,12 @@
     [sub-s : i64
       (compiler-backend-rsp-rebase-push-sub backend-state frame push-count)]
     [idx : i64 0]
-    [acc : String (str_cat.str-cat symbol ":\n" "")]
+    [acc : String
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
+        symbol
+        ":\n"
+        "")]
     (while (< idx (array-length push-regs))
       (if (string.eq
         (compiler-backend-global-array-element-shared-view push-regs idx)
@@ -16247,16 +16286,22 @@
         unit
         (set!
           acc
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             acc
             "    pushq "
-            (compiler-backend-global-array-element-shared-view push-regs idx)
+            (compiler-backend-callee-save-operand-origin
+              backend-state
+              (compiler-backend-global-array-element-shared-view push-regs idx)
+              (compiler-backend-trace-csr-name-at backend-state idx)
+              (Write))
             "\n"
             "")))
       (set! idx (+ idx 1)))
     (if (= sub-s 0)
       acc
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         acc
         "    subq $"
         (string.int->string sub-s)
@@ -16280,7 +16325,14 @@
         sub-s
         frame)]
     [idx : i64 0]
-    [acc : String (str_cat.str-cat ".seh_proc " symbol "\n" symbol ":\n")]
+    [acc : String
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
+        ".seh_proc "
+        symbol
+        "\n"
+        symbol
+        ":\n")]
     (while (< idx (array-length push-regs))
       (if (string.eq
         (compiler-backend-global-array-element-shared-view push-regs idx)
@@ -16288,26 +16340,35 @@
         unit
         (set!
           acc
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             acc
             "    pushq "
-            (compiler-backend-global-array-element-shared-view push-regs idx)
-            (str_cat.str-cat
+            (compiler-backend-callee-save-operand-origin
+              backend-state
+              (compiler-backend-global-array-element-shared-view push-regs idx)
+              (compiler-backend-trace-csr-name-at backend-state idx)
+              (Write))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               "\n    .seh_pushreg "
               (compiler-backend-global-array-element-shared-view push-regs idx)
               "\n"))))
       (set! idx (+ idx 1)))
     (set!
       acc
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         acc
         (compiler-backend-emit-stack-sub target-policy sub-s)))
     (set!
       acc
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         acc
         (if (> sub-s 0)
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             "    .seh_stackalloc "
             (string.int->string sub-s)
             "\n"
@@ -17969,6 +18030,10 @@
         (= address 0)
         (io.panic "stack traffic: preservation home plan was not installed"))
       (let
+        [callee? : bool
+          (match (& request.key)
+            [(CalleeSaveRegister _) true]
+            [_ false])]
         [home : home_origins.CompilerBackendLogicalHome
           (unsafe
             (let
@@ -17986,8 +18051,12 @@
                   (match (home_origins.compiler-backend-home-preservation!
                     (&mut plan)
                     function
-                    block
-                    site
+                    (if callee?
+                      plan.entry-block
+                      block)
+                    (if callee?
+                      -1
+                      site)
                     (clone request.key))
                     [(Ok home) home]
                     [(Err message) (io.panic message)]))]
@@ -17997,10 +18066,17 @@
           capture
           (text_origins.CompilerBackendStackAccessOrigin
             (compiler_ir_types.compiler-ir-symbol-typed-id function)
-            block
+            (if callee?
+              (match (& request.access)
+                [(Write) (FunctionEntry)]
+                [(Read) (FunctionExit)]
+                [(ReadWrite)
+                  (io.panic "stack traffic: callee save cannot be RMW")])
+              (SourceBlock block))
             home.id
             home.bytes
             (match (& request.key)
+              [(CalleeSaveRegister _) (CallAbi)]
               [(EmergencyRegister _) (EmergencyScratch)]
               [(ParallelCopySlot _) (PlannedScratch)]
               [(ParallelCopyRegister _) (PlannedScratch)]
@@ -18011,6 +18087,62 @@
           text)
           [(Ok result) result]
           [(Err message) (io.panic message)])))))
+
+;; Called only by an actual save/restore authority after its save-plan test.
+;; The ABI selects the legal register and fixed saved width, never an offset.
+(define (compiler-backend-callee-save-operand-origin
+  [state : CompilerBackendState]
+  [text : String]
+  [reg : i64]
+  [access : stack_traffic.CompilerStackTrafficAccess]) : String
+  (when
+    (= (compiler-backend-state-stack-text-origins state).storage 0)
+    (return text))
+  (let
+    [abi : compiler_abi.CompilerRegTargetAbi
+      (if (compiler-backend-current-fn-win64? state)
+        (Windows)
+        (Linux))]
+    [xmm? : bool (compiler_abi.compiler-abi-xmm-register-id? reg)]
+    [valid : bool (= reg compiler_abi.compiler-reg-id-rbp)]
+    (for [index
+      (iterator.range
+        0
+        (if xmm?
+          (compiler_abi.compiler-abi-callee-saved-xmm-register-count
+            abi
+            (Internal))
+          (compiler_abi.compiler-abi-callee-saved-gp-register-count
+            abi
+            (Internal))))]
+      (when
+        (=
+          reg
+          (if xmm?
+            (compiler_abi.compiler-abi-callee-saved-xmm-register-id
+              abi
+              (Internal)
+              index)
+            (compiler_abi.compiler-abi-callee-saved-gp-register-id
+              abi
+              (Internal)
+              index)))
+        (set! valid true)))
+    (unless
+      valid
+      (io.panic "stack traffic: register is not callee saved by this ABI"))
+    (compiler-backend-preservation-operand-origin
+      state
+      text
+      (CompilerBackendPreservationOperandRequest
+        (CalleeSaveRegister reg)
+        (if xmm?
+          (Vector)
+          (General))
+        (if xmm?
+          16
+          8)
+        access))))
 
 (defstruct CompilerBackendFixedStagingOperandRequest
   (part home_origins.CompilerBackendFixedStagingKey)
@@ -18494,11 +18626,16 @@
   (if (compiler-backend-callee-needs-save? backend-state assignments reg-id)
     (let
       [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         "    movq "
         reg
         ", "
-        (compiler-backend-callee-save-slot vars idx backend-state)
+        (compiler-backend-callee-save-operand-origin
+          backend-state
+          (compiler-backend-callee-save-slot vars idx backend-state)
+          reg-id
+          (Write))
         "\n"))
     ""))
 
@@ -18511,9 +18648,14 @@
   (if (compiler-backend-callee-needs-save? backend-state assignments reg-id)
     (let
       [reg : String (compiler_abi.compiler-abi-register-spelling reg-id)]
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         "    movq "
-        (compiler-backend-callee-save-slot vars idx backend-state)
+        (compiler-backend-callee-save-operand-origin
+          backend-state
+          (compiler-backend-callee-save-slot vars idx backend-state)
+          reg-id
+          (Read))
         ", "
         reg
         "\n"))
@@ -18614,9 +18756,14 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [reg-id : i64]) : String
   (if (compiler-backend-callee-needs-save? backend-state assignments reg-id)
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       "    popq "
-      (compiler_abi.compiler-abi-register-spelling reg-id)
+      (compiler-backend-callee-save-operand-origin
+        backend-state
+        (compiler_abi.compiler-abi-register-spelling reg-id)
+        reg-id
+        (Read))
       "\n"
       "")
     ""))
@@ -18625,8 +18772,10 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
-    (str_cat.str-cat
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins backend-state)
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       "    leaq "
       (compiler-backend-callee-save-slot
         vars
@@ -18707,7 +18856,8 @@
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
   (if (compiler-backend-current-fn-win64? backend-state)
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       (compiler-backend-emit-restore-callee-reg
         assignments
         vars
@@ -18736,7 +18886,8 @@
         backend-state)
         (set!
           text
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             text
             (compiler-backend-emit-save-callee-reg
               assignments
@@ -18759,7 +18910,8 @@
           assignments
           vars
           backend-state)
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
           ;; Win64: %rdi/%rsi restores first (no-op on Linux), mirroring the save.
           (compiler-backend-emit-restore-win64-callee-regs
             assignments
@@ -18816,7 +18968,10 @@
             -1
             false
             backend-state)]
-        (str_cat.str-cat xmm gp))
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          xmm
+          gp))
       gp)))
 
 (define (compiler-backend-return-label
@@ -18830,7 +18985,8 @@
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [vars : i64]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins backend-state)
     (compiler-backend-emit-restore-callee-regs assignments vars backend-state)
     "    leave\n    ret\n"))
 
@@ -18839,9 +18995,15 @@
   [vars : i64]
   [target : String]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins backend-state)
     (compiler-backend-emit-restore-callee-regs assignments vars backend-state)
-    (str_cat.str-cat "    leave\n    jmp " target "\n" "")))
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
+      "    leave\n    jmp "
+      target
+      "\n"
+      "")))
 
 (define (compiler-backend-char-code [c : char]) : i64
   (cast c : i64))
@@ -67123,7 +67285,8 @@
 ;; address = last pushed), matching the existing pop-run epilogue order.
 ;; Lines joined by newlines with NO trailing newline (append-line adds it).
 (define (compiler-backend-rsp-rebase-pop-run
-  [push-regs : (__tl_dyn-array String)]) : String
+  [push-regs : (__tl_dyn-array String)]
+  [backend-state : CompilerBackendState]) : String
   (let
     [idx : i64 (- (array-length push-regs) 1)]
     [acc : String ""]
@@ -67134,13 +67297,18 @@
         unit
         (set!
           acc
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             acc
             (if (string.eq acc "")
               ""
               "\n")
             "    popq "
-            (compiler-backend-global-array-element-shared-view push-regs idx)
+            (compiler-backend-callee-save-operand-origin
+              backend-state
+              (compiler-backend-global-array-element-shared-view push-regs idx)
+              (compiler-backend-trace-csr-name-at backend-state idx)
+              (Read))
             "")))
       (set! idx (- idx 1)))
     acc))
@@ -67696,7 +67864,8 @@
                                       (compiler-backend-rebase-append-line
                                         origin-buffer
                                         buf
-                                        (str_cat.str-cat
+                                        (text_origins.compiler-backend-text-origins-cat
+                                          origin-capture
                                           (if (= amount 0)
                                             ""
                                             (str_cat.str-cat
@@ -67705,7 +67874,8 @@
                                               ", %rsp\n"))
                                           (compiler-backend-rsp-rebase-pop-run
                                             (compiler-backend-global-shared-view
-                                              push-regs))
+                                              push-regs)
+                                            backend-state)
                                           "")
                                         nl))))
                                 (let

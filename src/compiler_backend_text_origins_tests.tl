@@ -281,23 +281,37 @@
     [access : origins.CompilerBackendStackAccessOrigin
       (origins.CompilerBackendStackAccessOrigin
         (ir.CompilerIrSymbolId 0)
-        3
+        (SourceBlock 3)
         7
         32
         (Allocator)
         (Vector)
         32
         (Read))]
-    (for [invalid (iterator.range 0 6)]
+    (for [invalid (iterator.range 0 10)]
       (let
         [bad : origins.CompilerBackendStackAccessOrigin (clone access)]
         (cond
           [(= invalid 0) (set! bad.function (ir.CompilerIrSymbolId -1))]
-          [(= invalid 1) (set! bad.block -1)]
+          [(= invalid 1) (set! bad.anchor (SourceBlock -1))]
           [(= invalid 2) (set! bad.home -1)]
           [(= invalid 3) (set! bad.access-bytes 0)]
           [(= invalid 4) (set! bad.home-bytes 0)]
-          [else (set! bad.home-bytes 16)])
+          [(= invalid 5) (set! bad.home-bytes 16)]
+          [(= invalid 6) (set! bad.anchor (FunctionEntry))]
+          [(= invalid 7) (set! bad.anchor (FunctionExit))]
+          [else
+            (set! bad.owner (CallAbi))
+            (set!
+              bad.anchor
+              (if (= invalid 8)
+                (FunctionEntry)
+                (FunctionExit)))
+            (set!
+              bad.access
+              (if (= invalid 8)
+                (Read)
+                (Write)))])
         (text-origin-test-error
           (origins.compiler-backend-text-origins-record capture bad "-64(%rbp)"))))
     (test.assert-i64-eq
@@ -321,6 +335,22 @@
         (origins.compiler-backend-text-origins-accesses capture).len
         1
         "refused retag leaves no orphan token"))
+    (for [saving (iterator.range 0 2)]
+      (let
+        [abi : origins.CompilerBackendStackAccessOrigin (clone access)]
+        (set! abi.owner (CallAbi))
+        (set!
+          abi.anchor
+          (if (= saving 1)
+            (FunctionEntry)
+            (FunctionExit)))
+        (set!
+          abi.access
+          (if (= saving 1)
+            (Write)
+            (Read)))
+        (text-origin-test-ok
+          (origins.compiler-backend-text-origins-record capture abi "%r12"))))
     (origins.compiler-backend-text-origins-release! (&mut capture))))
 
 (test text-origins-record-typed-facts-transactionally (text-origin-record-test))

@@ -868,7 +868,16 @@ access capture or the report's real-kernel acceptance.
 `compiler_backend_text_origins_tests.tl` checks distinct identities for equal
 operand bytes, interleaved owners, nested concatenation/single evaluation,
 slice/retarget rejection, inventory growth and scratch retirement. Its native
-smoke calls the same fixtures at opt0/1/2. `compiler_backend_stack_origins_tests.tl`
+smoke calls the same fixtures at opt0/1/2. Typed function-entry/exit anchors
+reject wrong access directions and non-ABI owners. Callee-save fixtures cover
+GP frame moves/pop runs and Linux/Windows FPO push/pop parents in all three
+backend modes, plus Win64 XMM frame/FPO saves with exact sixteen-byte width.
+An invalid current IR site/block cannot replace function authority. The actual
+FPO seam deletes both old move tokens and synthesizes the final push/pop pair
+with the same resource; only surviving tokens appear in the final text.
+Pure registry tests retain exact/spare parity and reject wrong function,
+instruction scope, caller-saved/mask/vector registers and malformed registries.
+`compiler_backend_stack_origins_tests.tl`
 checks actual vector load/store/folded/fallback factories and a higher-level
 vector copy with equal colored offsets but distinct logical homes. The native
 producer smoke also checks all three optimization levels, including body-buffer

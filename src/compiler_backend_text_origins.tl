@@ -50,11 +50,18 @@
           (compiler_str_cat.str-cat ,@args)
           ,active)))))
 
+;; These are emitting authorities, not final CFG block IDs. Function entry
+;; and exit traffic cannot inherit whichever IR block was emitted last.
+(defenum CompilerBackendStackAccessAnchor
+  (SourceBlock i64)
+  (FunctionEntry)
+  (FunctionExit))
+
 ;; Emitter-issued identity, before rendering or slot coloring can conflate
 ;; distinct values. Operation ordinals belong to the final stream consumer.
 (defstruct CompilerBackendStackAccessOrigin
   (function ir.CompilerIrSymbolId)
-  (block i64)
+  (anchor CompilerBackendStackAccessAnchor)
   (home i64)
   (home-bytes i64)
   (owner stack_traffic.CompilerStackTrafficOwner)
@@ -169,7 +176,25 @@
   (when
     (or
       (< access.function.value 0)
-      (< access.block 0)
+      (not
+        (match (& access.anchor)
+          [(SourceBlock block) (>= block 0)]
+          [(FunctionEntry)
+            (and
+              (match (& access.owner)
+                [(CallAbi) true]
+                [_ false])
+              (match (& access.access)
+                [(Write) true]
+                [_ false]))]
+          [(FunctionExit)
+            (and
+              (match (& access.owner)
+                [(CallAbi) true]
+                [_ false])
+              (match (& access.access)
+                [(Read) true]
+                [_ false]))]))
       (< access.home 0)
       (<= access.home-bytes 0)
       (> access.access-bytes access.home-bytes)
@@ -592,7 +617,7 @@
           capture
           (CompilerBackendStackAccessOrigin
             (clone origin.function)
-            origin.block
+            (clone origin.anchor)
             origin.home
             origin.home-bytes
             (clone origin.owner)

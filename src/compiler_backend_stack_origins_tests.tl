@@ -620,7 +620,9 @@
           8
           "body definition identity")
         (test.assert-i64-eq
-          (array-ref facts.slots 0).block
+          (match (& (array-ref facts.slots 0).anchor)
+            [(SourceBlock block) block]
+            [_ -1])
           10
           "entry block attribution")))
     (backend.compiler-backend-state-release-final-arenas! state)))
@@ -910,7 +912,9 @@
         function
         "actual emitted function")
       (test.assert-i64-eq
-        (array-ref accesses.slots 0).block
+        (match (& (array-ref accesses.slots 0).anchor)
+          [(SourceBlock source) source]
+          [_ -1])
         block
         "actual IR block identity")
       (test.assert-i64-eq
@@ -1536,7 +1540,7 @@
             capture
             (origins.CompilerBackendStackAccessOrigin
               (ir.compiler-ir-symbol-typed-id 0)
-              2
+              (SourceBlock 2)
               7
               8
               (Allocator)
@@ -1550,7 +1554,7 @@
             capture
             (origins.CompilerBackendStackAccessOrigin
               (ir.compiler-ir-symbol-typed-id 0)
-              2
+              (SourceBlock 2)
               8
               8
               (Allocator)
@@ -4162,3 +4166,357 @@
 (test
   backend-stack-origins-fixed-shuffle-buffers
   (backend-stack-origins-shuffle-test))
+
+(define (backend-stack-origins-callee-emit
+  [state : backend.CompilerBackendState]
+  [homes : regalloc.CompilerRegAssignmentTable]
+  [shape : i64]
+  [windows? : bool]) : String
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (backend.compiler-backend-state-stack-text-origins state)]
+    (if (< shape 2)
+      (origins.compiler-backend-text-origins-cat
+        capture
+        (backend.compiler-backend-emit-save-callee-regs homes 10 state)
+        (backend.compiler-backend-emit-restore-callee-regs homes 10 state))
+      (if (= shape 2)
+        (let
+          [pushes : (__tl_dyn-array String)
+            (backend.compiler-backend-rsp-rebase-make-push-regs)]
+          (set! (array-ref pushes 0) "%r12")
+          (set! (array-ref pushes 1) "%r13")
+          (origins.compiler-backend-text-origins-cat
+            capture
+            (if windows?
+              (backend.compiler-backend-emit-function-entry-fpo-windows
+                (backend.compiler-backend-target-policy-new (Windows))
+                state
+                "fixture"
+                128
+                homes
+                10
+                (owned_view.compiler-owned-shared-view pushes)
+                2)
+              (backend.compiler-backend-emit-function-entry-fpo-push
+                state
+                "fixture"
+                128
+                (owned_view.compiler-owned-shared-view pushes)
+                2))
+            (backend.compiler-backend-rsp-rebase-pop-run pushes state)))
+        (origins.compiler-backend-text-origins-cat
+          capture
+          (if (= shape 3)
+            (backend.compiler-backend-emit-save-win64-xmm-callee-regs
+              (if windows?
+                (Windows)
+                (Linux))
+              homes
+              10
+              128
+              state)
+            (if windows?
+              (backend.compiler-backend-emit-save-win64-xmm-callee-regs-fpo-at
+                state
+                homes
+                10
+                128
+                0)
+              ""))
+          (if windows?
+            (backend.compiler-backend-emit-win64-xmm-callee-regs-at
+              homes
+              10
+              0
+              9
+              -1
+              false
+              state)
+            ""))))))
+
+(define (backend-stack-origins-callee-test) : unit
+  (backend-stack-origins-callee-rebase-test)
+  (for [mode (iterator.range 0 3)]
+    (for [platform (iterator.range 0 2)]
+      (for [shape (iterator.range 0 5)]
+        (for [selection
+          (iterator.range
+            0
+            (if (= shape 0)
+              (if (= platform 1)
+                8
+                6)
+              (if (and (>= shape 3) (= platform 1))
+                10
+                1)))]
+          (let
+            [state : backend.CompilerBackendState
+              (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+            [function-state : backend.CompilerBackendFunctionState
+              (backend.compiler-backend-state-function-state state)]
+            [windows? : bool (= platform 1)]
+            [assignment : regalloc.CompilerRegAssignment
+              (regalloc.CompilerRegAssignment
+                7
+                (Register
+                  (cond
+                    [(= shape 0)
+                      (backend.compiler-backend-callee-save-order-reg-id
+                        selection)]
+                    [(< shape 3) cabi.compiler-reg-id-r12]
+                    [else (cabi.compiler-abi-xmm-register-id (+ 6 selection))])))]
+            [second : regalloc.CompilerRegAssignment
+              (regalloc.CompilerRegAssignment
+                8
+                (Register cabi.compiler-reg-id-r13))]
+            [homes : regalloc.CompilerRegAssignmentTable
+              (regalloc.compiler-reg-assignments-prepend
+                (& assignment)
+                (if (or (= shape 1) (= shape 2))
+                  (regalloc.compiler-reg-assignments-prepend
+                    (& second)
+                    (regalloc.compiler-reg-assignment-table-empty))
+                  (regalloc.compiler-reg-assignment-table-empty)))]
+            (backend.compiler-backend-function-state-set-bool!
+              function-state
+              backend.compiler-backend-function-bool-current-fn-win64
+              windows?)
+            (backend.compiler-backend-function-state-set-current-mode!
+              function-state
+              (match mode
+                [0 (Scalar)]
+                [1 (Avx2)]
+                [_ (Avx512)]))
+            (backend.compiler-backend-function-scratch-set-i64!
+              function-state
+              backend.compiler-backend-scratch-i64-current-source-function
+              44)
+            (backend.compiler-backend-function-state-set-i64!
+              function-state
+              backend.compiler-backend-function-i64-current-block-label
+              10)
+            (let
+              [plain : String
+                (backend-stack-origins-callee-emit state homes shape windows?)]
+              (backend.compiler-backend-state-stack-origins-begin! state)
+              (backend-stack-origins-install-test-plan! state false false)
+              ;; No nearest instruction or stale post-body block can own a CSR.
+              (backend.compiler-backend-function-state-set-emit-current-site!
+                function-state
+                -123)
+              (backend.compiler-backend-function-state-set-i64!
+                function-state
+                backend.compiler-backend-function-i64-current-block-label
+                -1)
+              (let
+                [text : String
+                  (backend-stack-origins-callee-emit state homes shape windows?)]
+                [capture : origins.CompilerBackendTextOrigins
+                  (backend.compiler-backend-state-stack-text-origins state)]
+                [facts : origins.CompilerBackendStackAccessOriginList
+                  (backend.compiler-backend-state-stack-access-origins state)]
+                [expected : i64
+                  (if (< shape 3)
+                    (if (= shape 0)
+                      2
+                      4)
+                    (if windows?
+                      2
+                      0))]
+                (test.assert-string-eq
+                  text
+                  plain
+                  "ABI capture preserves complete emitted bytes")
+                (test.assert-i64-eq
+                  facts.len
+                  expected
+                  "one fact per actual save and restore")
+                (test.assert-i64-eq
+                  (array-length
+                    (origins.compiler-backend-text-origins-find
+                      capture
+                      (& text)))
+                  expected
+                  "all parent joins retain actual instruction tokens, not unwind rows")
+                (for [index (iterator.range 0 expected)]
+                  (let
+                    [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                      (& (array-ref facts.slots index))]
+                    [writes : i64 0]
+                    [reads : i64 0]
+                    (test.assert-true
+                      (match (& fact.owner)
+                        [(CallAbi) true]
+                        [_ false])
+                      "callee saves are ABI traffic, never allocator traffic")
+                    (test.assert-i64-eq
+                      fact.home-bytes
+                      (if (< shape 3)
+                        8
+                        16)
+                      "exact ABI capacity")
+                    (test.assert-true
+                      (if (< shape 3)
+                        (match (& fact.bank)
+                          [(General) true]
+                          [_ false])
+                        (match (& fact.bank)
+                          [(Vector) true]
+                          [_ false]))
+                      "ABI semantic bank is independent of execution mode")
+                    (test.assert-i64-eq
+                      fact.access-bytes
+                      fact.home-bytes
+                      "full saved width in every mode")
+                    (test.assert-true
+                      (match (& fact.anchor)
+                        [(FunctionEntry)
+                          (match (& fact.access)
+                            [(Write) true]
+                            [_ false])]
+                        [(FunctionExit)
+                          (match (& fact.access)
+                            [(Read) true]
+                            [_ false])]
+                        [_ false])
+                      "function entry/exit authority survives invalid current IR site")
+                    (for [other (iterator.range 0 expected)]
+                      (let
+                        [candidate : (&
+                          facts
+                          origins.CompilerBackendStackAccessOrigin)
+                          (& (array-ref facts.slots other))]
+                        (when
+                          (= candidate.home fact.home)
+                          (match (& candidate.access)
+                            [(Write) (+= writes 1)]
+                            [(Read) (+= reads 1)]
+                            [_ (io.panic "unexpected ABI RMW")]))))
+                    (test.assert-i64-eq
+                      writes
+                      1
+                      "one save per logical ABI home")
+                    (test.assert-i64-eq
+                      reads
+                      1
+                      "one restore per logical ABI home"))))
+              (backend.compiler-backend-state-stack-origins-end! state))
+            (backend.compiler-backend-state-release-final-arenas! state)))))))
+
+(test
+  backend-stack-origins-use-function-callee-authority
+  (backend-stack-origins-callee-test))
+
+(define (backend-stack-origins-callee-rebased
+  [state : backend.CompilerBackendState]
+  [homes : regalloc.CompilerRegAssignmentTable]
+  [windows? : bool]) : String
+  (let
+    [capture : origins.CompilerBackendTextOrigins
+      (backend.compiler-backend-state-stack-text-origins state)]
+    [pushes : (__tl_dyn-array String)
+      (backend.compiler-backend-rsp-rebase-make-push-regs)]
+    [body : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        (backend.compiler-backend-emit-save-callee-regs homes 10 state)
+        "    movq %r12, %rax\n"
+        (backend.compiler-backend-emit-restore-callee-regs homes 10 state)
+        "    leave\n    ret\n")]
+    (set! (array-ref pushes 0) "%r12")
+    (let
+      [result : backend.CompilerBackendRspRebaseResult
+        (backend.compiler-backend-rsp-rebase-full-result-with-saves
+          body
+          128
+          true
+          (owned_view.compiler-owned-shared-view pushes)
+          1
+          (owned_view.compiler-owned-shared-view pushes)
+          1
+          10
+          state)]
+      (unless result.ok (io.panic "callee origin FPO fixture refused"))
+      (origins.compiler-backend-text-origins-cat
+        capture
+        (if windows?
+          (backend.compiler-backend-emit-function-entry-fpo-windows
+            (backend.compiler-backend-target-policy-new (Windows))
+            state
+            "fixture"
+            128
+            homes
+            10
+            pushes
+            1)
+          (backend.compiler-backend-emit-function-entry-fpo-push
+            state
+            "fixture"
+            128
+            pushes
+            1))
+        result.text))))
+
+(define (backend-stack-origins-callee-rebase-test) : unit
+  (for [platform (iterator.range 0 2)]
+    (let
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [assignment : regalloc.CompilerRegAssignment
+        (regalloc.CompilerRegAssignment 7 (Register cabi.compiler-reg-id-r12))]
+      [homes : regalloc.CompilerRegAssignmentTable
+        (regalloc.compiler-reg-assignments-prepend
+          (& assignment)
+          (regalloc.compiler-reg-assignment-table-empty))]
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        10)
+      (backend.compiler-backend-function-state-set-bool!
+        function-state
+        backend.compiler-backend-function-bool-current-fn-win64
+        (= platform 1))
+      (let
+        [plain : String
+          (backend-stack-origins-callee-rebased state homes (= platform 1))]
+        (backend.compiler-backend-state-stack-origins-begin! state)
+        (backend-stack-origins-install-test-plan! state false false)
+        (let
+          [text : String
+            (backend-stack-origins-callee-rebased state homes (= platform 1))]
+          [capture : origins.CompilerBackendTextOrigins
+            (backend.compiler-backend-state-stack-text-origins state)]
+          [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+            (origins.compiler-backend-text-origins-find capture (& text))]
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          (test.assert-string-eq
+            text
+            plain
+            "actual FPO seam leaves machine bytes unchanged")
+          (test.assert-i64-eq
+            facts.len
+            4
+            "old moves plus newly synthesized push/pop are retained")
+          (test.assert-i64-eq
+            (array-length spans)
+            2
+            "only new push/pop have final events")
+          (for [index (iterator.range 0 2)]
+            (let
+              [token : i64 (array-ref spans index).token]
+              (test.assert-true
+                (and (>= token 2) (< token 4))
+                "deleted move token does not survive")
+              (test.assert-i64-eq
+                (array-ref facts.slots token).home
+                (array-ref facts.slots 0).home
+                "FPO transports the original function resource")))))
+      (backend.compiler-backend-state-release-final-arenas! state))))

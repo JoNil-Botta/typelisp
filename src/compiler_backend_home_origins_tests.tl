@@ -307,7 +307,8 @@
   (home-origin-parameter-test)
   (home-origin-phi-test)
   (home-origin-group-fragment-test)
-  (home-origin-emergency-test))
+  (home-origin-emergency-test)
+  (home-origin-callee-test))
 
 (test home-origins-survive-noninjective-coloring (home-origin-tests))
 
@@ -1096,3 +1097,103 @@ join:
           "no malformed fixed resource is published")))))
 
 (test backend-home-fixed-lane-resource (home-origin-fixed-staging-test))
+
+(define (home-origin-callee-test) : unit
+  (for [spare (iterator.range 0 2)]
+    (let
+      [original : ir.CompilerIrBlockList
+        (ir_text.blocks "entry:
+  %1 = mov %0 : i64
+  return %1
+")]
+      [input : homes.CompilerBackendHomePlanInput
+        (homes.CompilerBackendHomePlanInput
+          44
+          2
+          2
+          (ir.compiler-ir-param-seq-empty)
+          (owned_view.compiler-owned-shared-view original)
+          original
+          (None)
+          (live.compiler-live-set-empty))]
+      [plan : homes.CompilerBackendHomePlan
+        (match (homes.compiler-backend-home-plan-build (& input))
+          [(Ok result) result]
+          [(Err message) (io.panic message)])]
+      (for [index (iterator.range 0 3)]
+        (let
+          [reg : i64
+            (if (= index 1)
+              (abi.compiler-abi-xmm-register-id 6)
+              abi.compiler-reg-id-r12)]
+          (match (homes.compiler-backend-home-preservation!
+            (&mut plan)
+            44
+            plan.entry-block
+            -1
+            (CalleeSaveRegister reg))
+            [(Err message) (io.panic message)]
+            [(Ok home)
+              (test.assert-i64-eq
+                home.id
+                (if (= index 1)
+                  7
+                  6)
+                "function resource survives saves and returns at different sites")
+              (test.assert-i64-eq
+                home.bytes
+                (if (= index 1)
+                  16
+                  8)
+                "callee capacity is its actual ABI preservation width")])))
+      (let
+        [slots : (__tl_dyn-array homes.CompilerBackendPreservationHome)
+          (__tl_make-array
+            homes.CompilerBackendPreservationHome
+            (+ 2 (* spare 3)))]
+        (for [index (iterator.range 0 2)]
+          (set!
+            (array-ref slots index)
+            (clone (array-ref plan.preservations.slots index))))
+        (set!
+          plan.preservations
+          (homes.CompilerBackendPreservationHomeList slots 2)))
+      (match (homes.compiler-backend-home-preservation!
+        (&mut plan)
+        44
+        plan.entry-block
+        -1
+        (CalleeSaveRegister abi.compiler-reg-id-r12))
+        [(Err message) (io.panic message)]
+        [(Ok home)
+          (test.assert-i64-eq home.id 6 "exact/spare function scope parity")])
+      (for [invalid (iterator.range 0 11)]
+        (let
+          [bad : homes.CompilerBackendHomePlan (clone plan)]
+          (when (= invalid 9) (set! bad.preservations.len 100))
+          (when
+            (= invalid 10)
+            (set!
+              (array-ref bad.preservations.slots 1)
+              (clone (array-ref bad.preservations.slots 0))))
+          (test.assert-true
+            (match (homes.compiler-backend-home-preservation!
+              (&mut bad)
+              (if (= invalid 0)
+                45
+                44)
+              (if (= invalid 1)
+                (+ plan.entry-block 1)
+                plan.entry-block)
+              (cond [(= invalid 2) 0] [(= invalid 3) -2] [else -1])
+              (CalleeSaveRegister
+                (cond
+                  [(= invalid 4) abi.compiler-reg-id-rax]
+                  [(= invalid 5) abi.compiler-reg-id-rsp]
+                  [(= invalid 6) (abi.compiler-abi-xmm-register-id 0)]
+                  [(= invalid 7) (abi.compiler-abi-vector-register-id 6)]
+                  [(= invalid 8) (abi.compiler-abi-mask-register-id 1)]
+                  [else abi.compiler-reg-id-r12])))
+              [(Err _) true]
+              [_ false])
+            "function saves reject instruction authority, wrong function and invalid registers"))))))

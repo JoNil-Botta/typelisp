@@ -72,7 +72,8 @@
   (phi-inputs CompilerBackendHomePhiInputs))
 
 ;; A preservation resource is issued at its emitting authority, independently
-;; of its current frame displacement. Separate IR sites never share its home.
+;; of its current frame displacement. Separate IR sites never share its home;
+;; callee saves instead have function scope, canonically represented by site -1.
 (defenum CompilerBackendFixedStagingKey
   (Operand i64)
   (Result i64)
@@ -86,6 +87,7 @@
   (LaneBuffer))
 
 (defenum CompilerBackendPreservationKey
+  (CalleeSaveRegister i64)
   (EmergencyRegister i64)
   (ParallelCopySlot i64)
   (ParallelCopyRegister i64)
@@ -658,6 +660,10 @@
 (define (compiler-backend-preservation-key-bytes
   [key : (& CompilerBackendPreservationKey)]) : i64
   (match key
+    [(CalleeSaveRegister reg)
+      (if (abi.compiler-abi-xmm-register-id? reg)
+        16
+        8)]
     [(EmergencyRegister _) 64]
     [(ParallelCopySlot _) 8]
     [(ParallelCopyRegister _) 8]
@@ -667,6 +673,10 @@
   [left : (& CompilerBackendPreservationKey)]
   [right : (& CompilerBackendPreservationKey)]) : bool
   (match left
+    [(CalleeSaveRegister a)
+      (match right
+        [(CalleeSaveRegister b) (= a b)]
+        [_ false])]
     [(EmergencyRegister a)
       (match right
         [(EmergencyRegister b) (= a b)]
@@ -695,18 +705,38 @@
   [site : i64]
   [key : CompilerBackendPreservationKey]) : CompilerBackendPlannedHomeResult
   (unless
-    (and
-      (= function plan.function)
-      (>= block 0)
-      (>= site 0)
-      (< site (array-length plan.sites)))
-    (return (Err "stack traffic: preservation site is unbound")))
-  (unless
-    (= block (array-ref plan.sites site).block)
-    (return (Err "stack traffic: preservation block differs")))
+    (= function plan.function)
+    (return (Err "stack traffic: preservation function differs")))
+  (match (& key)
+    [(CalleeSaveRegister _)
+      (unless
+        (and (= site -1) (= block plan.entry-block) (>= block 0))
+        (return (Err "stack traffic: callee save needs function authority")))]
+    [_
+      (unless
+        (and (>= block 0) (>= site 0) (< site (array-length plan.sites)))
+        (return (Err "stack traffic: preservation site is unbound")))
+      (unless
+        (= block (array-ref plan.sites site).block)
+        (return (Err "stack traffic: preservation block differs")))])
   (let
     [normalized : CompilerBackendPreservationKey
       (match (& key)
+        [(CalleeSaveRegister reg)
+          (unless
+            (or
+              (= reg abi.compiler-reg-id-rbx)
+              (= reg abi.compiler-reg-id-rbp)
+              (= reg abi.compiler-reg-id-rsi)
+              (= reg abi.compiler-reg-id-rdi)
+              (and
+                (>= reg abi.compiler-reg-id-r12)
+                (<= reg abi.compiler-reg-id-r15))
+              (and
+                (>= reg (abi.compiler-abi-xmm-register-id 6))
+                (<= reg (abi.compiler-abi-xmm-register-id 15))))
+            (return (Err "stack traffic: invalid callee-save resource")))
+          (CalleeSaveRegister reg)]
         [(FixedStaging part bytes)
           (unless
             (and

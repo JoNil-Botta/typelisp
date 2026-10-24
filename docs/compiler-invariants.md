@@ -626,7 +626,8 @@ or refine that attribution before a post-regalloc census is published.
 Stack-operand capture also precedes rendering. A typed vector operand retains
 its logical variable even when allocation gives another variable the same
 physical offset. Read/write factories issue snapshots with the actual emitted
-function and block; snapshot order is not a final operation ordinal. Protected
+function and a source-block or explicit function-entry/exit anchor; snapshot
+order is not a final operation ordinal or final CFG block identity. Protected
 operand allocations and every indexed concatenation live in one explicit
 capture arena, preventing scratch-address reuse from transferring an identity.
 The index compares allocation identity, never byte equality. Untracked copies
@@ -704,6 +705,16 @@ sites, and register parking or an elided save issues no stack access. The
 capture arena owns registry growth across instruction-scratch rewinds. Save,
 restore and their recursive parents transport the issued operand identities;
 neither a displacement nor a rendered opcode can establish this owner.
+Callee-register saves instead have function scope: all returns refer to the
+same register resource, independently of the current IR site. The actual ABI
+save plan authorizes `CallAbi` traffic with eight-byte GP or sixteen-byte Win64
+XMM capacity, even in wider SIMD modes. Entry writes and exit reads have
+explicit anchors; they cannot inherit the last emitted source block. Frame
+moves, pop runs and FPO push/pop synthesis transport or reissue that resource
+through their actual typed plan. Deleted move tokens never become final events,
+and unwind directives issue no access. The ordinary frame-pointer push/leave,
+other implicit ABI traffic and final machine anchor reconciliation remain
+separate authorities required before a complete census can be published.
 Parallel-copy frame temporaries use distinct typed slot keys in the same
 preservation registry. Each is one eight-byte `PlannedScratch` home with a
 `Bytes` bank: GP and floating moves transport bits through that resource, while

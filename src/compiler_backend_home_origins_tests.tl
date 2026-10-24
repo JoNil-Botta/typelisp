@@ -309,7 +309,8 @@
   (home-origin-group-fragment-test)
   (home-origin-emergency-test)
   (home-origin-callee-test)
-  (home-origin-adapter-test))
+  (home-origin-adapter-test)
+  (home-origin-call-slots-test))
 
 (test home-origins-survive-noninjective-coloring (home-origin-tests))
 
@@ -1339,3 +1340,59 @@ join:
               [(Err _) true]
               [_ false])
             "adapter factory rejects noncanonical parameter ordinals"))))))
+
+(define (home-origin-call-slots-test) : unit
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (ir_text.blocks
+        "entry:
+  %0 = call slot_callee() : i64
+  %1 = call slot_callee() : i64
+  return %1
+")]
+    [input : homes.CompilerBackendHomePlanInput
+      (homes.CompilerBackendHomePlanInput
+        44
+        2
+        2
+        (ir.compiler-ir-param-seq-empty)
+        (owned_view.compiler-owned-shared-view blocks)
+        blocks
+        (None)
+        (live.compiler-live-set-empty))]
+    [plan : homes.CompilerBackendHomePlan
+      (match (homes.compiler-backend-home-plan-build (& input))
+        [(Ok result) result]
+        [(Err message) (io.panic message)])]
+    (for [site (iterator.range 0 2)]
+      (for [area (iterator.range 0 2)]
+        (for [slot (iterator.range 0 2)]
+          (for [repeat (iterator.range 0 2)]
+            (match (homes.compiler-backend-home-preservation!
+              (&mut plan)
+              44
+              plan.entry-block
+              site
+              (if (= area 0)
+                (OutgoingStackSlot slot)
+                (TailStackSlot slot)))
+              [(Err message) (io.panic message)]
+              [(Ok home)
+                (test.assert-i64-eq
+                  home.id
+                  (+ 6 (+ (* site 4) (+ (* area 2) slot)))
+                  "call sites, areas and ABI ordinals never alias")
+                (test.assert-i64-eq home.bytes 8 "one outgoing ABI word")])))))
+    (for [kind (iterator.range 0 2)]
+      (test.assert-true
+        (match (homes.compiler-backend-home-preservation!
+          (&mut plan)
+          44
+          plan.entry-block
+          0
+          (if (= kind 0)
+            (OutgoingStackSlot -1)
+            (TailStackSlot -1)))
+          [(Err _) true]
+          [_ false])
+        "negative call ABI ordinal rejects"))))

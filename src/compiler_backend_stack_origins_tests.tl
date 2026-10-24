@@ -5046,6 +5046,7 @@ second:
                 [reads : i64 0]
                 [frame : i64 0]
                 [incoming : i64 0]
+                [outgoing : i64 0]
                 (test.assert-string-eq
                   text
                   plain
@@ -5104,9 +5105,23 @@ second:
                           "incoming ABI area is read, not the local initialization")]
                       [(AdapterBody)
                         (when
-                          (match (& fact.owner)
-                            [(CallAbi) true]
-                            [_ false])
+                          (and
+                            (>= fact.home 27)
+                            (match (& fact.owner)
+                              [(CallAbi) true]
+                              [_ false]))
+                          (+= outgoing 1)
+                          (test.assert-true
+                            (match (& fact.access)
+                              [(Write) true]
+                              [_ false])
+                            "outgoing words are written"))
+                        (when
+                          (and
+                            (< fact.home 27)
+                            (match (& fact.owner)
+                              [(CallAbi) true]
+                              [_ false]))
                           (test.assert-i64-eq
                             fact.home-bytes
                             8
@@ -5123,6 +5138,24 @@ second:
                           false
                           "adapter cannot inherit a source block")])))
                 (test.assert-i64-eq frame 2 "one real frame push and pop")
+                (let
+                  [abi : cabi.CompilerRegTargetAbi
+                    (if (= platform 0)
+                      (Linux)
+                      (Windows))]
+                  [words : i64 (cond [(= shape 0) 0] [(= shape 3) 18] [else 9])]
+                  [registers : i64
+                    (if (= shape 2)
+                      (cabi.compiler-abi-float-arg-register-count
+                        abi
+                        (Internal))
+                      (cabi.compiler-abi-gp-arg-register-count abi (Internal)))]
+                  (test.assert-i64-eq
+                    outgoing
+                    (if (> words registers)
+                      (- words registers)
+                      0)
+                    "forwarded call has no hidden closure argument"))
                 (let
                   [abi : cabi.CompilerRegTargetAbi
                     (if (= platform 0)
@@ -5165,3 +5198,199 @@ second:
 (test
   backend-stack-origins-synthetic-adapter-owner
   (backend-stack-origins-adapter-test))
+
+(define (backend-stack-origins-tail-store-text
+  [type-bases : i64]
+  [target : backend.CompilerBackendTarget]
+  [homes : regalloc.CompilerRegAssignmentTable]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]
+  [parallel? : bool]
+  [_slot : i64]
+  [state : backend.CompilerBackendState]) : backend.ResultCompilerBackend
+  (unless
+    parallel?
+    (return
+      (backend.compiler-backend-emit-direct-tail-stack-call-arg
+        type-bases
+        target
+        homes
+        value
+        (clone ty)
+        (backend.compiler-backend-float-type? (& ty))
+        0
+        state)))
+  (let
+    [values : (__tl_dyn-array ir.CompilerIrValue)
+      (__tl_make-array ir.CompilerIrValue 9)]
+    [types : ast.AstTypeList (ast.ast-type-list-with-capacity 9)]
+    [out : backend.CompilerBackendAsmBuf
+      (backend.compiler-backend-asm-buf-with-capacity 2048)]
+    (for [i (iterator.range 0 9)]
+      (set! (array-ref values i) (Var 0))
+      (ast.ast-type-list-push
+        (&mut types)
+        (ast.ast-node-pool-reader-type-push (& ty))))
+    (backend.compiler-backend-asm-buf-capture!
+      (&mut out)
+      (backend.compiler-backend-state-stack-text-origins state))
+    (let
+      [seq : ir.CompilerIrValueSeq (ir.CompilerIrValueSeq values 9)]
+      [args : ir.CompilerIrCallArgs (ir.compiler-ir-call-args-from-seq (& seq))]
+      (match (backend.compiler-backend-emit-call-args-parallel-into
+        (&mut out)
+        (IncomingStackArgArea)
+        type-bases
+        target
+        (Internal)
+        homes
+        (& args)
+        (& types)
+        0
+        0
+        0
+        0
+        state)
+        [(Err message) (Err message)]
+        [(Ok _) (Ok (backend.compiler-backend-asm-buf-finish (& out)))]))))
+
+(define (backend-stack-origins-tail-slot-test) : unit
+  (for [platform (iterator.range 0 2)]
+    (for [kind (iterator.range 0 4)]
+      (let
+        [state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+        [fn : backend.CompilerBackendFunctionState
+          (backend.compiler-backend-state-function-state state)]
+        [target : backend.CompilerBackendTarget
+          (if (= platform 0)
+            (Linux)
+            (Windows))]
+        [assignment : regalloc.CompilerRegAssignment
+          (regalloc.CompilerRegAssignment
+            0
+            (Register (cabi.compiler-abi-xmm-register-id 0)))]
+        [homes : regalloc.CompilerRegAssignmentTable
+          (if (= kind 3)
+            (regalloc.compiler-reg-assignments-prepend
+              (& assignment)
+              (regalloc.compiler-reg-assignment-table-empty))
+            (regalloc.compiler-reg-assignment-table-empty))]
+        [ty : ast.AstType
+          (if (or (= kind 1) (= kind 3))
+            (F32)
+            (I64))]
+        [value : ir.CompilerIrValue
+          (cond [(= kind 0) (I64 42)] [(= kind 1) (F64 0)] [else (Var 0)])]
+        [blocks : ir.CompilerIrBlockList
+          (ir_text.blocks "entry:
+  %1 = call tail_slot(%0) : i64
+  return %1
+")]
+        (backend.compiler-backend-function-scratch-set-i64!
+          fn
+          backend.compiler-backend-scratch-i64-current-source-function
+          44)
+        (backend.compiler-backend-function-state-set-emit-current-site! fn 0)
+        (let
+          [plain : String
+            (match (backend-stack-origins-tail-store-text
+              (ast.ast-node-pool-reader-type-segment-bases)
+              target
+              (owned_view.compiler-owned-shared-view homes)
+              (clone value)
+              (clone ty)
+              (= kind 3)
+              0
+              state)
+              [(Ok text) text]
+              [(Err _) (io.panic "plain tail store refused")])]
+          (backend.compiler-backend-state-stack-origins-begin! state)
+          (let
+            [input : home_origins.CompilerBackendHomePlanInput
+              (home_origins.CompilerBackendHomePlanInput
+                44
+                2
+                2
+                (ir.compiler-ir-param-seq-empty)
+                (owned_view.compiler-owned-shared-view blocks)
+                blocks
+                (None)
+                (live.compiler-live-set-empty))]
+            [plan : home_origins.CompilerBackendHomePlan
+              (match (home_origins.compiler-backend-home-plan-build (& input))
+                [(Ok result) result]
+                [(Err message) (io.panic message)])]
+            (backend.compiler-backend-function-state-set-i64!
+              fn
+              backend.compiler-backend-function-i64-current-block-label
+              plan.entry-block)
+            (backend.compiler-backend-stack-home-plan-install! fn plan))
+          (let
+            [text : String
+              (match (backend-stack-origins-tail-store-text
+                (ast.ast-node-pool-reader-type-segment-bases)
+                target
+                homes
+                value
+                ty
+                (= kind 3)
+                0
+                state)
+                [(Ok result) result]
+                [(Err _) (io.panic "captured tail store refused")])]
+            [capture : origins.CompilerBackendTextOrigins
+              (backend.compiler-backend-state-stack-text-origins state)]
+            [facts : origins.CompilerBackendStackAccessOriginList
+              (backend.compiler-backend-state-stack-access-origins state)]
+            [writes : i64 0]
+            (test.assert-string-eq
+              text
+              plain
+              "tail stores preserve complete assembly")
+            (test.assert-i64-eq
+              (array-length
+                (origins.compiler-backend-text-origins-find capture (& text)))
+              (cond
+                [(= kind 2) 2]
+                [(= kind 3)
+                  (if (= platform 0)
+                    1
+                    5)]
+                [else 1])
+              "tail composition transports read and write operands")
+            (for [i (iterator.range 0 facts.len)]
+              (let
+                [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                  (& (array-ref facts.slots i))]
+                (when
+                  (match (& fact.owner)
+                    [(CallAbi) true]
+                    [_ false])
+                  (+= writes 1)
+                  (test.assert-i64-eq fact.home-bytes 8 "one tail ABI word")
+                  (test.assert-i64-eq
+                    fact.access-bytes
+                    (if (or (= kind 1) (= kind 3))
+                      4
+                      8)
+                    "actual tail store width")
+                  (test.assert-true
+                    (match (& fact.access)
+                      [(Write) true]
+                      [_ false])
+                    "tail overwrites are writes"))))
+            (test.assert-i64-eq
+              writes
+              (if (= kind 3)
+                (if (= platform 0)
+                  1
+                  5)
+                1)
+              "tail-area resource writes"))
+          (backend.compiler-backend-state-stack-origins-end! state))
+        (backend.compiler-backend-state-release-final-arenas! state)))))
+
+(test
+  backend-stack-origins-tail-stack-slots
+  (backend-stack-origins-tail-slot-test))

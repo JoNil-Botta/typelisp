@@ -18109,6 +18109,8 @@
             (match (& request.key)
               [(FramePointer) (CallAbi)]
               [(IncomingStackSlot _) (CallAbi)]
+              [(OutgoingStackSlot _) (CallAbi)]
+              [(TailStackSlot _) (CallAbi)]
               [(CalleeSaveRegister _) (CallAbi)]
               [(EmergencyRegister _) (EmergencyScratch)]
               [(ParallelCopySlot _) (PlannedScratch)]
@@ -18147,6 +18149,24 @@
       bank
       bytes
       (Read))))
+
+(define (compiler-backend-call-stack-operand-origin
+  [state : CompilerBackendState]
+  [text : String]
+  [area : CompilerBackendStackArgArea]
+  [slot : i64]
+  [bank : stack_traffic.CompilerStackTrafficBank]
+  [bytes : i64]) : String
+  (compiler-backend-preservation-operand-origin
+    state
+    text
+    (CompilerBackendPreservationOperandRequest
+      (match area
+        [(OutgoingStackArgArea) (OutgoingStackSlot slot)]
+        [(IncomingStackArgArea) (TailStackSlot slot)])
+      bank
+      bytes
+      (Write))))
 
 ;; Every emitted function requires its own installed plan, including adapters.
 (define (compiler-backend-frame-pointer-context-check
@@ -23774,18 +23794,30 @@
             (compiler-backend-emit-group-stack-word-copy
               word0
               scratch
-              (compiler-backend-outgoing-stack-arg-slot
-                target
-                convention
-                stack-idx)
+              (compiler-backend-call-stack-operand-origin
+                backend-state
+                (compiler-backend-outgoing-stack-arg-slot
+                  target
+                  convention
+                  stack-idx)
+                (OutgoingStackArgArea)
+                stack-idx
+                (General)
+                8)
               backend-state)
             (compiler-backend-emit-group-stack-word-copy
               word1
               scratch
-              (compiler-backend-outgoing-stack-arg-slot
-                target
-                convention
-                (+ stack-idx 1))
+              (compiler-backend-call-stack-operand-origin
+                backend-state
+                (compiler-backend-outgoing-stack-arg-slot
+                  target
+                  convention
+                  (+ stack-idx 1))
+                (OutgoingStackArgArea)
+                (+ stack-idx 1)
+                (General)
+                8)
               backend-state))))]
     [_
       (Err
@@ -23854,10 +23886,16 @@
           (compiler-backend-emit-group-stack-word-copy
             operand
             scratch
-            (compiler-backend-outgoing-stack-arg-slot
-              target
-              convention
-              stack-idx)
+            (compiler-backend-call-stack-operand-origin
+              backend-state
+              (compiler-backend-outgoing-stack-arg-slot
+                target
+                convention
+                stack-idx)
+              (OutgoingStackArgArea)
+              stack-idx
+              (General)
+              8)
             backend-state)))]
     [_
       (Err
@@ -41809,14 +41847,18 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [slot : String
-      (str_cat.str-cat
-        (string.int->string
-          (compiler-backend-outgoing-stack-arg-offset
-            target
-            convention
-            stack-idx))
-        "(%rsp)\n"
-        "")]
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
+        (compiler-backend-call-stack-operand-origin
+          backend-state
+          (compiler-backend-outgoing-stack-arg-slot target convention stack-idx)
+          (OutgoingStackArgArea)
+          stack-idx
+          (General)
+          (if is-float
+            (compiler-backend-float-access-bytes arg-ty)
+            8))
+        "\n")]
     (if is-float
       (let
         [scav : String (compiler-backend-stack-call-arg-stage backend-state)]
@@ -43662,12 +43704,22 @@
               [else "    movq "])
             (compiler_abi.compiler-abi-register-spelling source)
             ", "
-            (compiler-backend-stack-arg-area-slot
+            (compiler-backend-call-stack-operand-origin
+              backend-state
+              (compiler-backend-stack-arg-area-slot
+                area
+                target
+                convention
+                slot
+                backend-state)
               area
-              target
-              convention
               slot
-              backend-state)
+              (if (= class compiler-backend-scalar-arg-gp)
+                (General)
+                (Vector))
+              (if (= class compiler-backend-scalar-arg-f32)
+                4
+                8))
             "\n")))
       (set! index (+ index 1)))
     (let
@@ -44055,7 +44107,15 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     [slot : String
-      (compiler-backend-tail-final-stack-slot target stack-idx backend-state)]
+      (compiler-backend-call-stack-operand-origin
+        backend-state
+        (compiler-backend-tail-final-stack-slot target stack-idx backend-state)
+        (IncomingStackArgArea)
+        stack-idx
+        (General)
+        (if is-float
+          (compiler-backend-float-access-bytes arg-ty)
+          8))]
     (if is-float
       (let
         [scav : String (compiler-backend-stack-call-arg-stage backend-state)]
@@ -44074,7 +44134,8 @@
               scav
               backend-state))]
         (Ok
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             head
             "    "
             (compiler-backend-float-bits-load-mnemonic
@@ -44083,9 +44144,20 @@
             " "
             gp-part
             ", "
-            (str_cat.str-cat slot "\n"))))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              slot
+              "\n"))))
       (match (compiler-backend-immediate-operand backend-state value)
-        [(Some imm) (Ok (str_cat.str-cat "    movq " imm ", " slot "\n"))]
+        [(Some imm)
+          (Ok
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              "    movq "
+              imm
+              ", "
+              slot
+              "\n"))]
         [(No)
           (let
             [scav : String
@@ -44097,7 +44169,16 @@
                   value
                   (compiler-backend-global-shared-view scav)
                   backend-state))]
-            (Ok (str_cat.str-cat head "    movq " scav ", " slot "\n" "")))]))))
+            (Ok
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
+                head
+                "    movq "
+                scav
+                ", "
+                slot
+                "\n"
+                "")))]))))
 
 (define (compiler-backend-emit-direct-tail-call-args-from
   [type-segment-bases : i64]
@@ -44174,7 +44255,11 @@
                 (+ stack-idx 1)
                 func-diag
                 backend-state))]
-          (Ok (str_cat.str-cat head tail)))
+          (Ok
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              head
+              tail)))
         (match (if is-float
           (compiler-backend-target-float-arg-reg-for-banks
             target
@@ -44218,7 +44303,11 @@
                     stack-idx
                     func-diag
                     backend-state))]
-              (Ok (str_cat.str-cat head tail)))]
+              (Ok
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins backend-state)
+                  head
+                  tail)))]
           [(Err message) (compiler-backend-instr-error func-diag message)])))))
 
 (define (compiler-backend-emit-direct-tail-call-args
@@ -47963,7 +48052,8 @@
                   instr-diag
                   backend-state)]))]
         (Ok
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             args-asm
             (compiler-backend-tail-jump-tail
               assignments
@@ -47995,7 +48085,8 @@
           (= tail-stack-count 0)
           (string.eq return-normalize ""))
           (Ok
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               args-asm
               varargs-pre-call
               (compiler-backend-tail-jump-tail
@@ -48004,15 +48095,18 @@
                 target-symbol
                 backend-state)))
           (Ok
-            (str_cat.str-cat
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
               (compiler-backend-emit-call-space-sub call-space)
               args-asm
               varargs-pre-call
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
                 "    call "
                 target-symbol
                 "\n"
-                (str_cat.str-cat
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins backend-state)
                   (compiler-backend-emit-call-space-add call-space)
                   return-normalize
                   (compiler-backend-return-tail

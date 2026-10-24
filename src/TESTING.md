@@ -896,7 +896,13 @@ parameter-anchor owners/directions. Actual adapter parents cover scalar and
 floating bank overflow and both aggregate words; an independent ABI inventory
 includes SysV's whole-aggregate fit boundary. Source entry and inactive-owner
 fixtures check the same authority without borrowing a synthetic plan.
-Outgoing-area completeness and final report acceptance remain separate.
+Call-word registry fixtures distinguish sites, normal/tail areas and ordinals,
+and reject negative slots. Actual adapter templates verify outgoing scalar,
+floating and group words. Tail fixtures cover immediate, floating and local
+sources plus register-sourced XMM parallel stores on both targets, requiring
+complete ordinary/captured byte equality and surviving read/write operands.
+Bulk C copies, implicit call/return traffic and final report acceptance remain
+separate.
 `compiler_backend_stack_origins_tests.tl`
 checks actual vector load/store/folded/fallback factories and a higher-level
 vector copy with equal colored offsets but distinct logical homes. The native

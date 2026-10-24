@@ -736,8 +736,15 @@ a frame restore. Capacity is eight bytes per ABI word, while actual scalar and
 floating read widths remain explicit. Group words retain separate ordinals and
 SysV's all-or-stack register-fit rule. Shared scalar, float and group-copy
 parents transport the marked addresses without changing machine bytes.
-Outgoing ABI areas, other implicit traffic and final machine anchor
-reconciliation remain required before a complete census.
+Outgoing and direct-tail scalar/group stack words use separate site-scoped
+resources, issued from the ABI word ordinal. Incoming parameter resources,
+ordinary outgoing areas and tail overwrites cannot alias, even at equal frame
+addresses. Register-sourced parallel stores retain their actual GP/XMM bank
+and 4/8-byte access; their ABI word capacity stays eight bytes. Group words
+remain separate resources. Ordinary and direct-tail marshalling, recursive
+parents and the top-level tail-call result preserve those write tokens.
+Bulk C aggregate copy destinations, implicit call/return traffic, other owners
+and final machine anchor reconciliation remain required for a complete census.
 Parallel-copy frame temporaries use distinct typed slot keys in the same
 preservation registry. Each is one eight-byte `PlannedScratch` home with a
 `Bytes` bank: GP and floating moves transport bits through that resource, while

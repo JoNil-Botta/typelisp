@@ -90,6 +90,8 @@
 (defenum CompilerBackendPreservationKey
   (FramePointer)
   (IncomingStackSlot i64)
+  (OutgoingStackSlot i64)
+  (TailStackSlot i64)
   (CalleeSaveRegister i64)
   (EmergencyRegister i64)
   (ParallelCopySlot i64)
@@ -743,6 +745,8 @@
   (match key
     [(FramePointer) 8]
     [(IncomingStackSlot _) 8]
+    [(OutgoingStackSlot _) 8]
+    [(TailStackSlot _) 8]
     [(CalleeSaveRegister reg)
       (if (abi.compiler-abi-xmm-register-id? reg)
         16
@@ -763,6 +767,14 @@
     [(IncomingStackSlot a)
       (match right
         [(IncomingStackSlot b) (= a b)]
+        [_ false])]
+    [(OutgoingStackSlot a)
+      (match right
+        [(OutgoingStackSlot b) (= a b)]
+        [_ false])]
+    [(TailStackSlot a)
+      (match right
+        [(TailStackSlot b) (= a b)]
         [_ false])]
     [(CalleeSaveRegister a)
       (match right
@@ -831,6 +843,16 @@
     [normalized : CompilerBackendPreservationKey
       (match (& key)
         [(FramePointer) (FramePointer)]
+        [(OutgoingStackSlot slot)
+          (when
+            (< slot 0)
+            (return (Err "stack traffic: invalid outgoing ABI slot")))
+          (OutgoingStackSlot slot)]
+        [(TailStackSlot slot)
+          (when
+            (< slot 0)
+            (return (Err "stack traffic: invalid tail ABI slot")))
+          (TailStackSlot slot)]
         [(IncomingStackSlot slot)
           (when
             (< slot 0)

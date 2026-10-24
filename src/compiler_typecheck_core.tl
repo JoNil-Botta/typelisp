@@ -111222,7 +111222,7 @@
                   module-id
                   env
                   tc-module-view-pending-name
-                  (tc-global-shared-view tc-moved-shared-empty-id-map)
+                  (clone tc-moved-shared-empty-id-map)
                   false)
                 (Ok env)))))))))
 
@@ -114447,7 +114447,7 @@
                 (tc-bind-id
                   replayed
                   (array-ref keys position)
-                  (clone (tc-global-array-element-shared-view types position)))))
+                  (clone (array-ref types position)))))
             ;; A failed delta must not publish the partially continued map.
             (set! (deref data).macro-cache-store top-env.store)
             (set! (deref data).macro-cache-head top-env.head)

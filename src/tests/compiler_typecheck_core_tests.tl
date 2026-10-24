@@ -51,7 +51,7 @@
     source
     (parser.compiler-cfg-empty)
     pools)
-    [(Ok (Program decls)) (ast.ast-decl-list-box-shared-view decls)]
+    [(Ok (Program decls)) (deref decls)]
     [_ (io.panic "module carry fixture did not parse")]))
 
 ;; The oracle always walks every source row, starting from a fresh name
@@ -67,8 +67,7 @@
     [lists : (Array ast.AstDeclList 2) (array old delta)]
     (for [part (iterator.range 0 2)]
       (let
-        [decls : ast.AstDeclList
-          (tc_core.tc-global-array-element-shared-view lists part)]
+        [decls : ast.AstDeclList (clone (array-ref lists part))]
         (for [index (iterator.range 0 (ast.ast-decl-list-len (& decls)))]
           (set!
             env
@@ -169,7 +168,7 @@
             (match (tc_core.tc-extend-top-env-for-splice
               ctx
               base
-              (tc_core.tc-global-shared-view delta)
+              (clone delta)
               "carry-owner"
               module-id)
               [(Ok env) env]
@@ -230,7 +229,7 @@
           ctx
           base
           top
-          (tc_core.tc-global-shared-view delta)
+          (clone delta)
           "carry-owner"
           (if (string.eq mode "root")
             cbi.compiler-builtin-id-fix-empty
@@ -254,11 +253,7 @@
             (let
               [actual : tc_core.TcTypeEnv (array-ref data.macro-cache-values 0)]
               [expected : tc_core.TcTypeEnv
-                (tc-module-carry-test-rebuild
-                  ctx
-                  top
-                  (tc_core.tc-global-shared-view old)
-                  (tc_core.tc-global-shared-view delta))]
+                (tc-module-carry-test-rebuild ctx top (clone old) (clone delta))]
               [names
                 (array
                   (ci.intern "kept")
@@ -275,15 +270,13 @@
                     (array-ref names index))
                   (string.copy mode)))
               (let
-                [continued : tc_i64_i64_map.Map
-                  (tc_core.tc-global-array-element-shared-view
-                    data.macro-cache-seen
-                    0)]
+                [continued : (& data tc_i64_i64_map.Map)
+                  (& (array-ref data.macro-cache-seen 0))]
                 (test.assert-true
                   (not
                     (tc_core.macro-module-env-splice-fresh?
                       ctx
-                      (& continued)
+                      continued
                       (& delta)))
                   "continued names survive scratch retirement")))))
         (tc_core.tc-job-state-retire-owned-storage! job)

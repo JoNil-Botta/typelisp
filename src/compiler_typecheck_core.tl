@@ -16247,6 +16247,10 @@
   [env : TcTypeEnv]
   [region-marker-id : i64]) : TcMaybeNameId
   (match (tc-type-env-view env)
+    [(Cache _ scan-through _ rest _)
+      (if scan-through
+        (tc-arena-phase-token-region-head rest region-marker-id)
+        (No))]
     [(Bind key ty _)
       (if (= key region-marker-id)
         (match ty
@@ -16260,6 +16264,10 @@
   [owner-marker-id : i64]
   [region-marker-id : i64]) : TcMaybeNameId
   (match (tc-type-env-view env)
+    [(Cache _ scan-through _ rest _)
+      (if scan-through
+        (tc-arena-phase-token-owner-head rest owner-marker-id region-marker-id)
+        (No))]
     [(Bind key ty rest)
       (if (= key owner-marker-id)
         (match ty

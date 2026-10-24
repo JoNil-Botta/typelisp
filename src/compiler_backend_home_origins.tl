@@ -75,7 +75,8 @@
   (entry-block i64)
   (parameters CompilerBackendHomeBindingList)
   (sites (__tl_dyn-array CompilerBackendHomeSite))
-  (bytes (__tl_dyn-array i64)))
+  (bytes (__tl_dyn-array i64))
+  (groups (__tl_dyn-array bool)))
 
 (defstruct CompilerBackendHomePlanInput
   (function i64)
@@ -372,6 +373,7 @@
     [cursor : i64 0]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
     [bytes : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
+    [groups : (__tl_dyn-array bool) (__tl_make-array bool input.logical-count)]
     (unless
       (and
         (>= input.params.len 0)
@@ -478,7 +480,10 @@
         (when
           (> capacity 1152921504606846975)
           (return (Err "stack traffic: original home capacity overflows")))
-        (set! (array-ref bytes var) (* 8 capacity))))
+        (set! (array-ref bytes var) (* 8 capacity))
+        (set!
+          (array-ref groups var)
+          (live.compiler-live-set-contains? (& input.groups) var))))
     (Ok
       (CompilerBackendHomePlan
         input.function
@@ -488,7 +493,8 @@
           -1)
         parameters.bindings
         sites
-        bytes))))
+        bytes
+        groups))))
 
 (define (compiler-backend-home-plan-resolve
   [plan : (& plan CompilerBackendHomePlan)]
@@ -536,6 +542,33 @@
       (and (>= logical 0) (< logical (array-length plan.bytes)))
       (return (Err "stack traffic: original home has no allocation capacity")))
     (Ok (CompilerBackendLogicalHome logical (array-ref plan.bytes logical)))))
+
+;; Fragment IDs occupy a separate namespace after every whole logical home.
+;; Group membership is the original allocator census, never inferred from a
+;; 16-byte capacity, colored slot, physical displacement or machine opcode.
+(define (compiler-backend-home-group-fragment
+  [plan : (& plan CompilerBackendHomePlan)]
+  [home : CompilerBackendLogicalHome]
+  [word : i64]) : CompilerBackendPlannedHomeResult
+  (let
+    [count : i64 (array-length plan.bytes)]
+    (unless
+      (and
+        (= (array-length plan.groups) count)
+        (>= home.id 0)
+        (< home.id count)
+        (or (= word 0) (= word 1)))
+      (return (Err "stack traffic: invalid original group fragment")))
+    (unless
+      (and
+        (array-ref plan.groups home.id)
+        (= home.bytes (array-ref plan.bytes home.id))
+        (>= home.bytes 16))
+      (return (Err "stack traffic: home is not an original two-word group")))
+    (when
+      (> home.id (/ (- (- 9223372036854775807 count) word) 2))
+      (return (Err "stack traffic: original group fragment identity overflows")))
+    (Ok (CompilerBackendLogicalHome (+ count (+ (* 2 home.id) word)) 8))))
 
 ;; Phi copies execute on the predecessor edge, but read the selected target
 ;; Phi input and define its result. The marshaller supplies its actual target

@@ -31058,6 +31058,7 @@ f:
             (/ index 2)
             (% index 2)
             8
+            (backend.CompilerBackendGroupWordOrigin.Read (General))
             state)
             [(Ok operand)
               (let

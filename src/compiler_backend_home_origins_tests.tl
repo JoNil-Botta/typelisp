@@ -304,7 +304,8 @@
   (home-origin-plan-test)
   (home-origin-address-test)
   (home-origin-parameter-test)
-  (home-origin-phi-test))
+  (home-origin-phi-test)
+  (home-origin-group-fragment-test))
 
 (test home-origins-survive-noninjective-coloring (home-origin-tests))
 
@@ -595,3 +596,105 @@ join:
             [(Err _) true]
             [_ false])
           "equal operand colors do not authorize changed predecessor labels")))))
+
+(define (home-origin-group-fragment-test) : unit
+  (for [spare (iterator.range 0 2)]
+    (let
+      [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+      [instructions : (__tl_dyn-array ir.CompilerIrInstr)
+        (__tl_make-array ir.CompilerIrInstr (+ 1 (* 3 spare)))]
+      [blocks : (__tl_dyn-array ir.CompilerIrBlock)
+        (__tl_make-array ir.CompilerIrBlock (+ 1 (* 2 spare)))]
+      (for [var (iterator.range 0 10)]
+        (set! (array-ref map var) var))
+      (set! (array-ref map 7) 1)
+      (set! (array-ref map 8) 1)
+      (set! (array-ref instructions 0) (Mov 8 (Var 7) (I64)))
+      (set!
+        (array-ref blocks 0)
+        (Block 10 (ir.CompilerIrInstrSeq instructions 1)))
+      (let
+        [original : ir.CompilerIrBlockList
+          (Array (ir.CompilerIrBlockSeq blocks 1))]
+        [input : homes.CompilerBackendHomePlanInput
+          (homes.CompilerBackendHomePlanInput
+            44
+            10
+            10
+            (ir.compiler-ir-param-seq-empty)
+            (owned_view.compiler-owned-shared-view original)
+            (regalloc.compiler-reg-remap-blocks (& map) (& original))
+            (Remap map 10)
+            (live.compiler-live-set-insert (live.compiler-live-set1 7) 8))]
+        [plan : homes.CompilerBackendHomePlan
+          (match (homes.compiler-backend-home-plan-build (& input))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (for [kind (iterator.range 0 2)]
+          (let
+            [home : homes.CompilerBackendLogicalHome
+              (match (homes.compiler-backend-home-plan-resolve
+                (& plan)
+                44
+                10
+                0
+                1
+                (if (= kind 0)
+                  (AnyUse)
+                  (Definition)))
+                [(Ok result) result]
+                [(Err message) (io.panic message)])]
+            (for [word (iterator.range 0 2)]
+              (match (homes.compiler-backend-home-group-fragment
+                (& plan)
+                home
+                word)
+                [(Err message) (io.panic message)]
+                [(Ok fragment)
+                  (test.assert-i64-eq
+                    fragment.id
+                    (+ 24 (+ (* 2 kind) word))
+                    "group fragments retain original color and word")
+                  (test.assert-i64-eq
+                    fragment.bytes
+                    8
+                    "one fragment is one word")]))))
+        (for [invalid (iterator.range 0 6)]
+          (let
+            [id : i64
+              (if (= invalid 0)
+                -1
+                (if (= invalid 1)
+                  10
+                  (if (= invalid 2)
+                    0
+                    7)))]
+            [bytes : i64
+              (if (= invalid 3)
+                8
+                16)]
+            [word : i64
+              (if (= invalid 4)
+                -1
+                (if (= invalid 5)
+                  2
+                  0))]
+            (test.assert-true
+              (match (homes.compiler-backend-home-group-fragment
+                (& plan)
+                (homes.CompilerBackendLogicalHome id bytes)
+                word)
+                [(Err _) true]
+                [_ false])
+              "only an exact original group authorizes a word")))
+        (let
+          [malformed : homes.CompilerBackendHomePlan (clone plan)]
+          (set! malformed.groups (__tl_make-array bool 0))
+          (test.assert-true
+            (match (homes.compiler-backend-home-group-fragment
+              (& malformed)
+              (homes.CompilerBackendLogicalHome 7 16)
+              0)
+              [(Err _) true]
+              [_ false])
+            "group extent mismatch rejects"))))))

@@ -913,8 +913,16 @@ single and paired GEP/load factories preserve separate original destinations
 with full inactive-output parity. Buffer association tests reject foreign,
 untracked and finalized destinations. Both origin fixture families run natively
 at opt0/1/2.
-Remaining access-changing
-rewrites, traffic owners and complete report acceptance are distinct.
+Group fragments check original allocator membership independently of capacity,
+exact/spare storage, invalid homes and word indices, and disjoint sibling and
+whole-home identities. Actual memory and mixed register-pair operand routes
+retain explicit banks and pre-color group identities. Incoming parameters and
+body writes stay distinct even at one colored address. The actual Phi cycle
+prefix saves the old destination while reading the selected incoming group,
+retains every token through its temporary parent, and restores edge authority
+after both success and a controlled failure. Native home/producer smokes run
+these cases at opt0/1/2. Remaining access-changing rewrites, traffic owners and
+complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

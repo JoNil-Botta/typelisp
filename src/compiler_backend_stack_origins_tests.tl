@@ -560,11 +560,14 @@
       [entry-text : String
         (backend.compiler-backend-stack-operand-origin
           state
-          1
           "-64(%rbp)"
-          8
-          (General)
-          (Write))]
+          (backend.CompilerBackendStackOperandRequest
+            1
+            8
+            (General)
+            (Write)
+            (Whole)
+            (Value)))]
       (backend.compiler-backend-parameter-origins-end! state nested)
       (test.assert-true
         (backend.compiler-backend-function-scratch-bool?
@@ -592,11 +595,14 @@
         [body-text : String
           (backend.compiler-backend-stack-operand-origin
             state
-            1
             "-64(%rbp)"
-            8
-            (General)
-            (Write))]
+            (backend.CompilerBackendStackOperandRequest
+              1
+              8
+              (General)
+              (Write)
+              (Whole)
+              (Value)))]
         [facts : origins.CompilerBackendStackAccessOriginList
           (backend.compiler-backend-state-stack-access-origins state)]
         (test.assert-string-eq
@@ -2084,3 +2090,352 @@
 (test
   backend-stack-origins-bind-fused-load-destinations
   (backend-stack-origins-fused-load-test))
+
+(define (backend-stack-origins-group-test) : unit
+  (for [kind (iterator.range 0 3)]
+    (let
+      [state : backend.CompilerBackendState
+        (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+      [function-state : backend.CompilerBackendFunctionState
+        (backend.compiler-backend-state-function-state state)]
+      [map : (__tl_dyn-array i64) (__tl_make-array i64 10)]
+      [original : ir.CompilerIrBlockList
+        (ir_text.blocks "entry:
+  %8 = mov %7 : i64
+  return %8
+")]
+      [assignment : regalloc.CompilerRegAssignment
+        (regalloc.CompilerRegAssignment
+          1
+          (if (= kind 2)
+            (RegisterPair
+              (cabi.compiler-abi-register-id-from-spelling "%r12")
+              (cabi.compiler-abi-register-id-from-spelling "%xmm4"))
+            (Spill -64)))]
+      [assignments : regalloc.CompilerRegAssignmentTable
+        (if (= kind 0)
+          (regalloc.compiler-reg-assignment-table-empty)
+          (regalloc.compiler-reg-assignments-prepend
+            (& assignment)
+            (regalloc.compiler-reg-assignment-table-empty)))]
+      (for [var (iterator.range 0 10)]
+        (set! (array-ref map var) var))
+      (set! (array-ref map 7) 1)
+      (set! (array-ref map 8) 1)
+      (backend.compiler-backend-function-scratch-set-i64!
+        function-state
+        backend.compiler-backend-scratch-i64-current-source-function
+        44)
+      (backend.compiler-backend-function-state-set-emit-current-site!
+        function-state
+        0)
+      (backend.compiler-backend-group-vars-enable!
+        state
+        (live.compiler-live-set1 1)
+        (live.compiler-live-set-empty))
+      (backend.compiler-backend-state-stack-origins-begin! state)
+      (let
+        [input : home_origins.CompilerBackendHomePlanInput
+          (home_origins.CompilerBackendHomePlanInput
+            44
+            10
+            10
+            (ir.CompilerIrParamSeq
+              (__tl_make-array (ir.CompilerIrParam.Param "arg" (I64) 7))
+              1)
+            (owned_view.compiler-owned-shared-view original)
+            (regalloc.compiler-reg-remap-blocks (& map) (& original))
+            (Remap map 10)
+            (live.compiler-live-set-insert (live.compiler-live-set1 7) 8))]
+        [plan : home_origins.CompilerBackendHomePlan
+          (match (home_origins.compiler-backend-home-plan-build (& input))
+            [(Ok result) result]
+            [(Err message) (io.panic message)])]
+        (backend.compiler-backend-function-state-set-i64!
+          function-state
+          backend.compiler-backend-function-i64-current-block-label
+          (array-ref plan.sites 0).block)
+        (backend.compiler-backend-stack-home-plan-install! function-state plan))
+      (let
+        [entry : backend.CompilerBackendParameterOriginsContext
+          (backend.compiler-backend-parameter-origins-begin! state)]
+        (for [word (iterator.range 0 2)]
+          (test.assert-true
+            (match (backend.compiler-backend-group-word-operand-with-backend-state
+              assignments
+              1
+              word
+              10
+              (backend.CompilerBackendGroupWordOrigin.Write (General))
+              state)
+              [(Ok _) true]
+              [_ false])
+            "group parameter materialization"))
+        (backend.compiler-backend-parameter-origins-end! state entry))
+      (test.assert-true
+        (match (backend.compiler-backend-group-word-operand-with-backend-state
+          assignments
+          1
+          0
+          10
+          (backend.CompilerBackendGroupWordOrigin.Read (Mask))
+          state)
+          [(Err _) (!= kind 2)]
+          [(Ok _) (= kind 2)])
+        "a memory group never uses the mask bank")
+      (for [word (iterator.range 0 2)]
+        (let
+          [bank : traffic.CompilerStackTrafficBank
+            (if (= word 0)
+              (General)
+              (Vector))]
+          [read : String
+            (match (backend.compiler-backend-group-word-operand-with-backend-state
+              assignments
+              1
+              word
+              10
+              (backend.CompilerBackendGroupWordOrigin.Read bank)
+              state)
+              [(Ok text) text]
+              [(Err _) (io.panic "group read refused")])]
+          [write : String
+            (match (backend.compiler-backend-group-word-operand-with-backend-state
+              assignments
+              1
+              word
+              10
+              (backend.CompilerBackendGroupWordOrigin.Write bank)
+              state)
+              [(Ok text) text]
+              [(Err _) (io.panic "group write refused")])]
+          [scratch : String
+            (if (= word 0)
+              "%r8"
+              "%xmm2")]
+          [load : String
+            (backend.compiler-backend-emit-group-word-move
+              read
+              scratch
+              (= word 1)
+              state)]
+          [store : String
+            (backend.compiler-backend-emit-group-word-move
+              scratch
+              write
+              (= word 1)
+              state)]
+          [capture : origins.CompilerBackendTextOrigins
+            (backend.compiler-backend-state-stack-text-origins state)]
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          (test.assert-string-eq
+            read
+            write
+            "same physical operand, different logical homes")
+          (test.assert-i64-eq
+            (array-length
+              (origins.compiler-backend-text-origins-find capture (& load)))
+            (if (= kind 2)
+              0
+              1)
+            "read token survives actual word move")
+          (test.assert-i64-eq
+            (array-length
+              (origins.compiler-backend-text-origins-find capture (& store)))
+            (if (= kind 2)
+              0
+              1)
+            "write token survives actual word move")
+          (test.assert-i64-eq
+            facts.len
+            (if (= kind 2)
+              0
+              (+ 2 (* 2 (+ word 1))))
+            "only memory operands produce facts")
+          (unless
+            (= kind 2)
+            (for [rw (iterator.range 0 2)]
+              (let
+                [fact : (& facts origins.CompilerBackendStackAccessOrigin)
+                  (& (array-ref facts.slots (+ 2 (+ (* 2 word) rw))))]
+                (test.assert-i64-eq
+                  fact.home
+                  (+ 24 (+ (* 2 rw) word))
+                  "logical group and word are independent")
+                (test.assert-i64-eq fact.home-bytes 8 "fragment capacity")
+                (test.assert-i64-eq fact.access-bytes 8 "whole word access")
+                (test.assert-true
+                  (match (& fact.bank)
+                    [(General) (= word 0)]
+                    [(Vector) (= word 1)]
+                    [_ false])
+                  "bank comes from consumer")
+                (test.assert-true
+                  (match (& fact.access)
+                    [(Read) (= rw 0)]
+                    [(Write) (= rw 1)]
+                    [_ false])
+                  "explicit read/write intent"))))))
+      (unless
+        (= kind 2)
+        (let
+          [facts : origins.CompilerBackendStackAccessOriginList
+            (backend.compiler-backend-state-stack-access-origins state)]
+          (for [word (iterator.range 0 2)]
+            (test.assert-i64-eq
+              (array-ref facts.slots word).home
+              (+ 24 word)
+              "parameter writes use original incoming group"))))
+      (backend.compiler-backend-state-release-final-arenas! state))))
+
+(test
+  backend-stack-origins-keep-original-group-fragments
+  (backend-stack-origins-group-test))
+
+(define (backend-stack-origins-group-phi-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [index : backend.CompilerBackendProgramIndex
+      (backend.compiler-backend-program-index-build-with-backend-state-and-profile-state
+        state
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty)
+        (profile_state.compiler-profile-state-new))]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state state)]
+    [original : ir.CompilerIrBlockList
+      (ir_text.blocks
+        "entry:
+  jump join
+other:
+  jump join
+join:
+  %7 = phi [%9, entry], [%10, other] : i64
+  %8 = phi [%10, entry], [%9, other] : i64
+  return %7
+")]
+    [map : (__tl_dyn-array i64) (__tl_make-array i64 12)]
+    [a : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 1 (Spill -64))]
+    [b : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 2 (Spill -80))]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignments-prepend
+        (& a)
+        (regalloc.compiler-reg-assignments-prepend
+          (& b)
+          (regalloc.compiler-reg-assignment-table-empty)))]
+    [groups : live.CompilerLiveI64Set (live.compiler-live-set-empty)]
+    (for [var (iterator.range 0 12)]
+      (set! (array-ref map var) var))
+    (for [var (iterator.range 7 11)]
+      (set! groups (live.compiler-live-set-insert groups var)))
+    (set! (array-ref map 7) 1)
+    (set! (array-ref map 8) 2)
+    (set! (array-ref map 9) 2)
+    (set! (array-ref map 10) 1)
+    (backend.compiler-backend-function-scratch-set-i64!
+      function-state
+      backend.compiler-backend-scratch-i64-current-source-function
+      44)
+    (backend.compiler-backend-group-vars-enable!
+      state
+      (live.compiler-live-set-insert (live.compiler-live-set1 1) 2)
+      (live.compiler-live-set-empty))
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (let
+      [input : home_origins.CompilerBackendHomePlanInput
+        (home_origins.CompilerBackendHomePlanInput
+          44
+          12
+          12
+          (ir.compiler-ir-param-seq-empty)
+          (owned_view.compiler-owned-shared-view original)
+          (regalloc.compiler-reg-remap-blocks (& map) (& original))
+          (Remap map 12)
+          groups)]
+      [plan : home_origins.CompilerBackendHomePlan
+        (match (home_origins.compiler-backend-home-plan-build (& input))
+          [(Ok result) result]
+          [(Err message) (io.panic message)])]
+      (backend.compiler-backend-function-state-set-i64!
+        function-state
+        backend.compiler-backend-function-i64-current-block-label
+        (array-ref plan.sites 0).block)
+      (backend.compiler-backend-stack-home-plan-install! function-state plan))
+    (backend.compiler-backend-function-state-set-current-phi-target-point!
+      state
+      4)
+    (backend.compiler-backend-function-state-set-emit-current-site!
+      function-state
+      0)
+    (let
+      [text : String
+        (match (backend.compiler-backend-emit-phi-cycle-prefix
+          (ast.ast-node-pool-reader-type-segment-bases)
+          assignments
+          1
+          (Value (Var 2))
+          (I64)
+          ""
+          index
+          12
+          state)
+          [(Ok text) text]
+          [(Err _) (io.panic "group phi cycle refused")])]
+      [facts : origins.CompilerBackendStackAccessOriginList
+        (backend.compiler-backend-state-stack-access-origins state)]
+      [capture : origins.CompilerBackendTextOrigins
+        (backend.compiler-backend-state-stack-text-origins state)]
+      (test.assert-i64-eq
+        facts.len
+        6
+        "two old-destination saves plus four copy operands")
+      (test.assert-i64-eq
+        (array-length
+          (origins.compiler-backend-text-origins-find capture (& text)))
+        6
+        "cycle prefix transports all original fragment tokens")
+      (for [event (iterator.range 0 6)]
+        (test.assert-i64-eq
+          (array-ref facts.slots event).home
+          (+
+            (if (or (= event 2) (= event 3))
+              30
+              26)
+            (% event 2))
+          "save uses Phi definition, copy read uses exact incoming operand")))
+    (test.assert-true
+      (not
+        (backend.compiler-backend-function-scratch-bool?
+          function-state
+          backend.compiler-backend-scratch-bool-phi-origins))
+      "successful cycle restores caller Phi context")
+    (test.assert-true
+      (match (backend.compiler-backend-emit-phi-cycle-prefix
+        (ast.ast-node-pool-reader-type-segment-bases)
+        assignments
+        1
+        (Value (Bool true))
+        (I64)
+        ""
+        index
+        12
+        state)
+        [(Err _) true]
+        [_ false])
+      "controlled cycle error is retained")
+    (test.assert-true
+      (not
+        (backend.compiler-backend-function-scratch-bool?
+          function-state
+          backend.compiler-backend-scratch-bool-phi-origins))
+      "failed cycle restores caller Phi context")
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-keep-group-phi-authorities
+  (backend-stack-origins-group-phi-test))

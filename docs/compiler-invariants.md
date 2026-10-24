@@ -696,6 +696,16 @@ a foreign, untracked or finalized buffer cannot accept a captured operand.
 Single and paired GEP/load factories supply each consumed Load's destination
 site separately from address formation. A scalar read of a larger aggregate
 requires an explicit logical fragment; its capacity cannot stand in for one.
+The original allocator group set is retained separately from home capacity.
+Each two-word group fragment has a distinct identity outside the whole-home
+namespace and exactly eight bytes of capacity. Neither a sibling word nor a
+scalar home can establish its recurrence. Whole-home accesses to a group reject;
+the group-word factory supplies explicit read/write intent, word index and the
+actual general or scalar-vector access bank. Register-only group operands
+publish no home access. Phi cycle saves read the old destination's definition;
+the first copy reads its selected incoming operand, and both success and error
+restore the caller's edge context before recursive draining. Immediate stores,
+word moves and Phi temporary parents preserve the operand tokens they consume.
 Inactive emission
 allocates no instruction-home plan and does not change coloring or placement.
 An RMW fold retains separate ordered read and write tokens at the same emitted

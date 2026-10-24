@@ -1626,18 +1626,36 @@
             origin-previous)
           origin-result)))))
 
+(defenum CompilerBackendStackOperandPart
+  (Whole)
+  (GroupWord i64))
+
+(defenum CompilerBackendStackOperandAuthority
+  (Value)
+  ;; A parallel Phi cycle saves the old destination before overwriting it.
+  (PhiDestination))
+
+(defstruct CompilerBackendStackOperandRequest
+  (var i64)
+  (bytes i64)
+  (bank stack_traffic.CompilerStackTrafficBank)
+  (access stack_traffic.CompilerStackTrafficAccess)
+  (part CompilerBackendStackOperandPart)
+  (authority CompilerBackendStackOperandAuthority))
+
 (define (compiler-backend-stack-operand-origin
   [state : CompilerBackendState]
-  [var : i64]
   [text : String]
-  [bytes : i64]
-  [bank : stack_traffic.CompilerStackTrafficBank]
-  [access : stack_traffic.CompilerStackTrafficAccess]) : String
+  [request : CompilerBackendStackOperandRequest]) : String
   (let
     [capture : text_origins.CompilerBackendTextOrigins
       (compiler-backend-state-stack-text-origins state)]
     (when (= capture.storage 0) (return text))
     (let
+      [var : i64 request.var]
+      [bytes : i64 request.bytes]
+      [bank : stack_traffic.CompilerStackTrafficBank request.bank]
+      [access : stack_traffic.CompilerStackTrafficAccess request.access]
       [function-state : CompilerBackendFunctionState
         (compiler-backend-state-function-state state)]
       [function : i64
@@ -1674,7 +1692,7 @@
                 (compiler-backend-function-state-i64
                   function-state
                   compiler-backend-function-i64-emit-current-site))))]
-        [home : home_origins.CompilerBackendLogicalHome
+        [whole : home_origins.CompilerBackendLogicalHome
           (match (home_origins.compiler-backend-home-plan-resolve
             (& plan)
             function
@@ -1689,13 +1707,26 @@
                   entry?
                   (io.panic
                     "stack traffic: parameter initialization cannot authorize a home read"))
-                (if phi?
-                  (home_origins.CompilerBackendHomeQuery.Use
-                    (compiler-backend-function-scratch-i64
-                      function-state
-                      compiler-backend-scratch-i64-phi-origin-use))
-                  (home_origins.CompilerBackendHomeQuery.AnyUse))]
+                (match (& request.authority)
+                  [(Value)
+                    (if phi?
+                      (home_origins.CompilerBackendHomeQuery.Use
+                        (compiler-backend-function-scratch-i64
+                          function-state
+                          compiler-backend-scratch-i64-phi-origin-use))
+                      (home_origins.CompilerBackendHomeQuery.AnyUse))]
+                  [(PhiDestination)
+                    (unless
+                      phi?
+                      (io.panic
+                        "stack traffic: saved phi home has no edge context"))
+                    (home_origins.CompilerBackendHomeQuery.Definition)])]
               [(Write)
+                (match (& request.authority)
+                  [(PhiDestination)
+                    (io.panic
+                      "stack traffic: saved phi authority only authorizes a read")]
+                  [(Value) unit])
                 (if entry?
                   (home_origins.CompilerBackendHomeQuery.Parameter)
                   (home_origins.CompilerBackendHomeQuery.Definition))]
@@ -1732,6 +1763,25 @@
                     [(Read) "read"]
                     [(Write) "write"]
                     [(ReadWrite) "read-write"])))])]
+        [home : home_origins.CompilerBackendLogicalHome
+          (match (& request.part)
+            [(Whole)
+              (when
+                (array-ref plan.groups whole.id)
+                (io.panic
+                  "stack traffic: group access requires an explicit logical fragment"))
+              whole]
+            [(GroupWord word)
+              (unless
+                (= bytes 8)
+                (io.panic
+                  "stack traffic: group fragment access must be one full word"))
+              (match (home_origins.compiler-backend-home-group-fragment
+                (& plan)
+                whole
+                word)
+                [(Ok result) result]
+                [(Err message) (io.panic message)])])]
         (when
           (and
             (> home.bytes 8)
@@ -5622,11 +5672,14 @@
     [text : String
       (compiler-backend-stack-operand-origin
         backend-state
-        operand.var
         operand.text
-        (compiler-backend-mask-access-bytes lanes)
-        (Mask)
-        (Read))]
+        (CompilerBackendStackOperandRequest
+          operand.var
+          (compiler-backend-mask-access-bytes lanes)
+          (Mask)
+          (Read)
+          (Whole)
+          (Value)))]
     (text_origins.compiler-backend-text-origins-cat
       (compiler-backend-state-stack-text-origins backend-state)
       "    "
@@ -5646,11 +5699,14 @@
     [text : String
       (compiler-backend-stack-operand-origin
         backend-state
-        operand.var
         operand.text
-        (compiler-backend-mask-access-bytes lanes)
-        (Mask)
-        (Write))]
+        (CompilerBackendStackOperandRequest
+          operand.var
+          (compiler-backend-mask-access-bytes lanes)
+          (Mask)
+          (Write)
+          (Whole)
+          (Value)))]
     (text_origins.compiler-backend-text-origins-cat
       (compiler-backend-state-stack-text-origins backend-state)
       "    "
@@ -6890,11 +6946,14 @@
         [text : String
           (compiler-backend-stack-operand-origin
             backend-state
-            operand.var
             operand.text
-            op.bytes
-            op.bank
-            (Read))]
+            (CompilerBackendStackOperandRequest
+              operand.var
+              op.bytes
+              op.bank
+              (Read)
+              (Whole)
+              (Value)))]
         (Some
           (text_origins.compiler-backend-text-origins-cat
             (compiler-backend-state-stack-text-origins backend-state)
@@ -7752,11 +7811,14 @@
     [text : String
       (compiler-backend-stack-operand-origin
         backend-state
-        operand.var
         operand.text
-        bytes
-        (Vector)
-        (Read))]
+        (CompilerBackendStackOperandRequest
+          operand.var
+          bytes
+          (Vector)
+          (Read)
+          (Whole)
+          (Value)))]
     (text_origins.compiler-backend-text-origins-cat
       (compiler-backend-state-stack-text-origins backend-state)
       "    "
@@ -7777,11 +7839,14 @@
     [text : String
       (compiler-backend-stack-operand-origin
         backend-state
-        operand.var
         operand.text
-        bytes
-        (Vector)
-        (Write))]
+        (CompilerBackendStackOperandRequest
+          operand.var
+          bytes
+          (Vector)
+          (Write)
+          (Whole)
+          (Value)))]
     (text_origins.compiler-backend-text-origins-cat
       (compiler-backend-state-stack-text-origins backend-state)
       "    "
@@ -7842,11 +7907,14 @@
               ""
               (compiler-backend-stack-operand-origin
                 backend-state
-                operand.var
                 operand.text
-                (compiler-backend-vector-access-bytes width)
-                (Vector)
-                (Read))))]
+                (CompilerBackendStackOperandRequest
+                  operand.var
+                  (compiler-backend-vector-access-bytes width)
+                  (Vector)
+                  (Read)
+                  (Whole)
+                  (Value)))))]
         [(No)
           (let
             [reg
@@ -16326,13 +16394,16 @@
                     backend-state)
                   (compiler-backend-stack-operand-origin
                     backend-state
-                    var-id
                     (compiler-backend-frame-offset-with-backend-state
                       backend-state
                       offset)
-                    8
-                    (General)
-                    (Read)))
+                    (CompilerBackendStackOperandRequest
+                      var-id
+                      8
+                      (General)
+                      (Read)
+                      (Whole)
+                      (Value))))
                 ", "
                 reg
                 "\n")]
@@ -16354,11 +16425,14 @@
               (compiler-backend-asm-require-origin-capture! out backend-state)
               (compiler-backend-stack-operand-origin
                 backend-state
-                var-id
                 (compiler-backend-slot-with-backend-state backend-state var-id)
-                8
-                (General)
-                (Read)))
+                (CompilerBackendStackOperandRequest
+                  var-id
+                  8
+                  (General)
+                  (Read)
+                  (Whole)
+                  (Value))))
             ", "
             reg
             "\n")]))))
@@ -16398,13 +16472,16 @@
               (compiler-backend-asm-require-origin-capture! out backend-state)
               (compiler-backend-stack-operand-origin
                 backend-state
-                var-id
                 (compiler-backend-frame-offset-with-backend-state
                   backend-state
                   offset)
-                8
-                (General)
-                (Write)))
+                (CompilerBackendStackOperandRequest
+                  var-id
+                  8
+                  (General)
+                  (Write)
+                  (Whole)
+                  (Value))))
             "\n")]
         ;; Rematerialised value: its single def store is dead (every use
         ;; recomputes), so emit nothing.
@@ -16419,11 +16496,14 @@
           (compiler-backend-asm-require-origin-capture! out backend-state)
           (compiler-backend-stack-operand-origin
             backend-state
-            var-id
             (compiler-backend-slot-with-backend-state backend-state var-id)
-            8
-            (General)
-            (Write)))
+            (CompilerBackendStackOperandRequest
+              var-id
+              8
+              (General)
+              (Write)
+              (Whole)
+              (Value))))
         "\n")]))
 
 (define (compiler-backend-emit-store-var
@@ -16484,13 +16564,16 @@
               " "
               (compiler-backend-stack-operand-origin
                 backend-state
-                var-id
                 (compiler-backend-frame-offset-with-backend-state
                   backend-state
                   offset)
-                (compiler-backend-float-access-bytes ty)
-                (Vector)
-                (Read))
+                (CompilerBackendStackOperandRequest
+                  var-id
+                  (compiler-backend-float-access-bytes ty)
+                  (Vector)
+                  (Read)
+                  (Whole)
+                  (Value)))
               ", "
               reg
               "\n")]
@@ -16506,11 +16589,14 @@
           " "
           (compiler-backend-stack-operand-origin
             backend-state
-            var-id
             (compiler-backend-slot-with-backend-state backend-state var-id)
-            (compiler-backend-float-access-bytes ty)
-            (Vector)
-            (Read))
+            (CompilerBackendStackOperandRequest
+              var-id
+              (compiler-backend-float-access-bytes ty)
+              (Vector)
+              (Read)
+              (Whole)
+              (Value)))
           ", "
           reg
           "\n")])))
@@ -16554,13 +16640,16 @@
               ", "
               (compiler-backend-stack-operand-origin
                 backend-state
-                var-id
                 (compiler-backend-frame-offset-with-backend-state
                   backend-state
                   offset)
-                (compiler-backend-float-access-bytes ty)
-                (Vector)
-                (Write))
+                (CompilerBackendStackOperandRequest
+                  var-id
+                  (compiler-backend-float-access-bytes ty)
+                  (Vector)
+                  (Write)
+                  (Whole)
+                  (Value)))
               "\n")]
           ;; A register-group var is never float-class; unreachable.
           ;; A rematerialised value is never float-class; unreachable.
@@ -16575,11 +16664,14 @@
           ", "
           (compiler-backend-stack-operand-origin
             backend-state
-            var-id
             (compiler-backend-slot-with-backend-state backend-state var-id)
-            (compiler-backend-float-access-bytes ty)
-            (Vector)
-            (Write))
+            (CompilerBackendStackOperandRequest
+              var-id
+              (compiler-backend-float-access-bytes ty)
+              (Vector)
+              (Write)
+              (Whole)
+              (Value)))
           "\n")])))
 
 ;; On-demand callee-save: the scavenge may use a FREE callee-saved register even
@@ -19852,11 +19944,14 @@
         [(Some operand)
           (compiler-backend-stack-operand-origin
             backend-state
-            operand.var
             operand.text
-            (compiler-backend-float-access-bytes ty)
-            (Vector)
-            (Read))])]
+            (CompilerBackendStackOperandRequest
+              operand.var
+              (compiler-backend-float-access-bytes ty)
+              (Vector)
+              (Read)
+              (Whole)
+              (Value)))])]
     [(Global name)
       (text_origins.compiler-backend-text-origins-cat
         (compiler-backend-state-stack-text-origins backend-state)
@@ -20569,7 +20664,16 @@
             (compiler-backend-store-immediate-mnemonic type-segment-bases ty)]
           (if (string.eq mnemonic "")
             (No)
-            (Some (str_cat.str-cat "    " mnemonic " " imm ", " addr "\n"))))]
+            (Some
+              (text_origins.compiler-backend-text-origins-cat
+                (compiler-backend-state-stack-text-origins backend-state)
+                "    "
+                mnemonic
+                " "
+                imm
+                ", "
+                addr
+                "\n"))))]
       [(No) (No)])))
 
 (define (compiler-backend-emit-load-immediate-to-reg
@@ -21503,10 +21607,12 @@
 (define (compiler-backend-emit-group-word-move
   [src : (& src str)]
   [dst : (& dst str)]
-  [sse? : bool]) : String
+  [sse? : bool]
+  [backend-state : CompilerBackendState]) : String
   (if (string.eq src dst)
     ""
-    (str_cat.str-cat
+    (text_origins.compiler-backend-text-origins-cat
+      (compiler-backend-state-stack-text-origins backend-state)
       "    "
       (if sse?
         "movsd"
@@ -21527,7 +21633,7 @@
   (if (or
     (compiler-backend-peephole-register-operand? src)
     (compiler-backend-peephole-register-operand? dst))
-    (Ok (compiler-backend-emit-group-word-move src dst sse?))
+    (Ok (compiler-backend-emit-group-word-move src dst sse? backend-state))
     (let
       ;; Incoming parameter materialization runs before the emitted body. The
       ;; body's cursor is nevertheless left at its final instruction by the
@@ -21553,9 +21659,10 @@
             exclude-n
             "%r8"))]
       (Ok
-        (str_cat.str-cat
-          (compiler-backend-emit-group-word-move src scratch sse?)
-          (compiler-backend-emit-group-word-move scratch dst sse?))))))
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          (compiler-backend-emit-group-word-move src scratch sse? backend-state)
+          (compiler-backend-emit-group-word-move scratch dst sse? backend-state))))))
 
 (define (compiler-backend-emit-load-pack-word
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -21615,10 +21722,12 @@
   [scratch : String]
   [dst : String]
   [sse? : bool]
-  [immediate-store : CompilerBackendMaybeAsm]) : String
+  [immediate-store : CompilerBackendMaybeAsm]
+  [backend-state : CompilerBackendState]) : String
   (match immediate-store
     [(Some asm) asm]
-    [(No) (compiler-backend-emit-group-word-move scratch dst sse?)]))
+    [(No)
+      (compiler-backend-emit-group-word-move scratch dst sse? backend-state)]))
 
 (define (compiler-backend-emit-pack-words-direct-registers
   [backend-state : CompilerBackendState]
@@ -21642,9 +21751,10 @@
       (not (string.eq src0 dst1))
       (not (string.eq src1 dst0)))
       (Some
-        (str_cat.str-cat
-          (compiler-backend-emit-group-word-move src0 dst0 sse0?)
-          (compiler-backend-emit-group-word-move src1 dst1 sse1?)))
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          (compiler-backend-emit-group-word-move src0 dst0 sse0? backend-state)
+          (compiler-backend-emit-group-word-move src1 dst1 sse1? backend-state)))
       (No))))
 
 (define (compiler-backend-pack-word-source-home
@@ -21767,11 +21877,22 @@
               store1
               backend-state))]
         (Ok
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             a0
             a1
-            (compiler-backend-emit-pack-word-store scratch0 dst0 sse0? store0)
-            (compiler-backend-emit-pack-word-store scratch1 dst1 sse1? store1))))]))
+            (compiler-backend-emit-pack-word-store
+              scratch0
+              dst0
+              sse0?
+              store0
+              backend-state)
+            (compiler-backend-emit-pack-word-store
+              scratch1
+              dst1
+              sse1?
+              store1
+              backend-state))))]))
 
 ;; An ordinary group keeps word0 in its scalar var slot. Functions without
 ;; address-exposed groups can retain the compact second-word region. Once any
@@ -21893,12 +22014,34 @@
                 assignments
                 w0
                 w1
-                (compiler-backend-frame-offset-with-backend-state
+                (compiler-backend-stack-operand-origin
                   backend-state
-                  offset)
-                (compiler-backend-frame-offset-with-backend-state
+                  (compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    offset)
+                  (CompilerBackendStackOperandRequest
+                    dst
+                    8
+                    (if w0-sse
+                      (Vector)
+                      (General))
+                    (Write)
+                    (GroupWord 0)
+                    (Value)))
+                (compiler-backend-stack-operand-origin
                   backend-state
-                  (- offset 8))
+                  (compiler-backend-frame-offset-with-backend-state
+                    backend-state
+                    (- offset 8))
+                  (CompilerBackendStackOperandRequest
+                    dst
+                    8
+                    (if w1-sse
+                      (Vector)
+                      (General))
+                    (Write)
+                    (GroupWord 1)
+                    (Value)))
                 w0-sse
                 w1-sse
                 instr-diag
@@ -21917,6 +22060,10 @@
                   dst
                   0
                   vars
+                  (CompilerBackendGroupWordOrigin.Write
+                    (if w0-sse
+                      (Vector)
+                      (General)))
                   backend-state))]
             [dst1
               (try
@@ -21925,6 +22072,10 @@
                   dst
                   1
                   vars
+                  (CompilerBackendGroupWordOrigin.Write
+                    (if w1-sse
+                      (Vector)
+                      (General)))
                   backend-state))]
             (compiler-backend-emit-pack-words
               type-segment-bases
@@ -21961,6 +22112,10 @@
           src-var
           index
           vars
+          (CompilerBackendGroupWordOrigin.Read
+            (if is-float
+              (Vector)
+              (General)))
           backend-state)
           [(Ok operand)
             (Ok
@@ -21992,7 +22147,8 @@
                     (compiler-backend-emit-group-word-move
                       operand
                       dst-home
-                      is-float)
+                      is-float
+                      backend-state)
                     (let
                       [no-exclude : (__tl_dyn-array String)
                         (__tl_make-array String 0)]
@@ -22010,11 +22166,14 @@
                             0
                             "%r8"
                             backend-state))]
-                      (str_cat.str-cat
+                      (text_origins.compiler-backend-text-origins-cat
+                        (compiler-backend-state-stack-text-origins
+                          backend-state)
                         (compiler-backend-emit-group-word-move
                           operand
                           scratch
-                          is-float)
+                          is-float
+                          backend-state)
                         (compiler-backend-emit-store-typed-var
                           assignments
                           dst
@@ -22037,90 +22196,138 @@
 ;; The assembly operand (register name or memory slot) holding word `index`
 ;; of a register-group var, regardless of how the allocator homed it. Used by the
 ;; call/return/param ABI to move group words to/from the ABI registers.
+(defenum CompilerBackendGroupWordOrigin
+  (Read stack_traffic.CompilerStackTrafficBank)
+  (Write stack_traffic.CompilerStackTrafficBank)
+  (PhiSave stack_traffic.CompilerStackTrafficBank))
+
 (define (compiler-backend-group-word-operand-with-backend-state
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [var : i64]
   [index : i64]
   [vars : i64]
+  [origin : CompilerBackendGroupWordOrigin]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (not (or (= index 0) (= index 1)))
-    (Err
-      (box
-        (compiler_diagnostic.compiler-diagnostic-at-start
-          ""
-          "backend: register-group word index must be 0 or 1")))
-    (match (compiler-backend-emit-assignment-lookup
-      backend-state
-      assignments
-      var)
-      [(Some location)
-        (match location
-          [(RegisterPair reg-a reg-b)
+  (let
+    [emitted : ResultCompilerBackend
+      (if (not (or (= index 0) (= index 1)))
+        (Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
+              ""
+              "backend: register-group word index must be 0 or 1")))
+        (match (compiler-backend-emit-assignment-lookup
+          backend-state
+          assignments
+          var)
+          [(Some location)
+            (match location
+              [(RegisterPair reg-a reg-b)
+                (Ok
+                  (compiler_abi.compiler-abi-register-spelling
+                    (if (= index 0)
+                      reg-a
+                      reg-b)))]
+              [(Spill offset)
+                (if (compiler-backend-group-var? backend-state var)
+                  (Ok
+                    (compiler-backend-frame-offset-with-backend-state
+                      backend-state
+                      (if (= index 0)
+                        offset
+                        (- offset 8))))
+                  (Err
+                    (box
+                      (compiler_diagnostic.compiler-diagnostic-at-start
+                        ""
+                        "backend: register-group var assigned spill slot"))))]
+              [(Register _)
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      "backend: register-group var assigned scalar register home")))]
+              [(Remat _)
+                (Err
+                  (box
+                    (compiler_diagnostic.compiler-diagnostic-at-start
+                      ""
+                      "backend: register-group var rematerialised")))])]
+          [(No)
             (Ok
-              (compiler_abi.compiler-abi-register-spelling
-                (if (= index 0)
-                  reg-a
-                  reg-b)))]
-          [(Spill offset)
-            (if (compiler-backend-group-var? backend-state var)
-              (Ok
+              (if (compiler-backend-group-var? backend-state var)
                 (compiler-backend-frame-offset-with-backend-state
                   backend-state
                   (if (= index 0)
-                    offset
-                    (- offset 8))))
-              (Err
-                (box
-                  (compiler_diagnostic.compiler-diagnostic-at-start
-                    ""
-                    "backend: register-group var assigned spill slot"))))]
-          [(Register _)
-            (Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-at-start
-                  ""
-                  "backend: register-group var assigned scalar register home")))]
-          [(Remat _)
-            (Err
-              (box
-                (compiler_diagnostic.compiler-diagnostic-at-start
-                  ""
-                  "backend: register-group var rematerialised")))])]
-      [(No)
-        (Ok
-          (if (compiler-backend-group-var? backend-state var)
-            (compiler-backend-frame-offset-with-backend-state
-              backend-state
-              (if (= index 0)
-                (if (compiler-backend-addressable-group-var? backend-state var)
-                  (compiler-backend-group-word0-slot
-                    var
-                    vars
-                    assignments
-                    backend-state)
-                  (compiler-backend-group-legacy-word0-slot var))
-                (if (=
-                  (let
-                    [function-state-live-set
-                      (compiler-backend-function-state-live-set
-                        (compiler-backend-state-function-state backend-state)
-                        compiler-backend-function-live-set-addressable-group-vars)]
-                    (compiler_liveness.compiler-live-set-word-count
-                      function-state-live-set))
-                  0)
-                  (compiler-backend-group-legacy-word1-slot
-                    var
-                    vars
-                    assignments
-                    backend-state)
-                  (compiler-backend-group-word1-slot
-                    var
-                    vars
-                    assignments
-                    backend-state))))
-            (compiler-backend-slot-with-backend-state
-              backend-state
-              (+ var index))))])))
+                    (if (compiler-backend-addressable-group-var?
+                      backend-state
+                      var)
+                      (compiler-backend-group-word0-slot
+                        var
+                        vars
+                        assignments
+                        backend-state)
+                      (compiler-backend-group-legacy-word0-slot var))
+                    (if (=
+                      (let
+                        [function-state-live-set
+                          (compiler-backend-function-state-live-set
+                            (compiler-backend-state-function-state
+                              backend-state)
+                            compiler-backend-function-live-set-addressable-group-vars)]
+                        (compiler_liveness.compiler-live-set-word-count
+                          function-state-live-set))
+                      0)
+                      (compiler-backend-group-legacy-word1-slot
+                        var
+                        vars
+                        assignments
+                        backend-state)
+                      (compiler-backend-group-word1-slot
+                        var
+                        vars
+                        assignments
+                        backend-state))))
+                (compiler-backend-slot-with-backend-state
+                  backend-state
+                  (+ var index))))]))]
+    [operand : String (try emitted)]
+    (when
+      (or
+        (= (compiler-backend-state-stack-text-origins backend-state).storage 0)
+        (compiler-backend-peephole-register-operand? operand))
+      (return (Ok operand)))
+    (let
+      [bank : stack_traffic.CompilerStackTrafficBank
+        (match (& origin)
+          [(Read bank) bank]
+          [(Write bank) bank]
+          [(PhiSave bank) bank])]
+      (when
+        (match (& bank)
+          [(Mask) true]
+          [_ false])
+        (return
+          (Err
+            (box
+              (compiler_diagnostic.compiler-diagnostic-at-start
+                ""
+                "stack traffic: group words require a general or scalar-vector bank")))))
+      (Ok
+        (compiler-backend-stack-operand-origin
+          backend-state
+          operand
+          (CompilerBackendStackOperandRequest
+            var
+            8
+            bank
+            (match (& origin)
+              [(Write _) (Write)]
+              [_ (Read)])
+            (GroupWord index)
+            (match (& origin)
+              [(PhiSave _) (PhiDestination)]
+              [_ (Value)])))))))
 
 ;; Load a group value's two words into `reg0`/`reg1` (for return -> rax:rdx
 ;; or an argument register pair). The value must be a group var.
@@ -22144,6 +22351,14 @@
               v
               0
               vars
+              (CompilerBackendGroupWordOrigin.Read
+                (if (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  0)
+                  (Vector)
+                  (General)))
               backend-state))]
         [word1
           (try
@@ -22152,9 +22367,18 @@
               v
               1
               vars
+              (CompilerBackendGroupWordOrigin.Read
+                (if (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  1)
+                  (Vector)
+                  (General)))
               backend-state))]
         (Ok
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             (compiler-backend-emit-group-word-move
               word0
               reg0
@@ -22162,7 +22386,8 @@
                 type-segment-bases
                 program-index
                 ty
-                0))
+                0)
+              backend-state)
             (compiler-backend-emit-group-word-move
               word1
               reg1
@@ -22170,7 +22395,8 @@
                 type-segment-bases
                 program-index
                 ty
-                1)))))]
+                1)
+              backend-state))))]
     [_
       (Err
         (box
@@ -22198,6 +22424,14 @@
           var
           0
           vars
+          (CompilerBackendGroupWordOrigin.Write
+            (if (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              0)
+              (Vector)
+              (General)))
           backend-state))]
     [word1
       (try
@@ -22206,9 +22440,18 @@
           var
           1
           vars
+          (CompilerBackendGroupWordOrigin.Write
+            (if (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              1)
+              (Vector)
+              (General)))
           backend-state))]
     (Ok
-      (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        (compiler-backend-state-stack-text-origins backend-state)
         (compiler-backend-emit-group-word-move
           reg0
           word0
@@ -22216,7 +22459,8 @@
             type-segment-bases
             program-index
             ty
-            0))
+            0)
+          backend-state)
         (compiler-backend-emit-group-word-move
           reg1
           word1
@@ -22224,7 +22468,8 @@
             type-segment-bases
             program-index
             ty
-            1))))))
+            1)
+          backend-state)))))
 
 (define (compiler-backend-group-return-reg
   [type-segment-bases : i64]
@@ -22304,6 +22549,14 @@
               src-var
               0
               vars
+              (CompilerBackendGroupWordOrigin.Read
+                (if (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  0)
+                  (Vector)
+                  (General)))
               backend-state))]
         [src1
           (try
@@ -22312,6 +22565,14 @@
               src-var
               1
               vars
+              (CompilerBackendGroupWordOrigin.Read
+                (if (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  1)
+                  (Vector)
+                  (General)))
               backend-state))]
         [dst0
           (try
@@ -22320,6 +22581,14 @@
               dst
               0
               vars
+              (CompilerBackendGroupWordOrigin.Write
+                (if (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  0)
+                  (Vector)
+                  (General)))
               backend-state))]
         [dst1
           (try
@@ -22328,6 +22597,14 @@
               dst
               1
               vars
+              (CompilerBackendGroupWordOrigin.Write
+                (if (compiler-backend-group-word-sse?
+                  type-segment-bases
+                  program-index
+                  ty
+                  1)
+                  (Vector)
+                  (General)))
               backend-state))]
         [sse0? : bool
           (compiler-backend-group-word-sse?
@@ -22387,16 +22664,50 @@
               backend-state))]
         (Ok
           (if (string.eq dst0 src1)
-            (str_cat.str-cat
-              (compiler-backend-emit-group-word-move src0 reg0 sse0?)
-              (compiler-backend-emit-group-word-move src1 reg1 sse1?)
-              (compiler-backend-emit-group-word-move reg0 dst0 sse0?)
-              (compiler-backend-emit-group-word-move reg1 dst1 sse1?))
-            (str_cat.str-cat
-              (compiler-backend-emit-group-word-move src0 reg0 sse0?)
-              (compiler-backend-emit-group-word-move reg0 dst0 sse0?)
-              (compiler-backend-emit-group-word-move src1 reg1 sse1?)
-              (compiler-backend-emit-group-word-move reg1 dst1 sse1?)))))]
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              (compiler-backend-emit-group-word-move
+                src0
+                reg0
+                sse0?
+                backend-state)
+              (compiler-backend-emit-group-word-move
+                src1
+                reg1
+                sse1?
+                backend-state)
+              (compiler-backend-emit-group-word-move
+                reg0
+                dst0
+                sse0?
+                backend-state)
+              (compiler-backend-emit-group-word-move
+                reg1
+                dst1
+                sse1?
+                backend-state))
+            (text_origins.compiler-backend-text-origins-cat
+              (compiler-backend-state-stack-text-origins backend-state)
+              (compiler-backend-emit-group-word-move
+                src0
+                reg0
+                sse0?
+                backend-state)
+              (compiler-backend-emit-group-word-move
+                reg0
+                dst0
+                sse0?
+                backend-state)
+              (compiler-backend-emit-group-word-move
+                src1
+                reg1
+                sse1?
+                backend-state)
+              (compiler-backend-emit-group-word-move
+                reg1
+                dst1
+                sse1?
+                backend-state)))))]
     [_
       (Err
         (box
@@ -22434,10 +22745,12 @@
 (define (compiler-backend-emit-group-stack-word-copy
   [operand : String]
   [scratch : (& scratch str)]
-  [slot : String]) : String
-  (str_cat.str-cat
-    (compiler-backend-emit-group-word-move operand scratch false)
-    (compiler-backend-emit-group-word-move scratch slot false)))
+  [slot : String]
+  [backend-state : CompilerBackendState]) : String
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins backend-state)
+    (compiler-backend-emit-group-word-move operand scratch false backend-state)
+    (compiler-backend-emit-group-word-move scratch slot false backend-state)))
 
 ;; Push a group call-arg's two words to the outgoing stack frame at
 ;; consecutive slots (word0 -> stack-idx, word1 -> stack-idx+1), bit-copying
@@ -22462,6 +22775,7 @@
               v
               0
               vars
+              (CompilerBackendGroupWordOrigin.Read (General))
               backend-state))]
         [word1
           (try
@@ -22470,6 +22784,7 @@
               v
               1
               vars
+              (CompilerBackendGroupWordOrigin.Read (General))
               backend-state))]
         [scratch : String
           (compiler-backend-scavenge-reg-here
@@ -22479,21 +22794,24 @@
             "%r10"
             backend-state)]
         (Ok
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            (compiler-backend-state-stack-text-origins backend-state)
             (compiler-backend-emit-group-stack-word-copy
               word0
               scratch
               (compiler-backend-outgoing-stack-arg-slot
                 target
                 convention
-                stack-idx))
+                stack-idx)
+              backend-state)
             (compiler-backend-emit-group-stack-word-copy
               word1
               scratch
               (compiler-backend-outgoing-stack-arg-slot
                 target
                 convention
-                (+ stack-idx 1))))))]
+                (+ stack-idx 1))
+              backend-state))))]
     [_
       (Err
         (box
@@ -22555,6 +22873,7 @@
               v
               word-index
               vars
+              (CompilerBackendGroupWordOrigin.Read (General))
               backend-state))]
         (Ok
           (compiler-backend-emit-group-stack-word-copy
@@ -22563,7 +22882,8 @@
             (compiler-backend-outgoing-stack-arg-slot
               target
               convention
-              stack-idx))))]
+              stack-idx)
+            backend-state)))]
     [_
       (Err
         (box
@@ -22630,8 +22950,17 @@
                       v
                       word-index
                       vars
+                      (CompilerBackendGroupWordOrigin.Read
+                        (if sse?
+                          (Vector)
+                          (General)))
                       backend-state))]
-                (Ok (compiler-backend-emit-group-word-move operand reg sse?)))]
+                (Ok
+                  (compiler-backend-emit-group-word-move
+                    operand
+                    reg
+                    sse?
+                    backend-state)))]
             [_
               (compiler-backend-instr-error
                 func-diag
@@ -22656,6 +22985,14 @@
           var
           word-index
           vars
+          (CompilerBackendGroupWordOrigin.Write
+            (if (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              word-index)
+              (Vector)
+              (General)))
           backend-state))]
     (Ok
       (compiler-backend-emit-group-word-move
@@ -22665,7 +23002,8 @@
           type-segment-bases
           program-index
           ty
-          word-index)))))
+          word-index)
+        backend-state))))
 
 (define (compiler-backend-emit-group-word-stack-param
   [type-segment-bases : i64]
@@ -22688,6 +23026,14 @@
           var
           word-index
           vars
+          (CompilerBackendGroupWordOrigin.Write
+            (if (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              word-index)
+              (Vector)
+              (General)))
           backend-state))]
     (compiler-backend-emit-group-word-copy
       (compiler-backend-frame-offset-with-backend-state
@@ -43426,7 +43772,8 @@
   [mnemonic : String]
   [slot-index : i64]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins backend-state)
     "    "
     mnemonic
     " "
@@ -43442,7 +43789,8 @@
   [mnemonic : String]
   [slot-index : i64]
   [backend-state : CompilerBackendState]) : String
-  (str_cat.str-cat
+  (text_origins.compiler-backend-text-origins-cat
+    (compiler-backend-state-stack-text-origins backend-state)
     "    "
     mnemonic
     " "
@@ -43474,7 +43822,8 @@
     (let
       [scratch : String (compiler-backend-phi-temp-gp-scratch backend-state)]
       (compiler-backend-emergency-wrap
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
           "    movq "
           operand
           ", "
@@ -43501,7 +43850,8 @@
     (let
       [scratch : String (compiler-backend-phi-temp-gp-scratch backend-state)]
       (compiler-backend-emergency-wrap
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
           "    movq "
           (compiler-backend-cycle-temp-slot-with-backend-state
             backend-state
@@ -43598,6 +43948,14 @@
           var
           index
           vars
+          (CompilerBackendGroupWordOrigin.PhiSave
+            (if (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              index)
+              (Vector)
+              (General)))
           backend-state))]
     (Ok
       (if (compiler-backend-group-word-sse?
@@ -43637,6 +43995,14 @@
           var
           index
           vars
+          (CompilerBackendGroupWordOrigin.Write
+            (if (compiler-backend-group-word-sse?
+              type-segment-bases
+              program-index
+              ty
+              index)
+              (Vector)
+              (General)))
           backend-state))]
     (Ok
       (if (compiler-backend-group-word-sse?
@@ -43693,7 +44059,11 @@
             ty
             program-index
             backend-state))]
-      (Ok (str_cat.str-cat w0 w1)))
+      (Ok
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          w0
+          w1)))
     (let
       [operand
         (try
@@ -43739,7 +44109,11 @@
             ty
             program-index
             backend-state))]
-      (Ok (str_cat.str-cat w1 w0)))
+      (Ok
+        (text_origins.compiler-backend-text-origins-cat
+          (compiler-backend-state-stack-text-origins backend-state)
+          w1
+          w0)))
     (let
       [operand
         (try
@@ -44506,6 +44880,60 @@
 ;; recursion so the cycle-break Temp pick can exclude every dst register of the
 ;; whole marshalling -- including those of already-emitted (drained) copies, which
 ;; still hold placed phi values that must survive to the merge block entry.
+;; A cycle's save reads the old Phi destination, not the incoming operand.
+;; Keep that authority only across the save and first copy; recursive draining
+;; installs its own context. Both controlled failures restore the outer state.
+(define (compiler-backend-emit-phi-cycle-prefix
+  [type-segment-bases : i64]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [dst : i64]
+  [source : CompilerBackendPhiSource]
+  [ty : compiler_ast_types.AstType]
+  [reg : String]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [saved : CompilerBackendPhiOriginsContext
+      (compiler-backend-phi-origins-begin! backend-state dst)]
+    [save : ResultCompilerBackend
+      (if (string.eq reg "")
+        (compiler-backend-emit-phi-temp-save
+          type-segment-bases
+          assignments
+          dst
+          (compiler-backend-global-shared-view ty)
+          program-index
+          vars
+          backend-state)
+        (compiler-backend-emit-phi-temp-save-reg
+          assignments
+          dst
+          reg
+          backend-state))]
+    [result : ResultCompilerBackend
+      (match save
+        [(Err message) (Err message)]
+        [(Ok prefix)
+          (match (compiler-backend-emit-phi-source-to-var
+            type-segment-bases
+            assignments
+            dst
+            source
+            ty
+            program-index
+            vars
+            backend-state)
+            [(Err message) (Err message)]
+            [(Ok copy)
+              (Ok
+                (text_origins.compiler-backend-text-origins-cat
+                  (compiler-backend-state-stack-text-origins backend-state)
+                  prefix
+                  copy))])])]
+    (compiler-backend-phi-origins-end! backend-state saved)
+    result))
+
 (define (compiler-backend-emit-phi-copy-list-with-all
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -44582,30 +45010,15 @@
                       (compiler-backend-global-shared-view copies)
                       (compiler-backend-global-shared-view all))
                     "")]
-                [save
-                  (try
-                    (if (string.eq reg "")
-                      (compiler-backend-emit-phi-temp-save
-                        type-segment-bases
-                        assignments
-                        dst
-                        (compiler-backend-global-shared-view ty)
-                        program-index
-                        vars
-                        backend-state)
-                      (compiler-backend-emit-phi-temp-save-reg
-                        assignments
-                        dst
-                        reg
-                        backend-state)))]
                 [head
                   (try
-                    (compiler-backend-emit-phi-source-to-var
+                    (compiler-backend-emit-phi-cycle-prefix
                       type-segment-bases
                       assignments
                       dst
                       source
                       ty
+                      (compiler-backend-global-shared-view reg)
                       program-index
                       vars
                       backend-state))]
@@ -44629,7 +45042,6 @@
                 (Ok
                   (text_origins.compiler-backend-text-origins-cat
                     (compiler-backend-state-stack-text-origins backend-state)
-                    save
                     head
                     tail)))])]
         [(No) (compiler-backend-parallel-move-missing "phi" copy-id)])]))
@@ -50997,7 +51409,8 @@
                             ctx.type-segment-bases
                             ctx.program-index
                             ty
-                            0))
+                            0)
+                          ctx.backend-state)
                         (compiler-backend-emit-group-word-move
                           reg1
                           sym1
@@ -51005,7 +51418,8 @@
                             ctx.type-segment-bases
                             ctx.program-index
                             ty
-                            1))))]
+                            1)
+                          ctx.backend-state)))]
                   [(Err message)
                     (compiler-backend-instr-error-from instr-diag message)]))
               (let

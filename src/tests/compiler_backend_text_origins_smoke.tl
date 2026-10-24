@@ -1,0 +1,13 @@
+(import compiler_backend_text_origins_tests as fixtures)
+
+(define (main) : i64
+  (fixtures.text-origin-construction-test)
+  (fixtures.text-origin-scratch-test)
+  (fixtures.text-origin-boundaries-test)
+  (fixtures.text-origin-macro-test)
+  (fixtures.text-origin-record-test)
+  (fixtures.text-origin-buffer-test)
+  (fixtures.text-origin-copy-test)
+  (fixtures.text-origin-replace-test)
+  (fixtures.text-origin-range-buffer-test)
+  42)

@@ -1208,7 +1208,9 @@
   (lookup-parent i64)
   (flushed i64)
   (flushed-frames i64)
-  (frame-base i64))
+  (frame-base i64)
+  (loops ir.CompilerSpmdLoopRegionList)
+  (flushed-loops i64))
 
 (defenum LowerMaybeSpmdSites
   (No)
@@ -1229,7 +1231,44 @@
     -1
     0
     0
-    -1))
+    -1
+    (ir.compiler-spmd-loop-region-list-new)
+    0))
+
+;; Call only with the labels selected by a native loop emitter. In particular,
+;; the tail entry precedes any scalar/predicated tail work, not merely its
+;; backedge. Publication waits for this source site's terminal decision.
+(define (lower-spmd-record-loop!
+  [state : LowerState]
+  [header : i64]
+  [body : i64]
+  [tail : i64]
+  [exit : i64]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (match (lower-box-field-shared-view data spmd-sites)
+      [(No) unit]
+      [(Some sites-box)
+        (let
+          [sites : (&mut sites-box LowerSpmdSites)
+            (&mut (__tl-box-place sites-box))]
+          (when
+            (>= sites.active 0)
+            (let
+              [source : LowerSpmdSite
+                (lower-spmd-site-list-get
+                  (& sites.items)
+                  sites.active
+                  (lower-spmd-site-fallback))]
+              (ir.compiler-spmd-loop-region-list-push
+                (&mut sites.loops)
+                (ir.CompilerSpmdLoopRegion
+                  (ir.compiler-ir-symbol-typed-id (deref data).function)
+                  source.decision.site
+                  header
+                  body
+                  tail
+                  exit)))))])))
 
 (define (lower-state-spmd-sites [state : LowerState]) : (Box LowerSpmdSites)
   (let
@@ -1716,6 +1755,24 @@
                   site.decision)
                 (set! sites.flushed (+ index 1))))
             (set! sites.flushed-frames sites.frames.len)
+            (for [index (iterator.range sites.flushed-loops sites.loops.len)]
+              (let
+                [region : ir.CompilerSpmdLoopRegion
+                  (clone (array-ref sites.loops.slots index))]
+                [source : LowerSpmdSite
+                  (lower-spmd-site-list-get
+                    (& sites.items)
+                    region.site.ordinal
+                    (lower-spmd-site-fallback))]
+                (unless source.finished (break))
+                (when
+                  (match (& source.decision.route)
+                    [(NativeGangs) true]
+                    [_ false])
+                  (ir.compiler-spmd-loop-region-list-push
+                    (&mut facts.loops)
+                    region))
+                (set! sites.flushed-loops (+ index 1))))
             (ir.CompilerSourceSpans.Spans entries instructions count facts))])]
     (__tl-project-set-field
       (__tl-box-place data)
@@ -51660,6 +51717,12 @@
               [(Label next-s label)
                 (set! s next-s)
                 (set! exit-label label)])
+            (lower-spmd-record-loop!
+              s
+              header-label
+              body-label
+              tail-header-label
+              exit-label)
             (match (lower-vector-loop-limit
               s
               (lower-global-shared-view end-value)
@@ -51905,6 +51968,14 @@
               [(Label next-s label)
                 (set! s next-s)
                 (set! exit-label label)])
+            (lower-spmd-record-loop!
+              s
+              header-label
+              body-label
+              (if (lower-spmd-reduce-vector-accumulator? elem-ty)
+                tail-init-label
+                tail-header-label)
+              exit-label)
             (match (lower-vector-loop-limit
               s
               (lower-global-shared-view end-value)
@@ -52143,6 +52214,12 @@
                   [(Label next-s label)
                     (set! s next-s)
                     (set! exit-label label)])
+                (lower-spmd-record-loop!
+                  s
+                  header-label
+                  body-label
+                  tail-init-label
+                  exit-label)
                 (match (lower-vector-loop-limit
                   s
                   (lower-global-shared-view end-value)
@@ -60470,6 +60547,12 @@
               [(Label next-s label)
                 (set! s next-s)
                 (set! preheader-label label)])
+            (lower-spmd-record-loop!
+              s
+              header-label
+              body-label
+              tail-header-label
+              exit-label)
             (match (lower-vector-loop-limit
               s
               (lower-global-shared-view end-value)
@@ -60851,6 +60934,12 @@
               [(Label next-s label)
                 (set! s next-s)
                 (set! exit-label label)])
+            (lower-spmd-record-loop!
+              s
+              header-label
+              body-label
+              tail-header-label
+              exit-label)
             (match (lower-vector-loop-limit
               s
               (lower-global-shared-view end-value)

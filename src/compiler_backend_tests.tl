@@ -12,6 +12,7 @@
 (import compiler_backend_object_target_linux as object_linux)
 (import compiler_backend_object_target_windows as object_windows)
 (import compiler_backend as backend)
+(import compiler_backend_text_origins as text_origins)
 (import compiler_lower as lower)
 (import compiler_abi as cabi)
 (import compiler_regalloc as regalloc)
@@ -17392,13 +17393,15 @@ f:
         (compiler-backend-stack-splat-dst-only-assignments)
         (Var 1)
         backend-state)
-        [(Some operand) (string.eq operand "-16(%rbp)")]
+        [(Some operand)
+          (and (= operand.var 1) (string.eq operand.text "-16(%rbp)"))]
         [(No) false])
       (match (backend.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-spill-assignments -40)
         (Var 1)
         backend-state)
-        [(Some operand) (string.eq operand "-40(%rbp)")]
+        [(Some operand)
+          (and (= operand.var 1) (string.eq operand.text "-40(%rbp)"))]
         [(No) false])
       (match (backend.compiler-backend-stack-memory-operand
         (compiler-backend-stack-splat-register-assignments)
@@ -23939,6 +23942,7 @@ f:
         (& (I64))
         index
         0
+        -1
         index.backend-state)
         [(Ok asm)
           (and (string.eq asm "    movq $9, 8(%r12)\n") (asm-lacks? asm "%r10"))]
@@ -31054,6 +31058,7 @@ f:
             (/ index 2)
             (% index 2)
             8
+            (backend.CompilerBackendGroupWordOrigin.Read (General))
             state)
             [(Ok operand)
               (let
@@ -35003,7 +35008,8 @@ f:
       0
       (string.string-length text)
       return-label
-      ok)))
+      ok
+      (text_origins.compiler-backend-text-origins-disabled))))
 
 (define (compiler-backend-swb-dup-tail-bound-ok?) : bool
   (let
@@ -35055,7 +35061,8 @@ f:
         text
         sites
         2
-        ".Lt__swb_tail:\n    ret\n")]
+        ".Lt__swb_tail:\n    ret\n"
+        (text_origins.compiler-backend-text-origins-disabled))]
     (string.eq
       out
       ".Le:\n    jl .Lt__swb_tail\n.Lt:\n    jmp .Lt__swb_tail\n.Lt__swb_tail:\n    ret\n")))
@@ -35112,7 +35119,8 @@ f:
     return-label
     (compiler-backend-swb-fix-prologue-mask)
     form-a-saving-label
-    (compiler-backend-swb-fix-block-list labels)))
+    (compiler-backend-swb-fix-block-list labels)
+    (text_origins.compiler-backend-text-origins-disabled)))
 
 ;; (8a) Variant (i): the form (a) bare clone lies INSIDE the would-be framed
 ;; region.  No duplication is involved -- the region is single-entry -- so only
@@ -39298,7 +39306,10 @@ b_keep:
                 stream
                 (backend.compiler-backend-global-shared-view records))]
             [rendered : String
-              (backend.compiler-backend-peephole-records-render records)]
+              (backend.compiler-backend-peephole-records-render
+                records
+                (backend.compiler-backend-state-stack-text-origins
+                  backend-state))]
             (backend.compiler-backend-peephole-records-retire! stream)
             rendered))]
       (CompilerBackendPeepholeChunkState

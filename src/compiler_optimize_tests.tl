@@ -1,6 +1,7 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_stack_traffic_regions_tests as stack_regions)
 (import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import compiler_ir_types as ir)
@@ -31,6 +32,10 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+
+(test
+  stack-traffic-final-source-regions
+  (stack_regions.compiler-stack-traffic-region-tests))
 
 ;; Whole-program entries arm the checked tier; a fixture must restore the
 ;; caller's mode so later band-only and explicitly armed probes stay distinct.
@@ -16231,6 +16236,318 @@
       (ir.compiler-ir-function-seq-prepend
         (& (opt-inline-switch-callee-named callee-name))
         (& (ir.compiler-ir-function-seq-empty))))))
+
+(define (opt-inline-loop-boundary-test-spans [callee : i64]) : ir.CompilerSourceSpans
+  (let
+    [facts : ir.CompilerSpmdDecisions (ir.compiler-spmd-decisions-empty)]
+    (ir.compiler-spmd-loop-region-list-push
+      (&mut facts.loops)
+      (ir.CompilerSpmdLoopRegion
+        (ir.compiler-ir-symbol-typed-id callee)
+        (ir.CompilerSpmdSiteId (opt-test-span-symbol "source_function") 7)
+        (ir.compiler-ir-label "entry")
+        (ir.compiler-ir-label "zero")
+        (ir.compiler-ir-label "other")
+        (ir.compiler-ir-label "join")))
+    (ir.compiler-source-spans-set-spmd (ir.compiler-source-spans-empty) facts)))
+
+(define (opt-inline-loop-boundary-test-clone-ok?
+  [region : ir.CompilerSpmdLoopRegion]
+  [caller : i64]
+  [prefix : String]) : bool
+  (and
+    (ir.compiler-ir-symbol-id-eq?
+      region.function
+      (ir.compiler-ir-symbol-typed-id caller))
+    (ir.compiler-ir-symbol-id-eq?
+      region.site.function
+      (opt-test-span-symbol "source_function"))
+    (= region.site.ordinal 7)
+    (=
+      region.header
+      (opt.opt-inline-prefix-label
+        (owned_view.compiler-owned-shared-view prefix)
+        (ir.compiler-ir-label "entry")))
+    (=
+      region.body
+      (opt.opt-inline-prefix-label
+        (owned_view.compiler-owned-shared-view prefix)
+        (ir.compiler-ir-label "zero")))
+    (=
+      region.tail
+      (opt.opt-inline-prefix-label
+        (owned_view.compiler-owned-shared-view prefix)
+        (ir.compiler-ir-label "other")))
+    (=
+      region.exit
+      (opt.opt-inline-prefix-label prefix (ir.compiler-ir-label "join")))))
+
+(test
+  optimizer-inline-loop-boundaries-distinct-clones
+  (let
+    [callee : i64 (opt-test-symbol "boundary_callee")]
+    [caller : i64 (opt-test-symbol "boundary_caller")]
+    [outer : i64 (opt-test-symbol "boundary_outer")]
+    [original : ir.CompilerSourceSpans
+      (opt-inline-loop-boundary-test-spans callee)]
+    [once : ir.CompilerSourceSpans
+      (opt.opt-inline-clone-spmd-loops
+        (ir.compiler-source-spans-escape (& original))
+        caller
+        callee
+        "first")]
+    [twice : ir.CompilerSourceSpans
+      (opt.opt-inline-clone-spmd-loops once caller callee "second")]
+    [nested : ir.CompilerSourceSpans
+      (opt.opt-inline-clone-spmd-loops twice outer caller "outer")]
+    [facts (ir.compiler-source-spans-spmd (& nested))]
+    [original-facts (ir.compiler-source-spans-spmd (& original))]
+    (test.assert-i64-eq
+      original-facts.loops.len
+      1
+      "callee input facts remain unchanged")
+    (test.assert-i64-eq facts.loops.len 5 "two copies and both nested copies")
+    (for [index (iterator.range 1 5)]
+      (test.assert-true
+        (opt-inline-loop-boundary-test-clone-ok?
+          (clone (array-ref facts.loops.slots index))
+          (if (< index 3)
+            caller
+            outer)
+          (match index
+            [1 "first"]
+            [2 "second"]
+            [3 "outer.first"]
+            [_ "outer.second"]))
+        "each emitted clone retains its source site and exact label mapping"))
+    (let
+      [unrelated : ir.CompilerSourceSpans
+        (opt.opt-inline-clone-spmd-loops
+          (ir.compiler-source-spans-escape (& nested))
+          caller
+          (opt-test-symbol "not_this_callee")
+          "unused")]
+      [unrelated-facts (ir.compiler-source-spans-spmd (& unrelated))]
+      (test.assert-i64-eq
+        unrelated-facts.loops.len
+        5
+        "unrelated functions do not create records"))
+    (let
+      [accepted : ir.CompilerSourceSpans
+        (opt.opt-inline-clone-spmd-loops
+          (owned_view.compiler-owned-shared-view original)
+          caller
+          callee
+          "accepted")]
+      [rejected : ir.CompilerSourceSpans
+        (opt.opt-inline-clone-spmd-loops
+          (owned_view.compiler-owned-shared-view original)
+          caller
+          callee
+          "rejected")]
+      [accepted-facts (ir.compiler-source-spans-spmd (& accepted))]
+      [rejected-facts (ir.compiler-source-spans-spmd (& rejected))]
+      (test.assert-true
+        (opt-inline-loop-boundary-test-clone-ok?
+          (clone (array-ref accepted-facts.loops.slots 1))
+          caller
+          "accepted")
+        "rejected rounds cannot overwrite an accepted positional suffix")
+      (test.assert-true
+        (opt-inline-loop-boundary-test-clone-ok?
+          (clone (array-ref rejected-facts.loops.slots 1))
+          caller
+          "rejected")
+        "tentative clone facts have independent storage"))))
+
+(test
+  optimizer-inline-loop-boundaries-admitted-and-refused-sites
+  (with-test-inline-mode
+    (begin
+      (opt.opt-inline-checked-set-active! true)
+      (for [level (iterator.range 1 3)]
+        (for [tail (iterator.range 0 2)]
+          (let
+            [symbols : OptInlineMultiTestSymbols
+              (opt-inline-multi-test-symbols)]
+            [caller : ir.CompilerIrFunction
+              (if (= tail 0)
+                (opt-inline-switch-caller symbols)
+                (Function
+                  symbols.main
+                  (opt-inline-switch-params)
+                  (I64)
+                  4
+                  (irt.blocks
+                    "entry:
+                 tailcall inline_switch(%1, %0, %2) : i64")
+                  Ordinary))]
+            [input : ir.CompilerSourceSpans
+              (opt-inline-loop-boundary-test-spans symbols.inline-switch)]
+            (match (opt-test-inline-program-with-spans
+              (ast.ast-node-pool-reader-context-current)
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (ir.compiler-ir-function-seq-prepend
+                (& caller)
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (& (opt-inline-acyclic-switch-callee symbols))
+                    (& (ir.compiler-ir-function-seq-empty)))))
+              level
+              input)
+              [(Program functions spans)
+                (let
+                  [facts (ir.compiler-source-spans-spmd (& spans))]
+                  (test.assert-i64-eq
+                    (+
+                      (opt-count-direct-call-name-function-seq
+                        (& functions)
+                        "main"
+                        "inline_switch")
+                      (opt-count-tail-call-name-function-seq
+                        (owned_view.compiler-owned-shared-view functions)
+                        "main"
+                        "inline_switch"))
+                    (if (and (= level 2) (= tail 0))
+                      0
+                      1)
+                    (str_cat.str-cat
+                      "boundary clone fixture admission at level "
+                      (string.int->string level)
+                      " tail "
+                      (string.int->string tail)))
+                  (test.assert-i64-eq
+                    facts.loops.len
+                    (if (and (= level 2) (= tail 0))
+                      2
+                      1)
+                    (str_cat.str-cat
+                      "admitted clone facts at level "
+                      (string.int->string level)
+                      " tail "
+                      (string.int->string tail)))
+                  (when
+                    (and (= level 2) (= facts.loops.len 2))
+                    (let
+                      [region : ir.CompilerSpmdLoopRegion
+                        (clone (array-ref facts.loops.slots 1))]
+                      (test.assert-true
+                        (opt-inline-loop-boundary-test-clone-ok?
+                          region
+                          symbols.main
+                          "inl.entry.0")
+                        "admitted sites transfer exact source boundaries")
+                      (match (opt-function-seq-find (& functions) "main")
+                        [(Some func)
+                          (let
+                            [blocks : ir.CompilerIrBlockList
+                              (opt.opt-function-blocks func)]
+                            (for [part (iterator.range 0 4)]
+                              (test.assert-true
+                                (match (opt.opt-cfg-find-block
+                                  (& blocks)
+                                  (match part
+                                    [0 region.header]
+                                    [1 region.body]
+                                    [2 region.tail]
+                                    [_ region.exit]))
+                                  [(Some _) true]
+                                  [(No) false])
+                                "all transferred labels name actual cloned blocks")))]
+                        [(No) (test.assert-true false "caller retained")]))))])))))))
+
+(test
+  optimizer-inline-unroll-lineage-clone
+  (let
+    [callee : i64 (opt-test-symbol "boundary_callee")]
+    [caller : i64 (opt-test-symbol "boundary_caller")]
+    [input : ir.CompilerSourceSpans
+      (opt-inline-loop-boundary-test-spans callee)]
+    [facts : ir.CompilerSpmdDecisions
+      (ir.compiler-spmd-decisions-escape
+        (ir.compiler-source-spans-spmd (& input)))]
+    [_add : unit
+      (ir.compiler-spmd-loop-unroll-list-push
+        (&mut facts.unrolls)
+        (ir.CompilerSpmdLoopUnroll
+          (ir.compiler-ir-symbol-typed-id callee)
+          (ir.compiler-ir-label "zero")
+          (ir.compiler-ir-label "entry")
+          (ir.compiler-ir-label "other")
+          (ir.compiler-ir-label "join")))]
+    [output : ir.CompilerSourceSpans
+      (opt.opt-inline-clone-spmd-loops
+        (ir.compiler-source-spans-set-spmd input facts)
+        caller
+        callee
+        "cloned")]
+    [result (ir.compiler-source-spans-spmd (& output))]
+    (test.assert-i64-eq
+      result.unrolls.len
+      2
+      "original and cloned unroll lineage")
+    (when
+      (= result.unrolls.len 2)
+      (let
+        [row : ir.CompilerSpmdLoopUnroll
+          (clone (array-ref result.unrolls.slots 1))]
+        (test.assert-true
+          (ir.compiler-ir-symbol-id-eq?
+            row.function
+            (ir.compiler-ir-symbol-typed-id caller))
+          "unroll lineage follows the emitted caller")
+        (test.assert-i64-eq
+          row.body
+          (ir.compiler-ir-label "cloned.zero")
+          "old body")
+        (test.assert-i64-eq
+          row.guard
+          (ir.compiler-ir-label "cloned.entry")
+          "guard")
+        (test.assert-i64-eq
+          row.unrolled
+          (ir.compiler-ir-label "cloned.other")
+          "new body")
+        (test.assert-i64-eq
+          row.exit
+          (ir.compiler-ir-label "cloned.join")
+          "exit")))
+    (let
+      [outer : i64 (opt-test-symbol "boundary_outer")]
+      [history : ir.CompilerSpmdDecisions
+        (ir.CompilerSpmdDecisions
+          (owned_view.compiler-owned-reference-shared-view (& result.decisions))
+          (owned_view.compiler-owned-reference-shared-view (& result.frames))
+          (ir.compiler-spmd-loop-region-list-new)
+          (ir.compiler-spmd-loop-unroll-list-escape (& result.unrolls)))]
+      [only-history : ir.CompilerSourceSpans
+        (opt.opt-inline-clone-spmd-loops
+          (ir.compiler-source-spans-set-spmd
+            (ir.compiler-source-spans-empty)
+            history)
+          outer
+          caller
+          "outer")]
+      [copied (ir.compiler-source-spans-spmd (& only-history))]
+      (test.assert-i64-eq copied.loops.len 0 "no fabricated source loop")
+      (test.assert-i64-eq
+        copied.unrolls.len
+        3
+        "history clones without a source loop")
+      (when
+        (= copied.unrolls.len 3)
+        (let
+          [row : ir.CompilerSpmdLoopUnroll
+            (clone (array-ref copied.unrolls.slots 2))]
+          (test.assert-true
+            (ir.compiler-ir-symbol-id-eq?
+              row.function
+              (ir.compiler-ir-symbol-typed-id outer))
+            "history-only emitted function")
+          (test.assert-i64-eq
+            row.body
+            (ir.compiler-ir-label "outer.cloned.zero")
+            "composed history-only label map"))))))
 
 (define (opt-inline-switch-case-result-ok?
   [functions : ir.CompilerIrFunctionSeq]
@@ -37622,6 +37939,106 @@
     (opt-unroll-mutable-map-test-blocks mode)
     Ordinary))
 
+(define (opt-unroll-source-trace-fixture
+  [trace : opt.OptSpmdLoopTrace]
+  [mode : i64]) : bool
+  (let
+    [original : ir.CompilerIrFunction
+      (opt-unroll-mutable-map-test-function mode)]
+    [input : ir.CompilerIrFunction
+      (if (= mode 4)
+        (opt.opt-function-with-frame-blocks
+          original
+          (opt.opt-function-frame original)
+          (opt.opt-blocks-append
+            (& (opt.opt-function-blocks original))
+            (& (irt.blocks "exit:\n return 0"))))
+        original)]
+    (if (= mode 4)
+      ;; Call the SIMD rewrite directly so its post-rewrite verifier, rather
+      ;; than the general driver's input gate, rejects the duplicate labels.
+      (match (opt.opt-unroll-simd-function-with-context-result
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.opt-cfg-context-build (opt.opt-function-blocks input))
+        (owned_view.compiler-owned-shared-view input)
+        false)
+        [(Result next _ labels)
+          (opt.opt-spmd-loop-trace-note!
+            trace
+            (opt.opt-function-name input)
+            (& labels))
+          (> (opt.opt-function-frame next) (opt.opt-function-frame input))])
+      (match (opt.opt-unroll-function-with-context-result
+        (opt.OptUnrollRequest
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (opt.opt-cfg-context-build (opt.opt-function-blocks input))
+          false
+          trace)
+        (owned_view.compiler-owned-shared-view input))
+        [(Result next _)
+          (> (opt.opt-function-frame next) (opt.opt-function-frame input))]))))
+
+(test
+  optimizer-spmd-unroll-trace-owned-and-committed
+  (let
+    [empty : ir.CompilerSpmdDecisions (ir.compiler-spmd-decisions-empty)]
+    [disabled : opt.OptSpmdLoopTrace (opt.opt-spmd-loop-trace-new (& empty))]
+    [seed-spans : ir.CompilerSourceSpans
+      (opt-inline-loop-boundary-test-spans
+        (opt-test-symbol "unroll_mutable_map_fixture"))]
+    [seed (ir.compiler-source-spans-spmd (& seed-spans))]
+    [job-a : opt.OptSpmdLoopTrace (opt.opt-spmd-loop-trace-new seed)]
+    [job-b : opt.OptSpmdLoopTrace (opt.opt-spmd-loop-trace-new seed)]
+    [work : arena.Arena (arena.make)]
+    (test.assert-true
+      (= disabled.storage 0)
+      "ordinary jobs allocate no trace cell")
+    (in-arena
+      work
+      (test.assert-true
+        (opt-unroll-source-trace-fixture job-a 0)
+        "canonical mutable SIMD map commits")
+      (test.assert-false
+        (opt-unroll-source-trace-fixture job-b 2)
+        "loop-local output base is refused")
+      (test.assert-false
+        (opt-unroll-source-trace-fixture job-b 4)
+        "duplicate input labels cannot publish a rewrite")
+      (test.assert-true
+        (opt-unroll-source-trace-fixture disabled 0)
+        "disabled tracing preserves the accepted rewrite"))
+    (arena.destroy-safe! work)
+    (let
+      [a : ir.CompilerSpmdLoopUnrollList (opt.opt-spmd-loop-trace-output job-a)]
+      [b : ir.CompilerSpmdLoopUnrollList (opt.opt-spmd-loop-trace-output job-b)]
+      [off : ir.CompilerSpmdLoopUnrollList
+        (opt.opt-spmd-loop-trace-output disabled)]
+      (test.assert-i64-eq a.len 1 "accepted trace survives function scratch")
+      (test.assert-i64-eq b.len 0 "interleaved rejected job has no trace")
+      (test.assert-i64-eq off.len 0 "disabled job has no trace")
+      (when
+        (= a.len 1)
+        (let
+          [row : ir.CompilerSpmdLoopUnroll (array-ref a.slots 0)]
+          (test.assert-true
+            (ir.compiler-ir-symbol-id-eq?
+              row.function
+              (opt-test-span-symbol "unroll_mutable_map_fixture"))
+            "emitted function identity")
+          (test.assert-i64-eq row.body (ir.compiler-ir-label "body") "old body")
+          (test.assert-i64-eq
+            row.guard
+            (ir.compiler-ir-label "body__unroll_guard")
+            "guard")
+          (test.assert-i64-eq
+            row.unrolled
+            (ir.compiler-ir-label "body__unroll_body")
+            "new body")
+          (test.assert-i64-eq
+            row.exit
+            (ir.compiler-ir-label "body__unroll_exit")
+            "exit"))))))
+
 (define (opt-unroll-test-count-add-instr-seq
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [acc : i64]) : i64
@@ -38123,7 +38540,7 @@
           (opt.opt-function-blocks store-required-input))
         store-required-input
         true)
-        [(Result result _) result])]
+        [(Result result _ _) result])]
     [local-base-func : ir.CompilerIrFunction
       (opt.opt-unroll-function
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -76912,6 +77329,7 @@ return 0" true)
     (opt.OptProgramSummaries
       false
       (profile_state.compiler-profile-state-new)
+      (opt.opt-spmd-loop-trace-disabled)
       (opt_i64_i64_map.with-capacity 8)
       call-memory
       (opt_i64_i64_map.with-capacity 8)

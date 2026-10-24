@@ -595,6 +595,131 @@ are retained in the lower owner's `spmd-rejected-spans` result field and escaped
 beside the diagnostic before scratch retirement; entry reset clears them.
 Optimizer instruction-span rebuilding and backend register remapping retain the
 source decisions unchanged. Functions without SPMD allocate no site collection.
+Native loop emitters also retain source-owned `CompilerSpmdLoopRegion` records:
+the emitted function, source site, full-gang header and body, first tail entry,
+and exit. The emitter supplies these labels directly. Scalar/fallback and
+unvisited sites have no native loop record, and publication waits for a
+terminal native decision. These are lowering-input anchors: cloning, inlining,
+rotation or unrolling must explicitly reconcile them before a consumer applies
+them to a transformed CFG. A missing anchor is not permission to infer a region
+from a label's spelling. Escape copies the live record prefix into its receiver;
+the instruction-span cutoff and reset do not discard source loop facts.
+The inliner transfers these anchors with the same explicit caller-site label
+map that clones the blocks, retaining the original source site. Tentative
+positional records own separate storage: a rejected checked-tier round cannot
+overwrite a previously accepted suffix as if it were a keyed span table.
+Accepted mutable SIMD unrolls separately record the original body, new guard,
+recurring body and exit. Only verified live rewrites publish these records;
+priced candidates use a disabled sink. The sink belongs to the optimizer job's
+surviving arena, so function scratch retirement cannot erase the trace or mix
+two jobs. These are transform-history facts: later CFG rewrites may retire
+their labels, and the final census must still reconcile and validate membership.
+The IR partition checks the exact graph labels and edges against its function,
+then uses canonical dominance-based natural loops rooted at retained source
+headers or bodies. Committed unroll headers remain separate from their
+remainders. Tails stop at their source exit; nested source sets must be strictly
+contained, with inner traffic owned once and retained as parent control.
+Identical or partially overlapping claims reject. Reachability cannot invent
+a hot region for a retired or unreachable site. This partition attributes IR
+control only: backend-generated traps and final machine rewrites must preserve
+or refine that attribution before a post-regalloc census is published.
+Stack-operand capture also precedes rendering. A typed vector operand retains
+its logical variable even when allocation gives another variable the same
+physical offset. Read/write factories issue snapshots with the actual emitted
+function and block; snapshot order is not a final operation ordinal. Protected
+operand allocations and every indexed concatenation live in one explicit
+capture arena, preventing scratch-address reuse from transferring an identity.
+The index compares allocation identity, never byte equality. Untracked copies
+lose proof rather than recover it from matching text. Slices cannot cut an
+operand annotation; address rewrites explicitly retarget an exact annotation.
+Rejected snapshots publish no access token. The owning backend clears its
+capture before retirement, after all text users have finished or escaped.
+Body buffers retain these tokens across growth and every append form. Insertion
+orders them by final byte position, independently of token creation order, and
+cannot split an operand. The buffer accounts for every appended byte and checks
+retained operand spellings before publishing its protected result. Byte equality
+validates that transport; it never supplies an absent logical identity. A failed
+step leaves the buffer metadata unchanged, and finalization closes it once.
+A scratch escape carries its pre-copy entry identity through the checked
+clone-out result, then validates the cloned bytes before restoring annotations.
+First-occurrence replacements preserve only explicitly retained or inserted
+annotations. Frame/FPO rendering copies exact source ranges and retargets each
+annotated address explicitly; rejected frame audits return the original text
+and identity. Distinct logical homes never merge when rebased addresses match.
+The ordinary uncaptured route retains its borrowed text builder.
+Windows save insertion preserves the actual recognized save's range, not its
+recognition template. Tail clones retain source identities at distinct final
+positions. The compact line records keep their existing layout: final blits
+transport annotations from surviving source ranges, and dropped records
+transport none. Cold outlining appends annotations in its actual output order;
+its synthesized branch/label bytes also count toward the final extent check.
+These transfers do not infer new memory accesses or finish the census audit.
+Frame coloring renumbers IR values before the factories run. Capture pairs the
+uncolored rewritten instruction's canonical definition/use positions with the
+actual colored instruction, by typed block label and placed instruction index.
+The same emitted color can therefore name different original read and write
+homes. Distinct original uses sharing a color require an explicit operand index;
+there is no fallback from a role string or a physical offset. AddrOf's raw
+storage slot is checked separately and never authorizes a value read. Function,
+block and site must match the installed scratch-owned plan, which is cleared
+before scratch retirement. Parameter initialization uses a separate typed
+parameter binding, not the definition at whichever body site was last active.
+Its dynamic scope selects the actual entry block and restores the previous
+block and authority before propagating an error result. Nested scopes restore
+their parent; disabled capture does not create function state. A parameter
+initialization cannot authorize a home read.
+Phi marshalling retains the target entry ordinal and the selected predecessor's
+canonical operand index. Its reads and writes bind to that target Phi, while
+the emitted access stays in the actual predecessor block. Changed predecessor
+labels, ambiguous destinations and missing edges cannot establish authority.
+A fused GEP/store supplies the consumed store's exact value site separately
+from its address site. Provenance scopes preserve the fusion head's label and
+scavenge coordinates and restore their parent before returning an error.
+Other fused parents must provide their own exact operand sites.
+Home capacity comes from the allocator's original
+vector/mask/group storage census, independently of each emitted access width;
+an access wider than that capacity cannot publish a token. Compact mask moves
+record their typed mask bank and 2/4/8-byte width independently of that larger
+reservation. Vector and mask emitters share one typed allocator-home lookup.
+A folded scalar broadcast keeps its scalar home identity and access width;
+its vector destination does not turn the read into a vector-width access. One
+typed opcode descriptor supplies both the mnemonic and width, and the scalar
+operand type supplies its general or floating-register bank. Address-only
+forwarded values and literals cannot authorize a stack read.
+Scalar floating loads, stores and folded operands record their XMM bank and
+actual 4/8-byte access independently of the original scalar home capacity.
+Ordinary mnemonic selection does not construct an origin descriptor.
+Scalar GP factories record only actual home loads/stores. Register moves,
+rematerialization and address-only forwarding do not authorize a home access.
+Typed scalar home reads retain their actual 1/2/4/8-byte width before the
+memory renderer formats them. That renderer transports an issued token; it
+cannot derive a home or owner from the supplied address. Return, call-result
+and global-store parents preserve those tokens, including C-ABI boolean
+normalization and mixed-bank group returns.
+Fresh auxiliary assembly buffers bind the active capture before any prefix;
+a foreign, untracked or finalized buffer cannot accept a captured operand.
+Single and paired GEP/load factories supply each consumed Load's destination
+site separately from address formation. A scalar read of a larger aggregate
+requires an explicit logical fragment; its capacity cannot stand in for one.
+The original allocator group set is retained separately from home capacity.
+Each two-word group fragment has a distinct identity outside the whole-home
+namespace and exactly eight bytes of capacity. Neither a sibling word nor a
+scalar home can establish its recurrence. Whole-home accesses to a group reject;
+the group-word factory supplies explicit read/write intent, word index and the
+actual general or scalar-vector access bank. Register-only group operands
+publish no home access. Phi cycle saves read the old destination's definition;
+the first copy reads its selected incoming operand, and both success and error
+restore the caller's edge context before recursive draining. Immediate stores,
+word moves and Phi temporary parents preserve the operand tokens they consume.
+Inactive emission
+allocates no instruction-home plan and does not change coloring or placement.
+An RMW fold retains separate ordered read and write tokens at the same emitted
+operand, including distinct logical homes that share one physical address.
+Their typed source records must prove compatible access directions, function
+and width. If the value remains live, the synthesized reload derives a new
+read from the stored home, rather than reusing the original load's home.
+Read-only or unbound tokens cannot authorize that readback. These are access
+semantics; allocator warning policy still belongs to the downstream consumer.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

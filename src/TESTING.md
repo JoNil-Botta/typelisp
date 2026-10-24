@@ -842,6 +842,130 @@ actual backend ownership or publish a warning.
 
 ## SPMD decision provenance
 
+`compiler-lower-spmd-loop-boundaries` checks all five native loop emitters in
+Linux/Windows scalar, AVX2 and AVX-512 modes. Every native record's four labels
+must name distinct blocks in its emitted function; scalar and unsupported
+routes publish none. Sequential loops, branch-state forks, repeated macro
+syntax and unreachable sites check collection boundaries. The source-span
+arena-retirement smoke also reads escaped loop records after destroying their
+producer. These source anchors do not establish final optimized region
+membership; consumers must check the transformed CFG and retain explicit
+clone/rotation/unroll lineage.
+The optimizer's `optimizer-inline-loop-boundaries-*` tests check repeated and
+nested clone maps, unchanged source identities, scratch-arena escape and
+speculative rollback isolation. Admitted multiblock calls publish actual caller
+labels; lower optimization levels and refused cold tail sites publish no clone.
+`optimizer-spmd-unroll-trace-owned-and-committed` interleaves enabled jobs and a
+disabled job, checks accepted versus refused/malformed input, and reads the
+trace after destroying function scratch. Unroll history follows explicit label
+maps when cloned; the IR source-span smoke checks all fields after escape.
+`stack-traffic-final-source-regions` checks exact/spare graph construction,
+nested source ownership, separate unrolled/remainder headers, tail boundaries,
+cold exits and unreachable sites. Graph identity/edge mismatches, duplicate
+claims, lost recurring bodies, tail reentry and unbound unroll history reject.
+These tests attribute final IR control; they do not establish final backend
+access capture or the report's real-kernel acceptance.
+`compiler_backend_text_origins_tests.tl` checks distinct identities for equal
+operand bytes, interleaved owners, nested concatenation/single evaluation,
+slice/retarget rejection, inventory growth and scratch retirement. Its native
+smoke calls the same fixtures at opt0/1/2. `compiler_backend_stack_origins_tests.tl`
+checks actual vector load/store/folded/fallback factories and a higher-level
+vector copy with equal colored offsets but distinct logical homes. The native
+producer smoke also checks all three optimization levels, including body-buffer
+growth, all append forms and a later-issued save inserted before its body.
+Buffer fixtures reject noncontiguous writes, cuts, invalid extents, changed
+operand bytes and reuse after finalization; refused operations publish no
+partial metadata. Copy witnesses cross checked scratch clone-out; changed,
+foreign or invalid snapshots reject. Replacement tests cover first-only
+semantics, empty needles and partial operand cuts. Source-range buffer checks
+are transactional. Actual vector factory operands pass both audited frame
+modes with exact untracked-output parity, distinct equal-offset home tokens,
+blank/label lines and no terminal newline; a syscall refusal retains the
+original text and annotations. Final-render fixtures check source identities
+across record deletion, synthesized-line newlines and actual cold-stub movement
+with exact ordinary-output parity. Windows SEH insertion retains the actual
+save and following body; malformed saves reject. Tail cloning retains one
+source identity at distinct final positions while branch splicing preserves
+all retained ranges. Actual RMW-2/RMW-3 folds check exact uncaptured-output
+parity, distinct load/store homes at one folded operand and the synthesized
+reload's new read of the stored home. Wrong-direction and read-only derivation
+requests reject without orphan access records. `compiler_backend_home_origins_tests.tl`
+pairs original instructions with the real noninjective frame-color remapper,
+including separate use/definition identities, repeated versus ambiguous uses,
+literal operand positions, raw address storage and changed operands. Placed
+block reordering, live/spare prefixes, invalid identities/extents and malformed
+or duplicate placement are checked. Original scalar, group, vector and mask
+capacities come from the allocator census. Actual emitter factories retain
+homes7/8 when both become color1 at the same physical offset; cleanup clears
+the scratch plan. Compact-mask fixtures check all kmov widths, the larger
+reservation, distinct pre-color homes and GPR-parent origin transport. Native
+home and producer smokes call these cases at opt0/1/2. Table-driven folded
+broadcast cases cover ten scalar types, scalar capacity versus read width,
+original colored identity and both prefix and completed-instruction transport.
+Literal input refuses the memory route without creating a token. Parameter
+fixtures distinguish an incoming parameter from a body definition sharing its
+color, check invalid/spare parameter prefixes and IDs, and reject cross-block
+or body-site substitution. Actual factory fixtures exercise nested entry scopes,
+block/authority restoration and disabled-capture state allocation.
+Scalar-floating tables cover f32/f64, assigned spills and stack-only homes,
+parameter/body identities, folded reads and exact inactive-output parity.
+Phi cases retain the selected predecessor's input independently of a result
+with the same emitted color, reject changed labels and unknown edges, and
+require the target entry. The actual fused-store factory checks the consumed
+value's provenance, unchanged label coordinates, nested scope restoration and
+restoration after a controlled unsupported-value error.
+Scalar GP fixtures exercise explicit spills and stack-only homes, distinct
+pre-color read/write/parameter identities and fresh-buffer transport. Actual
+single and paired GEP/load factories preserve separate original destinations
+with full inactive-output parity. Buffer association tests reject foreign,
+untracked and finalized destinations. Both origin fixture families run natively
+at opt0/1/2.
+Group fragments check original allocator membership independently of capacity,
+exact/spare storage, invalid homes and word indices, and disjoint sibling and
+whole-home identities. Actual memory and mixed register-pair operand routes
+retain explicit banks and pre-color group identities. Incoming parameters and
+body writes stay distinct even at one colored address. The actual Phi cycle
+prefix saves the old destination while reading the selected incoming group,
+retains every token through its temporary parent, and restores edge authority
+after both success and a controlled failure. Native home/producer smokes run
+these cases at opt0/1/2. A boundary table exercises actual return, ordinary
+and normalized call-result stores, and global-store parents across narrow,
+wide and floating scalars plus GP, mixed and SSE two-word groups. It checks
+complete uncaptured-output parity, exact surviving operand tokens, original
+colored identities and each actual access width; no address spelling supplies
+those facts. Emergency preservation fixtures check all three backend modes,
+GP/SIMD widths, paired same-site resources and distinct resources at a reused
+frame offset. They retain every token through recursive save/restore parents,
+exercise registry growth across instruction-scratch destruction, and exclude
+register parking and elision. Pure resource tests cover exact/spare storage,
+vector-family aliases and malformed sites/registers/registries. Planned-copy
+tests cover GP/F32/F64 register and memory routes, exact
+allocator/temporary operand order, and the recursive XMM argument-cycle
+emitter. The existing actual Phi-edge table also checks scalar, float and
+group cycle saves/restores with selected-definition authority. Typed planned
+slot keys cannot alias equal-numbered emergency registers. Fixed lane-buffer
+fixtures exercise the actual AVX2 tail-mask and predicated load/store emitters,
+including boolean loads, narrow integer lanes and the qword register-only route.
+They compare complete captured/uncaptured text and check every surviving token's
+owner, capacity, access width and final read/write order. Invalid lane extents
+reject before multiplication; exact/spare pure resources retain separate typed
+and instruction-site identities. Variable-shift fixtures cover signed/unsigned
+left/right word shifts on AVX2 and byte shifts on AVX2/AVX-512. They check every
+final input/group/permutation access against a separate semantic sequence,
+including repeated packing writes, partial index initialization and narrower
+widening reads. Pure malformed-key/capacity and access-boundary assertions share
+their body with the native home smoke; both home and producer smokes run at
+opt0/1/2. Gather and shuffle emitter tables cover signed/unsigned integer and
+floating dword/qword layouts on AVX2/AVX-512. Gather cases distinguish destructive
+mask saves, high-index saves, result-half stores and complete tuple loads,
+including the unstaged AVX-512 qword route. Shuffle cases check low/high selector
+save/check accesses, recursive lane copies, split AVX2 qword-index writes and
+full source/index reloads against a separate semantic sequence. One-selector
+routes issue no unused high-selector fact. The fixed-key companion rejects
+invalid selector ordinals and role-specific capacities, with every assertion
+shared by native smokes. Remaining access-changing rewrites, traffic owners and
+complete report acceptance are distinct.
+
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected
 maps, empty/tail ranges, cross-lane parent identities and deterministic order.

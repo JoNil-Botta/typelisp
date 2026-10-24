@@ -1,0 +1,857 @@
+;; Instruction-scoped logical identities before the frame-coloring renumber.
+;; This table describes the actual remap; it must never change allocation.
+(import compiler_ir_types as ir)
+(import compiler_regalloc as regalloc)
+(import compiler_liveness as live)
+(import compiler_owned_view as owned_view)
+(import compiler_abi as abi)
+(import stdlib.dense_list as dense_list)
+(import stdlib.iterator)
+(import stdlib.string)
+(import stdlib.hashmap)
+(import (hashmap.hashmap i64 i64) as block_index)
+
+(defenum CompilerBackendHomePosition
+  (Definition)
+  (Parameter)
+  ;; AddrOf's storage authority is distinct from a value read.
+  (Address)
+  ;; The canonical IR operand visitor's constructor order, including literals.
+  (Use i64))
+
+(defstruct CompilerBackendHomeBinding
+  (emitted i64)
+  (logical i64)
+  (position CompilerBackendHomePosition))
+
+(defstruct CompilerBackendHomeBindingList
+  (slots (__tl_dyn-array CompilerBackendHomeBinding))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerBackendHomeBinding
+  CompilerBackendHomeBindingList
+  compiler-backend-home-binding-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  append-from)
+
+(defstruct CompilerBackendHomeBindingBuilder
+  (bindings CompilerBackendHomeBindingList)
+  (use-index i64)
+  (error String))
+
+(defenum CompilerBackendHomeBindingsResult
+  (Ok CompilerBackendHomeBindingList)
+  (Err String))
+
+(defenum CompilerBackendHomeQuery
+  (Definition)
+  (Parameter)
+  (Address)
+  (AnyUse)
+  (Use i64))
+
+(defenum CompilerBackendLogicalHomeResult
+  (Ok i64)
+  (Err String))
+
+(defenum CompilerBackendHomePhiInputs
+  (None)
+  (Inputs ir.CompilerIrPhiInputSeq))
+
+(defenum CompilerBackendHomePhiSiteResult
+  (Ok i64 i64)
+  (Err String))
+
+(defstruct CompilerBackendHomeSite
+  (block i64)
+  (instruction i64)
+  (bindings CompilerBackendHomeBindingList)
+  (phi-inputs CompilerBackendHomePhiInputs))
+
+;; A preservation resource is issued at its emitting authority, independently
+;; of its current frame displacement. Separate IR sites never share its home.
+(defenum CompilerBackendFixedStagingKey
+  (Operand i64)
+  (Result i64)
+  (Permutation)
+  (GatherMask)
+  (GatherIndex)
+  (GatherResult)
+  (ShuffleSelector i64)
+  (ShuffleIndex)
+  (ShuffleSource)
+  (LaneBuffer))
+
+(defenum CompilerBackendPreservationKey
+  (EmergencyRegister i64)
+  (ParallelCopySlot i64)
+  (ParallelCopyRegister i64)
+  (FixedStaging CompilerBackendFixedStagingKey i64))
+
+(defstruct CompilerBackendPreservationHome
+  (site i64)
+  (key CompilerBackendPreservationKey))
+
+(defstruct CompilerBackendPreservationHomeList
+  (slots (__tl_dyn-array CompilerBackendPreservationHome))
+  (len i64))
+
+(dense_list.compiler-dense-list-operations
+  CompilerBackendPreservationHome
+  CompilerBackendPreservationHomeList
+  compiler-backend-preservation-home-list
+  caller-provided-fallback
+  zero-capacity
+  compiler-dense-list-unused-shared-zero-storage
+  append-from)
+
+(defstruct CompilerBackendHomePlan
+  (function i64)
+  (entry-block i64)
+  (parameters CompilerBackendHomeBindingList)
+  (sites (__tl_dyn-array CompilerBackendHomeSite))
+  (bytes (__tl_dyn-array i64))
+  (groups (__tl_dyn-array bool))
+  (preservations CompilerBackendPreservationHomeList))
+
+(defstruct CompilerBackendHomePlanInput
+  (function i64)
+  (logical-count i64)
+  (emitted-count i64)
+  (params ir.CompilerIrParamSeq)
+  (original ir.CompilerIrBlockList)
+  (placed ir.CompilerIrBlockList)
+  (coloring regalloc.CompilerRegColoring)
+  (groups live.CompilerLiveI64Set))
+
+(defenum CompilerBackendHomePlanResult
+  (Ok CompilerBackendHomePlan)
+  (Err String))
+
+(defstruct CompilerBackendLogicalHome
+  (id i64)
+  (bytes i64))
+
+(defenum CompilerBackendPlannedHomeResult
+  (Ok CompilerBackendLogicalHome)
+  (Err String))
+
+(define (compiler-backend-home-binding-add!
+  [builder : (&mut builder CompilerBackendHomeBindingBuilder)]
+  [coloring : (& regalloc.CompilerRegColoring)]
+  [logical-count : i64]
+  [logical : i64]
+  [position : CompilerBackendHomePosition]) : unit
+  (unless (string.eq (& builder.error) "") (return unit))
+  (when
+    (or (< logical 0) (>= logical logical-count))
+    (set! builder.error "stack traffic: original home is outside its function")
+    (return unit))
+  (let
+    [emitted : i64
+      (match coloring
+        [(None) logical]
+        [(Remap remap _)
+          (regalloc.compiler-reg-remap-id
+            (owned_view.compiler-owned-reference-shared-view remap)
+            logical)])]
+    (when
+      (< emitted 0)
+      (set! builder.error "stack traffic: live home has no emitted color")
+      (return unit))
+    (compiler-backend-home-binding-list-push
+      (&mut builder.bindings)
+      (CompilerBackendHomeBinding emitted logical position))))
+
+(define (compiler-backend-home-binding-use!
+  [builder : (&mut builder CompilerBackendHomeBindingBuilder)]
+  [coloring : (& regalloc.CompilerRegColoring)]
+  [logical-count : i64]
+  [_role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : unit
+  (match value
+    [(Var logical)
+      (let
+        [position : i64 builder.use-index]
+        (compiler-backend-home-binding-add!
+          builder
+          coloring
+          logical-count
+          logical
+          (Use position)))]
+    [_ unit])
+  (set! builder.use-index (+ builder.use-index 1)))
+
+;; Called on the uncolored instruction with the exact coloring used by
+;; compiler-reg-remap-instr. AddrOf's raw storage slot is not a value use and
+;; does not authorize a memory read; its separate address authority is retained
+;; by that instruction's emitter.
+(define (compiler-backend-home-bindings
+  [instr : (& ir.CompilerIrInstr)]
+  [coloring : (& regalloc.CompilerRegColoring)]
+  [logical-count : i64]) : CompilerBackendHomeBindingsResult
+  (when
+    (< logical-count 0)
+    (return (Err "stack traffic: invalid original home extent")))
+  (let
+    [builder : CompilerBackendHomeBindingBuilder
+      (CompilerBackendHomeBindingBuilder
+        (compiler-backend-home-binding-list-new)
+        0
+        "")]
+    [dst : i64 (ir.compiler-ir-instr-dst instr)]
+    (when
+      (>= dst 0)
+      (compiler-backend-home-binding-add!
+        (&mut builder)
+        coloring
+        logical-count
+        dst
+        (Definition)))
+    (match instr
+      [(AddrOf _ storage)
+        (compiler-backend-home-binding-add!
+          (&mut builder)
+          coloring
+          logical-count
+          storage
+          (Address))]
+      [_ unit])
+    (ir.compiler-ir-instr-visit-uses
+      (owned_view.compiler-owned-reference-shared-view instr)
+      compiler-backend-home-binding-use!
+      (&mut builder)
+      coloring
+      logical-count)
+    (if (string.eq (& builder.error) "")
+      (Ok builder.bindings)
+      (Err builder.error))))
+
+;; A colored ID alone is insufficient when two original uses share a color.
+;; The emitting parent must then supply its explicit canonical operand index.
+(define (compiler-backend-home-resolve
+  [bindings : (& bindings CompilerBackendHomeBindingList)]
+  [emitted : i64]
+  [query : CompilerBackendHomeQuery]) : CompilerBackendLogicalHomeResult
+  (when
+    (or
+      (< emitted 0)
+      (< bindings.len 0)
+      (> bindings.len (array-length bindings.slots))
+      (match query
+        [(Use index) (< index 0)]
+        [_ false]))
+    (return (Err "stack traffic: invalid original-home lookup")))
+  (let
+    [logical : i64 -1]
+    (for [index (iterator.range 0 bindings.len)]
+      (let
+        [binding : (& bindings CompilerBackendHomeBinding)
+          (& (array-ref bindings.slots index))]
+        [matches : bool
+          (and
+            (= binding.emitted emitted)
+            (match query
+              [(Definition)
+                (match (& binding.position)
+                  [(Definition) true]
+                  [_ false])]
+              [(Parameter)
+                (match (& binding.position)
+                  [(Parameter) true]
+                  [_ false])]
+              [(Address)
+                (match (& binding.position)
+                  [(Address) true]
+                  [_ false])]
+              [(AnyUse)
+                (match (& binding.position)
+                  [(Use _) true]
+                  [_ false])]
+              [(Use expected)
+                (match (& binding.position)
+                  [(Use actual) (= actual expected)]
+                  [_ false])]))]
+        (when
+          (or
+            (< binding.logical 0)
+            (< binding.emitted 0)
+            (match (& binding.position)
+              [(Use index) (< index 0)]
+              [_ false]))
+          (return (Err "stack traffic: invalid original-home binding")))
+        (when
+          matches
+          (when
+            (and (>= logical 0) (!= logical binding.logical))
+            (return
+              (Err
+                "stack traffic: colored operand needs an explicit source position")))
+          (set! logical binding.logical))))
+    (if (< logical 0)
+      (Err "stack traffic: emitted operand has no original home at this site")
+      (Ok logical))))
+
+(define (compiler-backend-home-position-equal?
+  [left : (& CompilerBackendHomePosition)]
+  [right : (& CompilerBackendHomePosition)]) : bool
+  (match left
+    [(Parameter)
+      (match right
+        [(Parameter) true]
+        [_ false])]
+    [(Address)
+      (match right
+        [(Address) true]
+        [_ false])]
+    [(Definition)
+      (match right
+        [(Definition) true]
+        [_ false])]
+    [(Use a)
+      (match right
+        [(Use b) (= a b)]
+        [_ false])]))
+
+;; Check the remapper's actual definition/use shape, including operand order.
+;; StoreOwned normalizes to StorePtr at this boundary with the same operands.
+(define (compiler-backend-home-bindings-checked
+  [original : (& ir.CompilerIrInstr)]
+  [emitted : (& ir.CompilerIrInstr)]
+  [coloring : (& regalloc.CompilerRegColoring)]
+  [logical-count : i64]
+  [emitted-count : i64]) : CompilerBackendHomeBindingsResult
+  (match original
+    [(Phi _ inputs _)
+      (match emitted
+        [(Phi _ after _)
+          (unless
+            (and
+              (>= inputs.start 0)
+              (>= inputs.len 0)
+              (<= inputs.start (array-length inputs.slots))
+              (<= inputs.len (- (array-length inputs.slots) inputs.start))
+              (>= after.start 0)
+              (>= after.len 0)
+              (<= after.start (array-length after.slots))
+              (<= after.len (- (array-length after.slots) after.start))
+              (= inputs.len after.len))
+            (return (Err "stack traffic: remapped phi input extent differs")))
+          (for [incoming (iterator.range 0 inputs.len)]
+            (unless
+              (and
+                (>= (ir.compiler-ir-phi-input-seq-ref inputs incoming).label 0)
+                (=
+                  (ir.compiler-ir-phi-input-seq-ref inputs incoming).label
+                  (ir.compiler-ir-phi-input-seq-ref after incoming).label))
+              (return (Err "stack traffic: remapped phi predecessor differs"))))]
+        [_ (return (Err "stack traffic: remapped phi instruction differs"))])]
+    [_
+      (match emitted
+        [(Phi _ _ _)
+          (return (Err "stack traffic: remapped phi instruction differs"))]
+        [_ unit])])
+  (let
+    [expected : CompilerBackendHomeBindingList
+      (try (compiler-backend-home-bindings original coloring logical-count))]
+    [identity : regalloc.CompilerRegColoring (None)]
+    [actual : CompilerBackendHomeBindingList
+      (try (compiler-backend-home-bindings emitted (& identity) emitted-count))]
+    (unless
+      (= expected.len actual.len)
+      (return (Err "stack traffic: remapped operand count differs")))
+    (for [index (iterator.range 0 expected.len)]
+      (let
+        [before : (& expected CompilerBackendHomeBinding)
+          (& (array-ref expected.slots index))]
+        [after : (& actual CompilerBackendHomeBinding)
+          (& (array-ref actual.slots index))]
+        (unless
+          (and
+            (= before.emitted after.emitted)
+            (compiler-backend-home-position-equal?
+              (& before.position)
+              (& after.position)))
+          (return (Err "stack traffic: remapped operand identity differs")))))
+    (Ok expected)))
+
+;; Source blocks are matched by their typed label, then by instruction index.
+;; Placement may reorder or retire whole blocks; it cannot silently add a clone
+;; or edit an instruction's remapped operands. Sites follow ACTUAL placed order.
+(define (compiler-backend-home-plan-build
+  [input : (& input CompilerBackendHomePlanInput)]) : CompilerBackendHomePlanResult
+  (when
+    (or
+      (< input.function 0)
+      (< input.logical-count 0)
+      (< input.emitted-count 0))
+    (return (Err "stack traffic: invalid original-home plan identity")))
+  (let
+    [original : (& input (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view (& input.original))]
+    [placed : (& input (Slice ir.CompilerIrBlock))
+      (ir.compiler-ir-block-list-view (& input.placed))]
+    [parameters : CompilerBackendHomeBindingBuilder
+      (CompilerBackendHomeBindingBuilder
+        (compiler-backend-home-binding-list-new)
+        0
+        "")]
+    [parameter-seen : (__tl_dyn-array bool)
+      (__tl_make-array bool input.logical-count)]
+    [indices : block_index.Map
+      (block_index.with-capacity (+ (* 2 (array-length original)) 1))]
+    [seen : (__tl_dyn-array bool)
+      (__tl_make-array bool (array-length original))]
+    [sites : (__tl_dyn-array CompilerBackendHomeSite)
+      (__tl_make-array
+        CompilerBackendHomeSite
+        (ir.compiler-ir-block-list-instruction-count (& input.placed)))]
+    [cursor : i64 0]
+    [words : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
+    [bytes : (__tl_dyn-array i64) (__tl_make-array i64 input.logical-count)]
+    [groups : (__tl_dyn-array bool) (__tl_make-array bool input.logical-count)]
+    (unless
+      (and
+        (>= input.params.len 0)
+        (<= input.params.len (array-length input.params.slots)))
+      (return (Err "stack traffic: invalid original parameter extent")))
+    (for [index (iterator.range 0 input.params.len)]
+      (match (ir.compiler-ir-param-seq-ref input.params index)
+        [(Param _ _ logical)
+          (compiler-backend-home-binding-add!
+            (&mut parameters)
+            (& input.coloring)
+            input.logical-count
+            logical
+            (Parameter))
+          (unless
+            (string.eq (& parameters.error) "")
+            (return (Err parameters.error)))
+          (when
+            (or
+              (array-ref parameter-seen logical)
+              (>=
+                (array-ref parameters.bindings.slots index).emitted
+                input.emitted-count))
+            (return
+              (Err
+                "stack traffic: original parameter has no unique emitted home")))
+          (set! (array-ref parameter-seen logical) true)]))
+    (when
+      (and (> input.params.len 0) (= (array-length placed) 0))
+      (return (Err "stack traffic: original parameters have no entry block")))
+    (for [index (iterator.range 0 (array-length original))]
+      (match (& (array-ref original index))
+        [(Block label _)
+          (when
+            (or
+              (< label 0)
+              (not
+                (block_index.insert-if-absent-ref! (&mut indices) label index)))
+            (return (Err "stack traffic: duplicate or invalid original block")))]))
+    (for [index (iterator.range 0 (array-length placed))]
+      (match (& (array-ref placed index))
+        [(Block label instructions)
+          (let
+            [before-index : i64
+              (match (block_index.get-borrowed (& indices) label)
+                [(LookupFound found) found]
+                [(LookupMissing) -1])]
+            (when
+              (or (< before-index 0) (array-ref seen before-index))
+              (return
+                (Err "stack traffic: placed block has no unique original")))
+            (set! (array-ref seen before-index) true)
+            (match (& (array-ref original before-index))
+              [(Block _ before)
+                (unless
+                  (= before.len instructions.len)
+                  (return
+                    (Err "stack traffic: placed instruction count differs")))
+                (for [offset (iterator.range 0 instructions.len)]
+                  (let
+                    [bindings : CompilerBackendHomeBindingList
+                      (match (compiler-backend-home-bindings-checked
+                        (& (array-ref before.slots offset))
+                        (& (array-ref instructions.slots offset))
+                        (& input.coloring)
+                        input.logical-count
+                        input.emitted-count)
+                        [(Ok result) result]
+                        [(Err message) (return (Err message))])]
+                    (set!
+                      (array-ref sites cursor)
+                      (CompilerBackendHomeSite
+                        label
+                        offset
+                        bindings
+                        (match (& (array-ref before.slots offset))
+                          [(Phi _ inputs _)
+                            (Inputs
+                              (owned_view.compiler-owned-reference-shared-view
+                                inputs))]
+                          [_ (None)])))
+                    (+= cursor 1)))]))]))
+    ;; Reuse the exact allocator storage-shape census. In particular a mask's
+    ;; reserved home may be wider than one emitted compact mask access.
+    (regalloc.compiler-reg-vector-stack-words-params!
+      (& input.params)
+      (&mut words))
+    (regalloc.compiler-reg-vector-stack-words-blocks!
+      (& input.original)
+      (&mut words))
+    (regalloc.compiler-reg-vector-stack-words-fixpoint!
+      (& input.original)
+      (&mut words))
+    (for [var (iterator.range 0 input.logical-count)]
+      (let
+        [size : i64
+          (regalloc.compiler-reg-vector-stack-words-for-var (& words) var)]
+        [capacity : i64
+          (if (live.compiler-live-set-contains? (& input.groups) var)
+            (if (< size 2)
+              2
+              size)
+            size)]
+        (when
+          (> capacity 1152921504606846975)
+          (return (Err "stack traffic: original home capacity overflows")))
+        (set! (array-ref bytes var) (* 8 capacity))
+        (set!
+          (array-ref groups var)
+          (live.compiler-live-set-contains? (& input.groups) var))))
+    (Ok
+      (CompilerBackendHomePlan
+        input.function
+        (if (> (array-length placed) 0)
+          (match (& (array-ref placed 0))
+            [(Block label _) label])
+          -1)
+        parameters.bindings
+        sites
+        bytes
+        groups
+        (compiler-backend-preservation-home-list-new)))))
+
+(define (compiler-backend-home-plan-resolve
+  [plan : (& plan CompilerBackendHomePlan)]
+  [function : i64]
+  [block : i64]
+  [site : i64]
+  [emitted : i64]
+  [query : CompilerBackendHomeQuery]) : CompilerBackendPlannedHomeResult
+  (unless
+    (= function plan.function)
+    (return (Err "stack traffic: original-home emission site is unbound")))
+  (let
+    [logical : i64
+      (match (& query)
+        [(Parameter)
+          (unless
+            (and (>= block 0) (= block plan.entry-block))
+            (return
+              (Err "stack traffic: original parameter entry block differs")))
+          (match (compiler-backend-home-resolve
+            (& plan.parameters)
+            emitted
+            query)
+            [(Ok result) result]
+            [(Err message) (return (Err message))])]
+        [_
+          (unless
+            (and (>= site 0) (< site (array-length plan.sites)))
+            (return
+              (Err "stack traffic: original-home emission site is unbound")))
+          (let
+            [entry : (& plan CompilerBackendHomeSite)
+              (& (array-ref plan.sites site))]
+            (unless
+              (= block entry.block)
+              (return
+                (Err "stack traffic: original-home emission block differs")))
+            (match (compiler-backend-home-resolve
+              (& entry.bindings)
+              emitted
+              query)
+              [(Ok result) result]
+              [(Err message) (return (Err message))]))])]
+    (unless
+      (and (>= logical 0) (< logical (array-length plan.bytes)))
+      (return (Err "stack traffic: original home has no allocation capacity")))
+    (Ok (CompilerBackendLogicalHome logical (array-ref plan.bytes logical)))))
+
+;; Fragment IDs occupy a separate namespace after every whole logical home.
+;; Group membership is the original allocator census, never inferred from a
+;; 16-byte capacity, colored slot, physical displacement or machine opcode.
+(define (compiler-backend-home-group-fragment
+  [plan : (& plan CompilerBackendHomePlan)]
+  [home : CompilerBackendLogicalHome]
+  [word : i64]) : CompilerBackendPlannedHomeResult
+  (let
+    [count : i64 (array-length plan.bytes)]
+    (unless
+      (and
+        (= (array-length plan.groups) count)
+        (>= home.id 0)
+        (< home.id count)
+        (or (= word 0) (= word 1)))
+      (return (Err "stack traffic: invalid original group fragment")))
+    (unless
+      (and
+        (array-ref plan.groups home.id)
+        (= home.bytes (array-ref plan.bytes home.id))
+        (>= home.bytes 16))
+      (return (Err "stack traffic: home is not an original two-word group")))
+    (when
+      (> home.id (/ (- (- 9223372036854775807 count) word) 2))
+      (return (Err "stack traffic: original group fragment identity overflows")))
+    (Ok (CompilerBackendLogicalHome (+ count (+ (* 2 home.id) word)) 8))))
+
+(define (compiler-backend-fixed-staging-key-equal?
+  [left : (& CompilerBackendFixedStagingKey)]
+  [right : (& CompilerBackendFixedStagingKey)]) : bool
+  (match left
+    [(Operand a)
+      (match right
+        [(Operand b) (= a b)]
+        [_ false])]
+    [(Result a)
+      (match right
+        [(Result b) (= a b)]
+        [_ false])]
+    [(Permutation)
+      (match right
+        [(Permutation) true]
+        [_ false])]
+    [(GatherMask)
+      (match right
+        [(GatherMask) true]
+        [_ false])]
+    [(GatherIndex)
+      (match right
+        [(GatherIndex) true]
+        [_ false])]
+    [(GatherResult)
+      (match right
+        [(GatherResult) true]
+        [_ false])]
+    [(ShuffleSelector a)
+      (match right
+        [(ShuffleSelector b) (= a b)]
+        [_ false])]
+    [(ShuffleIndex)
+      (match right
+        [(ShuffleIndex) true]
+        [_ false])]
+    [(ShuffleSource)
+      (match right
+        [(ShuffleSource) true]
+        [_ false])]
+    [(LaneBuffer)
+      (match right
+        [(LaneBuffer) true]
+        [_ false])]))
+
+(define (compiler-backend-preservation-key-bytes
+  [key : (& CompilerBackendPreservationKey)]) : i64
+  (match key
+    [(EmergencyRegister _) 64]
+    [(ParallelCopySlot _) 8]
+    [(ParallelCopyRegister _) 8]
+    [(FixedStaging _ bytes) bytes]))
+
+(define (compiler-backend-preservation-key-equal?
+  [left : (& CompilerBackendPreservationKey)]
+  [right : (& CompilerBackendPreservationKey)]) : bool
+  (match left
+    [(EmergencyRegister a)
+      (match right
+        [(EmergencyRegister b) (= a b)]
+        [_ false])]
+    [(ParallelCopySlot a)
+      (match right
+        [(ParallelCopySlot b) (= a b)]
+        [_ false])]
+    [(ParallelCopyRegister a)
+      (match right
+        [(ParallelCopyRegister b) (= a b)]
+        [_ false])]
+    [(FixedStaging a _)
+      (match right
+        [(FixedStaging b _) (compiler-backend-fixed-staging-key-equal? a b)]
+        [_ false])]))
+
+;; Preservation resources follow all scalar and group-fragment IDs. The
+;; emitting authority supplies a typed key, never a frame displacement. A
+;; parallel-copy slot is one eight-byte word; an emergency save reserves the
+;; widest physical bank. Slot reuse at another IR site cannot alias either.
+(define (compiler-backend-home-preservation!
+  [plan : (&mut plan CompilerBackendHomePlan)]
+  [function : i64]
+  [block : i64]
+  [site : i64]
+  [key : CompilerBackendPreservationKey]) : CompilerBackendPlannedHomeResult
+  (unless
+    (and
+      (= function plan.function)
+      (>= block 0)
+      (>= site 0)
+      (< site (array-length plan.sites)))
+    (return (Err "stack traffic: preservation site is unbound")))
+  (unless
+    (= block (array-ref plan.sites site).block)
+    (return (Err "stack traffic: preservation block differs")))
+  (let
+    [normalized : CompilerBackendPreservationKey
+      (match (& key)
+        [(FixedStaging part bytes)
+          (unless
+            (and
+              (or (= bytes 32) (= bytes 64))
+              (match part
+                [(Operand index) (and (>= index 0) (< index 2))]
+                [(Result index) (and (>= index 0) (< index 4))]
+                [(Permutation) true]
+                [(GatherMask) (= bytes 32)]
+                [(GatherIndex) true]
+                [(GatherResult) true]
+                [(ShuffleSelector index) (and (>= index 0) (< index 2))]
+                [(ShuffleIndex) true]
+                [(ShuffleSource) true]
+                [(LaneBuffer) (= bytes 32)]))
+            (return (Err "stack traffic: invalid fixed staging authority")))
+          (FixedStaging (clone part) bytes)]
+        [(ParallelCopySlot slot)
+          (when
+            (< slot 0)
+            (return (Err "stack traffic: invalid parallel-copy slot")))
+          (ParallelCopySlot slot)]
+        [(ParallelCopyRegister reg)
+          (unless
+            (and
+              (>= reg abi.compiler-reg-id-rax)
+              (<= reg abi.compiler-reg-id-r15)
+              (!= reg abi.compiler-reg-id-rsp)
+              (!= reg abi.compiler-reg-id-rbp))
+            (return
+              (Err "stack traffic: invalid parallel-copy preservation register")))
+          (ParallelCopyRegister reg)]
+        [(EmergencyRegister reg)
+          (unless
+            (or
+              (and
+                (>= reg abi.compiler-reg-id-rax)
+                (<= reg abi.compiler-reg-id-r15)
+                (!= reg abi.compiler-reg-id-rsp)
+                (!= reg abi.compiler-reg-id-rbp))
+              (abi.compiler-abi-xmm-register-id? reg)
+              (abi.compiler-abi-vector-register-id? reg))
+            (return
+              (Err "stack traffic: invalid emergency preservation register")))
+          (EmergencyRegister (abi.compiler-abi-register-ownership-id reg))])]
+    (unless
+      (and
+        (>= plan.preservations.len 0)
+        (<= plan.preservations.len (array-length plan.preservations.slots)))
+      (return (Err "stack traffic: invalid preservation home extent")))
+    (let
+      [index : i64 0]
+      [found : i64 -1]
+      [count : i64 (array-length plan.bytes)]
+      (while (< index plan.preservations.len)
+        (let
+          [entry : CompilerBackendPreservationHome
+            (clone (array-ref plan.preservations.slots index))]
+          (when
+            (and
+              (= entry.site site)
+              (compiler-backend-preservation-key-equal?
+                (& entry.key)
+                (& normalized)))
+            (when
+              (>= found 0)
+              (return
+                (Err "stack traffic: duplicate preservation home authority")))
+            (unless
+              (=
+                (compiler-backend-preservation-key-bytes (& entry.key))
+                (compiler-backend-preservation-key-bytes (& normalized)))
+              (return (Err "stack traffic: preservation capacity changed")))
+            (set! found index)))
+        (+= index 1))
+      (let
+        [ordinal : i64
+          (if (>= found 0)
+            found
+            plan.preservations.len)]
+        (when
+          (> count (/ (- 9223372036854775807 ordinal) 3))
+          (return (Err "stack traffic: preservation home identity overflows")))
+        (when
+          (< found 0)
+          (compiler-backend-preservation-home-list-push
+            (&mut plan.preservations)
+            (CompilerBackendPreservationHome site (clone normalized))))
+        (Ok
+          (CompilerBackendLogicalHome
+            (+ (* count 3) ordinal)
+            (compiler-backend-preservation-key-bytes (& normalized))))))))
+
+;; Phi copies execute on the predecessor edge, but read the selected target
+;; Phi input and define its result. The marshaller supplies its actual target
+;; entry ordinal; matching a destination in any other block is not authority.
+(define (compiler-backend-home-phi-site
+  [plan : (& plan CompilerBackendHomePlan)]
+  [target-site : i64]
+  [from-block : i64]
+  [dst : i64]) : CompilerBackendHomePhiSiteResult
+  (unless
+    (and
+      (>= target-site 0)
+      (< target-site (array-length plan.sites))
+      (= (array-ref plan.sites target-site).instruction 0))
+    (return (Err "stack traffic: phi target entry is unbound")))
+  (let
+    [target : i64 (array-ref plan.sites target-site).block]
+    [found-site : i64 -1]
+    [found-use : i64 -1]
+    [cursor : i64 target-site]
+    [done : bool false]
+    (while (and (not done) (< cursor (array-length plan.sites)))
+      (let
+        [site : (& plan CompilerBackendHomeSite)
+          (& (array-ref plan.sites cursor))]
+        (if (!= site.block target)
+          (set! done true)
+          (match (& site.phi-inputs)
+            [(None) (set! done true)]
+            [(Inputs inputs)
+              (match (compiler-backend-home-resolve
+                (& site.bindings)
+                dst
+                (Definition))
+                [(Err _) unit]
+                [(Ok _)
+                  (when
+                    (>= found-site 0)
+                    (return
+                      (Err
+                        "stack traffic: phi destination has multiple original sites")))
+                  (set! found-site cursor)
+                  (for [index (iterator.range 0 inputs.len)]
+                    (when
+                      (=
+                        (ir.compiler-ir-phi-input-seq-ref inputs index).label
+                        from-block)
+                      (when
+                        (>= found-use 0)
+                        (return
+                          (Err "stack traffic: phi predecessor is ambiguous")))
+                      (set! found-use index)))])]))
+        (+= cursor 1)))
+    (if (and (>= found-site 0) (>= found-use 0))
+      (Ok found-site found-use)
+      (Err "stack traffic: phi edge has no original operand authority"))))

@@ -879,8 +879,11 @@ across record deletion, synthesized-line newlines and actual cold-stub movement
 with exact ordinary-output parity. Windows SEH insertion retains the actual
 save and following body; malformed saves reject. Tail cloning retains one
 source identity at distinct final positions while branch splicing preserves
-all retained ranges. Access-changing rewrites, remaining traffic owners and
-complete report acceptance are distinct.
+all retained ranges. Actual RMW-2/RMW-3 folds check exact uncaptured-output
+parity, distinct load/store homes at one folded operand and the synthesized
+reload's new read of the stored home. Wrong-direction and read-only derivation
+requests reject without orphan access records. Remaining access-changing
+rewrites, traffic owners and complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

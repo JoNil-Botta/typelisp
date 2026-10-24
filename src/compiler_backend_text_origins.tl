@@ -469,6 +469,134 @@
         (return (Err "stack traffic: address rewrite needs one exact origin")))
       (compiler-backend-text-origins-mark capture replacement origin.token))))
 
+;; A folded memory operand performs the retained read and then the retained
+;; write, even when coloring gave different logical homes identical addresses.
+;; Overlapping byte spans here are deliberate; tokens remain distinct facts.
+(define (compiler-backend-text-origins-merge-accesses
+  [capture : CompilerBackendTextOrigins]
+  [read : String]
+  [write : String]
+  [replacement : String]) : CompilerBackendOriginTextResult
+  (when (= capture.storage 0) (return (Ok replacement)))
+  (when
+    (and
+      (= (array-length (compiler-backend-text-origins-find capture (& read))) 0)
+      (=
+        (array-length (compiler-backend-text-origins-find capture (& write)))
+        0))
+    (return (Ok replacement)))
+  (let
+    [left : String
+      (try
+        (compiler-backend-text-origins-retarget
+          capture
+          read
+          (string.copy (& replacement))))]
+    [right : String
+      (try
+        (compiler-backend-text-origins-retarget
+          capture
+          write
+          (string.copy (& replacement))))]
+    [reads : (__tl_dyn-array CompilerBackendTextOrigin)
+      (compiler-backend-text-origins-find capture (& left))]
+    [writes : (__tl_dyn-array CompilerBackendTextOrigin)
+      (compiler-backend-text-origins-find capture (& right))]
+    (when
+      (= (array-ref reads 0).token (array-ref writes 0).token)
+      (return
+        (Err "stack traffic: folded accesses need distinct source tokens")))
+    (let
+      [read-token : i64 (array-ref reads 0).token]
+      [write-token : i64 (array-ref writes 0).token]
+      [accesses : CompilerBackendStackAccessOriginList
+        (compiler-backend-text-origins-accesses capture)]
+      (when
+        (or
+          (< read-token 0)
+          (>= read-token accesses.len)
+          (< write-token 0)
+          (>= write-token accesses.len))
+        (return (Err "stack traffic: folded token has no typed access")))
+      (let
+        [left : (& accesses CompilerBackendStackAccessOrigin)
+          (& (array-ref accesses.slots read-token))]
+        [right : (& accesses CompilerBackendStackAccessOrigin)
+          (& (array-ref accesses.slots write-token))]
+        (unless
+          (and
+            (match (& left.access)
+              [(Read) true]
+              [_ false])
+            (match (& right.access)
+              [(Write) true]
+              [_ false])
+            (= left.function.value right.function.value)
+            (= left.access-bytes right.access-bytes))
+          (return (Err "stack traffic: incompatible folded read/write access")))))
+    (in-arena
+      (arena.Arena capture.owner)
+      (let
+        [origins : (__tl_dyn-array CompilerBackendTextOrigin)
+          (__tl_make-array CompilerBackendTextOrigin 2)]
+        (set!
+          (array-ref origins 0)
+          (compiler-backend-text-origin-shift (& (array-ref reads 0)) 0))
+        (set!
+          (array-ref origins 1)
+          (compiler-backend-text-origin-shift (& (array-ref writes 0)) 0))
+        (Ok
+          (compiler-backend-text-origins-publish
+            capture
+            (string.copy (& replacement))
+            origins))))))
+
+;; A synthesized readback reads the STORE's logical home. Reusing the old
+;; load's token would silently change that identity across a colored overlap.
+(define (compiler-backend-text-origins-readback
+  [capture : CompilerBackendTextOrigins]
+  [written : (& written str)]
+  [replacement : String]) : CompilerBackendOriginTextResult
+  (when (= capture.storage 0) (return (Ok replacement)))
+  (let
+    [spans : (__tl_dyn-array CompilerBackendTextOrigin)
+      (compiler-backend-text-origins-find capture written)]
+    (when (= (array-length spans) 0) (return (Ok replacement)))
+    (unless
+      (and
+        (= (array-length spans) 1)
+        (= (array-ref spans 0).start 0)
+        (= (array-ref spans 0).end (string.string-length written)))
+      (return (Err "stack traffic: readback needs one exact stored operand")))
+    (let
+      [token : i64 (array-ref spans 0).token]
+      [accesses : CompilerBackendStackAccessOriginList
+        (compiler-backend-text-origins-accesses capture)]
+      (when
+        (or (< token 0) (>= token accesses.len))
+        (return (Err "stack traffic: readback token has no typed access")))
+      (let
+        [origin : (& accesses CompilerBackendStackAccessOrigin)
+          (& (array-ref accesses.slots token))]
+        (unless
+          (match (& origin.access)
+            [(Write) true]
+            [(ReadWrite) true]
+            [_ false])
+          (return
+            (Err "stack traffic: readback source does not write its home")))
+        (compiler-backend-text-origins-record
+          capture
+          (CompilerBackendStackAccessOrigin
+            (clone origin.function)
+            origin.block
+            origin.home
+            (clone origin.owner)
+            (clone origin.bank)
+            origin.access-bytes
+            (Read))
+          replacement)))))
+
 ;; Match stdlib.string.replace's FIRST-occurrence semantics. Whole removed
 ;; annotations disappear; newly inserted text supplies its own identities.
 ;; A partial operand match cannot silently inherit the old annotation.

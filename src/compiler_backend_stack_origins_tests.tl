@@ -717,3 +717,193 @@
 (test
   backend-stack-origins-survive-seh-and-tail-clone
   (backend-stack-origins-splice-clone-test))
+
+(define (backend-stack-origins-rmw-case [live? : bool]) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [plain-state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [stream : backend.CompilerBackendStreamState
+      (backend.compiler-backend-state-stream-state state)]
+    [plain-stream : backend.CompilerBackendStreamState
+      (backend.compiler-backend-state-stream-state plain-state)]
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (let
+      [capture : origins.CompilerBackendTextOrigins
+        (backend.compiler-backend-state-stack-text-origins state)]
+      [read : String
+        (backend.compiler-backend-origin-invariant-text
+          (origins.compiler-backend-text-origins-record
+            capture
+            (origins.CompilerBackendStackAccessOrigin
+              (ir.compiler-ir-symbol-typed-id 0)
+              2
+              7
+              (Allocator)
+              (General)
+              8
+              (Read))
+            "-8(%rsp)"))]
+      [write : String
+        (backend.compiler-backend-origin-invariant-text
+          (origins.compiler-backend-text-origins-record
+            capture
+            (origins.CompilerBackendStackAccessOrigin
+              (ir.compiler-ir-symbol-typed-id 0)
+              2
+              8
+              (Allocator)
+              (General)
+              8
+              (Write))
+            "-8(%rsp)"))]
+      [source : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "f:\n    movq "
+          read
+          ", %r10\n    addq $1, %r10\n    movq %r10, "
+          write
+          "\n"
+          (if live?
+            "    movq %r10, %rax\n    ret\n"
+            "    xorq %r10, %r10\n    ret\n"))]
+      [plain-records : backend.CompilerBackendPeepholeLineVec
+        (backend.compiler-backend-peephole-asm-once-records
+          plain-state
+          plain-stream
+          (string.copy (& source))
+          false)]
+      [_plain-fold : unit
+        (backend.compiler-backend-peephole-rmw-fold-candidates!
+          plain-state
+          plain-stream
+          (owned_view.compiler-owned-shared-view plain-records))]
+      [expected : String
+        (backend.compiler-backend-peephole-records-render
+          plain-records
+          (origins.compiler-backend-text-origins-disabled))]
+      [records : backend.CompilerBackendPeepholeLineVec
+        (backend.compiler-backend-peephole-asm-once-records
+          state
+          stream
+          source
+          false)]
+      [_fold : unit
+        (backend.compiler-backend-peephole-rmw-fold-candidates!
+          state
+          stream
+          (owned_view.compiler-owned-shared-view records))]
+      [actual : String
+        (backend.compiler-backend-peephole-records-render records capture)]
+      [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+        (origins.compiler-backend-text-origins-find capture (& actual))]
+      [accesses : origins.CompilerBackendStackAccessOriginList
+        (origins.compiler-backend-text-origins-accesses capture)]
+      (test.assert-string-eq
+        actual
+        expected
+        "RMW capture has exact ordinary output")
+      (test.assert-i64-eq
+        (backend.compiler-backend-string-count
+          (& actual)
+          "    addq $1, -8(%rsp)\n")
+        1
+        "actual fold occurred")
+      (test.assert-i64-eq
+        (array-length spans)
+        (if live?
+          3
+          2)
+        "folded read/write plus optional readback")
+      (test.assert-i64-eq
+        (array-ref spans 0).token
+        0
+        "fold retains original read token")
+      (test.assert-i64-eq
+        (array-ref spans 1).token
+        1
+        "fold retains distinct original store token")
+      (test.assert-i64-eq
+        (array-ref spans 0).start
+        (array-ref spans 1).start
+        "one operand retains two logical accesses")
+      (test.assert-i64-eq
+        (array-ref spans 0).end
+        (array-ref spans 1).end
+        "overlapping spans are exact")
+      (test.assert-i64-eq
+        (array-ref accesses.slots 0).home
+        7
+        "load home remains distinct")
+      (test.assert-i64-eq
+        (array-ref accesses.slots 1).home
+        8
+        "store home remains distinct")
+      (test.assert-i64-eq
+        accesses.len
+        (if live?
+          3
+          2)
+        "only actual generated reload publishes a new access")
+      (when
+        live?
+        (test.assert-i64-eq
+          (array-ref spans 2).token
+          2
+          "readback has a new final access token")
+        (test.assert-i64-eq
+          (array-ref accesses.slots 2).home
+          8
+          "readback reads store home rather than old load home")
+        (test.assert-true
+          (match (& (array-ref accesses.slots 2).access)
+            [(Read) true]
+            [_ false])
+          "readback is a read")
+        (test.assert-true
+          (< (array-ref spans 1).end (array-ref spans 2).start)
+          "readback follows folded write"))
+      (test.assert-true
+        (match (origins.compiler-backend-text-origins-readback
+          capture
+          (& read)
+          "-8(%rsp)")
+          [(Err _) true]
+          [_ false])
+        "read-only origin cannot authorize readback")
+      (test.assert-true
+        (match (origins.compiler-backend-text-origins-merge-accesses
+          capture
+          (owned_view.compiler-owned-shared-view write)
+          (owned_view.compiler-owned-shared-view read)
+          "-8(%rsp)")
+          [(Err _) true]
+          [_ false])
+        "wrong read/write directions reject")
+      (test.assert-true
+        (match (origins.compiler-backend-text-origins-merge-accesses
+          capture
+          read
+          write
+          "-8(%rsp)")
+          [(Ok _) true]
+          [_ false])
+        "correct ordered source pair remains reusable")
+      (test.assert-i64-eq
+        (origins.compiler-backend-text-origins-accesses capture).len
+        accesses.len
+        "refused metadata does not publish orphan accesses"))
+    (backend.compiler-backend-peephole-records-retire! stream)
+    (backend.compiler-backend-peephole-records-retire! plain-stream)
+    (backend.compiler-backend-state-release-final-arenas! state)
+    (backend.compiler-backend-state-release-final-arenas! plain-state)))
+
+(define (backend-stack-origins-rmw-test) : unit
+  (backend-stack-origins-rmw-case false)
+  (backend-stack-origins-rmw-case true))
+
+(test
+  backend-stack-origins-rmw-keeps-logical-homes
+  (backend-stack-origins-rmw-test))

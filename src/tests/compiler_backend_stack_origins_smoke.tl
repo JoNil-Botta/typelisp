@@ -5,4 +5,5 @@
   (fixtures.backend-stack-origins-rebase-test)
   (fixtures.backend-stack-origins-final-render-test)
   (fixtures.backend-stack-origins-splice-clone-test)
+  (fixtures.backend-stack-origins-rmw-test)
   42)

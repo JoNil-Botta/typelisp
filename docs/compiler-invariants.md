@@ -654,6 +654,13 @@ transport annotations from surviving source ranges, and dropped records
 transport none. Cold outlining appends annotations in its actual output order;
 its synthesized branch/label bytes also count toward the final extent check.
 These transfers do not infer new memory accesses or finish the census audit.
+An RMW fold retains separate ordered read and write tokens at the same emitted
+operand, including distinct logical homes that share one physical address.
+Their typed source records must prove compatible access directions, function
+and width. If the value remains live, the synthesized reload derives a new
+read from the stored home, rather than reusing the original load's home.
+Read-only or unbound tokens cannot authorize that readback. These are access
+semantics; allocator warning policy still belongs to the downstream consumer.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

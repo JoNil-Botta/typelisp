@@ -89051,21 +89051,41 @@ tl_shared_object_init:
 
 ;; The folded line's text, built from the three records' own bytes.
 (define (compiler-backend-peephole-rmw-folded-line
-  [op-src : String]
+  [op-src : (& op-src str)]
   [op-ms : i64]
   [op-me : i64]
   [src-start : i64]
   [src-end : i64]
-  [mem-src : String]
+  [mem-src : (& mem-src str)]
   [mem-start : i64]
   [mem-end : i64]
-  [two-operand? : bool]) : String
+  [two-operand? : bool]
+  [written : String]
+  [capture : text_origins.CompilerBackendTextOrigins]) : String
   (let
     [mnemonic : String (string.substring op-src op-ms (- op-me op-ms))]
-    [mem : String (string.substring mem-src mem-start (- mem-end mem-start))]
+    [mem : String
+      (if (= capture.storage 0)
+        (string.substring mem-src mem-start (- mem-end mem-start))
+        (let
+          [read : String
+            (compiler-backend-origin-invariant-text
+              (text_origins.compiler-backend-text-origins-slice
+                capture
+                mem-src
+                mem-start
+                (- mem-end mem-start)))]
+          (compiler-backend-origin-invariant-text
+            (text_origins.compiler-backend-text-origins-merge-accesses
+              capture
+              (compiler-backend-global-shared-view read)
+              written
+              read))))]
     (if two-operand?
-      (str_cat.str-cat
-        (str_cat.str-cat
+      (text_origins.compiler-backend-text-origins-cat
+        capture
+        (text_origins.compiler-backend-text-origins-cat
+          capture
           "    "
           mnemonic
           " "
@@ -89073,7 +89093,12 @@ tl_shared_object_init:
         ", "
         mem
         "")
-      (str_cat.str-cat "    " mnemonic " " mem))))
+      (text_origins.compiler-backend-text-origins-cat
+        capture
+        "    "
+        mnemonic
+        " "
+        mem))))
 
 ;; Fold every triple the walk recognized in one group's record stream. The walk
 ;; recorded the OP's record index; the load is the record before it and the
@@ -89108,6 +89133,8 @@ tl_shared_object_init:
   [stream : CompilerBackendStreamState]
   [v : CompilerBackendPeepholeLineVec]) : unit
   (let
+    [origin-capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins backend-state)]
     [cands : (__tl_dyn-array i64) v.rmw-cands]
     [cand-count : i64 v.rmw-cand-len]
     [recs : (__tl_dyn-array CompilerBackendPeepholeLineRecord) v.lines]
@@ -89297,10 +89324,15 @@ tl_shared_object_init:
                 ;; the triple did (`movq` writes no flags). The text of
                 ;; the reload is taken BEFORE the load's record is
                 ;; overwritten.
-                [reload-text : String
-                  (if dead?
+                [written : String
+                  (if (= origin-capture.storage 0)
                     ""
-                    (string.substring lrec.src lstart (- lend lstart)))]
+                    (compiler-backend-origin-invariant-text
+                      (text_origins.compiler-backend-text-origins-slice
+                        origin-capture
+                        (& srec.src)
+                        (+ scomma 2)
+                        (- send (+ scomma 2)))))]
                 [store-newline? : bool
                   (compiler-backend-peephole-record-newline? srec)]
                 [load-newline? : bool
@@ -89315,7 +89347,36 @@ tl_shared_object_init:
                     lrec.src
                     lops
                     lcomma
-                    (= alu-kind 1))]
+                    (= alu-kind 1)
+                    (compiler-backend-global-shared-view written)
+                    origin-capture)]
+                [reload-text : String
+                  (if dead?
+                    ""
+                    (if (= origin-capture.storage 0)
+                      (string.substring lrec.src lstart (- lend lstart))
+                      (let
+                        [original : String
+                          (compiler-backend-origin-invariant-text
+                            (text_origins.compiler-backend-text-origins-slice
+                              origin-capture
+                              (& lrec.src)
+                              lstart
+                              (- lend lstart)))]
+                        [memory : String
+                          (string.substring lrec.src lops (- lcomma lops))]
+                        [readback : String
+                          (compiler-backend-origin-invariant-text
+                            (text_origins.compiler-backend-text-origins-readback
+                              origin-capture
+                              (& written)
+                              (compiler-backend-global-shared-view memory)))]
+                        (compiler-backend-origin-invariant-text
+                          (text_origins.compiler-backend-text-origins-replace
+                            origin-capture
+                            original
+                            memory
+                            readback)))))]
                 [line : CompilerBackendPeepholeLine
                   (compiler-backend-peephole-owned-line
                     backend-state

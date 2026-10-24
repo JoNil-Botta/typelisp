@@ -31046,7 +31046,7 @@
 ;: a different block. This asserts the numbering itself.
 (define (opt-cfg-index-walk-order-ids-ok?
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [index : opt.OptCfgIndex]
+  [index : (& index opt.OptCfgIndex)]
   [position : i64]) : bool
   (match blocks
     [(slice) true]
@@ -31062,10 +31062,155 @@
 (define (opt-cfg-index-numbering-ok?) : bool
   (let
     [blocks : ir.CompilerIrBlockList (opt-cfg-switch-blocks)]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
     (opt-cfg-index-walk-order-ids-ok?
       (ir.compiler-ir-block-list-view blocks)
-      (opt.opt-cfg-index-build (& blocks))
+      (& index)
       0)))
+
+;; The integer lookup must not depend on live global stamps or a particular
+;; label spelling. Synthetic numeric labels also exercise high bits without
+;; growing the global spelling pool to those ids.
+(define (opt-cfg-label-index-property [count : i64] [stride : i64] [base : i64]) : bool
+  (let
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    (for [id (iterator.range 0 count)]
+      (let
+        [label : i64
+          (+
+            base
+            (*
+              stride
+              (if (and (> count 1) (= id (- count 1)))
+                0
+                (% (* id 17) count))))]
+        (set! (array-ref labels id) label)
+        (ir.compiler-ir-block-builder-push!
+          (&mut builder)
+          (Block label (irt.instrs "return 0")))))
+    (let
+      [blocks : ir.CompilerIrBlockList
+        (ir.compiler-ir-block-builder-to-list builder)]
+      [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+      [_other : opt.OptCfgIndex
+        (opt.opt-cfg-index-build
+          (& (irt.blocks "other:
+                        return 1")))]
+      (for [query (iterator.range -2 (+ count 2))]
+        (let
+          [label : i64
+            (cond
+              [(= query -2) -9223372036854775808]
+              [(= query -1) 9223372036854775807]
+              [else (+ base (* stride query))])]
+          [expected : i64 -1]
+          [actual : i64
+            (match (opt.opt-cfg-index-id (& index) label)
+              [(Some id) id]
+              [(None) -1])]
+          (for [id (iterator.range 0 count)]
+            (when
+              (and (< expected 0) (= (array-ref labels id) label))
+              (set! expected id)))
+          (unless (= actual expected) (return false))))
+      true)))
+
+(test
+  cfg-label-index-matches-first-block-after-another-build
+  (for [power (iterator.range 0 7)]
+    (for [edge (iterator.range -1 2)]
+      (let
+        [count : i64 (+ (shl 1 power) edge)]
+        (test.assert-true
+          (and
+            (opt-cfg-label-index-property count 1 1)
+            (opt-cfg-label-index-property count 2048 1073741824)
+            (opt-cfg-label-index-property count 65536 4611686018427387904))
+          "empty, sparse, reordered and duplicate labels retain first-match lookup and bounded misses")))))
+
+(test
+  cfg-label-index-survives-source-pool-reset-and-reuse
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "cfg-reset-entry:
+                     jump cfg-reset-exit
+                   cfg-reset-exit:
+                     return 0")]
+    [other : ir.CompilerIrBlockList
+      (irt.blocks
+        "cfg-reset-exit:
+                     return 1
+                   cfg-reset-entry:
+                     return 2")]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+    [ambient : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [_install : unit (ci.intern-compat-state-install! state)]
+    [kept : i64 (ci.intern-source-slice "kept" 0 4)]
+    [discarded : i64 (ci.intern-source-slice "discard" 0 7)]
+    [_partial : unit (ci.intern-reset-to! 1)]
+    [replacement : i64 (ci.intern-source-slice "replacement" 0 11)]
+    [partial-ok : bool
+      (and
+        (= discarded replacement)
+        (opt-cfg-index-walk-order-ids-ok?
+          (ir.compiler-ir-block-list-view (& blocks))
+          index
+          0))]
+    [_full : unit (ci.intern-reset!)]
+    [reused : i64 (ci.intern-source-slice "reused" 0 6)]
+    [_other : opt.OptCfgIndex (opt.opt-cfg-index-build (& other))]
+    [full-ok : bool
+      (and
+        (= kept reused)
+        (opt-cfg-index-walk-order-ids-ok?
+          (ir.compiler-ir-block-list-view (& blocks))
+          index
+          0)
+        (match (opt.opt-cfg-index-id (& index) -1)
+          [(None) true]
+          [(Some _) false]))]
+    [_capture : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut state))]
+    [_restore : unit (ci.intern-compat-state-install! ambient)]
+    [_release : unit
+      (ci.intern-compat-state-release-structural-generations! (&mut state))]
+    [_destroy : unit
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena (& state))))]
+    (test.assert-true
+      (and partial-ok full-ok)
+      "a live CFG index retains integer-label lookup across source-pool reset, slot reuse and another index build")))
+
+(test
+  cfg-label-index-sparse-probes-stay-short
+  (for [power (iterator.range 4 7)]
+    (let
+      [count : i64 (shl 1 power)]
+      [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [slots : (__tl_dyn-array i64)
+        (__tl_make-array i64 (opt.opt-cfg-index-id-map-capacity count))]
+      [mask : i64 (- (array-length slots) 1)]
+      [probes : i64 0]
+      (for [id (iterator.range 0 count)]
+        (set! (array-ref labels id) (+ 11 (* id 2048))))
+      (opt.opt-cfg-index-fill-id-map! (&mut slots) (& labels) count)
+      (for [id (iterator.range 0 count)]
+        (let
+          [slot : i64 (opt.opt-cfg-index-id-slot (array-ref labels id) mask)]
+          [found : bool false]
+          (while (not found)
+            (+= probes 1)
+            (if (= (array-ref slots slot) (+ id 1))
+              (set! found true)
+              (set! slot (bit-and (+ slot 1) mask))))))
+      (test.assert-true
+        (<= probes (* count 3))
+        "half-full sparse label tables avoid a long shared probe chain"))))
 
 ;; The borrowed lookups read the function's own list, which the index numbers in
 ;; walk order: a label the index knows finds that label's block, and an unknown

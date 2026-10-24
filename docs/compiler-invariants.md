@@ -647,6 +647,13 @@ annotations. Frame/FPO rendering copies exact source ranges and retargets each
 annotated address explicitly; rejected frame audits return the original text
 and identity. Distinct logical homes never merge when rebased addresses match.
 The ordinary uncaptured route retains its borrowed text builder.
+Windows save insertion preserves the actual recognized save's range, not its
+recognition template. Tail clones retain source identities at distinct final
+positions. The compact line records keep their existing layout: final blits
+transport annotations from surviving source ranges, and dropped records
+transport none. Cold outlining appends annotations in its actual output order;
+its synthesized branch/label bytes also count toward the final extent check.
+These transfers do not infer new memory accesses or finish the census audit.
 A prepared job scans its owned expression pool once for the six source forms.
 The AST owner walks stable segments and reads only live row tags; no row view
 survives a pool change or handoff.

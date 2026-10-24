@@ -874,8 +874,13 @@ semantics, empty needles and partial operand cuts. Source-range buffer checks
 are transactional. Actual vector factory operands pass both audited frame
 modes with exact untracked-output parity, distinct equal-offset home tokens,
 blank/label lines and no terminal newline; a syscall refusal retains the
-original text and annotations. Final-stream rewrites, remaining traffic owners
-and complete report acceptance are distinct.
+original text and annotations. Final-render fixtures check source identities
+across record deletion, synthesized-line newlines and actual cold-stub movement
+with exact ordinary-output parity. Windows SEH insertion retains the actual
+save and following body; malformed saves reject. Tail cloning retains one
+source identity at distinct final positions while branch splicing preserves
+all retained ranges. Access-changing rewrites, remaining traffic owners and
+complete report acceptance are distinct.
 
 The `compiler-lower-spmd-decisions-*` inline tests inspect final typed source
 facts, including native and scalar routes, explicit scalar operations, rejected

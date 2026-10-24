@@ -5,6 +5,8 @@
 (import compiler_ast_types as ast)
 (import compiler_stack_traffic as traffic)
 (import compiler_intern as ci)
+(import compiler_abi as cabi)
+(import compiler_diagnostic as diagnostic)
 (import compiler_owned_view as owned_view)
 (import stdlib.test)
 (import stdlib.string)
@@ -426,3 +428,292 @@
 (test
   backend-stack-origins-survive-frame-rebase
   (backend-stack-origins-rebase-test))
+
+(define (backend-stack-origins-final-render-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [stream : backend.CompilerBackendStreamState
+      (backend.compiler-backend-state-stream-state state)]
+    [capture : origins.CompilerBackendTextOrigins
+      (origins.compiler-backend-text-origins-new)]
+    [cold-operand : String
+      (backend.compiler-backend-origin-invariant-text
+        (origins.compiler-backend-text-origins-mark capture "-8(%rsp)" 101))]
+    [hot-operand : String
+      (backend.compiler-backend-origin-invariant-text
+        (origins.compiler-backend-text-origins-mark capture "-8(%rsp)" 102))]
+    [cold : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        "    vmovups %ymm14, "
+        cold-operand
+        "\n")]
+    [hot : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        "    vmovups "
+        hot-operand
+        ", %ymm14\n")]
+    [body : String
+      (origins.compiler-backend-text-origins-cat
+        capture
+        ".text\n.globl f\n    .type f,@function\nf:\n    cmpq %r9, %rdi\n    jb .Lf_ok\n"
+        cold
+        "    call tl_oob_abort\n.Lf_ok:\n"
+        hot
+        "    ret\n    .size f, . - f\n")]
+    [records : backend.CompilerBackendPeepholeLineVec
+      (backend.compiler-backend-peephole-asm-once-records
+        state
+        stream
+        body
+        false)]
+    [plan : backend.CompilerBackendColdPlan
+      (backend.compiler-backend-cold-plan records)]
+    [expected : String
+      (backend.compiler-backend-peephole-records-render
+        (owned_view.compiler-owned-shared-view records)
+        (origins.compiler-backend-text-origins-disabled))]
+    [actual : String
+      (backend.compiler-backend-peephole-records-render records capture)]
+    [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+      (origins.compiler-backend-text-origins-find capture (& actual))]
+    (test.assert-i64-eq plan.stubs 1 "actual cold movement planned")
+    (test.assert-string-eq
+      actual
+      expected
+      "captured cold rendering preserves bytes")
+    (test.assert-i64-eq
+      (array-length spans)
+      2
+      "both moved and retained operands")
+    (test.assert-i64-eq
+      (array-ref spans 0).token
+      102
+      "hot access comes first after movement")
+    (test.assert-i64-eq
+      (array-ref spans 1).token
+      101
+      "cold access follows hot return")
+    (for [index (iterator.range 0 2)]
+      (test.assert-string-eq
+        (string.copy
+          (string.substring-view
+            (& actual)
+            (array-ref spans index).start
+            (- (array-ref spans index).end (array-ref spans index).start)))
+        "-8(%rsp)"
+        "full final byte coordinate"))
+    (backend.compiler-backend-peephole-records-retire! stream)
+    (let
+      [source : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "plain:\n"
+          cold
+          hot
+          "    ret\n")]
+      [records : backend.CompilerBackendPeepholeLineVec
+        (backend.compiler-backend-peephole-asm-once-records
+          state
+          stream
+          source
+          false)]
+      [replacement : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "    vmovups "
+          hot-operand
+          ", %ymm13")]
+      [owned : backend.CompilerBackendPeepholeLine
+        (backend.compiler-backend-peephole-owned-line
+          state
+          stream
+          replacement
+          true)]
+      (test.assert-i64-eq records.len 4 "label/two accesses/return fixture")
+      (set! (array-ref records.live 1) 0)
+      (set!
+        (array-ref records.lines 2)
+        (backend.compiler-backend-peephole-line-record owned))
+      (let
+        [actual : String
+          (backend.compiler-backend-peephole-records-render records capture)]
+        [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+          (origins.compiler-backend-text-origins-find capture (& actual))]
+        (test.assert-string-eq
+          actual
+          "plain:\n    vmovups -8(%rsp), %ymm13\n    ret\n"
+          "deletion and owned-line newline are exact")
+        (test.assert-i64-eq
+          (array-length spans)
+          1
+          "deleted access leaves no final event")
+        (test.assert-i64-eq
+          (array-ref spans 0).token
+          102
+          "owned line retains explicit token"))
+      (backend.compiler-backend-peephole-records-retire! stream))
+    (origins.compiler-backend-text-origins-release! (&mut capture))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-follow-final-record-order
+  (backend-stack-origins-final-render-test))
+
+(define (backend-stack-origins-splice-clone-test) : unit
+  (let
+    [state : backend.CompilerBackendState
+      (backend.compiler-backend-state-new (ci.intern-compat-state-new))]
+    [assignment : regalloc.CompilerRegAssignment
+      (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r12))]
+    [homes : regalloc.CompilerRegAssignmentTable
+      (regalloc.compiler-reg-assignments-prepend
+        (& assignment)
+        (regalloc.compiler-reg-assignment-table-empty))]
+    (backend.compiler-backend-function-state-set-bool!
+      (backend.compiler-backend-state-function-state state)
+      backend.compiler-backend-function-bool-current-fn-win64
+      true)
+    (backend.compiler-backend-state-stack-origins-begin! state)
+    (let
+      [capture : origins.CompilerBackendTextOrigins
+        (backend.compiler-backend-state-stack-text-origins state)]
+      [save : String
+        (backend.compiler-backend-origin-invariant-text
+          (origins.compiler-backend-text-origins-mark capture "-16(%rbp)" 111))]
+      [read : String
+        (backend.compiler-backend-origin-invariant-text
+          (origins.compiler-backend-text-origins-mark capture "-64(%rbp)" 112))]
+      [hot : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "    vmovups "
+          read
+          ", %ymm14\n")]
+      [body : String
+        (origins.compiler-backend-text-origins-cat
+          capture
+          "    movq %r12, "
+          save
+          "\n"
+          hot)]
+      [described : String
+        (match (backend.compiler-backend-windows-framed-save-splice
+          (& body)
+          0
+          ""
+          (owned_view.compiler-owned-shared-view homes)
+          1
+          64
+          "f"
+          (diagnostic.compiler-diagnostic-at-start "" "")
+          state)
+          [(Ok text) text]
+          [(Err _) (io.panic "valid captured Windows save rejected")])]
+      [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+        (origins.compiler-backend-text-origins-find capture (& described))]
+      (test.assert-string-eq
+        described
+        "    movq %r12, -16(%rbp)\n    .seh_savereg %r12, 48\n    .seh_endprologue\n    vmovups -64(%rbp), %ymm14\n"
+        "SEH insertion preserves actual source save and body bytes")
+      (test.assert-i64-eq
+        (array-length spans)
+        2
+        "SEH keeps both source annotations")
+      (test.assert-i64-eq
+        (array-ref spans 0).token
+        111
+        "save identity comes from actual source range")
+      (test.assert-i64-eq
+        (array-ref spans 1).token
+        112
+        "body survives save insertion")
+      (test.assert-true
+        (match (backend.compiler-backend-windows-framed-save-splice
+          (& hot)
+          0
+          ""
+          homes
+          1
+          64
+          "f"
+          (diagnostic.compiler-diagnostic-at-start "" "")
+          state)
+          [(Err _) true]
+          [(Ok _) false])
+        "invalid save sequence remains an error")
+      (let
+        [source : String
+          (origins.compiler-backend-text-origins-cat
+            capture
+            ".Le:\n    jl .Lt\n.Lt:\n"
+            hot
+            "    ret\n")]
+        [start : i64
+          (backend.compiler-backend-string-find-from (& source) "    vmovups" 0)]
+        [sites : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        [ok : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        (set!
+          (array-ref sites 0)
+          (backend.compiler-backend-string-find-from (& source) "\n.Lt:" 0))
+        (set! (array-ref ok 0) 1)
+        (let
+          [tail : String
+            (backend.compiler-backend-swb-dup-tail-body
+              (& source)
+              (unsafe
+                (string-data source))
+              start
+              (string.string-length source)
+              ".Lreturn"
+              (&mut ok)
+              capture)]
+          [clone : String
+            (origins.compiler-backend-text-origins-cat
+              capture
+              ".Lt__swb_tail:\n"
+              tail
+              "    ret\n")]
+          [expected : String
+            (backend.compiler-backend-swb-apply-dup
+              (& source)
+              (owned_view.compiler-owned-shared-view sites)
+              1
+              (owned_view.compiler-owned-shared-view clone)
+              (origins.compiler-backend-text-origins-disabled))]
+          [actual : String
+            (backend.compiler-backend-swb-apply-dup
+              (& source)
+              sites
+              1
+              clone
+              capture)]
+          [spans : (__tl_dyn-array origins.CompilerBackendTextOrigin)
+            (origins.compiler-backend-text-origins-find capture (& actual))]
+          (test.assert-i64-eq (array-ref ok 0) 1 "tail clone admitted")
+          (test.assert-string-eq
+            actual
+            expected
+            "explicit cloned text has exact ordinary bytes")
+          (test.assert-i64-eq
+            (array-length spans)
+            2
+            "original and cloned access survive")
+          (test.assert-i64-eq
+            (array-ref spans 0).token
+            112
+            "original source identity")
+          (test.assert-i64-eq
+            (array-ref spans 1).token
+            112
+            "clone retains same source identity")
+          (test.assert-true
+            (< (array-ref spans 0).start (array-ref spans 1).start)
+            "cloned access has a distinct final position"))))
+    (backend.compiler-backend-state-release-final-arenas! state)))
+
+(test
+  backend-stack-origins-survive-seh-and-tail-clone
+  (backend-stack-origins-splice-clone-test))

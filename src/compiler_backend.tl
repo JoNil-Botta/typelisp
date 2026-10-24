@@ -514,7 +514,10 @@
   (abort-cands (__tl_dyn-array i64))
   (abort-cand-len i64)
   (close-cands (__tl_dyn-array i64))
-  (close-cand-len i64))
+  (close-cand-len i64)
+  ;; Installed only for the actual render; the compact per-line records remain
+  ;; unchanged and ordinary parsing allocates no annotation storage.
+  (origins text_origins.CompilerBackendTextOriginBuffer))
 
 ;; The physical chunks the streaming peephole parses in place, in emission
 ;; order, plus their combined byte count. A group chunk is one whole emitted
@@ -15114,6 +15117,8 @@
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
+    [origin-capture : text_origins.CompilerBackendTextOrigins
+      (compiler-backend-state-stack-text-origins backend-state)]
     [error : String ""]
     [xmm-count : i64 0]
     [gp-count : i64 0]
@@ -15171,7 +15176,8 @@
     (if (and (string.eq error "") (< base 0))
       (set!
         error
-        (str_cat.str-cat
+        (text_origins.compiler-backend-text-origins-cat
+          origin-capture
           "backend: Windows prologue of "
           symbol
           " is missing from its shrink-wrapped body"))
@@ -15196,7 +15202,8 @@
         (> bound compiler-backend-windows-prologue-limit))
         (set!
           error
-          (str_cat.str-cat
+          (text_origins.compiler-backend-text-origins-cat
+            origin-capture
             "backend: Windows prologue of "
             symbol
             " may need "
@@ -15227,14 +15234,16 @@
                 (compiler-backend-callee-save-order-slot-index k backend-state))]
             [offset : i64 (+ frame slot)]
             [rbp-line : String
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                origin-capture
                 "    movq "
                 reg
                 ", "
                 (string.int->string slot)
                 "(%rbp)\n")]
             [rsp-line : String
-              (str_cat.str-cat
+              (text_origins.compiler-backend-text-origins-cat
+                origin-capture
                 "    movq "
                 reg
                 ", "
@@ -15258,12 +15267,21 @@
                     (if (string.is-string-prefix-at body rbp-line pos)
                       rbp-line
                       rsp-line)]
+                  [retained-line : String
+                    (try
+                      (compiler-backend-origin-text-result
+                        (text_origins.compiler-backend-text-origins-slice
+                          origin-capture
+                          body
+                          pos
+                          (string.string-length line))))]
                   (set! pos (+ pos (string.string-length line)))
                   (set!
                     rows
-                    (str_cat.str-cat
+                    (text_origins.compiler-backend-text-origins-cat
+                      origin-capture
                       rows
-                      line
+                      retained-line
                       "    .seh_savereg "
                       reg
                       ", "
@@ -15282,11 +15300,24 @@
         (set! k (+ k 1)))
       (if (string.eq error "")
         (Ok
-          (str_cat.str-cat
-            (string.substring body 0 start)
+          (text_origins.compiler-backend-text-origins-cat
+            origin-capture
+            (try
+              (compiler-backend-origin-text-result
+                (text_origins.compiler-backend-text-origins-slice
+                  origin-capture
+                  body
+                  0
+                  start)))
             rows
             "    .seh_endprologue\n"
-            (string.substring body pos (- (string.string-length body) pos))))
+            (try
+              (compiler-backend-origin-text-result
+                (text_origins.compiler-backend-text-origins-slice
+                  origin-capture
+                  body
+                  pos
+                  (- (string.string-length body) pos))))))
         (compiler-backend-instr-error instr-diag error)))))
 
 ;; M-G3 stage 2: frame-pointer-omission prologue (Linux text path only; the
@@ -70535,7 +70566,8 @@
   [body-start : i64]
   [body-stop : i64]
   [return-label : String]
-  [ok : (&mut ok (__tl_dyn-array i64))]) : String
+  [ok : (&mut ok (__tl_dyn-array i64))]
+  [origin-capture : text_origins.CompilerBackendTextOrigins]) : String
   (let
     [epilogue : i64
       (compiler-backend-swb-epilogue-start data body-start body-stop)]
@@ -70582,9 +70614,15 @@
                     (set! (array-ref ok 0) 0)))
                 (set!
                   out
-                  (str_cat.str-cat
+                  (text_origins.compiler-backend-text-origins-cat
+                    origin-capture
                     out
-                    (string.substring text i (- (+ stop 1) i))
+                    (compiler-backend-origin-invariant-text
+                      (text_origins.compiler-backend-text-origins-slice
+                        origin-capture
+                        text
+                        i
+                        (- (+ stop 1) i)))
                     ""))))))
         (set! i (+ stop 1))))
     out))
@@ -70596,7 +70634,8 @@
   [text : (& text str)]
   [sites : (__tl_dyn-array i64)]
   [site-count : i64]
-  [dup-text : String]) : String
+  [dup-text : String]
+  [origin-capture : text_origins.CompilerBackendTextOrigins]) : String
   (let
     [n : i64 (string.string-length text)]
     [out : String ""]
@@ -70607,10 +70646,28 @@
         [s : i64 (array-ref sites k)]
         (set!
           out
-          (str_cat.str-cat out (string.substring text at (- s at)) "__swb_tail"))
+          (text_origins.compiler-backend-text-origins-cat
+            origin-capture
+            out
+            (compiler-backend-origin-invariant-text
+              (text_origins.compiler-backend-text-origins-slice
+                origin-capture
+                text
+                at
+                (- s at)))
+            "__swb_tail"))
         (set! at s)
         (set! k (+ k 1))))
-    (str_cat.str-cat out (string.substring text at (- n at)) dup-text)))
+    (text_origins.compiler-backend-text-origins-cat
+      origin-capture
+      out
+      (compiler-backend-origin-invariant-text
+        (text_origins.compiler-backend-text-origins-slice
+          origin-capture
+          text
+          at
+          (- n at)))
+      dup-text)))
 
 (define (compiler-backend-swb-node-targets?
   [succ-start : (& succ-start (__tl_dyn-array i64))]
@@ -70655,7 +70712,8 @@
   [node-count : i64]
   [chosen : i64]
   [dup-node : i64]
-  [return-label : String]) : CompilerBackendSwbDup
+  [return-label : String]
+  [origin-capture : text_origins.CompilerBackendTextOrigins]) : CompilerBackendSwbDup
   (let
     [data : (Ptr u8)
       (unsafe
@@ -70718,7 +70776,8 @@
         (array-ref body-start dup-node)
         (array-ref body-end dup-node)
         return-label
-        (&mut ok))]
+        (&mut ok)
+        origin-capture)]
     (if (or
       (= (array-ref ok 0) 0)
       (= (array-ref cursor 0) 0)
@@ -70728,11 +70787,14 @@
         true
         sites
         (array-ref cursor 0)
-        (str_cat.str-cat
-          (string.substring
-            text
-            (array-ref lab-start dup-node)
-            (- (array-ref lab-end dup-node) (array-ref lab-start dup-node)))
+        (text_origins.compiler-backend-text-origins-cat
+          origin-capture
+          (compiler-backend-origin-invariant-text
+            (text_origins.compiler-backend-text-origins-slice
+              origin-capture
+              text
+              (array-ref lab-start dup-node)
+              (- (array-ref lab-end dup-node) (array-ref lab-start dup-node))))
           "__swb_tail:\n"
           body
           "    ret\n")))))
@@ -70909,7 +70971,8 @@
   ;; SWB-FIX-1: form (a)'s saving block (the single entry of ITS framed body),
   ;; or label-none when form (a) is not active for this function.
   [form-a-saving-label : i64]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : CompilerBackendSwbPlan
+  [blocks : compiler_ir_types.CompilerIrBlockList]
+  [origin-capture : text_origins.CompilerBackendTextOrigins]) : CompilerBackendSwbPlan
   (let
     [data : (Ptr u8)
       (unsafe
@@ -71161,7 +71224,8 @@
                       node-count
                       chosen-dup
                       dup-node-first
-                      return-label))]
+                      return-label
+                      origin-capture))]
                 ;; A duplication the text cannot reproduce rejects that
                 ;; CANDIDATE, not the placement.  Re-run the walk with
                 ;; duplication disabled -- which is exactly the pre-TD-1
@@ -72865,7 +72929,8 @@
                                 shrinkwrap-saving-label
                                 (compiler_ir_types.compiler-ir-label-none))
                               (compiler-backend-global-shared-view
-                                emit-blocks-list))
+                                emit-blocks-list)
+                              origin-capture)
                             (compiler-backend-swb-no-plan))]
                         ;; An applied placement that the second emission
                         ;; no longer reproduces is drift, not a placement:
@@ -72887,7 +72952,8 @@
                               final-body
                               swb-plan.dup-sites
                               swb-plan.dup-site-count
-                              swb-plan.dup-text)
+                              swb-plan.dup-text
+                              origin-capture)
                             (owned_view.compiler-owned-shared-view final-body))]
                         [entry-symbol : String
                           (if wrap-active?
@@ -85976,7 +86042,8 @@ tl_shared_object_init:
     walk.abort-cands
     walk.abort-cand-len
     walk.close-cands
-    walk.close-cand-len))
+    walk.close-cand-len
+    (text_origins.CompilerBackendTextOriginBuffer 0)))
 
 (define (compiler-backend-peephole-records-retire!
   [stream : CompilerBackendStreamState]) : unit
@@ -87121,6 +87188,22 @@ tl_shared_object_init:
             (if (and newline? (not owned?))
               (+ end 1)
               end)]
+          (when
+            (!= v.origins.storage 0)
+            (match (text_origins.compiler-backend-text-origin-buffer-append-range!
+              (clone v.origins)
+              (& rec.src)
+              start
+              (- hi start))
+              [(Ok) unit]
+              [(Err message) (io.panic message)])
+            (when
+              (and newline? owned?)
+              (match (text_origins.compiler-backend-text-origin-buffer-append!
+                (clone v.origins)
+                "\n")
+                [(Ok) unit]
+                [(Err message) (io.panic message)])))
           (if (and run-active (= addr run-addr) (= start run-end))
             (set! run-end hi)
             (begin
@@ -88094,11 +88177,24 @@ tl_shared_object_init:
 
 ;; Write `text` and a newline at `pos`; the next free position is returned.
 (define (compiler-backend-cold-write-line!
+  [origins : text_origins.CompilerBackendTextOriginBuffer]
   [dst : (MutPtr u8)]
   [pos : i64]
   [text : String]) : i64
   (let
     [n : i64 (string.string-length text)]
+    (when
+      (!= origins.storage 0)
+      (match (text_origins.compiler-backend-text-origin-buffer-append!
+        origins
+        (& text))
+        [(Ok) unit]
+        [(Err message) (io.panic message)])
+      (match (text_origins.compiler-backend-text-origin-buffer-append!
+        origins
+        "\n")
+        [(Ok) unit]
+        [(Err message) (io.panic message)]))
     (text_buf_borrowed.copy-byte-range-into
       (unsafe
         (string-data text))
@@ -88201,6 +88297,7 @@ tl_shared_object_init:
         (set!
           pos
           (compiler-backend-cold-write-line!
+            v.origins
             dst
             pos
             (compiler-backend-global-array-element-shared-view plan.head k)))
@@ -88277,6 +88374,7 @@ tl_shared_object_init:
         (set!
           pos
           (compiler-backend-cold-write-line!
+            v.origins
             dst
             pos
             (compiler-backend-global-array-element-shared-view plan.inverse k)))
@@ -88321,13 +88419,30 @@ tl_shared_object_init:
 ;; synthesized lines are scratch and only the rendered string is cloned out into
 ;; the caller's arena.
 (define (compiler-backend-peephole-records-render
-  [v : CompilerBackendPeepholeLineVec]) : String
-  (if (= v.abort-cand-len 0)
-    (compiler-backend-peephole-records-render-plain v)
-    (with-scratch
+  [v : CompilerBackendPeepholeLineVec]
+  [capture : text_origins.CompilerBackendTextOrigins]) : String
+  (if (= capture.storage 0)
+    (if (= v.abort-cand-len 0)
+      (compiler-backend-peephole-records-render-plain v)
+      (with-scratch
+        (let
+          [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
+          (compiler-backend-cold-render v plan))))
+    (let
+      [origin-buffer : text_origins.CompilerBackendTextOriginBuffer
+        (text_origins.compiler-backend-text-origin-buffer-new capture)]
+      (set! v.origins origin-buffer)
       (let
-        [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
-        (compiler-backend-cold-render v plan)))))
+        [text : String
+          (if (= v.abort-cand-len 0)
+            (compiler-backend-peephole-records-render-plain v)
+            (let
+              [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
+              (compiler-backend-cold-render v plan)))]
+        (compiler-backend-origin-invariant-text
+          (text_origins.compiler-backend-text-origin-buffer-finish
+            origin-buffer
+            text))))))
 
 ;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into
@@ -89292,7 +89407,10 @@ tl_shared_object_init:
         (in-arena
           home-arena
           (let
-            [kept : String (compiler-backend-peephole-records-render records)]
+            [kept : String
+              (compiler-backend-peephole-records-render
+                records
+                (compiler-backend-state-stack-text-origins backend-state))]
             (CompilerBackendPeepholeSweepChunkState
               (text_buf.append state.out kept)
               (text_buf.empty)

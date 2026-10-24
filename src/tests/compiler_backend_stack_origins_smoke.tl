@@ -3,4 +3,6 @@
 (define (main) : i64
   (fixtures.backend-stack-origins-producer-test)
   (fixtures.backend-stack-origins-rebase-test)
+  (fixtures.backend-stack-origins-final-render-test)
+  (fixtures.backend-stack-origins-splice-clone-test)
   42)

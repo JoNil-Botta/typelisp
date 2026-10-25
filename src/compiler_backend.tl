@@ -60717,18 +60717,19 @@
     (let
       [block (compiler_ir_types.compiler-ir-block-seq-ref blocks index)]
       [mark : i64 (compiler-backend-asm-buf-len (& out))]
-      (match (& block)
-        [(Block _ instrs)
-          (let
-            [function-state : CompilerBackendFunctionState
-              (compiler-backend-state-function-state
-                program-index.backend-state)]
-            (compiler-backend-function-state-set-emit-instr-post-base!
-              function-state
-              (+
-                (compiler-backend-function-state-emit-instr-post-base
-                  function-state)
-                instrs.len)))])
+      ;; Read the count in its own binding: the borrow ends here, before
+      ;; `block` moves into the emitter (a loop body's borrow would otherwise
+      ;; stay open to the end of the iteration for the published stage0).
+      [instr-count : i64
+        (match (& block)
+          [(Block _ instrs) instrs.len])]
+      [function-state : CompilerBackendFunctionState
+        (compiler-backend-state-function-state program-index.backend-state)]
+      (compiler-backend-function-state-set-emit-instr-post-base!
+        function-state
+        (+
+          (compiler-backend-function-state-emit-instr-post-base function-state)
+          instr-count))
       (let
         [_
           (try

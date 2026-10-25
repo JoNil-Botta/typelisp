@@ -192,6 +192,7 @@ stdlib_manifest() {
 arena.tl
 atomic.tl
 args.tl
+base64.tl
 byte_buf.tl
 byte_buf_core.tl
 byte_le.tl
@@ -297,6 +298,7 @@ stdlib/tests/format_fixed_invalid_shape.tl|134|-|literal:format: invalid fixed f
 stdlib/tests/format_fixed_empty_digits.tl|134|-|literal:format: fixed float digits must not be empty|-
 stdlib/tests/format_negative_precision.tl|134|-|literal:format: negative width or precision|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
+stdlib/tests/base64_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_core_api.tl|42|-|-|-
 stdlib/tests/crypto_rsa_verify_api.tl|42|-|-|-
@@ -339,6 +341,7 @@ stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|prin
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-
 stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/process_argv.tl|42|-|-|-
 stdlib/tests/process_runtime_stderr.tl|42|-|-
 stdlib/tests/process_exact_env.tl|42|-|-|-
 stdlib/tests/profile_concurrent_api.tl|42|-|-|-

@@ -1135,7 +1135,11 @@ both prefix shorthand and the equivalent list-headed forms:
 `quasiquote` produces an `Expr` while evaluating `unquote` operands as
 compile-time `Expr` values and inserting their checked AST. `unquote-splicing`
 evaluates to an `ExprList` and splices that list into the surrounding
-template list. Clause lists and binding-clause lists do not splice
+template list. A body expression sequence is a list position even when its
+only template form is `,@body`, including `let`, `lambda`, and `match` arms.
+An empty splice contributes no expressions; the expanded form must still meet
+its ordinary body and result-type requirements. Clause lists and binding-clause
+lists do not splice
 implicitly; use `expr-clause-list->expr-list` or
 `expr-binding-clause-list->expr-list` when a macro needs to splice generated
 bracket operands. `unquote` and `unquote-splicing` outside quasiquote are
@@ -1294,6 +1298,18 @@ body, or namespace effects is an
 incompatible-duplicate diagnostic. Different generated identities that bind
 the same visible value/type/constructor/variant name are ordinary duplicate
 namespace errors, with the generated keys included in the diagnostic.
+
+For `: Decls` output, the module that owns a generated declaration is also
+part of its identity: the calling module, or the module selected by an earlier
+`(module ...)` declaration in the same output. The same identity therefore
+emits once per owner. Each calling module receives its own copy of the
+declarations and imports placed in it, while declarations placed in an
+explicit module are emitted there once, whichever caller expands first. The
+`(module ...)` declarations are part of every replay, even one that adds no
+declaration, so a replayed `(module ...)` still sets the owner of the
+declarations that follow it, including those after the call. Within one owner,
+repeating an identity with an incompatible payload is still the
+incompatible-duplicate diagnostic.
 
 Generated declarations enter the same namespaces as hand-written
 declarations: `defstruct` binds the nominal type, struct constructor, and

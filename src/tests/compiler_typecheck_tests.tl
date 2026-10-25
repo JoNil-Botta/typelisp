@@ -868,6 +868,23 @@
 
 (define (compiler-typecheck-foreach-spmd-tests-ok?) : bool
   (and
+    (compiler-typecheck-error-ok?
+      "(define (cycle [x : i64]) : i64 (cycle x))
+(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)]) : unit
+  (foreach ([i : i64 0 3]) (set! (array-ref out i) (cycle (array-ref xs i)))))"
+      "typecheck: recursive SPMD helper call is not supported")
+    (compiler-typecheck-error-ok?
+      "(define (left [x : i64]) : i64 (right x))
+(define (right [x : i64]) : i64 (left x))
+(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)]) : unit
+  (foreach ([i : i64 0 3]) (set! (array-ref out i) (left (array-ref xs i)))))"
+      "typecheck: recursive SPMD helper call is not supported")
+    (compiler-typecheck-ok?
+      "(define (bump [x : i64]) : i64 (+ x 1))
+(define (compose [x : i64]) : i64 (bump x))
+(define (fill [xs : (__tl_dyn-array i64)] [out : (__tl_dyn-array i64)]) : unit
+  (foreach ([i : i64 0 3])
+    (set! (array-ref out i) (+ (compose (bump (array-ref xs i))) (bump i)))))")
     (compiler-typecheck-ok?
       "(define (main [n : i64]) : unit
   (let

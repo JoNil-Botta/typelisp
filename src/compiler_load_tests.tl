@@ -1140,19 +1140,74 @@
         [_ false])]
     [(Err _) false]))
 
-(define (compiler-load-nested-module-duplicate-ok?) : bool
-  (match (load.compiler-load-source
-    "src/nested_dup.tl"
-    "(module local.helper (define a : i64 1))
+(define (compiler-load-package-diagnostic-parity-ok?) : bool
+  (let
+    [root : String "target/exp/compiler-load-module-parity"]
+    [sources : (__tl_dyn-array String)
+      (__tl_make-array
+        "(module local.helper (define a : i64 1))
 (module local.helper (define b : i64 2))"
-    (sym_i64_env.sym-i64-empty))
-    [(Err diag)
-      (and
-        (compiler-load-error-code? (__tl-box-place diag) "E0307")
-        (string.eq
-          (cdiag.compiler-diagnostic-message (__tl-box-place diag))
-          "compiler-load: duplicate module declaration"))]
-    [(Ok _ _) false]))
+        "(module outer
+  (module local.helper (define a : i64 1))
+  (module local.helper (define b : i64 2)))"
+        "(module local.helper
+  (module local.helper (define a : i64 1)))"
+        "(module left (module shared (define a : i64 1)))
+(module right (module shared (define b : i64 2)))"
+        "(import missing_9007)")]
+    (load.compiler-load-test-mkdir "target/exp")
+    (load.compiler-load-test-mkdir (& root))
+    (for [index (iterator.range 0 (array-length sources))]
+      (let
+        [entry : String
+          (str_cat.str-cat
+            (string.copy (& root))
+            "/entry-"
+            (string.int->string index)
+            ".tl")]
+        [code : String
+          (if (< index 4)
+            "E0307"
+            "E0301")]
+        [message : String
+          (if (< index 4)
+            "compiler-load: duplicate module declaration"
+            (str_cat.str-cat
+              "compiler-load: cannot read import "
+              (string.copy (& root))
+              "/missing_9007.tl"))]
+        (compiler-load-write-file-text
+          (string.copy entry)
+          (string.copy (& (array-ref sources index))))
+        (match (load.compiler-load-file-with-paths-and-roots
+          (& entry)
+          (sym_i64_env.sym-i64-empty)
+          (& (svec.new)))
+          [(Err ordinary-diag)
+            (let
+              [ordinary : cdiag.CompilerDiagnostic (deref ordinary-diag)]
+              (match (compiler-load-package-file-with-paths-and-roots
+                entry
+                (sym_i64_env.sym-i64-empty)
+                (svec.new)
+                (string.copy root)
+                (load.compiler-pkg-deps-empty))
+                [(Err package-diag)
+                  (unless
+                    (and
+                      (compiler-load-error-code? (& ordinary) code)
+                      (string.eq
+                        (cdiag.compiler-diagnostic-message (& ordinary))
+                        message)
+                      (= (cdiag.compiler-diagnostic-line (& ordinary)) 1)
+                      (= (cdiag.compiler-diagnostic-col (& ordinary)) 1)
+                      (compiler-load-diagnostics-eq?
+                        ordinary
+                        (deref package-diag)))
+                    (return false))]
+                [(Ok _ _ _ _) (return false)]))]
+          [(Ok _ _ _ _) (return false)])))
+    true))
 
 (define (compiler-load-seen-module-ok?) : bool
   (match (load.compiler-load-source
@@ -4322,8 +4377,7 @@
         "proof_other.tl"
         (string.copy text))]
     [_next-entry : unit
-      (load.compiler-load-session-state-embedded-provenance-reset!
-        (load.compiler-load-global-shared-view state))]
+      (load.compiler-load-session-state-embedded-provenance-reset! (& state))]
     [after-reset : bool
       (compiler-load-proof-matches?
         (& state)
@@ -4454,8 +4508,7 @@
           (=
             (ci.intern-compat-state-pool-len (& intern-decoy))
             decoy-pool-before))]
-      (load.compiler-load-session-state-embedded-provenance-reset!
-        (owned_view.compiler-owned-shared-view state-b))
+      (load.compiler-load-session-state-embedded-provenance-reset! (& state-b))
       (let
         [active-after : ci.InternCompatState
           (ci.intern-compat-state-capture-active)]
@@ -4577,8 +4630,7 @@
           (load.compiler-load-canonical-stdlib-path "/roots/a/string.tl")
           "/roots/a/string.tl"))]
     [_reset : unit
-      (load.compiler-load-session-state-embedded-provenance-reset!
-        (owned_view.compiler-owned-shared-view state))]
+      (load.compiler-load-session-state-embedded-provenance-reset! (& state))]
     [_note-after-reset : unit
       (load.compiler-load-session-state-note-stdlib-path!
         (owned_view.compiler-owned-shared-view state)
@@ -4798,8 +4850,7 @@
         (sym_i64_env.sym-i64-contains-id observed-a.primary-members member-a-id)
         (sym_i64_env.sym-i64-contains-id observed-b.primary-members member-b-id))]
     [_reset-a : unit
-      (load.compiler-load-session-state-surface-summaries-reset!
-        (owned_view.compiler-owned-shared-view state-a))]
+      (load.compiler-load-session-state-surface-summaries-reset! (& state-a))]
     (cond
       [(not before-reset)
         (io.panic "compiler-load: traversal before-reset mismatch")]
@@ -5417,8 +5468,7 @@
               (= summary.module-id module-b)]
             [_ false]))]
       [_reset-a : unit
-        (load.compiler-load-session-state-surface-summaries-reset!
-          (owned_view.compiler-owned-shared-view state-a))]
+        (load.compiler-load-session-state-surface-summaries-reset! (& state-a))]
       [isolation-ok : bool
         (and
           (=
@@ -5541,8 +5591,7 @@
               (= decl.name decl-id)
               (= decl.module module-id)))]
         [_ false])]
-    (load.compiler-load-session-state-surface-summaries-reset!
-      (owned_view.compiler-owned-shared-view state))
+    (load.compiler-load-session-state-surface-summaries-reset! (& state))
     (and
       handoff-ok
       (=
@@ -5910,8 +5959,8 @@
     (compiler-load-nested-module-body-ok?)
     (return (io.panic "compiler-load: nested module body smoke mismatch")))
   (unless
-    (compiler-load-nested-module-duplicate-ok?)
-    (return (io.panic "compiler-load: nested module duplicate smoke mismatch")))
+    (compiler-load-package-diagnostic-parity-ok?)
+    (return (io.panic "compiler-load: package diagnostic parity mismatch")))
   (unless
     (compiler-load-seen-module-ok?)
     (return (io.panic "compiler-load: seen module smoke mismatch")))

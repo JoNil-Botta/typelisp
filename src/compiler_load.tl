@@ -2781,23 +2781,33 @@
   (array-ref state.embedded-stdlib-provenance.noted 0))
 
 (define (compiler-load-session-state-embedded-provenance-reset!
-  [state : CompilerLoadSessionState]) : unit
-  (set!
-    (array-ref state.embedded-stdlib-provenance.module-ids 0)
+  [state : (& state CompilerLoadSessionState)]) : unit
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.module-ids
+    0
     (sym_i64_env.sym-i64-empty))
-  (set!
-    (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.equivalence-cache
+    0
     (sym_i64_env.sym-i64-empty))
-  (set!
-    (array-ref state.embedded-stdlib-provenance.canonical-paths 0)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.canonical-paths
+    0
     (sym_i64_env.sym-i64-empty))
-  (set!
-    (array-ref state.embedded-stdlib-provenance.suffix-claims 0)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.suffix-claims
+    0
     (sym_i64_env.sym-i64-empty))
-  (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.noted
+    0
+    false)
   (let
     [owner : i64 (array-ref state.embedded-provenance-owner-arena 0)]
-    (set! (array-ref state.embedded-provenance-owner-arena 0) 0)
+    (owned_view.compiler-owned-cell-set!
+      state.embedded-provenance-owner-arena
+      0
+      0)
     (if (> owner 0)
       (unsafe
         (arena.tl_arena_destroy owner))
@@ -3157,8 +3167,7 @@
   [state : CompilerLoadSessionState]
   [pools : ast.AstNodePoolContext]) : unit
   (parser.compiler-parse-decl-origin-cache-reset!)
-  (compiler-load-session-state-surface-summaries-reset!
-    (owned_view.compiler-owned-shared-view state))
+  (compiler-load-session-state-surface-summaries-reset! (& state))
   (compiler-load-session-state-lazy-qualified-observer-reset! (&mut state))
   (set! (array-ref state.surface-summary-load-depth 0) 0)
   (if (compiler-load-session-state-cache-enabled? state)
@@ -3176,7 +3185,7 @@
 
 (define (compiler-load-session-reset-interns!) : unit
   (compiler-load-session-state-embedded-provenance-reset!
-    (compiler-load-active-session-state-shared-view))
+    (& (compiler-load-active-session-state-shared-view)))
   (compiler-load-surface-summaries-reset!)
   (compiler-load-lazy-qualified-observer-reset!)
   (set!
@@ -3195,10 +3204,8 @@
 (define (compiler-load-session-state-reset-interns-with-state!
   [load-state : CompilerLoadSessionState]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : unit
-  (compiler-load-session-state-embedded-provenance-reset!
-    (owned_view.compiler-owned-shared-view load-state))
-  (compiler-load-session-state-surface-summaries-reset!
-    (owned_view.compiler-owned-shared-view load-state))
+  (compiler-load-session-state-embedded-provenance-reset! (& load-state))
+  (compiler-load-session-state-surface-summaries-reset! (& load-state))
   (compiler-load-session-state-lazy-qualified-observer-reset! (&mut load-state))
   (set! (array-ref load-state.surface-summary-load-depth 0) 0)
   (if (compiler-load-session-state-cache-enabled? load-state)
@@ -4189,11 +4196,7 @@
                 (& module-path)
                 stdlib-roots)
                 [(CompilerLoadSomePath root-path) (Ok root-path)]
-                [(CompilerLoadNoPath)
-                  (Err
-                    (str_cat.str-cat
-                      "compiler-load: dotted import missing module segment after package alias: "
-                      module-name))])))
+                [(CompilerLoadNoPath) (Ok fallback)])))
           (match (compiler-load-pkg-dep-lookup deps (string.copy first))
             [(CompilerLoadNoPath)
               (cond
@@ -4207,19 +4210,7 @@
                     (& (string.copy module-path))
                     stdlib-roots)
                     [(CompilerLoadSomePath root-path) (Ok root-path)]
-                    [(CompilerLoadNoPath)
-                      (if (= (compiler-pkg-deps-count deps) 0)
-                        ;; A dotted alias with no declared dependencies and no
-                        ;; local or root module is an unknown package alias;
-                        ;; with a deps graph the name may be a vendored local
-                        ;; source module.
-                        (Err
-                          (str_cat.str-cat
-                            "compiler-load: unknown package alias '"
-                            first
-                            "': pkg:"
-                            module-path))
-                        (Ok fallback))])])]
+                    [(CompilerLoadNoPath) (Ok fallback)])])]
             [(CompilerLoadSomePath dep-path)
               (if (compiler-load-github-dependency-path?
                 (& (string.copy dep-path)))
@@ -5219,6 +5210,40 @@
       cfgs
       pools)))
 
+;; The executable prefix is one ordered runtime/macro load. Driver and
+;; in-memory source jobs must use the same paths, cfgs and module columns.
+(define (compiler-load-executable-prelude
+  [load-state : CompilerLoadSessionState]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]) : ResultCompilerLoadWithPaths
+  (match (compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
+    (owned_view.compiler-owned-shared-view load-state)
+    (& (compiler-load-runtime-prelude-path-shared-view))
+    (sym_i64_env.sym-i64-empty)
+    (& stdlib-roots)
+    cfgs
+    pools)
+    [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
+      (match (compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+        load-state
+        runtime-seen
+        (& stdlib-roots)
+        cfgs
+        pools)
+        [(Ok macro-decls macro-paths macro-modules macro-seen)
+          (Ok
+            (compiler-load-decl-list-append (& runtime-decls) (& macro-decls))
+            (compiler-load-decl-path-list-append
+              (& runtime-paths)
+              (& macro-paths))
+            (compiler-load-decl-module-list-append
+              (& runtime-modules)
+              (& macro-modules))
+            macro-seen)]
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
+
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
     [(Ok decls _ _ seen) (Ok decls seen)]
@@ -5241,6 +5266,34 @@
   [_name : (& str)]
   [name-id : i64]) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-bind-id seen name-id 1))
+
+(define (compiler-load-duplicate-module-diagnostic [path : String]) : (Box
+    cdiag.CompilerDiagnostic)
+  (box
+    (cdiag.compiler-diagnostic-load
+      DuplicateModule
+      (cdiag.compiler-diagnostic-at-start
+        path
+        "compiler-load: duplicate module declaration"))))
+
+;; Body identities share one source-file namespace, including bodies under
+;; different parents. A later flat marker cannot reopen an earlier body.
+;; The set is scratch-owned and never escapes module-identity validation.
+(define (compiler-load-module-bodies-duplicate?
+  [decls : (& decls ast.AstDeclList)]
+  [bodies : (&mut bodies load_i64_i64_map.Map)]) : bool
+  (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+    (match (ast.ast-decl-list-ref-borrowed decls index)
+      [(Module name)
+        (when (load_i64_i64_map.contains? bodies name) (return true))]
+      [(ModuleBody name body)
+        (when (load_i64_i64_map.contains? bodies name) (return true))
+        (load_i64_i64_map.insert-ref! bodies name 1)
+        (when
+          (compiler-load-module-bodies-duplicate? (& (deref body)) bodies)
+          (return true))]
+      [_ unit]))
+  false)
 
 (define (compiler-load-decls-module-id-loop
   [path : String]
@@ -5267,13 +5320,7 @@
                   fallback-id
                   (CompilerLoadSomeModuleId (ci.intern-str name) name))]
               [(CompilerLoadSomeModuleId _ _)
-                (Err
-                  (box
-                    (cdiag.compiler-diagnostic-load
-                      DuplicateModule
-                      (cdiag.compiler-diagnostic-at-start
-                        path
-                        "compiler-load: duplicate module declaration"))))])]
+                (Err (compiler-load-duplicate-module-diagnostic path))])]
           [_
             (compiler-load-decls-module-id-loop
               path
@@ -5289,24 +5336,38 @@
   (let
     [fallback : String
       (compiler-load-canonical-module-id-from-path (string.copy path))]
-    (compiler-load-decls-module-id-loop
+    (compiler-load-decls-module-id-with-fallback
       path
       decls
       fallback
-      fallback-id
-      CompilerLoadNoModuleId)))
+      fallback-id)))
 
 (define (compiler-load-decls-module-id-with-fallback
   [path : String]
   [decls : (& ast.AstDeclList)]
   [fallback : String]
   [fallback-id : i64]) : ResultCompilerLoadModuleId
-  (compiler-load-decls-module-id-loop
-    path
-    decls
-    fallback
-    fallback-id
-    CompilerLoadNoModuleId))
+  (let
+    [has-body : bool false]
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+      (match (ast.ast-decl-list-ref-borrowed decls index)
+        [(ModuleBody _ _)
+          (set! has-body true)
+          (break)]
+        [_ unit]))
+    (if (and
+      has-body
+      (with-scratch
+        (let
+          [bodies : load_i64_i64_map.Map (load_i64_i64_map.new)]
+          (compiler-load-module-bodies-duplicate? decls (&mut bodies)))))
+      (Err (compiler-load-duplicate-module-diagnostic path))
+      (compiler-load-decls-module-id-loop
+        path
+        decls
+        fallback
+        fallback-id
+        CompilerLoadNoModuleId))))
 
 (define (compiler-load-check-expected-module
   [path : (& str)]
@@ -6149,7 +6210,7 @@
     owner-arena))
 
 (define (compiler-load-session-state-surface-summaries-reset!
-  [state : CompilerLoadSessionState]) : unit
+  [state : (& state CompilerLoadSessionState)]) : unit
   (compiler-load-surface-summaries-epoch-bump!)
   (let
     [payload-owner : i64
@@ -6160,11 +6221,15 @@
     (in-arena
       (unsafe
         (arena.Arena state.owner-arena))
-      (set!
-        (array-ref state.surface-summaries 0)
+      (owned_view.compiler-owned-cell-set!
+        state.surface-summaries
+        0
         (compiler-load-surface-summary-list-empty))
-      (set! (array-ref state.lazy-import-skip-record-count 0) 0))
-    (set! (array-ref state.surface-summary-owner-arena 0) 0)
+      (owned_view.compiler-owned-cell-set!
+        state.lazy-import-skip-record-count
+        0
+        0))
+    (owned_view.compiler-owned-cell-set! state.surface-summary-owner-arena 0 0)
     (when
       (> payload-owner 0)
       (if (= (arena.tl_arena_current) payload-owner)
@@ -6176,15 +6241,14 @@
 
 (define (compiler-load-surface-summaries-reset!) : unit
   (compiler-load-session-state-surface-summaries-reset!
-    (compiler-load-active-session-state-shared-view)))
+    (& (compiler-load-active-session-state-shared-view))))
 
 (define (compiler-load-session-state-surface-summary-load-enter!
   [state : CompilerLoadSessionState]) : unit
   (let
     [depth : i64 (array-ref state.surface-summary-load-depth 0)]
     (if (= depth 0)
-      (compiler-load-session-state-surface-summaries-reset!
-        (owned_view.compiler-owned-shared-view state))
+      (compiler-load-session-state-surface-summaries-reset! (& state))
       unit)
     (set! (array-ref state.surface-summary-load-depth 0) (+ depth 1))))
 
@@ -9675,12 +9739,8 @@
                   (& rest)
                   target-module-id))
                 (Err
-                  (box
-                    (cdiag.compiler-diagnostic-load
-                      DuplicateModule
-                      (cdiag.compiler-diagnostic-at-start
-                        (string.copy importer-path)
-                        "compiler-load: duplicate module declaration"))))
+                  (compiler-load-duplicate-module-diagnostic
+                    (string.copy importer-path)))
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   (CompilerLoadTraversalContext
                     traversal.load-state
@@ -9999,7 +10059,21 @@
                                         (& after-modules))
                                       rest-seen))))]
                             [(Err diag) (Err diag)]))]
-                      [(Err diag) (Err diag)]))]
+                      [(Err diag)
+                        (let
+                          [origin : cdiag.CompilerDiagnostic
+                            (cdiag.compiler-diagnostic-from-ast-span
+                              importer-path
+                              (__tl-box-place span)
+                              "")]
+                          (Err
+                            (box
+                              (cdiag.compiler-diagnostic-with-secondary
+                                (__tl-box-place diag)
+                                (cdiag.compiler-diagnostic-primary-span
+                                  (& origin))
+                                (cdiag.CompilerDiagnosticSomeString
+                                  "imported here")))))]))]
                 [(Err message)
                   (Err
                     (box

@@ -27,7 +27,90 @@
 (import stdlib.arena)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
+(cfg test (import compiler_embedded_stdlib_tlci as embedded_tlci))
 (import compiler_cfg_core as cfg_core)
+
+(cfg
+  test
+  (test
+    compiler-driver-retained-image-owner
+    (let
+      [a : arena.Arena (arena.make)]
+      [b : arena.Arena (arena.make)]
+      [a-owner : i64 (arena.raw-handle a)]
+      [b-owner : i64 (arena.raw-handle b)]
+      (test.assert-i64-eq
+        embedded_tlci.compiler-embedded-stdlib-tlci-decoded-owner
+        0
+        "no image owner before the batch")
+      (let
+        [invalid-owners : (Array i64 3) (array 0 -1 -9223372036854775808)]
+        [index : i64 0]
+        (while (< index 3)
+          (let
+            [_bytes : (__tl_dyn-array u8)
+              (embedded_tlci.compiler-embedded-stdlib-tlci-surface-bytes
+                (array-ref invalid-owners index))]
+            unit)
+          (test.assert-i64-eq
+            embedded_tlci.compiler-embedded-stdlib-tlci-decoded-owner
+            0
+            "a nonpositive owner cannot publish retained bytes")
+          (set! index (+ index 1))))
+      (let
+        [first : (__tl_dyn-array u8)
+          (embedded_tlci.compiler-embedded-stdlib-tlci-surface-bytes a-owner)]
+        [nested : (__tl_dyn-array u8)
+          (embedded_tlci.compiler-embedded-stdlib-tlci-surface-bytes b-owner)]
+        [first-address : i64
+          (cast
+            (unsafe
+              (ptr->int (__tl_array-data first)))
+            : i64)]
+        (test.assert-i64-eq
+          (array-length first)
+          (embedded_tlci.compiler-embedded-stdlib-tlci-length)
+          "retained expansion preserves the complete image")
+        (test.assert-i64-eq
+          embedded_tlci.compiler-embedded-stdlib-tlci-decoded-owner
+          a-owner
+          "nested users retain the enclosing owner")
+        (test.assert-i64-eq
+          first-address
+          (cast
+            (unsafe
+              (ptr->int (__tl_array-data nested)))
+            : i64)
+          "nested surfaces borrow the same live bytes")
+        (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! b-owner)
+        (test.assert-i64-eq
+          embedded_tlci.compiler-embedded-stdlib-tlci-decoded-owner
+          a-owner
+          "a nested user cannot unpublish its enclosing image")
+        (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! a-owner)
+        (arena.destroy-safe! a)
+        (test.assert-i64-eq
+          embedded_tlci.compiler-embedded-stdlib-tlci-decoded-owner
+          0
+          "a new owner cannot read the retired byte slot")
+        (let
+          [next : (__tl_dyn-array u8)
+            (embedded_tlci.compiler-embedded-stdlib-tlci-surface-bytes b-owner)]
+          (test.assert-i64-eq
+            embedded_tlci.compiler-embedded-stdlib-tlci-decoded-owner
+            b-owner
+            "the next batch publishes its own live owner")
+          (test.assert-i64-eq
+            (array-length next)
+            (embedded_tlci.compiler-embedded-stdlib-tlci-length)
+            "a later batch receives the complete image")))
+      (embedded_tlci.compiler-embedded-stdlib-tlci-forget-decoded! b-owner)
+      (arena.destroy-safe! b)
+      (test.assert-i64-eq
+        embedded_tlci.compiler-embedded-stdlib-tlci-decoded-owner
+        0
+        "batch teardown unpublishes its owner"))))
+
 (cfg embedded-stdlib-tlci (import compiler_build_identity as build_identity))
 (cfg embedded-stdlib-tlci (import compiler_surface_ast as surface_ast))
 (cfg embedded-stdlib-tlci (import compiler_surface_hydrate))

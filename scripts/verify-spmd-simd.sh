@@ -7,8 +7,8 @@ set -eu
 # available variant, and asserts they produce IDENTICAL exit codes (with empty
 # stderr). Staged unsupported mode/program pairs are compiled and must fail with
 # an explicit diagnostic. `scalar` is always the reference; a SIMD mode is only
-# run when the host CPU can actually execute that ISA (via
-# scripts/detect-simd-isa.sh), and is skipped cleanly otherwise. This is the
+# run natively when the host supports it, or under pinned Intel SDE for
+# AVX-512. CI requires one of those execution routes. This is the
 # comparison the SPMD acceptance criteria need: proving SIMD lowering --
 # including the masked `foreach` tail and `spmd-reduce` folds -- matches scalar
 # semantics, not merely that a mode runs on a trivial full-width program.
@@ -23,10 +23,6 @@ set -eu
 #   scripts/verify-spmd-simd.sh
 #   TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
 #
-# On the fleet's AVX-512 Windows box (the only AVX-512 machine), run from Git
-# Bash / MSYS with clang on PATH; detect-simd-isa.sh reports `avx2`+`avx512`
-# there, so all three modes are exercised. A generic windows-latest or Linux CI
-# runner without AVX-512 runs scalar+avx2 and skips avx512 cleanly.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -60,8 +56,8 @@ if [ "$HOST_OS" = linux ]; then
     }
 fi
 
-# Runnable SIMD ISAs on THIS host (CPUID feature bit + OS XSAVE), not host OS.
-SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh")
+. "$ROOT/scripts/lib-simd-execution.sh"
+simd_execution_init
 
 spmd_short_tail_shape_fail() {
     echo "[spmd-simd] spmd_short_tail benchmark shape: $*" >&2
@@ -142,6 +138,7 @@ tests/spmd/native_slice_multi_output_i64.tl
 tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
 tests/spmd/inline_helper_f64.tl
+tests/integration/spmd_inline_helper_composition.tl
 tests/spmd/private_helper_i64.tl
 tests/spmd/private_helper_f64.tl
 tests/spmd/private_helper_bool.tl
@@ -204,7 +201,7 @@ EOF
 }
 
 isa_available() {
-    printf '%s\n' "$SIMD_ISAS" | grep -qx "$1"
+    simd_execution_mode "$1"
 }
 
 spmd_mode_expected_compile_diagnostic() {
@@ -255,7 +252,8 @@ run_spmd_mode() {
     mode_exit="$WORKDIR/$_tag.$_mode.exit"
     : > "$mode_out"
     : > "$mode_err"
-    rm -f "$mode_exit"
+    mode_execution="$WORKDIR/$_tag.$_mode.execution"
+    rm -f "$mode_exit" "$mode_execution"
 
     if [ "$HOST_OS" = linux ]; then
         _asm="$WORKDIR/$_tag.$_mode.s"
@@ -274,16 +272,36 @@ run_spmd_mode() {
             mode_code=1
             return
         fi
+        simd_execution_record "$_prog" "$_mode"
+        printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
         set +e
-        "$_bin" >> "$mode_out" 2>> "$mode_err"
+        simd_execute "$_mode" "$_bin" >> "$mode_out" 2>> "$mode_err"
         mode_code=$?
         set -e
     else
-        set +e
-        "$COMPILER" run "$_prog" --backend-mode "$_mode" \
-            > "$mode_out" 2> "$mode_err"
-        mode_code=$?
-        set -e
+        simd_execution_mode "$_mode" || return 1
+        if [ "$SIMDEX_MODE" = sde ]; then
+            _bin="$WORKDIR/$_tag.$_mode.exe"
+            if ! "$COMPILER" build "$_prog" --backend-mode "$_mode" -o "$_bin" \
+                > "$mode_out" 2> "$mode_err"; then
+                mode_code=1
+                return
+            fi
+            simd_execution_record "$_prog" "$_mode"
+            printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
+            set +e
+            simd_execute "$_mode" "$_bin" > "$mode_out" 2> "$mode_err"
+            mode_code=$?
+            set -e
+        else
+            simd_execution_record "$_prog" "$_mode"
+            printf '%s\n' "$SIMDEX_MODE" > "$mode_execution"
+            set +e
+            "$COMPILER" run "$_prog" --backend-mode "$_mode" \
+                > "$mode_out" 2> "$mode_err"
+            mode_code=$?
+            set -e
+        fi
     fi
     printf '%s\n' "$mode_code" > "$mode_exit"
 }
@@ -345,6 +363,7 @@ while IFS= read -r prog; do
             continue
         fi
         if ! isa_available "$isa"; then
+            simd_execution_record "$prog" "$mode"
             echo "[spmd-simd]   skip $mode ($isa not runnable on this $HOST_OS host)"
             continue
         fi
@@ -374,4 +393,5 @@ if [ -s "$FAILURES" ]; then
     exit 1
 fi
 
-echo "spmd-simd verification passed (host=$HOST_OS, isas='$(printf '%s' "$SIMD_ISAS" | tr '\n' ' ')')"
+simd_execution_summary spmd-simd
+echo "spmd-simd verification passed (host=$HOST_OS, native-isas='$(printf '%s' "$SIMDEX_NATIVE_ISAS" | tr '\n' ' ')')"

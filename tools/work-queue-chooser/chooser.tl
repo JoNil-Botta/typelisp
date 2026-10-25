@@ -1,10 +1,12 @@
 ;# work-queue-chooser/chooser.tl - TypeLisp work-queue chooser.
 ;#
 ;# Reads the combined `{"prs":[...],"issues":[...]}` JSON from stdin, classifies
-;# each entry, skips review-claimed/draft PRs and pending/running PR checks,
+;# each entry, skips review-claimed/blocked/draft PRs and pending/running PR checks,
 ;# and issues an open PR already claims (the issue number appears as a 4+ digit
 ;# run in a PR branch name or title -- an issue someone is already working is
-;# not work to hand to a second agent), weights the rest (PR review = 45;
+;# not work to hand to a second agent). Eligible reviews precede all issues;
+;# only when none remain does the chooser consider issues. Within that pool it
+;# weights candidates (PR review = 45;
 ;# ready-for-implementation = 10 with +50 for p0 and +3 for p1;
 ;# research/triage = 1 with +6 for p0 and +3 for p1), uses system entropy to
 ;# make a weighted pick, and prints one action line:
@@ -75,7 +77,7 @@
   (title String)
   (weight i64))
 
-;: Immutable contiguous candidates in source order (PRs first, then issues).
+;: Immutable contiguous candidates in source order: reviews or fallback issues.
 (defstruct CandSeq
   (slots (__tl_dyn-array Candidate))
   (len i64))
@@ -310,6 +312,10 @@
 (define (pr-review-claimed? [item : json.Json]) : bool
   (label-list-has? (json-field-array item "labels") "review-claimed"))
 
+;: Eligibility only. Blocked PRs still reserve linked issues and backlog slots.
+(define (pr-blocked? [item : json.Json]) : bool
+  (label-list-has? (json-field-array item "labels") "blocked"))
+
 ;: Return the lane-specific priority bonus for a label list. p0 takes
 ;: precedence over p1.
 (define (label-list-priority-bonus [labels : json.JsonSeq] [ready : bool]) : i64
@@ -425,7 +431,7 @@
   (label-list-has? (json-field-array item "labels") "ready-for-implementation"))
 
 ;: Append a JSON array of PR objects as candidates, preserving source order.
-;: Claimed, draft and explicit non-main-base PRs are never eligible; other PRs
+;: Claimed, blocked, draft and explicit non-main-base PRs are never eligible; other PRs
 ;: whose checks are pending or running are skipped until they become terminal.
 (define (pr-candidates-into
   [items : json.JsonSeq]
@@ -438,6 +444,7 @@
         [(JsonFound head)
           (if (and
             (not (pr-review-claimed? (chooser-shared-view head)))
+            (not (pr-blocked? (chooser-shared-view head)))
             (not (pr-draft? (chooser-shared-view head)))
             (pr-targets-main? (chooser-shared-view head))
             (pr-checks-complete? (chooser-shared-view head)))
@@ -697,8 +704,8 @@
         (string.int->string claimed-prs)
         "; recheck when PR labels, checks, draft/base state, or issue readiness change"))))
 
-;: Build the full candidate sequence: PR candidates first, then issue
-;: candidates. Ready-for-implementation issues are dropped once more than
+;: Select from eligible reviews first, falling back to issues only when none
+;: remain. Ready-for-implementation issues are dropped once more than
 ;: `implement-pr-cap` open non-draft PRs are present, leaving only review and
 ;: research/triage work.
 (define (build-candidates [root : json.Json]) : CandSeq
@@ -709,7 +716,9 @@
       (<= (count-open-nondraft-prs (chooser-shared-view prs)) implement-pr-cap)]
     [out : CandBuilder (cand-builder-new)]
     (pr-candidates-into (chooser-shared-view prs) (&mut out))
-    (issue-candidates-into issues prs implement-allowed? (&mut out))
+    (if (= out.len 0)
+      (issue-candidates-into issues prs implement-allowed? (&mut out))
+      unit)
     (cand-builder-to-seq out)))
 
 ;: Number of candidates in a sequence.
@@ -778,13 +787,100 @@
 
 (cfg
   test
-  (define (chooser-test-expect-label-error [text : String] [expected : String]) : unit
+  (define (chooser-test-expect-error [text : String] [expected : String]) : unit
     (match (choose-candidate text)
       [(Err message)
         (test.assert-true
           (string.eq message expected)
-          "actionable malformed PR label diagnostic")]
-      [_ (io.panic "chooser fixture must reject malformed PR labels")])))
+          "expected chooser diagnostic")]
+      [_ (io.panic "chooser fixture expected an error")])))
+
+(test
+  chooser-review-precedes-large-p0-backlog
+  (let
+    [text : String
+      "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"labels\":[]}],\"issues\":["]
+    [index : i64 0]
+    (while (< index 300)
+      (if (> index 0)
+        (set! text (string.append text ","))
+        unit)
+      (set!
+        text
+        (string.append
+          text
+          (string.append
+            "{\"number\":"
+            (string.append
+              (string.int->string (+ 7000 index))
+              ",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}"))))
+      (set! index (+ index 1)))
+    (set! text (string.append text "]}"))
+    (match (json.parse (& text))
+      [(OkJson root)
+        (let
+          [cands : CandSeq (build-candidates root)]
+          (test.assert-i64-eq
+            (cand-count cands)
+            1
+            "issue volume cannot dilute review")
+          (test.assert-i64-eq
+            (__tl-project-field (cand-nth cands 0) number)
+            40
+            "review precedes p0"))]
+      [(ErrJson _) (io.panic "test JSON should parse")])
+    (chooser-test-expect-action text kind-pr 40)))
+
+(test
+  chooser-blocked-pr-preserves-linkage-and-allows-fallback
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Fix #6001\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}],\"headRefName\":\"issue-6000\"}],\"issues\":[{\"number\":6000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]},{\"number\":6001,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]},{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    kind-ready
+    7000)
+  (chooser-test-expect-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Fix #6001\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}],\"headRefName\":\"issue-6000\"}],\"issues\":[{\"number\":6000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]},{\"number\":6001,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    "Error: no eligible candidates were provided"))
+
+(test
+  chooser-blocked-label-removal-and-exact-name
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    kind-pr
+    40)
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"Blocked\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    kind-pr
+    40)
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked \"}]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    kind-pr
+    40))
+
+(test
+  chooser-blocked-prs-preserve-cap-boundary
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":44,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":45,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":46,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":47,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    kind-ready
+    7000)
+  (chooser-test-expect-wait
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":44,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":45,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":46,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":47,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":48,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    "wait: queue saturated; review: 9 PRs in flight; implement: 1 ready issue held back; research/triage: 0 claimed")
+  (chooser-test-expect-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]}],\"issues\":[]}"
+    "Error: no eligible candidates were provided"))
+
+(test
+  chooser-review-remains-eligible-above-cap
+  (chooser-test-expect-action
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":44,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":45,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":46,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":47,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"blocked\"}]},{\"number\":48,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]}],\"issues\":[{\"number\":7000,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]}]}"
+    kind-pr
+    48))
+
+(test
+  chooser-validates-labels-even-after-blocked-label
+  (chooser-test-expect-error
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"labels\":[{\"name\":\"blocked\"},{}]}],\"issues\":[]}"
+    "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"))
 
 (test
   chooser-review-claim-removal-and-legacy-labels
@@ -819,7 +915,7 @@
 (test
   chooser-claimed-unclaimed-and-other-pr-rules
   (chooser-test-expect-action
-    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}],\"labels\":[{\"name\":\"bug\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"p0\"},{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}],\"labels\":[]},{\"number\":44,\"title\":\"Review\",\"isDraft\":true,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":45,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"stacked\",\"statusCheckRollup\":[],\"labels\":[]}],\"issues\":[]}"
+    "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"}]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"COMPLETED\",\"conclusion\":\"FAILURE\"}],\"labels\":[{\"name\":\"bug\"}]},{\"number\":42,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"p0\"},{\"name\":\"review-claimed\"}]},{\"number\":43,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}],\"labels\":[]},{\"number\":44,\"title\":\"Review\",\"isDraft\":true,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":45,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"stacked\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":46,\"title\":\"Blocked\",\"labels\":[{\"name\":\"blocked\"}]}],\"issues\":[{\"number\":7000,\"title\":\"Urgent issue\",\"labels\":[{\"name\":\"p0\"},{\"name\":\"ready-for-implementation\"}]}]}"
     kind-pr
     41))
 
@@ -857,61 +953,61 @@
 
 (test
   chooser-rejects-malformed-pr-label-data
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":null}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":0}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":true}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":{}}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":\"\"}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[\"review-claimed\"]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[null]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[[]]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":null}]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":7}]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":false}]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":{}}]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":[]}]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{\"name\":\"review-claimed\"},{}]}],\"issues\":[]}"
     "Error: invalid input: prs[0].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"))
 
 (test
   chooser-validates-labels-before-other-pr-exclusions
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":true,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
     "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"stacked\",\"statusCheckRollup\":[],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
     "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots")
-  (chooser-test-expect-label-error
+  (chooser-test-expect-error
     "{\"prs\":[{\"number\":40,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[],\"labels\":[]},{\"number\":41,\"title\":\"Review\",\"isDraft\":false,\"baseRefName\":\"main\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}],\"labels\":[{}]}],\"issues\":[{\"number\":7000,\"title\":\"Issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"
     "Error: invalid input: prs[1].labels must be an array of objects with string name fields; omit labels only for legacy snapshots"))
 
@@ -924,9 +1020,9 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (if (= (cand-count cands) 5)
+          (if (= (cand-count cands) 4)
             unit
-            (io.panic "expected only complete/no-check PRs plus issue"))
+            (io.panic "expected only complete/no-check PRs"))
           (if (= (__tl-project-field (cand-nth cands 0) number) 1)
             unit
             (io.panic "non-draft PR without checks should remain eligible"))
@@ -939,9 +1035,9 @@
           (if (= (__tl-project-field (cand-nth cands 3) number) 6)
             unit
             (io.panic "terminal legacy status should remain eligible"))
-          (if (= (__tl-project-field (cand-nth cands 4) number) 7)
-            unit
-            (io.panic "issue should remain after skipped PRs")))]
+          (test.assert-false
+            (cand-list-has-kind? cands kind-triage)
+            "eligible reviews defer issue fallback"))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -962,26 +1058,25 @@
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
-  chooser-priority-order-is-lane-aware
+  chooser-issue-fallback-priority-order-is-lane-aware
   (let
     [text : String
-      "{\"prs\":[{\"number\":20,\"title\":\"Review\",\"statusCheckRollup\":[]}],\"issues\":[{\"number\":10,\"title\":\"Ready both\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":11,\"title\":\"Ready p0\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]},{\"number\":12,\"title\":\"Ready p1\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]},{\"number\":13,\"title\":\"Ready plain\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":14,\"title\":\"Triage both\",\"labels\":[{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":15,\"title\":\"Triage p0\",\"labels\":[{\"name\":\"p0\"}]},{\"number\":16,\"title\":\"Triage p1\",\"labels\":[{\"name\":\"p1\"}]},{\"number\":17,\"title\":\"Triage plain\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":20,\"title\":\"Review\",\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":10,\"title\":\"Ready both\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":11,\"title\":\"Ready p0\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p0\"}]},{\"number\":12,\"title\":\"Ready p1\",\"labels\":[{\"name\":\"ready-for-implementation\"},{\"name\":\"p1\"}]},{\"number\":13,\"title\":\"Ready plain\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":14,\"title\":\"Triage both\",\"labels\":[{\"name\":\"p1\"},{\"name\":\"p0\"}]},{\"number\":15,\"title\":\"Triage p0\",\"labels\":[{\"name\":\"p0\"}]},{\"number\":16,\"title\":\"Triage p1\",\"labels\":[{\"name\":\"p1\"}]},{\"number\":17,\"title\":\"Triage plain\",\"labels\":[]}]}"]
     (match (json.parse (& text))
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          [review : i64 (__tl-project-field (cand-nth cands 0) weight)]
-          [ready-both : i64 (__tl-project-field (cand-nth cands 1) weight)]
-          [ready-p0 : i64 (__tl-project-field (cand-nth cands 2) weight)]
-          [ready-p1 : i64 (__tl-project-field (cand-nth cands 3) weight)]
-          [ready-plain : i64 (__tl-project-field (cand-nth cands 4) weight)]
-          [triage-both : i64 (__tl-project-field (cand-nth cands 5) weight)]
-          [triage-p0 : i64 (__tl-project-field (cand-nth cands 6) weight)]
-          [triage-p1 : i64 (__tl-project-field (cand-nth cands 7) weight)]
-          [triage-plain : i64 (__tl-project-field (cand-nth cands 8) weight)]
-          (if (= (cand-count cands) 9)
+          [ready-both : i64 (__tl-project-field (cand-nth cands 0) weight)]
+          [ready-p0 : i64 (__tl-project-field (cand-nth cands 1) weight)]
+          [ready-p1 : i64 (__tl-project-field (cand-nth cands 2) weight)]
+          [ready-plain : i64 (__tl-project-field (cand-nth cands 3) weight)]
+          [triage-both : i64 (__tl-project-field (cand-nth cands 4) weight)]
+          [triage-p0 : i64 (__tl-project-field (cand-nth cands 5) weight)]
+          [triage-p1 : i64 (__tl-project-field (cand-nth cands 6) weight)]
+          [triage-plain : i64 (__tl-project-field (cand-nth cands 7) weight)]
+          (if (= (cand-count cands) 8)
             unit
-            (io.panic "expected one review and eight issue candidates"))
+            (io.panic "expected eight fallback issue candidates"))
           (if (= ready-both ready-p0)
             unit
             (io.panic "ready p0 should take precedence over p1"))
@@ -1001,12 +1096,9 @@
             unit
             (io.panic
               "removing ready-for-implementation must lower every priority"))
-          (if (< triage-p0 review)
-            unit
-            (io.panic "even p0 triage must stay below PR review"))
-          (if (> ready-p0 review)
-            unit
-            (io.panic "ready p0 must retain its override above PR review")))]
+          (test.assert-false
+            (cand-list-has-kind? cands kind-pr)
+            "pending reviews leave issue weights unchanged"))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
@@ -1064,65 +1156,62 @@
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (if (= (cand-count cands) 2)
+          (if (= (cand-count cands) 1)
             unit
-            (io.panic
-              "only the non-draft PR and the triage issue should remain"))
+            (io.panic "only the non-draft PR should remain"))
           (if (= (__tl-project-field (cand-nth cands 0) number) 62)
             unit
             (io.panic
               "the sole non-draft PR should be the only review candidate"))
-          (if (= (__tl-project-field (cand-nth cands 1) number) 70)
-            unit
-            (io.panic "triage issue should follow once draft PRs are dropped")))]
+          (test.assert-false
+            (cand-list-has-kind? cands kind-triage)
+            "eligible review defers triage"))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-caps-implement-when-many-open-prs
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":48,\"title\":\"PR I\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (if (= (cand-count cands) 10)
+          (if (= (cand-count cands) 1)
             unit
-            (io.panic
-              "nine review PRs plus the surviving triage issue expected"))
+            (io.panic "only the surviving triage issue expected"))
           (if (cand-list-has-kind? cands kind-ready)
             (io.panic
               "ready-for-implementation issues must drop above the eight-PR cap")
             unit)
-          (if (cand-list-has-kind? cands kind-pr)
-            unit
-            (io.panic
-              "review candidates must stay eligible above the eight-PR cap"))
+          (test.assert-false
+            (cand-list-has-kind? cands kind-pr)
+            "running reviews are ineligible above the cap")
           (if (cand-list-has-kind? cands kind-triage)
             unit
             (io.panic
               "research/triage issues must stay eligible above the eight-PR cap"))
-          (if (= (__tl-project-field (cand-nth cands 9) number) 51)
+          (if (= (__tl-project-field (cand-nth cands 0) number) 51)
             unit
-            (io.panic "triage issue should remain after the nine review PRs")))]
+            (io.panic "triage issue should remain while reviews are running")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test
   chooser-allows-implement-at-pr-cap-boundary
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]},{\"number\":51,\"title\":\"Triage issue\",\"labels\":[]}]}"]
     (match (json.parse (& text))
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (if (= (cand-count cands) 10)
+          (if (= (cand-count cands) 2)
             unit
-            (io.panic "eight review PRs plus both issues expected at the cap"))
+            (io.panic "both fallback issues expected at the cap"))
           (if (cand-list-has-kind? cands kind-ready)
             unit
             (io.panic "exactly eight open PRs is at the cap, not above it"))
-          (if (= (__tl-project-field (cand-nth cands 8) number) 50)
+          (if (= (__tl-project-field (cand-nth cands 0) number) 50)
             unit
             (io.panic "ready issue should remain right at the PR cap")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
@@ -1131,21 +1220,21 @@
   chooser-draft-prs-do-not-count-toward-pr-cap
   (let
     [text : String
-      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[]},{\"number\":48,\"title\":\"Draft D\",\"isDraft\":true,\"statusCheckRollup\":[]},{\"number\":49,\"title\":\"Draft E\",\"isDraft\":true,\"statusCheckRollup\":[]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"]
+      "{\"prs\":[{\"number\":40,\"title\":\"PR A\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":41,\"title\":\"PR B\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":42,\"title\":\"PR C\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":43,\"title\":\"PR D\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":44,\"title\":\"PR E\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":45,\"title\":\"PR F\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":46,\"title\":\"PR G\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":47,\"title\":\"PR H\",\"isDraft\":false,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":48,\"title\":\"Draft D\",\"isDraft\":true,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]},{\"number\":49,\"title\":\"Draft E\",\"isDraft\":true,\"statusCheckRollup\":[{\"status\":\"IN_PROGRESS\"}]}],\"issues\":[{\"number\":50,\"title\":\"Ready issue\",\"labels\":[{\"name\":\"ready-for-implementation\"}]}]}"]
     (match (json.parse (& text))
       [(OkJson root)
         (let
           [cands : CandSeq (build-candidates root)]
-          (if (= (cand-count cands) 9)
+          (if (= (cand-count cands) 1)
             unit
             (io.panic
-              "eight non-draft review PRs plus the kept ready issue expected"))
+              "the ready issue remains while non-draft reviews are running"))
           (if (cand-list-has-kind? cands kind-ready)
             unit
             (io.panic "two draft PRs must not push eight open PRs over the cap"))
-          (if (= (__tl-project-field (cand-nth cands 8) number) 50)
+          (if (= (__tl-project-field (cand-nth cands 0) number) 50)
             unit
-            (io.panic "ready issue should sit right after the non-draft PRs")))]
+            (io.panic "ready issue should remain despite the draft PRs")))]
       [(ErrJson _) (io.panic "test JSON should parse")])))
 
 (test

@@ -173,6 +173,9 @@ end
 case|selfhost_compiler_liveness|src/compiler_liveness.tl|assembly|none|direct
 end
 
+case|selfhost_compiler_stack_traffic|src/compiler_stack_traffic.tl|assembly|none|direct
+end
+
 case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|none|direct
 end
 
@@ -272,4 +275,7 @@ case|selfhost_linker_ar_dialect_reader|src/linker_ar_dialect_reader.tl|assembly|
 end
 
 case|selfhost_linker_elf_object_reader|src/linker_elf_object_reader.tl|assembly|none|direct
+end
+
+case|selfhost_linker_coff_import_reader|src/linker_coff_import_reader.tl|assembly|none|direct
 end

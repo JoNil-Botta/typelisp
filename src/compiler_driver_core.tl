@@ -3806,34 +3806,11 @@
   [pools : compiler_ast_types.AstNodePoolContext]
   [profile-state : profile_state.CompilerProfileState]) : compiler_load.ResultCompilerLoadWithPaths
   (compiler-driver-profile-note-prelude-source-pipeline! profile-state)
-  (match (compiler_load.compiler-load-stdlib-prelude-file-with-roots-cfg-with-pools
-    (owned_view.compiler-owned-shared-view load-state)
-    (& (compiler_load.compiler-load-runtime-prelude-path-shared-view))
-    (sym_i64_env.sym-i64-empty)
-    (& stdlib-roots)
+  (compiler_load.compiler-load-executable-prelude
+    load-state
+    stdlib-roots
     cfgs
-    pools)
-    [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
-      (match (compiler_load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
-        load-state
-        runtime-seen
-        (& stdlib-roots)
-        cfgs
-        pools)
-        [(Ok macro-decls macro-paths macro-modules macro-seen)
-          (Ok
-            (compiler_load.compiler-load-decl-list-append
-              (& runtime-decls)
-              (& macro-decls))
-            (compiler_load.compiler-load-decl-path-list-append
-              (& runtime-paths)
-              (& macro-paths))
-            (compiler_load.compiler-load-decl-module-list-append
-              (& runtime-modules)
-              (& macro-modules))
-            macro-seen)]
-        [(Err diag) (Err diag)])]
-    [(Err diag) (Err diag)]))
+    pools))
 
 (define (compiler-driver-load-runtime-prelude-cache-miss-with-state-and-pools
   [load-state : compiler_load.CompilerLoadSessionState]

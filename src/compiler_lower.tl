@@ -9,11 +9,13 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_typecheck_core as tc_core)
+(import compiler_typecheck_api as tc_api)
 (import compiler_symbols as csym)
 (import compiler_specialize as spec)
 (import compiler_parse_core as parser)
 (import compiler_load as load)
 (import compiler_cfg_core as cfg_core)
+(import compiler_target_cfg_core as target_cfg)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import compiler_ir_types as ir)
@@ -1805,6 +1807,9 @@
   ;; Tail-call-safe current function parameter var range: [start, end).
   (tail-param-start i64)
   (tail-param-end i64)
+  ;; Slice-pattern rest views preserve their source's external storage. The
+  ;; persistent set also keeps cloned control-flow states independent.
+  (tail-external-vars LowerIdSet)
   ;; Allocated only when this function enters masked SPMD lowering.
   (masked-load-cache LowerMaybeMaskedLoadCache)
   ;; Attached only while lowering one masked vector loop and its vector tail.
@@ -1893,6 +1898,7 @@
         address-taken
         tail-param-start
         tail-param-end
+        (lower-id-set-empty)
         (No)
         (No)
         (lower_i64_i64_map.with-capacity 1)
@@ -2299,7 +2305,14 @@
 
 (defstruct CompilerLowerRequest
   (mode CompilerLowerMode)
-  (pointer-proof pointer_proof.PointerProofRequest))
+  (pointer-proof pointer_proof.PointerProofRequest)
+  (stdlib-roots svec.Vec)
+  (cfg-names svec.Vec)
+  (in-session bool)
+  (executable bool))
+
+(define (compiler-lower-request [mode : CompilerLowerMode]) : CompilerLowerRequest
+  (CompilerLowerRequest mode Disabled (svec.new) (svec.new) false false))
 
 ;; Consumers of semantic evidence accept this checked boundary, not an ordinary
 ;; ResultCompilerLower. Its program is immutable until analysis finishes.
@@ -2313,16 +2326,18 @@
 
 (define (compiler-lower-state-use-request!
   [state : CompilerLowerState]
-  [request : CompilerLowerRequest]) : unit
-  (compiler-lower-state-set-pointer-proof-request! state request.pointer-proof))
+  [request : (& request CompilerLowerRequest)]) : unit
+  (compiler-lower-state-set-pointer-proof-request!
+    state
+    (clone request.pointer-proof)))
 
 (define (lower-compiler-pointer-proof-result
-  [request : CompilerLowerRequest]
+  [request : (& request CompilerLowerRequest)]
   [result : ResultCompilerLower]) : ResultCompilerLowerPointerProof
   (match result
     [(Err diagnostic) (Err diagnostic)]
     [(Ok program spans lower-state)
-      (match request.pointer-proof
+      (match (clone request.pointer-proof)
         [(Disabled)
           (Err
             (box
@@ -15300,6 +15315,31 @@
     (__tl-project-set-field (__tl-box-place data) tail-param-end 0)
     state))
 
+(define (lower-state-tail-storage-contains? [state : LowerState] [var-id : i64]) : bool
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (or
+      (lower-state-tail-param-range-contains? state var-id)
+      (lower-id-set-contains? (& (deref data).tail-external-vars) var-id))))
+
+(define (lower-state-mark-tail-storage [state : LowerState] [var-id : i64]) : LowerState
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    [previous : LowerIdSet
+      (replace! (deref data).tail-external-vars (lower-id-set-empty))]
+    [next : LowerIdSet (lower-id-set-insert previous var-id)]
+    (__tl-project-set-field (__tl-box-place data) tail-external-vars next)
+    state))
+
+(define (lower-state-invalidate-tail-storage [state : LowerState]) : LowerState
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-set-field
+      (__tl-box-place data)
+      tail-external-vars
+      (lower-id-set-empty))
+    (lower-state-clear-tail-param-range state)))
+
 (define (lower-state-alloc-var [state : LowerState]) : LowerAlloc
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
@@ -21197,110 +21237,123 @@
                             [(Err message)
                               (Err (box (lower-diagnostic message)))]
                             [(Ok nested-fields)
-                              (match (lower-load-inline-value-at-offset
-                                ctx
-                                state
-                                (lower-global-shared-view base)
-                                offset
-                                (lower-global-shared-view resolved))
-                                [(Expr field-state field-value _)
-                                  ;; For a register-resident enum field the
-                                  ;; loaded value IS the tag word; for a memory
-                                  ;; enum it is a pointer to the field, so the
-                                  ;; tag is loaded from offset 0. Dereferencing
-                                  ;; a register-resident tag word would fault
-                                  ;; (it is a small integer, not an address).
-                                  (match (if (lower-type-register-resident?
+                              (let
+                                [field-words : i64
+                                  (lower-type-register-words
                                     ctx
-                                    resolved)
-                                    (Expr
-                                      field-state
-                                      (lower-global-shared-view field-value)
-                                      (I64))
-                                    (lower-load-at-offset
-                                      field-state
-                                      field-value
-                                      0
-                                      (I64)))
-                                    [(Expr tag-state tag-value _)
-                                      (match (lower-state-alloc-var tag-state)
-                                        [(Alloc eq-alloc eq-var)
-                                          (match (lower-state-fresh-label
-                                            (lower-state-emit
-                                              eq-alloc
-                                              (BinOp
-                                                eq-var
-                                                Eq
-                                                tag-value
-                                                (I64
-                                                  (csym.compiler-registry-handle-child-index
-                                                    handle))
-                                                (I64)))
-                                            "payload_ok")
-                                            [(Label ok-state ok-label)
-                                              (match (lower-bind-variant-payloads
-                                                ctx
-                                                (lower-state-finish-block
-                                                  (lower-state-emit
-                                                    ok-state
-                                                    (Branch
-                                                      (Var eq-var)
-                                                      ok-label
-                                                      fail-label))
-                                                  ok-label)
-                                                env
-                                                type-env
-                                                bind-mode
-                                                field-value
-                                                nested-args
-                                                nested-fields
-                                                mode
-                                                (lower-enum-type-name-id-or
-                                                  resolved
-                                                  -1)
-                                                (lower-enum-type-name-or-empty
-                                                  (lower-global-shared-view
-                                                    resolved))
-                                                nested-name-str
-                                                (lower-variant-handle-name-id-or
+                                    (lower-global-shared-view resolved))]
+                                ;; A borrowed match reads its scrutinee behind a
+                                ;; pointer, and so does the payload walk below.
+                                ;; A two-word register-group enum field would
+                                ;; load as a packed value, so a borrowed match
+                                ;; takes its address instead and reads it like
+                                ;; a memory enum (#8905).
+                                [field-in-place? : bool
+                                  (and (not owned?) (= field-words 2))]
+                                [field-base : ir.CompilerIrValue
+                                  (lower-global-shared-view base)]
+                                (match (if field-in-place?
+                                  (lower-gep-byte state field-base offset)
+                                  (lower-load-inline-value-at-offset
+                                    ctx
+                                    state
+                                    field-base
+                                    offset
+                                    (lower-global-shared-view resolved)))
+                                  [(Expr field-state field-value _)
+                                    ;; For a register-resident enum field the
+                                    ;; loaded value IS the tag word; for a memory
+                                    ;; enum, or a field read in place, it is a
+                                    ;; pointer to the field, so the tag is loaded
+                                    ;; from offset 0. Dereferencing a
+                                    ;; register-resident tag word would fault (it
+                                    ;; is a small integer, not an address).
+                                    (match (if (and
+                                      (> field-words 0)
+                                      (not field-in-place?))
+                                      (Expr
+                                        field-state
+                                        (lower-global-shared-view field-value)
+                                        (I64))
+                                      (lower-load-at-offset
+                                        field-state
+                                        field-value
+                                        0
+                                        (I64)))
+                                      [(Expr tag-state tag-value _)
+                                        (match (lower-state-alloc-var tag-state)
+                                          [(Alloc eq-alloc eq-var)
+                                            (match (lower-state-fresh-label
+                                              (lower-state-emit
+                                                eq-alloc
+                                                (BinOp
+                                                  eq-var
+                                                  Eq
+                                                  tag-value
+                                                  (I64
+                                                    (csym.compiler-registry-handle-child-index
+                                                      handle))
+                                                  (I64)))
+                                              "payload_ok")
+                                              [(Label ok-state ok-label)
+                                                (match (lower-bind-variant-payloads
                                                   ctx
-                                                  handle
-                                                  nested-name)
-                                                0
-                                                8
-                                                fail-label
-                                                ;; nested enum: rare path, so
-                                                ;; computing its group-ness
-                                                ;; once here is cheap.
-                                                (match bind-mode
-                                                  [(Owned)
-                                                    (lower-type-register-group?
-                                                      ctx
-                                                      resolved)]
-                                                  [(Borrowed _) false]))
-                                                [(Ok
-                                                    nested-state
-                                                    nested-env
-                                                    nested-type-env)
-                                                  (lower-bind-variant-payloads
+                                                  (lower-state-finish-block
+                                                    (lower-state-emit
+                                                      ok-state
+                                                      (Branch
+                                                        (Var eq-var)
+                                                        ok-label
+                                                        fail-label))
+                                                    ok-label)
+                                                  env
+                                                  type-env
+                                                  bind-mode
+                                                  field-value
+                                                  nested-args
+                                                  nested-fields
+                                                  mode
+                                                  (lower-enum-type-name-id-or
+                                                    resolved
+                                                    -1)
+                                                  (lower-enum-type-name-or-empty
+                                                    (lower-global-shared-view
+                                                      resolved))
+                                                  nested-name-str
+                                                  (lower-variant-handle-name-id-or
                                                     ctx
-                                                    nested-state
-                                                    nested-env
-                                                    nested-type-env
-                                                    bind-mode
-                                                    base
-                                                    rest-patterns
-                                                    rest-types
-                                                    mode
-                                                    enum-id
-                                                    enum-name
-                                                    variant-name
-                                                    variant-name-id
-                                                    next-index
-                                                    next-cursor
-                                                    fail-label
-                                                    scrut-reg-group?)]
-                                                [(Err message) (Err message)])])])])])])))]))]
+                                                    handle
+                                                    nested-name)
+                                                  0
+                                                  8
+                                                  fail-label
+                                                  ;; An owned two-word field is
+                                                  ;; read as a register group; a
+                                                  ;; borrowed one is read in place.
+                                                  (and owned? (= field-words 2)))
+                                                  [(Ok
+                                                      nested-state
+                                                      nested-env
+                                                      nested-type-env)
+                                                    (lower-bind-variant-payloads
+                                                      ctx
+                                                      nested-state
+                                                      nested-env
+                                                      nested-type-env
+                                                      bind-mode
+                                                      base
+                                                      rest-patterns
+                                                      rest-types
+                                                      mode
+                                                      enum-id
+                                                      enum-name
+                                                      variant-name
+                                                      variant-name-id
+                                                      next-index
+                                                      next-cursor
+                                                      fail-label
+                                                      scrut-reg-group?)]
+                                                  [(Err message) (Err message)])])])])]))])))]))]
               [_
                 (Err
                   (box
@@ -21419,7 +21472,8 @@
   [count : i64]
   [rest : ast.AstPattern]
   [rest-ty : ast.AstType]
-  [elem-ty : ast.AstType]) : ResultLowerEnv
+  [elem-ty : ast.AstType]
+  [external-storage : bool]) : ResultLowerEnv
   (let
     [name : i64
       (match rest
@@ -21443,7 +21497,9 @@
                 (lower-global-shared-view rest-ty))
                 [(Expr pack-state (Var rest-var) _)
                   (Ok
-                    pack-state
+                    (if external-storage
+                      (lower-state-mark-tail-storage pack-state rest-var)
+                      pack-state)
                     (sym_i64_env.sym-i64-bind-id env name rest-var)
                     (tc_core.tc-bind-id type-env name rest-ty))]
                 [_
@@ -21557,6 +21613,10 @@
     (lower-global-shared-view scrut-ty))
     [(View lifetime mutable elem-ty array-length)
       (let
+        [external-storage : bool
+          (match (& scrut-value)
+            [(Var id) (lower-state-tail-storage-contains? state id)]
+            [_ false])]
         [count : i64
           (tc_core.tc-slice-pattern-element-count (& items) has-rest)]
         (match (if (>= array-length 0)
@@ -21612,7 +21672,8 @@
                       lifetime
                       mutable
                       (lower-global-shared-view elem-ty))
-                    elem-ty)
+                    elem-ty
+                    external-storage)
                   (Ok elements-state elements-env elements-type-env))]
               [(Err message) (Err message)])]
           [(Err message) (Err message)]))]
@@ -30106,7 +30167,7 @@
         (Ok (tc_core.tc-type-without-regions expr-ty)))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(Some ty)
           (Ok
@@ -31305,7 +31366,7 @@
       (lower-materialize-at-expr ctx state (I64 1) expr-ty origin)]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(Some ty) (lower-init-expr ctx state env type-env ty origin expr-ty)]
         [(No)
@@ -31499,17 +31560,17 @@
                                     (let
                                       [assign-state
                                         : LowerState
-                                        ;; A rebound aggregate param may point at
+                                        ;; A rebound frame-sensitive binding may point at
                                         ;; current-frame storage, so its var id no
                                         ;; longer proves tail-call forwarding is safe.
                                         (if (and
-                                          (lower-state-tail-param-range-contains?
+                                          (lower-state-tail-storage-contains?
                                             assign-value-state
                                             id)
-                                          (lower-type-contains-inline-aggregate?
+                                          (lower-tail-call-frame-sensitive-type?
                                             ctx
                                             (lower-global-shared-view target-ty)))
-                                          (lower-state-clear-tail-param-range
+                                          (lower-state-invalidate-tail-storage
                                             assign-value-state)
                                           assign-value-state)]
                                       (ResultLowerExpr.Ok
@@ -32434,7 +32495,7 @@
         (lower-box-get ctx state env type-env inner expected-ty))]
     [(Init maybe-ty-id)
       (match (ast.ast-maybe-type-from-id-with-pools
-        (tc_core.tc-context-pools ctx)
+        (& (tc_core.tc-context-pools ctx))
         maybe-ty-id)
         [(No)
           (lower-init-expr
@@ -38868,7 +38929,7 @@
               type-env
               address
               (ast.ast-maybe-type-from-id-with-pools
-                (tc_core.tc-context-pools ctx)
+                (& (tc_core.tc-context-pools ctx))
                 maybe-ty-id)
               result-ty
               origin)])]
@@ -67002,6 +67063,13 @@
                     view?)])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
+;; How a match on a borrowed enum place continues: as a value of the given type
+;; (its merge label is allocated after the scrutinee), or in tail position with
+;; the function's return type and sret var.
+(defenum LowerBorrowedEnumMatchCont
+  (Value ast.AstType)
+  (Tail ast.AstType i64))
+
 (define (lower-match-borrowed-enum
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -67011,52 +67079,82 @@
   [borrow-lifetime : i64]
   [enum-ty : ast.AstType]
   [arms : ast.AstMatchArmList]
-  [expr-ty : ast.AstType]
+  [cont : LowerBorrowedEnumMatchCont]
   [mode : LowerResultMode]) : ResultLowerExpr
   (let
     [resident : bool (lower-type-register-resident? ctx enum-ty)]
     [place-lowered : LowerExpr (try (lower-expr ctx state env type-env place))]
     (match place-lowered
       [(Expr place-state place-value _)
-        (match (if resident
-          (lower-copy-inline-aggregate-to-inline
-            ctx
-            place-state
-            place-value
-            (lower-global-shared-view enum-ty))
-          (ResultLowerExpr.Ok
-            (LowerExpr.Expr
-              place-state
-              place-value
-              (lower-global-shared-view enum-ty))))
-          [(ResultLowerExpr.Ok scrut-expr)
-            (match scrut-expr
-              [(LowerExpr.Expr scrut-state scrut-value _)
-                (match (lower-state-alloc-var scrut-state)
-                  [(LowerAlloc.Alloc scrut-alloc scrut-var)
-                    (match (lower-state-fresh-label
+        ;; The borrowed payload bindings and literal compares below
+        ;; address the scrutinee as MEMORY (gep off the pointer). A
+        ;; register-resident enum place lowers to its packed word(s), so
+        ;; spill it to a temp inline slot and run the whole match on the
+        ;; slot address (force-memory). The Mov is typed U64 in that case:
+        ;; the var holds an address, not a register group.
+        (let
+          [scrut-expr
+            (try
+              (if resident
+                (lower-copy-inline-aggregate-to-inline
+                  ctx
+                  place-state
+                  place-value
+                  (lower-global-shared-view enum-ty))
+                (ResultLowerExpr.Ok
+                  (Expr
+                    place-state
+                    place-value
+                    (lower-global-shared-view enum-ty)))))]
+          (match scrut-expr
+            [(Expr scrut-state scrut-value _)
+              (match (lower-state-alloc-var scrut-state)
+                [(Alloc scrut-alloc scrut-var)
+                  (let
+                    [home-state : LowerState
                       (lower-state-emit
                         scrut-alloc
-                        (ir.CompilerIrInstr.Mov
+                        (Mov
                           scrut-var
                           scrut-value
                           (if resident
-                            (ast.AstType.U64)
-                            (owned_view.compiler-owned-shared-view enum-ty))))
-                      "match_merge")
-                      [(LowerLabel.Label merge-state merge-label)
+                            (U64)
+                            (owned_view.compiler-owned-shared-view enum-ty))))]
+                    (match cont
+                      [(Value expr-ty)
+                        (match (lower-state-fresh-label
+                          home-state
+                          "match_merge")
+                          [(Label merge-state merge-label)
+                            (lower-match-enum
+                              ctx
+                              merge-state
+                              env
+                              type-env
+                              scrut-var
+                              enum-ty
+                              arms
+                              (lower-match-cont-new
+                                ctx
+                                merge-label
+                                expr-ty
+                                mode)
+                              (Some borrow-lifetime)
+                              resident)])]
+                      ;; Tail arms use the shared argument-storage proof.
+                      ;; References and views into frame slots retain calls.
+                      [(Tail ret-ty sret-var)
                         (lower-match-enum
                           ctx
-                          merge-state
+                          home-state
                           env
                           type-env
                           scrut-var
                           enum-ty
                           arms
-                          (lower-match-cont-new ctx merge-label expr-ty mode)
-                          (tc_core.TcMaybeNameId.Some borrow-lifetime)
-                          resident)])])])]
-          [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])))
+                          (LowerMatchCont.Tail ret-ty sret-var)
+                          (Some borrow-lifetime)
+                          resident)]))])]))])))
 
 (define (lower-match
   [ctx : tc_core.TcContext]
@@ -67087,76 +67185,29 @@
   [mode : LowerResultMode]) : ResultLowerExpr
   (let
     [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-id)]
-    (match (ast.ast-expr-unspan (& scrutinee))
-      [(ast.AstExpr.Borrow mutable _ place-box)
-        (if mutable
-          (lower-match-value
-            ctx
-            state
-            env
-            type-env
-            scrutinee
-            arms
-            expr-ty
-            mode
-            false)
-          (let
-            [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
-            (match (tc_core.tc-expr
-              ctx
-              type-env
-              (lower-global-shared-view scrutinee))
-              [(tc_core.ResultTcType.Ok scrut-ty)
-                (match (tc_core.tc-type-strip-region
-                  (tc_core.tc-resolve-type ctx scrut-ty))
-                  [(ast.AstType.Ref borrow-lifetime referent-box)
-                    (let
-                      [referent-ty : ast.AstType
-                        (tc_core.tc-type-strip-region
-                          (tc_core.tc-resolve-type
-                            ctx
-                            (tc_core.tc-context-type-get ctx referent-box)))]
-                      (match (& referent-ty)
-                        [(or (ast.AstType.Enum _) (ast.AstType.EnumArgs _ _))
-                          (lower-match-borrowed-enum
-                            ctx
-                            state
-                            env
-                            type-env
-                            place
-                            borrow-lifetime
-                            referent-ty
-                            arms
-                            expr-ty
-                            mode)]
-                        [_
-                          (lower-match-value
-                            ctx
-                            state
-                            env
-                            type-env
-                            scrutinee
-                            arms
-                            expr-ty
-                            mode
-                            false)]))]
-                  [_
-                    (lower-match-value
-                      ctx
-                      state
-                      env
-                      type-env
-                      scrutinee
-                      arms
-                      expr-ty
-                      mode
-                      false)])]
-              [(tc_core.ResultTcType.Err message)
-                (ResultLowerExpr.Err
-                  (box (lower-diagnostic-at-expr ctx scrutinee message)))])))]
-      ;; A mutable view's patterns bind the viewed storage
-      ;; (`lower-bind-owned-pattern-name`).
-      [_
+    ;; A mutable view's patterns bind the viewed storage
+    ;; (`lower-bind-owned-pattern-name`); a borrowed scrutinee is not one.
+    [view? : bool
+      (match (ast.ast-expr-unspan (& scrutinee))
+        [(ast.AstExpr.Borrow _ _ _) false]
+        [_ (lower-mutable-view-init? ctx scrutinee-id)])]
+    (match (lower-borrowed-enum-match-scrutinee
+      ctx
+      type-env
+      (lower-global-shared-view scrutinee))
+      [(Place place borrow-lifetime enum-ty)
+        (lower-match-borrowed-enum
+          ctx
+          state
+          env
+          type-env
+          place
+          borrow-lifetime
+          enum-ty
+          arms
+          (LowerBorrowedEnumMatchCont.Value expr-ty)
+          mode)]
+      [(None)
         (lower-match-value
           ctx
           state
@@ -67166,7 +67217,10 @@
           arms
           expr-ty
           mode
-          (lower-mutable-view-init? ctx scrutinee-id))])))
+          view?)]
+      [(Invalid message)
+        (ResultLowerExpr.Err
+          (box (lower-diagnostic-at-expr ctx scrutinee message)))])))
 
 (define (lower-box-pattern-for-type?
   [ctx : tc_core.TcContext]
@@ -71144,11 +71198,12 @@
   [args : (& args ast.AstExprList)]
   [ret-ty : ast.AstType]
   [sret-var : i64]) : bool
-  (if (lower-tail-call-inline-aggregate-risk?
+  (if (lower-tail-call-frame-risk?
     ctx
     state
     env
     type-env
+    (lower-global-shared-view func-ty)
     args
     (lower-global-shared-view ret-ty)
     sret-var)
@@ -71747,14 +71802,14 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [expr : ast.AstExpr]) : bool
+  [expr : (& expr ast.AstExpr)]) : bool
   (match expr
     [(or (Spanned inner-box _) (Ann inner-box _))
       (lower-tail-call-safe-param-aggregate-arg?
         ctx
         state
         env
-        (lower-context-expr-get ctx inner-box))]
+        (& (lower-context-expr-get ctx inner-box)))]
     [(Var name)
       (let
         [var-id : i64
@@ -71763,8 +71818,165 @@
             name
             (csym.compiler-symbols-missing-handle))]
         (if (csym.compiler-symbols-handle-found? var-id)
-          (lower-state-tail-param-range-contains? state var-id)
+          (lower-state-tail-storage-contains? state var-id)
           false))]
+    [_ false]))
+
+;; A reference to a scalar field can point into an aggregate frame slot; its
+;; referent type alone says nothing about whether frame reuse is safe. Views
+;; likewise carry the address of their source storage.
+(define (lower-tail-call-frame-sensitive-type?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (let
+    [resolved : ast.AstType
+      (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
+    (match (& resolved)
+      [(or (Ref _ _) (MutRef _ _) (Slice _) (Str)) true]
+      [_ (lower-type-contains-inline-aggregate? ctx resolved)])))
+
+(define (lower-tail-call-heap-container-type?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
+    [(or (DynArray _) (String) (Box _)) true]
+    [(or (Ref _ inner) (MutRef _ inner))
+      (lower-tail-call-heap-container-type?
+        ctx
+        (tc_core.tc-context-type-get ctx inner))]
+    [_ false]))
+
+;; Prove the storage selected by a place is outside this frame. Copy aggregate
+;; match bindings and unknown local aliases deliberately fail this proof.
+(define (lower-tail-call-external-place?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : (& expr ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan (& expr))
+    [(Ann inner _)
+      (lower-tail-call-external-place?
+        ctx
+        state
+        env
+        type-env
+        (& (lower-context-expr-get ctx inner)))]
+    [(Var name)
+      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+          [(Ok id)
+            (lower-tail-call-external-place?
+              ctx
+              state
+              env
+              type-env
+              (& (lower-context-expr-get ctx id)))]
+          [(Err _) false])
+        (or
+          ;; A typed global binding has no local IR binding. Its storage
+          ;; outlives this frame, including a mutable borrow of that storage.
+          (and
+            (not (sym_i64_env.sym-i64-contains-id env name))
+            (match (tc_core.tc-lookup-id type-env name)
+              [(Ok _) true]
+              [(Err _) false]))
+          (and
+            (lower-tail-call-safe-param-aggregate-arg? ctx state env expr)
+            (match (tc_core.tc-lookup-id type-env name)
+              [(Ok ty)
+                (let
+                  [resolved : ast.AstType
+                    (tc_core.tc-type-strip-region
+                      (tc_core.tc-resolve-type ctx ty))]
+                  (match (& resolved)
+                    [(or (Ref _ _) (MutRef _ _)) true]
+                    [_
+                      (and
+                        (lower-type-inline-storage? ctx (& resolved))
+                        (not (lower-type-register-resident? ctx resolved)))]))]
+              [(Err _) false]))))]
+    [(or (StructGet receiver _) (TupleRef receiver _))
+      (lower-tail-call-external-place?
+        ctx
+        state
+        env
+        type-env
+        (& (lower-context-expr-get ctx receiver)))]
+    [(ArrayRef source _)
+      (let
+        [array : ast.AstExpr (lower-context-expr-get ctx source)]
+        (or
+          (match (tc_core.tc-expr
+            ctx
+            type-env
+            (lower-context-expr-get ctx source))
+            [(Ok ty) (lower-tail-call-heap-container-type? ctx ty)]
+            [(Err _) false])
+          (lower-tail-call-external-place? ctx state env type-env array)))]
+    [(BoxGet _) true]
+    [_ false]))
+
+(define (lower-tail-call-safe-address-arg?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : (& expr ast.AstExpr)]) : bool
+  (match (ast.ast-expr-unspan (& expr))
+    [(Ann inner _)
+      (lower-tail-call-safe-address-arg?
+        ctx
+        state
+        env
+        type-env
+        (& (lower-context-expr-get ctx inner)))]
+    [(Borrow mutable _ place-id)
+      (let
+        [place : ast.AstExpr (lower-context-expr-get ctx place-id)]
+        (or
+          (lower-tail-call-external-place? ctx state env type-env (& place))
+          ;; A shared borrow of a plain scalar variable is copied by
+          ;; lower-borrow-copy-to-storage into tl_alloc storage. A projection
+          ;; does not take that path; a copied view can still name this frame.
+          (and
+            (not mutable)
+            (match (ast.ast-expr-unspan (& place))
+              [(Var name)
+                (and
+                  (not (tc_core.tc-dotted-local-field-name-id? type-env name))
+                  (match (tc_core.tc-lookup-id type-env name)
+                    [(Ok ty)
+                      (not (lower-tail-call-frame-sensitive-type? ctx ty))]
+                    [(Err _) false]))]
+              [_ false]))))]
+    [(Call callee args)
+      (and
+        (not
+          (=
+            (tc_core.tc-slice-view-call-kind
+              ctx
+              type-env
+              (lower-context-expr-get ctx callee))
+            tc_core.TcSliceViewCallKind.None))
+        (= (ast.ast-expr-list-len (& args)) 3)
+        (let
+          [source-id : i64 (ast.ast-expr-list-get (& args) 0 0)]
+          [source : ast.AstExpr (lower-context-expr-get ctx source-id)]
+          (or
+            (match (tc_core.tc-expr
+              ctx
+              type-env
+              (lower-context-expr-get ctx source-id))
+              [(Ok ty) (lower-tail-call-heap-container-type? ctx ty)]
+              [(Err _) false])
+            (lower-tail-call-external-place? ctx state env type-env (& source))
+            (lower-tail-call-safe-param-borrow-arg?
+              ctx
+              state
+              env
+              type-env
+              source))))]
     [_ false]))
 
 ;; A borrow of a tail parameter is as safe as passing the parameter itself in
@@ -71780,17 +71992,13 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [expr : ast.AstExpr]) : bool
+  [expr : (& expr ast.AstExpr)]) : bool
   (match (ast.ast-expr-unspan (& expr))
     [(Borrow mutable _ place-box)
       (let
         [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
         (and
-          (lower-tail-call-safe-param-aggregate-arg?
-            ctx
-            state
-            env
-            (lower-global-shared-view place))
+          (lower-tail-call-safe-param-aggregate-arg? ctx state env (& place))
           (or
             (lower-tail-call-reference-var? ctx type-env (& place))
             (and
@@ -71820,54 +72028,58 @@
         [(Err _) false])]
     [_ false]))
 
-(define (lower-expr-list-contains-unsafe-inline-aggregate?
+(define (lower-tail-call-unsafe-args?
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]) : bool
-  (lower-expr-list-contains-unsafe-inline-aggregate-at?
-    ctx
-    state
-    env
-    type-env
-    (& exprs)))
-
-(define (lower-expr-list-contains-unsafe-inline-aggregate-at?
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : tc_core.TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]) : bool
+  [exprs : (& exprs ast.AstExprList)]
+  [types : (& types ast.AstTypeList)]) : bool
+  (when (not (= exprs.len (ast.ast-type-list-len types))) (return true))
   (for [index (iterator.range 0 exprs.len)]
     (let
-      [expr : ast.AstExpr
-        (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0))]
-      (match (tc_core.tc-expr ctx type-env (lower-global-shared-view expr))
-        [(Ok ty)
+      [expr-id : i64
+        (lower-context-expr-transparent-id
+          ctx
+          (ast.ast-expr-list-get exprs index 0))]
+      [expr : ast.AstExpr (lower-context-expr-get ctx expr-id)]
+      [expected : ast.AstType
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
+      ;; The formal type and effective argument include implicit borrows.
+      ;; Inspecting only the source expression misses an i64 field passed to
+      ;; a reference parameter.
+      (match (tc_core.tc-call-effective-arg-expr
+        ctx
+        type-env
+        expr-id
+        expr
+        (lower-global-shared-view expected))
+        [(Ok effective)
           (when
             (and
-              (lower-type-contains-inline-aggregate?
+              (lower-tail-call-frame-sensitive-type?
                 ctx
-                (lower-global-shared-view ty))
+                (lower-global-shared-view expected))
               (not
                 (or
-                  ;; A reference parameter retains caller storage.
+                  ;; A reference or view parameter, or a binding proven to
+                  ;; hold external storage, still points at its caller's
+                  ;; storage while it is unreassigned.
                   (and
-                    (match (tc_core.tc-type-strip-region
-                      (tc_core.tc-resolve-type
+                    (not
+                      (lower-type-contains-inline-aggregate?
                         ctx
-                        (lower-global-shared-view ty)))
-                      [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)) true]
-                      [_ false])
-                    (lower-tail-call-unreassigned-param-arg?
+                        (lower-global-shared-view expected)))
+                    (lower-tail-call-safe-param-aggregate-arg?
                       ctx
                       state
                       env
-                      (lower-global-shared-view expr)))
-                  ;; So does a by-value parameter the body never writes: it is
-                  ;; bound to the caller's storage, which stays unchanged for
-                  ;; the whole (tail-)call chain.
+                      (& effective)))
+                  ;; So does a by-value aggregate parameter the body never
+                  ;; writes: it is bound to the caller's storage, which stays
+                  ;; unchanged for the whole (tail-)call chain.
                   (lower-tail-call-forwardable-param-arg?
                     ctx
                     state
@@ -71875,28 +72087,24 @@
                     type-env
                     exprs
                     index
-                    (lower-global-shared-view ty))
-                  ;; A shared borrow of such a parameter points at that storage too (#8745).
+                    expected)
                   (lower-tail-call-safe-param-borrow-arg?
                     ctx
                     state
                     env
                     type-env
-                    expr))))
+                    (& effective))
+                  (lower-tail-call-safe-address-arg?
+                    ctx
+                    state
+                    env
+                    type-env
+                    effective))))
             (return true))
           unit]
-        ;; An argument whose type is unknown is treated as unsafe.
-        [(tc_core.ResultTcType.Err _) (return true)])))
+        [(Err _) (return true)])))
   false)
 
-;; Argument `index` is an unreassigned memory-class parameter still bound to
-;; its incoming storage, and lowering will pass that storage unchanged: the
-;; body has no escaping raw addresses (so the argument is stable, see
-;; `lower-call-argument-unstable?`) and no later operand forces an
-;; evaluation-order snapshot. Structural ABI classes keep their explicit
-;; call transforms. Should a snapshot slip through anyway, its frame slot is
-;; an `AddrOf` exposure, and the backend then emits a call and return instead
-;; of the jump (`compiler-ir-blocks-expose-frame?`).
 (define (lower-tail-call-forwardable-param-arg?
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -71936,11 +72144,12 @@
         [_ false])
       (not (lower-argument-snapshot-needed? ctx state env type-env exprs index)))))
 
-(define (lower-tail-call-inline-aggregate-risk?
+(define (lower-tail-call-frame-risk?
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [func-ty : ast.AstType]
   [args : (& args ast.AstExprList)]
   [ret-ty : ast.AstType]
   [sret-var : i64]) : bool
@@ -71951,12 +72160,16 @@
     ;; Aggregate returns do not make frame reuse unsafe when the current
     ;; function has the caller-owned sret slot to forward to the callee.
     (and (< sret-var 0) (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
-    (lower-expr-list-contains-unsafe-inline-aggregate?
-      ctx
-      state
-      env
-      type-env
-      args)))
+    (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
+      [(Func param-types _)
+        (lower-tail-call-unsafe-args?
+          ctx
+          state
+          env
+          type-env
+          args
+          (& (tc_core.tc-resolve-type-list ctx (deref param-types))))]
+      [_ true])))
 
 (define (lower-tail-call-append-current-sret-arg
   [ctx : tc_core.TcContext]
@@ -72009,19 +72222,26 @@
             (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
           [(and
               unshadowed
-              ;; Only suppress TCO when THIS call actually involves inline
-              ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
-              ;; disabled tail-call optimization for every call (mode is always on),
-              ;; losing TCO entirely (deep self-recursion, smoke shape failure).
-              (not
-                (lower-tail-call-inline-aggregate-risk?
-                  ctx
-                  state
-                  env
-                  type-env
-                  args
-                  (lower-global-shared-view ret-ty)
-                  sret-var))
+              ;; Prove argument storage survives this frame's release using
+              ;; the same formal types and implicit borrows as argument lowering.
+              (match (lower-lookup-type-id
+                ctx
+                (lower-state-type-cache state)
+                env
+                type-env
+                name)
+                [(Ok func-ty)
+                  (not
+                    (lower-tail-call-frame-risk?
+                      ctx
+                      state
+                      env
+                      type-env
+                      func-ty
+                      args
+                      (lower-global-shared-view ret-ty)
+                      sret-var))]
+                [(Err _) false])
               (lower-tail-call-direct-supported?
                 ctx
                 state
@@ -72273,31 +72493,43 @@
               (owned_view.compiler-owned-shared-view result))])
         result))))
 
-(define (lower-borrowed-enum-match-scrutinee?
+;; A shared borrow of an enum place as a match scrutinee: the place, the
+;; borrow's lifetime and the enum type, or None for any other scrutinee.
+;; Invalid preserves the value and tail forms' original diagnostic.
+(defenum LowerBorrowedEnumScrutinee
+  (None)
+  (Place ast.AstExpr i64 ast.AstType)
+  (Invalid String))
+
+(define (lower-borrowed-enum-match-scrutinee
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [scrutinee : ast.AstExpr]) : bool
+  [scrutinee : ast.AstExpr]) : LowerBorrowedEnumScrutinee
   (match (ast.ast-expr-unspan (& scrutinee))
-    [(Borrow mutable _ _)
+    [(Borrow mutable _ place-box)
       (if mutable
-        false
+        (None)
         (match (tc_core.tc-expr ctx type-env scrutinee)
           [(Ok scrut-ty)
             (match (tc_core.tc-type-strip-region
               (tc_core.tc-resolve-type ctx scrut-ty))
-              [(Ref _ referent-box)
+              [(Ref borrow-lifetime referent-box)
                 (let
                   [referent-ty : ast.AstType
                     (tc_core.tc-type-strip-region
                       (tc_core.tc-resolve-type
                         ctx
                         (tc_core.tc-context-type-get ctx referent-box)))]
-                  (match referent-ty
-                    [(or (Enum _) (EnumArgs _ _)) true]
-                    [_ false]))]
-              [_ false])]
-          [(Err _) false]))]
-    [_ false]))
+                  (match (& referent-ty)
+                    [(or (Enum _) (EnumArgs _ _))
+                      (Place
+                        (lower-context-expr-get ctx place-box)
+                        borrow-lifetime
+                        referent-ty)]
+                    [_ (None)]))]
+              [_ (None)])]
+          [(Err message) (Invalid message)]))]
+    [_ (None)]))
 
 ;; Where the scrutinee of a match should live: when it is already a var (the
 ;; common case -- a local, an array-ref result, a call result) use that var
@@ -72328,34 +72560,48 @@
   [arms : ast.AstMatchArmList]
   [ret-ty : ast.AstType]
   [sret-var : i64]
-  [origin : ast.AstExpr]
   [view? : bool]) : ResultLowerState
-  (if (lower-borrowed-enum-match-scrutinee?
+  (match (lower-borrowed-enum-match-scrutinee
     ctx
     type-env
     (lower-global-shared-view scrutinee))
-    (lower-return-expr ctx state env type-env origin ret-ty sret-var)
-    (let
-      [scrut-lowered : LowerExpr
-        (try (lower-expr ctx state env type-env scrutinee))]
-      (match scrut-lowered
-        [(Expr scrut-state scrut-value scrut-ty)
-          (match (lower-tail-match-scrutinee-home
-            scrut-state
-            scrut-value
-            (lower-global-shared-view scrut-ty))
-            [(Home match-state scrut-var)
-              (lower-match-tail-result
-                (lower-match-dispatch
-                  ctx
-                  match-state
-                  env
-                  type-env
-                  scrut-var
-                  scrut-ty
-                  arms
-                  (Tail ret-ty sret-var)
-                  view?))])]))))
+    [(Invalid message)
+      (Err (box (lower-diagnostic-at-expr ctx scrutinee message)))]
+    [(Place place borrow-lifetime enum-ty)
+      (lower-match-tail-result
+        (lower-match-borrowed-enum
+          ctx
+          state
+          env
+          type-env
+          place
+          borrow-lifetime
+          enum-ty
+          arms
+          (LowerBorrowedEnumMatchCont.Tail ret-ty sret-var)
+          (LowerResultMode.Value)))]
+    [(None)
+      (let
+        [scrut-lowered : LowerExpr
+          (try (lower-expr ctx state env type-env scrutinee))]
+        (match scrut-lowered
+          [(Expr scrut-state scrut-value scrut-ty)
+            (match (lower-tail-match-scrutinee-home
+              scrut-state
+              scrut-value
+              (lower-global-shared-view scrut-ty))
+              [(Home match-state scrut-var)
+                (lower-match-tail-result
+                  (lower-match-dispatch
+                    ctx
+                    match-state
+                    env
+                    type-env
+                    scrut-var
+                    scrut-ty
+                    arms
+                    (Tail ret-ty sret-var)
+                    view?))])]))]))
 
 (define (lower-tail-expr
   [ctx : tc_core.TcContext]
@@ -72456,7 +72702,6 @@
               arms
               ret-ty
               sret-var
-              expr
               (lower-mutable-view-init? ctx scrutinee-box)))])]
     [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)]))
 
@@ -78161,7 +78406,7 @@
                 lower-state
                 decls
                 paths
-                (lower-global-shared-view entry-path)
+                (clone entry-path)
                 Nil))])]
       [specialized-result : spec.ResultSpecProgramWithPaths
         (begin
@@ -78174,7 +78419,7 @@
               (spec.compiler-specialize-program-with-paths-and-pools-and-intern-state-and-profile-state
                 (& program)
                 (& paths)
-                (lower-global-shared-view entry-path)
+                (clone entry-path)
                 pools
                 (& intern-state)
                 (compiler-lower-state-profile lower-state))
@@ -78281,14 +78526,15 @@
                             pools
                             (compiler-lower-checked-dest-pools-current
                               lower-state)
-                            (& specialized))
+                            (& specialized)
+                            false)
                           (AstProgramCompaction specialized pools))]
-                      [source-program : ast.AstProgram
-                        (match (lower-global-shared-view source-compaction)
-                          [(AstProgramCompaction out _) out])]
                       [source-pools : ast.AstNodePoolContext
+                        (match (& source-compaction)
+                          [(AstProgramCompaction _ out-pools) (clone out-pools)])]
+                      [source-program : ast.AstProgram
                         (match source-compaction
-                          [(AstProgramCompaction _ out-pools) out-pools])]
+                          [(AstProgramCompaction out _) out])]
                       [source-entry-path : String
                         (if detach-source?
                           (lower-copy-string-into-pools entry-path source-pools)
@@ -78510,7 +78756,7 @@
           (spec.gen-normalize-program-with-paths-and-pools-and-intern-state
             (& program)
             (& paths)
-            (lower-global-shared-view entry-path)
+            (clone entry-path)
             generation-owner)]
         ;; Publish explicit generation mutations before matching either result
         ;; or entering the legacy macro-expansion phase.
@@ -78526,14 +78772,15 @@
                   (ast.ast-program-compact-with-pools
                     pools
                     (compiler-lower-checked-dest-pools-current lower-state)
-                    (& generated))
+                    (& generated)
+                    false)
                   (AstProgramCompaction generated pools))]
-              [macro-program : ast.AstProgram
-                (match (lower-global-shared-view generated-compaction)
-                  [(AstProgramCompaction out _) out])]
               [macro-pools : ast.AstNodePoolContext
+                (match (& generated-compaction)
+                  [(AstProgramCompaction _ out-pools) (clone out-pools)])]
+              [macro-program : ast.AstProgram
                 (match generated-compaction
-                  [(AstProgramCompaction _ out-pools) out-pools])]
+                  [(AstProgramCompaction out _) out])]
               [macro-entry-path : String
                 (if detach-before-macro?
                   (lower-copy-string-into-pools entry-path macro-pools)
@@ -78649,19 +78896,20 @@
                                 committed-macro-pools
                                 (compiler-lower-checked-dest-pools-current
                                   lower-state)
-                                (& expanded))
+                                (& expanded)
+                                true)
                               (AstProgramCompaction
                                 (if retain-macro-source?
                                   macro-program
                                   expanded)
                                 committed-macro-pools))]
-                          [detached-program : ast.AstProgram
-                            (match (lower-global-shared-view
-                              detached-compaction)
-                              [(AstProgramCompaction out _) out])]
                           [detached-pools : ast.AstNodePoolContext
+                            (match (& detached-compaction)
+                              [(AstProgramCompaction _ out-pools)
+                                (clone out-pools)])]
+                          [detached-program : ast.AstProgram
                             (match detached-compaction
-                              [(AstProgramCompaction _ out-pools) out-pools])]
+                              [(AstProgramCompaction out _) out])]
                           [detached-entry-path : String
                             (if detach-load-pools?
                               (lower-copy-string-into-pools
@@ -78860,21 +79108,43 @@
   (cbi.compiler-builtin-initialize-for-parse!)
   (cfg_core.compiler-cfg-empty))
 
-(define (lower-source-load [src : (& str)]) : load.ResultCompilerLoadWithPaths
+(define (lower-source-load
+  [path : (& str)]
+  [src : (& str)]
+  [context : (& context tc_api.TypecheckRequest)]
+  [request : (& request CompilerLowerRequest)]) : load.ResultCompilerLoadWithPaths
   (let
-    [stdlib-roots : svec.Vec (svec.new)]
-    [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
-    (match (load.compiler-load-core-macro-prelude-with-roots-cfg
-      (sym_i64_env.sym-i64-empty)
-      (& stdlib-roots)
-      cfgs)
+    [inline-runtime : bool
+      (match context.program
+        [(ast.Program decls)
+          (lower-source-decls-define-module? (& (deref decls)) "stdlib.runtime")])]
+    [prelude : load.ResultCompilerLoadWithPaths
+      (if (or (not request.executable) inline-runtime)
+        (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
+          (owned_view.compiler-owned-reference-shared-view
+            (& context.load-state))
+          (sym_i64_env.sym-i64-empty)
+          (& context.stdlib-roots)
+          (clone context.cfgs)
+          (clone context.pools))
+        (load.compiler-load-executable-prelude
+          (owned_view.compiler-owned-reference-shared-view
+            (& context.load-state))
+          (clone context.stdlib-roots)
+          (clone context.cfgs)
+          (clone context.pools)))]
+    (match prelude
       [(Ok prelude-decls prelude-paths prelude-modules prelude-seen)
-        (match (load.compiler-load-source-with-paths-and-roots-cfg
-          ""
+        (match (load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+          (owned_view.compiler-owned-reference-shared-view
+            (& context.load-state))
+          path
           src
           prelude-seen
-          (& stdlib-roots)
-          cfgs)
+          (& context.stdlib-roots)
+          (ast.AstMaybeModuleName.No)
+          (clone context.cfgs)
+          (clone context.pools))
           [(Ok entry-decls entry-paths entry-modules seen)
             (Ok
               (load.compiler-load-decl-list-append
@@ -78894,7 +79164,7 @@
   [kind : ast.AstImportKind]
   [path : (& str)]) : bool
   (match kind
-    [(Module)
+    [(or (Module) (ModuleAll) (ModuleItem _))
       (load.compiler-load-stdlib-import?
         (load.compiler-load-dotted-module-path path))]
     [_ false]))
@@ -78904,9 +79174,7 @@
   [kind : ast.AstImportKind]
   [path : String]) : bool
   (if (lower-source-stdlib-import-kind? kind path)
-    (match kind
-      [(Module) (not (lower-source-decls-define-module? all-decls path))]
-      [_ true])
+    (not (lower-source-decls-define-module? all-decls path))
     false))
 
 (define (lower-source-call-head-import?
@@ -78977,8 +79245,8 @@
 
 (define (lower-source-decls-need-loader?
   [pools : ast.AstNodePoolContext]
-  [decls : ast.AstDeclList]
-  [all-decls : ast.AstDeclList]) : bool
+  [decls : (& ast.AstDeclList)]
+  [all-decls : (& ast.AstDeclList)]) : bool
   (match (ast.ast-decl-list-step decls)
     [(Nil) false]
     [(Cons decl rest)
@@ -78986,17 +79254,138 @@
         (lower-source-decl-needs-loader? pools decl all-decls)
         (lower-source-decls-need-loader? pools rest all-decls))]))
 
-(define (lower-source-program-needs-loader? [program : ast.AstProgram]) : bool
+(define (lower-source-program-needs-loader? [program : (& ast.AstProgram)]) : bool
   (match program
-    [(Program decls-box)
-      (let
-        [decls : ast.AstDeclList (deref decls-box)]
-        [pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        (lower-source-decls-need-loader?
-          pools
-          (lower-global-shared-view decls)
-          decls))]))
+    [(Program decls)
+      (lower-source-decls-need-loader?
+        (ast.ast-node-pool-context-capture-active)
+        decls
+        decls)]))
+
+(define (lower-source-request-cfgs [request : (& request CompilerLowerRequest)]) : sym_i64_env.SymI64Env
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [cfgs : sym_i64_env.SymI64Env
+      (target_cfg.compiler-target-user-cfgs (& request.cfg-names))]
+    (match (lower-mode-abi (clone request.mode))
+      [(Linux) (target_cfg.compiler-target-cfgs (target_cfg.Linux) cfgs)]
+      [(Windows) (target_cfg.compiler-target-cfgs (target_cfg.Windows) cfgs)]
+      [_ cfgs])))
+
+;; Imported declarations and their paths must share the same logical-module
+;; column. The private request owners isolate aliases and CTFE state while
+;; source nodes and names remain in the caller's installed pools/interner.
+(define (lower-source-context
+  [lower-state : CompilerLowerState]
+  [path : String]
+  [src : (& str)]
+  [request : (& request CompilerLowerRequest)]
+  [context : (& context tc_api.TypecheckRequest)]) : ResultCompilerLower
+  (load.compiler-load-session-state-program-cache-disable!
+    (owned_view.compiler-owned-reference-shared-view (& context.load-state)))
+  (tc_core.tc-job-state-set-parser-control!
+    (clone context.job-state)
+    (parser.compiler-parse-control-from-cfg (clone context.cfgs)))
+  (tc_core.tc-macro-state-bind-source-names!
+    (tc_core.tc-job-state-macro-state (clone context.job-state))
+    (ci.intern-source-name-session-capture-active-handle))
+  (let
+    [loaded : load.ResultCompilerLoadWithPaths
+      (lower-source-load (& path) src context request)]
+    [result : ResultCompilerLower
+      (match loaded
+        [(Ok decls paths modules _)
+          (lower-compiler-program-with-decl-paths-mode-cache-and-pools-and-source-names-and-load-state-and-intern-state
+            lower-state
+            (owned_view.compiler-owned-reference-shared-view
+              (& context.load-state))
+            (owned_view.compiler-owned-reference-shared-view
+              (& context.prefix-cache))
+            (clone context.job-state)
+            path
+            (ast.ast-program decls)
+            (ast.ast-decl-path-list-with-modules paths (& modules))
+            (clone request.mode)
+            (clone context.stdlib-roots)
+            (clone context.cfgs)
+            (clone context.cache-scope)
+            (clone context.pools)
+            (ci.intern-source-name-session-capture-active-handle)
+            (ci.intern-compat-state-capture-active)
+            (cbi.state-capture))]
+        [(Err diagnostic) (Err diagnostic)])]
+    ;; No checked context escapes this boundary: successful IR and spans own
+    ;; their escaped data, and failures already live in the caller's arena.
+    (tc_core.tc-job-state-retire-owned-storage! (clone context.job-state))
+    (tc_core.tc-prefix-snapshot-cache-clear-for-state! (& context.prefix-cache))
+    (load.compiler-load-session-state-dotted-path-cache-reset!
+      (owned_view.compiler-owned-reference-shared-view (& context.load-state)))
+    (load.compiler-load-session-state-release-stdlib-proofs!
+      (& context.load-state))
+    (load.compiler-load-session-state-embedded-provenance-reset!
+      (& context.load-state))
+    (load.compiler-load-session-state-surface-summaries-reset!
+      (& context.load-state))
+    result))
+
+(define (lower-source-request
+  [lower-state : CompilerLowerState]
+  [path : String]
+  [src : (& str)]
+  [request : (& request CompilerLowerRequest)]
+  [package-name : String]) : ResultCompilerLower
+  (when
+    (and (not request.in-session) (lower-resetting-entry-in-live-session?))
+    (return
+      (lower-resetting-entry-live-session-error
+        "lower-compiler-source-with-path-mode"
+        path)))
+  (unless
+    request.in-session
+    (lower-reset-file-state!)
+    (tc_core.compiler-typecheck-reset-file-state!)
+    (ci.intern-reset!)
+    (lower-reset-intern-owned-state!)
+    (cbi.compiler-builtin-reset!))
+  (compiler-lower-state-reset! lower-state)
+  (compiler-lower-state-set-spmd-package! lower-state package-name)
+  (let
+    [cfgs : sym_i64_env.SymI64Env (lower-source-request-cfgs request)]
+    (match (parser.parse-ast-source-diagnostic-with-cfg
+      (clone path)
+      src
+      (clone cfgs))
+      [(Ok program)
+        (let
+          [load-imports : bool (lower-source-program-needs-loader? (& program))]
+          (if load-imports
+            (lower-source-context
+              lower-state
+              (clone path)
+              src
+              request
+              (&
+                (tc_api.TypecheckRequest
+                  (load.compiler-load-standalone-session-state-new)
+                  (tc_core.tc-prefix-snapshot-cache-state-new)
+                  (tc_core.tc-job-state-new)
+                  program
+                  (ast.ast-decl-path-list-new)
+                  (clone request.stdlib-roots)
+                  cfgs
+                  (load.compiler-load-prelude-cache-key
+                    "typecheck-prefix-lower"
+                    (& request.stdlib-roots)
+                    cfgs)
+                  (ast.ast-node-pool-context-capture-active)
+                  (ci.intern-compat-state-capture-active)
+                  (tc_core.TcSemanticObserver 0))))
+            (lower-compiler-program-with-path-mode-and-state
+              lower-state
+              path
+              program
+              (clone request.mode))))]
+      [(Err diagnostic) (Err diagnostic)])))
 
 (define (lower-compiler-source-with-path-mode-package-and-state
   [lower-state : CompilerLowerState]
@@ -79004,55 +79393,12 @@
   [src : (& str)]
   [mode : CompilerLowerMode]
   [package-name : String]) : ResultCompilerLower
-  (when
-    (lower-resetting-entry-in-live-session?)
-    (return
-      (lower-resetting-entry-live-session-error
-        "lower-compiler-source-with-path-mode"
-        path)))
-  ;; Each standalone single-source compile (smoke self-tests, emit-source,
-  ;; check tools) runs in a fresh arena, so interned name strings from a
-  ;; previous compile are freed. Reset the persistent intern table here so a
-  ;; later compile never probes a dangling key. The multi-file driver compiles
-  ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
-  (lower-reset-file-state!)
-  (compiler-lower-state-reset! lower-state)
-  (compiler-lower-state-set-spmd-package! lower-state package-name)
-  (tc_core.compiler-typecheck-reset-file-state!)
-  (ci.intern-reset!)
-  (lower-reset-intern-owned-state!)
-  (cbi.compiler-builtin-reset!)
-  (match (parser.parse-ast-source src)
-    [(Ok program)
-      (if (lower-source-program-needs-loader?
-        (lower-global-shared-view program))
-        (let
-          [stdlib-roots : svec.Vec (svec.new)]
-          [cfgs : sym_i64_env.SymI64Env (lower-source-language-cfgs)]
-          (match (lower-source-load src)
-            [(Ok decls paths _ _)
-              (lower-compiler-program-with-decl-paths-mode-cache-and-state
-                lower-state
-                path
-                (ast.ast-program decls)
-                paths
-                mode
-                (lower-global-shared-view stdlib-roots)
-                cfgs
-                (load.compiler-load-prelude-cache-key
-                  "typecheck-prefix-lower"
-                  (& stdlib-roots)
-                  cfgs))]
-            [(Err diag) (Err diag)]))
-        (lower-compiler-program-with-path-mode-and-state
-          lower-state
-          path
-          program
-          mode))]
-    [(Err message)
-      (Err
-        (box
-          (lower-diagnostic-with-fallback-path (lower-diagnostic message) path)))]))
+  (lower-source-request
+    lower-state
+    path
+    src
+    (& (compiler-lower-request mode))
+    package-name))
 
 (define (lower-compiler-source-with-path-mode-and-state
   [lower-state : CompilerLowerState]
@@ -79082,11 +79428,11 @@
 (define (lower-compiler-source-with-request
   [path : String]
   [src : String]
-  [request : CompilerLowerRequest]) : ResultCompilerLower
+  [request : (& request CompilerLowerRequest)]) : ResultCompilerLower
   (let
     [state : CompilerLowerState (compiler-lower-state-new)]
     (compiler-lower-state-use-request! state request)
-    (match request.pointer-proof
+    (match (clone request.pointer-proof)
       [(Disabled) unit]
       [(Requested input)
         (let
@@ -79104,14 +79450,10 @@
             (lower-global-shared-view path)))])
     (let
       [result : ResultCompilerLower
-        (lower-compiler-source-with-path-mode-and-state
-          state
-          path
-          src
-          request.mode)]
+        (lower-source-request state path src request "")]
       (match (& result)
         [(Err _)
-          (match request.pointer-proof
+          (match (clone request.pointer-proof)
             [(Requested input)
               (pointer_proof.pointer-proof-input-fail!
                 input

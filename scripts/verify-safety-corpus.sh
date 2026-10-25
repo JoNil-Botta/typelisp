@@ -324,7 +324,17 @@ build_selfhost_checker() {
 }
 
 safe_name() {
-    printf '%s' "$1" | sed 's#[/\\:]#_#g'
+    safe_name_rest=$1
+    case_name=
+    while :; do
+        case "$safe_name_rest" in
+            *[/\\:]*)
+                case_name=$case_name${safe_name_rest%%[/\\:]*}_
+                safe_name_rest=${safe_name_rest#*[/\\:]}
+                ;;
+            *) case_name=$case_name$safe_name_rest; break ;;
+        esac
+    done
 }
 
 show_stream_if_nonempty() {
@@ -428,7 +438,7 @@ run_manifest_case() {
     [ -n "$source" ] || fail "$case_id missing source"
     [ -f "$source" ] || fail "$case_id source does not exist: $source"
 
-    case_name=$(safe_name "$case_id")
+    safe_name "$case_id"
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
 
@@ -532,6 +542,14 @@ manifest_runner_self_test() {
     for_each_manifest_case "$self_test_manifest" manifest_runner_stdin_consumer
     [ "$self_test_count" -eq 2 ] || \
         fail "manifest stdin isolation self-test processed $self_test_count of 2 cases"
+
+    # Output basenames preserve every byte except the three path separators.
+    safe_name 'plain-123_Å [*] "quote"'
+    [ "$case_name" = 'plain-123_Å [*] "quote"' ] || fail "ordinary safety case name changed"
+    safe_name '/a\b:c//\:'
+    [ "$case_name" = '_a_b_c____' ] || fail "safety case separators were not translated"
+    safe_name ''
+    [ -z "$case_name" ] || fail "empty safety case name changed"
 }
 
 rejection_oracle_self_test() {

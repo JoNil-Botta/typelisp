@@ -65,6 +65,15 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   end detection, sticky truncation (cursor and first failure kept, later reads
   and failures ignored), the work limit and its charging rule, negative counts,
   and caller-defined failures.
+- `base64_api.tl` covers strict RFC 4648 standard-alphabet encoding and
+  canonical padded decoding: every published RFC vector, independent fixtures,
+  every byte value at every position through twelve source bytes, both padding
+  counts, all 64 pad-bit values, every invalid alphabet byte at every position,
+  truncated/trailing/padded quanta, checked length overflow, destination
+  capacity, unchanged-on-failure, and source/destination overlap rejection.
+  All 65,536 two-byte inputs also check an independent literal-alphabet oracle.
+  Every API checks negative, zero, short, exact, and oversized output limits;
+  rejected limits preserve every physical destination byte and its live length.
 - `http_head_codec.tl` covers strict byte-oriented HTTP/1.1 request-head
   serialization and incremental response-head parsing: every split boundary,
   exact consumption with one-byte and 32 KiB coalesced body suffixes, bounded
@@ -258,6 +267,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   deterministic setup, vfork, child wiring, exec-status channel, stdin, wait,
   capture, signal, and close failures; each failure is followed by a successful
   command plus exact descriptor and child-reaping checks.
+- `process_argv.tl` pins Microsoft C quoting goldens, encoded-size boundaries,
+  and rejection before spawn. A native child checks consecutive empty values,
+  whitespace, quotes, backslash runs and non-ASCII bytes through captured and
+  inherited execution, plus the full 4096-argument public count boundary.
+  Captured argv is also compared as exact length-framed output.
 - `thread_api.tl` keeps the standalone native thread runtime coverage: two
   native worker threads, semaphore signaling, join return values, and the
   checked `String`/array/box join wrappers. A zero-count semaphore also holds a

@@ -868,6 +868,73 @@
           [(or (Ok _) (Err _)) false]))]
     [(None) false]))
 
+(define (compiler-registries-field-indexed-bounds-ok?) : bool
+  (match (build-compiler-symbols-from-source
+    "(defstruct Mixed (flag bool) (scale f64) (count i64))")
+    [(Ok symbols)
+      (match (csym.compiler-symbols-decl-at-index symbols 0)
+        [(Ok (DefStruct _ _ _ _ fields))
+          (let
+            [tags
+              (array
+                (ast.ast-type-tag (& (Bool)))
+                (ast.ast-type-tag (& (F64)))
+                (ast.ast-type-tag (& (I64))))]
+            [index : i64 0]
+            (while (< index (array-length tags))
+              (unless
+                (=
+                  (compiler-type-result-tag-score
+                    (csym.compiler-registries-struct-field-type-indexed
+                      symbols
+                      (csym.compiler-registry-make-handle
+                        (csym.compiler-symbol-kind-struct-field)
+                        0
+                        index))
+                    (array-ref tags index))
+                  1)
+                (return false))
+              (+= index 1))
+            (let
+              [invalid-indices : (Array i64 4)
+                (array -9223372036854775808 -1 3 9223372036854775807)]
+              [invalid : i64 0]
+              (while (< invalid (array-length invalid-indices))
+                (match (csym.compiler-field-type-at-index
+                  (& fields)
+                  (array-ref invalid-indices invalid))
+                  [(Err message)
+                    (unless
+                      (string.eq message "symbols: field index not found")
+                      (return false))]
+                  [_ (return false)])
+                (+= invalid 1)))
+            (and
+              (match (csym.compiler-field-type-at-index
+                (& (ast.ast-field-def-list-with-capacity 0))
+                0)
+                [(Err message)
+                  (string.eq message "symbols: field index not found")]
+                [_ false])
+              (match (csym.compiler-registries-struct-field-type-indexed
+                symbols
+                (csym.compiler-registry-make-handle
+                  (csym.compiler-symbol-kind-struct-field)
+                  0
+                  (- (csym.compiler-registry-child-stride) 1)))
+                [(Err message)
+                  (string.eq message "symbols: field index not found")]
+                [_ false])))]
+        [_ false])]
+    [(Err _) false]))
+
+(test
+  compiler-field-type-indexed-bounds
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless
+    (compiler-registries-field-indexed-bounds-ok?)
+    (io.panic "symbols: indexed field type bounds failed")))
+
 (define (compiler-registries-lifetime-field-indexed-ok?) : bool
   (match (parser.parse-ast-source
     "(defenum NotStruct (None))
@@ -2246,8 +2313,75 @@
     (string.int->string (csym.compiler-registry-child-stride))
     " members"))
 
+(define (compiler-symbols-selected-macro-alias-check!) : unit
+  (match (build-compiler-symbols-from-source
+    "(module shadow)
+(defmacro (ft) : Expr `7)
+(module provider)
+(defmacro (answer) : Expr `42)")
+    [(Ok symbols)
+      (let
+        [root : i64 (csym.compiler-symbol-root-module-id)]
+        [local-name : i64 (ci.intern "ft")]
+        [missing : i64 (csym.compiler-symbols-missing-handle)]
+        [foreign : i64
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (& symbols)
+            (ci.intern "shadow")
+            local-name
+            missing)]
+        [expected : i64
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (& symbols)
+            (ci.intern "provider")
+            (ci.intern "answer")
+            missing)]
+        [before : i64
+          (csym.compiler-symbols-lookup-macro-in-module-id-or
+            (& symbols)
+            root
+            local-name
+            missing)]
+        [selected : csym.CompilerSymbols
+          (csym.compiler-symbols-add-selected-item-alias
+            (& symbols)
+            (ci.intern "provider")
+            (ci.intern "answer")
+            root
+            local-name)]
+        [later-bare : csym.CompilerSymbols
+          (csym.compiler-symbols-add-macro-alias-key-id
+            (& selected)
+            (csym.compiler-symbol-name-id-key local-name)
+            foreign
+            false)]
+        (unless
+          (and
+            (csym.compiler-symbols-handle-found? foreign)
+            (csym.compiler-symbols-handle-found? expected)
+            (not (= foreign expected))
+            (= before foreign)
+            (=
+              (csym.compiler-symbols-lookup-macro-in-module-id-or
+                (& later-bare)
+                root
+                local-name
+                missing)
+              expected)
+            (=
+              (csym.compiler-symbols-lookup-macro-in-module-id-or
+                (& later-bare)
+                (ci.intern "shadow")
+                local-name
+                missing)
+              foreign))
+          (io.panic
+            "symbols: selected macro alias lost to a foreign bare alias")))]
+    [(Err message) (io.panic message)]))
+
 (define (compiler-symbols-self-test) : i64
   (cbi.compiler-builtin-refresh!)
+  (compiler-symbols-selected-macro-alias-check!)
   (match (parser.parse-ast-source
     "(import stdlib.test)
 (defstruct Point (x i64) (y i64))
@@ -2290,6 +2424,7 @@
                     (compiler-registry-large-owner-handle-ok?)
                     (compiler-registry-shift-map-full-ok?)
                     (compiler-registries-incremental-splice-ok?)
+                    (compiler-registries-field-indexed-bounds-ok?)
                     (compiler-registries-lifetime-field-indexed-ok?)
                     (compiler-symbols-append-splice-ok?)
                     (compiler-symbols-append-external-macro-alias-ok?)

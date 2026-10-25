@@ -41,6 +41,8 @@ byte_buf_bytes_bounds_trap|run-trap|tests/safety/byte_buf_bytes_bounds_trap.tl|1
 
 # Defined safe-code areas that should remain accepted.
 bounds_spmd_comptime_defined|run-exit|tests/safety/bounds_spmd_comptime_defined.tl|42|-
+spmd_helper_direct_recursion_reject|check-fail|tests/safety/spmd_helper_direct_recursion_reject.tl|-|recursive SPMD helper call is not supported
+spmd_helper_mutual_recursion_reject|check-fail|tests/safety/spmd_helper_mutual_recursion_reject.tl|-|recursive SPMD helper call is not supported
 reference_region_defined|check-ok|tests/safety/reference_region_defined.tl|-|-
 signature_lifetime_alias_reborrow_ok|run-exit|tests/safety/signature_lifetime_alias_reborrow_ok.tl|42|-
 free_name_scan_macro_binding_ok|run-exit|tests/safety/free_name_scan_macro_binding_ok.tl|42|-
@@ -480,6 +482,7 @@ hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nomina
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|error[E0210]: typecheck: call `same-owner` argument 2 (parameter `right`) type mismatch: expected (& left-life str), found (& right-life str); source lifetime `right-life` does not outlive required lifetime `left-life`
+tail_ref_param_local_rebind_reject|check-fail|tests/safety/tail_ref_param_local_rebind_reject.tl|-|error[E0210]: typecheck: assignment type mismatch
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: call `take-mut` argument 1 (parameter `n`) type mismatch: expected (&mut n i64), found i64
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 auto_borrow_move_before_last_use_reject|check-fail|tests/safety/auto_borrow_move_before_last_use_reject.tl|-|cannot move borrowed place `text`
@@ -546,6 +549,8 @@ byte_buf_view_move_live_reject|check-fail|tests/safety/byte_buf_view_move_live_r
 byte_buf_view_mut_after_immut_reject|check-fail|tests/safety/byte_buf_view_mut_after_immut_reject.tl|-|cannot mutably borrow borrowed place `buf`
 byte_buf_view_double_mut_reject|check-fail|tests/safety/byte_buf_view_double_mut_reject.tl|-|cannot mutably borrow borrowed place `buf`
 byte_buf_view_arena_escape_reject|check-fail|tests/safety/byte_buf_view_arena_escape_reject.tl|-|region-tagged value cannot escape with-arena
+macro_local_lifetime_coercion_reject|check-fail|tests/safety/macro_local_lifetime_coercion_reject.tl|-|source lifetime `shadowed` does not outlive required lifetime `keep`
+macro_local_lifetime_incoming_ok|run-exit|tests/safety/macro_local_lifetime_incoming_ok.tl|42|-
 safe_raw_pointer_read_reject|check-fail|tests/safety/safe_raw_pointer_read_reject.tl|-|typecheck: ptr-read requires unsafe context
 fs_raw_metadata_safe_reject|check-fail|tests/safety/fs_raw_metadata_safe_reject.tl|-|fs/metadata-read-i64-at requires unsafe context
 fs_raw_directory_alias_safe_reject|check-fail|tests/safety/fs_raw_directory_alias_safe_reject.tl|-|disk/c-string-byte requires unsafe context
@@ -636,6 +641,9 @@ while_nonunit_first_reject|check-fail|tests/safety/while_nonunit_first_reject.tl
 while_nonunit_macro_reject|check-fail|tests/safety/while_nonunit_macro_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
 while_nonunit_decls_reject|check-fail|tests/safety/while_nonunit_decls_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
 while_empty_splice_reject|check-fail|tests/safety/while_empty_splice_reject.tl|-|typecheck: while requires at least one body expression
+macro_body_splice_non_list_reject|check-fail|tests/safety/macro_body_splice_non_list_reject.tl|-|unquote-splicing expects ExprList
+macro_body_splice_scalar_position_reject|check-fail|tests/safety/macro_body_splice_scalar_position_reject.tl|-|unquote-splicing is only valid in a quasiquote list
+macro_body_splice_unquoted_reject|check-fail|tests/safety/macro_body_splice_unquoted_reject.tl|-|unquote-splicing is only valid inside quasiquote
 while_ignored_result_reject|check-fail|tests/safety/while_ignored_result_reject.tl|-|typecheck: while body must be unit: expected unit, found Outcome
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match
@@ -1522,6 +1530,10 @@ source_selected_generated_ok|check-ok|tests/safety/source_selected_generated_ok.
 source_selected_generated_missing_reject|check-fail|tests/safety/source_selected_generated_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
 source_selected_generated_seen_missing_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|-|module 'source_selected_generated_provider' has no selected item 'nothing'
 source_selected_generated_seen_missing_span_reject|check-fail|tests/safety/source_selected_generated_seen_missing_reject.tl|tests/safety/source_selected_generated_seen_missing_reject.tl:3:1|module 'source_selected_generated_provider' has no selected item 'nothing'
+source_selected_generated_macro_missing_reject|check-fail|tests/safety/source_selected_generated_macro_missing_reject.tl|-|has no selected item 'missing-macro'
+source_selected_generated_macro_missing_span_reject|check-fail|tests/safety/source_selected_generated_macro_missing_reject.tl|-|source_selected_generated_macro_missing_reject.tl:2:1
+source_selected_generated_macro_conflict_reject|check-fail|tests/safety/source_selected_generated_macro_conflict_reject.tl|-|ambiguous import alias 'selected'
+source_selected_generated_macro_local_conflict_reject|check-fail|tests/safety/source_selected_generated_macro_local_conflict_reject.tl|-|collides with the declaration of 'selected' in the entry module
 source_selected_plain_missing_reject|check-fail|tests/safety/source_selected_plain_missing_reject.tl|-|module 'decls_generated_conflict_left' has no selected item 'missing'
 decls_generated_wildcard_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
@@ -2158,3 +2170,8 @@ macro_diagnostic_division|check-fail|tests/safety/macro_diagnostic_division.tl|-
 macro_diagnostic_fuel|check-fail|tests/safety/macro_diagnostic_fuel.tl|-|error[E0507]:
 macro_table_cycle_reject|check-fail|tests/safety/macro_table_cycle/main.tl|-|error[E0501]: typecheck: missing macro
 macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.tl|-|-
+
+# Same canonical Decls identity in one module must retain collision checks.
+decls_same_scope_incompatible|check-fail|tests/safety/decls_same_scope_incompatible.tl|-|has incompatible payload
+decls_explicit_module_tail_conflict|check-fail|tests/safety/decls_explicit_module_tail_conflict.tl|-|duplicate value declaration generated.decls_explicit_global/value
+decls_explicit_target_incompatible|check-fail|tests/safety/decls_explicit_target_incompatible.tl|-|duplicate generated key for answer has incompatible payload

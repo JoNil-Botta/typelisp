@@ -60,6 +60,9 @@
       (sanitize.runtime-sanitize-data data)
       data)))
 
+;; The OS command line has at most 32767 UTF-16 code units. Its narrow UTF-8
+;; copy plus 32768 pointers fits the 524288-byte boot pool. Decoding compacts
+;; bytes with write<=read and retains argv[0] pathname quoting separately.
 (define (compiler-backend-runtime-windows-libc-shim-functions
   [startup-profile : bool]) : String
   (str_cat.str-cat
@@ -117,7 +120,7 @@ tl_setup_argv:
     jmp .L_tl_argv_cp
 .L_tl_argv_cpd:
     movb $0, (%r13,%r12)
-    movq $2056, %rcx
+    movq $262144, %rcx
     subq $32, %rsp
     call .L_tl_boot_alloc
     addq $32, %rsp
@@ -126,44 +129,85 @@ tl_setup_argv:
     movq %r13, %rbx
 .L_tl_argv_scan:
     movb (%rbx), %al
-    cmpb $0, %al
+    testb %al, %al
     je .L_tl_argv_done
-    cmpb $0x20, %al
+    cmpb $32, %al
+    je .L_tl_argv_skip
+    cmpb $9, %al
     jne .L_tl_argv_tokstart
+.L_tl_argv_skip:
     incq %rbx
     jmp .L_tl_argv_scan
 .L_tl_argv_tokstart:
-    cmpq $255, %r15
-    jge .L_tl_argv_done
-    movq %rbx, (%r14,%r15,8)
+    movq %r13, (%r14,%r15,8)
     incq %r15
     xorl %r9d, %r9d
 .L_tl_argv_tok:
     movb (%rbx), %al
-    cmpb $0, %al
-    je .L_tl_argv_done
-    cmpb $0x22, %al
-    jne .L_tl_argv_notq
-    xorl $1, %r9d
-    movq %rbx, %rcx
-.L_tl_argv_shift:
-    movb 1(%rcx), %al
-    movb %al, (%rcx)
-    incq %rcx
-    cmpb $0, %al
-    jne .L_tl_argv_shift
-    jmp .L_tl_argv_tok
-.L_tl_argv_notq:
-    cmpb $0x20, %al
-    jne .L_tl_argv_adv
+    testb %al, %al
+    je .L_tl_argv_final
+    cmpb $32, %al
+    je .L_tl_argv_space
+    cmpb $9, %al
+    jne .L_tl_argv_notspace
+.L_tl_argv_space:
     testl %r9d, %r9d
-    jnz .L_tl_argv_adv
-    movb $0, (%rbx)
+    jnz .L_tl_argv_notspace
     incq %rbx
+    movb $0, (%r13)
+    incq %r13
     jmp .L_tl_argv_scan
-.L_tl_argv_adv:
+.L_tl_argv_notspace:
+    cmpq $1, %r15
+    je .L_tl_argv_program
+    cmpb $92, %al
+    jne .L_tl_argv_quote
+    xorq %r12, %r12
+.L_tl_argv_slashes:
+    incq %r12
+    incq %rbx
+    cmpb $92, (%rbx)
+    je .L_tl_argv_slashes
+    movq %r12, %r10
+    cmpb $34, (%rbx)
+    jne .L_tl_argv_copy_slashes
+    shrq $1, %r10
+.L_tl_argv_copy_slashes:
+    testq %r10, %r10
+    jz .L_tl_argv_slashes_done
+    movb $92, (%r13)
+    incq %r13
+    decq %r10
+    jmp .L_tl_argv_copy_slashes
+.L_tl_argv_slashes_done:
+    movb (%rbx), %al
+    cmpb $34, %al
+    jne .L_tl_argv_tok
+    testb $1, %r12b
+    jnz .L_tl_argv_copy
+.L_tl_argv_quote:
+    cmpb $34, %al
+    jne .L_tl_argv_copy
+    testl %r9d, %r9d
+    jz .L_tl_argv_toggle
+    cmpb $34, 1(%rbx)
+    jne .L_tl_argv_toggle
+    incq %rbx
+    jmp .L_tl_argv_copy
+.L_tl_argv_program:
+    cmpb $34, %al
+    jne .L_tl_argv_copy
+.L_tl_argv_toggle:
+    xorl $1, %r9d
     incq %rbx
     jmp .L_tl_argv_tok
+.L_tl_argv_copy:
+    movb %al, (%r13)
+    incq %r13
+    incq %rbx
+    jmp .L_tl_argv_tok
+.L_tl_argv_final:
+    movb $0, (%r13)
 .L_tl_argv_done:
     movq $0, (%r14,%r15,8)
     movq %r15, .L_tl_argc(%rip)

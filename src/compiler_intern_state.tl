@@ -1220,7 +1220,7 @@
     (if (>= direct 0)
       direct
       (if (<= handle.address 0)
-        (ci.intern-active-syntax-source-name-id-or raw fallback)
+        (ci.intern-active-syntax-source-name-id-or raw false fallback)
         ;; Decode the mixed structural id once. Trying each typed decoder in
         ;; sequence repeated the same owner/table proof up to four times on this
         ;; compiler-wide render path. Family-specific validation stays here;

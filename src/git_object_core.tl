@@ -3,6 +3,7 @@
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.str_cat)
 (import stdlib.string)
+(import stdlib.vector)
 
 (defenum GitObjectFormat
   (Sha1)
@@ -270,6 +271,7 @@
   (max-object-bytes i64)
   (max-headers i64)
   (max-tree-entries i64)
+  ;; Bounds duplicate look-back comparisons, at most twice the entry count.
   (max-name-comparisons i64)
   (max-refs i64)
   (max-peel-depth i64)
@@ -518,6 +520,9 @@
   (name String)
   (id GitObjectId))
 
+(import (vector.vector GitTreeEntry core) as tree-entries)
+(import (vector.vector i64 core) as tree-indices)
+
 (defstruct GitTree
   (entries (__tl_dyn-array GitTreeEntry)))
 
@@ -585,7 +590,9 @@
   (let
     [length : i64 (string.string-length bytes)]
     [width : i64 (git-object-id-bytes format)]
-    [entries : (__tl_dyn-array GitTreeEntry) (__tl_make-array GitTreeEntry 0)]
+    [entries : tree-entries.Vec (tree-entries.new)]
+    [candidates : tree-indices.Vec (tree-indices.new)]
+    [candidate-count : i64 0]
     [cursor : i64 0]
     [comparisons : i64 0]
     (unless
@@ -596,7 +603,7 @@
       (return (Err "git object: tree exceeds byte limit")))
     (while (< cursor length)
       (when
-        (>= (array-length entries) limits.max-tree-entries)
+        (>= (tree-entries.len (& entries)) limits.max-tree-entries)
         (return (Err "git object: tree entry limit exceeded")))
       (let
         [space : i64 (git-object-find-byte bytes cursor 32)]
@@ -635,26 +642,16 @@
               (string.substring bytes name-start (- nul name-start))]
             [slash : i64 (git-object-find-byte (& name) 0 47)]
             (when (>= slash 0) (return (Err "git object: forbidden tree name")))
-            (let
-              [prior-index : i64 0]
-              (while (< prior-index (array-length entries))
-                (let
-                  [prior : (& entries GitTreeEntry)
-                    (& (array-ref entries prior-index))]
-                  (when
-                    (>= comparisons limits.max-name-comparisons)
-                    (return
-                      (Err "git object: tree name comparison limit exceeded")))
-                  (set! comparisons (+ comparisons 1))
-                  (when
-                    (string.eq (& prior.name) (& name))
-                    (return (Err "git object: duplicate tree name")))
-                  (set! prior-index (+ prior-index 1)))))
             (when
-              (> (array-length entries) 0)
+              (> (tree-entries.len (& entries)) 0)
               (let
+                [slots : (& entries (__tl_dyn-array GitTreeEntry))
+                  (tree-entries.slots (& entries))]
                 [previous : (& entries GitTreeEntry)
-                  (& (array-ref entries (- (array-length entries) 1)))]
+                  (& (array-ref slots (- (tree-entries.len (& entries)) 1)))]
+                (when
+                  (string.eq (& previous.name) (& name))
+                  (return (Err "git object: duplicate tree name")))
                 (when
                   (>=
                     (git-object-tree-name-compare
@@ -664,17 +661,66 @@
                       (= mode 16384))
                     0)
                   (return (Err "git object: tree entries out of order")))))
+            ;; Candidates are non-tree entries in decreasing directory-name
+            ;; order. Once N/ sorts before this name it cannot match a later
+            ;; tree. Each entry is pushed and popped once; at most one kept
+            ;; candidate is compared per entry, even for nested prefixes.
+            (while (> candidate-count 0)
+              (when
+                (>= comparisons limits.max-name-comparisons)
+                (return (Err "git object: tree name comparison limit exceeded")))
+              (set! comparisons (+ comparisons 1))
+              (let
+                [prior-index : i64
+                  (tree-indices.get (& candidates) (- candidate-count 1) -1)]
+                [slots : (& entries (__tl_dyn-array GitTreeEntry))
+                  (tree-entries.slots (& entries))]
+                [prior : (& entries GitTreeEntry)
+                  (& (array-ref slots prior-index))]
+                [order : i64
+                  (git-object-tree-name-compare
+                    (& prior.name)
+                    true
+                    (& name)
+                    true)]
+                (when
+                  (= order 0)
+                  (return (Err "git object: duplicate tree name")))
+                (when (> order 0) (break))
+                (set! candidate-count (- candidate-count 1))))
+            (when
+              (!= mode 16384)
+              (if (< candidate-count (tree-indices.len (& candidates)))
+                (tree-indices.set-ref!
+                  (&mut candidates)
+                  candidate-count
+                  (tree-entries.len (& entries)))
+                (tree-indices.push-ref!
+                  (&mut candidates)
+                  (tree-entries.len (& entries))))
+              (set! candidate-count (+ candidate-count 1)))
             (let
               [id
                 (try
                   (git-object-id-from-binary
                     format
                     (string.substring bytes (+ nul 1) width)))]
-              (__tl_array-push!
-                entries
+              (tree-entries.push-ref!
+                (&mut entries)
                 (GitTreeEntry mode (git-object-tree-kind mode-code) name id)))
             (set! cursor (+ (+ nul 1) width))))))
-    (Ok (GitTree entries))))
+    ;; The plain vector reads its elements by clone, as its own `get` does.
+    (let
+      [count : i64 (tree-entries.len (& entries))]
+      [items : (__tl_dyn-array GitTreeEntry)
+        (__tl_make-array GitTreeEntry count)]
+      [slots : (& entries (__tl_dyn-array GitTreeEntry))
+        (tree-entries.slots (& entries))]
+      [index : i64 0]
+      (while (< index count)
+        (set! (array-ref items index) (clone (array-ref slots index)))
+        (set! index (+ index 1)))
+      (Ok (GitTree items)))))
 
 (defstruct GitTag
   (target GitObjectId)

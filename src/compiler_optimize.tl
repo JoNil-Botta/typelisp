@@ -1401,7 +1401,9 @@
           (opt-type-eq type-segment-bases rhs-ty (& (F32))))
           (owned_view.compiler-owned-reference-shared-view rhs-ty)
           lhs-ty))]
-    [(or (BitAnd) (BitOr) (BitXor) (Shl _) (Shr _)) lhs-ty]
+    [(or (Shl _) (Shr _)) lhs-ty]
+    ;; Bitwise masks use the instruction width, even when a known operand
+    ;; originated in narrower storage.
     [_ (owned_view.compiler-owned-reference-shared-view result-ty)]))
 
 (define (opt-signed-min [ty : (& ty ast.AstType)]) : i64
@@ -10474,11 +10476,13 @@
       (set! size (* size 2)))
     size))
 
-;; Labels inside one function are near-contiguous, so masking alone already
-;; spreads them; folding the high bits down first keeps a pruned, strided label
-;; set from collapsing onto one slot.
+;; Fold multiplied high bits into the slot before masking: pruned labels need
+;; not retain the dense numbering of the original body. Equality still reads
+;; the label through the stored id, independently of its probe position.
 (define (opt-cfg-index-id-slot [label : i64] [mask : i64]) : i64
-  (bit-and (bit-xor label (shr label 5)) mask))
+  (let
+    [mixed : i64 (* label -7046029254386353131)]
+    (bit-and (bit-xor mixed (cast (shr (cast mixed : u64) 29) : i64)) mask)))
 
 ;; Ids are inserted in block order and an occupied slot whose label matches is
 ;; left alone, so a duplicate-label CFG resolves to its first block -- the same
@@ -19174,7 +19178,9 @@
       [_ index])))
 
 ;; Each header phi must carry exactly the two loop-edge inputs {preheader,
-;; latch}; the record keeps (dst, preheader input, latch input, type).
+;; latch}; the record keeps (dst, preheader input, latch input, type). Its type
+;; must share the input owner: round copy-out shares type leaves, so persisting
+;; a new compound-type container here would leave it in retiring round storage.
 (define (opt-rotate-ssa-phi-recs-from
   [phis : (& phis ir.CompilerIrInstrSeq)]
   [preheader : i64]
@@ -19185,13 +19191,13 @@
     (match (opt-rotate-ssa-phi-recs-from phis preheader latch (+ index 1))
       [(No) (No)]
       [(Some recs)
-        (match (ir.compiler-ir-instr-seq-borrow phis index)
+        (match (ir.compiler-ir-instr-seq-ref phis index)
           [(Phi dst inputs ty)
             (match (opt-phi-edge-values (& inputs) preheader latch)
               [(Some pre-value latch-value)
                 (Some
                   (opt-rotate-ssa-phi-recs-cons
-                    (Rec dst pre-value latch-value (ast.ty-node-persist ty))
+                    (Rec dst pre-value latch-value ty)
                     recs))]
               [(No) (No)])]
           [_ (No)])])))
@@ -116612,7 +116618,8 @@
 
 (define (opt-filter-reachable-globals
   [globals : (& ir.CompilerIrGlobalSeq)]
-  [reachable : (& opt_i64_i64_map.Map)]) : ir.CompilerIrGlobalSeq
+  [reachable : (& opt_i64_i64_map.Map)]
+  [static-arrays-only? : bool]) : ir.CompilerIrGlobalSeq
   (let
     [builder : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity globals.len)]
@@ -116623,7 +116630,11 @@
           [(Global name ty value)
             (when
               (or
-                (opt-runtime-global? (& ty) (& value))
+                (if static-arrays-only?
+                  (match (& value)
+                    [(StaticArray _) false]
+                    [_ true])
+                  (opt-runtime-global? (& ty) (& value)))
                 (opt_i64_i64_map.contains?
                   reachable
                   (ir.compiler-ir-symbol-id name)))
@@ -116729,12 +116740,23 @@
             (set! ok false)))
         ok))))
 
-;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf) for
-;; standalone callers that do not already have a classified start.
+(define (opt-static-array-globals? [globals : (& ir.CompilerIrGlobalSeq)]) : bool
+  (for [index (iterator.range 0 globals.len)]
+    (match (ir.compiler-ir-global-seq-borrow globals index)
+      [(Global _ _ value)
+        (match value
+          [(StaticArray _) (return true)]
+          [_ unit])]))
+  false)
+
 (define (opt-prune-unreachable-program
   [globals : ir.CompilerIrGlobalSeq]
   [functions : ir.CompilerIrFunctionSeq]
-  [externs : (& ir.CompilerIrExternSeq)]) : OptPrunedProgram
+  [externs : (& ir.CompilerIrExternSeq)]
+  [static-arrays-only? : bool]) : OptPrunedProgram
+  (when
+    (and static-arrays-only? (not (opt-static-array-globals? (& globals))))
+    (return (Program globals functions)))
   (if (opt-function-seq-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
@@ -116745,29 +116767,33 @@
         (opt_i64_i64_map.with-capacity
           (opt-function-index-capacity
             (ir.compiler-ir-global-seq-count globals)))]
+      [initial : OptReachState
+        (State reachable (opt-reach-worklist-new) reachable-globals 0)]
+      [roots : OptReachState
+        (if static-arrays-only?
+          initial
+          (opt-reach-add-function-leaf index (& initial) "main"))]
+      ;; Opt0 emits every function and retains every non-static global. Scan
+      ;; all those bodies and initializer values so none can name omitted data.
+      (when
+        static-arrays-only?
+        (for [slot (iterator.range 0 (opt-function-index-count (& index)))]
+          (set! roots (opt-reach-add-function-slot roots slot))))
       (match (opt-reach-process
         (& index)
         (opt-reach-globals
           index
-          (&
-            (opt-reach-add-provided-externs
-              index
-              externs
-              (&
-                (opt-reach-add-function-leaf
-                  index
-                  (&
-                    (State
-                      reachable
-                      (opt-reach-worklist-new)
-                      reachable-globals
-                      0))
-                  "main"))))
+          (& (opt-reach-add-provided-externs index externs (& roots)))
           (& globals)))
         [(State reachable-out _ reachable-globals-out _)
           (Program
-            (opt-filter-reachable-globals (& globals) (& reachable-globals-out))
-            (opt-filter-reachable-functions index (& functions) reachable-out))]))
+            (opt-filter-reachable-globals
+              (& globals)
+              (& reachable-globals-out)
+              static-arrays-only?)
+            (if static-arrays-only?
+              functions
+              (opt-filter-reachable-functions index (& functions) reachable-out)))]))
     (Program globals functions)))
 
 (define (opt-direct-call-self-recursive-instr?
@@ -120280,6 +120306,18 @@
       (ir.compiler-ir-symbol-id name))
       [(LookupFound mask) mask]
       [(LookupMissing) (opt-external-call-write-mask name)])))
+
+;; A no-reentry external fallback excludes implicit writes to private globals;
+;; it does not describe writes through an explicit global argument. Only an
+;; installed function/extern row accounts for that argument's storage.
+(define (opt-global-mod-ref-has-row?
+  [mod-ref : (& mod-ref OptGlobalModRef)]
+  [name : i64]) : bool
+  (and
+    mod-ref.built?
+    (opt_i64_i64_map.contains?
+      (& mod-ref.writes)
+      (ir.compiler-ir-symbol-id name))))
 
 ;; The cells a `Store name` writes: exactly name's, when there is a table.
 (define (opt-global-mod-ref-instr-store-mask
@@ -126307,11 +126345,21 @@
   [input-retirement : OptInputRetirement]
   [input-chunk-bounds : (__tl_dyn-array i64)]) : CompilerOptimizedProgram
   (match (owned_view.compiler-owned-reference-shared-view program)
-    [(Program globals functions externs _authority)
+    [(Program globals functions externs authority)
       (if (= level 0)
-        (Program
-          (compiler-opt-debug-finish-program pools interns program)
-          (opt-remap-spans-program (& spans) program))
+        (let
+          [pruned : OptPrunedProgram
+            (opt-prune-unreachable-program globals functions (& externs) true)]
+          ;; Pruning keeps the program's return-storage authority.
+          [retained : ir.CompilerIrProgram
+            (Program
+              (opt-pruned-program-globals pruned)
+              (opt-pruned-program-functions pruned)
+              externs
+              (ir.compiler-ir-clone-return-storage-authority pools authority))]
+          (Program
+            (compiler-opt-debug-finish-program pools interns (& retained))
+            (opt-remap-spans-program (& spans) (& retained))))
         (begin
           (cfg compile-profile (compiler-opt-profile-start profile-state))
           ;; Everything the inline stage builds -- the devirtualized function
@@ -126415,7 +126463,8 @@
                       (opt-prune-unreachable-program
                         (compiler-opt-global-shared-view globals)
                         reachable-functions
-                        (& externs))]
+                        (& externs)
+                        false)]
                     [pruned-globals : ir.CompilerIrGlobalSeq
                       (opt-pruned-program-globals pruned)]
                     [pruned-functions : ir.CompilerIrFunctionSeq
@@ -126516,7 +126565,8 @@
                           (opt-prune-unreachable-program
                             globals
                             optimized-functions
-                            (& externs))]
+                            (& externs)
+                            false)]
                         [final-globals : ir.CompilerIrGlobalSeq
                           (opt-pruned-program-globals final-pruned)]
                         [final-functions : ir.CompilerIrFunctionSeq
@@ -126551,7 +126601,7 @@
                                 externs
                                 (ir.compiler-ir-clone-return-storage-authority
                                   pools
-                                  _authority))])]
+                                  authority))])]
                         (begin
                           (cfg
                             compile-profile
@@ -132172,9 +132222,10 @@
         [obj-known? : bool (not (opt-global-mod-ref-any? obj-row))]
         ;; Does this call write through a parameter whose ARGUMENT is a global,
         ;; AND do both rows resolve? Those positions are the ones the storage
-        ;; row names and the root-keyed filter cannot describe -- but only a
-        ;; program that carries both tables can name them, so everything else
-        ;; keeps the pre-IAG-2 path exactly, including every level below 2.
+        ;; row names and the root-keyed filter cannot describe. Both tables
+        ;; must be known and the callee must have an installed row: an implicit
+        ;; runtime helper's external fallback does not describe the argument.
+        ;; Everything else keeps the root-keyed filter, including levels below 2.
         [global-args? : bool
           (and
             cells-known?
@@ -132183,7 +132234,11 @@
               (& call-memory)
               (ir.compiler-ir-symbol-id name))
               [(LookupFound summary)
-                (opt-load-call-global-arg-writes? summary args)]
+                (and
+                  (opt-load-call-global-arg-writes? summary args)
+                  (or
+                    (opt-global-mod-ref-has-row? mod-ref name)
+                    (opt-global-mod-ref-has-row? obj name)))]
               [(LookupMissing) false]))]
         [filtered : OptLoadTable
           (match (opt_i64_i64_map.get

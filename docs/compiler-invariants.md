@@ -44,6 +44,11 @@ Physical IR storage types are derived separately with regions erased.
 Semantic queries for operands and nested calls therefore receive the same
 brands as the original checked binding. An `in-arena` body also retains its
 source allocation region alongside the runtime restore marker.
+
+Scalar integer bitwise folding normalizes both constants at the declared
+`BinOp` operand width. A known constant's defining type must not truncate a
+wider storage mask or discard the upper fields of a packed aggregate.
+
 Encoded typechecker errors cross the
 lowering boundary through the shared decoder, preserving the producer's code,
 primary span, help and secondary labels.
@@ -448,6 +453,13 @@ Recursive type rendering retains both owners through nested pointer, slice,
 function and nominal arguments. The compatibility type-name entry deliberately
 uses the installed structural owner through the zero-handle adapter.
 
+Typechecker lifetime diagnostics distinguish source pool IDs from syntax
+identities. Their shared renderer validates the installed structural owner and
+a macro local's definition identity, with macro spelling enabled explicitly.
+The ownerless IR adapter keeps macro identities opaque. Foreign, stale and
+malformed identities use the total `<id:N>` fallback before any string-pool
+lookup. Coercion details and recursive type rendering share this boundary.
+
 A function's frame is laid out before its body is emitted. Below the slot and
 maximum callee-save area it holds, from the top down: the SIMD staging region,
 the cycle-temp slots, the emergency slots, and, at the bottom, the outgoing
@@ -618,6 +630,30 @@ expression dispatcher. Each expansion frame pairs its invocation span with the
 current origin path, so an imported template's nested call keeps the template
 file while a forwarded caller operand keeps the caller file.
 
+`compiler_stack_traffic.tl` defines the #9242 post-regalloc fact boundary for
+#7236. Its producer must supply final emitted-operation keys, logical homes,
+closed ownership and register-bank facts, and source-owned region membership;
+neither a stack offset nor a mnemonic proves them. Region parents precede
+children. The existing liveness CFG supplies indexed forward/reverse edges.
+The verifier rejects malformed extents, references, duplicate operations and
+missing reverse edges. Recurring-access counts describe header SCC membership
+only; they do not prove a round trip. An ordered witness names a same-home write
+and later read on a path which returns to the reachable full-gang header without
+visiting it between those events. In one block, operation/access keys give
+execution order. A `ReadWrite` access reads before writing and cannot witness
+itself without a nonempty inner cycle. Child control flow participates while
+child traffic retains its own region. The proof selects no owner or bank;
+allocator/vector/mask warning policy belongs to #7294.
+Facts borrow their function/job owner. Emitted and source function identities
+are distinct: inlined regions retain the callee's canonical source site. Both
+display names are owned snapshots, so rendering never consults another
+installed symbol table. Ordinary cold traps carry `NoSite`; full-gang and tail
+regions require a typed `Site`. Retention
+must escape all arrays and strings into the receiving owner. The v1 JSON schema
+uses canonical array order and explicit compiler digest/source identity.
+The module is groundwork with #7236 as its named next production consumer;
+retire it if that consumer is retired. It adds no default compiler-path hooks.
+
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,
 then the body, so binding order and ordinal survive every AST walker. The
@@ -678,6 +714,48 @@ current. Successful raw lower, pointer-proof and driver-lowered results carry
 the one-word lower owner through their consumers. A fresh standalone lowering
 failure releases its otherwise unreturned arenas after its diagnostic escapes.
 
+### Standalone source context
+
+`CompilerLowerRequest` is borrowed by source lowering and semantic-evidence
+consumers. `compiler-lower-request` initializes the mode, disabled proof,
+empty stdlib roots/cfg names, and standalone semantic-lowering policy. Callers may set those
+fields without another entry-point variant. Cfg names and roots are owned text,
+not interned IDs captured before a reset. Target predicates come from the
+shared target presets after the correct intern generation is installed.
+
+Standalone requests retain the live-session guard and reset interning,
+builtins and serial typecheck state. `in-session` requests append to the
+caller's installed AST/name owners. Import-aware requests use private loader,
+prefix-cache and typecheck job state. They retire only that job's temporary
+storage after IR or diagnostics escape. The borrowed context remains inspectable:
+prefix, dotted-path, proof, provenance and surface-summary owners are empty on
+both outcomes. Callers must publish explicit pool mutations before
+invoking an API that reads the installed pools. A nested success or failure
+cannot change the enclosing generation, builtin IDs, load-session selector or
+previously published AST prefix.
+
+Imported source uses its caller path and the loader's complete declaration
+paths/module column, including selected/wildcard imports and macro-produced
+declarations. `compiler-load-executable-prelude` is the shared ordered
+runtime/core-macro prefix for the CLI and import-aware executable source jobs.
+Backend target helpers set `executable`; semantic-only lowering keeps its core
+macro prefix so executable runtime types do not enter its debug/type graph.
+A source
+that supplies its own inline `stdlib.runtime` keeps that owner. Import-free
+programs keep their existing unlocated lowering path, including in-session
+library entry naming used by the native macro catalog. Missing
+import diagnostics preserve the failing file and add the caller's exact
+import span as an `imported here` label.
+Imported helper names retain the actual caller owner (`<source>` for the
+default source API), rather than the old empty-path owner.
+
+Raw object-image helpers retain their structural contract; an image does not
+certify direct-object admission. Existing eligibility checks still exclude
+unsupported instructions, ABI shapes and runtime bodies. The source-import
+tests keep an allocation program's explicit semantic exclusion until #8317's
+runtime bodies are materialized, alongside assembly/CLI execution and
+supported raw-image artifact controls on both target ABIs.
+
 Function lowering forks the persistent type-environment store inside its
 existing scratch extent. Parameters, return/cleanup markers and local bindings
 append there while the immutable module tail stays borrowed. The inherited
@@ -715,6 +793,22 @@ Buffered emission retains its job through the write, and lowered link requests
 retain their owner through direct-object and assembly-fallback consumption.
 Object emission copies literal string/byte payloads into its destination;
 at opt0 those headers and bytes can belong to lower IR until emission finishes.
+Immutable String literals use one canonical record plan for assembly and direct
+objects. Reverse-byte sorting groups terminated suffixes behind a complete
+owner; labels may share suffix bytes, while every distinct String keeps its own
+eight-byte-aligned pointer/length header and exact bytes through its final zero.
+The plan copies all fragments and labels into the destination arena before the
+input owner retires. Mutable binary constants retain separate storage. Sorting
+uses the shared stable vector sort and temporary scalar keys into live,
+immutable input slots throughout sorting.
+No key escapes the planner: every returned fragment and label is owned by its
+destination arena before the caller may retire the input. The sort therefore
+copies only scalar keys, while String byte copies remain confined to the output
+records. Layout tests pin bytes, aligned headers and absolute relocations after input
+retirement, and native opt0/1/2 tests pin complete writer output on both hosts.
+The assembly sink reuses the backend's byte-exact quoted escaping for compact
+`.ascii` fragments and NUL-terminated `.string` records; the direct-object sink
+retains the same physical records without depending on textual directive size.
 Globals, externs and source spans live outside the dedicated function-IR arena.
 
 The lowerer's checked expression dispatcher delegates complete families to
@@ -868,6 +962,19 @@ core-macro Clone handoff supplies its explicit
 empty source-language cfg set. The `generated_cfg` native fixture and interleaved
 cfg driver-state smoke guard this boundary.
 
+`Decls` splice admission is keyed by the owning module, output segment and
+expansion identity in the job-owned structural intern session. A compatible
+repeat in one module remains empty; another module still receives its imports
+and local declarations. Explicit module switches split the output into
+segments, each admitted under its actual owner and its marker count; all marker
+rows and the original declaration interleaving are preserved. A consuming
+module that is also an explicit target therefore keeps its local segment apart
+from the target segment. Incompatible output under one owner/segment/identity
+still diagnoses. `decls_module_scopes` and `serialize_module_scopes` exercise
+independent generated modules and shared enum payload serializers, and
+`decls_self_target_scopes` self-targeting consumers; the memo scope and re-arm
+tests cover owner and segment isolation, collision probing and invalidation.
+
 The expansion walk splices each macro's output into a segmented program view
 and continues over it. A splice costs work in its delta and the module it
 expands in, never a rescan of the whole program (#8120). Segment nodes and the
@@ -881,6 +988,14 @@ splice that keeps the context's flat program keeps its module declaration
 index. The `macro-segmented-program-events` test and the generated-declaration
 typecheck cases cover the event index and the re-resolution boundary; the
 `expansions` compiler-scaling row measures expansions within one module.
+
+Unqualified import-cache invalidation resolves its existing key-array descriptor
+once, then clears every module-key slot unconditionally. The descriptor stays
+stable throughout the clear. Name/value slots remain unreadable until their
+module key is populated again. Fresh-allocation zeroing cannot clear this live
+storage: a virgin arena may contain overwritten keys. Valid source-name
+table/generation pairs retain the cache; each job owns its own key array and
+invalidation controls.
 
 Macro and CTFE diagnostic raises supply a `CompilerMacroKind` to
 `ctfe-diagnostic-at-expr`. The shared code transport preserves an existing
@@ -976,7 +1091,15 @@ and protected-node journal operation with ordinary rewrites, but retains the
 existing provenance slots and span records. Registering those wrappers again
 would duplicate per-use re-span records. Semantic rewrites still use the
 span-updating setter, and whole-program compaction rebuilds provenance for its
-new ids.
+new ids. Only final macro compaction may consume source span slots as forwarding
+IDs. The consuming entry clears the aligned, fixed span-slot segments once,
+including their writable unused tails, with an unconditional fill. Zero then
+marks an unvisited expression; destination ids are stored plus one. Source
+provenance becomes unavailable before traversal: the exhaustive child/declaration
+walk reads raw rows and reconstructs canonical and ReSpan records from wrappers;
+subsequent path copies and cache clearing read no source spans. Other compaction
+callers preserve source provenance. Test builds poison the consumed source's
+shared span-base table so reads through any context view fail.
 
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
 inline records: function entries (symbol, path id, span; 32 bytes) and
@@ -1152,6 +1275,18 @@ by surface identity order. Exact package-root lint detects uncalled producer
 declarations, while embedded-stdlib and package-surface parity gates exercise
 the real producer entries.
 
+Multi-entry `compile --batch` commands retain the immutable decoded embedded
+image in the batch driver's surface arena. Initialization expands those fixed
+bytes before the first entry's live-allocation baseline; source-only entries
+still use their normal source fallback. The byte slot becomes readable only
+after expansion completes. Decoder scratch storage retires immediately; only
+the byte result escapes into the surface arena. Nested surfaces borrow the
+enclosing owner's bytes. Both assembly and Windows object batches forget their
+owner after successful or failed entry execution, before that owner retires.
+Empty and singleton batches keep their existing lazy path. This retains no
+parsed AST or macro result. Fresh source provenance checks and each native
+session's admission, W^X mapping, registration and release remain independent.
+
 The runtime lifetime tests cover repeated checked errors, macro errors, failed
 imports after a successful import, parent restoration, bounded direct-object
 side-backend retention, and emission at all optimization levels for both targets. The copied environment test destroys the
@@ -1192,6 +1327,10 @@ A global's IR initializer takes one of three forms:
     `(Array T N)` value.
   - The direct-object encoder has no static-array record, so such programs
     take the assembly path.
+  - Reachability removes an unused `StaticArray` even at opt0. At that level
+    every emitted function body and retained global initializer is a root;
+    all other globals and all functions remain unchanged. A program without
+    `main` conservatively retains all data for its unknown external callers.
 
 Migrated mutable typecheck caches, indexes and traversal state belong to the
 compiler job's `TcJobState`, so resetting or destroying one job cannot disturb
@@ -1212,11 +1351,22 @@ file-result cleanup and terminal retirement clear all header views before
 destroying the payload. A different job or scratch arena may be current during
 allocation or cleanup without becoming the owner.
 
+The SPMD helper recursion stack tracks active bodies, not completed calls.
+Push materializes an immutable parent snapshot before publishing the child;
+success and error paths restore that parent. Dense stack nodes belong to the
+compiler job arena and remain valid across function scratch rewinds.
+
 A value that is a pure function of intern ids is not cached at all: a stdlib comptime syntax type is recognised by decomposing
 the structural module key of its canonical id, and comptime helper prefixes are
 compared with the builtin ids directly. Generation-stamped mirrors of such
 values only add state that must then be reset and isolated. The families that
 still await migration are tracked in #4960.
+
+Dotted enum-alias fallback reads spelling metadata only for source-name IDs.
+An unresolved structural symbol key is already a semantic identity; it cannot
+be reinterpreted as an index into source spelling tables. Both alias-key and
+variant-handle fallbacks reject IDs outside that table's domain before reading
+leading segments or dotted tails.
 
 Each compile and each `compile --batch` entry resets the interner. Those resets
 cost what the compile used, not the tables' capacity (#8520).
@@ -1359,6 +1509,27 @@ below. Two copies keep the rule true without copying every parameter:
 through it. Raw-pointer writes into an argument stay the unsafe code's
 obligation.
 
+Tail-call selection proves that each effective argument's storage survives
+release of the current frame. Direct and indirect calls use the callee's
+formal types and `tc-call-effective-arg-expr`, including implicit borrows;
+a scalar field's source type does not reveal that its address is passed.
+References, slices, strings-as-views and inline aggregates require a proof:
+an unchanged parameter, a reference-parameter reborrow, caller-owned
+memory-class parameter storage, a typed global binding without a local IR
+binding, or a supported heap projection. A shared
+borrow of a plain scalar variable is safe because lowering copies it into
+`tl_alloc` storage. Local reference/view aliases, unknown call results and
+Copy aggregates materialized from heap elements do not acquire a proof.
+Slice-pattern rest views inherit a proven external scrutinee's storage;
+their IR IDs are retained in a persistent set so lowering-state forks do not
+share new facts. Reassignment of a proven frame-sensitive binding invalidates
+both that set and the parameter forwarding range. Unknown provenance retains
+an ordinary call and return; borrowed
+match arms use the same tail-call selection.
+`lower-match-borrowed-enum` shares scrutinee evaluation and payload binding
+between value and tail continuations. A register-resident scrutinee's spill
+remains frame storage; it grants no external-storage proof.
+
 Address-exposed register groups own contiguous stack pairs indexed by final
 variable ID. In a function that exposes any group address, all group second
 words use that canonical pair region; mixing a one-word-stride map with
@@ -1401,6 +1572,13 @@ remove an address fact. Both global-cell summaries and aggregate live-in
 analysis consume this same address set. Any address-taken global prevents the
 per-global no-write table from being built: a pointer-writing call may reach
 that cell even when it has no direct `Store` instruction naming the global.
+
+Load-CSE may replace a global argument's parameter-root filter with named
+cell/storage filtering only when the callee has an installed mod/ref row and
+both write sets are known. A runtime helper's no-reentry fallback excludes
+implicit private-global writes; it does not account for a global passed as an
+explicit writable destination. Without a row, that argument keeps the ordinary
+root filter, including its conservative unknown-root invalidation.
 
 GEP use splitting may re-evaluate only stable literals, addresses and
 single-definition variables. `Global` and `RuntimeGlobal` are implicit mutable
@@ -1665,6 +1843,26 @@ class's exclusions as well as its live ranges. A blocked outgoing argument
 cannot inherit a parameter pin through a phi or copy. Tail calls have no
 live-after survival constraint, but their argument marshalling must still read
 each source before an argument-register write can destroy it.
+A one-instruction all-GP tail forwarder shares ordinary calls' bounded
+overflow eligibility: it has no other locals to displace from register homes.
+The fallback marshals into outgoing stack slots; a true tail jump marshals into
+incoming slots before restoring callee-saved homes. Both store register-sourced
+stack arguments before the parallel register move. Indirect calls, mixed-class
+arguments and register groups retain their existing restrictions.
+
+Move harvesting mutably borrows one `CompilerRegMoveBuilder` through casts,
+destructive ties, copies and phi inputs, preserving their existing add order.
+Lists of at most 32 moves use a bounded newest-first scan. The next unique move
+promotes the entire prefix once: its integer map indexes pair hashes into
+chains of move slots, and each subsequent insertion updates that index.
+Lookups compare both full-width endpoints. Each collision link points to an
+older slot or -1, so lookup terminates while preserving newest-first order.
+Undirected lookup selects the newer of both orientations; a strict duplicate
+upgrades that same newest undirected slot even when admission was directed.
+Self moves never enter the sequence or index. The fixed prefix bound and one
+promotion preserve expected linear total construction cost. The builder lives
+in the function scratch arena; coalescing receives only its dense sequence.
+Retained sequence views do not own or consult the mutable builder index.
 
 Eligibility calculation, rematerialization interval selection, stack coloring
 and final scavenger interval selection use that same budget to reclaim large
@@ -1711,6 +1909,13 @@ and ordered block storage; no returned loop borrows the workspace. Empty,
 acyclic and duplicate-label fallback collections allocate no CFG-sized traversal
 arrays.
 
+Post-SSA rotation's round homes own block, instruction and phi-input containers.
+Their type leaves retain the input function's owner. Phi analysis must borrow
+that existing type rather than create a compound-type container in round
+scratch: the round copier shares those leaves while retiring its old home.
+The compound-phi rotation tests overwrite all retired homes before reading
+every returned type and verifying the carried function/context.
+
 Empty work records initially read one immutable zero-length array descriptor;
 each record replaces both handles before its first element write. The work
 record itself is private, never a shallow view of shared mutable storage. The
@@ -1737,6 +1942,13 @@ dies; its operands therefore participate in the shared escape visitor. Without
 a complete lifetime proof for the packed result, the backing range stays private.
 Packing only values without tracked storage roots does not invalidate a range.
 
+A forwarded `AddrOf` is materialized at its use; suppressing its definition
+does not initialize its nominal register or spill home. Ordinary copies,
+same-type casts and phi copies must therefore materialize it even when source
+and destination have the same allocator home. Parallel-copy scheduling treats
+it as reading no home, and cycle saves must not replace it with the nominal
+home's contents. Address formation still uses the backing local's storage.
+
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it
 without naming it. No pass that forwards values by definition records a copy or
@@ -1753,6 +1965,10 @@ constant fact naming such a var, as destination or source.
   its copy environment (#7973).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
+- Stack-only and scalar register plans both use
+  `compiler-reg-ineligible-memory`: an `AddrOf` source keeps a private frame
+  slot despite its direct-use interval ending. Inline `Alloc` ranges retain
+  the separate storage-lifetime proof used by inline-storage coloring.
 
 #8190 tracks making this one pass-wide rule with an adversarial matrix.
 
@@ -1877,6 +2093,15 @@ the existing sequence handling. The public comptime `expr-while` builder keeps
 its one expression as a singleton list. Native quasiquote uses the same host
 callback with its body-list flag so it agrees with interpreted expansion.
 
+Quoted body sequences represented by a single expression retain a singleton
+`Begin` around a lone `UnquoteSplicing`. Collapsing that list before quasiquote
+would lose its splice position. The shared body parser and single-form match arms
+apply the same rule, retaining the original spanned splice inside the list;
+ordinary single-form bodies, including match-arm cfg handling, stay unchanged.
+`tests/integration/macro_body_splice.tl` covers expansion through native code
+and the inline-test harness, with invalid positions and operands in the safety
+corpus.
+
 Caller-origin macro markers have a negative macro-name ID and preserve the
 captured operand's source path without adding a user-visible expansion frame.
 For ordinary unobserved operands, capture replaces
@@ -1973,6 +2198,13 @@ check, a failed top-environment build reuses this path-aware validator to
 recover the selected import's canonical diagnostic. Macro setup permits pending
 generator exports; final typechecking requires complete exports. Recovery runs
 only on failure and adds no namespace scan to successful environment builds.
+An append that introduces a `defmacro` replays the existing alias pass over
+the segmented module/import event index before publishing its next context.
+Selected macro aliases then bind in the ordinary symbol map even when their import
+preceded the generator. Their explicit binding replaces a tentative bare macro
+alias from another module; actual import/local collisions still fail namespace
+validation. Ordinary value/function splices do not replay this
+pass; no pending alias registry or full declaration rescan is needed.
 Errors use the marker's physical
 path and span. Each scan uses temporary maps that are not cached; composite-key
 interning is published to the job's intern owner before handoff. The generated
@@ -2059,6 +2291,18 @@ Before runtime lowering, `build-package-tlci-capture-exports` records callable
 metadata as canonical TLCI text, sorted macro identities as owned strings, and
 the complete generated transformer source. `TlciNativeMacroCaptures` contains
 AST body and parameter references, so it stays inside that capture operation.
+`TlciNativeSourceContext` supplies the expression/type pools and interner that
+own those references. All source-generation helpers borrow that context;
+rendering reads neither installed pool nor installed intern spellings. The
+context caches its source owner's result-kind and unquote sentinel IDs through
+read-only lookup. A missing sentinel is not a valid negative-ID match. These
+are source syntax identities, independent of the later backend's builtin table.
+Package capture passes the runtime child's driver owners. The standalone image
+builder and serial fixtures freeze their parsed owners at named boundaries.
+They must finish rendering before those owners reset or retire. The producer's
+existing serial rendering scratch and later backend compilation remain serial
+boundaries; this source-owner handoff does not remove the driver bridges still
+tracked by #5754 and #5756.
 Capture runs in a disposable scratch arena: collectors, temporary rendering and
 AST-backed macro captures do not survive it. Only the final metadata text, each
 catalog name, transformer source or diagnostic is copied into the caller owner.
@@ -2200,6 +2444,49 @@ these records without deriving names from payload bytes or changing their order.
 The encoder does not select exports from package declarations or publish an
 archive. Its inline oracle test compares all seven payloads in a maintained
 LLVM AMD64 fixture, including the empty-export support objects.
+
+### COFF short import input
+
+`src/linker_coff_import_reader.tl` reads one immutable member payload and a
+caller-supplied `ArchiveMemberId`. It does not traverse archives, select or
+coalesce members, choose symbol winners, search DLLs, or assign PE addresses.
+#7102 consumes its checked records for resolution; #7175 consumes live imports
+for PE import tables and thunks; #7127 can reuse the parser for round trips.
+
+Short imports require version 0, AMD64, known code/data/const type, zero
+reserved bits, and one of ordinal/exact/no-prefix/undecorate. `EXPORTAS` fails
+explicitly. The declared string extent must equal the entire remaining input
+and contain exactly two nonempty NUL-terminated strings, with no trailing data.
+Portable names use printable ASCII without path separators. DLL basenames also
+reject Windows path/wildcard characters and leading/trailing dots. Non-ASCII,
+including otherwise valid UTF-8, is outside this profile; no host code page or
+Unicode case conversion participates in identity.
+
+The reader reuses the encoder's name policy and transformation. No-prefix
+drops exactly one leading `?`, `@` or `_`; undecorate then stops at the first
+`@`. Empty transformed names fail. Literal public spellings are preserved,
+including an existing `__imp_` prefix; the IAT spelling always prepends another
+literal `__imp_`. DLL identity folds only ASCII case and retains the written
+basename separately. Ordinal mode requires 1..65535 and produces no hint/name;
+named mode preserves any 16-bit hint and produces no ordinal. Timestamp and
+hint are provenance rather than identity/order inputs. Code/data/const stay
+distinct; conflicting public/IAT identities are left for the resolver.
+
+The shared short-import/bigobj signature is classified from version, complete
+header, AMD64 machine, bigobj UUID and checked section/symbol/string-table
+extents. Other-object results are header classifications; full ordinary COFF
+and bigobj section/symbol semantics belong to their object reader. Unused
+bigobj words do not acquire import-header meanings.
+
+Caller limits bound input bytes, every name including the derived IAT symbol,
+owned output-string content, and work. Output reserves `6 + 3*public + 2*dll`
+bytes before allocating names; fixed record storage and bounded temporary
+buffers are separate. Work reserves `64 + 16*input` before field access and
+string scans. There are exactly two strings and at most one result/diagnostic.
+Division and subtraction checks precede table-count multiplication, and
+`SizeOfData` is compared with the remaining span without adding an untrusted
+size to an offset. Errors retain the physical member, static field and
+member-relative byte. Returned names are owned snapshots of validated input.
 
 Embedded link policy is read by `src/linker_coff_directive_reader.tl`. The
 object reader passes a section header summary (object identity, section
@@ -2398,6 +2685,29 @@ Loader-owned failures enter `compiler-diagnostic-load` with a typed cause when
 source context is attached. Resolver helpers keep plain internal messages;
 forwarded parser/typechecker diagnostics retain their own codes and provenance.
 The `E03..` inventory lists every loader conversion, including package imports.
+Ordinary and package loads validate nested module bodies at the shared module
+identity boundary. A repeated body, including bodies under different parents,
+reports E0307 at the source-file start before either walker transforms it.
+An unresolved local dotted import retains its candidate path so normal source
+loading reports E0301; dependency declarations control alias routing, while
+an unknown explicit `pkg:` include alias remains an E0303 resolution failure.
+
+## Windows argument transport
+
+Both synchronous process paths use one bounded Microsoft C argv encoder.
+Validation rejects a quote in the program pathname and an encoded command
+exceeding 32767 bytes including its NUL before allocating native resources or
+creating a child. Argument escaping doubles backslashes only before quotes
+and the closing delimiter; program-name quoting leaves them literal.
+
+Text and direct-object startup compact the command-line copy in place with
+the write cursor never ahead of the read cursor. Spaces and tabs delimit
+only outside quotes; odd/even backslash runs and doubled quotes inside a
+quoted argument follow the same rules as the encoder. The first token uses
+the distinct program-name rule. The OS limit of 32767 UTF-16 code units bounds
+both the UTF-8 byte copy and 32768 pointers inside the existing 512 KiB boot
+pool. Public process builders retain their separate 4096-argument limit.
+`process_argv.tl` exercises exact count/bytes through both native spawn modes.
 
 ## Async process ownership
 
@@ -2413,3 +2723,74 @@ reservation reuse, cloned reservations, reverse waits and stale live tokens.
 A separate mode of the same fixture runs concurrent native starts, failed execs
 and waits without the single-threaded fault hooks; both modes check descriptor
 and child cleanup.
+
+### ELF shared-object metadata
+
+linker_elf_dso_reader.tl supplies pure ELF64/LSB/x86-64 ET_DYN syntax for
+#8300. read-dso borrows immutable input and takes caller-assigned input/content
+identity plus DsoLimits. The result retains that borrow, physical program and
+dynamic-entry indices/offsets, dynstr/name spans, typed symbols, both hash
+directories, soname/needed names, loader flags, and GNU version records.
+Identity records are provenance, not capabilities; consumers retain their
+owner and must not mutate the input or directory while using its records.
+Sectionful symbol IDs refer to their physical section; sectionless IDs use
+table index -1 and the dynamic symbol table's file offset.
+
+The checked ELF identity/machine prefix, unsigned range proofs and symbol
+decoders are shared with the ET_REL reader. PT_DYNAMIC is unique and its file
+offset must agree with translation through PT_LOAD. Load extents cannot wrap,
+overlap or map a requested virtual range ambiguously. File size, rather than
+memory size, bounds every address translation and open-ended hash/version
+walk. Zero-sized load extents are empty. Optional section headers corroborate
+dynamic table/symbol/string/hash/version addresses, sizes and entry widths;
+a discrepancy is an error, and absent headers never trigger a fallback.
+The ancillary section directory is internal; it is not a complete ET_REL model.
+
+DT_HASH nchain or checked GNU bucket/terminated-chain walks establish the
+symbol count; both agree when GNU chains encode a count. An empty GNU hash can have
+symoffset=1 despite a longer undefined-symbol prefix. A checked SysV count or
+the unique dynamic-symbol section supplies that total; its virtual address
+still maps through PT_LOAD. Without either, UnsupportedMetadata reports
+GNU-empty-symbol-count rather than assuming dynstr adjacency. chain-count
+retains the empty/nonempty distinction while symbol-count is complete for
+every accepted model. Validation checks reachability,
+chain ownership, bucket/name hashes and GNU bloom bits. The shared
+linker_elf_dynamic.tl owns dynamic tag classification and the GNU byte hash;
+the existing GNU-version codec remains the single SysV name-hash owner.
+GNU version extents are preflighted, then decoded by that existing codec,
+preserving hidden/default bits, definition/need indices, inheritance,
+physical offsets and required BASE. An unresolved version index is rejected.
+
+lookup takes borrowed name/version bytes, hash selection and a work limit.
+Empty version selects a non-hidden default; an explicit version can select a
+non-default definition. Local, undefined and hidden/internal visibility rows
+are absent; weak, protected, TLS and IFUNC definitions retain their syntax.
+An explicitly requested unavailable hash is an error. No lookup executes code
+or chooses a provider across DSOs. Unknown dynamic tags/loader bits remain raw
+syntax for later admission policy. #8293 and #7101 consume these records;
+#8300 does not search files, parse linker scripts, resolve imports, relocate
+images or add a public linker command. Non-ELF input has a distinct NotElf
+result so the caller can dispatch to the script parser.
+
+Limits cover input, segments, sections, dynamic entries, symbols, total version
+headers/auxiliaries, string bytes, conservative retained storage, and work.
+Every variable allocation has a prior bound. Name/payload bytes remain
+borrowed except the bounded version slices required by the existing codec.
+Its ownership maps, geometric vector storage, padding and fixed index map are
+reserved before decoding. The final section cross-check is charged before
+the remaining work budget is handed to that codec. Work is a conservative
+operation budget, not a time or OS-memory metric. Errors contain a fixed
+field name, physical source offset and original identity; hostile text is
+never copied into diagnostics.
+
+The retained reservation includes fixed result/empty-vector storage as well
+as variable records. Version name references are checked in the extent pass,
+so malformed name diagnostics identify their source word rather than the
+untrusted target index.
+
+Only a string table selected by dynsym's section link or an allocated table at
+the dynamic string address is corroborating dynstr metadata. In particular,
+unallocated strtab/shstrtab addresses of zero do not identify a dynstr whose
+valid mapped virtual address is zero. Unrelated allocated string tables
+remain unrelated; the section-work reservation checks its product by division
+before multiplication.

@@ -3568,7 +3568,8 @@
       (match (opt.opt-prune-unreachable-program
         (ir.compiler-ir-global-seq-empty)
         (owned_view.compiler-owned-shared-view out)
-        (& (ir.compiler-ir-extern-seq-empty)))
+        (& (ir.compiler-ir-extern-seq-empty))
+        false)
         [(Program _ functions) functions])]
     ;; The stage output still holds the pruned bodies, whose chunk the carry
     ;; releases, so read it first.
@@ -7157,6 +7158,65 @@
     (unless (= (opt-cc-check once) 0) (return (opt-cc-check once)))
     ;; idempotence: the canonical form is a fixpoint of the same pass
     (unless (= (opt-cc-check twice) 0) (return (+ 40 (opt-cc-check twice))))
+    42))
+
+(define (compiler-optimize-bitwise-width-self-test) : i64
+  (let
+    [input : ir.CompilerIrInstrSeq
+      (irt.instrs
+        "%1 = mov -3 : i8
+         %2 = mov -3 : i16
+         %3 = mov -3 : i32
+         %4 = mov 7 : i8
+         %5 = mov -2147483648 : i32
+         %6 = mov -32768 : i16
+         %7 = mov -128 : i8
+         %100 = bit_and %1, 255 : u64
+         %101 = bit_and %2, 65535 : u64
+         %102 = bit_and %3, 4294967295 : u64
+         %103 = bit_and 4294967295, %3 : u64
+         %104 = bit_or %4, 4294967296 : u64
+         %105 = bit_xor %4, 4294967296 : u64
+         %106 = bit_and %3, 0 : u64
+         %107 = bit_and %5, 4294967295 : u64
+         %108 = bit_and %6, 65535 : u64
+         %109 = bit_and %7, 255 : u64
+         %110 = bit_and %3, 255 : u8
+         %111 = bit_and %999, 255 : u64")]
+    [folded : ir.CompilerIrInstrSeq
+      (opt-test-fold-instrs
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (Nil)
+        input)]
+    [expected : (Array i64 10)
+      (array
+        253
+        65533
+        4294967293
+        4294967293
+        4294967303
+        4294967303
+        0
+        2147483648
+        32768
+        128)]
+    (unless (= (opt-count-arith-instr-seq folded) 1) (return 1))
+    (for [index (iterator.range 0 (array-length expected))]
+      (unless
+        (=
+          (opt-mov-dst-i64-value-instr-seq folded (+ 100 index) -999)
+          (array-ref expected index))
+        (return (+ 10 index)))
+      (unless
+        (=
+          (opt-mov-dst-type-tag folded (+ 100 index))
+          (ast.ast-type-tag (& (U64))))
+        (return (+ 30 index))))
+    (unless
+      (and
+        (= (opt-mov-dst-i64-value-instr-seq folded 110 -999) 253)
+        (= (opt-mov-dst-type-tag folded 110) (ast.ast-type-tag (& (U8)))))
+      (return 2))
     42))
 
 (define (compiler-optimize-typed-fold-self-test) : i64
@@ -13988,6 +14048,113 @@
   (if (compiler-optimize-global-dce-ok?)
     42
     1))
+
+;; IR text supplies the references; only the zero-length static payloads need
+;; construction, because the textual format does not encode StaticArray bytes.
+(define (opt-static-array-test-program [with-main? : bool]) : ir.CompilerIrProgram
+  (match (irt.program
+    (str_cat.str-cat
+      "global @unused : (Array u64 0) = unit
+       global @direct : (Array u64 0) = unit
+       global @dead_body_only : (Array u64 0) = unit
+       global @aliased : (Array u64 0) = unit
+       global @initializer_only : (Array u64 0) = unit
+       global @opaque_argument : (Array u64 0) = unit
+       global @unused_scalar : i64 = 7
+       global @alias : (Ptr (Array u64 0)) = &@aliased
+       global @runtime : i64 = runtime-init@init
+       function @"
+      (if with-main?
+        "main"
+        "entry")
+      "() -> i64 vars 2 {
+       entry:
+         %0 = mov @direct : (Array u64 0)
+         %1 = call opaque(&@opaque_argument) : i64
+         return 42
+       }
+       function @dead() -> i64 vars 1 {
+       entry:
+         %0 = mov &@dead_body_only : (Ptr (Array u64 0))
+         return 0
+       }
+       function @init() -> i64 vars 1 {
+       entry:
+         %0 = mov &@initializer_only : (Ptr (Array u64 0))
+         return 0
+       }"))
+    [(Program globals functions externs _)
+      (let
+        [builder (ir.compiler-ir-global-builder-with-capacity globals.len)]
+        (for [index (iterator.range 0 globals.len)]
+          (match (ir.compiler-ir-global-seq-ref (& globals) index)
+            [(Global name ty value)
+              (let
+                [static?
+                  (match (& ty)
+                    [(Array _ _) true]
+                    [_ false])]
+                (opt-test-global-builder-push!
+                  (&mut builder)
+                  name
+                  ty
+                  (if static?
+                    (StaticArray "")
+                    value)))]))
+        (Program
+          (ir.compiler-ir-global-builder-to-seq builder)
+          functions
+          externs
+          (ir.CompilerIrReturnStorageAuthority.None)))]))
+
+(test
+  static-array-opt0-retained-roots
+  (let
+    [bases (ast.ast-node-pool-reader-type-segment-bases)]
+    [names
+      (array
+        "direct"
+        "dead_body_only"
+        "aliased"
+        "initializer_only"
+        "opaque_argument"
+        "unused_scalar"
+        "alias"
+        "runtime")]
+    (for [variant (iterator.range 0 2)]
+      (let
+        [with-main? (= variant 0)]
+        [input (opt-static-array-test-program with-main?)]
+        [expected (clone (opt-program-functions (& input)))]
+        [actual (opt-test-optimize-program-with-level input 0)]
+        [functions (opt-program-functions (& actual))]
+        [globals (opt-program-globals actual)]
+        (test.assert-i64-eq
+          globals.len
+          (if with-main?
+            8
+            9)
+          "only unused static data in a complete program is removed")
+        (test.assert-true
+          (= (opt-global-list-defines? (& globals) "unused") (not with-main?))
+          "an incomplete package conservatively keeps all static data")
+        (for [index (iterator.range 0 (array-length names))]
+          (test.assert-true
+            (opt-global-list-defines?
+              (& globals)
+              (clone (array-ref names index)))
+            (clone (array-ref names index))))
+        (test.assert-i64-eq
+          functions.len
+          expected.len
+          "opt0 keeps every function")
+        (for [index (iterator.range 0 functions.len)]
+          (test.assert-true
+            (opt.opt-function-eq
+              bases
+              (ir.compiler-ir-function-seq-borrow (& functions) index)
+              (ir.compiler-ir-function-seq-borrow (& expected) index))
+            "opt0 leaves every retained function body unchanged"))))))
 
 (defstruct OptCallgraphTestSymbols
   (main i64)
@@ -31570,7 +31737,7 @@
 ;: a different block. This asserts the numbering itself.
 (define (opt-cfg-index-walk-order-ids-ok?
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [index : opt.OptCfgIndex]
+  [index : (& index opt.OptCfgIndex)]
   [position : i64]) : bool
   (match blocks
     [(slice) true]
@@ -31586,10 +31753,155 @@
 (define (opt-cfg-index-numbering-ok?) : bool
   (let
     [blocks : ir.CompilerIrBlockList (opt-cfg-switch-blocks)]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
     (opt-cfg-index-walk-order-ids-ok?
       (ir.compiler-ir-block-list-view blocks)
-      (opt.opt-cfg-index-build (& blocks))
+      (& index)
       0)))
+
+;; The integer lookup must not depend on live global stamps or a particular
+;; label spelling. Synthetic numeric labels also exercise high bits without
+;; growing the global spelling pool to those ids.
+(define (opt-cfg-label-index-property [count : i64] [stride : i64] [base : i64]) : bool
+  (let
+    [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [builder : ir.CompilerIrBlockBuilder
+      (ir.compiler-ir-block-builder-with-capacity count)]
+    (for [id (iterator.range 0 count)]
+      (let
+        [label : i64
+          (+
+            base
+            (*
+              stride
+              (if (and (> count 1) (= id (- count 1)))
+                0
+                (% (* id 17) count))))]
+        (set! (array-ref labels id) label)
+        (ir.compiler-ir-block-builder-push!
+          (&mut builder)
+          (Block label (irt.instrs "return 0")))))
+    (let
+      [blocks : ir.CompilerIrBlockList
+        (ir.compiler-ir-block-builder-to-list builder)]
+      [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+      [_other : opt.OptCfgIndex
+        (opt.opt-cfg-index-build
+          (& (irt.blocks "other:
+                        return 1")))]
+      (for [query (iterator.range -2 (+ count 2))]
+        (let
+          [label : i64
+            (cond
+              [(= query -2) -9223372036854775808]
+              [(= query -1) 9223372036854775807]
+              [else (+ base (* stride query))])]
+          [expected : i64 -1]
+          [actual : i64
+            (match (opt.opt-cfg-index-id (& index) label)
+              [(Some id) id]
+              [(None) -1])]
+          (for [id (iterator.range 0 count)]
+            (when
+              (and (< expected 0) (= (array-ref labels id) label))
+              (set! expected id)))
+          (unless (= actual expected) (return false))))
+      true)))
+
+(test
+  cfg-label-index-matches-first-block-after-another-build
+  (for [power (iterator.range 0 7)]
+    (for [edge (iterator.range -1 2)]
+      (let
+        [count : i64 (+ (shl 1 power) edge)]
+        (test.assert-true
+          (and
+            (opt-cfg-label-index-property count 1 1)
+            (opt-cfg-label-index-property count 2048 1073741824)
+            (opt-cfg-label-index-property count 65536 4611686018427387904))
+          "empty, sparse, reordered and duplicate labels retain first-match lookup and bounded misses")))))
+
+(test
+  cfg-label-index-survives-source-pool-reset-and-reuse
+  (let
+    [blocks : ir.CompilerIrBlockList
+      (irt.blocks
+        "cfg-reset-entry:
+                     jump cfg-reset-exit
+                   cfg-reset-exit:
+                     return 0")]
+    [other : ir.CompilerIrBlockList
+      (irt.blocks
+        "cfg-reset-exit:
+                     return 1
+                   cfg-reset-entry:
+                     return 2")]
+    [index : opt.OptCfgIndex (opt.opt-cfg-index-build (& blocks))]
+    [ambient : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [_install : unit (ci.intern-compat-state-install! state)]
+    [kept : i64 (ci.intern-source-slice "kept" 0 4)]
+    [discarded : i64 (ci.intern-source-slice "discard" 0 7)]
+    [_partial : unit (ci.intern-reset-to! 1)]
+    [replacement : i64 (ci.intern-source-slice "replacement" 0 11)]
+    [partial-ok : bool
+      (and
+        (= discarded replacement)
+        (opt-cfg-index-walk-order-ids-ok?
+          (ir.compiler-ir-block-list-view (& blocks))
+          index
+          0))]
+    [_full : unit (ci.intern-reset!)]
+    [reused : i64 (ci.intern-source-slice "reused" 0 6)]
+    [_other : opt.OptCfgIndex (opt.opt-cfg-index-build (& other))]
+    [full-ok : bool
+      (and
+        (= kept reused)
+        (opt-cfg-index-walk-order-ids-ok?
+          (ir.compiler-ir-block-list-view (& blocks))
+          index
+          0)
+        (match (opt.opt-cfg-index-id (& index) -1)
+          [(None) true]
+          [(Some _) false]))]
+    [_capture : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut state))]
+    [_restore : unit (ci.intern-compat-state-install! ambient)]
+    [_release : unit
+      (ci.intern-compat-state-release-structural-generations! (&mut state))]
+    [_destroy : unit
+      (unsafe
+        (arena.tl_arena_destroy
+          (ci.intern-compat-state-persistent-arena (& state))))]
+    (test.assert-true
+      (and partial-ok full-ok)
+      "a live CFG index retains integer-label lookup across source-pool reset, slot reuse and another index build")))
+
+(test
+  cfg-label-index-sparse-probes-stay-short
+  (for [power (iterator.range 4 7)]
+    (let
+      [count : i64 (shl 1 power)]
+      [labels : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [slots : (__tl_dyn-array i64)
+        (__tl_make-array i64 (opt.opt-cfg-index-id-map-capacity count))]
+      [mask : i64 (- (array-length slots) 1)]
+      [probes : i64 0]
+      (for [id (iterator.range 0 count)]
+        (set! (array-ref labels id) (+ 11 (* id 2048))))
+      (opt.opt-cfg-index-fill-id-map! (&mut slots) (& labels) count)
+      (for [id (iterator.range 0 count)]
+        (let
+          [slot : i64 (opt.opt-cfg-index-id-slot (array-ref labels id) mask)]
+          [found : bool false]
+          (while (not found)
+            (+= probes 1)
+            (if (= (array-ref slots slot) (+ id 1))
+              (set! found true)
+              (set! slot (bit-and (+ slot 1) mask))))))
+      (test.assert-true
+        (<= probes (* count 3))
+        "half-full sparse label tables avoid a long shared probe chain"))))
 
 ;; The borrowed lookups read the function's own list, which the index numbers in
 ;; walk order: a label the index knows finds that label's block, and an unknown
@@ -52304,6 +52616,153 @@
           (set! (array-ref junk word) -1))))
     (opt.opt-round-regions-leave! (& regions))))
 
+(define (opt-rotate-ssa-compound-siblings [ty : (& ty str)] [reverse? : bool]) : ir.CompilerIrFunction
+  (let
+    [text : String (irt.blocks-text (opt-rotate-ssa-many-siblings-blocks 6))]
+    (for [k (iterator.range 0 6)]
+      (let
+        [header : String (str_cat.str-cat "rr-h" (string.int->string k) ":\n")]
+        [phi : String
+          (str_cat.str-cat
+            "  %"
+            (string.int->string (+ 20 k))
+            " = phi [%19, rr-m"
+            (string.int->string k)
+            "], [%"
+            (string.int->string (+ 20 k))
+            ", rr-l"
+            (string.int->string k)
+            "] : "
+            (string.copy ty)
+            "\n")]
+        (set!
+          text
+          (string.replace
+            text
+            (string.copy (& header))
+            (str_cat.str-cat header phi)))))
+    (when
+      reverse?
+      (for [k (iterator.range 0 6)]
+        (let
+          [next : String
+            (if (= k 5)
+              "rr-exit"
+              (str_cat.str-cat "rr-m" (string.int->string (+ k 1))))]
+          [arms : String
+            (str_cat.str-cat
+              ", rr-b"
+              (string.int->string k)
+              ", "
+              (string.copy (& next)))]
+          (set!
+            text
+            (string.replace
+              text
+              arms
+              (str_cat.str-cat ", " next ", rr-b" (string.int->string k)))))))
+    (Function
+      (opt-test-symbol "rotate_compound")
+      (irt.params (str_cat.str-cat "n=%0:i64, value=%19:" (string.copy ty)))
+      (I64)
+      26
+      (irt.blocks text)
+      Ordinary)))
+
+(define (opt-rotate-ssa-compound-types-ok?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [ty : (& ty str)]) : bool
+  (let
+    [ok? : bool true]
+    (for [k (iterator.range 0 6)]
+      (let
+        [header : i64
+          (ir.compiler-ir-label
+            (& (str_cat.str-cat "rr-h" (string.int->string k))))]
+        [label : i64
+          (if (opt-block-list-has-label?
+            (ir.compiler-ir-block-list-view blocks)
+            header)
+            header
+            (ir.compiler-ir-label
+              (& (str_cat.str-cat "rr-b" (string.int->string k)))))]
+        (match (opt.opt-cfg-find-block blocks label)
+          [(No) (set! ok? false)]
+          [(Some block)
+            (match block
+              [(Block _ instrs)
+                (match (ir.compiler-ir-instr-seq-borrow instrs 0)
+                  [(Phi dst _ actual)
+                    (set!
+                      ok?
+                      (and
+                        ok?
+                        (= dst (+ 20 k))
+                        (string.eq
+                          (ir.compiler-ir-type-render
+                            (irt.ir-text-session)
+                            (ast.ast-node-pool-reader-type-segment-bases)
+                            actual)
+                          ty)))]
+                  [_ (set! ok? false)])])])))
+    ok?))
+
+(define (compiler-optimize-rotate-ssa-compound-types-self-test) : i64
+  (let
+    [types
+      (array
+        "i64"
+        "(Tuple i64 bool)"
+        "(-> i64 (Tuple bool i64))"
+        "(Tuple (-> i64 bool) (Array i64 2))")]
+    [fuels : (Array i64 6) (array 0 1 2 3 6 7)]
+    [outer : i64 (arena.tl_arena_current)]
+    (for [kind (iterator.range 0 4)]
+      (for [orientation (iterator.range 0 2)]
+        (for [fuel-index (iterator.range 0 6)]
+          (let
+            [ty (& (array-ref types kind))]
+            [fuel (array-ref fuels fuel-index)]
+            [func (opt-rotate-ssa-compound-siblings ty (= orientation 1))]
+            [original-blocks (opt.opt-function-blocks func)]
+            [context (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+            (unless
+              (opt.opt-verify-ok?
+                (& (opt.opt-verify-function-with-context func context)))
+              (return 1))
+            (match (opt.opt-rotate-ssa-rounds func context fuel)
+              [(Result result kept-context)
+                (opt-round-regions-test-clobber!)
+                (unless (= (arena.tl_arena_current) outer) (return 2))
+                (unless
+                  (opt-rotate-ssa-compound-types-ok? original-blocks ty)
+                  (return 3))
+                (unless
+                  (opt-rotate-ssa-compound-types-ok?
+                    (& (opt.opt-function-blocks result))
+                    ty)
+                  (return (+ 10 (* kind 10) fuel)))
+                (unless
+                  (=
+                    (opt-rotate-ssa-rotated-count result 6)
+                    (if (> fuel 6)
+                      6
+                      fuel))
+                  (return 4))
+                (unless
+                  (opt.opt-verify-ok?
+                    (&
+                      (opt.opt-verify-function-with-context result kept-context)))
+                  (return 5))])))))
+    42))
+
+(test
+  opt-rotate-ssa-compound-types-survive-round-retirement
+  (test.assert-i64-eq
+    (compiler-optimize-rotate-ssa-compound-types-self-test)
+    42
+    "every carried compound phi type survives repeated home switches, exhausted fuel and retired-storage reuse"))
+
 ;; Bytes the rounds bump in their caller's arena, round regions excluded, or -1
 ;; when they do not hand the caller's arena back.
 (cfg
@@ -69941,6 +70400,18 @@ return 0" true)
   cse-block-tables-keep-the-first-walk-state
   (let
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
+    [previous : arena.Arena (arena.make)]
+    [_preceding-function : unit
+      (in-arena
+        previous
+        (let
+          [blocks : ir.CompilerIrBlockList
+            (irt.blocks
+              "entry:
+                           %1 = addr_of %0
+                           return %0")]
+          (opt.opt-function-addr-taken-install! 2 (& blocks))))]
+    [_retire-previous : unit (arena.destroy-safe! previous)]
     [tables : opt.OptBlockExprTables (opt.opt-block-expr-tables-new)]
     [no-exprs : ir.CompilerIrInstrSeq (irt.instrs "%1 = mov %0 : i64")]
     [first : ir.CompilerIrInstrSeq
@@ -69949,6 +70420,17 @@ return 0" true)
     [second : ir.CompilerIrInstrSeq
       (irt.instrs "%4 = mul %0, %1 : i64
 %5 = mul %0, %1 : i64")]
+    [own : ir.CompilerIrBlockList
+      (ir.compiler-ir-blocks
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "empty")
+          (clone no-exprs))
+        (ir.CompilerIrBlock.Block (ir.compiler-ir-label "first") (clone first))
+        (ir.CompilerIrBlock.Block
+          (ir.compiler-ir-label "second")
+          (clone second)))]
+    ;; Raw block walks use the enclosing function's address-taken facts.
+    [_own-facts : unit (opt.opt-function-addr-taken-install! 6 (& own))]
     (opt.opt-fold-strength-cse-instr-seq-rewrite!
       bases
       (&mut tables.exprs)
@@ -70251,6 +70733,13 @@ return 0" true)
     (compiler-optimize-commute-constant-lhs-self-test)
     42
     "a commutative integer op with a literal or global-cell LHS canonicalises to a literal or cell RHS (two cells stay), `0 - x` on i64 becomes Neg, and Sub/Shl/f32-f64/narrow-width neighbours are left alone"))
+
+(test
+  bitwise-declared-width
+  (test.assert-i64-eq
+    (compiler-optimize-bitwise-width-self-test)
+    42
+    "bitwise folds keep the declared width for narrow constants, wide masks and high bits, and retain unknown operands"))
 
 (test
   scalar-shift-count-type-fold
@@ -76213,6 +76702,122 @@ return 0" true)
           cells)
         (opt-t22-blocks (opt-t22-global-arg-instrs symbols callee arg)))]
     (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
+
+;; An implicit runtime helper has a parameter-write summary but no installed
+;; cell/storage row. Its no-reentry fallback cannot account for an explicit
+;; global destination, even when both global tables are built.
+(define (opt-t22-runtime-global-loads [callee : i64] [mode : i64]) : i64
+  (let
+    [symbols (opt-t22-cell-symbols)]
+    [target : ir.CompilerIrValue
+      (if (= mode 5)
+        (GlobalAddr symbols.g)
+        (Global
+          (if (= mode 1)
+            symbols.h
+            symbols.g)))]
+    [args : ir.CompilerIrCallArgs
+      (cond
+        [(= mode 3) (Nil)]
+        [(= callee cbi.compiler-builtin-id-tl-array-zero)
+          (Two
+            target
+            (I64
+              (if (= mode 2)
+                0
+                8)))]
+        [else
+          (ir.compiler-ir-call-args-from-seq
+            (&
+              (ir.compiler-ir-value-seq3
+                target
+                (I64
+                  (if (= mode 2)
+                    0
+                    1))
+                (I64 0))))])]
+    [instrs
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Gep 2 (Global symbols.g) (I64 0) (I64))
+        (irt.instr "%3 = load %2 : i64")
+        (ir.CompilerIrInstr.Call 4 callee args (Unit))
+        (ir.CompilerIrInstr.Gep 5 (Global symbols.g) (I64 0) (I64))
+        (irt.instr "%6 = load %5 : i64")
+        (irt.instr "return %6"))]
+    [functions
+      (ir.compiler-ir-function-seq1
+        (&
+          (opt-call-memory-test-function
+            symbols.caller
+            (ir.compiler-ir-param-seq-empty)
+            (opt-test-instr-seq-copy (clone instrs)))))]
+    [globals (opt-t22-storage-globals symbols)]
+    [cells
+      (opt-test-global-obj-attach
+        (opt-t22-storage-globals symbols)
+        (& functions)
+        16
+        (opt.opt-global-cell-summary-build
+          (opt-t22-type-bases)
+          (& globals)
+          (& functions)))]
+    [blocks
+      (begin
+        (when (= mode 6) (set! cells.mod-ref.built? false))
+        (when (= mode 7) (set! cells.obj-mod-ref.built? false))
+        (opt-t22-run
+          (ir.compiler-ir-param-seq-empty)
+          (opt.opt-call-memory-build (opt-t22-type-bases) (& functions) 16)
+          (if (= mode 4)
+            (opt.opt-global-cell-summary-empty)
+            cells)
+          (opt-t22-blocks instrs)))]
+    (opt-count-load-blocks (ir.compiler-ir-block-list-view blocks))))
+
+(test
+  load-cse-runtime-global-argument-needs-installed-row
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [callees
+      (ir.compiler-ir-value-seq3
+        (Global cbi.compiler-builtin-id-tl-array-zero)
+        (Global cbi.compiler-builtin-id-tl-array-fill8)
+        (Global cbi.compiler-builtin-id-tl-mem-fill8))]
+    (for [at (iterator.range 0 3)]
+      (match (ir.compiler-ir-value-seq-borrow (& callees) at)
+        [(Global callee)
+          (for [mode (iterator.range 0 8)]
+            (test.assert-i64-eq
+              (opt-t22-runtime-global-loads callee mode)
+              2
+              "implicit fills cannot skip a global argument without an installed mod/ref row"))]
+        [_ (test.assert-true false "fixture callee identity")]))))
+
+(test
+  global-mod-ref-installed-zero-row
+  (let
+    [_builtins : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [name cbi.compiler-builtin-id-tl-mem-fill8]
+    [row
+      (opt.OptGlobalModRef
+        true
+        (opt_i64_i64_map.with-capacity 1)
+        (opt_i64_i64_map.with-capacity 1))]
+    (test.assert-i64-eq
+      (opt.opt-global-mod-ref-call-mask (& row) name)
+      0
+      "the no-reentry fallback has no implicit global writes")
+    (test.assert-true
+      (not (opt.opt-global-mod-ref-has-row? (& row) name))
+      "a built table alone does not contain a callee row")
+    (opt_i64_i64_map.insert-ref! (&mut row.writes) name 0)
+    (test.assert-true
+      (opt.opt-global-mod-ref-has-row? (& row) name)
+      "an installed zero write set is still a row")
+    (set! row.built? false)
+    (test.assert-true
+      (not (opt.opt-global-mod-ref-has-row? (& row) name))
+      "an unavailable table supplies no row proof")))
 
 ;; --- (c) MF-5 (ii): the width rule for constant globals ---------------------
 ;;

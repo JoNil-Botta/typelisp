@@ -6578,6 +6578,45 @@
 (define (main) : i64
   (step (Big 1 2 3) 39))")
 
+(define (compiler-lower-tail-borrowed-enum-match-source) : String
+  "(defenum Item (Var i64) (Pair i64 i64))
+(defstruct ItemSeq (slots (__tl_dyn-array Item)) (len i64))
+(define (walk [seq : (& ItemSeq)] [i : i64] [acc : i64]) : i64
+  (if (>= i seq.len)
+    acc
+    (match (& (array-ref seq.slots i))
+      [(Var _) (walk seq (+ i 1) (+ acc 1))]
+      [_ (walk seq (+ i 1) acc)])))
+(defstruct Holder (item Item) (next i64))
+(define (field [h : (& Holder)] [k : i64] [acc : i64]) : i64
+  (if (= k 0)
+    acc
+    (match (& h.item)
+      [(Pair a _) (field h (- k 1) (+ acc a))]
+      [_ (field h (- k 1) acc)])))
+(defenum Flag (On i64) (Off))
+(defstruct FlagSeq (slots (__tl_dyn-array Flag)) (len i64))
+(define (flags [seq : (& FlagSeq)] [i : i64] [acc : i64]) : i64
+  (if (>= i seq.len)
+    acc
+    (match (& (array-ref seq.slots i))
+      [(On v) (flags seq (+ i 1) (+ acc v))]
+      [(Off) (flags seq (+ i 1) acc)])))
+(defstruct Pt (x i64) (y i64) (z i64))
+(defenum Shape (Dot Pt) (Blank))
+(define (pt-sum [p : (& Pt)]) : i64 (+ p.x (+ p.y p.z)))
+(define (local-shape [n : i64]) : i64
+  (let [sh : Shape (Dot (Pt n 1 2))]
+    (match (& sh)
+      [(Dot p) (pt-sum p)]
+      [(Blank) 0])))
+(define (main) : i64
+  (let [seq : ItemSeq (ItemSeq (__tl_make-array Item 1) 1)]
+    [fs : FlagSeq (FlagSeq (__tl_make-array Flag 1) 1)]
+    [h : Holder (Holder (Pair 1 2) 0)]
+    (+ (+ (walk (& seq) 0 0) (flags (& fs) 0 0))
+       (+ (field (& h) 2 0) (local-shape 1)))))")
+
 (define (compiler-lower-tail-reborrow-param-source) : String
   "(defstruct Lst (slots (__tl_dyn-array i64)) (len i64))
 (define (inner [l : (& Lst)] [k : i64]) : i64
@@ -6721,6 +6760,34 @@
         (= (lower-test-function-tail-call-count functions "step" "finish") 0)
         (> (lower-test-function-call-count functions "step" "finish") 0))]
     [_ false]))
+
+(define (compiler-lower-tail-borrowed-enum-match-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source
+      (compiler-lower-tail-borrowed-enum-match-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-function-tail-call-count functions "walk" "walk") 2)
+        (= (lower-test-function-call-count functions "walk" "walk") 0)
+        (= (lower-test-function-tail-call-count functions "field" "field") 2)
+        (= (lower-test-function-call-count functions "field" "field") 0)
+        (= (lower-test-function-tail-call-count functions "flags" "flags") 2)
+        (= (lower-test-function-call-count functions "flags" "flags") 0)
+        (=
+          (lower-test-function-tail-call-count functions "local-shape" "pt-sum")
+          0)
+        (> (lower-test-function-call-count functions "local-shape" "pt-sum") 0))]
+    [_ false]))
+
+;; A self tail call in an arm of a match on a borrowed enum place stays a tail
+;; call: an element through a reference parameter, a field through one, and a
+;; two-word enum the match spills to a slot. A binding that borrows a frame
+;; local's aggregate payload keeps its call (#9044).
+(test
+  compiler-lower-tail-borrowed-enum-match
+  (test.assert-true
+    (compiler-lower-tail-borrowed-enum-match-shape-ok?)
+    "a tail match on a borrowed enum place keeps its arms' tail calls"))
 
 (define (compiler-lower-tail-reborrow-param-shape-ok?) : bool
   (match (lower-test-functions
@@ -7019,8 +7086,13 @@
     (lower.lower-compiler-source (compiler-lower-borrowed-enum-match-source)))
     [(Some functions)
       (and
-        (> (lower-test-function-phi-count functions "score") 0)
-        (> (lower-test-function-call-count functions "score" "take") 0)
+        ;; `score`'s match is in tail position, so its arms return directly
+        ;; and the arm call stays a tail call (#9044). The borrowed `i64`
+        ;; binding is copied to its own storage, so the call may reuse the
+        ;; frame.
+        (= (lower-test-function-phi-count functions "score") 0)
+        (= (lower-test-function-tail-call-count functions "score" "take") 1)
+        (= (lower-test-function-call-count functions "score" "take") 0)
         (> (lower-test-count functions "score" (GepOffset 8)) 0)
         (> (lower-test-count functions "slot-score" (Branch)) 0))]
     [_ false]))
@@ -7029,10 +7101,10 @@
   (match (lower-test-functions (lower.lower-compiler-source src))
     [(Some functions)
       (and
-        (> (lower-test-count functions ".::sum" (Branch)) 1)
-        (> (lower-test-count functions ".::sum" (Return)) 2)
-        (> (lower-test-count functions ".::chain" (Return)) 1)
-        (> (lower-test-count functions ".::sum" (Load)) 3))]
+        (> (lower-test-count functions "<source>::sum" (Branch)) 1)
+        (> (lower-test-count functions "<source>::sum" (Return)) 2)
+        (> (lower-test-count functions "<source>::chain" (Return)) 1)
+        (> (lower-test-count functions "<source>::sum" (Load)) 3))]
     [_ false]))
 
 (define (compiler-lower-option-try-shape-ok?) : bool
@@ -7064,8 +7136,8 @@
     (lower.lower-compiler-source (compiler-lower-resource-with-source)))
     [(Some functions)
       (and
-        (= (lower-test-functions-call-count functions ".::close-a") 3)
-        (= (lower-test-functions-call-count functions ".::close-b") 2)
+        (= (lower-test-functions-call-count functions "<source>::close-a") 3)
+        (= (lower-test-functions-call-count functions "<source>::close-b") 2)
         (> (lower-test-count functions "main" (Return)) 2)
         (> (lower-test-count functions "main" (Branch)) 2))]
     [_ false]))
@@ -7075,10 +7147,12 @@
     (lower.lower-compiler-source (compiler-lower-resource-with-nested-source)))
     [(Some functions)
       (and
-        (= (lower-test-functions-call-count functions ".::close-a") 1)
-        (= (lower-test-functions-call-count functions ".::close-b") 1))]
+        (= (lower-test-functions-call-count functions "<source>::close-a") 1)
+        (= (lower-test-functions-call-count functions "<source>::close-b") 1))]
     [_ false]))
 
+;; Imported cleanup helpers retain the caller owner across the standalone
+;; intern/builtin reset; their cleanup edges and early returns stay exact.
 (define (compiler-lower-cleanup-struct-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-cleanup-struct-source)))
@@ -7087,14 +7161,14 @@
         (=
           (lower-test-function-direct-call-count
             functions
-            ".::cleanup-file-handle"
-            ".::close-fd")
+            "<source>::cleanup-file-handle"
+            "<source>::close-fd")
           1)
         (>
           (lower-test-function-direct-call-count
             functions
             "main"
-            ".::cleanup-file-handle")
+            "<source>::cleanup-file-handle")
           1)
         (> (lower-test-count functions "main" (Return)) 1))]
     [_ false]))

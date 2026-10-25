@@ -24,6 +24,7 @@
 (import compiler_lower_tests as lower_tests)
 (import compiler_load)
 (import compiler_regalloc_tests as reg_tests)
+(import compiler_backend_source_tests as source_tests)
 (import compiler_backend_runtime_common as runtime_common)
 (import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
@@ -13881,6 +13882,64 @@ f:
           backend-state)
         (has "    je 1f\n    bsrq ")))))
 
+(define (compiler-backend-tail-stack-forward-program) : ir.CompilerIrProgram
+  (irt.program
+    "function @leaf(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64) -> i64 vars 7 {
+     entry:
+       return %6
+     }
+     function @tail(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> i64 vars 6 {
+     entry:
+       tailcall leaf(%0, %1, %2, %3, %4, %5, %0) : i64
+     }
+     function @jumper(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64, g=%6:i64) -> i64 vars 7 {
+     entry:
+       tailcall leaf(%1, %0, %3, %2, %5, %4, %0) : i64
+     }
+     function @plain(a=%0:i64, b=%1:i64, c=%2:i64, d=%3:i64, e=%4:i64, f=%5:i64) -> i64 vars 7 {
+     entry:
+       %6 = call leaf(%0, %1, %2, %3, %4, %5, %0) : i64
+       return %6
+     }"))
+
+(test
+  backend-tail-stack-forward-registers
+  (for [abi (iterator.range 0 2)]
+    (let
+      [state
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
+      [program (compiler-backend-tail-stack-forward-program)]
+      [spans (ir.compiler-source-spans-empty)]
+      [target : backend.CompilerBackendTarget
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      (backend.compiler-backend-state-set-scalar-registers-enabled! state true)
+      (test.assert-true
+        (match (compiler-backend-test-emit-program-with-state
+          state
+          target
+          (& program)
+          (& spans)
+          false)
+          [(Ok asm)
+            (let
+              [tail (compiler-backend-asm-function-body asm "_tl_tail")]
+              [plain (compiler-backend-asm-function-body asm "_tl_plain")]
+              [jumper (compiler-backend-asm-function-body asm "_tl_jumper")]
+              (and
+                (not (string.eq tail ""))
+                (not (string.eq plain ""))
+                (asm-has? tail "    call _tl_leaf\n")
+                (asm-has? jumper "    jmp _tl_leaf\n")
+                (asm-lacks? jumper "    call ")
+                (<=
+                  (backend.compiler-backend-string-count tail "    movq ")
+                  (backend.compiler-backend-string-count plain "    movq "))))]
+          [(Err _) false])
+        "a stack tail fallback needs no more argument moves than an ordinary call"))))
+
 (define (compiler-backend-call-return-program) : ir.CompilerIrProgram
   (Program
     (ir.compiler-ir-global-seq-empty)
@@ -23519,6 +23578,232 @@ f:
         3)
       (has "    leaq -16(%rbp), %rax\n")
       (lacks "    movq -24(%rbp), %rax\n"))))
+
+(test
+  backend-forwarded-address-coalesced-copies
+  (for [abi (iterator.range 0 2)]
+    (let
+      [target : backend.CompilerBackendTarget
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      (test.assert-true
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target
+            (irt.instrs
+              "%2 = addr_of %1
+                         %3 = mov %2 : (MutPtr i64)
+                         %4 = load %3 : i64
+                         store_ptr %3, 7 : i64")
+            (reg-homes "%2=%r12 %3=%r12")
+            5
+            target)
+          (has "leaq -16(%rbp), %r12"))
+        "a coalesced Mov materializes its forwarded address")
+      (test.assert-true
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target
+            (irt.instrs
+              "%2 = addr_of %1
+                         %3 = cast %2 : (MutPtr i64) to (MutPtr i64)
+                         %4 = load %3 : i64
+                         store_ptr %3, 7 : i64")
+            (reg-homes "%2=%r12 %3=%r12")
+            5
+            target)
+          (has "leaq -16(%rbp), %r12"))
+        "a same-type cast materializes its forwarded address")
+      (test.assert-true
+        (asm-ok?
+          (compiler-backend-emit-test-instrs-target
+            (irt.instrs "%3 = mov %2 : i64")
+            (reg-homes "%2=%r12 %3=%r12")
+            4
+            target)
+          (lacks "mov" "lea"))
+        "an initialized same-home copy remains empty"))))
+
+(test
+  backend-forwarded-address-phi-resources
+  (let
+    [program-index
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [state program-index.backend-state]
+    [blocks
+      (irt.blocks
+        "entry:
+                     %2 = addr_of %1
+                     jump join
+                   join:
+                     %3 = phi [%2, entry] : (MutPtr i64)
+                     %4 = phi [%5, entry] : (MutPtr i64)")]
+    [assignments (reg-homes "%2=%rax %3=%rbx %4=%rax %5=%rbx")]
+    [_forward : unit
+      (backend.compiler-backend-addr-of-forwarding-enable!
+        state
+        6
+        (clone blocks)
+        (backend.compiler-backend-function-use-counts 6 (clone blocks)))]
+    [copies
+      (match (backend.compiler-backend-leading-phi-copies-seq
+        state
+        (clone assignments)
+        (irt.instrs
+          "%3 = phi [%2, entry] : (MutPtr i64)
+                     %4 = phi [%5, entry] : (MutPtr i64)")
+        (ir.compiler-ir-label "entry"))
+        [(Ok copies) copies]
+        [(Err _) (backend.compiler-backend-phi-copy-seq-with-capacity 0)])]
+    (test.assert-true
+      (match (backend.compiler-backend-phi-copy-list-decision
+        state
+        (clone assignments)
+        (clone copies))
+        [(CompilerParallelMoveUnblocked dst) (= dst 4)]
+        [_ false])
+      "materialization has no source register, so this is not a swap cycle")
+    (test.assert-true
+      (match (backend.compiler-backend-phi-source-replace-home
+        state
+        (clone assignments)
+        (Value (Var 2))
+        4
+        cabi.compiler-reg-id-r10)
+        [(Value (Var id)) (= id 2)]
+        [_ false])
+      "saving the nominal home must not replace an address with its contents")
+    (test.assert-i64-eq
+      (backend.compiler-backend-phi-copy-list-drop-same-home
+        state
+        (reg-homes "%2=%rax %3=%rax %4=%rcx %5=%rbx")
+        (clone copies)).len
+      2
+      "same-home filtering retains the address materialization")
+    (test.assert-true
+      (asm-ok?
+        (backend.compiler-backend-emit-phi-edge-copies
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (clone assignments)
+          blocks
+          (ir.compiler-ir-label "join")
+          (ir.compiler-ir-label "entry")
+          program-index
+          6)
+        (has "movq %rbx, %rax" "leaq -16(%rbp), %rbx")
+        (lacks "push" "pop"))
+      "emit the real dependency before materializing the address")
+    (backend.compiler-backend-addr-of-forwarding-disable! state)
+    (test.assert-true
+      (match (backend.compiler-backend-phi-copy-list-decision
+        state
+        assignments
+        copies)
+        [(CompilerParallelMoveCycle _) true]
+        [_ false])
+      "initialized homes still form an ordinary swap cycle")))
+
+;; This is final optimizer IR: both branch loads produce 1 and the two phis
+;; add them. The separate source-level stale-load issue does not affect its
+;; expected value of 2.
+(define (compiler-backend-forwarded-address-join-program) : ir.CompilerIrProgram
+  (irt.program
+    "function @join(flag=%0:bool) -> i64 vars 15 {
+     entry:
+       %2 = mov 1 : i64
+       %3 = addr_of %2
+       %4 = mov %3 : (MutPtr i64)
+       branch %0, then, else
+     then:
+       %5 = load %4 : i64
+       %6 = mov %5 : i64
+       %2 = mov 3 : i64
+       jump merge
+     else:
+       %8 = load %4 : i64
+       %9 = mov %8 : i64
+       %2 = mov 3 : i64
+       jump merge
+     merge:
+       %10 = phi [%5, then], [%8, else] : i64
+       %11 = phi [%6, then], [%9, else] : i64
+       %14 = add %11, %10 : i64
+       return %14
+     }
+     function @loop() -> i64 vars 9 {
+     entry:
+       %0 = mov 41 : i64
+       %1 = mov 1 : i64
+       %2 = addr_of %1
+       jump header
+     header:
+       %3 = phi [%2, entry], [%4, body] : (MutPtr i64)
+       %6 = phi [0, entry], [%7, body] : i64
+       %8 = load %3 : i64
+       %5 = lt %6, 1 : i64
+       branch %5, body, exit
+     body:
+       %4 = addr_of %0
+       %7 = add %6, 1 : i64
+       jump header
+     exit:
+       return %8
+     }
+     function @main() -> i64 vars 6 {
+     entry:
+       %0 = call join(false) : i64
+       %1 = call join(true) : i64
+       %2 = eq %0, 2 : i64
+       branch %2, check, fail
+     check:
+       %3 = eq %1, 2 : i64
+       branch %3, loop_check, fail
+     loop_check:
+       %4 = call loop() : i64
+       %5 = eq %4, 41 : i64
+       branch %5, pass, fail
+     pass:
+       return 2
+     fail:
+       return 1
+     }"))
+
+(test
+  backend-forwarded-address-join-storage
+  (for [abi (iterator.range 0 2)]
+    (let
+      [state
+        (backend.compiler-backend-state-new
+          (ci.intern-compat-state-capture-active))]
+      [program (compiler-backend-forwarded-address-join-program)]
+      [spans (ir.compiler-source-spans-empty)]
+      [target : backend.CompilerBackendTarget
+        (if (= abi 0)
+          (Linux)
+          (Windows))]
+      (backend.compiler-backend-state-set-scalar-registers-enabled! state true)
+      (test.assert-true
+        (match (compiler-backend-test-emit-program-with-state
+          state
+          target
+          (& program)
+          (& spans)
+          false)
+          [(Ok asm)
+            (let
+              [join (compiler-backend-asm-function-body asm "_tl_join")]
+              [loop (compiler-backend-asm-function-body asm "_tl_loop")]
+              (and
+                (asm-has? join "movq $1," "movq $3,")
+                ;; One address formation and the final integer addition.
+                (= (backend.compiler-backend-string-count join "    leaq ") 2)
+                (asm-has? loop "movq $41," "movq $1,")
+                ;; The entry and backedge each materialize their own address.
+                (= (backend.compiler-backend-string-count loop "    leaq ") 2)))]
+          [(Err _) false])
+        "each function retains its backing storage and address setup"))))
 
 (define (compiler-backend-addr-of-register-home-shape-ok?) : bool
   (let
@@ -38504,6 +38789,7 @@ b_keep:
 
 (define (compiler-backend-self-test) : i64
   (if (and
+    (compiler-backend-packed-literal-records-ok?)
     (compiler-backend-signed-div-guard-shapes-ok?)
     (compiler-backend-shift-count-bounds-ok?)
     (compiler-backend-avx2-i64-reduce-source-ok?)
@@ -38511,6 +38797,7 @@ b_keep:
     (compiler-backend-i64-reduce-call-ok?)
     (compiler-backend-lazy-table-storage-ok?)
     (compiler-backend-resetting-entry-live-session-guard-ok?)
+    (source_tests.self-test)
     (compiler-backend-inline-aggregate-global-shape-ok?)
     (compiler-backend-inline-aggregate-global-windows-shape-ok?)
     (compiler-backend-inline-aggregate-global-safety-ok?)
@@ -43010,3 +43297,159 @@ user_fn:
                 ""))))]
       [(Err _)
         (test.assert-true false "convention emission-site program failed")])))
+
+(define (compiler-backend-literal-pool-case
+  [values : (__tl_dyn-array String)]
+  [maximum-bytes : i64]) : bool
+  (let
+    [owner : arena.Arena
+      (unsafe
+        (arena.Arena (arena.tl_arena_make_small)))]
+    [items : backend.BackendStringSeq
+      (in-arena
+        owner
+        (let
+          [slots : (__tl_dyn-array String)
+            (__tl_make-array String (array-length values))]
+          (for [i (iterator.range 0 (array-length values))]
+            (set! (array-ref slots i) (string.copy (& (array-ref values i)))))
+          (backend.BackendStringSeq slots (array-length values))))]
+    [parts : object_target.CompilerBackendObjectTargetParts
+      (backend.compiler-backend-object-strings
+        (object_target.compiler-backend-object-parts-empty)
+        items
+        0)]
+    [records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish parts.rodata)]
+    [relocs : cobj.CompilerObjectRelocationList
+      (cobj.compiler-object-relocation-builder-finish parts.relocations)]
+    [symbols : cobj.CompilerObjectSymbolList
+      (cobj.compiler-object-symbol-builder-finish parts.symbols)]
+    [_released : unit
+      (unsafe
+        (arena.tl_arena_destroy (arena.raw-handle owner)))]
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity maximum-bytes)]
+    [size : i64
+      (layout.compiler-object-layout-render-data-records!
+        (&mut out)
+        (& records)
+        0)]
+    (when
+      (or
+        (> size maximum-bytes)
+        (not (= size out.len))
+        (not (= relocs.len (array-length values)))
+        (not (= symbols.len (* 2 (array-length values)))))
+      (return false))
+    (for [i (iterator.range 0 (array-length values))]
+      (let
+        [value : (& values str) (& (array-ref values i))]
+        [length : i64 (string.string-length value)]
+        [data : String (backend.compiler-backend-string-data-label value)]
+        [header : String (backend.compiler-backend-string-fat-label value)]
+        [offset : i64
+          (layout.compiler-object-layout-data-label-offset-from
+            (& records)
+            (& data)
+            0)]
+        [fat : i64
+          (layout.compiler-object-layout-data-label-offset-from
+            (& records)
+            (& header)
+            0)]
+        [pointer-ok : bool false]
+        [relocation-ok : bool false]
+        (when
+          (or
+            (< offset 0)
+            (>= (+ offset length) size)
+            (< fat 0)
+            (not (= (% fat 8) 0))
+            (> (+ fat 16) size))
+          (return false))
+        (for [j (iterator.range 0 length)]
+          (unless
+            (=
+              (array-ref out.slots (+ offset j))
+              (cast (string.string-ref value j) : u8))
+            (return false)))
+        (unless (= (array-ref out.slots (+ offset length)) 0) (return false))
+        (for [j (iterator.range 0 8)]
+          (unless
+            (=
+              (array-ref out.slots (+ fat (+ 8 j)))
+              (cast (bit-and (shr length (* j 8)) 255) : u8))
+            (return false)))
+        (for [j (iterator.range 0 (- records.len 1))]
+          (match (cobj.compiler-object-data-record-list-ref (& records) j)
+            [(Label label)
+              (when
+                (string.eq label header)
+                (match (cobj.compiler-object-data-record-list-ref
+                  (& records)
+                  (+ j 1))
+                  [(SymbolAddress target)
+                    (set! pointer-ok (string.eq target data))]
+                  [_ unit]))]
+            [_ unit]))
+        (for [j (iterator.range 0 relocs.len)]
+          (match (cobj.compiler-object-relocation-list-ref (& relocs) j)
+            [(Relocation (Rodata) site (Abs64) target)
+              (when
+                (and (string.eq site header) (string.eq target data))
+                (set! relocation-ok true))]
+            [_ unit]))
+        (unless (and pointer-ok relocation-ok) (return false))))
+    true))
+
+(define (compiler-backend-literal-pool-nul) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 3)]
+    (byte_buf_core.byte-buf-builder-push (&mut out) 97)
+    (byte_buf_core.byte-buf-builder-push (&mut out) 0)
+    (byte_buf_core.byte-buf-builder-push (&mut out) 98)
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+
+(define (compiler-backend-packed-literal-records-ok?) : bool
+  (let
+    [nul : String (compiler-backend-literal-pool-nul)]
+    [many : (__tl_dyn-array String) (__tl_make-array String 65)]
+    [budget : i64 24]
+    (for [i (iterator.range 0 64)]
+      (let
+        [value : String (str_cat.str-cat "row-" (string.int->string i) ":end")]
+        (+=
+          budget
+          (+
+            16
+            (layout.compiler-object-layout-align-offset
+              (+ (string.string-length value) 1)
+              8)))
+        (set! (array-ref many i) value)))
+    (set! (array-ref many 64) "end")
+    (and
+      (compiler-backend-literal-pool-case (__tl_make-array String 0) 0)
+      (compiler-backend-literal-pool-case (__tl_make-array "only") 24)
+      (compiler-backend-literal-pool-case (__tl_make-array "ab" "cd" "ef") 64)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "prefix/abc" "abc" "bc" "c" "")
+        96)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "" "c" "abc" "prefix/abc" "bc")
+        96)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "cab" "dab" "ab" "b" "")
+        88)
+      (compiler-backend-literal-pool-case (__tl_make-array nul "b" "") 56)
+      (compiler-backend-literal-pool-case
+        (__tl_make-array "prefixλ" "λ" "")
+        64)
+      (compiler-backend-literal-pool-case many budget))))
+
+(test
+  backend-packed-literal-records
+  (test.assert-true
+    (compiler-backend-packed-literal-records-ok?)
+    "packed literal bytes, terminal zeros and aligned pointer/length headers"))

@@ -2009,7 +2009,7 @@
 
 ;: Create `path` as a directory, returning a structured status.
 ;:
-;: Linux uses mode `0700`; Windows uses the CRT `_mkdir` function.
+;: Linux uses mode `0700`; Windows calls kernel32 `CreateDirectoryA`.
 (define (try-mkdir [path : (& path str)]) : io.ResultIoUnit
   (let
     [path-text : String (string.copy path)]

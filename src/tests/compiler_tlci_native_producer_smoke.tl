@@ -30,6 +30,13 @@
 (import stdlib.vector)
 (import (vector.vector String) as producer_test_svec)
 
+;; Serial fixture/tool boundary: freeze the parsed source owners before the
+;; pure producer call. Production package builds pass their driver owners.
+(define (producer-test-source-context) : compiler_tlci_native_producer.TlciNativeSourceContext
+  (compiler_tlci_native_producer.tlci-native-source-context-new
+    (ast.ast-node-pool-context-capture-active)
+    (ci.intern-compat-state-capture-active)))
+
 (define producer-test-cookie : i64
   0x2754)
 
@@ -139,6 +146,7 @@
       (let
         [identity : String
           (compiler_tlci_native_producer.embedded-stdlib-tlci-identity
+            (& (producer-test-source-context))
             module
             name)]
         (producer_test_svec.push-ref!
@@ -150,6 +158,7 @@
             identity
             params
             (compiler_tlci_native_producer.embedded-native-macro-result-kind
+              (& (producer-test-source-context))
               ret)
             body)))]
     [(Unsafe inner)
@@ -228,6 +237,7 @@
               [before : i64 (profile.alloc-total)]
               [text : String
                 (compiler_tlci_native_producer.embedded-native-source
+                  (& (producer-test-source-context))
                   name-array
                   (& captures))]
               [allocated : i64 (- (profile.alloc-total) before)]
@@ -3720,6 +3730,7 @@
                     (producer_test_svec.get (& names) name-index ""))
                   (set! name-index (+ name-index 1)))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
+                (& (producer-test-source-context))
                 (tlci.tlci-metadata-emit
                   (&
                     (tlci.tlci-make-metadata "v1" "str-cat-scoped-test" "0.1.0")))
@@ -3822,6 +3833,7 @@
   [default-arms : i64]) : bool
   (compiler_tlci_native_producer.embedded-native-full-blocker-report-set! true)
   (match (compiler_tlci_native_producer.embedded-native-emit-package
+    (& (producer-test-source-context))
     (tlci.tlci-metadata-emit
       (& (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0")))
     "producer-full-blocker-test"
@@ -3886,6 +3898,7 @@
     : (& captures compiler_tlci_native_producer.TlciNativeMacroCaptures)]) : bool
   (compiler_tlci_native_producer.embedded-native-full-blocker-report-set! false)
   (match (compiler_tlci_native_producer.embedded-native-emit-package
+    (& (producer-test-source-context))
     (tlci.tlci-metadata-emit
       (& (tlci.tlci-make-metadata "v1" "diagnostics" "0.1.0")))
     "producer-full-blocker-test"
@@ -4553,6 +4566,7 @@
                     (producer_test_svec.get (& names) name-index ""))
                   (set! name-index (+ name-index 1)))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
+                (& (producer-test-source-context))
                 (tlci.tlci-metadata-emit
                   (& (tlci.tlci-make-metadata "v1" "package" "0.1.0")))
                 "producer-test"
@@ -5037,6 +5051,7 @@
                     (producer_test_svec.get (& names) name-index ""))
                   (set! name-index (+ name-index 1)))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
+                (& (producer-test-source-context))
                 (tlci.tlci-metadata-emit
                   (& (tlci.tlci-make-metadata "v1" "span-test" "0.1.0")))
                 "producer-test"

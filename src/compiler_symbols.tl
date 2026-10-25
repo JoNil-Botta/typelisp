@@ -1075,10 +1075,13 @@
 (define (compiler-symbols-add-macro-alias-key-id
   [symbols : (& CompilerSymbols)]
   [key-id : i64]
-  [handle : i64]) : CompilerSymbols
+  [handle : i64]
+  [replace-existing? : bool]) : CompilerSymbols
   (match (compiler-symbols-shared-view symbols)
     [(CompilerSymbols values types macros decls owner-names decl-count)
-      (if (compiler-symbol-map-contains-id? (& macros) key-id)
+      (if (and
+        (not replace-existing?)
+        (compiler-symbol-map-contains-id? (& macros) key-id))
         (CompilerSymbols values types macros decls owner-names decl-count)
         (begin
           (compiler-symbol-map-bind-id! (&mut macros) key-id handle)
@@ -1438,7 +1441,8 @@
       (compiler-symbols-add-macro-alias-key-id
         (& next)
         (compiler-symbol-name-id-key name-id)
-        handle))))
+        handle
+        false))))
 
 (define (compiler-symbols-lookup-value-in-module-id
   [symbols : (& symbols CompilerSymbols)]
@@ -1781,7 +1785,8 @@
       (compiler-symbols-add-macro-alias-key-id
         (& symbols)
         (compiler-symbol-module-key-id-by-id alias-id name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
+        (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index)
+        false)]
     [(Extern decl-meta name _ _ _)
       (compiler-symbols-add-value-alias-key-id
         (& symbols)
@@ -2319,7 +2324,13 @@
         [(None) with-value])]
     (match macro-handle
       [(Some handle)
-        (compiler-symbols-add-macro-alias-key-id (& with-type) alias-key handle)]
+        ;; A selected binding takes precedence over tentative bare aliases
+        ;; from other modules. The loader diagnoses actual name collisions.
+        (compiler-symbols-add-macro-alias-key-id
+          (& with-type)
+          alias-key
+          handle
+          true)]
       [(None) with-type])))
 
 (define (build-compiler-symbol-aliases-list-with-index-offset
@@ -3874,18 +3885,14 @@
 
 (define (compiler-field-type-at-index
   [fields : (& ast.AstFieldDefList)]
-  [target : i64]
-  [index : i64]) : parser.ResultAstType
-  (if (>= index (ast.ast-field-def-list-len fields))
+  [target : i64]) : parser.ResultAstType
+  (if (or (< target 0) (>= target (ast.ast-field-def-list-len fields)))
     (Err "symbols: field index not found")
     (match (ast.ast-field-def-list-get
       fields
-      index
+      target
       (ast.ast-field-def-fallback))
-      [(Def _ ty _)
-        (if (= target index)
-          (Ok ty)
-          (compiler-field-type-at-index fields target (+ index 1)))])))
+      [(Def _ ty _) (Ok ty)])))
 
 (define (compiler-registries-variant-fields-indexed
   [symbols : (& symbols CompilerSymbols)]
@@ -3933,7 +3940,7 @@
       (Err "symbols: declaration index not found")
       (match (& (array-ref decls owner-index))
         [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
-          (compiler-field-type-at-index (& fields) child-index 0)]
+          (compiler-field-type-at-index (& fields) child-index)]
         [_ (Err "symbols: field owner is not struct")]))))
 
 (define (compiler-symbols-decl-name-id-at-index

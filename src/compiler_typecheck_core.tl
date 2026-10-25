@@ -112995,6 +112995,9 @@
         (unsafe
           (arena.tl_arena_set enclosing))
         (ast.ast-node-pool-context-install! pools)
+        ;; A compacted pool is shorter than the context's last capture, which
+        ;; would otherwise win as the "newer" state at the next adoption.
+        (when compacted? (tc-context-capture-active-pools! ctx))
         escaped))))
 
 (define (macro-module-generated-key? [key : (& str)]) : bool

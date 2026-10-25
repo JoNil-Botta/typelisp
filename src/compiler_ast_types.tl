@@ -4306,7 +4306,11 @@
     [source-dedup : (__tl_dyn-array i64) source-type.dedup-slots]
     (if (and
       (= target-expr.segment-bases source-expr.segment-bases)
-      (> source-expr.count target-expr.count))
+      (> source-expr.count target-expr.count)
+      (not
+        (ast-expr-node-pool-state-retired-tail?
+          (& source-expr)
+          target-expr.count)))
       (unsafe
         (ptr-write! target-expr-cell source-expr))
       unit)
@@ -4645,7 +4649,11 @@
         (ast-type-pool-cell-read pools.type-pool)]
       (if (and
         (= expr-state.segment-bases ast-node-pool-segment-bases)
-        (< expr-state.count ast-node-pool-count))
+        (or
+          (< expr-state.count ast-node-pool-count)
+          (ast-expr-node-pool-state-retired-tail?
+            (& expr-state)
+            ast-node-pool-count)))
         (ast-node-pool-state-capture-to-cell!
           (ast-pool-cell-data pools.expr-pool))
         unit)
@@ -12293,9 +12301,11 @@
 ;: Marked rows move to dense destinations in ascending id order, each recorded
 ;: in the map as id + 1 for the CompactionRemap walks that then republish the
 ;: result and memo entries; rewritten prefix rows are remapped here. The other
-;: rows are retired. Poison-checking builds append the survivors above the
-;: pool instead and poison every row the generation used, so that reading
-;: any of them through a stale id fails.
+;: rows are retired: each keeps the retired tag until a push reuses it.
+;: Relocating builds (`--cfg ast-generation-relocate`, a test configuration)
+;: append the survivors above the pool instead and retire every row the
+;: generation used, so that a read through any stale id fails in a
+;: poison-checking build.
 ;:
 ;: Returns false instead, with the map cleared for a persist in place, when a
 ;: Mark walk since `ast-expr-generation-mark-start!` met an id past the pool's
@@ -12334,7 +12344,7 @@
   [type-map-address : u64]
   [shared-type-base : i64]) : unit
   (let
-    [poison? : bool (cfg ast-generation-poison true false)]
+    [poison? : bool (cfg ast-generation-relocate true false)]
     [pool : AstExprNodePoolState (ast-expr-pool-cell-read pools.expr-pool)]
     [base : i64 entry.count]
     [end : i64 pool.count]
@@ -12520,7 +12530,7 @@
             base
             (+ base kept))
           end)]
-        (when poison? (ast-expr-row-poison! grown.segment-bases id))
+        (ast-expr-row-retire! grown.segment-bases id)
         (ast-expr-span-slot-set-in-bases! grown.span-slot-segment-bases id 0))
       (ast-expr-pool-cell-write!
         pools.expr-pool
@@ -12538,33 +12548,61 @@
           grown.span-records-monotonic?))
       (ast-node-pool-compat-context-sync-installed!))))
 
-;; Poison-checking builds (`--cfg ast-generation-poison`, a test
-;; configuration) overwrite each expression row a macro generation retires
-;; with this tag, which no AstExpr variant uses, and the row readers panic on
-;; it.
-(define ast-expr-row-poison-tag : i64
+;; A row a macro generation's compaction retired holds this tag, which no
+;; AstExpr variant uses, until a push reuses the row. Poison-checking builds
+;; (`--cfg ast-generation-poison`, a test configuration) make the row readers
+;; panic on it.
+(define ast-expr-row-retired-tag : i64
   2125315823)
+
+(define (ast-expr-row-address [segment-bases : i64] [id : i64]) : i64
+  (+
+    (unsafe
+      (ptr-read
+        (ptr-offset
+          (int->ptr segment-bases : (Ptr i64))
+          (shr id ast-expr-node-pool-segment-shift))))
+    (* id (ast-expr-node-bytes))))
 
 (define (ast-expr-row-poison-check! [address : i64]) : unit
   (when
     (=
       (unsafe
         (ptr-read (int->ptr address : (Ptr i64))))
-      ast-expr-row-poison-tag)
+      ast-expr-row-retired-tag)
     (io.panic "AST row retired by a macro generation was read")))
 
-(define (ast-expr-row-poison! [segment-bases : i64] [id : i64]) : unit
-  (let
-    [biased-base : i64
+(define (ast-expr-row-retire! [segment-bases : i64] [id : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (int->ptr (ast-expr-row-address segment-bases id) : (MutPtr i64))
+      ast-expr-row-retired-tag)))
+
+;: Whether `state`, a snapshot of a pool now `current-count` rows long, ends in
+;: a row a compaction retired. Such a snapshot predates that compaction; its
+;: extra length names no live row, so it is never the newer state.
+(define (ast-expr-node-pool-state-retired-tail?
+  [state : (& state AstExprNodePoolState)]
+  [current-count : i64]) : bool
+  (and
+    (> state.count current-count)
+    (=
       (unsafe
         (ptr-read
-          (ptr-offset
-            (int->ptr segment-bases : (Ptr i64))
-            (shr id ast-expr-node-pool-segment-shift))))]
-    (unsafe
-      (ptr-write!
-        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64))
-        ast-expr-row-poison-tag))))
+          (int->ptr
+            (ast-expr-row-address state.segment-bases (- state.count 1))
+            : (Ptr i64))))
+      ast-expr-row-retired-tag)))
+
+;: Whether the expression pool of `pools` is ahead of the installed one.
+(define (ast-node-pool-context-expr-newer-than-active?
+  [pools : (& pools AstNodePoolContext)]) : bool
+  (let
+    [state : AstExprNodePoolState (ast-expr-pool-cell-read pools.expr-pool)]
+    (and
+      (> state.count ast-node-pool-count)
+      (not
+        (ast-expr-node-pool-state-retired-tail? (& state) ast-node-pool-count)))))
 
 (define (ast-type-tag [ty : (& AstType)]) : i64
   (match ty

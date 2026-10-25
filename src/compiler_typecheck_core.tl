@@ -108350,9 +108350,7 @@
     (let
       [owned-pools : ast.AstNodePoolContext (tc-context-pools ctx)]
       (if (or
-        (>
-          (ast.ast-node-pool-context-expr-len owned-pools)
-          (ast.ast-node-pool-len))
+        (ast.ast-node-pool-context-expr-newer-than-active? (& owned-pools))
         (>
           (ast.ast-node-pool-context-type-len owned-pools)
           (ast.ty-node-pool-len)))
@@ -112680,7 +112678,7 @@
               [(DefFn _ _ _ _ body _)
                 (unless
                   macro-decl-generation-poison-control-done?
-                  (ast.ast-expr-row-poison!
+                  (ast.ast-expr-row-retire!
                     (ast.ast-node-pool-context-expr-segment-bases (& pools))
                     body)
                   (set! macro-decl-generation-poison-control-done? true))]

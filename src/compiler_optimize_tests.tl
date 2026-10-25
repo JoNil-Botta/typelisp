@@ -27245,20 +27245,28 @@
                return 0")))
         function-abi)]))
 
-(define (opt-tailrec-frame-test-function [address? : bool]) : ir.CompilerIrFunction
+(define (opt-tailrec-frame-test-function [mode : i64]) : ir.CompilerIrFunction
   (let
     [name : i64 (opt-test-symbol "tail_frame")]
     [instrs : ir.CompilerIrInstrSeq
-      (if address?
-        (irt.instrs
-          "%2 = addr_of %0
-           %3 = mov %2 : u64
-           %4 = gep %3, 0 : i64
-           %5 = cast %4 : u64 to i64
-           tailcall tail_frame(%5, %1) : i64")
-        (irt.instrs
-          "%2 = alloc i64
-           tailcall tail_frame(%1, %0) : i64"))]
+      (cond
+        [(= mode 0)
+          (irt.instrs
+            "%2 = addr_of %0
+             %3 = mov %2 : u64
+             %4 = gep %3, 0 : i64
+             %5 = cast %4 : u64 to i64
+             tailcall tail_frame(%5, %1) : i64")]
+        [(= mode 1)
+          (irt.instrs
+            "%2 = alloc i64
+             tailcall tail_frame(%2, %0) : i64")]
+        [else
+          (irt.instrs
+            "%2 = alloc i64
+             store_ptr %2, %1 : i64
+             %3 = load %2 : i64
+             tailcall tail_frame(%3, %0) : i64")])]
     (ir.CompilerIrFunction.Function
       name
       (opt-tailrec-test-params)
@@ -27277,12 +27285,17 @@
 
 ;; Test the optimizer consumer directly: source lowering can already refuse a
 ;; frame-retaining tail call, which would hide an unsound tailrec rewrite.
-;; The address case carries the frame pointer through an alias, Gep and cast;
-;; the allocation-only case checks the deliberately conservative admission.
+;; The address case carries the frame pointer through an alias, Gep and cast
+;; into an outgoing argument; the allocation case passes the slot itself. A
+;; slot only stored and loaded through never leaves the activation, so its
+;; self tail call is rewritten.
 (define (compiler-optimize-tailrec-frame-self-test) : i64
   (let
-    [address : ir.CompilerIrFunction (opt-tailrec-frame-test-function true)]
-    [allocation : ir.CompilerIrFunction (opt-tailrec-frame-test-function false)]
+    [address : ir.CompilerIrFunction (opt-tailrec-frame-test-function 0)]
+    [allocation : ir.CompilerIrFunction (opt-tailrec-frame-test-function 1)]
+    [contained : ir.CompilerIrFunction (opt-tailrec-frame-test-function 2)]
+    [contained-out : ir.CompilerIrFunction
+      (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view contained))]
     [address-out : ir.CompilerIrFunction
       (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view address))]
     [allocation-out : ir.CompilerIrFunction
@@ -27301,6 +27314,11 @@
             allocation
             allocation-out))
         2]
+      [(opt.opt-function-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          contained
+          contained-out)
+        3]
       [else 42])))
 
 (define (compiler-optimize-tailrec-self-test) : i64

@@ -4818,7 +4818,7 @@
 
 ;; Per-site exposure: a producer reaches only the blocks a CFG path leads to.
 ;;   entry -> alloc | clean; alloc -> after; after -> entry when `loop?`.
-(define (compiler-ir-smoke-frame-site-blocks [loop? : bool]) : compiler_ir_types.CompilerIrBlockList
+(define (compiler-ir-smoke-frame-site-blocks [loop? : bool] [captured? : bool]) : compiler_ir_types.CompilerIrBlockList
   (let
     [entry : i64 (compiler_ir_types.compiler-ir-label "frame.site.entry")]
     [alloc : i64 (compiler_ir_types.compiler-ir-label "frame.site.alloc")]
@@ -4843,9 +4843,19 @@
       (array-ref slots 1)
       (compiler_ir_types.CompilerIrBlock.Block
         alloc
-        (compiler_ir_types.compiler-ir-instr-seq2
-          (compiler_ir_types.CompilerIrInstr.Alloc 1 (ast.AstType.I64))
-          (compiler_ir_types.CompilerIrInstr.Jump after))))
+        (if captured?
+          ;; Storing the slot's address through an incoming pointer lets it
+          ;; outlive the activation.
+          (compiler_ir_types.compiler-ir-instr-seq3
+            (compiler_ir_types.CompilerIrInstr.Alloc 1 (ast.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.StorePtr
+              (compiler_ir_types.CompilerIrValue.Var 2)
+              (compiler_ir_types.CompilerIrValue.Var 1)
+              (ast.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump after))
+          (compiler_ir_types.compiler-ir-instr-seq2
+            (compiler_ir_types.CompilerIrInstr.Alloc 1 (ast.AstType.I64))
+            (compiler_ir_types.CompilerIrInstr.Jump after)))))
     (set!
       (array-ref slots 2)
       (compiler_ir_types.CompilerIrBlock.Block
@@ -4872,9 +4882,11 @@
 (define (compiler-ir-smoke-frame-site-failure) : i64
   (let
     [acyclic : compiler_ir_types.CompilerIrBlockList
-      (compiler-ir-smoke-frame-site-blocks false)]
+      (compiler-ir-smoke-frame-site-blocks false true)]
     [cyclic : compiler_ir_types.CompilerIrBlockList
-      (compiler-ir-smoke-frame-site-blocks true)]
+      (compiler-ir-smoke-frame-site-blocks true true)]
+    [contained : compiler_ir_types.CompilerIrBlockList
+      (compiler-ir-smoke-frame-site-blocks true false)]
     (when
       (compiler-ir-smoke-frame-site-exposed? (clone acyclic) "frame.site.entry")
       (return 1))
@@ -4898,6 +4910,18 @@
     (unless
       (compiler-ir-smoke-frame-site-exposed? (clone cyclic) "frame.site.clean")
       (return 7))
+    ;; A slot whose address never leaves the activation cannot outlive a
+    ;; frame-reusing jump, wherever the jump is.
+    (when
+      (compiler-ir-smoke-frame-site-exposed?
+        (clone contained)
+        "frame.site.after")
+      (return 8))
+    (when
+      (compiler-ir-smoke-frame-site-exposed?
+        (clone contained)
+        "frame.site.alloc")
+      (return 9))
     0))
 
 (define (compiler-ir-smoke-frame-exposure-failure) : i64

@@ -1051,9 +1051,10 @@ borrows, as rustc's borrow checker does, whatever the names.
   region-tagged binder (a view, or a value allocated in an arena) is not
   retired: a borrow of a view is a reborrow of its referent with the
   reference's lifetime, and lowering keeps the view in the referent's storage
-  (`lower-view-binder-type?` for a `let`, `lower-match-view` for a view's
-  match patterns, chosen from the scrutinee's checked type whatever its
-  form), never in a frame copy. A copyable region-tagged binder is a copy in
+  (`lower-view-binder-type?` for a `let`, and for the move-only binders of a
+  match on a view, enum, struct, tuple or catch-all, `lower-match-view`
+  chosen from the scrutinee's checked type whatever its form), never in a
+  frame copy. A copyable region-tagged binder is a copy in
   its own storage (`tc-selected-canonical-type` drops the tag) and is
   retired like any binder, so a borrow of it cannot be returned. The graph
   tells the two apart by the binder's class (`normalize-view-class?`): a

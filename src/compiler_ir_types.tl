@@ -6454,28 +6454,28 @@
     [(CompilerIrValue.Var id) (ir_i64_i64_map.contains? derived id)]
     [_ false]))
 
-(define (compiler-ir-frame-note-derived-use!
+(define (compiler-ir-frame-note-use!
   [derived : (& derived ir_i64_i64_map.Map)]
-  [hit : (&mut hit (__tl_dyn-array bool))]
-  [_role : CompilerIrOperandRole]
-  [value : CompilerIrValue]) : unit
-  (when
-    (compiler-ir-frame-derived? derived (& value))
-    (set! (array-ref hit 0) true)))
-
-(define (compiler-ir-frame-note-capture!
-  [derived : (& derived ir_i64_i64_map.Map)]
-  [escaped : (&mut escaped (__tl_dyn-array bool))]
+  [hits : (&mut hits (__tl_dyn-array bool))]
   [role : CompilerIrOperandRole]
   [value : CompilerIrValue]) : unit
   (when
-    (and
-      (match role
-        [(or (CompilerIrOperandRole.Address) (CompilerIrOperandRole.Condition))
-          false]
-        [_ true])
-      (compiler-ir-frame-derived? derived (& value)))
-    (set! (array-ref escaped 0) true)))
+    (compiler-ir-frame-derived? derived (& value))
+    (set! (array-ref hits 0) true)
+    (match role
+      [(or (CompilerIrOperandRole.Address) (CompilerIrOperandRole.Condition))
+        unit]
+      [_ (set! (array-ref hits 1) true)])))
+
+;; One visit of `instr`'s uses: `hits[0]` records a use of a frame address and
+;; `hits[1]` a use that may carry one out of the activation.
+(define (compiler-ir-frame-instr-uses!
+  [derived : (& derived ir_i64_i64_map.Map)]
+  [hits : (&mut hits (__tl_dyn-array bool))]
+  [instr : CompilerIrInstr]) : unit
+  (set! (array-ref hits 0) false)
+  (set! (array-ref hits 1) false)
+  (compiler-ir-instr-visit-uses instr compiler-ir-frame-note-use! derived hits))
 
 ;; The destination a frame address flows into through this instruction, or -1.
 (define (compiler-ir-frame-propagating-dst [instr : (& instr CompilerIrInstr)]) : i64
@@ -6495,8 +6495,8 @@
         true
         (let
           [derived : ir_i64_i64_map.Map (ir_i64_i64_map.with-capacity 8)]
-          [hit : (__tl_dyn-array bool) (__tl_make-array bool 1)]
-          [escaped : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+          [hits : (__tl_dyn-array bool) (__tl_make-array bool 2)]
+          [escaped : bool false]
           [changed : bool true]
           (for [b (iterator.range 0 seq.len)]
             (match (& (array-ref seq.slots b))
@@ -6521,14 +6521,12 @@
                         (and
                           (>= dst 0)
                           (not (ir_i64_i64_map.contains? (& derived) dst)))
-                        (set! (array-ref hit 0) false)
-                        (compiler-ir-instr-visit-uses
-                          instr
-                          compiler-ir-frame-note-derived-use!
+                        (compiler-ir-frame-instr-uses!
                           (& derived)
-                          (&mut hit))
+                          (&mut hits)
+                          instr)
                         (when
-                          (array-ref hit 0)
+                          (array-ref hits 0)
                           (ir_i64_i64_map.insert-ref! (&mut derived) dst 1)
                           (set! changed true)))))])))
           (for [b (iterator.range 0 seq.len)]
@@ -6544,12 +6542,12 @@
                         (match (& instr)
                           [(CompilerIrInstr.BoundsCheck _ _ _) false]
                           [_ true]))
-                      (compiler-ir-instr-visit-uses
-                        instr
-                        compiler-ir-frame-note-capture!
+                      (compiler-ir-frame-instr-uses!
                         (& derived)
-                        (&mut escaped)))))]))
-          (array-ref escaped 0)))]))
+                        (&mut hits)
+                        instr)
+                      (when (array-ref hits 1) (set! escaped true)))))]))
+          escaped))]))
 
 ;; Blocks a frame address may have reached: every block holding a producer and
 ;; every block a CFG path leads to from one. Each block is pushed once.

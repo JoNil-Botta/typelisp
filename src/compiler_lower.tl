@@ -46552,6 +46552,13 @@
   [scrutinee-id : i64]) : i64
   (cond
     [(lower-mutable-view-init? ctx scrutinee-id) 1]
+    ;; A call's or literal's value is a fresh temporary: binding its parts in
+    ;; place or as copies is the same storage, so it is not typed again.
+    [(match (ast.ast-expr-unspan (& (lower-context-expr-get ctx scrutinee-id)))
+        [(ast.AstExpr.Call _ _) true]
+        [(ast.AstExpr.Literal _) true]
+        [_ false])
+      0]
     [(match (tc_core.tc-expr
         ctx
         type-env

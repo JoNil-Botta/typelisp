@@ -33,7 +33,35 @@
           x.k)]
       [(B _) 0])))
 
+;; A copyable aggregate holding a reference is a copy too, and may be
+;; borrowed while it lives.
+(defstruct Holder
+  (:lifetimes q)
+  (r (& q i64))
+  (a i64)
+  (b i64))
+
+(defstruct HolderOut
+  (:lifetimes q)
+  (h (Holder q))
+  (t i64))
+
+(define (holder-sum [h : (& x (Holder q))]) : i64
+  (+ h.a h.b (deref h.r)))
+
+(define (holder-local [p : (& p (HolderOut q))]) : i64
+  (let
+    [v p.h]
+    [r (& v)]
+    (holder-sum r)))
+
 (define (main) : i64
-  (if (and (= (let-copy) 42) (= (pattern-copy) 42))
-    42
-    1))
+  (let
+    [n : i64 39]
+    [o (HolderOut (Holder (& n) 1 2) 3)]
+    (if (and
+      (= (let-copy) 42)
+      (= (pattern-copy) 42)
+      (= (holder-local (& o)) 42))
+      42
+      1)))

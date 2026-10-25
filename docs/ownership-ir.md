@@ -1052,10 +1052,13 @@ borrows, as rustc's borrow checker does, whatever the names.
   retired: a borrow of a view is a reborrow of its referent with the
   reference's lifetime, and lowering keeps the view in the referent's storage
   (`lower-view-binder-type?` for a `let`, `lower-match-view` for a view's
-  match patterns), never in a frame copy. A copyable region-tagged binder is
-  a copy in its own storage (`tc-selected-canonical-type` drops the tag; its
-  class is a plain value) and is retired like any binder, so a borrow of it
-  cannot be returned. Two cases are still open (#9288): a move-only value
+  match patterns, chosen from the scrutinee's checked type whatever its
+  form), never in a frame copy. A copyable region-tagged binder is a copy in
+  its own storage (`tc-selected-canonical-type` drops the tag) and is
+  retired like any binder, so a borrow of it cannot be returned. The graph
+  tells the two apart by the binder's class (`normalize-view-class?`): a
+  view's class reads its move-only target through a loan; a copy's class is
+  the plain type's, whether a value or one holding references. Two cases are still open (#9288): a move-only value
   allocated in an arena, or a view returned by value from a call, is held in
   the frame, yet a borrow of its binder gets the region's lifetime.
 - **The core operation.** A retirement is the core's `Invalidate` of the

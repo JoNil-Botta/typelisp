@@ -1,5 +1,6 @@
 ;; A move-only value read through a reference is a view: its binder (a `let`
-;; or a `match` pattern binder, in or out of tail position) is the referent's
+;; or a `match` pattern binder, in or out of tail position, whatever the
+;; scrutinee's form) is the referent's
 ;; storage, and a borrow of it is a reborrow of the referent with the
 ;; reference's lifetime (SPEC 3.9). Returning it is sound; lowering must not
 ;; copy the view into the frame (#8889 review: a frame copy was returned and
@@ -24,6 +25,13 @@
 
 (define (tail-pattern-view [p : (& p Out)]) : (& p In)
   (match p.e
+    [(A x) (& x)]
+    [(B _) (& p.s)]))
+
+;; A scrutinee that is not written as a place is still a view by its type.
+(define (value-form-view [p : (& p Out)]) : (& p In)
+  (match (begin
+    p.e)
     [(A x) (& x)]
     [(B _) (& p.s)]))
 
@@ -55,6 +63,7 @@
     [s (field-view (& o))]
     [t (tail-pattern-view (& o))]
     [u (pattern-view (& o))]
+    [w (value-form-view (& o))]
     [junk : i64 (clobber 100 200 300 400 500 600 700 800)]
     (if (and
       (= junk 900)
@@ -63,6 +72,8 @@
       (= t.m 2)
       (= (deref t.b) 40)
       (= u.n 1)
-      (= (deref u.b) 40))
+      (= (deref u.b) 40)
+      (= w.m 2)
+      (= (deref w.b) 40))
       42
       1)))

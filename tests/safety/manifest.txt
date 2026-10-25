@@ -377,6 +377,8 @@ storage_dead_view_binder_return_ok|run-exit|tests/safety/storage_dead_view_binde
 storage_dead_copy_view_binder_return_reject|check-fail|tests/safety/storage_dead_copy_view_binder_return_reject.tl|-|cannot return a reference to local `v`
 storage_dead_copy_view_pattern_return_reject|check-fail|tests/safety/storage_dead_copy_view_pattern_return_reject.tl|-|cannot return a reference to local `x`
 copy_view_binder_value_ok|run-exit|tests/safety/copy_view_binder_value_ok.tl|42|-
+storage_dead_copy_holder_view_return_reject|check-fail|tests/safety/storage_dead_copy_holder_view_return_reject.tl|-|cannot return a reference to local `v`
+mutable_view_match_value_form_write_ok|run-exit|tests/safety/mutable_view_match_value_form_write_ok.tl|42|-
 # Main's loop-edge rows stored borrows of a by-value parameter under its
 # signature lifetime; they now borrow caller storage, and the old program is
 # this row.

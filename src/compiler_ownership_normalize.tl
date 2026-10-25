@@ -3750,8 +3750,8 @@
 ;; region-tagged binder (a view, or a value allocated in an arena) has no
 ;; storage of its own that a borrow through it reaches: a borrow of a view is
 ;; a reborrow of its referent, and lowering keeps the view in the referent's
-;; storage. A copyable one is a copy in the binder's own storage: its class
-;; is a plain value (`tc-selected-canonical-type` drops the tag).
+;; storage. A copyable one is a copy in the binder's own storage
+;; (`normalize-view-class?`).
 (define (normalize-scope-bind!
   [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
@@ -3763,12 +3763,7 @@
     [(and
         (try
           (normalize-view-type! store lease (array-ref state.place-typed place)))
-        (not
-          (and
-            (normalize-copy-type?
-              (& state)
-              (array-ref state.body.places place).type.index)
-            (= (normalize-reference-kind (& state) place) 0))))
+        (normalize-view-class? (& state) (array-ref state.place-typed place)))
       (NormalizeUnit.Ok unit)]
     [(= (normalize-binder-owner (& state) place) 7)
       (normalize-push! state.function-places place)
@@ -6617,6 +6612,25 @@
             [(ast.AstType.Region _ _) true]
             [_ false]))]
       [(typed.TypedTypeValueResult.Err error) (normalize-bool-typed error)])))
+
+;; Whether the region-tagged typed type record `type` keeps no storage of its
+;; binder's own: a move-only value (an arena allocation), or a view, whose
+;; class reads a move-only referent through a loan. A copyable value read
+;; through a reference is a copy (`tc-selected-canonical-type` drops the tag),
+;; whose class is the plain type's: a value, or one holding references whose
+;; referent is not the target (`tc-selected-referent`).
+(define (normalize-view-class? [state : (& state NormalizeState)] [type : i64]) : bool
+  (or
+    (< type 0)
+    (>= type (array-length state.classes))
+    (not (array-ref state.classes type).copy?)
+    (let
+      [referent : i64 (array-ref state.classes type).referent]
+      (and
+        (> (array-ref state.classes type).reference 0)
+        (>= referent 0)
+        (< referent (array-length state.classes))
+        (not (array-ref state.classes referent).copy?)))))
 
 ;; Whether `loan` is a view's loan (`normalize-borrow!`).
 (define (normalize-view-loan? [state : (& state NormalizeState)] [loan : i64]) : bool

@@ -46544,27 +46544,24 @@
 
 ;; Whose patterns a match on `scrutinee-id` binds: 1 a mutable view's
 ;; (`lower-mutable-view-init?`), 2 a shared view's (a move-only enum read
-;; through a reference, matched in place: `tc-selected-view-scrutinee?`), 0 a
-;; value's.
+;; through a reference, matched in place: `tc-selected-view-scrutinee?`, from
+;; the scrutinee's checked type whatever its form, as the checker decides), 0
+;; a value's.
 (define (lower-match-view
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [scrutinee-id : i64]) : i64
   (cond
     [(lower-mutable-view-init? ctx scrutinee-id) 1]
-    [(and
-        (tc_core.tc-selected-place-form?
-          ctx
-          (lower-context-expr-get ctx scrutinee-id))
-        (match (tc_core.tc-expr
-          ctx
-          type-env
-          (lower-context-expr-get ctx scrutinee-id))
-          [(Ok ty)
-            (tc_core.tc-selected-view-scrutinee?
-              ctx
-              (tc_core.tc-selected-strip-arena-tags ctx type-env ty))]
-          [(Err _) false]))
+    [(match (tc_core.tc-expr
+        ctx
+        type-env
+        (lower-context-expr-get ctx scrutinee-id))
+        [(Ok ty)
+          (tc_core.tc-selected-view-scrutinee?
+            ctx
+            (tc_core.tc-selected-strip-arena-tags ctx type-env ty))]
+        [(Err _) false])
       2]
     [else 0]))
 

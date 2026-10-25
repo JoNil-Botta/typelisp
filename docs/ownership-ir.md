@@ -1047,9 +1047,17 @@ borrows, as rustc's borrow checker does, whatever the names.
   typechecker's storage-owning temporaries end at every return, after the
   body's scopes (`normalize-retire-function!`); a temporary in a block's
   result position is still read by the form it is lent to, so it is not
-  retired at the block. Globals are never retired. A region-tagged binder (a
-  view, or a value allocated in an arena) is not retired: a borrow through it
-  reaches memory it only points to, not storage of its own.
+  retired at the block. Globals are never retired. A move-only
+  region-tagged binder (a view, or a value allocated in an arena) is not
+  retired: a borrow of a view is a reborrow of its referent with the
+  reference's lifetime, and lowering keeps the view in the referent's storage
+  (`lower-view-binder-type?` for a `let`, `lower-match-view` for a view's
+  match patterns), never in a frame copy. A copyable region-tagged binder is
+  a copy in its own storage (`tc-selected-canonical-type` drops the tag; its
+  class is a plain value) and is retired like any binder, so a borrow of it
+  cannot be returned. Two cases are still open (#9288): a move-only value
+  allocated in an arena, or a view returned by value from a call, is held in
+  the frame, yet a borrow of its binder gets the region's lifetime.
 - **The core operation.** A retirement is the core's `Invalidate` of the
   binder's root place, which is `StorageDead` exactly: it needs no
   initialized value, uninitializes the whole root, and is an exclusive write

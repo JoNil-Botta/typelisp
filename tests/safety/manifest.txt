@@ -370,6 +370,13 @@ storage_dead_inner_scope_used_reject|check-fail|tests/safety/storage_dead_inner_
 storage_dead_inner_scope_unused_reject|check-fail|tests/safety/storage_dead_inner_scope_unused_reject.tl|-|cannot store reference into longer-lived binding
 storage_dead_loop_binding_reject|check-fail|tests/safety/storage_dead_loop_binding_reject.tl|-|cannot store reference into longer-lived binding
 storage_dead_caller_places_ok|run-exit|tests/safety/storage_dead_caller_places_ok.tl|42|-
+# A move-only value read through a reference is a view, kept in the referent's
+# storage; a copyable one is a copy the binder owns, retired like any binder
+# (#8889 review).
+storage_dead_view_binder_return_ok|run-exit|tests/safety/storage_dead_view_binder_return_ok.tl|42|-
+storage_dead_copy_view_binder_return_reject|check-fail|tests/safety/storage_dead_copy_view_binder_return_reject.tl|-|cannot return a reference to local `v`
+storage_dead_copy_view_pattern_return_reject|check-fail|tests/safety/storage_dead_copy_view_pattern_return_reject.tl|-|cannot return a reference to local `x`
+copy_view_binder_value_ok|run-exit|tests/safety/copy_view_binder_value_ok.tl|42|-
 # Main's loop-edge rows stored borrows of a by-value parameter under its
 # signature lifetime; they now borrow caller storage, and the old program is
 # this row.

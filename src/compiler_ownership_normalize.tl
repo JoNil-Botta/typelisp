@@ -3746,9 +3746,12 @@
     (NormalizeUnit.Ok unit)))
 
 ;; The storage of the binder at `place` comes into scope here (Rust's
-;; `StorageLive`); a temporary's lasts until the function returns. A
+;; `StorageLive`); a temporary's lasts until the function returns. A move-only
 ;; region-tagged binder (a view, or a value allocated in an arena) has no
-;; storage of its own that a borrow through it reaches.
+;; storage of its own that a borrow through it reaches: a borrow of a view is
+;; a reborrow of its referent, and lowering keeps the view in the referent's
+;; storage. A copyable one is a copy in the binder's own storage: its class
+;; is a plain value (`tc-selected-canonical-type` drops the tag).
 (define (normalize-scope-bind!
   [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
@@ -3757,8 +3760,15 @@
   [place : i64]
   [source : (& source own.OwnershipSource)]) : NormalizeUnit
   (cond
-    [(try
-        (normalize-view-type! store lease (array-ref state.place-typed place)))
+    [(and
+        (try
+          (normalize-view-type! store lease (array-ref state.place-typed place)))
+        (not
+          (and
+            (normalize-copy-type?
+              (& state)
+              (array-ref state.body.places place).type.index)
+            (= (normalize-reference-kind (& state) place) 0))))
       (NormalizeUnit.Ok unit)]
     [(= (normalize-binder-owner (& state) place) 7)
       (normalize-push! state.function-places place)

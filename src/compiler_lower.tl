@@ -1820,10 +1820,9 @@
   ;; The body of the borrowed enum match arm whose payloads are being bound,
   ;; or -1; set only while `lower-bind-match-variant-payloads` runs.
   (deferred-arm-body i64)
-  ;; Whether the patterns being bound are a mutable view's (a match the checker
-  ;; certified a write through, `tc-selected-mutable-view?`): their bindings
-  ;; are the viewed storage. Cleared in each arm's body.
-  (view-match bool)
+  ;; Whose patterns are being bound (`lower-match-view`): 0 a value's, 1 a
+  ;; mutable view's, 2 a shared view's. Cleared in each arm's body.
+  (view-match i64)
   ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
   ;; (every root) until lower-bind-source-params sets it.
   (mut-borrow-scope i64)
@@ -1903,7 +1902,7 @@
         (No)
         (lower_i64_i64_map.with-capacity 1)
         -1
-        false
+        0
         -1
         (lower_i64_i64_map.with-capacity 8)
         (lower_i64_i64_map.with-capacity 8)
@@ -15281,15 +15280,15 @@
     [data : (Box LowerStateData) (lower-state-box state)]
     (__tl-project-set-field (__tl-box-place data) deferred-arm-body body-id)))
 
-(define (lower-state-view-match? [state : LowerState]) : bool
+(define (lower-state-view-match [state : LowerState]) : i64
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     (__tl-project-field (__tl-box-place data) view-match)))
 
-(define (lower-state-set-view-match! [state : LowerState] [view? : bool]) : unit
+(define (lower-state-set-view-match! [state : LowerState] [view : i64]) : unit
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (__tl-project-set-field (__tl-box-place data) view-match view?)))
+    (__tl-project-set-field (__tl-box-place data) view-match view)))
 
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (let
@@ -46543,6 +46542,51 @@
       (set! steps (+ steps 1)))
     found))
 
+;; Whose patterns a match on `scrutinee-id` binds: 1 a mutable view's
+;; (`lower-mutable-view-init?`), 2 a shared view's (a move-only enum read
+;; through a reference, matched in place: `tc-selected-view-scrutinee?`), 0 a
+;; value's.
+(define (lower-match-view
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [scrutinee-id : i64]) : i64
+  (cond
+    [(lower-mutable-view-init? ctx scrutinee-id) 1]
+    [(and
+        (tc_core.tc-selected-place-form?
+          ctx
+          (lower-context-expr-get ctx scrutinee-id))
+        (match (tc_core.tc-expr
+          ctx
+          type-env
+          (lower-context-expr-get ctx scrutinee-id))
+          [(Ok ty)
+            (tc_core.tc-selected-view-scrutinee?
+              ctx
+              (tc_core.tc-selected-strip-arena-tags ctx type-env ty))]
+          [(Err _) false]))
+      2]
+    [else 0]))
+
+;; Whether a binder of type `ty` is a view: a move-only value read through a
+;; reference (`tc-selected-view-binder-type?`, not an arena value). The checker
+;; reads it as a reborrow of the referent and gives a borrow of it the
+;; reference's lifetime (SPEC 3.9), so it is the viewed storage, never a copy.
+;; A copyable value read through a reference is a copy the binder owns.
+(define (lower-view-binder-type?
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(ast.AstType.Region region inner)
+      (and
+        (not (tc_core.tc-selected-arena-region? type-env region))
+        (not
+          (tc_core.tc-type-copyable?
+            ctx
+            (tc_core.tc-context-type-get ctx inner))))]
+    [_ false]))
+
 (define (lower-let-init
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -46556,7 +46600,9 @@
   ;; body (`body-id`, -1 when not known).
   [scope : (& scope ast.AstLetBindingList)]
   [scope-index : i64]
-  [body-id : i64]) : ResultLowerExpr
+  [body-id : i64]
+  ;; The binding's checked type (`lower-let-binding-source-type`).
+  [source : (& source tc_core.ResultTcType)]) : ResultLowerExpr
   (let
     [init-mark : i64 (lower-state-next-var state)]
     ;; The binding a whole-variable initializer names, or -1.
@@ -46712,14 +46758,18 @@
                       (LowerExpr.Expr init-state init-value init-ty))]
                   ;; Storage nothing writes while the binding can still
                   ;; read it is shared, not copied (`lower-let-scope-alias-safe?`).
-                  [(lower-let-scope-alias-safe?
-                      ctx
-                      (lower-state-function-state init-state)
-                      type-env
-                      scope
-                      scope-index
-                      body-id
-                      name)
+                  [(or
+                      (lower-let-scope-alias-safe?
+                        ctx
+                        (lower-state-function-state init-state)
+                        type-env
+                        scope
+                        scope-index
+                        body-id
+                        name)
+                      (match source
+                        [(Ok ty) (lower-view-binder-type? ctx type-env ty)]
+                        [(Err _) false]))
                     (ResultLowerExpr.Ok
                       (LowerExpr.Expr init-state init-value init-ty))]
                   [else
@@ -46759,6 +46809,15 @@
           [name-id : i64 name]
           [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
           [init-mark : i64 (lower-state-next-var state)]
+          [source-result : tc_core.ResultTcType
+            (lower-let-binding-source-type
+              ctx
+              type-env
+              body-id
+              index
+              name-id
+              (lower-global-shared-view maybe-ty)
+              init-box)]
           (match (lower-let-init
             ctx
             state
@@ -46770,25 +46829,16 @@
             name-id
             bindings
             (+ index 1)
-            body-id)
+            body-id
+            (& source-result))
             [(ResultLowerExpr.Ok lowered)
               (match lowered
                 [(LowerExpr.Expr init-state init-value init-ty)
                   (let
                     [binding-ty : ast.AstType
-                      (lower-let-binding-type
-                        ctx
-                        (lower-global-shared-view maybe-ty)
-                        init-ty)]
+                      (lower-let-binding-type ctx maybe-ty init-ty)]
                     [source-ty : ast.AstType
-                      (match (lower-let-binding-source-type
-                        ctx
-                        type-env
-                        body-id
-                        index
-                        name-id
-                        maybe-ty
-                        init-box)
+                      (match source-result
                         [(Ok ty) ty]
                         [(Err message)
                           (return
@@ -67036,7 +67086,7 @@
   [arms : ast.AstMatchArmList]
   [expr-ty : ast.AstType]
   [mode : LowerResultMode]
-  [view? : bool]) : ResultLowerExpr
+  [view : i64]) : ResultLowerExpr
   (match (lower-expr ctx state env type-env scrutinee)
     [(ResultLowerExpr.Ok scrut-lowered)
       (match scrut-lowered
@@ -67060,7 +67110,7 @@
                     scrut-ty
                     arms
                     (lower-match-cont-new ctx merge-label expr-ty mode)
-                    view?)])])])]
+                    view)])])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
 ;; How a match on a borrowed enum place continues: as a value of the given type
@@ -67185,12 +67235,12 @@
   [mode : LowerResultMode]) : ResultLowerExpr
   (let
     [scrutinee : ast.AstExpr (lower-context-expr-get ctx scrutinee-id)]
-    ;; A mutable view's patterns bind the viewed storage
+    ;; A view's patterns bind the viewed storage
     ;; (`lower-bind-owned-pattern-name`); a borrowed scrutinee is not one.
-    [view? : bool
+    [view : i64
       (match (ast.ast-expr-unspan (& scrutinee))
-        [(ast.AstExpr.Borrow _ _ _) false]
-        [_ (lower-mutable-view-init? ctx scrutinee-id)])]
+        [(ast.AstExpr.Borrow _ _ _) 0]
+        [_ (lower-match-view ctx type-env scrutinee-id)])]
     (match (lower-borrowed-enum-match-scrutinee
       ctx
       type-env
@@ -67217,7 +67267,7 @@
           arms
           expr-ty
           mode
-          view?)]
+          view)]
       [(Invalid message)
         (ResultLowerExpr.Err
           (box (lower-diagnostic-at-expr ctx scrutinee message)))])))
@@ -67285,7 +67335,7 @@
 ;; writes never go through a shared alias). Otherwise the binding gets a copy,
 ;; a fresh root it owns. Reference and register bindings are values. A
 ;; binding of a mutable view's match is the viewed storage itself
-;; (`lower-state-view-match?`): its writes land there.
+;; (`lower-state-view-match`): its writes land there.
 (define (lower-bind-owned-pattern-name
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -67300,7 +67350,12 @@
       (sym_i64_env.sym-i64-bind-id env name var-id)
       (tc_core.tc-bind-id type-env name ty))
     (if (or
-      (lower-state-view-match? state)
+      (= (lower-state-view-match state) 1)
+      ;; A shared view's move-only binding is a view too; a copyable one is
+      ;; a copy (`lower-view-binder-type?`).
+      (and
+        (= (lower-state-view-match state) 2)
+        (not (tc_core.tc-type-copyable? ctx (clone ty))))
       (lower-binding-may-alias-storage? state name var-id))
       (ResultLowerEnv.Ok
         state
@@ -68541,11 +68596,11 @@
   [body : ast.AstExpr]
   [cont : LowerMatchCont]) : ResultLowerMatchArm
   (let
-    [view? : bool (lower-state-view-match? state)]
-    (lower-state-set-view-match! state false)
+    [view : i64 (lower-state-view-match state)]
+    (lower-state-set-view-match! state 0)
     (match (lower-match-arm-body-in ctx state env type-env body cont)
       [(ResultLowerMatchArm.Ok body-state next)
-        (lower-state-set-view-match! body-state view?)
+        (lower-state-set-view-match! body-state view)
         (ResultLowerMatchArm.Ok body-state next)]
       [(ResultLowerMatchArm.Err message) (ResultLowerMatchArm.Err message)])))
 
@@ -68678,8 +68733,8 @@
   [scrut-ty : ast.AstType]
   [source-arms : ast.AstMatchArmList]
   [cont : LowerMatchCont]
-  ;; A mutable view's match: its patterns bind the viewed storage.
-  [view? : bool]) : ResultLowerExpr
+  ;; Whose patterns these are (`lower-match-view`).
+  [view : i64]) : ResultLowerExpr
   (let
     [arms : ast.AstMatchArmList
       (lower-match-split-or-arms
@@ -68687,8 +68742,8 @@
         state
         (lower-match-pattern-scrut-ty ctx (lower-global-shared-view scrut-ty))
         source-arms)]
-    [outer? : bool (lower-state-view-match? state)]
-    (lower-state-set-view-match! state view?)
+    [outer : i64 (lower-state-view-match state)]
+    (lower-state-set-view-match! state view)
     (match (lower-match-dispatch-arms
       ctx
       state
@@ -68699,7 +68754,7 @@
       arms
       cont)
       [(ResultLowerExpr.Ok (LowerExpr.Expr done value ty))
-        (lower-state-set-view-match! done outer?)
+        (lower-state-set-view-match! done outer)
         (ResultLowerExpr.Ok (LowerExpr.Expr done value ty))]
       [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])))
 
@@ -72570,7 +72625,7 @@
   [arms : ast.AstMatchArmList]
   [ret-ty : ast.AstType]
   [sret-var : i64]
-  [view? : bool]) : ResultLowerState
+  [view : i64]) : ResultLowerState
   (match (lower-borrowed-enum-match-scrutinee
     ctx
     type-env
@@ -72611,7 +72666,7 @@
                     scrut-ty
                     arms
                     (Tail ret-ty sret-var)
-                    view?))])]))]))
+                    view))])]))]))
 
 (define (lower-tail-expr
   [ctx : tc_core.TcContext]
@@ -72712,7 +72767,7 @@
               arms
               ret-ty
               sret-var
-              (lower-mutable-view-init? ctx scrutinee-box)))])]
+              (lower-match-view ctx type-env scrutinee-box)))])]
     [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)]))
 
 (define (lower-param-count [params : (& params ast.AstParamList)]) : i64

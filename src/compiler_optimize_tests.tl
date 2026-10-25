@@ -27295,7 +27295,7 @@
     [allocation : ir.CompilerIrFunction (opt-tailrec-frame-test-function 1)]
     [contained : ir.CompilerIrFunction (opt-tailrec-frame-test-function 2)]
     [contained-out : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view contained))]
+      (opt.opt-tailrec-function (opt-tailrec-frame-test-function 2))]
     [address-out : ir.CompilerIrFunction
       (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view address))]
     [allocation-out : ir.CompilerIrFunction

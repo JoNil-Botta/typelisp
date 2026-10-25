@@ -33,6 +33,36 @@
           x.k)]
       [(B _) 0])))
 
+;; A copyable payload bound by a match on a `&mut` view is a copy too, even
+;; when a move-only sibling is written through (the view is then mutable):
+;; rewriting the matched part afterwards does not change it.
+(defstruct Wide
+  (k i64)
+  (j i64)
+  (l i64))
+
+(defstruct Owned
+  (b (Box i64))
+  (n i64)
+  (m i64))
+
+(defenum Pair
+  (Both Owned Wide)
+  (Other i64 i64 i64 i64 i64 i64))
+
+(defstruct PairOut
+  (e Pair)
+  (t i64))
+
+(define (mutable-view-copy [p : (&mut p PairOut)]) : i64
+  (match p.e
+    [(Both x c)
+      (begin
+        (set! x.n 9)
+        (set! p.e (Pair.Other 7 7 7 7 7 7))
+        c.k)]
+    [(Other _ _ _ _ _ _) 0]))
+
 ;; A copyable aggregate holding a reference is a copy too, and may be
 ;; borrowed while it lives.
 (defstruct Holder
@@ -62,6 +92,10 @@
     (if (and
       (= (let-copy) 42)
       (= (pattern-copy) 42)
-      (= (holder-local (& o)) 42))
+      (= (holder-local (& o)) 42)
+      (=
+        (mutable-view-copy
+          (&mut (PairOut (Pair.Both (Owned (box 1) 1 1) (Wide 42 5 6)) 3)))
+        42))
       42
       1)))

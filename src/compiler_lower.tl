@@ -1821,7 +1821,7 @@
   ;; or -1; set only while `lower-bind-match-variant-payloads` runs.
   (deferred-arm-body i64)
   ;; Whose patterns are being bound (`lower-match-view`): 0 a value's, 1 a
-  ;; mutable view's, 2 a shared view's. Cleared in each arm's body.
+  ;; view's. Cleared in each arm's body.
   (view-match i64)
   ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
   ;; (every root) until lower-bind-source-params sets it.
@@ -46542,11 +46542,10 @@
       (set! steps (+ steps 1)))
     found))
 
-;; Whose patterns a match on `scrutinee-id` binds: 1 a mutable view's
-;; (`lower-mutable-view-init?`), 2 a shared view's (a move-only enum read
-;; through a reference, matched in place: `tc-selected-view-scrutinee?`, from
-;; the scrutinee's checked type whatever its form, as the checker decides), 0
-;; a value's.
+;; Whose patterns a match on `scrutinee-id` binds: 1 a view's, a move-only
+;; enum read through a reference and matched in place (a mutable view,
+;; `lower-mutable-view-init?`, or by the scrutinee's checked type whatever its
+;; form, `tc-selected-view-scrutinee?`, as the checker decides); 0 a value's.
 (define (lower-match-view
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
@@ -46562,7 +46561,7 @@
             ctx
             (tc_core.tc-selected-strip-arena-tags ctx type-env ty))]
         [(Err _) false])
-      2]
+      1]
     [else 0]))
 
 ;; Whether a binder of type `ty` is a view: a move-only value read through a
@@ -67331,8 +67330,8 @@
 ;; owning that root is ever written (a written alias gets its own copy, so
 ;; writes never go through a shared alias). Otherwise the binding gets a copy,
 ;; a fresh root it owns. Reference and register bindings are values. A
-;; binding of a mutable view's match is the viewed storage itself
-;; (`lower-state-view-match`): its writes land there.
+;; move-only binding of a view's match is the viewed storage itself
+;; (`lower-state-view-match`): writes through a mutable view's land there.
 (define (lower-bind-owned-pattern-name
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -67347,11 +67346,10 @@
       (sym_i64_env.sym-i64-bind-id env name var-id)
       (tc_core.tc-bind-id type-env name ty))
     (if (or
-      (= (lower-state-view-match state) 1)
-      ;; A shared view's move-only binding is a view too; a copyable one is
-      ;; a copy (`lower-view-binder-type?`).
+      ;; A view's move-only binding is a view too, the viewed storage; a
+      ;; copyable one is a copy (SPEC 3.9, `lower-view-binder-type?`).
       (and
-        (= (lower-state-view-match state) 2)
+        (= (lower-state-view-match state) 1)
         (not (tc_core.tc-type-copyable? ctx (clone ty))))
       (lower-binding-may-alias-storage? state name var-id))
       (ResultLowerEnv.Ok

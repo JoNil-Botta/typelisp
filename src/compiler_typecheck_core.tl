@@ -47037,14 +47037,21 @@
       (tc-global-shared-view actual))))
 
 ;; A lifetime failure: it carries its kind to `tc-type-mismatch-message-in-context`.
+;; A lifetime as a diagnostic names it, with its role: a signature's elided
+;; lifetime has a synthesized name no source can spell, so it is described
+;; instead (Rust's "anonymous lifetime").
+(define (tc-lifetime-diagnostic-name [role : String] [name : i64]) : String
+  (if (tc-elaborated-lifetime-hidden? name)
+    "the signature's elided lifetime"
+    (str_cat.str-cat role " lifetime `" (tc-lifetime-name-render name) "`")))
+
 (define (tc-lifetime-coercion-outlives-detail [source : i64] [required : i64]) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (LifetimeMismatch))
-    "; source lifetime `"
-    (tc-lifetime-name-render source)
-    "` does not outlive required lifetime `"
-    (tc-lifetime-name-render required)
-    "`"))
+    "; "
+    (tc-lifetime-diagnostic-name "source" source)
+    " does not outlive "
+    (tc-lifetime-diagnostic-name "required" required)))
 
 (define (tc-lifetime-coercion-invariant-detail
   [label : String]

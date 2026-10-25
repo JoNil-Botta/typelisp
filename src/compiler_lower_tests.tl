@@ -7613,10 +7613,8 @@
       (compiler-lower-function-value-contextual-init-source)))
     [(Some functions)
       (and
-        (= (lower-test-count functions "main" (IndirectTailCall)) 0)
-        ;; The speculative tail-risk query has no expected type for `(init)`.
-        ;; Keep the contextual lowering and conservatively retain its call.
-        (= (lower-test-count functions "main" (IndirectCall)) 1))]
+        (= (lower-test-count functions "main" (IndirectTailCall)) 1)
+        (= (lower-test-count functions "main" (IndirectCall)) 0))]
     [_ false]))
 
 (define (compiler-lower-mutable-global-function-value-mode-shape-ok?

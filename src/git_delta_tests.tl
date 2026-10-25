@@ -1,4 +1,5 @@
 ;; Focused valid/malformed fixtures for git_delta_core.
+(import stdlib.iterator)
 (import git_delta_core as git_delta)
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.io)
@@ -55,8 +56,8 @@
     (set! (array-ref slots index) (cast (bit-and value 127) : u8))
     (set! value (shr value 7))
     (while (> value 0)
-      (set! value (- value 1))
-      (set! index (- index 1))
+      (-= value 1)
+      (-= index 1)
       (set!
         (array-ref slots index)
         (cast (bit-or (bit-and value 127) 128) : u8))
@@ -72,10 +73,8 @@
   (let
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
-      (git-delta-test-push! (&mut out) value)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (git-delta-test-push! (&mut out) value))
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (git-delta-test-insert-delta
@@ -89,13 +88,10 @@
     (if (> length 0)
       (begin
         (git-delta-test-push! (&mut out) length)
-        (let
-          [index : i64 0]
-          (while (< index length)
-            (git-delta-test-push!
-              (&mut out)
-              (cast (string.string-ref output index) : i64))
-            (set! index (+ index 1)))))
+        (for [index (iterator.range 0 length)]
+          (git-delta-test-push!
+            (&mut out)
+            (cast (string.string-ref output index) : i64))))
       unit)
     (byte_buf.byte-buf-builder-finish-string (& out))))
 
@@ -160,10 +156,8 @@
     [truncated : String (git-delta-test-repeat-byte 128 1)]
     [excessive : String (git-delta-test-repeat-byte 128 10)]
     [overflow-builder : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
-    [index : i64 0]
-    (while (< index 9)
-      (git-delta-test-push! (&mut overflow-builder) 128)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 9)]
+      (git-delta-test-push! (&mut overflow-builder) 128))
     (git-delta-test-push! (&mut overflow-builder) 1)
     (let
       [overflow : String
@@ -274,7 +268,7 @@
               (!= (cast (string.string-ref object 0) : i64) 120))
               (set! ok false)
               unit)])
-        (set! mask (+ mask 1))))
+        (+= mask 1)))
     ok))
 
 (define (git-delta-test-raw-delta
@@ -390,7 +384,7 @@
             (git_delta.git-delta-apply (& base) (& delta) (& limits))))
           (set! ok false)
           unit)
-        (set! opcode (+ opcode 1))))
+        (+= opcode 1)))
     (let
       [valid : String (git-delta-test-insert-delta 1 "xy")]
       [length : i64 (string.string-length valid)]
@@ -403,7 +397,7 @@
               (git_delta.git-delta-apply (& base) (& prefix) (& limits))))
             (set! ok false)
             unit)
-          (set! cut (+ cut 1))))
+          (+= cut 1)))
       ok)))
 
 (define (git-delta-test-empty-offsets) : (__tl_dyn-array

@@ -7890,7 +7890,12 @@
           top-env
           (csym.compiler-symbol-module-key-id-by-id module name-id)))]
     (Ok
-      (tc_core.tc-bind-id env name-id (lower-global-shared-view ty))
+      ;; Raw: `lower-module-local-envs-list` indexes the whole run of these
+      ;; binds with one cache layer once the module's declarations are bound.
+      ;; Threshold compaction over the program environment would instead
+      ;; build and collapse partial caches every few dozen binds, all of
+      ;; which the module view's arena keeps until the view is released.
+      (tc_core.tc-bind-raw-id env name-id (lower-global-shared-view ty))
       (tc_core.tc-bind-id local-env name-id ty))))
 
 ;; A module's first enum declaring a variant name owns the module's bare

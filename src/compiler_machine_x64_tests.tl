@@ -3,6 +3,7 @@
 ;; print that line and the encoder must emit the assembler's bytes for it. The
 ;; cases cover every REX bit combination of both widths, the stack and frame
 ;; registers, and the imm32 boundaries of both immediate forms.
+(import stdlib.iterator)
 (import compiler_machine_x64 as mx)
 (import compiler_abi)
 (import stdlib.byte_buf_core)
@@ -22,8 +23,7 @@
       [bytes : (__tl_dyn-array u8)
         (byte_buf_core.byte-buf-builder-finish-array (& out))]
       [text : String ""]
-      [index : i64 0]
-      (while (< index (array-length bytes))
+      (for [index (iterator.range 0 (array-length bytes))]
         (let
           [value : i64 (cast (array-ref bytes index) : i64)]
           (set!
@@ -34,8 +34,7 @@
                 ""
                 " ")
               (mx-hex-digit (shr value 4))
-              (mx-hex-digit (bit-and value 15)))))
-        (set! index (+ index 1)))
+              (mx-hex-digit (bit-and value 15))))))
       text)))
 
 (define (mx-golden! [instr : mx.MachineInstr] [text : String] [hex : String]) : unit
@@ -140,40 +139,31 @@
 ;; every register pair of both widths.
 (test
   machine-x64-size-is-encoded-length
-  (let
-    [dst : i64 0]
-    (while (< dst 16)
+  (for [dst (iterator.range 0 16)]
+    (for [src (iterator.range 0 16)]
       (let
-        [src : i64 0]
-        (while (< src 16)
-          (let
-            [wide : mx.MachineInstr (mx.MachineInstr.MovRR (W64) dst src)]
-            [narrow : mx.MachineInstr (mx.MachineInstr.MovRR (W32) dst src)]
-            (test.assert-i64-eq
-              (mx.compiler-machine-x64-size (clone wide))
-              (/ (+ (string.string-length (mx-hex wide)) 1) 3)
-              "machine x64 movq size")
-            (test.assert-i64-eq
-              (mx.compiler-machine-x64-size (clone narrow))
-              (/ (+ (string.string-length (mx-hex narrow)) 1) 3)
-              "machine x64 movl size"))
-          (set! src (+ src 1))))
-      (set! dst (+ dst 1)))))
+        [wide : mx.MachineInstr (mx.MachineInstr.MovRR (W64) dst src)]
+        [narrow : mx.MachineInstr (mx.MachineInstr.MovRR (W32) dst src)]
+        (test.assert-i64-eq
+          (mx.compiler-machine-x64-size (clone wide))
+          (/ (+ (string.string-length (mx-hex wide)) 1) 3)
+          "machine x64 movq size")
+        (test.assert-i64-eq
+          (mx.compiler-machine-x64-size (clone narrow))
+          (/ (+ (string.string-length (mx-hex narrow)) 1) 3)
+          "machine x64 movl size")))))
 
 ;; The emission helpers that carry register spellings enter records through
 ;; `compiler-abi-register-id-from-spelling`: every general-purpose spelling
 ;; round-trips, and no other spelling decodes as one.
 (test
   machine-x64-register-spelling-ingress
-  (let
-    [reg : i64 0]
-    (while (< reg 16)
-      (test.assert-i64-eq
-        (compiler_abi.compiler-abi-register-id-from-spelling
-          (compiler_abi.compiler-abi-register-spelling reg))
-        reg
-        "general-purpose spelling round-trips")
-      (set! reg (+ reg 1))))
+  (for [reg (iterator.range 0 16)]
+    (test.assert-i64-eq
+      (compiler_abi.compiler-abi-register-id-from-spelling
+        (compiler_abi.compiler-abi-register-spelling reg))
+      reg
+      "general-purpose spelling round-trips"))
   (test.assert-i64-eq
     (compiler_abi.compiler-abi-register-id-from-spelling "%xmm3")
     (+ compiler_abi.compiler-reg-id-xmm-base 3)

@@ -3850,6 +3850,199 @@
     (compiler-ast-type-clone?)
     "ty-node-persist copies every shape and owns fresh payload storage"))
 
+;; A MacroExpansion wrapper is transparent for source views: wrapping an
+;; explicit alternate view keeps that view's span, while the semantic node's
+;; canonical span is unchanged (#8832). The push paths dispatch span
+;; registration on the row's inline tag, so the test first checks the tags
+;; against constructed rows instead of repeating a variant number.
+(define (compiler-ast-macro-expansion-view-pools-ok?
+  [pools : ast.AstNodePoolContext]
+  [first-line : i64]) : bool
+  (let
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 7)))]
+    [canonical : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span first-line 1 first-line 2))]
+    [alternate : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span (+ first-line 1) 1 (+ first-line 1) 2))]
+    ;; Both creation orders: a wrapper over the alternate, and over the
+    ;; canonical view; then a wrapper over a wrapper.
+    [wrapped : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion alternate 0 0))]
+    [wrapped-canonical : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion canonical 1 1))]
+    [nested : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion wrapped 2 2))]
+    ;; A view created after a wrapper over the canonical one.
+    [late : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span (+ first-line 2) 1 (+ first-line 2) 2))]
+    [late-wrapped : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion late 3 3))]
+    (and
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools alternate)
+        (+ first-line 1))
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools wrapped)
+        (+ first-line 1))
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools nested)
+        (+ first-line 1))
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools wrapped-canonical)
+        first-line)
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools late-wrapped)
+        (+ first-line 2))
+      (compiler-ast-maybe-span-start-line?
+        (ast_tests.ast-node-pool-context-expr-canonical-span pools literal)
+        first-line)
+      (ast.ast-node-pool-context-expr-span-oracle-ok? pools))))
+
+(define (compiler-ast-macro-expansion-alternate-view-smoke?) : bool
+  (let
+    [tags-ok : bool
+      (and
+        (=
+          (ast.ast-expr-storage-tag (& (MacroExpansion 0 0 0)))
+          ast.ast-expr-macro-expansion-storage-tag)
+        (=
+          (ast.ast-expr-storage-tag
+            (& (Spanned 0 (ast.ast-source-span 0 0 0 0))))
+          ast.ast-expr-spanned-storage-tag)
+        ;; The neighbouring variant no longer takes the wrapper path.
+        (let
+          [step-tag : i64
+            (ast.ast-expr-storage-tag
+              (& (ForOwnedStep (ast.ast-expr-list-new))))]
+          (and
+            (!= step-tag ast.ast-expr-macro-expansion-storage-tag)
+            (!= step-tag ast.ast-expr-spanned-storage-tag))))]
+    ;; An independent pool, the issue's reproducer and its variants.
+    [independent : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [independent-ok : bool
+      (compiler-ast-macro-expansion-view-pools-ok? independent 1)]
+    ;; Re-span growth: enough alternates to grow the ReSpan table past its
+    ;; first segment, the last one wrapped.
+    [growth : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [growth-literal : i64
+      (ast.ast-node-pool-context-expr-push growth (Literal (ast.ast-lit-int 3)))]
+    [_growth-canonical : i64
+      (ast.ast-expr-spanned-with-pools
+        growth
+        growth-literal
+        (ast.ast-source-span 1 1 1 2))]
+    [last-view : i64 -1]
+    [_growth : unit
+      (for [index (iterator.range 0 100)]
+        (set!
+          last-view
+          (ast.ast-expr-spanned-with-pools
+            growth
+            growth-literal
+            (ast.ast-source-span (+ index 2) 1 (+ index 2) 2))))]
+    [growth-wrapped : i64
+      (ast.ast-node-pool-context-expr-push
+        growth
+        (MacroExpansion last-view 0 0))]
+    [growth-ok : bool
+      (and
+        (>= (ast.ast-node-pool-context-expr-respan-count growth) 100)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span growth growth-wrapped)
+          101)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? growth))]
+    ;; Reset/reuse: truncating to the wrapper's id and pushing a wrapper over
+    ;; another view there reports the new view, not the old one.
+    [reuse-mark : i64 (- (ast.ast-node-pool-context-expr-len growth) 1)]
+    [_reset : unit (ast.ast-node-pool-context-expr-truncate! growth reuse-mark)]
+    [reused : i64
+      (ast.ast-node-pool-context-expr-push
+        growth
+        (MacroExpansion _growth-canonical 0 0))]
+    [reuse-ok : bool
+      (and
+        (= reused growth-wrapped)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span growth reused)
+          1)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? growth))]
+    ;; The installed pool: the same through the active-pool push path.
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [_install : unit (ast.ast-node-pool-context-install! installed)]
+    [active-literal : i64
+      (ast.ast-node-push-active (Literal (ast.ast-lit-int 5)))]
+    [_active-canonical : i64
+      (ast.ast-node-push-active
+        (Spanned active-literal (ast.ast-source-span 40 1 40 2)))]
+    [active-alternate : i64
+      (ast.ast-node-push-active
+        (Spanned active-literal (ast.ast-source-span 41 1 41 2)))]
+    [active-wrapped : i64
+      (ast.ast-node-push-active (MacroExpansion active-alternate 0 0))]
+    [captured : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_restore : unit (ast.ast-node-pool-context-install! previous)]
+    [installed-ok : bool
+      (and
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span captured active-wrapped)
+          41)
+        (compiler-ast-maybe-span-start-line?
+          (ast_tests.ast-node-pool-context-expr-canonical-span
+            captured
+            active-literal)
+          40))]
+    ;; Whole-program compaction rebuilds provenance from the wrapper rows, and
+    ;; the remapped wrapper keeps the alternate view.
+    [source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [source-literal : i64
+      (ast.ast-node-pool-context-expr-push source (Literal (ast.ast-lit-int 9)))]
+    [_source-canonical : i64
+      (ast.ast-expr-spanned-with-pools
+        source
+        source-literal
+        (ast.ast-source-span 60 1 60 2))]
+    [source-alternate : i64
+      (ast.ast-expr-spanned-with-pools
+        source
+        source-literal
+        (ast.ast-source-span 61 1 61 2))]
+    [source-wrapped : i64
+      (ast.ast-node-pool-context-expr-push
+        source
+        (MacroExpansion source-alternate 0 0))]
+    [views : ast.AstExprList (ast.ast-expr-list-new)]
+    [_views : unit (ast.ast-expr-list-push (&mut views) source-wrapped)]
+    [program : ast.AstProgram (compiler-ast-reserve-program source (& views) 1)]
+    [dest : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [compacted-ok : bool
+      (match (ast.ast-program-compact-with-pools source dest (& program) false)
+        [(AstProgramCompaction out-program out-pools)
+          (let
+            [out-views : ast.AstExprList
+              (compiler-ast-reserve-compacted-views (& out-pools) out-program)]
+            (and
+              (compiler-ast-reserve-view-line? (& out-pools) (& out-views) 0 61)
+              (ast.ast-node-pool-context-expr-span-oracle-ok? out-pools)))])]
+    (and tags-ok independent-ok growth-ok reuse-ok installed-ok compacted-ok)))
+
 (define (main) : i64
   (unless (compiler-ast-spmd-presence-segments?) (return 32))
   (unless
@@ -3893,4 +4086,5 @@
   (unless (compiler-ast-generated-dense-list-operations-smoke?) (return 25))
   (unless (compiler-ast-canonical-reserve-smoke?) (return 27))
   (unless (compiler-ast-span-forwarding-smoke?) (return 32))
+  (unless (compiler-ast-macro-expansion-alternate-view-smoke?) (return 33))
   42)

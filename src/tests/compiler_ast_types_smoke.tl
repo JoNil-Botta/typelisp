@@ -3090,7 +3090,7 @@
         (ast.ast-node-pool-context-type-len pools)
         (ast.ast-i32-array-address expr-map)
         (ast.ast-i32-array-address type-map)
-        true)]
+        CompactionPersist)]
     [_retire : unit
       (unsafe
         (arena.destroy source))]
@@ -3113,7 +3113,7 @@
                 (ast.ast-node-pool-context-type-len out-pools)
                 (ast.ast-i32-array-address second-map)
                 (ast.ast-i32-array-address type-map)
-                true)]
+                CompactionPersist)]
             [ids-ok : bool true]
             [_ids : unit
               (begin

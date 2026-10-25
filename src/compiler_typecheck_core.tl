@@ -95704,22 +95704,29 @@
 ;; R3-P2b: move one memoized declaration list out of the live declaration
 ;; generation and into the pool's base arena, in place, with the caller's id
 ;; maps. Sharing the maps with the survivor's copy-out is what keeps a node that
-;; appears in both from being persisted (and re-allocated) twice.
+;; appears in both from being persisted (and re-allocated) twice. `mode` is
+;; CompactionPersist for that, or CompactionMark / CompactionRemap around a
+;; compacted generation (`macro-decl-generation-compact!`).
 ;;
 ;; Sequencing mirrors `macro-decl-generation-copy-out`: resume from the pool's
 ;; stable root, allocate the program shell there, and then call the copy, which
-;; restores the caller's arena itself.
+;; restores the caller's arena itself. A Mark walk's discarded copy stays in
+;; the caller's arena, the live generation.
 (define (macro-decl-generation-persist-decls
   [pools : ast.AstNodePoolContext]
   [decls : ast.AstDeclList]
   [shared-expr-base : i64]
   [shared-type-base : i64]
   [expr-map-address : u64]
-  [type-map-address : u64]) : ast.AstDeclList
+  [type-map-address : u64]
+  [mode : ast.AstCompactionMode]) : ast.AstDeclList
   (let
     [_resume : unit
-      (unsafe
-        (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))]
+      (match mode
+        [(CompactionMark) unit]
+        [_
+          (unsafe
+            (arena.tl_arena_set (ast.ast-node-pool-context-base-arena pools)))])]
     [program : ast.AstProgram (ast.ast-program decls)]
     (match (ast.ast-program-copy-append-above-with-maps
       pools
@@ -95729,7 +95736,7 @@
       shared-type-base
       expr-map-address
       type-map-address
-      true)
+      mode)
       [(AstProgramCompaction copied _)
         (match copied
           [(Program decls-box) (__tl-box-place decls-box)])])))
@@ -95741,7 +95748,8 @@
   [shared-expr-base : i64]
   [shared-type-base : i64]
   [expr-map-address : u64]
-  [type-map-address : u64]) : unit
+  [type-map-address : u64]
+  [mode : ast.AstCompactionMode]) : unit
   (let
     [memo : TcMacroGeneratedModuleStateData
       (tc-macro-generated-module-state-data state)]
@@ -95775,7 +95783,8 @@
                         shared-expr-base
                         shared-type-base
                         expr-map-address
-                        type-map-address)]
+                        type-map-address
+                        mode)]
                     [owned-summary : ast.AstDeclList
                       (macro-decl-generation-persist-decls
                         pools
@@ -95783,24 +95792,27 @@
                         shared-expr-base
                         shared-type-base
                         expr-map-address
-                        type-map-address)]
-                    [_resume : unit
-                      (unsafe
-                        (arena.tl_arena_set
-                          (ast.ast-node-pool-context-base-arena pools)))]
-                    [owned-generator : String (string.copy (& generator))]
-                    [owned-path : String (string.copy (& import-path))]
-                    [_store : unit
-                      (set!
-                        (array-ref memo.catalog-entries cursor)
-                        (Catalog
-                          target-id
-                          owned-catalog
-                          owned-generator
-                          owned-path
-                          owned-summary
-                          closure))]
-                    unit)]
+                        type-map-address
+                        mode)]
+                    (match mode
+                      [(CompactionMark) unit]
+                      [_
+                        (let
+                          [_resume : unit
+                            (unsafe
+                              (arena.tl_arena_set
+                                (ast.ast-node-pool-context-base-arena pools)))]
+                          [owned-generator : String (string.copy (& generator))]
+                          [owned-path : String (string.copy (& import-path))]
+                          (set!
+                            (array-ref memo.catalog-entries cursor)
+                            (Catalog
+                              target-id
+                              owned-catalog
+                              owned-generator
+                              owned-path
+                              owned-summary
+                              closure)))]))]
                 [(Empty) unit])
               (set! done true))
             (begin
@@ -95815,7 +95827,8 @@
   [shared-expr-base : i64]
   [shared-type-base : i64]
   [expr-map-address : u64]
-  [type-map-address : u64]) : unit
+  [type-map-address : u64]
+  [mode : ast.AstCompactionMode]) : unit
   (let
     [memo : TcMacroGeneratedDeclsStateData
       (tc-macro-generated-decls-state-data state)]
@@ -95838,25 +95851,26 @@
                   shared-expr-base
                   shared-type-base
                   expr-map-address
-                  type-map-address)]
-              (set! (array-ref memo.decls cursor) owned)
+                  type-map-address
+                  mode)]
+              (match mode
+                [(CompactionMark) unit]
+                [_ (set! (array-ref memo.decls cursor) owned)])
               (set! done true))
             (begin
               (set! cursor (bit-and (+ cursor 1) (- memo.capacity 1)))
               (+= steps 1))))))
     unit))
 
-;: Re-persist every memo entry this declaration's expansion recorded. Runs after
-;: the survivor's copy-out, with the same maps, and leaves the pool's base arena
-;: head published.
-(define (macro-decl-generation-escapes-persist!
+;: Walk every memo entry this declaration's expansion recorded with `mode`.
+(define (macro-decl-generation-escapes-walk!
   [state : TcMacroState]
   [pools : ast.AstNodePoolContext]
   [shared-expr-base : i64]
   [shared-type-base : i64]
   [expr-map-address : u64]
   [type-map-address : u64]
-  [splice? : bool]) : unit
+  [mode : ast.AstCompactionMode]) : unit
   (let
     [count : i64 (tc-macro-walk-field state macro-decl-generation-escape-count)]
     [kinds : (__tl_dyn-array i64)
@@ -95875,7 +95889,8 @@
             shared-expr-base
             shared-type-base
             expr-map-address
-            type-map-address)
+            type-map-address
+            mode)
           (macro-generated-decls-memo-persist-entry!
             state
             key
@@ -95883,7 +95898,31 @@
             shared-expr-base
             shared-type-base
             expr-map-address
-            type-map-address))))
+            type-map-address
+            mode))))))
+
+;: Re-persist every memo entry this declaration's expansion recorded. Runs after
+;: the survivor's copy-out, with the same maps and mode (CompactionPersist, or
+;: CompactionRemap after a compaction), and leaves the pool's base arena head
+;: published.
+(define (macro-decl-generation-escapes-persist!
+  [state : TcMacroState]
+  [pools : ast.AstNodePoolContext]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [expr-map-address : u64]
+  [type-map-address : u64]
+  [splice? : bool]
+  [mode : ast.AstCompactionMode]) : unit
+  (begin
+    (macro-decl-generation-escapes-walk!
+      state
+      pools
+      shared-expr-base
+      shared-type-base
+      expr-map-address
+      type-map-address
+      mode)
     ;; Fail-closed: a declaration that recorded more escapes than the list
     ;; holds has entries this pass could not reach, so its generation must not
     ;; be destroyed. Orphan it -- the next enter cuts a fresh arena and the
@@ -112526,7 +112565,8 @@
   [shared-expr-base : i64]
   [shared-type-base : i64]
   [expr-map-address : u64]
-  [type-map-address : u64]) : ResultMacroDeclExpansion
+  [type-map-address : u64]
+  [mode : ast.AstCompactionMode]) : ResultMacroDeclExpansion
   (match raw
     [(Ok expanded expanded-paths)
       (match (ast.ast-program-copy-append-above-with-maps
@@ -112537,7 +112577,7 @@
         shared-type-base
         expr-map-address
         type-map-address
-        true)
+        mode)
         [(AstProgramCompaction copied _)
           (let
             ;; The program copy restores the arena it was called with, which can
@@ -112562,6 +112602,88 @@
             (cdiag.compiler-diagnostic-box-shared-view diag))]
         [boxed : (Box cdiag.CompilerDiagnostic) (box owned)]
         (Err boxed))]))
+
+;; #9224: mark everything the generation publishes -- its result, every memo
+;; entry its expansion recorded, and the generation's own span/rewrite roots --
+;; then compact its rows. The caller republishes the result and the memo
+;; entries with CompactionRemap walks over the same maps.
+(define (macro-decl-generation-compact!
+  [state : TcMacroState]
+  [pools : ast.AstNodePoolContext]
+  [raw : (& raw ResultMacroDeclExpansion)]
+  [entry : (& entry ast.AstExprGenerationEntry)]
+  [shared-type-base : i64]
+  [expr-map-address : u64]
+  [type-map-address : u64]) : unit
+  (let
+    [base : i64 entry.count]
+    (match raw
+      [(Ok expanded _)
+        (let
+          [_marked : ast.AstProgramCompaction
+            (ast.ast-program-copy-append-above-with-maps
+              pools
+              pools
+              (&
+                (ast.ast-program
+                  (owned_view.compiler-owned-reference-shared-view expanded)))
+              base
+              shared-type-base
+              expr-map-address
+              type-map-address
+              CompactionMark)]
+          unit)]
+      [(Err _) unit])
+    (macro-decl-generation-escapes-walk!
+      state
+      pools
+      base
+      shared-type-base
+      expr-map-address
+      type-map-address
+      CompactionMark)
+    (ast.ast-expr-generation-mark-roots!
+      pools
+      entry
+      expr-map-address
+      type-map-address
+      shared-type-base)
+    (ast.ast-expr-generation-compact!
+      pools
+      entry
+      expr-map-address
+      type-map-address
+      shared-type-base)))
+
+;; The broken control for the poison check (`--cfg ast-generation-poison` with
+;; `--cfg ast-generation-poison-control`): retire one row that is still
+;; reachable, the body of the first function a compacted generation publishes.
+;; A compile under it must fail.
+(cfg
+  ast-generation-poison-control
+  (define macro-decl-generation-poison-control-done? : bool
+    false))
+
+(cfg
+  ast-generation-poison-control
+  (define (macro-decl-generation-poison-control!
+    [pools : ast.AstNodePoolContext]
+    [escaped : (& escaped ResultMacroDeclExpansion)]) : unit
+    (unless
+      macro-decl-generation-poison-control-done?
+      (match escaped
+        [(Ok decls _)
+          (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
+            (match (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
+              [(DefFn _ _ _ _ body _)
+                (unless
+                  macro-decl-generation-poison-control-done?
+                  (ast.ast-expr-row-poison!
+                    (ast.ast-node-pool-context-expr-segment-bases (& pools))
+                    body)
+                  (set! macro-decl-generation-poison-control-done? true))]
+              [_ unit]))]
+        [(Err _) unit]))))
 
 ;; R3-P1: run one firing declaration's expansion inside its own arena generation
 ;; and copy the surviving declaration back into the committed pool.
@@ -112664,6 +112786,8 @@
       [macro-state : TcMacroState (tc-context-macro-state ctx)]
       [enclosing : i64 (arena.tl_arena_current)]
       [entry-expr-len : i64 (ast.ast-node-pool-len)]
+      [generation-entry : ast.AstExprGenerationEntry
+        (ast.ast-expr-generation-enter!)]
       [_profile-entry-type-len : i64 (ast.ty-node-pool-len)]
       [_profile-live-before-enter : i64
         (cfg compile-profile (profile.alloc-live) 0)]
@@ -112722,6 +112846,7 @@
       [_escape-close : unit
         (tc-macro-walk-set! macro-state macro-decl-generation-active false)]
       [_witness-off : unit (ast.ast-node-pool-context-transient-witness! 0)]
+      [generation-provable? : bool (ast.ast-expr-generation-leave!)]
       ;; Clamped: the walk never truncates the pool below the length it entered
       ;; with, but a base above the live length would make the id map read out
       ;; of range, and a shorter pool has nothing above the base to copy anyway.
@@ -112767,9 +112892,6 @@
       [_install-stable : unit
         (ast.ast-node-pool-context-install!
           (ast.ast-node-pool-context-shared-view (& pools)))]
-      [_leave : unit
-        (unsafe
-          (arena.tl_arena_set enclosing))]
       [_profile-copy-start-total : i64
         (cfg compile-profile (profile.alloc-total) 0)]
       [_profile-copy-start-live : i64
@@ -112784,6 +112906,33 @@
       ;; Every existing type id is shared, so the copy-out and the escape pass
       ;; push no type node at all. Read once so both passes see the same base.
       [shared-type-base : i64 (ast.ast-node-pool-context-type-len pools)]
+      ;; #9224: reclaim the rows nothing published reaches, while the
+      ;; generation is still current for the walks' scratch.
+      [compacted? : bool
+        (and
+          generation-provable?
+          (not
+            (tc-macro-walk-field
+              macro-state
+              macro-decl-generation-escape-overflow))
+          (ast.ast-expr-generation-compactable? (& pools) (& generation-entry))
+          (begin
+            (macro-decl-generation-compact!
+              macro-state
+              pools
+              (& raw)
+              (& generation-entry)
+              shared-type-base
+              expr-map-address
+              type-map-address)
+            true))]
+      [publish-mode : ast.AstCompactionMode
+        (if compacted?
+          CompactionRemap
+          CompactionPersist)]
+      [_leave : unit
+        (unsafe
+          (arena.tl_arena_set enclosing))]
       [escaped : ResultMacroDeclExpansion
         (macro-decl-generation-copy-out
           pools
@@ -112791,7 +112940,8 @@
           shared-expr-base
           shared-type-base
           expr-map-address
-          type-map-address)]
+          type-map-address
+          publish-mode)]
       [_escapes : unit
         (macro-decl-generation-escapes-persist!
           macro-state
@@ -112800,7 +112950,15 @@
           shared-type-base
           expr-map-address
           type-map-address
-          splice?)]
+          splice?
+          publish-mode)]
+      [_poison-control : unit
+        (cfg
+          ast-generation-poison-control
+          (if compacted?
+            (macro-decl-generation-poison-control! pools (& escaped))
+            unit)
+          unit)]
       [_profile-copy-end-total : i64
         (cfg compile-profile (profile.alloc-total) 0)]
       [_profile-copy-end-live : i64

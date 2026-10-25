@@ -1916,6 +1916,37 @@
 ;; parsed. A floor of 0 protects nothing and drops the journal.
 (define ast-node-protected-journal-stride : i64
   8)
+
+;; While a macro generation expands, rows below its base are the committed
+;; prefix it may not move. An in-place rewrite of one can still make it point
+;; at the generation's rows, so the write is journaled here, and the
+;; generation's compaction treats those children as roots and remaps the
+;; rewritten row (`ast-expr-generation-compact!`). Outside a generation the
+;; floor is 0 and nothing is journaled. A nested generation, or more rewrites
+;; than the journal holds, makes the generation unprovable: it is persisted
+;; in place rather than compacted.
+(define ast-node-generation-floor : i64
+  0)
+(define ast-node-generation-depth : i64
+  0)
+(define ast-node-generation-unprovable? : bool
+  false)
+(define ast-node-generation-journal-capacity : i64
+  256)
+(define ast-node-generation-journal : (__tl_dyn-array i64)
+  (__tl_make-array i64 256))
+(define ast-node-generation-journal-len : i64
+  0)
+
+(define (ast-node-generation-note! [id : i64]) : unit
+  (if (>= ast-node-generation-journal-len ast-node-generation-journal-capacity)
+    (set! ast-node-generation-unprovable? true)
+    (begin
+      (set!
+        (array-ref ast-node-generation-journal ast-node-generation-journal-len)
+        id)
+      (+= ast-node-generation-journal-len 1))))
+
 (define ast-node-protected-floor : i64
   0)
 (define ast-node-protected-journal : (__tl_dyn-array i64)
@@ -1958,6 +1989,7 @@
   [dest : i64]
   [slot-bases : i64]
   [prior-slot : i64]) : unit
+  (when (< id ast-node-generation-floor) (ast-node-generation-note! id))
   (when
     (< id ast-node-protected-floor)
     (when
@@ -2230,6 +2262,9 @@
           (ptr-offset
             (int->ptr ast-node-pool-segment-bases : (Ptr i64))
             (shr id ast-expr-node-pool-segment-shift))))]
+    (cfg
+      ast-generation-poison
+      (ast-expr-row-poison-check! (+ biased-base (* id (ast-expr-node-bytes)))))
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -2959,6 +2994,9 @@
           (ptr-offset
             (int->ptr pool.segment-bases : (Ptr i64))
             (shr id ast-expr-node-pool-segment-shift))))]
+    (cfg
+      ast-generation-poison
+      (ast-expr-row-poison-check! (+ biased-base (* id (ast-expr-node-bytes)))))
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -4979,6 +5017,9 @@
           (ptr-offset
             (int->ptr segment-bases : (Ptr i64))
             (shr id ast-expr-node-pool-segment-shift))))]
+    (cfg
+      ast-generation-poison
+      (ast-expr-row-poison-check! (+ biased-base (* id (ast-expr-node-bytes)))))
     (unsafe
       (ptr-read
         (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (Ptr AstExpr))))))
@@ -5001,6 +5042,10 @@
           (ptr-offset
             (int->ptr bases-address : (Ptr i64))
             (shr row-id ast-expr-node-pool-segment-shift))))]
+    (cfg
+      ast-generation-poison
+      (ast-expr-row-poison-check!
+        (+ biased-base (* row-id (ast-expr-node-bytes)))))
     (unsafe
       (ptr-read
         (int->ptr
@@ -7047,6 +7092,9 @@
 ;; Hooks for child kinds a walker does not visit.
 (defmacro (ast-child-unit [_ignored : Expr ...]) : Expr
   `unit)
+
+(defmacro (ast-child-false [_ignored : Expr ...]) : Expr
+  `false)
 
 (defmacro (ast-fold-1
   [combine : Expr]
@@ -10641,25 +10689,40 @@
 ;; lengths taken before the expansion, which bounds one copy-out to the nodes
 ;; that expansion actually created.
 ;;
-;; `persist-in-place` changes what happens to an id AT OR ABOVE the expression
-;; base. Normally the walk pushes a rebuilt row at the pool tail and returns the
-;; new id. In persist mode it rebuilds the row's out-of-line payloads in the
-;; destination arena and writes the row back to the SAME id, returning that id
-;; unchanged: the pool does not grow at all. That is sound exactly because an id
-;; at or above the base was created by the caller's own transient scope -- no
-;; committed structure can reference it yet -- so overwriting it with an
-;; equal-valued, destination-owned copy is unobservable. `expr-map` degrades to
-;; a visited set (1 = already persisted), which is what stops a shared subgraph
-;; from being walked, or re-entered, twice.
+;; The mode decides what happens to an id AT OR ABOVE the expression base.
+;;
+;; - Copy pushes a rebuilt row at the pool tail and returns the new id.
+;; - Persist rebuilds the row's out-of-line payloads in the destination arena
+;;   and writes the row back to the SAME id, returning that id unchanged: the
+;;   pool does not grow at all. That is sound exactly because an id at or above
+;;   the base was created by the caller's own transient scope -- no committed
+;;   structure can reference it yet -- so overwriting it with an equal-valued,
+;;   destination-owned copy is unobservable. `expr-map` degrades to a visited
+;;   set (1 = already persisted), which is what stops a shared subgraph from
+;;   being walked, or re-entered, twice.
+;; - Mark writes nothing. It records the row in that same visited set, then
+;;   every row its children reach and the wrapper that owns its recorded
+;;   source span. A macro generation marks every root before it compacts its
+;;   rows (`ast-expr-generation-compact!`).
+;; - Remap is the walk after that compaction: every row it can reach already
+;;   has its destination in `expr-map`, so it only looks ids up. An unmarked
+;;   row there means the roots were incomplete, and the walk panics.
 ;;
 ;; LOAD-BEARING: both `ast-compaction-remap-expr` (the AstExpr child schema's
 ;; `ast-expr-map-children`) and `ast-compaction-remap-decl` (18 arms for 18
-;; variants) are EXHAUSTIVE matches with NO catch-all arm, and persist mode
+;; variants) are EXHAUSTIVE matches with NO catch-all arm, and every mode
 ;; inherits that property because it reuses those two walks rather than
-;; duplicating them. A new variant added to either enum breaks this file at
-;; build time. Do not add a `[_ ...]` arm to
+;; duplicating them. Mark reaches child rows through the same schema's
+;; `ast-expr-for-each-child`. A new variant added to either enum breaks this
+;; file at build time. Do not add a `[_ ...]` arm to
 ;; either match: a variant that fell through would silently keep a payload in
 ;; the caller's transient arena, and the failure mode is a use-after-free.
+(defenum AstCompactionMode
+  (CompactionCopy)
+  (CompactionPersist)
+  (CompactionMark)
+  (CompactionRemap))
+
 (defstruct AstProgramCompactionRemap
   (source-pools AstNodePoolContext)
   (dest-pools AstNodePoolContext)
@@ -10674,10 +10737,47 @@
   (source-expr-bases i64)
   (shared-expr-base i64)
   (shared-type-base i64)
-  (persist-in-place bool)
+  (mode AstCompactionMode)
+  ;; The source pool's span sidecar, read once per walk, which Mark follows
+  ;; from a reached row to the wrapper owning its source span.
+  (source-span-slot-bases i64)
+  (source-canonical-records i64)
+  (source-canonical-count i64)
+  (source-respan-records i64)
+  (source-respan-count i64)
   ;; Two String slots owned by the compaction entry point: the last generated
   ;; identity key seen and its destination copy (ast-compaction-copy-generated-key).
   (generated-key-cache-address u64))
+
+(define (ast-compaction-remap-new
+  [source-pools : AstNodePoolContext]
+  [dest-pools : AstNodePoolContext]
+  [expr-map-address : u64]
+  [expr-forwarding-slots : i64]
+  [type-map-address : u64]
+  [shared-expr-base : i64]
+  [shared-type-base : i64]
+  [mode : AstCompactionMode]
+  [generated-key-cache-address : u64]) : AstProgramCompactionRemap
+  (let
+    [source : AstExprNodePoolState
+      (ast-expr-pool-cell-read source-pools.expr-pool)]
+    (AstProgramCompactionRemap
+      source-pools
+      dest-pools
+      expr-map-address
+      expr-forwarding-slots
+      type-map-address
+      source.segment-bases
+      shared-expr-base
+      shared-type-base
+      mode
+      source.span-slot-segment-bases
+      source.canonical-span-records
+      source.canonical-span-count
+      source.respan-records
+      source.respan-count
+      generated-key-cache-address)))
 
 ;; Return the backing address, not the address of the dynamic-array descriptor.
 ;; Compaction maps are allocated at their final length, never grow, and remain
@@ -11392,48 +11492,98 @@
         [cached : i32
           (unsafe
             (ptr-read slot))]
-        [persist? : bool remap.persist-in-place]
         (if (> cached 0)
-          (if persist?
-            id
-            (cast (- cached 1) : i64))
-          (if persist?
-            ;; Mark BEFORE descending: a shared subgraph reached twice must
-            ;; return its id on the second visit rather than rebuild, and a
-            ;; re-entrant edge must not recurse forever. The direct source-row
-            ;; view remains valid while descendants rewrite other rows because
-            ;; segments never relocate. A re-entrant edge observes this mark
-            ;; and returns without rewriting its ancestor; only after the
-            ;; exhaustive walk has produced `owned-expr` do we rewrite this
-            ;; exact row and end the view.
-            (let
-              [_mark : unit
-                (begin
-                  (unsafe
-                    (ptr-write! slot (cast 1 : i32)))
-                  (cfg
-                    compile-profile
-                    (ast-compaction-profile-note-survivor-expr!)))]
-              [owned-expr : AstExpr
-                (ast-compaction-remap-expr
-                  remap
-                  (ast-expr-segment-bases-shared-view
-                    remap.source-expr-bases
-                    id))]
-              (ast-compaction-remap-dest-expr-set! remap id owned-expr)
-              id)
-            (let
-              [new-expr : AstExpr
-                (ast-compaction-remap-expr
-                  remap
-                  (ast-expr-segment-bases-shared-view
-                    remap.source-expr-bases
-                    id))]
-              [new-id : i64
-                (ast-compaction-remap-dest-expr-push remap new-expr)]
+          (match remap.mode
+            [(or (CompactionCopy) (CompactionRemap)) (cast (- cached 1) : i64)]
+            [(or (CompactionPersist) (CompactionMark)) id])
+          (match remap.mode
+            [(CompactionPersist)
+              ;; Mark BEFORE descending: a shared subgraph reached twice must
+              ;; return its id on the second visit rather than rebuild, and a
+              ;; re-entrant edge must not recurse forever. The direct
+              ;; source-row view remains valid while descendants rewrite other
+              ;; rows because segments never relocate. A re-entrant edge
+              ;; observes this mark and returns without rewriting its
+              ;; ancestor; only after the exhaustive walk has produced
+              ;; `owned-expr` do we rewrite this exact row and end the view.
+              (let
+                [_mark : unit
+                  (begin
+                    (unsafe
+                      (ptr-write! slot (cast 1 : i32)))
+                    (cfg
+                      compile-profile
+                      (ast-compaction-profile-note-survivor-expr!)))]
+                [owned-expr : AstExpr
+                  (ast-compaction-remap-expr
+                    remap
+                    (ast-expr-segment-bases-shared-view
+                      remap.source-expr-bases
+                      id))]
+                (ast-compaction-remap-dest-expr-set! remap id owned-expr)
+                id)]
+            [(CompactionCopy)
+              (let
+                [new-expr : AstExpr
+                  (ast-compaction-remap-expr
+                    remap
+                    (ast-expr-segment-bases-shared-view
+                      remap.source-expr-bases
+                      id))]
+                [new-id : i64
+                  (ast-compaction-remap-dest-expr-push remap new-expr)]
+                (unsafe
+                  (ptr-write! slot (cast (+ new-id 1) : i32)))
+                new-id)]
+            [(CompactionMark)
+              ;; Marked before descending, for the reason Persist gives.
               (unsafe
-                (ptr-write! slot (cast (+ new-id 1) : i32)))
-              new-id)))))))
+                (ptr-write! slot (cast 1 : i32)))
+              (cfg compile-profile (ast-compaction-profile-note-survivor-expr!))
+              (ast-expr-for-each-child
+                (ast-expr-segment-bases-shared-view remap.source-expr-bases id)
+                ast-compaction-mark-child
+                ast-child-unit
+                ast-child-unit
+                ast-child-unit
+                remap)
+              ;; A span read through this row resolves to its owner's record,
+              ;; and that wrapper may be reachable from nothing else.
+              (let
+                [owner : i64 (ast-compaction-source-owner remap id)]
+                (when (>= owner base) (ast-compaction-mark-child remap owner)))
+              id]
+            [(CompactionRemap)
+              (io.panic "AST generation compaction reached an unmarked row")
+              id]))))))
+
+;: Mark-mode hook for one child id.
+(define (ast-compaction-mark-child
+  [remap : (& remap AstProgramCompactionRemap)]
+  [id : i64]) : unit
+  (ast-compaction-remap-expr-id remap id)
+  unit)
+
+;: The row owning `id`'s recorded source span in the remap's source pool, as
+;: `ast-node-pool-context-expr-source-owner` resolves it, or -1.
+(define (ast-compaction-source-owner
+  [remap : (& remap AstProgramCompactionRemap)]
+  [id : i64]) : i64
+  (let
+    [slot : i64
+      (ast-expr-span-slot-get-from-bases remap.source-span-slot-bases id)]
+    (cond
+      [(and (> slot 0) (<= slot remap.source-canonical-count))
+        (ast-expr-packed-span-record-node
+          remap.source-canonical-records
+          (- slot 1)
+          1)]
+      [(and (< slot 0) (<= (- 0 slot) remap.source-respan-count))
+        (ast-expr-packed-span-record-node
+          remap.source-respan-records
+          (- (- 0 slot) 1)
+          0)]
+      [else -1])))
 
 (define (ast-string-same-storage? [left : (& left str)] [right : (& right str)]) : bool
   (and
@@ -11658,7 +11808,7 @@
         (ast-node-pool-context-type-len source-pools))]
     [key-cache : (Array String 2) (array "" "")]
     [remap : AstProgramCompactionRemap
-      (AstProgramCompactionRemap
+      (ast-compaction-remap-new
         source-pools
         dest-pools
         (ast-i32-array-address expr-map)
@@ -11668,10 +11818,9 @@
             span-slot-segment-bases)
           0)
         (ast-i32-array-address type-map)
-        (ast-node-pool-context-expr-segment-bases source-pools)
         0
         0
-        false
+        CompactionCopy
         (unsafe
           (ptr->int (__tl_array-data key-cache))))]
     [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
@@ -11748,7 +11897,7 @@
         shared-type-base
         (ast-i32-array-address expr-map)
         (ast-i32-array-address type-map)
-        false)]
+        CompactionCopy)]
     (unsafe
       (arena.tl_arena_destroy map-arena))
     out))
@@ -11761,11 +11910,16 @@
 ;: Their addresses point directly at fixed-length backing storage and must stay
 ;: valid until this copy and every escape-persistence walk using the maps ends.
 ;:
-;: With `persist-in-place`, expression rows at or above `shared-expr-base` are
-;: rewritten in place instead of appended, so `dest-pools` does not grow and
-;: every id in `program` survives unchanged. Only a caller that owns those ids
-;: outright -- because its own transient scope created them and nothing
-;: committed can reference them yet -- may pass true.
+;: `mode` is CompactionCopy for that. With CompactionPersist, expression rows at
+;: or above `shared-expr-base` are rewritten in place instead of appended, so
+;: `dest-pools` does not grow and every id in `program` survives unchanged.
+;: Only a caller that owns those ids outright -- because its own transient
+;: scope created them and nothing committed can reference them yet -- may
+;: persist. Such a caller may instead mark the program's rows
+;: (CompactionMark), compact them, and then remap the program
+;: (CompactionRemap); see `ast-expr-generation-compact!`. A Mark walk writes
+;: nothing to `dest-pools`: it builds its discarded copy in the caller's
+;: current arena.
 (define (ast-program-copy-append-above-with-maps
   [source-pools : AstNodePoolContext]
   [dest-pools : AstNodePoolContext]
@@ -11774,24 +11928,26 @@
   [shared-type-base : i64]
   [expr-map-address : u64]
   [type-map-address : u64]
-  [persist-in-place : bool]) : AstProgramCompaction
+  [mode : AstCompactionMode]) : AstProgramCompaction
   (let
     [prev-arena : i64 (arena.tl_arena_current)]
     [key-cache : (Array String 2) (array "" "")]
     [remap : AstProgramCompactionRemap
-      (AstProgramCompactionRemap
+      (ast-compaction-remap-new
         source-pools
         dest-pools
         expr-map-address
         0
         type-map-address
-        (ast-node-pool-context-expr-segment-bases source-pools)
         shared-expr-base
         shared-type-base
-        persist-in-place
+        mode
         (unsafe
           (ptr->int (__tl_array-data key-cache))))]
-    [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
+    [dest-arena : i64
+      (match mode
+        [(CompactionMark) prev-arena]
+        [_ (ast-node-pool-context-base-arena dest-pools)])]
     [out-program : AstProgram
       (begin
         (unsafe
@@ -11813,6 +11969,550 @@
   [dest-pools : AstNodePoolContext]
   [program : (& AstProgram)]) : AstProgramCompaction
   (ast-program-copy-append-above-with-pools source-pools dest-pools program 0 0))
+
+;; Macro generation compaction (#9224).
+;;
+;; A firing declaration's macro expansion runs in its own arena generation
+;; (`macro-expand-decl-with-path-in-generation`), and every expression row it
+;; pushes is at or above the pool length it entered with. Only the rows that
+;; its result and recorded memo entries reach outlive it; its superseded
+;; intermediate forms are most of the rest. Compaction moves the survivors
+;; down over them so that the next expansion reuses those rows instead of
+;; growing the pool.
+;;
+;; The roots are everything the generation can publish: its result and memo
+;; entries (marked by CompactionMark walks), the owner of each span record it
+;; appended for a semantic node in the prefix, and the children of each prefix
+;; row it rewrote in place. Marking also follows every reached row's span slot
+;; to the wrapper owning that span. Destinations are dense and in ascending old
+;; id order, so each row lands at or below its source after every row it could
+;; overwrite has been read. Span records appended during the generation move
+;; with their owners in the same order, which keeps canonical first-write order
+;; and the records' monotonic flag; the prefix keeps its ids, slots and
+;; records. A generation whose ownership cannot be proven -- the installed pool
+;; or its span records changed under it, it nested another generation, or it
+;; rewrote more prefix rows than the journal holds -- is persisted in place
+;; instead (`ast-expr-generation-compactable?`).
+(defstruct AstExprGenerationEntry
+  (segment-bases i64)
+  (count i64)
+  (canonical-span-count i64)
+  (respan-count i64))
+
+;: Open a macro generation over the installed pool: the rows from its current
+;: length on belong to the generation.
+(define (ast-expr-generation-enter!) : AstExprGenerationEntry
+  (if (> ast-node-generation-depth 0)
+    (set! ast-node-generation-unprovable? true)
+    (begin
+      (set! ast-node-generation-unprovable? false)
+      (set! ast-node-generation-journal-len 0)))
+  (+= ast-node-generation-depth 1)
+  (set! ast-node-generation-floor ast-node-pool-count)
+  (AstExprGenerationEntry
+    ast-node-pool-segment-bases
+    ast-node-pool-count
+    ast-node-canonical-span-count
+    ast-node-respan-count))
+
+;: Close the innermost generation once its expansion returns; true when
+;: nothing so far made its ownership unprovable.
+(define (ast-expr-generation-leave!) : bool
+  (-= ast-node-generation-depth 1)
+  (set! ast-node-generation-floor 0)
+  (not ast-node-generation-unprovable?))
+
+;: Every record in [first, last) of TABLE has its owner (id OWNER-OFFSET) in
+;: [base, end) and its other id in [0, end).
+(define (ast-expr-generation-records-owned?
+  [table : i64]
+  [first : i64]
+  [last : i64]
+  [owner-offset : i64]
+  [base : i64]
+  [end : i64]) : bool
+  (let
+    [ok : bool true]
+    [index : i64 first]
+    (while (and ok (< index last))
+      (let
+        [owner : i64
+          (ast-expr-packed-span-record-node table index owner-offset)]
+        [other : i64
+          (ast-expr-packed-span-record-node table index (- 1 owner-offset))]
+        (set! ok (and (>= owner base) (< owner end) (>= other 0) (< other end))))
+      (+= index 1))
+    ok))
+
+;: Whether `pools` is still the pool `entry` opened, with every span record
+;: appended since then owned by one of the generation's rows.
+(define (ast-expr-generation-compactable?
+  [pools : (& pools AstNodePoolContext)]
+  [entry : (& entry AstExprGenerationEntry)]) : bool
+  (let
+    [pool : AstExprNodePoolState (ast-expr-pool-cell-read pools.expr-pool)]
+    [base : i64 entry.count]
+    [end : i64 pool.count]
+    (and
+      (= pool.segment-bases entry.segment-bases)
+      (>= end base)
+      (>= pool.canonical-span-count entry.canonical-span-count)
+      (>= pool.respan-count entry.respan-count)
+      (ast-expr-generation-records-owned?
+        pool.canonical-span-records
+        entry.canonical-span-count
+        pool.canonical-span-count
+        1
+        base
+        end)
+      (ast-expr-generation-records-owned?
+        pool.respan-records
+        entry.respan-count
+        pool.respan-count
+        0
+        base
+        end))))
+
+;: Whether journaled prefix row `index` comes first in the journal, so that it
+;: is remapped exactly once.
+(define (ast-expr-generation-journal-first? [index : i64]) : bool
+  (let
+    [id : i64 (array-ref ast-node-generation-journal index)]
+    [first? : bool true]
+    (for [earlier (iterator.range 0 index)]
+      (when
+        (= (array-ref ast-node-generation-journal earlier) id)
+        (set! first? false)))
+    first?))
+
+(define (ast-expr-generation-child-above? [base : i64] [id : i64]) : bool
+  (>= id base))
+
+;: Mark a generation's roots besides its published program and memo entries:
+;: the owner of each span record it appended for a prefix semantic node, and
+;: the children of each prefix row it rewrote in place.
+(define (ast-expr-generation-mark-roots!
+  [pools : AstNodePoolContext]
+  [entry : (& entry AstExprGenerationEntry)]
+  [expr-map-address : u64]
+  [type-map-address : u64]
+  [shared-type-base : i64]) : unit
+  (let
+    [key-cache : (Array String 2) (array "" "")]
+    [remap : AstProgramCompactionRemap
+      (ast-compaction-remap-new
+        pools
+        pools
+        expr-map-address
+        0
+        type-map-address
+        entry.count
+        shared-type-base
+        CompactionMark
+        (unsafe
+          (ptr->int (__tl_array-data key-cache))))]
+    [base : i64 entry.count]
+    (for [index
+      (iterator.range entry.canonical-span-count remap.source-canonical-count)]
+      (when
+        (<
+          (ast-expr-packed-span-record-node
+            remap.source-canonical-records
+            index
+            0)
+          base)
+        (ast-compaction-mark-child
+          (& remap)
+          (ast-expr-packed-span-record-node
+            remap.source-canonical-records
+            index
+            1))))
+    (for [index (iterator.range 0 ast-node-generation-journal-len)]
+      (ast-expr-for-each-child
+        (ast-expr-segment-bases-shared-view
+          remap.source-expr-bases
+          (array-ref ast-node-generation-journal index))
+        ast-compaction-mark-child
+        ast-child-unit
+        ast-child-unit
+        ast-child-unit
+        (& remap)))))
+
+;: Give every marked row in the N map cells its destination from DEST-BASE, in
+;: order, stored as id + 1. Returns how many rows survive.
+(define (ast-expr-generation-assign!
+  [expr-map-address : u64]
+  [n : i64]
+  [dest-base : i64]) : i64
+  (let
+    [kept : i64 0]
+    (for [index (iterator.range 0 n)]
+      (when
+        (> (ast-compaction-map-ref expr-map-address index) 0)
+        (ast-compaction-map-set!
+          expr-map-address
+          index
+          (cast (+ (+ dest-base kept) 1) : i32))
+        (+= kept 1)))
+    kept))
+
+;: An id after compaction: unchanged below BASE, otherwise its destination, or
+;: -1 for a retired row.
+(define (ast-expr-generation-id
+  [expr-map-address : u64]
+  [base : i64]
+  [id : i64]) : i64
+  (if (< id base)
+    id
+    (- (cast (ast-compaction-map-ref expr-map-address (- id base)) : i64) 1)))
+
+;: Choose which records in [first, last) of TABLE survive -- those whose owner
+;: (id OWNER-OFFSET) survives and whose other id still names a row -- and give
+;: them destinations from DEST-FIRST, in order. DEST holds each record's
+;: destination + 1, or 0. Returns how many survive.
+(define (ast-expr-generation-assign-records!
+  [table : i64]
+  [first : i64]
+  [last : i64]
+  [owner-offset : i64]
+  [expr-map-address : u64]
+  [base : i64]
+  [dest : (&mut dest (__tl_dyn-array i32))]
+  [dest-first : i64]) : i64
+  (let
+    [kept : i64 0]
+    (for [index (iterator.range first last)]
+      (let
+        [owner : i64
+          (ast-expr-generation-id
+            expr-map-address
+            base
+            (ast-expr-packed-span-record-node table index owner-offset))]
+        [other : i64
+          (ast-expr-generation-id
+            expr-map-address
+            base
+            (ast-expr-packed-span-record-node table index (- 1 owner-offset)))]
+        (if (and (>= owner 0) (>= other 0))
+          (begin
+            (set!
+              (array-ref dest (- index first))
+              (cast (+ (+ dest-first kept) 1) : i32))
+            (+= kept 1))
+          (set! (array-ref dest (- index first)) (cast 0 : i32)))))
+    kept))
+
+;: Move the surviving records of one table to their destinations, with both
+;: ids remapped. Destinations ascend and never pass their sources.
+(define (ast-expr-generation-move-records!
+  [table : i64]
+  [first : i64]
+  [last : i64]
+  [expr-map-address : u64]
+  [base : i64]
+  [dest : (& dest (__tl_dyn-array i32))]) : unit
+  (for [index (iterator.range first last)]
+    (let
+      [target : i64 (cast (array-ref dest (- index first)) : i64)]
+      (when
+        (> target 0)
+        (let
+          [record : AstExprCanonicalSpanRecord
+            (ast-expr-canonical-record-get table index)]
+          (ast-expr-canonical-record-set!
+            table
+            (- target 1)
+            (AstExprCanonicalSpanRecord
+              (cast
+                (ast-expr-generation-id
+                  expr-map-address
+                  base
+                  (cast record.semantic-node : i64))
+                : i32)
+              (cast
+                (ast-expr-generation-id
+                  expr-map-address
+                  base
+                  (cast record.owner-node : i64))
+                : i32)
+              record.span)))))))
+
+;: A surviving row's span slot after its records moved: prefix records keep
+;: their index, generation records take their destination, and a slot naming
+;: a retired or stale record is cleared.
+(define (ast-expr-generation-slot
+  [slot : i64]
+  [canonical-first : i64]
+  [canonical-last : i64]
+  [canonical-dest : (& canonical-dest (__tl_dyn-array i32))]
+  [respan-first : i64]
+  [respan-last : i64]
+  [respan-dest : (& respan-dest (__tl_dyn-array i32))]) : i64
+  (cond
+    [(> slot 0)
+      (let
+        [index : i64 (- slot 1)]
+        (cond
+          [(< index canonical-first) slot]
+          [(< index canonical-last)
+            (cast (array-ref canonical-dest (- index canonical-first)) : i64)]
+          [else 0]))]
+    [(< slot 0)
+      (let
+        [index : i64 (- (- 0 slot) 1)]
+        (cond
+          [(< index respan-first) slot]
+          [(< index respan-last)
+            (- 0 (cast (array-ref respan-dest (- index respan-first)) : i64))]
+          [else 0]))]
+    [else 0]))
+
+;: Compact the generation `entry` opened, once every root has been marked in
+;: `expr-map` (CompactionMark walks and `ast-expr-generation-mark-roots!`).
+;: Marked rows move to dense destinations in ascending id order, each recorded
+;: in the map as id + 1 for the CompactionRemap walks that then republish the
+;: result and memo entries; rewritten prefix rows are remapped here. The other
+;: rows are retired. Poison-checking builds append the survivors above the
+;: pool instead and poison every row the generation used, so that reading
+;: any of them through a stale id fails.
+(define (ast-expr-generation-compact!
+  [pools : AstNodePoolContext]
+  [entry : (& entry AstExprGenerationEntry)]
+  [expr-map-address : u64]
+  [type-map-address : u64]
+  [shared-type-base : i64]) : unit
+  (let
+    [poison? : bool (cfg ast-generation-poison true false)]
+    [pool : AstExprNodePoolState (ast-expr-pool-cell-read pools.expr-pool)]
+    [base : i64 entry.count]
+    [end : i64 pool.count]
+    [canonical-first : i64 entry.canonical-span-count]
+    [canonical-last : i64 pool.canonical-span-count]
+    [respan-first : i64 entry.respan-count]
+    [respan-last : i64 pool.respan-count]
+    [dest-base : i64
+      (if poison?
+        end
+        base)]
+    [canonical-dest-first : i64
+      (if poison?
+        canonical-last
+        canonical-first)]
+    [respan-dest-first : i64
+      (if poison?
+        respan-last
+        respan-first)]
+    [kept : i64
+      (ast-expr-generation-assign! expr-map-address (- end base) dest-base)]
+    [canonical-dest : (__tl_dyn-array i32)
+      (__tl_make-array i32 (+ (- canonical-last canonical-first) 1))]
+    [respan-dest : (__tl_dyn-array i32)
+      (__tl_make-array i32 (+ (- respan-last respan-first) 1))]
+    [canonical-kept : i64
+      (ast-expr-generation-assign-records!
+        pool.canonical-span-records
+        canonical-first
+        canonical-last
+        1
+        expr-map-address
+        base
+        (&mut canonical-dest)
+        canonical-dest-first)]
+    [respan-kept : i64
+      (ast-expr-generation-assign-records!
+        pool.respan-records
+        respan-first
+        respan-last
+        0
+        expr-map-address
+        base
+        (&mut respan-dest)
+        respan-dest-first)]
+    [key-cache : (Array String 2) (array "" "")]
+    [remap : AstProgramCompactionRemap
+      (ast-compaction-remap-new
+        pools
+        pools
+        expr-map-address
+        0
+        type-map-address
+        base
+        shared-type-base
+        CompactionRemap
+        (unsafe
+          (ptr->int (__tl_array-data key-cache))))]
+    [caller-arena : i64 (arena.tl_arena_current)]
+    (when
+      poison?
+      (let
+        [cell : (__tl_dyn-array AstExprNodePoolState)
+          (ast-expr-pool-cell pools.expr-pool)]
+        (while (<
+          (ast-expr-node-pool-state-capacity (& (array-ref cell 0)))
+          (+ end kept))
+          (ast-expr-node-pool-state-grow-in-place! (&mut (array-ref cell 0))))
+        (when
+          (> canonical-kept 0)
+          (ast-expr-span-table-ensure!
+            pool.canonical-span-records
+            pool.base-arena
+            (- (+ canonical-dest-first canonical-kept) 1)))
+        (when
+          (> respan-kept 0)
+          (ast-expr-span-table-ensure!
+            pool.respan-records
+            pool.base-arena
+            (- (+ respan-dest-first respan-kept) 1)))))
+    (let
+      [grown : AstExprNodePoolState (ast-expr-pool-cell-read pools.expr-pool)]
+      (ast-expr-generation-move-records!
+        grown.canonical-span-records
+        canonical-first
+        canonical-last
+        expr-map-address
+        base
+        (& canonical-dest))
+      (ast-expr-generation-move-records!
+        grown.respan-records
+        respan-first
+        respan-last
+        expr-map-address
+        base
+        (& respan-dest))
+      ;; Payloads are rebuilt into the pool's base arena, as Persist does.
+      (unsafe
+        (arena.tl_arena_set grown.base-arena))
+      (for [index (iterator.range 0 (- end base))]
+        (let
+          [target : i64
+            (cast (ast-compaction-map-ref expr-map-address index) : i64)]
+          (when
+            (> target 0)
+            (let
+              [id : i64 (+ base index)]
+              [slot : i64
+                (ast-expr-span-slot-get-from-bases
+                  grown.span-slot-segment-bases
+                  id)]
+              [owned : AstExpr
+                (ast-compaction-remap-expr
+                  (& remap)
+                  (ast-expr-segment-bases-shared-view grown.segment-bases id))]
+              (ast-expr-node-pool-state-write-row! (& grown) (- target 1) owned)
+              (ast-expr-span-slot-set-in-bases!
+                grown.span-slot-segment-bases
+                (- target 1)
+                (ast-expr-generation-slot
+                  slot
+                  canonical-first
+                  canonical-last
+                  (& canonical-dest)
+                  respan-first
+                  respan-last
+                  (& respan-dest)))))))
+      ;; A prefix semantic node whose canonical span this generation recorded
+      ;; follows that record.
+      (for [index (iterator.range canonical-first canonical-last)]
+        (let
+          [target : i64
+            (cast (array-ref canonical-dest (- index canonical-first)) : i64)]
+          [semantic : i64
+            (ast-expr-packed-span-record-node
+              grown.canonical-span-records
+              (if (> target 0)
+                (- target 1)
+                index)
+              0)]
+          (when
+            (and
+              (> target 0)
+              (< semantic base)
+              (=
+                (ast-expr-span-slot-get-from-bases
+                  grown.span-slot-segment-bases
+                  semantic)
+                (+ index 1)))
+            (ast-expr-span-slot-set-in-bases!
+              grown.span-slot-segment-bases
+              semantic
+              target))))
+      (for [index (iterator.range 0 ast-node-generation-journal-len)]
+        (let
+          [id : i64 (array-ref ast-node-generation-journal index)]
+          (when
+            (and
+              (ast-expr-generation-journal-first? index)
+              (ast-expr-fold-children
+                (ast-expr-segment-bases-shared-view grown.segment-bases id)
+                ast-fold-or
+                false
+                ast-expr-generation-child-above?
+                ast-child-false
+                ast-child-false
+                ast-child-false
+                base))
+            (let
+              [_prior-slot : i64
+                (ast-expr-node-pool-state-write-row!
+                  (& grown)
+                  id
+                  (ast-compaction-remap-expr
+                    (& remap)
+                    (ast-expr-segment-bases-shared-view grown.segment-bases id)))]
+              unit))))
+      (unsafe
+        (arena.tl_arena_set caller-arena))
+      (for [id
+        (iterator.range
+          (if poison?
+            base
+            (+ base kept))
+          end)]
+        (when poison? (ast-expr-row-poison! grown.segment-bases id))
+        (ast-expr-span-slot-set-in-bases! grown.span-slot-segment-bases id 0))
+      (ast-expr-pool-cell-write!
+        pools.expr-pool
+        (AstExprNodePoolState
+          grown.segment-bases
+          (+ dest-base kept)
+          grown.base-arena
+          grown.storage-arena
+          grown.segment-count
+          grown.span-slot-segment-bases
+          grown.canonical-span-records
+          (+ canonical-dest-first canonical-kept)
+          grown.respan-records
+          (+ respan-dest-first respan-kept)
+          grown.span-records-monotonic?))
+      (ast-node-pool-compat-context-sync-installed!))))
+
+;; Poison-checking builds (`--cfg ast-generation-poison`, a test
+;; configuration) overwrite each expression row a macro generation retires
+;; with this tag, which no AstExpr variant uses, and the row readers panic on
+;; it.
+(define ast-expr-row-poison-tag : i64
+  2125315823)
+
+(define (ast-expr-row-poison-check! [address : i64]) : unit
+  (when
+    (=
+      (unsafe
+        (ptr-read (int->ptr address : (Ptr i64))))
+      ast-expr-row-poison-tag)
+    (io.panic "AST row retired by a macro generation was read")))
+
+(define (ast-expr-row-poison! [segment-bases : i64] [id : i64]) : unit
+  (let
+    [biased-base : i64
+      (unsafe
+        (ptr-read
+          (ptr-offset
+            (int->ptr segment-bases : (Ptr i64))
+            (shr id ast-expr-node-pool-segment-shift))))]
+    (unsafe
+      (ptr-write!
+        (int->ptr (+ biased-base (* id (ast-expr-node-bytes))) : (MutPtr i64))
+        ast-expr-row-poison-tag))))
 
 (define (ast-type-tag [ty : (& AstType)]) : i64
   (match ty

@@ -112605,8 +112605,9 @@
 
 ;; #9224: mark everything the generation publishes -- its result, every memo
 ;; entry its expansion recorded, and the generation's own span/rewrite roots --
-;; then compact its rows. The caller republishes the result and the memo
-;; entries with CompactionRemap walks over the same maps.
+;; then compact its rows. On true, the caller republishes the result and the
+;; memo entries with CompactionRemap walks over the same maps; on false
+;; nothing moved, and it persists them in place.
 (define (macro-decl-generation-compact!
   [state : TcMacroState]
   [pools : ast.AstNodePoolContext]
@@ -112614,9 +112615,10 @@
   [entry : (& entry ast.AstExprGenerationEntry)]
   [shared-type-base : i64]
   [expr-map-address : u64]
-  [type-map-address : u64]) : unit
+  [type-map-address : u64]) : bool
   (let
     [base : i64 entry.count]
+    (ast.ast-expr-generation-mark-start!)
     (match raw
       [(Ok expanded _)
         (let
@@ -112916,16 +112918,14 @@
               macro-state
               macro-decl-generation-escape-overflow))
           (ast.ast-expr-generation-compactable? (& pools) (& generation-entry))
-          (begin
-            (macro-decl-generation-compact!
-              macro-state
-              pools
-              (& raw)
-              (& generation-entry)
-              shared-type-base
-              expr-map-address
-              type-map-address)
-            true))]
+          (macro-decl-generation-compact!
+            macro-state
+            pools
+            (& raw)
+            (& generation-entry)
+            shared-type-base
+            expr-map-address
+            type-map-address))]
       [publish-mode : ast.AstCompactionMode
         (if compacted?
           CompactionRemap

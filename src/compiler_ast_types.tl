@@ -10745,6 +10745,7 @@
   (source-canonical-count i64)
   (source-respan-records i64)
   (source-respan-count i64)
+  (source-expr-count i64)
   ;; Two String slots owned by the compaction entry point: the last generated
   ;; identity key seen and its destination copy (ast-compaction-copy-generated-key).
   (generated-key-cache-address u64))
@@ -10777,6 +10778,7 @@
       source.canonical-span-count
       source.respan-records
       source.respan-count
+      source.count
       generated-key-cache-address)))
 
 ;; Return the backing address, not the address of the dynamic-array descriptor.
@@ -11481,81 +11483,100 @@
   [id : i64]) : i64
   (let
     [base : i64 remap.shared-expr-base]
-    (if (< id base)
-      (begin
+    (cond
+      [(< id base)
         (cfg compile-profile (ast-compaction-profile-note-source-expr!))
-        id)
-      (let
-        ;; Both map storage and source span segments stay fixed across the
-        ;; recursive walk; retain this exact slot through its eventual write.
-        [slot : (MutPtr i32) (ast-compaction-expr-map-slot remap (- id base))]
-        [cached : i32
-          (unsafe
-            (ptr-read slot))]
-        (if (> cached 0)
-          (match remap.mode
-            [(or (CompactionCopy) (CompactionRemap)) (cast (- cached 1) : i64)]
-            [(or (CompactionPersist) (CompactionMark)) id])
-          (match remap.mode
-            [(CompactionPersist)
-              ;; Mark BEFORE descending: a shared subgraph reached twice must
-              ;; return its id on the second visit rather than rebuild, and a
-              ;; re-entrant edge must not recurse forever. The direct
-              ;; source-row view remains valid while descendants rewrite other
-              ;; rows because segments never relocate. A re-entrant edge
-              ;; observes this mark and returns without rewriting its
-              ;; ancestor; only after the exhaustive walk has produced
-              ;; `owned-expr` do we rewrite this exact row and end the view.
-              (let
-                [_mark : unit
-                  (begin
-                    (unsafe
-                      (ptr-write! slot (cast 1 : i32)))
-                    (cfg
-                      compile-profile
-                      (ast-compaction-profile-note-survivor-expr!)))]
-                [owned-expr : AstExpr
-                  (ast-compaction-remap-expr
-                    remap
-                    (ast-expr-segment-bases-shared-view
-                      remap.source-expr-bases
-                      id))]
-                (ast-compaction-remap-dest-expr-set! remap id owned-expr)
-                id)]
-            [(CompactionCopy)
-              (let
-                [new-expr : AstExpr
-                  (ast-compaction-remap-expr
-                    remap
-                    (ast-expr-segment-bases-shared-view
-                      remap.source-expr-bases
-                      id))]
-                [new-id : i64
-                  (ast-compaction-remap-dest-expr-push remap new-expr)]
+        id]
+      ;; A reference past the pool's end names no row the generation owns.
+      ;; Marking stops there and reports it; the caller then persists in place.
+      [(and
+        (>= id remap.source-expr-count)
+        (match remap.mode
+          [(CompactionMark) true]
+          [_ false]))
+        (set! ast-compaction-mark-outside? true)
+        id]
+      [else
+        (let
+          ;; Both map storage and source span segments stay fixed across the
+          ;; recursive walk; retain this exact slot through its eventual write.
+          [slot : (MutPtr i32) (ast-compaction-expr-map-slot remap (- id base))]
+          [cached : i32
+            (unsafe
+              (ptr-read slot))]
+          (if (> cached 0)
+            (match remap.mode
+              [(or (CompactionCopy) (CompactionRemap))
+                (cast (- cached 1) : i64)]
+              [(or (CompactionPersist) (CompactionMark)) id])
+            (match remap.mode
+              [(CompactionPersist)
+                ;; Mark BEFORE descending: a shared subgraph reached twice must
+                ;; return its id on the second visit rather than rebuild, and a
+                ;; re-entrant edge must not recurse forever. The direct
+                ;; source-row view remains valid while descendants rewrite other
+                ;; rows because segments never relocate. A re-entrant edge
+                ;; observes this mark and returns without rewriting its
+                ;; ancestor; only after the exhaustive walk has produced
+                ;; `owned-expr` do we rewrite this exact row and end the view.
+                (let
+                  [_mark : unit
+                    (begin
+                      (unsafe
+                        (ptr-write! slot (cast 1 : i32)))
+                      (cfg
+                        compile-profile
+                        (ast-compaction-profile-note-survivor-expr!)))]
+                  [owned-expr : AstExpr
+                    (ast-compaction-remap-expr
+                      remap
+                      (ast-expr-segment-bases-shared-view
+                        remap.source-expr-bases
+                        id))]
+                  (ast-compaction-remap-dest-expr-set! remap id owned-expr)
+                  id)]
+              [(CompactionCopy)
+                (let
+                  [new-expr : AstExpr
+                    (ast-compaction-remap-expr
+                      remap
+                      (ast-expr-segment-bases-shared-view
+                        remap.source-expr-bases
+                        id))]
+                  [new-id : i64
+                    (ast-compaction-remap-dest-expr-push remap new-expr)]
+                  (unsafe
+                    (ptr-write! slot (cast (+ new-id 1) : i32)))
+                  new-id)]
+              [(CompactionMark)
+                ;; Marked before descending, for the reason Persist gives.
                 (unsafe
-                  (ptr-write! slot (cast (+ new-id 1) : i32)))
-                new-id)]
-            [(CompactionMark)
-              ;; Marked before descending, for the reason Persist gives.
-              (unsafe
-                (ptr-write! slot (cast 1 : i32)))
-              (cfg compile-profile (ast-compaction-profile-note-survivor-expr!))
-              (ast-expr-for-each-child
-                (ast-expr-segment-bases-shared-view remap.source-expr-bases id)
-                ast-compaction-mark-child
-                ast-child-unit
-                ast-child-unit
-                ast-child-unit
-                remap)
-              ;; A span read through this row resolves to its owner's record,
-              ;; and that wrapper may be reachable from nothing else.
-              (let
-                [owner : i64 (ast-compaction-source-owner remap id)]
-                (when (>= owner base) (ast-compaction-mark-child remap owner)))
-              id]
-            [(CompactionRemap)
-              (io.panic "AST generation compaction reached an unmarked row")
-              id]))))))
+                  (ptr-write! slot (cast 1 : i32)))
+                (cfg
+                  compile-profile
+                  (ast-compaction-profile-note-survivor-expr!))
+                (ast-expr-for-each-child
+                  (ast-expr-segment-bases-shared-view
+                    remap.source-expr-bases
+                    id)
+                  ast-compaction-mark-child
+                  ast-child-unit
+                  ast-child-unit
+                  ast-child-unit
+                  remap)
+                ;; A span read through this row resolves to its owner's record,
+                ;; and that wrapper may be reachable from nothing else.
+                (let
+                  [owner : i64 (ast-compaction-source-owner remap id)]
+                  (when (>= owner base) (ast-compaction-mark-child remap owner)))
+                id]
+              [(CompactionRemap)
+                (io.panic "AST generation compaction reached an unmarked row")
+                id])))])))
+
+;; Set by a Mark walk that met an id at or past its source pool's end.
+(define ast-compaction-mark-outside? : bool
+  false)
 
 ;: Mark-mode hook for one child id.
 (define (ast-compaction-mark-child
@@ -12275,7 +12296,38 @@
 ;: rows are retired. Poison-checking builds append the survivors above the
 ;: pool instead and poison every row the generation used, so that reading
 ;: any of them through a stale id fails.
+;:
+;: Returns false instead, with the map cleared for a persist in place, when a
+;: Mark walk since `ast-expr-generation-mark-start!` met an id past the pool's
+;: end: such a reference names no row this generation owns.
 (define (ast-expr-generation-compact!
+  [pools : AstNodePoolContext]
+  [entry : (& entry AstExprGenerationEntry)]
+  [expr-map-address : u64]
+  [type-map-address : u64]
+  [shared-type-base : i64]) : bool
+  (if ast-compaction-mark-outside?
+    (begin
+      (for [index
+        (iterator.range
+          0
+          (- (ast-node-pool-context-expr-len (& pools)) entry.count))]
+        (ast-compaction-map-set! expr-map-address index (cast 0 : i32)))
+      false)
+    (begin
+      (ast-expr-generation-move!
+        pools
+        entry
+        expr-map-address
+        type-map-address
+        shared-type-base)
+      true)))
+
+;: Start marking a generation's roots.
+(define (ast-expr-generation-mark-start!) : unit
+  (set! ast-compaction-mark-outside? false))
+
+(define (ast-expr-generation-move!
   [pools : AstNodePoolContext]
   [entry : (& entry AstExprGenerationEntry)]
   [expr-map-address : u64]

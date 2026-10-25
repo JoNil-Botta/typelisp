@@ -72068,10 +72068,14 @@
                   ;; hold external storage, still points at its caller's
                   ;; storage while it is unreassigned.
                   (and
-                    (not
-                      (lower-type-contains-inline-aggregate?
+                    (match (tc_core.tc-type-strip-region
+                      (tc_core.tc-resolve-type
                         ctx
                         (lower-global-shared-view expected)))
+                      [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)
+                           (ast.AstType.Slice _) (ast.AstType.Str))
+                        true]
+                      [_ false])
                     (lower-tail-call-safe-param-aggregate-arg?
                       ctx
                       state

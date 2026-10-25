@@ -4043,6 +4043,548 @@
               (ast.ast-node-pool-context-expr-span-oracle-ok? out-pools)))])]
     (and tags-ok independent-ok growth-ok reuse-ok installed-ok compacted-ok)))
 
+;; #9224: a macro generation's compaction. These fixtures run the walk's own
+;; sequence over an installed pool: open the generation, push its rows, close
+;; it, mark what it publishes, compact, and republish with Remap walks.
+(define (compiler-ast-generation-literal?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [id : i64]
+  [value : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools id)
+    [(Literal lit) (= (ast.ast-lit-int-value (& lit)) value)]
+    [_ false]))
+
+(define (compiler-ast-generation-if?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [id : i64]
+  [a : i64]
+  [b : i64]
+  [c : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools id)
+    [(If x y z) (and (= x a) (= y b) (= z c))]
+    [_ false]))
+
+(define (compiler-ast-generation-wraps?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [id : i64]
+  [inner : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools id)
+    [(or (Spanned found _) (MacroExpansion found _ _)) (= found inner)]
+    [_ false]))
+
+(define (compiler-ast-generation-list?
+  [pools : (& pools ast.AstNodePoolContext)]
+  [id : i64]
+  [expected : (& expected ast.AstExprList)]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools id)
+    [(Unsafe items)
+      (let
+        [same : bool
+          (= (ast.ast-expr-list-len (& items)) (ast.ast-expr-list-len expected))]
+        (for [index (iterator.range 0 (ast.ast-expr-list-len expected))]
+          (unless
+            (=
+              (ast.ast-expr-list-get (& items) index -1)
+              (ast.ast-expr-list-get expected index -2))
+            (set! same false)))
+        same)]
+    [_ false]))
+
+(define (compiler-ast-generation-ids
+  [first : i64]
+  [rest : (& rest ast.AstExprList)]) : ast.AstExprList
+  (let
+    [ids : ast.AstExprList (ast.ast-expr-list-new)]
+    (ast.ast-expr-list-push (&mut ids) first)
+    (for [index (iterator.range 0 (ast.ast-expr-list-len rest))]
+      (ast.ast-expr-list-push (&mut ids) (ast.ast-expr-list-get rest index -1)))
+    ids))
+
+(define (compiler-ast-generation-program [body : i64]) : ast.AstProgram
+  (ast.ast-program
+    (ast.ast-decl-cons
+      (& (ast.ast-decl-def-id (ci.intern-generated-name "generation") No body))
+      (& (ast.ast-decl-list-new)))))
+
+(define (compiler-ast-generation-body [program : ast.AstProgram]) : i64
+  (match program
+    [(Program decls-box)
+      (match (ast.ast-decl-list-get
+        (& (deref decls-box))
+        0
+        (ast.ast-decl-fallback))
+        [(Def _ _ _ body) body]
+        [_ -1])]))
+
+;: Close the generation `entry` opened over the installed pool the way the
+;: macro walk does, and return `program` republished.
+(define (compiler-ast-generation-close
+  [entry : (& entry ast.AstExprGenerationEntry)]
+  [program : ast.AstProgram]) : ast.AstProgram
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [_install : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-shared-view (& pools)))]
+    [base : i64 entry.count]
+    [type-base : i64 (ast.ast-node-pool-context-type-len pools)]
+    [expr-map : (__tl_dyn-array i32)
+      (ast.ast-compaction-id-map-create
+        (- (ast.ast-node-pool-context-expr-len pools) base))]
+    [type-map : (__tl_dyn-array i32) (ast.ast-compaction-id-map-create 0)]
+    [expr-map-address : u64 (ast.ast-i32-array-address expr-map)]
+    [type-map-address : u64 (ast.ast-i32-array-address type-map)]
+    [_start : unit (ast.ast-expr-generation-mark-start!)]
+    [_marked : ast.AstProgramCompaction
+      (ast.ast-program-copy-append-above-with-maps
+        pools
+        pools
+        (& program)
+        base
+        type-base
+        expr-map-address
+        type-map-address
+        CompactionMark)]
+    [_roots : unit
+      (ast.ast-expr-generation-mark-roots!
+        pools
+        entry
+        expr-map-address
+        type-map-address
+        type-base)]
+    [compacted? : bool
+      (ast.ast-expr-generation-compact!
+        pools
+        entry
+        expr-map-address
+        type-map-address
+        type-base)]
+    (match (ast.ast-program-copy-append-above-with-maps
+      pools
+      pools
+      (& program)
+      base
+      type-base
+      expr-map-address
+      type-map-address
+      (if compacted?
+        CompactionRemap
+        CompactionPersist))
+      [(AstProgramCompaction out _)
+        (ast.ast-node-pool-context-install! pools)
+        out])))
+
+;; Interior holes, a shared child, a child pushed after its parent, a canonical
+;; owner and an explicit alternate view reachable only through span slots and
+;; nested MacroExpansion wrappers, a wide span, a new canonical owner of a
+;; prefix node, and a prefix row the generation rewrote in place.
+(define (compiler-ast-generation-compaction-smoke?) : bool
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_install : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 8 8))]
+    [p0 : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 100)))]
+    [_p0-view : i64
+      (ast.ast-node-push-active (Spanned p0 (ast.ast-source-span 1 1 1 2)))]
+    [x : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 101)))]
+    [rewritten : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 102)))]
+    [entry : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [g0 : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 0)))]
+    [_g0-view : i64
+      (ast.ast-node-push-active (Spanned g0 (ast.ast-source-span 30 1 30 2)))]
+    [shared : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 1)))]
+    [a : i64 (ast.ast-node-push-active (If shared shared shared))]
+    [_g1 : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 2)))]
+    [forward : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 3)))]
+    [late : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 4)))]
+    [_forward : unit (ast.ast-node-set! forward (If late shared shared))]
+    [semantic : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 5)))]
+    [_owner : i64
+      (ast.ast-node-push-active
+        (Spanned semantic (ast.ast-source-span 10 1 10 2)))]
+    [alternate : i64
+      (ast.ast-node-push-active
+        (Spanned semantic (ast.ast-source-span 11 1 11 2)))]
+    [frame : i64 (ast.ast-node-push-active (MacroExpansion alternate 0 0))]
+    [outer-frame : i64 (ast.ast-node-push-active (MacroExpansion frame 1 1))]
+    [_g2 : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 6)))]
+    [wide-semantic : i64
+      (ast.ast-node-push-active (Literal (ast.ast-lit-int 7)))]
+    [wide : i64
+      (ast.ast-node-push-active
+        (Spanned wide-semantic (ast.ast-source-span 40 70000 40 70005)))]
+    [_prefix-owner : i64
+      (ast.ast-node-push-active (Spanned x (ast.ast-source-span 20 1 20 2)))]
+    [journaled : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 8)))]
+    [_g3 : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 9)))]
+    [body : ast.AstExprList (ast.ast-expr-list-new)]
+    [_body : unit
+      (begin
+        (ast.ast-expr-list-push (&mut body) a)
+        (ast.ast-expr-list-push (&mut body) forward)
+        (ast.ast-expr-list-push (&mut body) outer-frame)
+        (ast.ast-expr-list-push (&mut body) wide))]
+    [root : i64 (ast.ast-node-push-active (Unsafe body))]
+    [_rewrite : unit (ast.ast-node-set! rewritten (If journaled p0 p0))]
+    [provable? : bool (ast.ast-expr-generation-leave!)]
+    [before : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [compactable? : bool
+      (ast.ast-expr-generation-compactable? (& before) (& entry))]
+    [out : ast.AstProgram
+      (compiler-ast-generation-close
+        (& entry)
+        (compiler-ast-generation-program root))]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [expected-rest : ast.AstExprList (ast.ast-expr-list-new)]
+    [_expected : unit
+      (begin
+        (ast.ast-expr-list-push (&mut expected-rest) 6)
+        (ast.ast-expr-list-push (&mut expected-rest) 12)
+        (ast.ast-expr-list-push (&mut expected-rest) 14))]
+    [expected-body : ast.AstExprList
+      (compiler-ast-generation-ids 5 (& expected-rest))]
+    [shape-ok : bool
+      (and
+        provable?
+        compactable?
+        (= entry.count 4)
+        (= root 22)
+        (= (ast.ast-node-pool-context-expr-len pools) 18)
+        (= (compiler-ast-generation-body out) 17)
+        (compiler-ast-generation-list? (& pools) 17 (& expected-body))
+        (compiler-ast-generation-literal? (& pools) 4 1)
+        (compiler-ast-generation-if? (& pools) 5 4 4 4)
+        (compiler-ast-generation-if? (& pools) 6 7 4 4)
+        (compiler-ast-generation-literal? (& pools) 7 4)
+        (compiler-ast-generation-literal? (& pools) 8 5)
+        (compiler-ast-generation-wraps? (& pools) 9 8)
+        (compiler-ast-generation-wraps? (& pools) 10 8)
+        (compiler-ast-generation-wraps? (& pools) 11 10)
+        (compiler-ast-generation-wraps? (& pools) 12 11)
+        (compiler-ast-generation-literal? (& pools) 13 7)
+        (compiler-ast-generation-wraps? (& pools) 14 13)
+        (compiler-ast-generation-wraps? (& pools) 15 x)
+        (compiler-ast-generation-literal? (& pools) 16 8)
+        (compiler-ast-generation-literal? (& pools) p0 100)
+        (compiler-ast-generation-wraps? (& pools) 1 p0)
+        (compiler-ast-generation-literal? (& pools) x 101)
+        (compiler-ast-generation-if? (& pools) rewritten 16 p0 p0))]
+    [span-ok : bool
+      (and
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& pools) 12)
+          11)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& pools) 11)
+          11)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& pools) 10)
+          11)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& pools) 9)
+          10)
+        (compiler-ast-maybe-span-start-line?
+          (ast_tests.ast-node-pool-context-expr-canonical-span pools 8)
+          10)
+        (match (ast.ast-node-pool-context-expr-view-span (& pools) 14)
+          [(Some span)
+            (and
+              (= (ast.ast-source-span-start-line span) 40)
+              (= (ast.ast-source-span-start-col span) 70000))]
+          [(No) false])
+        (compiler-ast-maybe-span-start-line?
+          (ast_tests.ast-node-pool-context-expr-canonical-span pools 13)
+          40)
+        (compiler-ast-maybe-span-start-line?
+          (ast_tests.ast-node-pool-context-expr-canonical-span pools x)
+          20)
+        (compiler-ast-maybe-span-start-line?
+          (ast_tests.ast-node-pool-context-expr-canonical-span pools p0)
+          1)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span (& pools) 1)
+          1)
+        (= (ast.ast-node-pool-context-expr-source-owner (& pools) 8) 9)
+        (= (ast.ast-node-pool-context-expr-source-owner (& pools) 12) 10)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count (& pools)) 4)
+        (= (ast.ast-node-pool-context-expr-respan-count (& pools)) 1)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? (& pools)))]
+    ;; The retired rows are reused by the next push.
+    [reused : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 77)))]
+    [reused-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [reuse-ok : bool
+      (and
+        (= reused 18)
+        (match (ast.ast-node-pool-context-expr-view-span
+          (& reused-pools)
+          reused)
+          [(No) true]
+          [_ false])
+        (ast.ast-node-pool-context-expr-span-oracle-ok? (& reused-pools)))]
+    ;; A rollback into the compacted rows retires their records in order.
+    [_rollback : unit (ast.ast-node-pool-truncate! 10)]
+    [rolled : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [rollback-ok : bool
+      (and
+        (= (ast.ast-node-pool-context-expr-len rolled) 10)
+        (= (ast.ast-node-pool-context-expr-canonical-span-count (& rolled)) 2)
+        (= (ast.ast-node-pool-context-expr-respan-count (& rolled)) 0)
+        (match (ast_tests.ast-node-pool-context-expr-canonical-span rolled x)
+          [(No) true]
+          [_ false])
+        (compiler-ast-maybe-span-start-line?
+          (ast_tests.ast-node-pool-context-expr-canonical-span rolled 8)
+          10)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? (& rolled)))]
+    (ast.ast-node-pool-context-install! previous)
+    (and shape-ok span-ok reuse-ok rollback-ok)))
+
+;; One generation of the repeated fixed shape: a thousand discarded rows and
+;; one survivor, which lands at the generation's base.
+(define (compiler-ast-generation-repeat-once? [generation : i64]) : bool
+  (let
+    [entry : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [_garbage : unit
+      (for [index (iterator.range 0 1000)]
+        (let
+          [_id : i64
+            (ast.ast-node-push-active (Literal (ast.ast-lit-int index)))]
+          unit))]
+    [kept : i64
+      (ast.ast-node-push-active (Literal (ast.ast-lit-int (+ 5000 generation))))]
+    [items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_items : unit (ast.ast-expr-list-push (&mut items) kept)]
+    [root : i64 (ast.ast-node-push-active (Unsafe items))]
+    [provable? : bool (ast.ast-expr-generation-leave!)]
+    [out : ast.AstProgram
+      (compiler-ast-generation-close
+        (& entry)
+        (compiler-ast-generation-program root))]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [expected : ast.AstExprList
+      (compiler-ast-generation-ids entry.count (& (ast.ast-expr-list-new)))]
+    (and
+      provable?
+      (= (ast.ast-node-pool-context-expr-len pools) (+ entry.count 2))
+      (= (compiler-ast-generation-body out) (+ entry.count 1))
+      (compiler-ast-generation-literal?
+        (& pools)
+        entry.count
+        (+ 5000 generation))
+      (compiler-ast-generation-list? (& pools) (+ entry.count 1) (& expected))
+      (ast.ast-node-pool-context-expr-span-oracle-ok? (& pools)))))
+
+;; Retained rows stop growing with the discarded intermediates: forty
+;; generations of 1002 rows fit the pool's first 16384-row segment. An empty
+;; generation and one whose only row survives keep the pool as it is.
+(define (compiler-ast-generation-repeat-smoke?) : bool
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_install : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 8 8))]
+    [prefix : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 0)))]
+    [ok : bool true]
+    [_repeat : unit
+      (for [generation (iterator.range 0 40)]
+        (unless
+          (compiler-ast-generation-repeat-once? generation)
+          (set! ok false)))]
+    [empty : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [_empty-leave : bool (ast.ast-expr-generation-leave!)]
+    [empty-out : ast.AstProgram
+      (compiler-ast-generation-close
+        (& empty)
+        (compiler-ast-generation-program prefix))]
+    [single : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [only : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 9)))]
+    [_single-leave : bool (ast.ast-expr-generation-leave!)]
+    [single-out : ast.AstProgram
+      (compiler-ast-generation-close
+        (& single)
+        (compiler-ast-generation-program only))]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [state : ast.AstExprNodePoolState
+      (ast.ast-expr-pool-cell-read pools.expr-pool)]
+    (ast.ast-node-pool-context-install! previous)
+    (and
+      ok
+      (= empty.count 81)
+      (= (compiler-ast-generation-body empty-out) prefix)
+      (= only 81)
+      (= (compiler-ast-generation-body single-out) 81)
+      (compiler-ast-generation-literal? (& pools) 81 9)
+      (= (ast.ast-node-pool-context-expr-len pools) 82)
+      (= (ast.ast-expr-node-pool-state-capacity (& state)) 16384))))
+
+;; Generations whose ownership cannot be proven are persisted in place.
+(define (compiler-ast-generation-fallback-smoke?) : bool
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_install : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 8 8))]
+    [prefix : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 0)))]
+    ;; A nested generation makes both unprovable; the next one is not.
+    [_outer : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [_inner : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [inner-ok : bool (ast.ast-expr-generation-leave!)]
+    [outer-ok : bool (ast.ast-expr-generation-leave!)]
+    [_next : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [next-ok : bool (ast.ast-expr-generation-leave!)]
+    ;; More prefix rewrites than the journal holds.
+    [_crowded : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [_rewrites : unit
+      (for [index (iterator.range 0 300)]
+        (ast.ast-node-set! prefix (Literal (ast.ast-lit-int index))))]
+    [crowded-ok : bool (ast.ast-expr-generation-leave!)]
+    ;; A pool other than the one the generation entered.
+    [entry : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [other : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [changed-ok : bool
+      (ast.ast-expr-generation-compactable? (& other) (& entry))]
+    [_changed-leave : bool (ast.ast-expr-generation-leave!)]
+    ;; A reference past the pool's end: compaction declines, clears the map,
+    ;; and moves nothing.
+    [outside : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [row : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 1)))]
+    [items : ast.AstExprList
+      (compiler-ast-generation-ids row (& (ast.ast-expr-list-new)))]
+    [_far : unit (ast.ast-expr-list-push (&mut items) (+ row 100))]
+    [root : i64 (ast.ast-node-push-active (Unsafe items))]
+    [_outside-leave : bool (ast.ast-expr-generation-leave!)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [expr-map : (__tl_dyn-array i32) (ast.ast-compaction-id-map-create 2)]
+    [type-map : (__tl_dyn-array i32) (ast.ast-compaction-id-map-create 0)]
+    [expr-map-address : u64 (ast.ast-i32-array-address expr-map)]
+    [type-map-address : u64 (ast.ast-i32-array-address type-map)]
+    [type-base : i64 (ast.ast-node-pool-context-type-len pools)]
+    [_start : unit (ast.ast-expr-generation-mark-start!)]
+    [_marked : ast.AstProgramCompaction
+      (ast.ast-program-copy-append-above-with-maps
+        pools
+        pools
+        (& (compiler-ast-generation-program root))
+        outside.count
+        type-base
+        expr-map-address
+        type-map-address
+        CompactionMark)]
+    [declined? : bool
+      (not
+        (ast.ast-expr-generation-compact!
+          pools
+          (& outside)
+          expr-map-address
+          type-map-address
+          type-base))]
+    [after : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (ast.ast-node-pool-context-install! previous)
+    (and
+      (not inner-ok)
+      (not outer-ok)
+      next-ok
+      (not crowded-ok)
+      (not changed-ok)
+      declined?
+      (= (ast.ast-compaction-map-ref expr-map-address 0) 0)
+      (= (ast.ast-compaction-map-ref expr-map-address 1) 0)
+      (= (ast.ast-node-pool-context-expr-len after) (+ root 1)))))
+
+;; A snapshot taken before a compaction ends in retired rows, so it is never
+;; adopted as the newer state; the compacted pool keeps its length.
+(define (compiler-ast-generation-stale-snapshot-smoke?) : bool
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_install : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 8 8))]
+    [_prefix : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 0)))]
+    [entry : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [_garbage : unit
+      (for [index (iterator.range 0 10)]
+        (let
+          [_id : i64
+            (ast.ast-node-push-active (Literal (ast.ast-lit-int index)))]
+          unit))]
+    [kept : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 42)))]
+    [_leave : bool (ast.ast-expr-generation-leave!)]
+    [stale : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [stale-len : i64 (ast.ast-node-pool-context-expr-len stale)]
+    [_out : ast.AstProgram
+      (compiler-ast-generation-close
+        (& entry)
+        (compiler-ast-generation-program kept))]
+    [live : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [newer? : bool
+      (ast.ast-node-pool-context-expr-newer-than-active? (& stale))]
+    [_adopt : unit (ast.ast-node-pool-context-adopt-newer! live stale)]
+    [_publish : unit (ast.ast-node-pool-context-publish-newer! stale)]
+    [after : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (ast.ast-node-pool-context-install! previous)
+    (and
+      (= stale-len 12)
+      (not newer?)
+      (= (ast.ast-node-pool-context-expr-len live) 2)
+      (= (ast.ast-node-pool-context-expr-len after) 2)
+      (compiler-ast-generation-literal? (& after) 1 42))))
+
+;; Span records cross a segment: the one record a generation keeps among
+;; 66001 ReSpan views moves from segment 1 to the front of segment 0, with its
+;; wide coordinates.
+(define (compiler-ast-generation-record-segments-smoke?) : bool
+  (let
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_install : unit
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 8 8))]
+    [semantic : i64 (ast.ast-node-push-active (Literal (ast.ast-lit-int 0)))]
+    [_canonical : i64
+      (ast.ast-node-push-active
+        (Spanned semantic (ast.ast-source-span 1 1 1 2)))]
+    [entry : ast.AstExprGenerationEntry (ast.ast-expr-generation-enter!)]
+    [_views : unit
+      (for [index (iterator.range 0 66000)]
+        (let
+          [_view : i64
+            (ast.ast-node-push-active
+              (Spanned
+                semantic
+                (ast.ast-source-span (+ index 2) 1 (+ index 2) 2)))]
+          unit))]
+    [kept : i64
+      (ast.ast-node-push-active
+        (Spanned semantic (ast.ast-source-span 99999 5000 99999 5001)))]
+    [respans-before : i64 ast.ast-node-respan-count]
+    [_leave : bool (ast.ast-expr-generation-leave!)]
+    [out : ast.AstProgram
+      (compiler-ast-generation-close
+        (& entry)
+        (compiler-ast-generation-program kept))]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    (ast.ast-node-pool-context-install! previous)
+    (and
+      (= respans-before 66001)
+      (= (compiler-ast-generation-body out) 2)
+      (= (ast.ast-node-pool-context-expr-len pools) 3)
+      (= (ast.ast-node-pool-context-expr-respan-count (& pools)) 1)
+      (= (ast.ast-node-pool-context-expr-source-owner (& pools) 2) 2)
+      (match (ast.ast-node-pool-context-expr-view-span (& pools) 2)
+        [(Some span)
+          (and
+            (= (ast.ast-source-span-start-line span) 99999)
+            (= (ast.ast-source-span-start-col span) 5000))]
+        [(No) false])
+      (ast.ast-node-pool-context-expr-span-oracle-ok? (& pools)))))
+
 (define (main) : i64
   (unless (compiler-ast-spmd-presence-segments?) (return 32))
   (unless
@@ -4087,4 +4629,9 @@
   (unless (compiler-ast-canonical-reserve-smoke?) (return 27))
   (unless (compiler-ast-span-forwarding-smoke?) (return 32))
   (unless (compiler-ast-macro-expansion-alternate-view-smoke?) (return 33))
+  (unless (compiler-ast-generation-compaction-smoke?) (return 34))
+  (unless (compiler-ast-generation-repeat-smoke?) (return 35))
+  (unless (compiler-ast-generation-fallback-smoke?) (return 36))
+  (unless (compiler-ast-generation-stale-snapshot-smoke?) (return 37))
+  (unless (compiler-ast-generation-record-segments-smoke?) (return 38))
   42)

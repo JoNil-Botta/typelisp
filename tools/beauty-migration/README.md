@@ -20,7 +20,7 @@ Every compiler run they start should go under `scripts/run-memory-bounded.sh`.
 - Guards, run before gating a flip PR:
   - `tcoguard.py`, `selftail.py`: no tail jump lost (#9044, #9137, #9183).
   - `nestedpat.py`: no borrowed match with a nested variant pattern (#8905).
-  - `stalerb.py` / `reborrow.py`: no redundant `(& r)` of a value that is already a reference (#9137).
+  - `stalerb.py` (and `../views-residue/reborrow.py`): no redundant `(& r)` of a value that is already a reference (#9137).
 - `cgdiff.py`, `cgtop.py`: compare cachegrind function profiles.
 - `overlap*.sh`, `fnoverlap.py`, `conflictlines.py`: check a branch against open PRs.
 

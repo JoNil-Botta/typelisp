@@ -1,4 +1,5 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_machine_x64 as mx)
 (import stdlib.string)
@@ -227,61 +228,46 @@
   [dst : (&mut dst (__tl_dyn-array CompilerObjectDataRecord))]
   [src : (__tl_dyn-array CompilerObjectDataRecord)]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set!
-        (array-ref dst index)
-        (owned_view.compiler-owned-element-view src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-instr-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectX64Instr))]
   [src : (__tl_dyn-array CompilerObjectX64Instr)]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set!
-        (array-ref dst index)
-        (owned_view.compiler-owned-element-view src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-symbol-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectSymbol))]
   [src : (__tl_dyn-array CompilerObjectSymbol)]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set!
-        (array-ref dst index)
-        (owned_view.compiler-owned-element-view src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-relocation-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectRelocation))]
   [src : (__tl_dyn-array CompilerObjectRelocation)]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set!
-        (array-ref dst index)
-        (owned_view.compiler-owned-element-view src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-section-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectSection))]
   [src : (__tl_dyn-array CompilerObjectSection)]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set!
-        (array-ref dst index)
-        (owned_view.compiler-owned-element-view src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-data-record-builder-grow
   [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordBuilder
@@ -445,7 +431,7 @@
             (compiler-object-symbol-binding-eq? found-binding binding)
             (compiler-object-symbol-kind-eq? found-kind kind))
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (compiler-object-relocation-builder-targets?
@@ -461,7 +447,7 @@
         [(Relocation _ _ _ found-target)
           (if (string.eq found-target target)
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (compiler-object-section-kind-eq?
@@ -644,7 +630,7 @@
           (begin
             (set! result section)
             (set! found true))
-          (set! index (+ index 1)))))
+          (+= index 1))))
     result))
 
 (define (compiler-object-symbol-list-contains?
@@ -664,7 +650,7 @@
             (compiler-object-symbol-binding-eq? found-binding binding)
             (compiler-object-symbol-kind-eq? found-kind kind))
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (compiler-object-relocation-list-contains?
@@ -682,7 +668,7 @@
             (compiler-object-relocation-kind-eq? found-kind kind)
             (string.eq found-target target))
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (compiler-object-data-record-list-contains-label?
@@ -697,8 +683,8 @@
         [(Label value)
           (if (string.eq value label)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-label?
@@ -746,8 +732,8 @@
         [(or (Bytes value) (Raw value))
           (if (compiler-object-string-contains? (& value) bytes 0)
             (set! found true)
-            (set! index (+ index 1)))]
-        [_ (set! index (+ index 1))]))
+            (+= index 1))]
+        [_ (+= index 1)]))
     found))
 
 (define (compiler-object-section-contains-bytes?

@@ -4,6 +4,7 @@
 (import compiler_abort as abort)
 (cfg test (import compiler_embedded_stdlib_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_payload as payload))
+(import stdlib.iterator)
 (import compiler_lzss as lzss)
 (import lex as lexer)
 (import stdlib.string)
@@ -62,7 +63,7 @@
     (while (and keep (< j n))
       (if (compiler-embedded-stdlib-delimiter? (__tl_string_ref src j))
         (set! keep false)
-        (set! j (+ j 1))))
+        (+= j 1)))
     j))
 
 ;; Whether the atom at `start..end` of `src` is exactly `text`.
@@ -85,7 +86,7 @@
     [keep : bool true]
     (while (and keep (< j n))
       (if (lexer.is-space (__tl_string_ref src j))
-        (set! j (+ j 1))
+        (+= j 1)
         (set! keep false)))
     j))
 
@@ -115,9 +116,9 @@
       false
       (begin
         (while (and (< j end) (= (__tl_string_ref src j) ';'))
-          (set! j (+ j 1)))
+          (+= j 1))
         (while (and (< j end) (= (__tl_string_ref src j) ' '))
-          (set! j (+ j 1)))
+          (+= j 1))
         (let
           [k : i64 j]
           (while (and
@@ -128,7 +129,7 @@
                 (and (>= c 'a') (<= c 'z'))
                 (and (> k j) (>= c '0') (<= c '9'))
                 (and (> k j) (= c '-')))))
-            (set! k (+ k 1)))
+            (+= k 1))
           (not (and (> k j) (< k end) (= (__tl_string_ref src k) ':'))))))))
 
 ;; What the top-level form whose `(` precedes `start` is: 1 an inline
@@ -180,10 +181,8 @@
         (let
           [grown : (__tl_dyn-array i64)
             (__tl_make-array i64 (* (array-length ranges) 2))]
-          [k : i64 0]
-          (while (< k (* count 2))
-            (set! (array-ref grown k) (array-ref ranges k))
-            (set! k (+ k 1)))
+          (for [k (iterator.range 0 (* count 2))]
+            (set! (array-ref grown k) (array-ref ranges k)))
           grown))]
     (set! (array-ref out (* count 2)) start)
     (set! (array-ref out (+ (* count 2) 1)) end)
@@ -212,12 +211,12 @@
             (if (= c '\'')
               (match (lexer.apostrophe-char-literal-result src i n)
                 [(Ok _ end)
-                  (when (= depth 1) (set! elements (+ elements 1)))
+                  (when (= depth 1) (+= elements 1))
                   (set! i end)]
-                [(No) (set! i (+ i 1))]
+                [(No) (+= i 1)]
                 [(Err _) (set! valid false)])
               (begin
-                (when (= depth 1) (set! elements (+ elements 1)))
+                (when (= depth 1) (+= elements 1))
                 (set! i (compiler-embedded-stdlib-atom-end src (+ i 1) n))))]
           [(lexer.is-space c)
             (set! i (compiler-embedded-stdlib-skip-space src (+ i 1) n))]
@@ -240,15 +239,15 @@
                     count
                     (+ i 1)
                     (- cut 1)))
-                (set! count (+ count 1)))
+                (+= count 1))
               (set! i end))]
           [(= c '"')
-            (when (= depth 1) (set! elements (+ elements 1)))
+            (when (= depth 1) (+= elements 1))
             (match (lexer.scan-str-end-result src (+ i 1) n)
               [(Ok end) (set! i (+ end 1))]
               [(Err _) (set! valid false)])]
           [(or (= c '(') (= c '['))
-            (when (= depth 1) (set! elements (+ elements 1)))
+            (when (= depth 1) (+= elements 1))
             (when
               (and (= depth 0) (= c '('))
               (set! start i)
@@ -256,10 +255,10 @@
                 kind
                 (compiler-embedded-stdlib-inline-test-head src (+ i 1) n))
               (set! elements 0))
-            (set! depth (+ depth 1))
-            (set! i (+ i 1))]
+            (+= depth 1)
+            (+= i 1)]
           [else
-            (set! depth (- depth 1))
+            (-= depth 1)
             (cond
               [(< depth 0) (set! valid false)]
               [(and (= depth 0) (>= start 0))
@@ -268,10 +267,10 @@
                   (set!
                     ranges
                     (compiler-embedded-stdlib-ranges-push ranges count start i))
-                  (set! count (+ count 1)))
+                  (+= count 1))
                 (set! start -1)]
               [else unit])
-            (set! i (+ i 1))])))
+            (+= i 1)])))
     (if (and valid (= depth 0))
       (Ranges ranges count)
       (Unscannable))))
@@ -291,24 +290,20 @@
         [n : i64 (string-length (& src))]
         [out : text_buf.TextBuf (text_buf.empty)]
         [copied : i64 0]
-        [k : i64 0]
-        (while (< k count)
+        (for [k (iterator.range 0 count)]
           (let
             [start : i64 (array-ref ranges (* k 2))]
             [end : i64 (array-ref ranges (+ (* k 2) 1))]
-            [j : i64 start]
             (text_buf.append!
               out
               (string.substring (& src) copied (- start copied)))
-            (while (<= j end)
+            (for [j (iterator.range start (+ end 1))]
               (let
                 [b : char (__tl_string_ref (& src) j)]
                 (when
                   (or (= b '\n') (= b '\r'))
-                  (text_buf.append! out (string.substring (& src) j 1))))
-              (set! j (+ j 1)))
-            (set! copied (+ end 1)))
-          (set! k (+ k 1)))
+                  (text_buf.append! out (string.substring (& src) j 1)))))
+            (set! copied (+ end 1))))
         (text_buf.append! out (string.substring (& src) copied (- n copied)))
         (text_buf.render out))]))
 
@@ -349,28 +344,24 @@
       (let
         [starts : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [texts : (__tl_dyn-array String) (__tl_make-array String count)]
-        [k : i64 0]
-        (while (< k count)
+        (for [k (iterator.range 0 count)]
           (let
             [start : i64 (array-ref ranges (* k 2))]
             [end : i64 (array-ref ranges (+ (* k 2) 1))]
             (set! (array-ref starts k) start)
             (set!
               (array-ref texts k)
-              (string.substring src start (+ (- end start) 1))))
-          (set! k (+ k 1)))
+              (string.substring src start (+ (- end start) 1)))))
         (SomeDropped (CompilerEmbeddedStdlibDroppedSpans starts texts count)))]))
 
 (define (compiler-embedded-stdlib-line-break-count [text : (& text str)]) : i64
   (let
     [n : i64 (string-length text)]
-    [j : i64 0]
     [breaks : i64 0]
-    (while (< j n)
+    (for [j (iterator.range 0 n)]
       (let
         [b : char (__tl_string_ref text j)]
-        (when (or (= b '\n') (= b '\r')) (set! breaks (+ breaks 1))))
-      (set! j (+ j 1)))
+        (when (or (= b '\n') (= b '\r')) (+= breaks 1))))
     breaks))
 
 ;: Whether `src` is exactly the text `dropped` was taken from, given that
@@ -414,7 +405,7 @@
                   (& (array-ref dropped.texts k)))))
             (set! copied (+ start len)))
           (set! ok false)))
-      (set! k (+ k 1)))
+      (+= k 1))
     (and
       ok
       (= (+ at (- n copied)) m)
@@ -445,7 +436,7 @@
             [kept : i64 (- start copied)]
             [j : i64 start]
             (if (compiler-embedded-stdlib-span-eq? src copied blanked at kept)
-              (set! at (+ at kept))
+              (+= at kept)
               (set! ok false))
             (while (and ok (<= j end))
               (let
@@ -454,12 +445,12 @@
                   (or (= b '\n') (= b '\r'))
                   (if (< at m)
                     (if (= (__tl_string_ref blanked at) b)
-                      (set! at (+ at 1))
+                      (+= at 1)
                       (set! ok false))
                     (set! ok false))))
-              (set! j (+ j 1)))
+              (+= j 1))
             (set! copied (+ end 1)))
-          (set! k (+ k 1)))
+          (+= k 1))
         (if ok
           (and
             (= (+ at (- n copied)) m)

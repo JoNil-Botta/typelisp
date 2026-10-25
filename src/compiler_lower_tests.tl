@@ -1,6 +1,7 @@
 ;; compiler_lower_tests.tl - Selfhost lowering fixtures split from production.
 (import stdlib.iterator)
 (import compiler_lower as lower)
+(import compiler_allocation_profile as alloc_profile)
 (import compiler_optimize as optimize)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -57,6 +58,71 @@
               (clone (array-ref types index)))
             (* simd (array-ref avx2 index))
             "shared geometry preserves all previous OS/backend lane choices"))))))
+
+;; A module view binds each declaration of its module on top of the program
+;; environment, then indexes the whole run with one cache layer
+;; (`lower-module-local-envs-list`). The binds themselves must build no lookup
+;; caches: the view's arena would keep every one of them for as long as the
+;; view lives, which is most of declaration lowering for a module that has
+;; segments near the end of the program (#8829).
+(test
+  lower-module-local-binds-build-no-caches
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [module : i64 (ci.intern "lower-view-module")]
+    [count : i64 2000]
+    [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [program : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+    (for [index (iterator.range 0 count)]
+      (let
+        [name : i64
+          (ci.intern-generated-name
+            (& (str_cat.str-cat "lower-view-decl-" (string.int->string index))))]
+        (set! (array-ref ids index) name)
+        (set!
+          program
+          (tc_core.tc-bind-id
+            program
+            (csym.compiler-symbol-module-key-id-by-id module name)
+            (I64)))))
+    (let
+      [top : tc_core.TcTypeEnv (tc_core.tc-env-with-cache program)]
+      [env : tc_core.TcTypeEnv top]
+      [local : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
+      [view-arena : i64 (arena.tl_arena_make_small)]
+      [home : i64 (arena.tl_arena_current)]
+      (unsafe
+        (arena.tl_arena_set view-arena))
+      (for [index (iterator.range 0 count)]
+        (match (lower.lower-module-local-type-envs-bind-qualified
+          top
+          env
+          local
+          module
+          (array-ref ids index))
+          [(Ok next next-local)
+            (set! env next)
+            (set! local next-local)]
+          [(Err _) unit]))
+      (let
+        [layered : tc_core.TcTypeEnv
+          (tc_core.tc-env-with-cache-layer-over-explicit env)]
+        [bytes : i64
+          (alloc_profile.compiler-allocation-profile-arena-bump-bytes
+            view-arena)]
+        (unsafe
+          (arena.tl_arena_set home))
+        (test.assert-true
+          (< bytes (* count 256))
+          "module-local binds keep no lookup caches")
+        (for [index (iterator.range 0 count)]
+          (test.assert-true
+            (match (tc_core.tc-lookup-id layered (array-ref ids index))
+              [(Ok ty) (ast.ast-type-eq? ty (I64))]
+              [(Err _) false])
+            "every module-local name resolves through the view"))
+        (unsafe
+          (arena.tl_arena_destroy view-arena))))))
 
 (test
   compiler-lower-function-env-scratch

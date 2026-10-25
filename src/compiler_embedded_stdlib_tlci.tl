@@ -1,5 +1,6 @@
 ;; Build-configured embedded stdlib comptime image and production loader path.
 (import compiler_abort as abort)
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg test (import compiler_embedded_stdlib_tlci_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_tlci_payload as payload))
@@ -331,11 +332,9 @@
                     1)
                   (cfg
                     tlci-native-route-stress
-                    (set!
+                    (+=
                       compiler-embedded-stdlib-tlci-stress-image-generations
-                      (+
-                        compiler-embedded-stdlib-tlci-stress-image-generations
-                        1)))
+                      1))
                   true)])))])))
 
 (define (compiler-embedded-stdlib-tlci-catalog-lookup [name : String]) : CompilerEmbeddedStdlibTlciLookup
@@ -388,9 +387,7 @@
           [(or (Ok) (Err _)) unit])
         (cfg
           tlci-native-route-stress
-          (set!
-            compiler-embedded-stdlib-tlci-stress-release-generations
-            (+ compiler-embedded-stdlib-tlci-stress-release-generations 1))))
+          (+= compiler-embedded-stdlib-tlci-stress-release-generations 1)))
       unit)))
 
 ;; Map the embedded image through the production W^X loader, execute its image
@@ -520,7 +517,7 @@
         (match value
           [(Pattern pattern)
             (ast.ast-pattern-list-push (&mut out) pattern)
-            (set! index (+ index 1))]
+            (+= index 1)]
           [_ (set! ok false)])))
     (if ok
       (begin
@@ -552,9 +549,7 @@
   (begin
     (cfg
       tlci-native-route-stress
-      (set!
-        compiler-embedded-stdlib-tlci-stress-session-generations
-        (+ compiler-embedded-stdlib-tlci-stress-session-generations 1)))
+      (+= compiler-embedded-stdlib-tlci-stress-session-generations 1))
     (set! (array-ref compiler-comptime-host-pools 0) pools)
     (set! (array-ref compiler-comptime-host-reflections 0) reflections)
     (set!
@@ -569,7 +564,7 @@
         (set!
           (array-ref compiler-comptime-host-operands index)
           (owned_view.compiler-owned-element-view operands index))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (set! compiler-comptime-host-operand-count operand-count)
     (set! compiler-comptime-host-session-fuel fuel)
     (set!
@@ -678,14 +673,12 @@
         (* old-cap 2))]
     [bigger : (__tl_dyn-array ctfe_support.CompilerCtfeValue)
       (__tl_make-array ctfe_support.CompilerCtfeValue new-cap)]
-    [index : i64 0]
-    (while (< index compiler-comptime-host-stack-len)
+    (for [index (iterator.range 0 compiler-comptime-host-stack-len)]
       (set!
         (array-ref bigger index)
         (owned_view.compiler-owned-element-view
           compiler-comptime-host-stack
-          index))
-      (set! index (+ index 1)))
+          index)))
     (set! compiler-comptime-host-stack bigger)))
 
 (define (compiler-comptime-host-push! [value : ctfe_support.CompilerCtfeValue]) : i64
@@ -697,7 +690,7 @@
   (set!
     (array-ref compiler-comptime-host-stack compiler-comptime-host-stack-len)
     value)
-  (set! compiler-comptime-host-stack-len (+ compiler-comptime-host-stack-len 1))
+  (+= compiler-comptime-host-stack-len 1)
   tlci.tlci-host-callback-status-ok)
 
 (define (compiler-comptime-host-push-expr! [node : i64]) : i64
@@ -718,9 +711,7 @@
     (compiler-comptime-host-value-node value)))
 
 (define (compiler-comptime-host-drop! [count : i64]) : unit
-  (set!
-    compiler-comptime-host-stack-len
-    (- compiler-comptime-host-stack-len count)))
+  (-= compiler-comptime-host-stack-len count))
 
 (define (compiler-comptime-host-replace!
   [count : i64]
@@ -1245,9 +1236,7 @@
     session
     (if (> compiler-comptime-host-session-fuel 0)
       (begin
-        (set!
-          compiler-comptime-host-session-fuel
-          (- compiler-comptime-host-session-fuel 1))
+        (-= compiler-comptime-host-session-fuel 1)
         tlci.tlci-host-callback-status-ok)
       tlci.tlci-host-callback-status-fuel-exhausted)))
 
@@ -3006,8 +2995,7 @@
             (let
               [patterns : ast.AstPatternList
                 (ast.ast-pattern-list-with-capacity arg-a)]
-              [index : i64 0]
-              (while (< index arg-a)
+              (for [index (iterator.range 0 arg-a)]
                 (let
                   [name : String
                     (str_cat.str-cat
@@ -3016,11 +3004,8 @@
                   (ast.ast-pattern-list-push
                     (&mut patterns)
                     (ast.ast-pat-binding-id
-                      (ctfe_support.ctfe-materialize-generated-name-id name)))
-                  (set! index (+ index 1))))
-              (set!
-                compiler-comptime-host-session-fuel
-                (- compiler-comptime-host-session-fuel arg-a))
+                      (ctfe_support.ctfe-materialize-generated-name-id name)))))
+              (-= compiler-comptime-host-session-fuel arg-a)
               (compiler-comptime-host-replace! 1 (PatternList patterns)))]
           [_ tlci.tlci-host-callback-status-bad-request])])))
 
@@ -3739,7 +3724,7 @@
         (while (and
           (< end payload-len)
           (not (= (string.string-ref payload end) '\n')))
-          (set! end (+ end 1)))
+          (+= end 1))
         (if (or
           (< flags 0)
           (> flags 1)
@@ -3764,7 +3749,7 @@
                   (= flags 1)))]
             [_ (set! valid false)]))
         (set! start (+ end 1))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (when (not (= start payload-len)) (set! valid false))
     (when
       (and valid has-ret?)
@@ -3891,7 +3876,7 @@
       valid
       (< nominal-end payload-len)
       (not (= (string.string-ref payload nominal-end) '\n')))
-      (set! nominal-end (+ nominal-end 1)))
+      (+= nominal-end 1))
     (when
       (or (= nominal-end 0) (>= nominal-end payload-len))
       (set! valid false))
@@ -3906,7 +3891,7 @@
           (while (and
             (< end payload-len)
             (not (= (string.string-ref payload end) '\n')))
-            (set! end (+ end 1)))
+            (+= end 1))
           (if (= end start)
             (set! valid false)
             (begin
@@ -3918,7 +3903,7 @@
                 (if (>= end payload-len)
                   (set! valid false)
                   (set! start (+ end 1))))))
-          (set! index (+ index 1))))
+          (+= index 1)))
       (if (not valid)
         tlci.tlci-host-callback-status-bad-request
         (compiler-comptime-host-push!
@@ -4246,7 +4231,7 @@
           (+ start index))
           [(Type _) unit]
           [_ (set! valid false)])
-        (set! index (+ index 1)))
+        (+= index 1))
       (let
         [result : i64
           (if (not valid)
@@ -4255,8 +4240,7 @@
               [pools : ast.AstNodePoolContext
                 (compiler-comptime-host-session-pools)]
               [items : ast.AstTypeList (ast.ast-type-list-with-capacity arg-a)]
-              [item-index : i64 0]
-              (while (< item-index arg-a)
+              (for [item-index (iterator.range 0 arg-a)]
                 (match (compiler-comptime-host-array-element-shared-view
                   compiler-comptime-host-stack
                   (+ start item-index))
@@ -4264,8 +4248,7 @@
                     (ast.ast-type-list-push
                       (&mut items)
                       (ast.ast-node-pool-context-type-push pools ty))]
-                  [_ unit])
-                (set! item-index (+ item-index 1)))
+                  [_ unit]))
               (set! compiler-comptime-host-stack-len start)
               (compiler-comptime-host-push! (Type (Tuple (box items))))))]
         (when
@@ -4865,7 +4848,7 @@
         [node : i64 (compiler-comptime-host-stack-node depth)]
         (when (< node 0) (set! valid? false))
         (ast.ast-expr-list-push (&mut nodes) node)
-        (set! depth (- depth 1))))
+        (-= depth 1)))
     (if valid?
       (Some nodes)
       (None))))
@@ -5336,7 +5319,6 @@
           (- header 96)
           (- header 64))]
       [value : i64 0]
-      [index : i64 0]
       (if (or
         (< count 0)
         (> count 10)
@@ -5346,7 +5328,7 @@
           (set! batch.ok false)
           0)
         (begin
-          (while (< index count)
+          (for [index (iterator.range 0 count)]
             (let
               [digit : i64
                 (-
@@ -5355,8 +5337,7 @@
                     (+ batch.pos 1 index))
                   48)]
               (when (or (< digit 0) (> digit 63)) (set! batch.ok false))
-              (set! value (+ (* value 64) digit))
-              (set! index (+ index 1))))
+              (set! value (+ (* value 64) digit))))
           (set! batch.pos (+ batch.pos 1 count))
           (if negative
             (- 0 value)
@@ -5378,7 +5359,7 @@
             (cast (string.string-ref name offset) : i64)
             (compiler-comptime-host-batch-byte batch (+ start offset))))
         (set! same false))
-      (set! offset (+ offset 1)))
+      (+= offset 1))
     same))
 
 ;: The row index of the batch name `[start, start + length)` given the
@@ -5506,10 +5487,8 @@
           (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!)))
         (let
           [next : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-          [index : i64 0]
-          (while (< index used)
-            (set! (array-ref next index) (array-ref lane index))
-            (set! index (+ index 1)))
+          (for [index (iterator.range 0 used)]
+            (set! (array-ref next index) (array-ref lane index)))
           next)))))
 
 ;; The batch word at `word` (8 bytes from `base + 8 * word`), the final partial
@@ -5535,7 +5514,7 @@
                 (unsafe
                   (ptr-read (int->ptr (+ base index) : (Ptr u8))))
                 : i64)))
-          (set! index (- index 1)))
+          (-= index 1))
         value))))
 
 (define (compiler-comptime-host-batch-cache-slot [base : i64] [len : i64]) : i64
@@ -5600,7 +5579,7 @@
                   compiler-comptime-host-batch-cache-words
                   (+ start word)))
               (set! same false))
-            (set! word (+ word 1)))
+            (+= word 1))
           (if same
             found
             -1))))))
@@ -5614,17 +5593,14 @@
     (set!
       compiler-comptime-host-batch-cache-slots
       (__tl_make-array i64 capacity)))
-  (let
-    [entry : i64 0]
-    (while (< entry compiler-comptime-host-batch-cache-entries)
-      (set!
-        (array-ref
-          compiler-comptime-host-batch-cache-slots
-          (compiler-comptime-host-batch-cache-key-slot
-            (array-ref compiler-comptime-host-batch-cache-bases entry)
-            (array-ref compiler-comptime-host-batch-cache-lens entry)))
-        (+ entry 1))
-      (set! entry (+ entry 1)))))
+  (for [entry (iterator.range 0 compiler-comptime-host-batch-cache-entries)]
+    (set!
+      (array-ref
+        compiler-comptime-host-batch-cache-slots
+        (compiler-comptime-host-batch-cache-key-slot
+          (array-ref compiler-comptime-host-batch-cache-bases entry)
+          (array-ref compiler-comptime-host-batch-cache-lens entry)))
+      (+ entry 1))))
 
 ;; A batch decoded without running it: the cache entry of a well-formed batch,
 ;; or, for a malformed one, where its records' lanes start (past the cache's
@@ -5661,8 +5637,8 @@
               (set! batch.ok false)
               (begin
                 (set! (array-ref resolved index) found)
-                (set! batch.pos (+ batch.pos length))
-                (set! index (+ index 1))))))))
+                (+= batch.pos length)
+                (+= index 1)))))))
     (let
       [record-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
       [record-start : i64 compiler-comptime-host-batch-cache-records-len]
@@ -5697,7 +5673,7 @@
           (if (or (< op 0) (>= op name-count))
             (set! batch.ok false)
             (begin
-              (set! batch.pos (+ batch.pos 1))
+              (+= batch.pos 1)
               (set!
                 (array-ref compiler-comptime-host-batch-cache-records lane)
                 (array-ref resolved op))))
@@ -5708,7 +5684,7 @@
               (let
                 [count : i64
                   (begin
-                    (set! batch.pos (+ batch.pos 1))
+                    (+= batch.pos 1)
                     (compiler-comptime-host-batch-int! (&mut batch)))]
                 (if (or
                   (not batch.ok)
@@ -5723,9 +5699,9 @@
                         compiler-comptime-host-batch-cache-records
                         (+ lane 1 arg))
                       (+ batch.base batch.pos))
-                    (set! batch.pos (+ batch.pos count))
+                    (+= batch.pos count)
                     (set! byte-len count)
-                    (set! arg (+ arg 1)))))
+                    (+= arg 1))))
               (let
                 [value : i64
                   (if (and
@@ -5734,7 +5710,7 @@
                       (compiler-comptime-host-batch-byte (& batch) batch.pos)
                       64))
                     (begin
-                      (set! batch.pos (+ batch.pos 1))
+                      (+= batch.pos 1)
                       0)
                     (compiler-comptime-host-batch-int! (&mut batch)))]
                 (when
@@ -5746,16 +5722,15 @@
                     compiler-comptime-host-batch-cache-records
                     (+ lane 1 arg))
                   value)
-                (set! arg (+ arg 1)))))
+                (+= arg 1))))
           (when batch.ok (set! parsed (+ record 1)))
-          (set! record (+ record 1))))
+          (+= record 1)))
       (if (not (and batch.ok (= record record-count) (= batch.pos batch.len)))
         (Prefix record-start parsed)
         (let
           [entry : i64 compiler-comptime-host-batch-cache-entries]
           [words : i64 (/ (+ len 7) 8)]
           [word-start : i64 compiler-comptime-host-batch-cache-words-len]
-          [word : i64 0]
           (set!
             compiler-comptime-host-batch-cache-words
             (compiler-comptime-host-batch-cache-grown
@@ -5763,13 +5738,12 @@
                 compiler-comptime-host-batch-cache-words)
               word-start
               (+ word-start words)))
-          (while (< word words)
+          (for [word (iterator.range 0 words)]
             (set!
               (array-ref
                 compiler-comptime-host-batch-cache-words
                 (+ word-start word))
-              (compiler-comptime-host-batch-word base len word))
-            (set! word (+ word 1)))
+              (compiler-comptime-host-batch-word base len word)))
           (set!
             compiler-comptime-host-batch-cache-bases
             (compiler-comptime-host-batch-cache-grown
@@ -5860,7 +5834,7 @@
             (array-ref compiler-comptime-host-batch-cache-records (+ lane 1))
             (array-ref compiler-comptime-host-batch-cache-records (+ lane 2))
             (array-ref compiler-comptime-host-batch-cache-records (+ lane 3)))))
-      (set! record (+ record 1)))
+      (+= record 1))
     status))
 
 (define (compiler-comptime-host-batch-cache-replay

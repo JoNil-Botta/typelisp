@@ -3,6 +3,7 @@
 ;# This module never probes or writes a filesystem. A batch executor must reject
 ;# publication unless `publishable` is true, then recheck the same source
 ;# identities before a separate transactional write (#7280).
+(import stdlib.iterator)
 (import compiler_diagnostic as diag)
 (import stdlib.hash)
 (import stdlib.str_cat_runtime as str_cat)
@@ -128,7 +129,7 @@
     (while (and
       (< index snapshots.len)
       (not (string.eq (array-ref snapshots.slots index).path path)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (< index snapshots.len)
       index
       -1)))
@@ -139,7 +140,7 @@
     (while (and
       (< index identities.len)
       (not (string.eq (array-ref identities.slots index).path path)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (< index identities.len)
       index
       -1)))
@@ -173,10 +174,10 @@
               [byte : char (string.string-ref source offset)]
               (if (= byte '\n')
                 (begin
-                  (set! line (+ line 1))
+                  (+= line 1)
                   (set! col 1))
-                (set! col (+ col 1)))
-              (set! offset (+ offset 1))))))
+                (+= col 1))
+              (+= offset 1)))))
       (if (not found)
         (BadCoordinate)
         (if (and
@@ -299,7 +300,7 @@
     (while (and
       (< index limit)
       (= (string.string-ref left index) (string.string-ref right index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (= index limit)
       (< left-length right-length)
       (< (string.string-ref left index) (string.string-ref right index)))))
@@ -308,12 +309,9 @@
   (let
     [slots : (__tl_dyn-array LintFixCandidate)
       (__tl_make-array LintFixCandidate candidates.len)]
-    [index : i64 0]
-    (while (< index candidates.len)
-      (set! (array-ref slots index) (clone (array-ref candidates.slots index)))
-      (set! index (+ index 1)))
-    (set! index 1)
-    (while (< index candidates.len)
+    (for [index (iterator.range 0 candidates.len)]
+      (set! (array-ref slots index) (clone (array-ref candidates.slots index))))
+    (for [index (iterator.range 1 candidates.len)]
       (let
         [at : i64 index]
         (while (and
@@ -325,38 +323,31 @@
             [earlier : LintFixCandidate (clone (array-ref slots (- at 1)))]
             (set! (array-ref slots (- at 1)) (clone (array-ref slots at)))
             (set! (array-ref slots at) earlier)
-            (set! at (- at 1))))
-        (set! index (+ index 1))))
+            (-= at 1)))))
     (LintFixCandidateSeq slots candidates.len)))
 
 (define (candidate-fix-count [candidates : LintFixCandidateSeq]) : i64
   (let
-    [index : i64 0]
     [total : i64 0]
-    (while (< index candidates.len)
+    (for [index (iterator.range 0 candidates.len)]
       (set!
         total
         (+
           total
           (diag.compiler-diagnostic-fixes
-            (& (array-ref candidates.slots index).diagnostic)).len))
-      (set! index (+ index 1)))
+            (& (array-ref candidates.slots index).diagnostic)).len)))
     total))
 
 (define (candidate-edit-count [candidates : LintFixCandidateSeq]) : i64
   (let
-    [candidate-at : i64 0]
     [total : i64 0]
-    (while (< candidate-at candidates.len)
+    (for [candidate-at (iterator.range 0 candidates.len)]
       (let
         [fixes : diag.CompilerDiagnosticFixSeq
           (diag.compiler-diagnostic-fixes
             (& (array-ref candidates.slots candidate-at).diagnostic))]
-        [fix-at : i64 0]
-        (while (< fix-at fixes.len)
-          (set! total (+ total (array-ref fixes.slots fix-at).edits.len))
-          (set! fix-at (+ fix-at 1)))
-        (set! candidate-at (+ candidate-at 1))))
+        (for [fix-at (iterator.range 0 fixes.len)]
+          (set! total (+ total (array-ref fixes.slots fix-at).edits.len)))))
     total))
 
 ;: Plan all candidates, then mark both sides of every cross-fix conflict.
@@ -375,15 +366,13 @@
       (__tl_make-array LintFixResolvedEdit maximum-edits)]
     [outcome-count : i64 0]
     [edit-count : i64 0]
-    [candidate-at : i64 0]
-    (while (< candidate-at ordered.len)
+    (for [candidate-at (iterator.range 0 ordered.len)]
       (let
         [candidate : LintFixCandidate
           (clone (array-ref ordered.slots candidate-at))]
         [fixes : diag.CompilerDiagnosticFixSeq
           (diag.compiler-diagnostic-fixes (& candidate.diagnostic))]
-        [fix-at : i64 0]
-        (while (< fix-at fixes.len)
+        (for [fix-at (iterator.range 0 fixes.len)]
           (let
             [fix : diag.CompilerDiagnosticFix
               (clone (array-ref fixes.slots fix-at))]
@@ -421,24 +410,21 @@
                     (clone (array-ref fix.edits.slots edit-at))
                     outcome-count)
                     [(ValidEdit resolved)
-                      (let
-                        [prior : i64 first-edit]
-                        (while (< prior edit-count)
-                          (when
-                            (edits-overlap?
-                              (clone resolved)
-                              (clone (array-ref edits prior)))
-                            (set! kind (Invalid))
-                            (set! reason (InvalidFix)))
-                          (set! prior (+ prior 1)))
+                      (for [prior (iterator.range first-edit edit-count)]
                         (when
-                          (= kind (Planned))
-                          (set! (array-ref edits edit-count) resolved)
-                          (set! edit-count (+ edit-count 1))))]
+                          (edits-overlap?
+                            (clone resolved)
+                            (clone (array-ref edits prior)))
+                          (set! kind (Invalid))
+                          (set! reason (InvalidFix))))
+                      (when
+                        (= kind (Planned))
+                        (set! (array-ref edits edit-count) resolved)
+                        (+= edit-count 1))]
                     [(RejectedEdit rejected-kind rejected-reason)
                       (set! kind rejected-kind)
                       (set! reason rejected-reason)])
-                  (set! edit-at (+ edit-at 1)))])
+                  (+= edit-at 1))])
             (if (not (= kind (Planned)))
               (set! edit-count first-edit)
               unit)
@@ -462,9 +448,7 @@
                   applicability
                   kind
                   reason)))
-            (set! outcome-count (+ outcome-count 1))
-            (set! fix-at (+ fix-at 1))))
-        (set! candidate-at (+ candidate-at 1))))
+            (+= outcome-count 1)))))
     (lint-fix-finish-plan snapshots outcomes outcome-count edits edit-count)))
 
 ;: Mark all conflicting owners symmetrically, compact only valid edits, and
@@ -476,78 +460,65 @@
   [edits : (__tl_dyn-array LintFixResolvedEdit)]
   [edit-count : i64]) : LintFixPlan
   (let
-    [left : i64 0]
     [publishable : bool true]
     [next-edits : (__tl_dyn-array LintFixResolvedEdit)
       (__tl_make-array LintFixResolvedEdit edit-count)]
     [next-count : i64 0]
-    (while (< left edit-count)
-      (let
-        [right : i64 (+ left 1)]
-        (while (< right edit-count)
-          (let
-            [one : LintFixResolvedEdit (clone (array-ref edits left))]
-            [two : LintFixResolvedEdit (clone (array-ref edits right))]
-            (if (and
-              (not (= one.outcome-index two.outcome-index))
-              (edits-overlap? (clone one) (clone two)))
-              (let
-                [reason : LintFixReason
-                  (if (same-edit? (clone one) (clone two))
-                    (DuplicateEdit)
-                    (OverlappingEdit))]
-                [a : LintFixOutcome
-                  (clone (array-ref outcomes one.outcome-index))]
-                [b : LintFixOutcome
-                  (clone (array-ref outcomes two.outcome-index))]
-                (set! a.kind (Conflicting))
-                (when
-                  (or
-                    (not (= a.reason (OverlappingEdit)))
-                    (= reason (OverlappingEdit)))
-                  (set! a.reason reason))
-                (set! b.kind (Conflicting))
-                (when
-                  (or
-                    (not (= b.reason (OverlappingEdit)))
-                    (= reason (OverlappingEdit)))
-                  (set! b.reason reason))
-                (set! (array-ref outcomes one.outcome-index) a)
-                (set! (array-ref outcomes two.outcome-index) b))
-              unit)
-            (set! right (+ right 1))))
-        (set! left (+ left 1))))
+    (for [left (iterator.range 0 edit-count)]
+      (for [right (iterator.range (+ left 1) edit-count)]
+        (let
+          [one : LintFixResolvedEdit (clone (array-ref edits left))]
+          [two : LintFixResolvedEdit (clone (array-ref edits right))]
+          (if (and
+            (not (= one.outcome-index two.outcome-index))
+            (edits-overlap? (clone one) (clone two)))
+            (let
+              [reason : LintFixReason
+                (if (same-edit? (clone one) (clone two))
+                  (DuplicateEdit)
+                  (OverlappingEdit))]
+              [a : LintFixOutcome
+                (clone (array-ref outcomes one.outcome-index))]
+              [b : LintFixOutcome
+                (clone (array-ref outcomes two.outcome-index))]
+              (set! a.kind (Conflicting))
+              (when
+                (or
+                  (not (= a.reason (OverlappingEdit)))
+                  (= reason (OverlappingEdit)))
+                (set! a.reason reason))
+              (set! b.kind (Conflicting))
+              (when
+                (or
+                  (not (= b.reason (OverlappingEdit)))
+                  (= reason (OverlappingEdit)))
+                (set! b.reason reason))
+              (set! (array-ref outcomes one.outcome-index) a)
+              (set! (array-ref outcomes two.outcome-index) b))
+            unit))))
     ;; Duplicate stable identities cannot represent two independent fixes.
-    (set! left 0)
-    (while (< left outcome-count)
-      (let
-        [right : i64 (+ left 1)]
-        (while (< right outcome-count)
-          (let
-            [a : LintFixOutcome (clone (array-ref outcomes left))]
-            [b : LintFixOutcome (clone (array-ref outcomes right))]
-            (when
-              (and (string.eq a.id b.id) (= a.fix-index b.fix-index))
-              (set! a.kind (Invalid))
-              (set! a.reason (DuplicateCandidate))
-              (set! b.kind (Invalid))
-              (set! b.reason (DuplicateCandidate))
-              (set! (array-ref outcomes left) a)
-              (set! (array-ref outcomes right) b))
-            (set! right (+ right 1))))
-        (set! left (+ left 1))))
-    (set! left 0)
-    (while (< left edit-count)
+    (for [left (iterator.range 0 outcome-count)]
+      (for [right (iterator.range (+ left 1) outcome-count)]
+        (let
+          [a : LintFixOutcome (clone (array-ref outcomes left))]
+          [b : LintFixOutcome (clone (array-ref outcomes right))]
+          (when
+            (and (string.eq a.id b.id) (= a.fix-index b.fix-index))
+            (set! a.kind (Invalid))
+            (set! a.reason (DuplicateCandidate))
+            (set! b.kind (Invalid))
+            (set! b.reason (DuplicateCandidate))
+            (set! (array-ref outcomes left) a)
+            (set! (array-ref outcomes right) b)))))
+    (for [left (iterator.range 0 edit-count)]
       (let
         [edit : LintFixResolvedEdit (clone (array-ref edits left))]
         (match (array-ref outcomes edit.outcome-index).kind
           [(Planned)
             (set! (array-ref next-edits next-count) edit)
-            (set! next-count (+ next-count 1))]
-          [_ unit])
-        (set! left (+ left 1))))
-    (set! left 1)
-    (while (< left next-count)
+            (+= next-count 1)]
+          [_ unit])))
+    (for [left (iterator.range 1 next-count)]
       (let
         [at : i64 left]
         (while (and
@@ -562,16 +533,13 @@
               (array-ref next-edits (- at 1))
               (clone (array-ref next-edits at)))
             (set! (array-ref next-edits at) earlier)
-            (set! at (- at 1))))
-        (set! left (+ left 1))))
-    (set! left 0)
-    (while (< left outcome-count)
+            (-= at 1)))))
+    (for [left (iterator.range 0 outcome-count)]
       (match (array-ref outcomes left).kind
         [(Invalid) (set! publishable false)]
         [(Stale) (set! publishable false)]
         [(Conflicting) (set! publishable false)]
-        [_ unit])
-      (set! left (+ left 1)))
+        [_ unit]))
     (LintFixPlan
       snapshots
       (LintFixOutcomeSeq outcomes outcome-count)
@@ -584,15 +552,13 @@
   (let
     [output : (__tl_dyn-array LintFixSnapshot)
       (__tl_make-array LintFixSnapshot planned.snapshots.len)]
-    [source-at : i64 0]
-    (while (< source-at planned.snapshots.len)
+    (for [source-at (iterator.range 0 planned.snapshots.len)]
       (let
         [original : LintFixSnapshot
           (clone (array-ref planned.snapshots.slots source-at))]
         [text : String original.source]
-        [edit-at : i64 0]
         (if planned.publishable
-          (while (< edit-at planned.edits.len)
+          (for [edit-at (iterator.range 0 planned.edits.len)]
             (let
               [edit : LintFixResolvedEdit
                 (clone (array-ref planned.edits.slots edit-at))]
@@ -606,11 +572,9 @@
                     (string.substring
                       text
                       edit.end
-                      (- (string.string-length text) edit.end)))))
-              (set! edit-at (+ edit-at 1))))
+                      (- (string.string-length text) edit.end)))))))
           unit)
         (set!
           (array-ref output source-at)
-          (snapshot original.path text original.version original.editable))
-        (set! source-at (+ source-at 1))))
+          (snapshot original.path text original.version original.editable))))
     (LintFixSnapshotSeq output planned.snapshots.len)))

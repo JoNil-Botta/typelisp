@@ -1,4 +1,5 @@
 ;; Test-only coverage for persistent typechecker list storage.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_typecheck_core as tc_core)
 (import compiler_typecheck_api as tc_api)
@@ -51,7 +52,6 @@
     [scratch-child : tc_core.TcStringList Nil]
     [growth-sibling : tc_core.TcStringList Nil]
     [deep : tc_core.TcNameIdList Nil]
-    [index : i64 0]
     ;; Append a scratch-owned string to an outer store, discard the scratch,
     ;; then grow through unrelated siblings. The retained child must keep its
     ;; owner-arena copy rather than a stale source pointer.
@@ -69,7 +69,7 @@
     (unsafe
       (arena.set! home)
       (arena.destroy scratch))
-    (while (< index 4096)
+    (for [index (iterator.range 0 4096)]
       (set! deep (tc_core.tc-name-id-list-cons deep index))
       (if (< index 256)
         (set! string-deep (tc_core.tc-string-list-cons string-deep "deep"))
@@ -80,8 +80,7 @@
           (tc_core.tc-string-list-cons
             (tc_core.tc-global-shared-view string-base)
             "sibling"))
-        unit)
-      (set! index (+ index 1)))
+        unit))
     (and
       (= (tc-string-list-len string-root) 1)
       (= (tc-string-list-len string-base) 2)
@@ -143,8 +142,7 @@
     [macro-params : String ""]
     [function-params : String ""]
     [args : String ""]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [suffix : String (string.int->string index)]
         (set!
@@ -161,8 +159,7 @@
             " [p"
             (tc_core.tc-global-shared-view suffix)
             " : i64]"))
-        (set! args (str_cat.str-cat args " " suffix))
-        (set! index (+ index 1))))
+        (set! args (str_cat.str-cat args " " suffix))))
     (let
       [last : String (string.int->string (- count 1))]
       (str_cat.str-cat

@@ -4,6 +4,7 @@
 ;; compiler_intern. This adapter gives worker code a nominal structural view of
 ;; an explicitly owned source-name session.
 (import compiler_abort as abort)
+(import stdlib.iterator)
 (import compiler_intern as ci)
 (import compiler_owned_view as owned_view)
 
@@ -657,13 +658,11 @@
         (owned_view.compiler-owned-array-element-shared-view
           session.structural-table-cell
           0)]
-      [index : i64 0]
       [count : i64 0]
-      (while (< index table.len)
+      (for [index (iterator.range 0 table.len)]
         (if (= (cast (array-ref table.kinds index) : i64) kind)
-          (set! count (+ count 1))
-          unit)
-        (set! index (+ index 1)))
+          (+= count 1)
+          unit))
       count)))
 
 (define (intern-structural-session-source-name-component-valid?

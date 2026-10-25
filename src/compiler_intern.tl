@@ -9,6 +9,7 @@
 ;; allocation extents without pulling collection or formatting modules into them.
 ;;
 (import compiler_abort as abort)
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (cfg (any compile-profile test) (import compiler_profile_counters as counters))
 
@@ -130,7 +131,7 @@
                 (if (=
                   (ptr-read (ptr-offset lw i))
                   (ptr-read (ptr-offset rw i)))
-                  (set! i (+ i 1))
+                  (+= i 1)
                   (set! same false)))
               (if same
                 (let
@@ -139,7 +140,7 @@
                     (if (=
                       (cast (ptr-read (ptr-offset lp j)) : i64)
                       (cast (ptr-read (ptr-offset rp j)) : i64))
-                      (set! j (+ j 1))
+                      (+= j 1)
                       (set! same false)))
                   same)
                 false))))))))
@@ -541,7 +542,7 @@
           (if (=
             (intern-private-string-ref text i)
             (intern-private-string-ref prefix i))
-            (set! i (+ i 1))
+            (+= i 1)
             (set! same false)))
         same))))
 
@@ -596,7 +597,7 @@
 (define (intern-table-id-allocate!) : i64
   (let
     [id : i64 intern-next-table-id]
-    (set! intern-next-table-id (+ intern-next-table-id 1))
+    (+= intern-next-table-id 1)
     id))
 
 (define (intern-active-table-id) : i64
@@ -605,7 +606,7 @@
 (define (intern-generation-allocate!) : i64
   (let
     [generation : i64 intern-next-generation]
-    (set! intern-next-generation (+ intern-next-generation 1))
+    (+= intern-next-generation 1)
     generation))
 
 (defstruct InternStructuralTable
@@ -949,17 +950,13 @@
   0)
 
 (define (intern-structural-generation-make!) : i64
-  (set!
-    intern-structural-generations-made
-    (+ intern-structural-generations-made 1))
+  (+= intern-structural-generations-made 1)
   (tl_arena_make))
 
 (define (intern-structural-generation-destroy! [generation : i64]) : unit
   (unless
     (= generation 0)
-    (set!
-      intern-structural-generations-destroyed
-      (+ intern-structural-generations-destroyed 1))
+    (+= intern-structural-generations-destroyed 1)
     (unsafe
       (tl_arena_destroy generation))))
 
@@ -1045,7 +1042,7 @@
           [index : i64 0]
           (while (< index table.len)
             (intern-structural-table-map-put-index! table index)
-            (set! index (+ index 1))))))
+            (+= index 1)))))
     (set! table.map-arena generation)
     (intern-structural-generation-destroy! retired)))
 
@@ -1168,7 +1165,7 @@
         (abort.compiler-abort
           "tl: compiler_intern.intern-structural-table-map-clear-index!: record missing from the structural map\n")
         unit)
-      (set! steps (+ steps 1))
+      (+= steps 1)
       (set! slot (bit-and (+ slot 1) mask)))
     (intern-active-i64-set! slots-address slot 0)))
 
@@ -1198,11 +1195,11 @@
       by-record?
       (while (< index (array-length table.map-slots))
         (set! (array-ref table.map-slots index) 0)
-        (set! index (+ index 1)))
+        (+= index 1))
       (set! index 0)
       (while (< index (array-length table.structural-cache-raws))
         (set! (array-ref table.structural-cache-raws index) 0)
-        (set! index (+ index 1)))
+        (+= index 1))
       (set! index 0))
     (while (< index table.len)
       (if by-record?
@@ -1233,7 +1230,7 @@
       (set!
         (array-ref table.generated-symbol-handles index)
         (intern-id-slot-empty))
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! table.owner (intern-structural-owner-allocate!))
     (set! table.len 0)
     unit))
@@ -1839,8 +1836,7 @@
   [capacity : i64]) : unit
   (let
     [slot : i64 cursor]
-    [probes : i64 steps]
-    (while (< probes capacity)
+    (for [probes (iterator.range steps capacity)]
       (if (intern-id-slot-empty? (array-ref state.map-id-slots slot))
         (begin
           (intern-map-dirty-note!
@@ -1850,9 +1846,7 @@
           (set! (array-ref state.map-id-slots slot) (intern-id-slot-encode id))
           (set! (array-ref state.map-hash-slots slot) hash)
           (return unit))
-        (begin
-          (set! slot (intern-bucket (+ slot 1) capacity))
-          (set! probes (+ probes 1)))))))
+        (set! slot (intern-bucket (+ slot 1) capacity))))))
 
 (define (intern-compat-state-map-insert-existing!
   [state : (&mut state InternCompatState)]
@@ -1946,12 +1940,11 @@
   [id : i64]
   [name : (& name str)]) : unit
   (let
-    [i : i64 0]
     [n : i64 (intern-private-string-length name)]
     [slash : i64 -1]
     [dot : i64 -1]
     [last-dot : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (intern-private-string-ref name i)]
         (if (= c '/')
@@ -1962,8 +1955,7 @@
           (if (< dot 0)
             (set! dot i)
             unit)
-          (set! last-dot i))
-        (set! i (+ i 1))))
+          (set! last-dot i))))
     (owned_view.compiler-owned-cell-set!
       state.pool-last-slash-slots
       id
@@ -2109,7 +2101,7 @@
                 (set! done true))
               (begin
                 (set! cursor (intern-bucket (+ cursor 1) capacity))
-                (set! steps (+ steps 1))))))))
+                (+= steps 1)))))))
     (begin
       (cfg
         (any compile-profile test)
@@ -2231,7 +2223,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -2305,7 +2297,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -2711,16 +2703,17 @@
 (cfg
   (any compile-profile test)
   (define (intern-profile-reset! [metrics-address : u64]) : unit
-    (let
-      [metric : i64 intern-profile-hash-words-metric]
-      (while (< metric intern-profile-activity-end)
-        (intern-profile-set! metrics-address metric 0)
-        (set! metric (+ metric 1)))
-      (set! metric intern-profile-source-record-live-metric)
-      (while (< metric intern-profile-storage-end)
-        (intern-profile-set! metrics-address metric 0)
-        (set! metric (+ metric 1)))
-      (intern-profile-storage-initialize! metrics-address))))
+    (for [metric
+      (iterator.range
+        intern-profile-hash-words-metric
+        intern-profile-activity-end)]
+      (intern-profile-set! metrics-address metric 0))
+    (for [metric
+      (iterator.range
+        intern-profile-source-record-live-metric
+        intern-profile-storage-end)]
+      (intern-profile-set! metrics-address metric 0))
+    (intern-profile-storage-initialize! metrics-address)))
 
 (cfg
   (any compile-profile test)
@@ -2868,7 +2861,7 @@
               (unsafe
                 (ptr-read (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
             -7046029254386353131))
-        (set! i (+ i 8)))
+        (+= i 8))
       (let
         [tail : i64 0]
         (while (< i len)
@@ -2880,7 +2873,7 @@
                 (unsafe
                   (ptr-read (ptr-offset src (+ start i))))
                 : i64)))
-          (set! i (+ i 1)))
+          (+= i 1))
         (set! h (* (bit-xor h tail) -7046029254386353131))
         (bit-xor h (cast (shr (cast h : u64) 29) : i64))))))
 
@@ -2905,7 +2898,7 @@
               (unsafe
                 (ptr-read (ptr-cast (ptr-offset src (+ start i)) : (Ptr i64)))))
             -7046029254386353131))
-        (set! i (+ i 8)))
+        (+= i 8))
       (let
         [tail : i64 0]
         (while (< i len)
@@ -2917,7 +2910,7 @@
                 (unsafe
                   (ptr-read (ptr-offset src (+ start i))))
                 : i64)))
-          (set! i (+ i 1)))
+          (+= i 1))
         (set! h (* (bit-xor h tail) -7046029254386353131))
         (bit-xor h (cast (shr (cast h : u64) 29) : i64))))))
 
@@ -2975,11 +2968,9 @@
     [dst : (MutPtr u8)
       (unsafe
         (__tl_array-data buf))]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (unsafe
-        (ptr-write! (ptr-offset dst i) (ptr-read (ptr-offset src (+ start i)))))
-      (set! i (+ i 1)))
+        (ptr-write! (ptr-offset dst i) (ptr-read (ptr-offset src (+ start i))))))
     (unsafe
       (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))
 
@@ -3505,32 +3496,28 @@
     -1
     (- (- (intern-capacity) 1) index)))
 
-(define (intern-generated-canonical-id-at? [id : i64] [index : i64]) : bool
-  (if (>= index intern-generated-map-capacity)
-    false
+(define (intern-generated-canonical-id-at? [id : i64]) : bool
+  (for [index (iterator.range 0 intern-generated-map-capacity)]
     (let
       [stored : InternSlotId (array-ref intern-generated-map-id-slots index)]
-      (if (and
-        (not (intern-id-slot-empty? stored))
-        (= (intern-id-slot-decode stored) id))
-        true
-        (intern-generated-canonical-id-at? id (+ index 1))))))
+      (when
+        (and
+          (not (intern-id-slot-empty? stored))
+          (= (intern-id-slot-decode stored) id))
+        (return true))))
+  false)
 
 (define (intern-generated-canonical-id? [id : i64]) : bool
-  (and
-    (intern-generated-id-active? id)
-    (intern-generated-canonical-id-at? id 0)))
+  (and (intern-generated-id-active? id) (intern-generated-canonical-id-at? id)))
 
 (define (intern-private-last-slash [name : (& name str)]) : i64
   (let
-    [i : i64 0]
     [n : i64 (intern-private-string-length name)]
     [slash : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (= (intern-private-string-ref name i) '/')
         (set! slash i)
-        unit)
-      (set! i (+ i 1)))
+        unit))
     slash))
 
 ;; Generated-symbol roles are deliberately outside the source/generated id
@@ -3940,7 +3927,7 @@
       (if (= (intern-private-string-ref name i) '.')
         (set! dot i)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     dot))
 
 (define (intern-generated-name-store
@@ -4036,7 +4023,6 @@
   [name : String]
   [hash : i64]
   [cursor : i64]
-  [steps : i64]
   [qualified : bool]
   [module-id : i64]
   [base-id : i64]
@@ -4044,51 +4030,50 @@
   [leading-dot-id : i64]
   [dotted-prefix-id : i64]
   [dotted-tail-id : i64]) : i64
-  (if (>= steps intern-generated-map-capacity)
-    (abort.compiler-abort
-      "tl: compiler_intern.intern-generated-canonical-name-at: generated name map exhausted\n")
+  (for [steps (iterator.range 0 intern-generated-map-capacity)]
     (let
       [stored-id : InternSlotId
         (array-ref intern-generated-map-id-slots cursor)]
       (if (intern-id-slot-empty? stored-id)
-        (let
-          [id : i64
-            (intern-generated-name-store (& name) qualified module-id base-id)]
-          (begin
-            (when
-              dotted
+        (return
+          (let
+            [id : i64
+              (intern-generated-name-store (& name) qualified module-id base-id)]
+            (begin
+              (when
+                dotted
+                (set!
+                  (array-ref intern-pool-first-dot-slots id)
+                  (cast
+                    (intern-private-first-dot
+                      (& (array-ref intern-pool-slots id)))
+                    : i32))
+                (set!
+                  (array-ref intern-pool-leading-dot-id-slots id)
+                  (intern-id-slot-encode leading-dot-id))
+                (set!
+                  (array-ref intern-pool-dotted-prefix-id-slots id)
+                  (intern-id-slot-encode dotted-prefix-id))
+                (set!
+                  (array-ref intern-pool-base-id-slots id)
+                  (intern-id-slot-encode dotted-tail-id)))
+              (intern-map-dirty-note!
+                intern-map-dirty-log
+                (intern-map-dirty-generated-base)
+                cursor)
               (set!
-                (array-ref intern-pool-first-dot-slots id)
-                (cast
-                  (intern-private-first-dot
-                    (& (array-ref intern-pool-slots id)))
-                  : i32))
-              (set!
-                (array-ref intern-pool-leading-dot-id-slots id)
-                (intern-id-slot-encode leading-dot-id))
-              (set!
-                (array-ref intern-pool-dotted-prefix-id-slots id)
-                (intern-id-slot-encode dotted-prefix-id))
-              (set!
-                (array-ref intern-pool-base-id-slots id)
-                (intern-id-slot-encode dotted-tail-id)))
-            (intern-map-dirty-note!
-              intern-map-dirty-log
-              (intern-map-dirty-generated-base)
-              cursor)
-            (set!
-              (array-ref intern-generated-map-id-slots cursor)
-              (intern-id-slot-encode id))
-            (set! (array-ref intern-generated-map-hash-slots cursor) hash)
-            (cfg
-              (any compile-profile test)
-              (begin
-                (intern-profile-note-canonical-map-probe!
-                  intern-active-profile-metrics-address
-                  (+ steps 1))
-                (intern-profile-note-canonical-map-insert!
-                  intern-active-profile-metrics-address)))
-            id))
+                (array-ref intern-generated-map-id-slots cursor)
+                (intern-id-slot-encode id))
+              (set! (array-ref intern-generated-map-hash-slots cursor) hash)
+              (cfg
+                (any compile-profile test)
+                (begin
+                  (intern-profile-note-canonical-map-probe!
+                    intern-active-profile-metrics-address
+                    (+ steps 1))
+                  (intern-profile-note-canonical-map-insert!
+                    intern-active-profile-metrics-address)))
+              id)))
         (let
           [slot-id : i64 (intern-id-slot-decode stored-id)]
           [slot-hash : i64 (array-ref intern-generated-map-hash-slots cursor)]
@@ -4110,25 +4095,19 @@
                     (= (intern-dotted-prefix-id slot-id) dotted-prefix-id)
                     (= (intern-dotted-tail-id slot-id) dotted-tail-id))
                   (< (intern-first-dot slot-id) 0)))))
-            (begin
-              (cfg
-                (any compile-profile test)
-                (intern-profile-note-canonical-map-probe!
-                  intern-active-profile-metrics-address
-                  (+ steps 1)))
-              slot-id)
-            (intern-generated-canonical-name-at
-              name
-              hash
-              (intern-bucket (+ cursor 1) intern-generated-map-capacity)
-              (+ steps 1)
-              qualified
-              module-id
-              base-id
-              dotted
-              leading-dot-id
-              dotted-prefix-id
-              dotted-tail-id)))))))
+            (return
+              (begin
+                (cfg
+                  (any compile-profile test)
+                  (intern-profile-note-canonical-map-probe!
+                    intern-active-profile-metrics-address
+                    (+ steps 1)))
+                slot-id))
+            (set!
+              cursor
+              (intern-bucket (+ cursor 1) intern-generated-map-capacity)))))))
+  (abort.compiler-abort
+    "tl: compiler_intern.intern-generated-canonical-name-at: generated name map exhausted\n"))
 
 ;; Canonical generated symbols deduplicate independently from source symbols.
 ;; Equal display text does not collapse hygiene with a source binding.
@@ -4142,7 +4121,6 @@
       name
       hash
       (intern-bucket hash intern-generated-map-capacity)
-      0
       false
       -1
       -1
@@ -4245,7 +4223,6 @@
       name
       hash
       (intern-bucket hash intern-generated-map-capacity)
-      0
       true
       module-id
       base-id
@@ -4276,7 +4253,6 @@
       name
       hash
       (intern-bucket hash intern-generated-map-capacity)
-      0
       false
       -1
       -1
@@ -4363,18 +4339,17 @@
             (ptr-read (ptr-offset text-ptr (+ start i)))))
           unit
           (set! ok false))
-        (set! i (+ i 1)))
+        (+= i 1))
       ok)
     false))
 
 (define (intern-record-qualified-metadata [id : i64] [name : (& name str)]) : unit
   (let
-    [i : i64 0]
     [n : i64 (__tl_string_length name)]
     [slash : i64 -1]
     [dot : i64 -1]
     [last-dot : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (__tl_string_ref name i)]
         (if (= c '/')
@@ -4385,8 +4360,7 @@
           (if (< dot 0)
             (set! dot i)
             unit)
-          (set! last-dot i))
-        (set! i (+ i 1))))
+          (set! last-dot i))))
     (set! (array-ref intern-pool-last-slash-slots id) (cast slash : i32))
     (set! (array-ref intern-pool-first-dot-slots id) (cast dot : i32))
     (set!
@@ -4453,8 +4427,7 @@
   [capacity : i64]) : unit
   (let
     [slot : i64 cursor]
-    [probes : i64 steps]
-    (while (< probes capacity)
+    (for [probes (iterator.range steps capacity)]
       (if (intern-id-slot-empty? (array-ref intern-map-id-slots slot))
         (begin
           (intern-map-dirty-note!
@@ -4464,9 +4437,7 @@
           (set! (array-ref intern-map-id-slots slot) (intern-id-slot-encode id))
           (set! (array-ref intern-map-hash-slots slot) hash)
           (return unit))
-        (begin
-          (set! slot (intern-bucket (+ slot 1) capacity))
-          (set! probes (+ probes 1)))))))
+        (set! slot (intern-bucket (+ slot 1) capacity))))))
 
 (define (intern-map-insert-existing! [id : i64]) : unit
   (let
@@ -4574,7 +4545,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -4645,7 +4616,7 @@
                   (set! done true))
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (+= steps 1)))))))
       (begin
         (cfg
           (any compile-profile test)
@@ -4734,7 +4705,7 @@
                     (return (InternLookupFound slot-id)))
                   (begin
                     (set! cursor (bit-and (+ cursor 1) mask))
-                    (set! steps (+ steps 1))))))))
+                    (+= steps 1)))))))
         (begin
           (cfg
             (any compile-profile test)
@@ -4987,8 +4958,7 @@
       [capacity : i64 (array-length ids)]
       [hash : i64 (intern-hash name)]
       [cursor : i64 (intern-bucket hash capacity)]
-      [steps : i64 0]
-      (while (< steps capacity)
+      (for [steps (iterator.range 0 capacity)]
         (let
           [stored : InternSlotId (array-ref ids cursor)]
           (if (intern-id-slot-empty? stored)
@@ -5001,9 +4971,7 @@
                 (if (< slot-id session.source-count)
                   (return (InternLookupFound slot-id))
                   (return (InternLookupMissing)))
-                (begin
-                  (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                (set! cursor (intern-bucket (+ cursor 1) capacity)))))))
       (InternLookupMissing))
     (InternLookupMissing)))
 

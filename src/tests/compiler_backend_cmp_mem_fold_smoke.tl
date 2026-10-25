@@ -13,6 +13,7 @@
 ;; totals. The bounds checks in front of every `array-ref` are folded compares
 ;; too, so a fold that changed a check's sense would abort here instead of
 ;; returning.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -28,7 +29,7 @@
     (while (< i (array-length values))
       (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
       (set! (array-ref values i) (bit-and (shr state 7) 1023))
-      (set! i (+ i 1)))))
+      (+= i 1))))
 
 ;; The folded shape: `(= (array-ref flags i) 1)` and `(>= (array-ref marks i) 0)`
 ;; are single-use element loads feeding compares that feed branches, which is
@@ -37,13 +38,11 @@
   [flags : (& flags (__tl_dyn-array i64))]
   [marks : (& marks (__tl_dyn-array i64))]) : i64
   (let
-    [i : i64 0]
     [total : i64 0]
-    (while (< i (array-length flags))
+    (for [i (iterator.range 0 (array-length flags))]
       (when
         (and (= (array-ref flags i) 1) (>= (array-ref marks i) 0))
-        (set! total (+ total (array-ref marks i))))
-      (set! i (+ i 1)))
+        (+= total (array-ref marks i))))
     total))
 
 ;; The refused shape: each element is bound to a local that is read twice, so
@@ -52,16 +51,12 @@
   [flags : (& flags (__tl_dyn-array i64))]
   [marks : (& marks (__tl_dyn-array i64))]) : i64
   (let
-    [i : i64 0]
     [total : i64 0]
-    (while (< i (array-length flags))
+    (for [i (iterator.range 0 (array-length flags))]
       (let
         [flag : i64 (array-ref flags i)]
         [mark : i64 (array-ref marks i)]
-        (when
-          (and (= flag 1) (>= mark 0))
-          (set! total (+ total (+ mark (- flag flag)))))
-        (set! i (+ i 1))))
+        (when (and (= flag 1) (>= mark 0)) (+= total (+ mark (- flag flag))))))
     total))
 
 ;; The GAP8/GAP8-B shape: `uses | (live-out & ~defs)` over word arrays, with the
@@ -71,17 +66,15 @@
   [live : (& live (__tl_dyn-array i64))]
   [defs : (& defs (__tl_dyn-array i64))]) : i64
   (let
-    [i : i64 0]
     [acc : i64 0]
-    (while (< i (array-length uses))
+    (for [i (iterator.range 0 (array-length uses))]
       (set!
         acc
         (bit-xor
           acc
           (bit-or
             (array-ref uses i)
-            (bit-and (array-ref live i) (bit-xor (array-ref defs i) -1)))))
-      (set! i (+ i 1)))
+            (bit-and (array-ref live i) (bit-xor (array-ref defs i) -1))))))
     acc))
 
 (define (cmp-mem-fold-smoke-words-unfolded
@@ -89,16 +82,14 @@
   [live : (& live (__tl_dyn-array i64))]
   [defs : (& defs (__tl_dyn-array i64))]) : i64
   (let
-    [i : i64 0]
     [acc : i64 0]
-    (while (< i (array-length uses))
+    (for [i (iterator.range 0 (array-length uses))]
       (let
         [u : i64 (array-ref uses i)]
         [l : i64 (array-ref live i)]
         [d : i64 (array-ref defs i)]
         [notd : i64 (bit-xor d -1)]
-        (set! acc (bit-xor acc (bit-or u (bit-and l (bit-or notd (- d d))))))
-        (set! i (+ i 1))))
+        (set! acc (bit-xor acc (bit-or u (bit-and l (bit-or notd (- d d))))))))
     acc))
 
 ;; GAP8-C: the accumulator shape, where the single-use element load sits on the
@@ -118,14 +109,12 @@
   [d : (& d (__tl_dyn-array i64))]
   [seed : i64]) : i64
   (let
-    [i : i64 0]
     [acc : i64 seed]
-    (while (< i (array-length a))
+    (for [i (iterator.range 0 (array-length a))]
       (set! acc (bit-and (array-ref a i) acc))
       (set! acc (bit-or (array-ref b i) acc))
       (set! acc (bit-xor (array-ref c i) acc))
-      (set! acc (+ (array-ref d i) acc))
-      (set! i (+ i 1)))
+      (+= acc (array-ref d i)))
     acc))
 
 (define (cmp-mem-fold-smoke-acc-unfolded
@@ -135,9 +124,8 @@
   [d : (& d (__tl_dyn-array i64))]
   [seed : i64]) : i64
   (let
-    [i : i64 0]
     [acc : i64 seed]
-    (while (< i (array-length a))
+    (for [i (iterator.range 0 (array-length a))]
       (let
         [av : i64 (array-ref a i)]
         [bv : i64 (array-ref b i)]
@@ -146,8 +134,7 @@
         (set! acc (bit-and (bit-or av (- av av)) acc))
         (set! acc (bit-or (bit-or bv (- bv bv)) acc))
         (set! acc (bit-xor (bit-or cv (- cv cv)) acc))
-        (set! acc (+ (bit-or dv (- dv dv)) acc))
-        (set! i (+ i 1))))
+        (+= acc (bit-or dv (- dv dv)))))
     acc))
 
 ;; Indirect indexing: the loaded value becomes the NEXT access's index, so its
@@ -156,14 +143,12 @@
   [index : (& index (__tl_dyn-array i64))]
   [table : (& table (__tl_dyn-array i64))]) : i64
   (let
-    [i : i64 0]
     [total : i64 0]
-    (while (< i (array-length index))
+    (for [i (iterator.range 0 (array-length index))]
       (let
         [slot : i64 (bit-and (array-ref index i) 255)]
-        (when (= (array-ref table slot) 1) (set! total (+ total 1)))
-        (when (>= (array-ref table slot) 512) (set! total (+ total 2)))
-        (set! i (+ i 1))))
+        (when (= (array-ref table slot) 1) (+= total 1))
+        (when (>= (array-ref table slot) 512) (+= total 2))))
     total))
 
 ;; M6-J: byte-width compares that read the element in place, with no widening
@@ -181,7 +166,7 @@
     (while (< i (array-length bytes))
       (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
       (set! (array-ref bytes i) (cast (bit-and (shr state 7) 127) : u8))
-      (set! i (+ i 1)))))
+      (+= i 1))))
 
 (define (cmp-mem-fold-smoke-bytes
   [a : (& a (__tl_dyn-array u8))]
@@ -191,18 +176,14 @@
   [text : (& text str)]
   [key : u8]) : i64
   (let
-    [i : i64 0]
     [total : i64 0]
-    (while (< i (array-length a))
-      (when (= (array-ref a i) (cast 47 : u8)) (set! total (+ total 1)))
-      (when (< (array-ref b i) (cast 100 : u8)) (set! total (+ total 3)))
-      (when (< key (array-ref c i)) (set! total (+ total 7)))
-      (when (!= (array-ref d i) key) (set! total (+ total 11)))
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i (string.string-length text))
-      (when (!= (string.string-ref text i) '/') (set! total (+ total 13)))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 (array-length a))]
+      (when (= (array-ref a i) (cast 47 : u8)) (+= total 1))
+      (when (< (array-ref b i) (cast 100 : u8)) (+= total 3))
+      (when (< key (array-ref c i)) (+= total 7))
+      (when (!= (array-ref d i) key) (+= total 11)))
+    (for [i (iterator.range 0 (string.string-length text))]
+      (when (!= (string.string-ref text i) '/') (+= total 13)))
     total))
 
 (define (main) : i64
@@ -221,11 +202,8 @@
     (cmp-mem-fold-smoke-fill (&mut index) 6)
     ;; `flags` holds masked pseudorandom values; force a healthy population of
     ;; the literal the compare folds against.
-    (let
-      [i : i64 0]
-      (while (< i cmp-mem-fold-smoke-n)
-        (when (= (bit-and i 3) 0) (set! (array-ref flags i) 1))
-        (set! i (+ i 1))))
+    (for [i (iterator.range 0 cmp-mem-fold-smoke-n)]
+      (when (= (bit-and i 3) 0) (set! (array-ref flags i) 1)))
     (if (not
       (=
         (cmp-mem-fold-smoke-folded (& flags) (& marks))

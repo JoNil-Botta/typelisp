@@ -78960,6 +78960,15 @@ tl_shared_object_init:
             (compiler-backend-object-add-r8-rax-bytes))])]
     (compiler-backend-object-store-reg-to-var with-offset dst "%rax")))
 
+;; `cmpq %rcx, %rax` (REX.W 39 /r): flags from %rax - %rcx.
+(define (compiler-backend-object-cmp-rcx-rax-bytes) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    (compiler-backend-object-push-u8! (&mut out) 0x48)
+    (compiler-backend-object-push-u8! (&mut out) 0x39)
+    (compiler-backend-object-push-u8! (&mut out) 0xc8)
+    (compiler-backend-object-bytes-finish (& out))))
+
 (define (compiler-backend-object-cmp-imm32-rax-bytes [value : i64]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -80567,6 +80576,52 @@ tl_shared_object_init:
         src
         size
         program-index)]
+    ;; `index < length` unsigned, else the runtime's out-of-bounds abort:
+    ;; `cmpq %rcx, %rax; jb ok; call tl_oob_abort; ok:` (the assembly route's
+    ;; unlocated form). The length is loaded first: a global operand is read
+    ;; through %rax.
+    [(compiler_ir_types.CompilerIrInstr.BoundsCheck index length ok-label)
+      (let
+        [ok-symbol : String
+          (compiler-backend-asm-label (string.copy (& label-scope)) ok-label)]
+        [compared : object_target.CompilerBackendObjectTargetParts
+          (compiler-backend-object-add-nonempty-bytes
+            (compiler-backend-object-load-value-to-reg
+              (compiler-backend-object-load-value-to-reg
+                parts
+                (string.copy (& function))
+                length
+                "%rcx"
+                program-index)
+              (string.copy (& function))
+              index
+              "%rax"
+              program-index)
+            (compiler-backend-object-cmp-rcx-rax-bytes))]
+        [aborted : object_target.CompilerBackendObjectTargetParts
+          (compiler-backend-object-direct-call
+            (compiler-backend-object-jcc
+              compared
+              (string.copy (& function))
+              2
+              (string.copy (& ok-symbol)))
+            target
+            (compiler_regalloc.compiler-reg-direct-call-convention
+              cbi.compiler-builtin-id-tl-oob-abort)
+            (string.copy (& function))
+            (compiler-backend-call-symbol-index
+              cbi.compiler-builtin-id-tl-oob-abort
+              plan
+              program-index)
+            (compiler_ir_types.CompilerIrCallArgs.Nil)
+            program-index)]
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-symbol-local-section
+            aborted
+            (string.copy (& ok-symbol))
+            (cobj.CompilerObjectSectionKind.Text)
+            (cobj.CompilerObjectSymbolKind.Function))
+          (cobj.CompilerObjectX64Instr.Label ok-symbol)))]
     ;; Every other instruction must be excluded by object eligibility. Emitting
     ;; only its symbol references would silently drop its effect.
     [_ (compiler-backend-object-unencodable instr)]))

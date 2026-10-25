@@ -11988,7 +11988,11 @@
           out))]
     (AstProgramCompaction
       out-program
-      (ast-node-pool-context-snapshot dest-pools))))
+      ;; A snapshot's cells live in the pool's base arena; a Mark walk's
+      ;; discarded result does not need one.
+      (match mode
+        [(CompactionMark) (ast-node-pool-context-shared-view (& dest-pools))]
+        [_ (ast-node-pool-context-snapshot dest-pools)]))))
 
 ;: Copy `program` into the existing tail of `dest-pools`, remapping every
 ;: reachable source id without discarding declarations already copied there.

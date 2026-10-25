@@ -1062,13 +1062,32 @@ slots across wide-to-compact rewrites. Segment-zero growth copies physical
 slots without duplicating overflow ownership; snapshots keep the same table
 address.
 
-Macro generation copy-out persists expression payloads in place: all expression
-ids, wrapper targets, and wrapper spans remain unchanged. It shares the row-write
-and protected-node journal operation with ordinary rewrites, but retains the
-existing provenance slots and span records. Registering those wrappers again
-would duplicate per-use re-span records. Semantic rewrites still use the
-span-updating setter, and whole-program compaction rebuilds provenance for its
-new ids. Only final macro compaction may consume source span slots as forwarding
+Macro generation copy-out first compacts the generation's expression rows
+(#9224). Mark walks record everything the generation publishes: its result,
+every memo entry its expansion noted, the owner of each span record it
+appended for a prefix semantic node, and the children of each prefix row it
+rewrote in place (journaled while the generation runs). Marking follows each
+row's span slot to the wrapper owning that span. Marked rows then move to dense
+ids in ascending old-id order, so each lands at or below its source after
+every row it could overwrite was read; their payloads move to the pool's base
+arena once. The generation's span records move with their owners in the same
+order, keeping canonical first-write order, alternate coordinates and the
+records' monotonic flag; prefix ids, slots and records are unchanged. Remap
+walks then republish the result and memo entries through the same map, and the
+rest of the rows are retired: each holds a tag no AstExpr variant uses until a
+push reuses it. A pool snapshot ending in a retired row predates the
+compaction, so adopting the newer of two snapshots never resurrects it, and
+the walk's context recaptures the shorter pool. A generation whose ownership
+cannot be proven -- the installed pool or its span records changed under it, it
+nested another generation, its expansion rewrote more prefix rows than the
+journal holds, a reference names a row past the pool's end, or an escape
+overflowed -- keeps the previous behaviour: its payloads are persisted in place
+and every expression id, wrapper target and wrapper span remains unchanged.
+Persisting shares the row-write and protected-node journal operation with
+ordinary rewrites, but retains the existing provenance slots and span records.
+Registering those wrappers again would duplicate per-use re-span records.
+Semantic rewrites still use the span-updating setter, and whole-program
+compaction rebuilds provenance for its new ids. Only final macro compaction may consume source span slots as forwarding
 IDs. The consuming entry clears the aligned, fixed span-slot segments once,
 including their writable unused tails, with an unconditional fill. Zero then
 marks an unvisited expression; destination ids are stored plus one. Source

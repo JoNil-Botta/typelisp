@@ -197,6 +197,19 @@ rewind, retirement of address-keyed memos, and readable escaped IR and errors.
 Run the lowering suite at opt0/1/2; poisoned full self-compiles also exercise
 post-rewind consumers across functions, closures and generated helpers.
 
+`compiler_ast_types_smoke.tl` covers macro generation compaction (#9224):
+interior holes, shared and later-pushed children, span owners reachable only
+through span slots, nested MacroExpansion views, wide and cross-segment span
+records, a prefix rewrite, reuse, rollback, the fallbacks and stale snapshots.
+To validate a compiler change against compaction, build the compiler with
+`--cfg ast-generation-poison`, which makes every row reader panic on a retired
+row, and also with `--cfg ast-generation-poison --cfg ast-generation-relocate`,
+which moves each generation's survivors above the pool and retires every row
+the generation used, so a read through any id from before the compaction
+fails. Self-compile and run the corpora with both. As the broken control, a
+build with `--cfg ast-generation-poison --cfg ast-generation-poison-control`
+retires one reachable row and must fail its self-compile.
+
 `array_field_store_growth.tl` exercises field stores after dynamic-array
 growth for register and memory-class elements, nested struct/tuple projections,
 one-time index selection and mutable slices at opt0/1/2 on both hosts. Its

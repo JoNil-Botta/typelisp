@@ -6439,6 +6439,118 @@
             (set! index (+ index 1)))
           false))]))
 
+;; Whether a frame address this activation creates can outlive a frame-reusing
+;; tail transfer, after LLVM's capture tracking. Alloc and AddrOf create one;
+;; Mov, Gep, Phi, casts and arithmetic derive more from one. A load, store or
+;; copy through one (its address role), a branch on one and a bounds check of
+;; one keep it in the frame. Every other use may carry it out of the
+;; activation: a call or syscall argument, a stored, returned or packed value,
+;; a vector operand. Without such a use, nothing the tail transfer leaves
+;; behind can reach the reused frame. An invalid sequence answers true.
+(define (compiler-ir-frame-derived?
+  [derived : (& derived ir_i64_i64_map.Map)]
+  [value : (& value CompilerIrValue)]) : bool
+  (match value
+    [(CompilerIrValue.Var id) (ir_i64_i64_map.contains? derived id)]
+    [_ false]))
+
+(define (compiler-ir-frame-note-derived-use!
+  [derived : (& derived ir_i64_i64_map.Map)]
+  [hit : (&mut hit (__tl_dyn-array bool))]
+  [_role : CompilerIrOperandRole]
+  [value : CompilerIrValue]) : unit
+  (when
+    (compiler-ir-frame-derived? derived (& value))
+    (set! (array-ref hit 0) true)))
+
+(define (compiler-ir-frame-note-capture!
+  [derived : (& derived ir_i64_i64_map.Map)]
+  [escaped : (&mut escaped (__tl_dyn-array bool))]
+  [role : CompilerIrOperandRole]
+  [value : CompilerIrValue]) : unit
+  (when
+    (and
+      (match role
+        [(or (CompilerIrOperandRole.Address) (CompilerIrOperandRole.Condition))
+          false]
+        [_ true])
+      (compiler-ir-frame-derived? derived (& value)))
+    (set! (array-ref escaped 0) true)))
+
+;; The destination a frame address flows into through this instruction, or -1.
+(define (compiler-ir-frame-propagating-dst [instr : (& instr CompilerIrInstr)]) : i64
+  (match instr
+    [(or (CompilerIrInstr.Mov dst _ _) (CompilerIrInstr.Gep dst _ _ _)
+         (CompilerIrInstr.Phi dst _ _) (CompilerIrInstr.Cast dst _ _ _)
+         (CompilerIrInstr.Bitcast dst _ _ _) (CompilerIrInstr.BinOp dst _ _ _ _)
+         (CompilerIrInstr.UnOp dst _ _ _))
+      dst]
+    [_ -1]))
+
+(define (compiler-ir-blocks-capture-frame?
+  [blocks : (& blocks CompilerIrBlockList)]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Array seq)
+      (if (or (< seq.len 0) (> seq.len (array-length seq.slots)))
+        true
+        (let
+          [derived : ir_i64_i64_map.Map (ir_i64_i64_map.with-capacity 8)]
+          [hit : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+          [escaped : (__tl_dyn-array bool) (__tl_make-array bool 1)]
+          [changed : bool true]
+          (for [b (iterator.range 0 seq.len)]
+            (match (& (array-ref seq.slots b))
+              [(CompilerIrBlock.Block _ instrs)
+                (for [i (iterator.range 0 instrs.len)]
+                  (match (& (array-ref instrs.slots i))
+                    [(or (CompilerIrInstr.Alloc dst _)
+                         (CompilerIrInstr.AddrOf dst _ _))
+                      (ir_i64_i64_map.insert-ref! (&mut derived) dst 1)]
+                    [_ unit]))]))
+          (while changed
+            (set! changed false)
+            (for [b (iterator.range 0 seq.len)]
+              (match (& (array-ref seq.slots b))
+                [(CompilerIrBlock.Block _ instrs)
+                  (for [i (iterator.range 0 instrs.len)]
+                    (let
+                      [instr : CompilerIrInstr
+                        (owned_view.compiler-owned-element-view instrs.slots i)]
+                      [dst : i64 (compiler-ir-frame-propagating-dst (& instr))]
+                      (when
+                        (and
+                          (>= dst 0)
+                          (not (ir_i64_i64_map.contains? (& derived) dst)))
+                        (set! (array-ref hit 0) false)
+                        (compiler-ir-instr-visit-uses
+                          instr
+                          compiler-ir-frame-note-derived-use!
+                          (& derived)
+                          (&mut hit))
+                        (when
+                          (array-ref hit 0)
+                          (ir_i64_i64_map.insert-ref! (&mut derived) dst 1)
+                          (set! changed true)))))])))
+          (for [b (iterator.range 0 seq.len)]
+            (match (& (array-ref seq.slots b))
+              [(CompilerIrBlock.Block _ instrs)
+                (for [i (iterator.range 0 instrs.len)]
+                  (let
+                    [instr : CompilerIrInstr
+                      (owned_view.compiler-owned-element-view instrs.slots i)]
+                    (when
+                      (and
+                        (< (compiler-ir-frame-propagating-dst (& instr)) 0)
+                        (match (& instr)
+                          [(CompilerIrInstr.BoundsCheck _ _ _) false]
+                          [_ true]))
+                      (compiler-ir-instr-visit-uses
+                        instr
+                        compiler-ir-frame-note-capture!
+                        (& derived)
+                        (&mut escaped)))))]))
+          (array-ref escaped 0)))]))
+
 ;; Blocks a frame address may have reached: every block holding a producer and
 ;; every block a CFG path leads to from one. Each block is pushed once.
 (defstruct CompilerIrFrameWalk
@@ -6473,7 +6585,9 @@
 (define (compiler-ir-blocks-expose-frame-at?
   [blocks : (& blocks CompilerIrBlockList)]
   [label : i64]) : bool
-  (if (not (compiler-ir-blocks-expose-frame? blocks))
+  (if (or
+    (not (compiler-ir-blocks-expose-frame? blocks))
+    (not (compiler-ir-blocks-capture-frame? blocks)))
     false
     (match blocks
       [(CompilerIrBlockList.Array seq)

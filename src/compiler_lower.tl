@@ -72066,16 +72066,22 @@
                 (or
                   ;; A reference or view parameter, or a binding proven to
                   ;; hold external storage, still points at its caller's
-                  ;; storage while it is unreassigned.
+                  ;; storage while it is unreassigned; a register-class
+                  ;; aggregate parameter is passed by value in registers.
                   (and
-                    (match (tc_core.tc-type-strip-region
-                      (tc_core.tc-resolve-type
-                        ctx
-                        (lower-global-shared-view expected)))
-                      [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)
-                           (ast.AstType.Slice _) (ast.AstType.Str))
-                        true]
-                      [_ false])
+                    (or
+                      (match (tc_core.tc-type-strip-region
+                        (tc_core.tc-resolve-type
+                          ctx
+                          (lower-global-shared-view expected)))
+                        [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)
+                             (ast.AstType.Slice _) (ast.AstType.Str))
+                          true]
+                        [_ false])
+                      (not
+                        (lower-inline-aggregate-abi-copy-needed?
+                          ctx
+                          (& expected))))
                     (lower-tail-call-safe-param-aggregate-arg?
                       ctx
                       state

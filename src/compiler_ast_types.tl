@@ -1240,12 +1240,20 @@
   ;; Keep a generous fixed guard so malformed/cyclic in-place rewrites fail closed
   ;; without walking a multi-million-node pool before every span write.
   256)
+
+;: The inline storage tag of `expr`: the first word of its 32-byte row, which
+;: the pool's push paths read to dispatch span registration.
+(define (ast-expr-storage-tag [expr : (& expr AstExpr)]) : i64
+  (unsafe
+    (ptr-read (int->ptr (ast-place-address expr) : (Ptr i64)))))
+
+;; The two provenance-bearing variants' tags, read from constructed rows so they
+;; follow AstExpr's layout instead of a handwritten copy of its variant order
+;; (a stale copy sent MacroExpansion wrappers past span registration, #8832).
 (define ast-expr-spanned-storage-tag : i64
-  ;; AstExpr is append-only and Spanned is its first inline enum variant.
-  0)
+  (ast-expr-storage-tag (& (Spanned 0 (ast-source-span 0 0 0 0)))))
 (define ast-expr-macro-expansion-storage-tag : i64
-  ;; Keep synchronized with AstExpr's append-only inline variant order.
-  83)
+  (ast-expr-storage-tag (& (MacroExpansion 0 0 0))))
 (define ast-expr-span-slot-segment-bytes : i64
   (* ast-expr-node-pool-segment-size ast-expr-span-slot-bytes))
 

@@ -3644,6 +3644,35 @@
     [(typed.TypedError.Exhausted)
       "typecheck: selected inference identity exhausted"]))
 
+;; A typed-store failure as a selected result, handing the sink back. Built
+;; at a return site, the result is built in a temporary and copied out whole;
+;; built here, a site is one call.
+(define (tc-selected-failed
+  [error : typed.TypedError]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [bindings : (&mut bind TcSelectedBindings)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (TcSelectedResult.Err
+    (tc-selected-error error)
+    (TcSelectedSink.Capture store lease bindings)))
+
+(define (tc-selected-place-failed
+  [error : typed.TypedError]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [bindings : (&mut bind TcSelectedBindings)]) : (TcSelectedPlaceResult
+    store
+    lease
+    intern
+    bind)
+  (TcSelectedPlaceResult.Err
+    (tc-selected-error error)
+    (TcSelectedSink.Capture store lease bindings)))
+
 (define (tc-selected-project
   [result : (TcSelectedResult store lease intern bind)]) : ResultTcType
   (match result
@@ -3767,9 +3796,7 @@
             lease
             (typed.TypedOccurrenceId (typed.typed-handle-copy (& child.handle))))
             [(TcSelectedOriginResult.Err error)
-              (TcSelectedResult.Err
-                (tc-selected-error error)
-                (TcSelectedSink.Capture store lease bindings))]
+              (tc-selected-failed error store lease bindings)]
             [(TcSelectedOriginResult.Ok source)
               (tc-selected-publish-primitive
                 (ResultTcType.Ok ty)
@@ -4082,15 +4109,11 @@
                             ast.AstType.Never
                             (tc-global-shared-view ty)))])])
                   [(typed.TypedTypeIdResult.Err error)
-                    (TcSelectedResult.Err
-                      (tc-selected-error error)
-                      (TcSelectedSink.Capture store lease bindings))]
+                    (tc-selected-failed error store lease bindings)]
                   [(typed.TypedTypeIdResult.Ok type-id)
                     (match (typed.typed-origin-add! store lease source)
                       [(typed.TypedOriginResult.Err error)
-                        (TcSelectedResult.Err
-                          (tc-selected-error error)
-                          (TcSelectedSink.Capture store lease bindings))]
+                        (tc-selected-failed error store lease bindings)]
                       [(typed.TypedOriginResult.Ok origin)
                         (match (typed.typed-occurrence-add!
                           store
@@ -4101,9 +4124,7 @@
                           operation
                           (& children))
                           [(typed.TypedOccurrenceResult.Err error)
-                            (TcSelectedResult.Err
-                              (tc-selected-error error)
-                              (TcSelectedSink.Capture store lease bindings))]
+                            (tc-selected-failed error store lease bindings)]
                           [(typed.TypedOccurrenceResult.Ok id)
                             (TcSelectedResult.Ok
                               ty
@@ -4139,9 +4160,7 @@
                   occurrence
                   (TcSelectedSink.Capture store lease bindings))]
               [(typed.TypedResult.Err error)
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings))]))])]
+                (tc-selected-failed error store lease bindings)]))])]
     [(TcSelectedResult.Err message sink)
       (match sink
         [(TcSelectedSink.Query)
@@ -4154,9 +4173,7 @@
                 message
                 (TcSelectedSink.Capture store lease bindings))]
             [(typed.TypedResult.Err error)
-              (TcSelectedResult.Err
-                (tc-selected-error error)
-                (TcSelectedSink.Capture store lease bindings))])])]))
+              (tc-selected-failed error store lease bindings)])])]))
 
 ;; This entry owns one inference attempt. It never looks up a type by AST ID.
 ;; Child results, including contextual results for reused syntax, are returned
@@ -4278,15 +4295,11 @@
       [(TcSelectedSink.Capture store lease bindings)
         (match (tc-selected-context-lease-ok ctx lease)
           [(typed.TypedResult.Err error)
-            (TcSelectedResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings))]
+            (tc-selected-failed error store lease bindings)]
           [(typed.TypedResult.Ok _)
             (match (typed.typed-lease-ok (& store) lease)
               [(typed.TypedResult.Err error)
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings))]
+                (tc-selected-failed error store lease bindings)]
               [(typed.TypedResult.Ok _)
                 (let
                   [tail : i64
@@ -6694,10 +6707,7 @@
           [_exit : unit
             (match (tc-selected-place-exit! store lease (& indices))
               [(TcSelectedIndexCut.Err error)
-                (return
-                  (TcSelectedResult.Err
-                    (tc-selected-error error)
-                    (TcSelectedSink.Capture store lease bindings)))]
+                (return (tc-selected-failed error store lease bindings))]
               [(TcSelectedIndexCut.Ok cut)
                 (when
                   (> cut 0)
@@ -6715,10 +6725,7 @@
                 (typed.TypedTypeId
                   (typed.typed-handle-copy (& row.type.handle)))]
               [(typed.TypedPlaceView.Err error)
-                (return
-                  (TcSelectedResult.Err
-                    (tc-selected-error error)
-                    (TcSelectedSink.Capture store lease bindings)))])]
+                (return (tc-selected-failed error store lease bindings))])]
           [origin : typed.TypedOriginId
             (match (typed.typed-origin-add!
               store
@@ -6726,10 +6733,7 @@
               (tc-global-shared-view source))
               [(typed.TypedOriginResult.Ok value) value]
               [(typed.TypedOriginResult.Err error)
-                (return
-                  (TcSelectedResult.Err
-                    (tc-selected-error error)
-                    (TcSelectedSink.Capture store lease bindings)))])]
+                (return (tc-selected-failed error store lease bindings))])]
           [formation : typed.TypedOccurrenceId
             (match (typed.typed-occurrence-add!
               store
@@ -6741,10 +6745,7 @@
               (& indices))
               [(typed.TypedOccurrenceResult.Ok value) value]
               [(typed.TypedOccurrenceResult.Err error)
-                (return
-                  (TcSelectedResult.Err
-                    (tc-selected-error error)
-                    (TcSelectedSink.Capture store lease bindings)))])]
+                (return (tc-selected-failed error store lease bindings))])]
           [children : (__tl_dyn-array typed.TypedOccurrenceId)
             (__tl_make-array typed.TypedOccurrenceId 1)]
           (set! (array-ref children 0) formation)
@@ -6845,9 +6846,7 @@
               lease
               typed.TypedMode.Executable)
               [(typed.TypedAttemptResult.Err error)
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings))]
+                (tc-selected-failed error store lease bindings)]
               [(typed.TypedAttemptResult.Ok attempt)
                 (tc-selected-attempt-finish
                   attempt
@@ -8558,6 +8557,20 @@
   (Legacy (TcSelectedSink store lease intern bind))
   (Err String (TcSelectedSink store lease intern bind)))
 
+;; `tc-selected-failed` for a scrutinee.
+(define (tc-selected-scrutinee-failed
+  [error : typed.TypedError]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [bindings : (&mut bind TcSelectedBindings)]) : (TcSelectedScrutinee
+    store
+    lease
+    intern
+    bind)
+  (TcSelectedScrutinee.Err
+    (tc-selected-error error)
+    (TcSelectedSink.Capture store lease bindings)))
+
 ;; Whether `expr` forms a place, through span and expansion wrappers. A field
 ;; of an array element is a field place of the element (Rust's `v[i].f`), not a
 ;; move of the whole element.
@@ -9188,10 +9201,7 @@
       (match (typed.typed-type-add! store lease (tc-global-shared-view ty))
         [(typed.TypedTypeIdResult.Ok id) id]
         [(typed.TypedTypeIdResult.Err error)
-          (return
-            (TcSelectedScrutinee.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-scrutinee-failed error store lease bindings))])]
     ;; The initialization's own result: Never when its value diverges
     ;; (`tc-selected-flow-never!`).
     [unit-id : typed.TypedTypeId
@@ -9204,10 +9214,7 @@
           (typed.TypedOccurrenceId (typed.typed-handle-copy (& value.handle)))))
         [(typed.TypedTypeIdResult.Ok id) id]
         [(typed.TypedTypeIdResult.Err error)
-          (return
-            (TcSelectedScrutinee.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-scrutinee-failed error store lease bindings))])]
     [origin : typed.TypedOriginId
       (match (typed.typed-origin-add!
         store
@@ -9215,10 +9222,7 @@
         (ownership.ownership-source-copy (& source)))
         [(typed.TypedOriginResult.Ok id) id]
         [(typed.TypedOriginResult.Err error)
-          (return
-            (TcSelectedScrutinee.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-scrutinee-failed error store lease bindings))])]
     [binder : typed.TypedBinderId
       (match (typed.typed-binder-add!
         store
@@ -9229,10 +9233,7 @@
         -1)
         [(typed.TypedBinderResult.Ok id) id]
         [(typed.TypedBinderResult.Err error)
-          (return
-            (TcSelectedScrutinee.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-scrutinee-failed error store lease bindings))])]
     [place : typed.TypedPlaceId
       (match (typed.typed-place-add!
         store
@@ -9241,10 +9242,7 @@
           (typed.TypedBinderId (typed.typed-handle-copy (& binder.handle)))))
         [(typed.TypedPlaceResult.Ok id) id]
         [(typed.TypedPlaceResult.Err error)
-          (return
-            (TcSelectedScrutinee.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-scrutinee-failed error store lease bindings))])]
     [children : (__tl_dyn-array typed.TypedOccurrenceId)
       (__tl_make-array typed.TypedOccurrenceId 1)]
     (set! (array-ref children 0) value)
@@ -9264,9 +9262,7 @@
           (TcSelectedMaybePlace.Some place)
           (TcSelectedSink.Capture store lease bindings))]
       [(typed.TypedOccurrenceResult.Err error)
-        (TcSelectedScrutinee.Err
-          (tc-selected-error error)
-          (TcSelectedSink.Capture store lease bindings))])))
+        (tc-selected-scrutinee-failed error store lease bindings)])))
 
 ;; An expression typed by numeric literal defaulting alone: a literal, or an
 ;; arithmetic operation, conditional or sequence over such values.
@@ -10420,9 +10416,7 @@
                             [_ false])]
                         [(typed.TypedBinderView.Err error)
                           (return
-                            (TcSelectedResult.Err
-                              (tc-selected-error error)
-                              (TcSelectedSink.Capture store lease bindings)))])]
+                            (tc-selected-failed error store lease bindings))])]
                     (when
                       (and
                         (or
@@ -18279,9 +18273,7 @@
                     env
                     origin)
                     [(TcSelectedBinderLookup.Err error)
-                      (TcSelectedResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings))]
+                      (tc-selected-failed error store lease bindings)]
                     [(TcSelectedBinderLookup.Ok found)
                       (match found
                         ;; A Copy global is read as a fresh value of its type.
@@ -18763,9 +18755,7 @@
         [(TcSelectedSink.Capture store lease bindings)
           (match (tc-selected-binding-find! store lease (& bindings) env origin)
             [(TcSelectedBinderLookup.Err error)
-              (TcSelectedPlaceResult.Err
-                (tc-selected-error error)
-                (TcSelectedSink.Capture store lease bindings))]
+              (tc-selected-place-failed error store lease bindings)]
             [(TcSelectedBinderLookup.Ok found)
               (match found
                 [(TcSelectedBinder.Unrepresented)
@@ -18779,9 +18769,7 @@
                     lease
                     (typed.TypedPlaceKind.Root binder))
                     [(typed.TypedPlaceResult.Err error)
-                      (TcSelectedPlaceResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings))]
+                      (tc-selected-place-failed error store lease bindings)]
                     [(typed.TypedPlaceResult.Ok id)
                       (TcSelectedPlaceResult.Ok
                         type
@@ -18835,25 +18823,19 @@
                       (typed.typed-handle-copy (& row.type.handle)))]
                   [(typed.TypedPlaceView.Err error)
                     (return
-                      (TcSelectedPlaceResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings)))])]
+                      (tc-selected-place-failed error store lease bindings))])]
               [result-id : typed.TypedTypeId
                 (match (typed.typed-type-add! store lease place-type)
                   [(typed.TypedTypeIdResult.Ok id) id]
                   [(typed.TypedTypeIdResult.Err error)
                     (return
-                      (TcSelectedPlaceResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings)))])]
+                      (tc-selected-place-failed error store lease bindings))])]
               [origin : typed.TypedOriginId
                 (match (typed.typed-origin-add! store lease source)
                   [(typed.TypedOriginResult.Ok id) id]
                   [(typed.TypedOriginResult.Err error)
                     (return
-                      (TcSelectedPlaceResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings)))])]
+                      (tc-selected-place-failed error store lease bindings))])]
               [projection : typed.TypedProjectionId
                 (match (typed.typed-projection-add!
                   store
@@ -18865,9 +18847,7 @@
                   [(typed.TypedProjectionResult.Ok id) id]
                   [(typed.TypedProjectionResult.Err error)
                     (return
-                      (TcSelectedPlaceResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings)))])]
+                      (tc-selected-place-failed error store lease bindings))])]
               (match (typed.typed-place-add!
                 store
                 lease
@@ -18878,9 +18858,7 @@
                     (TcSelectedPlace.Selected id indices)
                     (TcSelectedSink.Capture store lease bindings))]
                 [(typed.TypedPlaceResult.Err error)
-                  (TcSelectedPlaceResult.Err
-                    (tc-selected-error error)
-                    (TcSelectedSink.Capture store lease bindings))]))])])))
+                  (tc-selected-place-failed error store lease bindings)]))])])))
 
 (define (tc-selected-place-tuple
   [ctx : TcContext]
@@ -19431,15 +19409,11 @@
       [(TcSelectedSink.Capture store lease bindings)
         (match (tc-selected-context-lease-ok ctx lease)
           [(typed.TypedResult.Err error)
-            (TcSelectedPlaceResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings))]
+            (tc-selected-place-failed error store lease bindings)]
           [(typed.TypedResult.Ok _)
             (match (typed.typed-charge! store lease 1)
               [(typed.TypedResult.Err error)
-                (TcSelectedPlaceResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings))]
+                (tc-selected-place-failed error store lease bindings)]
               [(typed.TypedResult.Ok _)
                 (tc-infer-selected-place-id-checked
                   ctx
@@ -19896,10 +19870,7 @@
       (match (typed.typed-type-add! store lease (tc-global-shared-view ty))
         [(typed.TypedTypeIdResult.Ok id) id]
         [(typed.TypedTypeIdResult.Err error)
-          (return
-            (TcSelectedPlaceResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-place-failed error store lease bindings))])]
     ;; The initialization's own result: Never when its value diverges
     ;; (`tc-selected-flow-never!`).
     [unit-id : typed.TypedTypeId
@@ -19912,10 +19883,7 @@
           (typed.TypedOccurrenceId (typed.typed-handle-copy (& value.handle)))))
         [(typed.TypedTypeIdResult.Ok id) id]
         [(typed.TypedTypeIdResult.Err error)
-          (return
-            (TcSelectedPlaceResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-place-failed error store lease bindings))])]
     [origin : typed.TypedOriginId
       (match (typed.typed-origin-add!
         store
@@ -19923,10 +19891,7 @@
         (ownership.ownership-source-copy (& source)))
         [(typed.TypedOriginResult.Ok id) id]
         [(typed.TypedOriginResult.Err error)
-          (return
-            (TcSelectedPlaceResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-place-failed error store lease bindings))])]
     [binder : typed.TypedBinderId
       (match (typed.typed-binder-add!
         store
@@ -19937,10 +19902,7 @@
         -1)
         [(typed.TypedBinderResult.Ok id) id]
         [(typed.TypedBinderResult.Err error)
-          (return
-            (TcSelectedPlaceResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-place-failed error store lease bindings))])]
     [place : typed.TypedPlaceId
       (match (typed.typed-place-add!
         store
@@ -19949,10 +19911,7 @@
           (typed.TypedBinderId (typed.typed-handle-copy (& binder.handle)))))
         [(typed.TypedPlaceResult.Ok id) id]
         [(typed.TypedPlaceResult.Err error)
-          (return
-            (TcSelectedPlaceResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings)))])]
+          (return (tc-selected-place-failed error store lease bindings))])]
     [children : (__tl_dyn-array typed.TypedOccurrenceId)
       (__tl_make-array typed.TypedOccurrenceId 1)]
     (set! (array-ref children 0) value)
@@ -19974,9 +19933,7 @@
             (TcSelectedPlace.Selected place indices)
             (TcSelectedSink.Capture store lease bindings)))]
       [(typed.TypedOccurrenceResult.Err error)
-        (TcSelectedPlaceResult.Err
-          (tc-selected-error error)
-          (TcSelectedSink.Capture store lease bindings))])))
+        (tc-selected-place-failed error store lease bindings)])))
 
 ;; The own type of a selected place, or `fallback` for an unrepresented one.
 (define (tc-selected-place-own-type!
@@ -20430,10 +20387,7 @@
         [_exit : unit
           (match (tc-selected-place-exit! store lease (& indices))
             [(TcSelectedIndexCut.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))]
+              (return (tc-selected-failed error store lease bindings))]
             [(TcSelectedIndexCut.Ok cut)
               (when
                 (> cut 0)
@@ -20452,18 +20406,12 @@
               ;; following additions may grow and move.
               (typed.TypedTypeId (typed.typed-handle-copy (& row.type.handle)))]
             [(typed.TypedPlaceView.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))])]
+              (return (tc-selected-failed error store lease bindings))])]
         [origin : typed.TypedOriginId
           (match (typed.typed-origin-add! store lease source)
             [(typed.TypedOriginResult.Ok value) value]
             [(typed.TypedOriginResult.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))])]
+              (return (tc-selected-failed error store lease bindings))])]
         [formation : typed.TypedOccurrenceId
           (match (typed.typed-occurrence-add!
             store
@@ -20475,10 +20423,7 @@
             (& indices))
             [(typed.TypedOccurrenceResult.Ok value) value]
             [(typed.TypedOccurrenceResult.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))])]
+              (return (tc-selected-failed error store lease bindings))])]
         [_charged : unit
           (match (typed.typed-charge!
             store
@@ -20486,10 +20431,7 @@
             (comptime (size-of (type typed.TypedOccurrenceId))))
             [(typed.TypedResult.Ok _) unit]
             [(typed.TypedResult.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))])]
+              (return (tc-selected-failed error store lease bindings))])]
         [children : (__tl_dyn-array typed.TypedOccurrenceId)
           (__tl_make-array formation)]
         [operation : typed.TypedOperation
@@ -20510,9 +20452,7 @@
               (TcSelectedOccurrence.Selected value)
               (TcSelectedSink.Capture store lease bindings))]
           [(typed.TypedOccurrenceResult.Err error)
-            (TcSelectedResult.Err
-              (tc-selected-error error)
-              (TcSelectedSink.Capture store lease bindings))]))]))
+            (tc-selected-failed error store lease bindings)]))]))
 
 ;; `(set! receiver.field value)`: the legacy field-mutation checks, in its order,
 ;; with the value inferred once against the field type; then the field place
@@ -20758,10 +20698,7 @@
                   [_exit : unit
                     (match (tc-selected-place-exit! store lease (& indices))
                       [(TcSelectedIndexCut.Err error)
-                        (return
-                          (TcSelectedResult.Err
-                            (tc-selected-error error)
-                            (TcSelectedSink.Capture store lease bindings)))]
+                        (return (tc-selected-failed error store lease bindings))]
                       [(TcSelectedIndexCut.Ok cut)
                         (when
                           (> cut 0)
@@ -20779,10 +20716,7 @@
                         (typed.TypedTypeId
                           (typed.typed-handle-copy (& row.type.handle)))]
                       [(typed.TypedPlaceView.Err error)
-                        (return
-                          (TcSelectedResult.Err
-                            (tc-selected-error error)
-                            (TcSelectedSink.Capture store lease bindings)))])]
+                        (return (tc-selected-failed error store lease bindings))])]
                   [origin : typed.TypedOriginId
                     (match (typed.typed-origin-add!
                       store
@@ -20790,10 +20724,7 @@
                       (tc-global-shared-view source))
                       [(typed.TypedOriginResult.Ok value) value]
                       [(typed.TypedOriginResult.Err error)
-                        (return
-                          (TcSelectedResult.Err
-                            (tc-selected-error error)
-                            (TcSelectedSink.Capture store lease bindings)))])]
+                        (return (tc-selected-failed error store lease bindings))])]
                   [formation : typed.TypedOccurrenceId
                     (match (typed.typed-occurrence-add!
                       store
@@ -20807,10 +20738,7 @@
                       (& indices))
                       [(typed.TypedOccurrenceResult.Ok value) value]
                       [(typed.TypedOccurrenceResult.Err error)
-                        (return
-                          (TcSelectedResult.Err
-                            (tc-selected-error error)
-                            (TcSelectedSink.Capture store lease bindings)))])]
+                        (return (tc-selected-failed error store lease bindings))])]
                   (tc-selected-publish
                     (tc-global-shared-view result)
                     syntax
@@ -21111,9 +21039,7 @@
                     [(typed.TypedResult.Ok _) unit]
                     [(typed.TypedResult.Err error)
                       (return
-                        (TcSelectedPlaceResult.Err
-                          (tc-selected-error error)
-                          (TcSelectedSink.Capture store lease bindings)))])]
+                        (tc-selected-place-failed error store lease bindings))])]
                 [children : (__tl_dyn-array typed.TypedOccurrenceId)
                   (__tl_make-array typed.TypedOccurrenceId (+ count 1))]
                 [at : i64 0]
@@ -32371,9 +32297,7 @@
           (& source))
           [(TcSelectedBinderLookup.Err error)
             (TcSelectedForeachIndex.Done
-              (TcSelectedResult.Err
-                (tc-selected-error error)
-                (TcSelectedSink.Capture store lease bindings)))]
+              (tc-selected-failed error store lease bindings))]
           [(TcSelectedBinderLookup.Ok found)
             (match found
               [(TcSelectedBinder.Unrepresented)
@@ -53102,9 +53026,7 @@
       ;; existing child budget, not a fresh allowance for every nested begin.
       (match (typed.typed-charge! store lease 1)
         [(typed.TypedResult.Err error)
-          (TcSelectedResult.Err
-            (tc-selected-error error)
-            (TcSelectedSink.Capture store lease bindings))]
+          (tc-selected-failed error store lease bindings)]
         [(typed.TypedResult.Ok _)
           (let
             [capacity : i64 exprs.len]
@@ -53117,9 +53039,7 @@
                 lease
                 (* capacity (comptime (size-of (type typed.TypedOccurrenceId))))))
               [(typed.TypedResult.Err error)
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings))]
+                (tc-selected-failed error store lease bindings)]
               [(typed.TypedResult.Ok _)
                 (tc-infer-selected-begin-at
                   ctx
@@ -64390,10 +64310,7 @@
                     (typed.typed-handle-copy (& child.handle))))
                   [(TcSelectedBoolResult.Ok value) value]
                   [(TcSelectedBoolResult.Err error)
-                    (return
-                      (TcSelectedResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings)))])]
+                    (return (tc-selected-failed error store lease bindings))])]
               ;; A diverging initializer is an exit: Never never receives a
               ;; storage place, so the binding is initialized on no path that
               ;; reaches its scope. No binder is noted; the initialization is
@@ -64414,10 +64331,7 @@
                         (typed.typed-handle-copy (& child.handle))))
                       [(TcSelectedOriginResult.Ok source) source]
                       [(TcSelectedOriginResult.Err error)
-                        (return
-                          (TcSelectedResult.Err
-                            (tc-selected-error error)
-                            (TcSelectedSink.Capture store lease bindings)))])]
+                        (return (tc-selected-failed error store lease bindings))])]
                   (match (begin
                     ;; A closure local takes the closure value's own type
                     ;; (its environment, see `tc-selected-publish-closure`),
@@ -64444,9 +64358,7 @@
                       (match (typed.typed-arena-region-note! store lease name)
                         [(typed.TypedResult.Err error)
                           (return
-                            (TcSelectedResult.Err
-                              (tc-selected-error error)
-                              (TcSelectedSink.Capture store lease bindings)))]
+                            (tc-selected-failed error store lease bindings))]
                         [(typed.TypedResult.Ok _) unit]))
                     (tc-selected-current-binding-note-id!
                       store
@@ -64475,9 +64387,7 @@
                         [else typed.TypedBinderKind.Local])
                       (& source)))
                     [(TcSelectedBinderLookup.Err error)
-                      (TcSelectedResult.Err
-                        (tc-selected-error error)
-                        (TcSelectedSink.Capture store lease bindings))]
+                      (tc-selected-failed error store lease bindings)]
                     [(TcSelectedBinderLookup.Ok result)
                       (match result
                         [(TcSelectedBinder.Unrepresented)
@@ -64491,9 +64401,7 @@
                             lease
                             (comptime (size-of (type typed.TypedOccurrenceId))))
                             [(typed.TypedResult.Err error)
-                              (TcSelectedResult.Err
-                                (tc-selected-error error)
-                                (TcSelectedSink.Capture store lease bindings))]
+                              (tc-selected-failed error store lease bindings)]
                             [(typed.TypedResult.Ok _)
                               (tc-selected-publish
                                 (ResultTcType.Ok ast.AstType.Unit)
@@ -65714,10 +65622,7 @@
         [_exit : unit
           (match (tc-selected-place-exit! store lease (& indices))
             [(TcSelectedIndexCut.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))]
+              (return (tc-selected-failed error store lease bindings))]
             [(TcSelectedIndexCut.Ok cut)
               (when
                 (> cut 0)
@@ -65734,10 +65639,7 @@
             [(typed.TypedPlaceView.Ok row)
               (typed.TypedTypeId (typed.typed-handle-copy (& row.type.handle)))]
             [(typed.TypedPlaceView.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))])]
+              (return (tc-selected-failed error store lease bindings))])]
         [origin : typed.TypedOriginId
           (match (typed.typed-origin-add!
             store
@@ -65745,10 +65647,7 @@
             (tc-global-shared-view source))
             [(typed.TypedOriginResult.Ok value) value]
             [(typed.TypedOriginResult.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))])]
+              (return (tc-selected-failed error store lease bindings))])]
         [formation : typed.TypedOccurrenceId
           (match (typed.typed-occurrence-add!
             store
@@ -65760,10 +65659,7 @@
             (& indices))
             [(typed.TypedOccurrenceResult.Ok value) value]
             [(typed.TypedOccurrenceResult.Err error)
-              (return
-                (TcSelectedResult.Err
-                  (tc-selected-error error)
-                  (TcSelectedSink.Capture store lease bindings)))])]
+              (return (tc-selected-failed error store lease bindings))])]
         [children : (__tl_dyn-array typed.TypedOccurrenceId)
           (__tl_make-array typed.TypedOccurrenceId 1)]
         (set! (array-ref children 0) formation)

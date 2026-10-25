@@ -145,13 +145,52 @@
   (Ok OwnershipNormalizedBody)
   (Err OwnershipNormalizeFailure))
 
+;; Failures built in one place, one helper per result type and failure kind:
+;; a result enum built at a return site is built in a temporary and then
+;; copied out whole (some 150 bytes of code a site), while a call to one of
+;; these builds it in the caller's result.
+(define (normalize-body-unsupported [message : String]) : OwnershipNormalizeResult
+  (OwnershipNormalizeResult.Err (OwnershipNormalizeFailure.Unsupported message)))
+
+(define (normalize-body-typed [error : typed.TypedError]) : OwnershipNormalizeResult
+  (OwnershipNormalizeResult.Err (OwnershipNormalizeFailure.Typed error)))
+
+(define (normalize-body-resource) : OwnershipNormalizeResult
+  (OwnershipNormalizeResult.Err OwnershipNormalizeFailure.Resource))
+
 (defenum NormalizeUnit
   (Ok unit)
   (Err OwnershipNormalizeFailure))
 
+;; `NormalizeUnit` failures (see `normalize-body-unsupported`).
+(define (normalize-unit-structural [message : String]) : NormalizeUnit
+  (NormalizeUnit.Err (OwnershipNormalizeFailure.Structural message)))
+
+(define (normalize-unit-unsupported [message : String]) : NormalizeUnit
+  (NormalizeUnit.Err (OwnershipNormalizeFailure.Unsupported message)))
+
+(define (normalize-unit-typed [error : typed.TypedError]) : NormalizeUnit
+  (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))
+
+(define (normalize-unit-resource) : NormalizeUnit
+  (NormalizeUnit.Err OwnershipNormalizeFailure.Resource))
+
 (defenum NormalizeInt
   (Ok i64)
   (Err OwnershipNormalizeFailure))
+
+;; `NormalizeInt` failures (see `normalize-body-unsupported`).
+(define (normalize-int-structural [message : String]) : NormalizeInt
+  (NormalizeInt.Err (OwnershipNormalizeFailure.Structural message)))
+
+(define (normalize-int-unsupported [message : String]) : NormalizeInt
+  (NormalizeInt.Err (OwnershipNormalizeFailure.Unsupported message)))
+
+(define (normalize-int-typed [error : typed.TypedError]) : NormalizeInt
+  (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error)))
+
+(define (normalize-int-resource) : NormalizeInt
+  (NormalizeInt.Err OwnershipNormalizeFailure.Resource))
 
 (defenum NormalizeWords
   (Ok (__tl_dyn-array i64))
@@ -349,9 +388,8 @@
       (< index (array-length state.classes))
       (>= (array-ref state.classes index).key 0))
     (return
-      (NormalizeInt.Err
-        (OwnershipNormalizeFailure.Unsupported
-          "ownership normalization: nonprimitive canonical type"))))
+      (normalize-int-unsupported
+        "ownership normalization: nonprimitive canonical type")))
   (let
     [key : i64 (array-ref state.classes index).key]
     [copy? : bool (array-ref state.classes index).copy?]
@@ -387,8 +425,7 @@
                 (array-ref (array-ref state.products key).fields ordinal))
                 [(typed.TypedTypeIdResult.Ok id) id]
                 [(typed.TypedTypeIdResult.Err error)
-                  (return
-                    (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error)))])]
+                  (return (normalize-int-typed error))])]
             [type : i64 (try (normalize-type! state store lease field))]
             (try (normalize-charge! state 1 1 0))
             (set!
@@ -448,8 +485,7 @@
         [(NormalizeInt.Ok code) (NormalizeInt.Ok code)]
         [(NormalizeInt.Err _)
           (normalize-value-type! state store lease id.handle.index)])]
-    [(typed.TypedTypeResult.Err error)
-      (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))]))
+    [(typed.TypedTypeResult.Err error) (normalize-int-typed error)]))
 
 ;; Whether record `id` of this body was given a body type before.
 (define (normalize-type-known?
@@ -1326,6 +1362,10 @@
   (Ok NormalizeOperation)
   (Err OwnershipNormalizeFailure))
 
+;; `NormalizeOperationResult` failures (see `normalize-body-unsupported`).
+(define (normalize-operation-unsupported [message : String]) : NormalizeOperationResult
+  (NormalizeOperationResult.Err (OwnershipNormalizeFailure.Unsupported message)))
+
 (define (normalize-unary-copy [op : (& op ast.AstUnOp)]) : ast.AstUnOp
   (match op
     [(ast.AstUnOp.Neg) ast.AstUnOp.Neg]
@@ -1503,9 +1543,8 @@
     [(typed.TypedOperation.ReplacePlace _)
       (NormalizeOperationResult.Ok NormalizeOperation.ReplacePlace)]
     [_
-      (NormalizeOperationResult.Err
-        (OwnershipNormalizeFailure.Unsupported
-          "ownership normalization: projection requires representation semantics"))]))
+      (normalize-operation-unsupported
+        "ownership normalization: projection requires representation semantics")]))
 
 (defstruct NormalizeHeader
   (type typed.TypedTypeId)
@@ -1518,6 +1557,13 @@
 (defenum NormalizeHeaderResult
   (Ok NormalizeHeader)
   (Err OwnershipNormalizeFailure))
+
+;; `NormalizeHeaderResult` failures (see `normalize-body-unsupported`).
+(define (normalize-header-unsupported [message : String]) : NormalizeHeaderResult
+  (NormalizeHeaderResult.Err (OwnershipNormalizeFailure.Unsupported message)))
+
+(define (normalize-header-typed [error : typed.TypedError]) : NormalizeHeaderResult
+  (NormalizeHeaderResult.Err (OwnershipNormalizeFailure.Typed error)))
 
 (defstruct NormalizeNode
   (handle typed.TypedHandle)
@@ -1535,6 +1581,16 @@
 (defenum NormalizeNodeResult
   (Ok NormalizeNode)
   (Err OwnershipNormalizeFailure))
+
+;; `NormalizeNodeResult` failures (see `normalize-body-unsupported`).
+(define (normalize-node-structural [message : String]) : NormalizeNodeResult
+  (NormalizeNodeResult.Err (OwnershipNormalizeFailure.Structural message)))
+
+(define (normalize-node-typed [error : typed.TypedError]) : NormalizeNodeResult
+  (NormalizeNodeResult.Err (OwnershipNormalizeFailure.Typed error)))
+
+(define (normalize-node-resource) : NormalizeNodeResult
+  (NormalizeNodeResult.Err OwnershipNormalizeFailure.Resource))
 
 (defstruct NormalizeBinder
   (handle typed.TypedHandle)
@@ -1984,9 +2040,8 @@
                     [(typed.TypedOperation.FormPlace _) unit]
                     [_
                       (return
-                        (NormalizeHeaderResult.Err
-                          (OwnershipNormalizeFailure.Unsupported
-                            "ownership normalization: place formation requires representation semantics")))])])]
+                        (normalize-header-unsupported
+                          "ownership normalization: place formation requires representation semantics"))])])]
             [operation : NormalizeOperation
               (let
                 [operation : NormalizeOperation
@@ -2026,8 +2081,7 @@
               node.child-count
               expression))]
         [(typed.TypedNodeResult.Err error)
-          (return
-            (NormalizeHeaderResult.Err (OwnershipNormalizeFailure.Typed error)))])]
+          (return (normalize-header-typed error))])]
     (NormalizeHeaderResult.Ok
       (NormalizeHeader
         header.type
@@ -2095,20 +2149,18 @@
       (and
         (>= header.children 0)
         (<= header.children (- state.limits.records 2)))
-      (return (NormalizeNodeResult.Err OwnershipNormalizeFailure.Resource)))
+      (return (normalize-node-resource)))
     (when
       (< id.handle.index 0)
       (return
-        (NormalizeNodeResult.Err
-          (OwnershipNormalizeFailure.Structural
-            "ownership normalization: invalid occurrence handle"))))
+        (normalize-node-structural
+          "ownership normalization: invalid occurrence handle")))
     (normalize-handle-reserve! state.seen id.handle.index)
     (when
       (!= (array-ref state.seen id.handle.index) 0)
       (return
-        (NormalizeNodeResult.Err
-          (OwnershipNormalizeFailure.Structural
-            "ownership normalization: executable occurrence has multiple parents"))))
+        (normalize-node-structural
+          "ownership normalization: executable occurrence has multiple parents")))
     (try
       (normalize-charge! state (+ 2 header.children) (+ 1 header.children) 0))
     (set! (array-ref state.seen id.handle.index) 1)
@@ -2120,8 +2172,7 @@
           [(typed.TypedOriginView.Ok source)
             (try (normalize-source-copy! state source))]
           [(typed.TypedOriginView.Err error)
-            (return
-              (NormalizeNodeResult.Err (OwnershipNormalizeFailure.Typed error)))])]
+            (return (normalize-node-typed error))])]
       [children : (__tl_dyn-array typed.TypedOccurrenceId)
         (__tl_make-array typed.TypedOccurrenceId header.children)]
       [ordinal : i64 0]
@@ -2131,9 +2182,7 @@
             [(typed.TypedChildResult.Ok child)
               (set! (array-ref children ordinal) child)]
             [(typed.TypedChildResult.Err error)
-              (return
-                (NormalizeNodeResult.Err
-                  (OwnershipNormalizeFailure.Typed error)))])
+              (return (normalize-node-typed error))])
           (set! ordinal (+ ordinal 1))))
       (NormalizeNodeResult.Ok
         (NormalizeNode
@@ -2168,9 +2217,8 @@
     (unless
       (normalize-storage-type? (& state) type)
       (return
-        (NormalizeInt.Err
-          (OwnershipNormalizeFailure.Structural
-            "ownership normalization: exit cannot have storage"))))
+        (normalize-int-structural
+          "ownership normalization: exit cannot have storage")))
     (normalize-reserve-room!
       state.body.locals
       local
@@ -2341,6 +2389,30 @@
   (Ok NormalizeValue)
   (Err OwnershipNormalizeFailure))
 
+;; `NormalizeValueResult` failures (see `normalize-body-unsupported`).
+(define (normalize-value-structural [message : String]) : NormalizeValueResult
+  (NormalizeValueResult.Err (OwnershipNormalizeFailure.Structural message)))
+
+(define (normalize-value-unsupported [message : String]) : NormalizeValueResult
+  (NormalizeValueResult.Err (OwnershipNormalizeFailure.Unsupported message)))
+
+(define (normalize-value-typed [error : typed.TypedError]) : NormalizeValueResult
+  (NormalizeValueResult.Err (OwnershipNormalizeFailure.Typed error)))
+
+(define (normalize-value-resource) : NormalizeValueResult
+  (NormalizeValueResult.Err OwnershipNormalizeFailure.Resource))
+
+(define (normalize-value-move-out [diagnostic : OwnershipMoveOutDiagnostic]) : NormalizeValueResult
+  (NormalizeValueResult.Err (OwnershipNormalizeFailure.MoveOut diagnostic)))
+
+;; A value returned before a walk's end, built in place.
+(define (normalize-value-ok [value : (& value NormalizeValue)]) : NormalizeValueResult
+  (NormalizeValueResult.Ok (NormalizeValue value.type value.place value.block)))
+
+;; An exit: the walk's value never exists.
+(define (normalize-value-exit) : NormalizeValueResult
+  (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1)))
+
 (defstruct NormalizeBinderHeader
   (type typed.TypedTypeId)
   (origin typed.TypedOriginId)
@@ -2450,7 +2522,7 @@
           [(typed.TypedOriginView.Ok source)
             (try (normalize-source-copy! state source))]
           [(typed.TypedOriginView.Err error)
-            (return (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error)))])]
+            (return (normalize-int-typed error))])]
       ;; Parameters and module values are initialized at entry.
       [place : i64
         (try
@@ -2519,9 +2591,8 @@
     (when
       (= slot 0)
       (return
-        (NormalizeUnit.Err
-          (OwnershipNormalizeFailure.Structural
-            "ownership normalization: missing initializer binder"))))
+        (normalize-unit-structural
+          "ownership normalization: missing initializer binder")))
     (let
       [index : i64 (- slot 1)]
       (when
@@ -2529,9 +2600,8 @@
           (array-ref state.binders index).parameter?
           (array-ref state.binders index).initialized-definition?)
         (return
-          (NormalizeUnit.Err
-            (OwnershipNormalizeFailure.Structural
-              "ownership normalization: binder has multiple declaration initializers"))))
+          (normalize-unit-structural
+            "ownership normalization: binder has multiple declaration initializers")))
       (set! (array-ref state.binders index).initialized-definition? true)
       (NormalizeUnit.Ok unit))))
 
@@ -2551,7 +2621,7 @@
       (match (typed.typed-binder-count! store lease)
         [(typed.TypedCountResult.Ok value) value]
         [(typed.TypedCountResult.Err error)
-          (return (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+          (return (normalize-unit-typed error))])]
     [index : i64 0]
     (try (normalize-charge! state 0 count 0))
     (while (< index count)
@@ -2560,8 +2630,7 @@
           (match (typed.typed-binder-at! store lease index)
             [(typed.TypedBinderResult.Ok value) value]
             [(typed.TypedBinderResult.Err error)
-              (return
-                (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+              (return (normalize-unit-typed error))])]
         [parameter? : bool
           (match (typed.typed-binder-get! store lease id)
             [(typed.TypedBinderView.Ok binder)
@@ -2570,8 +2639,7 @@
                 [(typed.TypedBinderKind.InvalidateParameter _) true]
                 [_ false])]
             [(typed.TypedBinderView.Err error)
-              (return
-                (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+              (return (normalize-unit-typed error))])]
         (when
           parameter?
           (let
@@ -2646,8 +2714,7 @@
           (match (normalize-type! state store lease target)
             [(NormalizeInt.Ok type) (NormalizeInt.Ok type)]
             [(NormalizeInt.Err _) (NormalizeInt.Ok 0)])]
-        [(typed.TypedTypeIdResult.Err error)
-          (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))]))))
+        [(typed.TypedTypeIdResult.Err error) (normalize-int-typed error)]))))
 
 ;; A route at a view binder's own place: a shared reference kind whose type
 ;; (the typed `container`) names a referent.
@@ -2683,8 +2750,7 @@
           (match (normalize-type! state store lease target)
             [(NormalizeInt.Ok type) (NormalizeInt.Ok type)]
             [(NormalizeInt.Err _) (NormalizeInt.Ok -1)])]
-        [(typed.TypedTypeIdResult.Err error)
-          (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))]))))
+        [(typed.TypedTypeIdResult.Err error) (normalize-int-typed error)]))))
 
 (define (normalize-integer? [type : i64]) : bool
   (and (>= type 2) (<= type 9)))
@@ -2785,6 +2851,10 @@
   (OwnershipNormalizeFailure.Structural
     "ownership normalization: selected operation/type mismatch"))
 
+;; `normalize-type-error` as a walk's result (see `normalize-body-unsupported`).
+(define (normalize-value-type-error) : NormalizeValueResult
+  (NormalizeValueResult.Err (normalize-type-error)))
+
 (define (normalize-copy!
   [state : (&mut state NormalizeState)]
   [block : i64]
@@ -2855,6 +2925,14 @@
         NormalizeMaybeType.No
         state.move-context))))
 
+;; `normalize-global-move-out` as a walk's result.
+(define (normalize-value-global-move-out
+  [state : (&mut state NormalizeState)]
+  [place : i64]
+  [source : (& source own.OwnershipSource)]) : NormalizeValueResult
+  (NormalizeValueResult.Err
+    (try (normalize-global-move-out state place source))))
+
 (define (normalize-global-local?
   [state : (& state NormalizeState)]
   [local : i64]) : bool
@@ -2910,9 +2988,8 @@
                 (& (array-ref state.nodes index).handle)
                 (& (array-ref node.children child).handle)))
             (return
-              (NormalizeUnit.Err
-                (OwnershipNormalizeFailure.Structural
-                  "ownership normalization: missing selected operand"))))
+              (normalize-unit-structural
+                "ownership normalization: missing selected operand")))
           (set!
             (array-ref operands (+ held child))
             (array-ref state.nodes index).result-place)
@@ -2946,7 +3023,7 @@
   [depth : i64]) : NormalizeValueResult
   (unless
     (and (>= depth 0) (< depth state.limits.depth))
-    (return (NormalizeValueResult.Err OwnershipNormalizeFailure.Resource)))
+    (return (normalize-value-resource)))
   (try (normalize-charge! state 1 1 0))
   (let
     [node : NormalizeNode (try (normalize-node! state store lease id))]
@@ -2979,13 +3056,12 @@
           block
           depth))]
     ;; A diverging operand is an exit.
-    (when (= input.type 13) (return (NormalizeValueResult.Ok input)))
+    (when (= input.type 13) (return (normalize-value-ok (& input))))
     (if (or
       (not (normalize-primitive-type? input.type))
       (not (normalize-primitive-type? node.type)))
-      (NormalizeValueResult.Err
-        (OwnershipNormalizeFailure.Unsupported
-          "ownership normalization: unary operand outside primitive values"))
+      (normalize-value-unsupported
+        "ownership normalization: unary operand outside primitive values")
       (if (normalize-unary-type? op input.type node.type)
         (begin
           (try
@@ -2996,7 +3072,7 @@
                 (normalize-place-id (& state) input.place))
               (& node.source)))
           (normalize-value! state input.block node.type (& node.source)))
-        (NormalizeValueResult.Err (normalize-type-error))))))
+        (normalize-value-type-error)))))
 
 (define (normalize-short-circuit!
   [state : (&mut state NormalizeState)]
@@ -3012,7 +3088,7 @@
     [result : i64 (try (normalize-local! state 1 false (& node.source)))]
     (unless
       (and (= left.type 1) (= node.type 1))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (try (normalize-copy! state left.block left.place result (& node.source)))
     (try
       (normalize-terminate!
@@ -3042,7 +3118,7 @@
             depth))]
       (unless
         (or (= right.type 1) (= right.type 13))
-        (return (NormalizeValueResult.Err (normalize-type-error))))
+        (return (normalize-value-type-error)))
       (when
         (>= right.block 0)
         (begin
@@ -3109,7 +3185,7 @@
               (normalize-child-id node 1)
               dead
               depth))
-          (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1)))]
+          (normalize-value-exit))]
       [else
         (let
           [right : NormalizeValue
@@ -3122,15 +3198,13 @@
                 left.block
                 depth))]
           (cond
-            [(= right.type 13)
-              (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))]
+            [(= right.type 13) (normalize-value-exit)]
             [(or
                 (not (normalize-binary-operand? (& state) left.type))
                 (not (normalize-binary-operand? (& state) right.type))
                 (not (normalize-binary-operand? (& state) node.type)))
-              (NormalizeValueResult.Err
-                (OwnershipNormalizeFailure.Unsupported
-                  "ownership normalization: binary operand outside primitive values"))]
+              (normalize-value-unsupported
+                "ownership normalization: binary operand outside primitive values")]
             [(or
               ;; Copy operands that are not primitive (raw pointers, Copy
               ;; aggregates) are read like scalars.
@@ -3155,7 +3229,7 @@
                     (normalize-place-id (& state) right.place))
                   (& node.source)))
               (normalize-value! state right.block node.type (& node.source))]
-            [else (NormalizeValueResult.Err (normalize-type-error))]))])))
+            [else (normalize-value-type-error)]))])))
 
 ;; A binary operand or result: a primitive, or a Copy value holding no loans.
 (define (normalize-binary-operand?
@@ -3192,7 +3266,7 @@
     [merge : i64 (try (normalize-block! state (& node.source)))]
     (unless
       (or (= condition.type 1) (= condition.type 13))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (when
       (>= condition.block 0)
       (try
@@ -3236,9 +3310,9 @@
             (if (= condition.type 13)
               13
               joined)))
-        (return (NormalizeValueResult.Err (normalize-type-error))))
+        (return (normalize-value-type-error)))
       (if (= node.type 13)
-        (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))
+        (normalize-value-exit)
         (let
           [result : i64
             (try (normalize-local! state node.type false (& node.source)))]
@@ -3379,9 +3453,8 @@
         (set! marker (array-ref state.owner-markers index)))
       (set! index (+ index 1)))
     (if (< marker 0)
-      (NormalizeUnit.Err
-        (OwnershipNormalizeFailure.Structural
-          "ownership normalization: brand end without an :invalidate parameter"))
+      (normalize-unit-structural
+        "ownership normalization: brand end without an :invalidate parameter")
       (normalize-emit!
         state
         block
@@ -3684,12 +3757,8 @@
   [place : i64]
   [source : (& source own.OwnershipSource)]) : NormalizeUnit
   (cond
-    [(match (normalize-view-type!
-        store
-        lease
-        (array-ref state.place-typed place))
-        [(NormalizeBool.Ok tagged?) tagged?]
-        [(NormalizeBool.Err failure) (return (NormalizeUnit.Err failure))])
+    [(try
+        (normalize-view-type! store lease (array-ref state.place-typed place)))
       (NormalizeUnit.Ok unit)]
     [(= (normalize-binder-owner (& state) place) 7)
       (normalize-push! state.function-places place)
@@ -4259,7 +4328,7 @@
         (if exited?
           13
           last-type))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (when
       (and (not exited?) (> state.owner-count owners))
       (try
@@ -4273,7 +4342,7 @@
           (& node.source))))
     (set! state.owner-count owners)
     (cond
-      [exited? (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))]
+      [exited? (normalize-value-exit)]
       [(< last-place 0) (normalize-value! state block 0 (& node.source))]
       [else
         (NormalizeValueResult.Ok (NormalizeValue last-type last-place active))])))
@@ -4321,7 +4390,7 @@
             (if diverged?
               13
               0)))
-        (return (NormalizeValueResult.Err (normalize-type-error))))
+        (return (normalize-value-type-error)))
       (unless
         diverged?
         (try
@@ -4352,23 +4421,21 @@
         (set! state.break-target saved-break)
         (set! state.continue-target saved-continue)
         (set! state.loop-depth (- state.loop-depth 1))
-        (match result
-          [(NormalizeValueResult.Err failure)
-            (return (NormalizeValueResult.Err failure))]
-          [(NormalizeValueResult.Ok body)
-            (unless
-              (or (= body.type 0) (= body.type 13))
-              (return (NormalizeValueResult.Err (normalize-type-error))))
-            (when
-              (>= body.block 0)
-              (try
-                (normalize-terminate!
-                  state
-                  body.block
-                  (own.OwnershipTerminator.Goto
-                    (normalize-block-id (& state) condition-block)))))])))
+        (let
+          [body : NormalizeValue (try result)]
+          (unless
+            (or (= body.type 0) (= body.type 13))
+            (return (normalize-value-type-error)))
+          (when
+            (>= body.block 0)
+            (try
+              (normalize-terminate!
+                state
+                body.block
+                (own.OwnershipTerminator.Goto
+                  (normalize-block-id (& state) condition-block))))))))
     (if diverged?
-      (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))
+      (normalize-value-exit)
       (normalize-value! state exit-block 0 (& node.source)))))
 
 (define (normalize-loop-control!
@@ -4378,15 +4445,12 @@
   [target : i64]
   ;; 2 a break, 3 a continue (see `OwnershipObligationDiagnostic`).
   [exit : i64]) : NormalizeValueResult
-  (unless
-    (= node.type 13)
-    (return (NormalizeValueResult.Err (normalize-type-error))))
+  (unless (= node.type 13) (return (normalize-value-type-error)))
   (when
     (< target 0)
     (return
-      (NormalizeValueResult.Err
-        (OwnershipNormalizeFailure.Structural
-          "ownership normalization: loop control outside scalar while body"))))
+      (normalize-value-structural
+        "ownership normalization: loop control outside scalar while body")))
   (try
     (normalize-exit-owners!
       state
@@ -4399,7 +4463,7 @@
       state
       block
       (own.OwnershipTerminator.Goto (normalize-block-id (& state) target))))
-  (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1)))
+  (normalize-value-exit))
 
 ;; Walks a child whose value `context` consumes (`move-context`), restoring the
 ;; enclosing context after it.
@@ -4432,14 +4496,10 @@
   (let
     [operands : (__tl_dyn-array own.OwnershipPlaceId) (normalize-no-place-ids)]
     [active : i64 block]
-    (unless
-      (= node.type 13)
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+    (unless (= node.type 13) (return (normalize-value-type-error)))
     (try (normalize-charge! state 2 2 0))
     (if (= (array-length node.children) 0)
-      (unless
-        (= state.return-type 0)
-        (return (NormalizeValueResult.Err (normalize-type-error))))
+      (unless (= state.return-type 0) (return (normalize-value-type-error)))
       (let
         [value : NormalizeValue
           (try
@@ -4453,7 +4513,7 @@
               4))]
         (unless
           (or (= value.type 13) (= value.type state.return-type))
-          (return (NormalizeValueResult.Err (normalize-type-error))))
+          (return (normalize-value-type-error)))
         (set! active value.block)
         (when
           (>= active 0)
@@ -4488,7 +4548,7 @@
           state
           active
           (own.OwnershipTerminator.Return (own.OwnershipPlaceIds operands)))))
-    (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))))
+    (normalize-value-exit)))
 
 (define (normalize-bind-write!
   [state : (&mut state NormalizeState)]
@@ -4526,9 +4586,9 @@
             13
             0))
         (or (= value.type 13) (= value.type type)))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (if (= value.type 13)
-      (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))
+      (normalize-value-exit)
       (begin
         (unless
           assign?
@@ -4665,8 +4725,7 @@
                 NormalizeBinderLookup.No]
               [_ NormalizeBinderLookup.No])]
           [(typed.TypedNodeResult.Err error)
-            (return
-              (NormalizeValueResult.Err (OwnershipNormalizeFailure.Typed error)))])
+            (return (normalize-value-typed error))])
         NormalizeBinderLookup.No)]
     (if reserve?
       (normalize-reserve-borrow! state store lease id block depth)
@@ -4759,9 +4818,8 @@
     (unless
       (and (= (array-length node.children) 0) (>= referent.place 0))
       (return
-        (NormalizeValueResult.Err
-          (OwnershipNormalizeFailure.Unsupported
-            "ownership normalization: reborrow of an opaque reference"))))
+        (normalize-value-unsupported
+          "ownership normalization: reborrow of an opaque reference")))
     (let
       [value : NormalizeValue
         (try
@@ -4817,7 +4875,7 @@
           depth))]
     (unless
       (= (array-length node.children) 1)
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (normalize-reserve-place!
       state
       node
@@ -4845,7 +4903,7 @@
       (and
         (< node.type (array-length state.type-references))
         (= (array-ref state.type-references node.type) 2))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (try (normalize-exclusive-ok state parent borrowed.place (& node.source)))
     (let
       ;; Behind an opaque referent the reference is read here (its own loans
@@ -5083,7 +5141,7 @@
       (and
         (= (array-length node.children) 0)
         (= (array-ref state.body.places place).type.index node.type))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     ;; The child loan's place and parent are patched to the binder's single
     ;; solved origin; it is issued when the call activates its arguments.
     (try (normalize-charge! state 1 1 0))
@@ -5172,6 +5230,10 @@
   (Ok NormalizePlaceRoute)
   (Err OwnershipNormalizeFailure))
 
+;; `NormalizeRouteResult` failures (see `normalize-body-unsupported`).
+(define (normalize-route-resource) : NormalizeRouteResult
+  (NormalizeRouteResult.Err OwnershipNormalizeFailure.Resource))
+
 (define (normalize-place-step!
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
@@ -5223,7 +5285,7 @@
       (match (typed.typed-place-count! store lease)
         [(typed.TypedCountResult.Ok value) value]
         [(typed.TypedCountResult.Err error)
-          (return (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+          (return (normalize-unit-typed error))])]
     [index : i64 0]
     (set! state.place-memo-ids (__tl_make-array typed.TypedHandle count))
     (set! state.place-memo-steps (__tl_make-array NormalizePlaceStep count))
@@ -5233,8 +5295,7 @@
           (match (typed.typed-place-at! store lease index)
             [(typed.TypedPlaceResult.Ok value) value]
             [(typed.TypedPlaceResult.Err error)
-              (return
-                (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+              (return (normalize-unit-typed error))])]
         (try (normalize-charge! state 0 1 0))
         (let
           [place-step : NormalizePlaceStep
@@ -5598,8 +5659,7 @@
           (if (normalize-box-ast-type? (& value))
             1
             0))]
-      [(typed.TypedTypeValueResult.Err error)
-        (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))])))
+      [(typed.TypedTypeValueResult.Err error) (normalize-int-typed error)])))
 
 (define (normalize-box-ast-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
@@ -5625,9 +5685,7 @@
   [lease : (& lease (typed.TypedBodyLease intern))]
   [id : typed.TypedPlaceId]
   [depth : i64]) : NormalizeRouteResult
-  (when
-    (> depth state.limits.depth)
-    (return (NormalizeRouteResult.Err OwnershipNormalizeFailure.Resource)))
+  (when (> depth state.limits.depth) (return (normalize-route-resource)))
   (try (normalize-charge! state 0 1 0))
   (match (try (normalize-place-step-of! (& state) store lease id))
     [(NormalizePlaceStep.Root binder)
@@ -5818,9 +5876,8 @@
         (when
           (< value.block 0)
           (return
-            (NormalizeValueResult.Err
-              (OwnershipNormalizeFailure.Structural
-                "ownership normalization: diverging place index"))))
+            (normalize-value-structural
+              "ownership normalization: diverging place index")))
         (set! active value.block)
         (set! index (+ index 1))))
     (let
@@ -5833,7 +5890,7 @@
         (or
           route.indexed
           (= (array-ref state.body.places route.place).type.index node.type))
-        (return (NormalizeValueResult.Err (normalize-type-error))))
+        (return (normalize-value-type-error)))
       (set! state.formed-loan route.loan)
       (set! state.formed-binder route.binder)
       (set! state.formed-indexed route.indexed)
@@ -5914,9 +5971,7 @@
     [indexed : bool state.formed-indexed]
     [boxed : bool state.formed-boxed]
     [fixed : bool state.formed-fixed]
-    (unless
-      (= formed.type node.type)
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+    (unless (= formed.type node.type) (return (normalize-value-type-error)))
     ;; Moving owned box contents out consumes the box.
     (when
       (and
@@ -5933,17 +5988,16 @@
             (normalize-cleanup-type? (& state) node.type)
             (normalize-box-part-place? store lease (normalize-child-id node 0)))
           (return
-            (NormalizeValueResult.Err
-              (OwnershipNormalizeFailure.MoveOut
-                (OwnershipMoveOutDiagnostic
-                  (normalize-binder-name
-                    (& state)
-                    (normalize-place-root (& state) formed.place))
-                  (normalize-place-fields (& state) formed.place)
-                  4
-                  (try (normalize-source-copy! state (& node.source)))
-                  NormalizeMaybeType.No
-                  state.move-context)))))
+            (normalize-value-move-out
+              (OwnershipMoveOutDiagnostic
+                (normalize-binder-name
+                  (& state)
+                  (normalize-place-root (& state) formed.place))
+                (normalize-place-fields (& state) formed.place)
+                4
+                (try (normalize-source-copy! state (& node.source)))
+                NormalizeMaybeType.No
+                state.move-context))))
         (try
           (normalize-emit!
             state
@@ -5958,7 +6012,7 @@
             (try
               (normalize-value! state formed.block node.type (& node.source)))]
           (try (normalize-note-flow! state formed.place moved.place))
-          (return (NormalizeValueResult.Ok moved)))))
+          (return (normalize-value-ok (& moved))))))
     (if (and (< loan 0) (not indexed))
       (let
         [dest : i64
@@ -5995,38 +6049,37 @@
         (unless
           (normalize-copy-type? (& state) node.type)
           (return
-            (NormalizeValueResult.Err
-              (OwnershipNormalizeFailure.MoveOut
-                (OwnershipMoveOutDiagnostic
-                  (normalize-binder-name
-                    (& state)
-                    (normalize-place-root (& state) formed.place))
-                  (normalize-place-fields (& state) formed.place)
-                  ;; A place reached through a reference is borrowed content
-                  ;; whatever holds it (E0208, Rust E0507); only an owned
-                  ;; container's element is an element move.
-                  (cond
-                    [(>= loan 0)
-                      (match (& (array-ref state.body.loans loan).kind)
-                        [(own.OwnershipLoanKind.Exclusive) 2]
-                        [_ 1])]
-                    ;; A fixed array's element at a runtime index (a literal
-                    ;; index in range is an exact path, moved on its own).
-                    [(and indexed fixed) 4]
-                    [indexed 0]
-                    [else 1])
-                  (try (normalize-source-copy! state (& node.source)))
-                  (match (typed.typed-occurrence-get!
-                    store
-                    lease
-                    (typed.TypedOccurrenceId
-                      (typed.typed-handle-copy (& node.handle))))
-                    [(typed.TypedNodeResult.Ok occurrence)
-                      (NormalizeMaybeType.Some
-                        (typed.TypedTypeId
-                          (typed.typed-handle-copy (& occurrence.type.handle))))]
-                    [(typed.TypedNodeResult.Err _) NormalizeMaybeType.No])
-                  state.move-context)))))
+            (normalize-value-move-out
+              (OwnershipMoveOutDiagnostic
+                (normalize-binder-name
+                  (& state)
+                  (normalize-place-root (& state) formed.place))
+                (normalize-place-fields (& state) formed.place)
+                ;; A place reached through a reference is borrowed content
+                ;; whatever holds it (E0208, Rust E0507); only an owned
+                ;; container's element is an element move.
+                (cond
+                  [(>= loan 0)
+                    (match (& (array-ref state.body.loans loan).kind)
+                      [(own.OwnershipLoanKind.Exclusive) 2]
+                      [_ 1])]
+                  ;; A fixed array's element at a runtime index (a literal
+                  ;; index in range is an exact path, moved on its own).
+                  [(and indexed fixed) 4]
+                  [indexed 0]
+                  [else 1])
+                (try (normalize-source-copy! state (& node.source)))
+                (match (typed.typed-occurrence-get!
+                  store
+                  lease
+                  (typed.TypedOccurrenceId
+                    (typed.typed-handle-copy (& node.handle))))
+                  [(typed.TypedNodeResult.Ok occurrence)
+                    (NormalizeMaybeType.Some
+                      (typed.TypedTypeId
+                        (typed.typed-handle-copy (& occurrence.type.handle))))]
+                  [(typed.TypedNodeResult.Err _) NormalizeMaybeType.No])
+                state.move-context))))
         (if (< loan 0)
           (try
             (normalize-emit!
@@ -6099,13 +6152,12 @@
     (when
       (< formed.block 0)
       (return
-        (NormalizeValueResult.Err
-          (OwnershipNormalizeFailure.Structural
-            "ownership normalization: diverging place formation"))))
-    (when (= value.type 13) (return (NormalizeValueResult.Ok value)))
+        (normalize-value-structural
+          "ownership normalization: diverging place formation")))
+    (when (= value.type 13) (return (normalize-value-ok (& value))))
     (unless
       (and (= value.type formed.type) (= node.type 0))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     ;; A store into an unnamed part of an owned place (an element, or box
     ;; contents) writes the whole place: it must be initialized (no element
     ;; ever moves out), every loan of it conflicts, and the value moves in.
@@ -6252,9 +6304,8 @@
       (when
         (< formed.block 0)
         (return
-          (NormalizeValueResult.Err
-            (OwnershipNormalizeFailure.Structural
-              "ownership normalization: diverging place formation"))))]
+          (normalize-value-structural
+            "ownership normalization: diverging place formation")))]
     [reserve-parent : i64
       (if (normalize-deferred-loan? (& state) loan)
         -1
@@ -6267,8 +6318,7 @@
             (array-ref state.body.places formed.place).local.index)
           (not (normalize-copy-type? (& state) formed.type)))
         (return
-          (NormalizeValueResult.Err
-            (try (normalize-global-move-out state formed.place (& node.source))))))]
+          (normalize-value-global-move-out state formed.place (& node.source))))]
     [reservation : i64 state.loan-count]
     [reservation-source : own.OwnershipSource
       (try (normalize-source-copy! state (& node.source)))]
@@ -6302,10 +6352,10 @@
           (normalize-child-id node 1)
           formed.block
           depth))]
-    (when (= value.type 13) (return (NormalizeValueResult.Ok value)))
+    (when (= value.type 13) (return (normalize-value-ok (& value))))
     (unless
       (and (= value.type formed.type) (= node.type formed.type))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     ;; The reservation is used at the commit: it is live through the
     ;; replacement. The commit activates an exclusive borrow of the place,
     ;; which any other live loan conflicts with.
@@ -6556,8 +6606,7 @@
           (match value
             [(ast.AstType.Region _ _) true]
             [_ false]))]
-      [(typed.TypedTypeValueResult.Err error)
-        (NormalizeBool.Err (OwnershipNormalizeFailure.Typed error))])))
+      [(typed.TypedTypeValueResult.Err error) (normalize-bool-typed error)])))
 
 ;; Whether `loan` is a view's loan (`normalize-borrow!`).
 (define (normalize-view-loan? [state : (& state NormalizeState)] [loan : i64]) : bool
@@ -6709,7 +6758,7 @@
         (if mutable?
           2
           1))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (when
       mutable?
       (try (normalize-exclusive-ok state parent borrowed.place (& node.source))))
@@ -6796,9 +6845,8 @@
       (normalize-literal-select! state store lease node block depth)]
     ;; A control-flow receiver is only a store's first operand.
     [(normalize-builtin-code? node 151)
-      (NormalizeValueResult.Err
-        (OwnershipNormalizeFailure.Structural
-          "ownership normalization: store receiver outside its store"))]
+      (normalize-value-structural
+        "ownership normalization: store receiver outside its store")]
     [else (normalize-call! state store lease node block depth)]))
 
 (define (normalize-builtin-code? [node : (& node NormalizeNode)] [code : i64]) : bool
@@ -6822,9 +6870,8 @@
   (unless
     (and (> state.receiver-depth 0) (= (array-length node.children) 1))
     (return
-      (NormalizeValueResult.Err
-        (OwnershipNormalizeFailure.Structural
-          "ownership normalization: receiver tail outside a store"))))
+      (normalize-value-structural
+        "ownership normalization: receiver tail outside a store")))
   (let
     [receiver : NormalizeDeferredReceiver
       (try
@@ -6841,7 +6888,7 @@
     (try (normalize-retain-node! state retained place))
     (__tl_array-push! state.receiver-targets receiver)
     (if (< formed 0)
-      (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))
+      (normalize-value-exit)
       (normalize-value! state formed node.type (& node.source)))))
 
 ;; An element moved out of a `for` loop's private array (form 152): the
@@ -6858,7 +6905,7 @@
   [depth : i64]) : NormalizeValueResult
   (unless
     (= (array-length node.children) 1)
-    (return (NormalizeValueResult.Err (normalize-type-error))))
+    (return (normalize-value-type-error)))
   (let
     [formed : NormalizeValue
       (try
@@ -6910,7 +6957,7 @@
     [exited? : bool false]
     (unless
       (and (>= selected 0) (< selected (- count 1)))
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+      (return (normalize-value-type-error)))
     (while (< index count)
       (let
         [value : NormalizeValue
@@ -6932,7 +6979,7 @@
             (normalize-push! values value.place)
             (set! active value.block)))
         (set! index (+ index 1))))
-    (when exited? (return (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))))
+    (when exited? (return (normalize-value-exit)))
     (let
       [result : i64
         (try (normalize-local! state node.type false (& node.source)))]
@@ -7005,9 +7052,7 @@
     [merge : i64 (try (normalize-block! state source))]
     [current : i64 block]
     [index : i64 0]
-    (when
-      (< count 1)
-      (return (NormalizeValueResult.Err (normalize-type-error))))
+    (when (< count 1) (return (normalize-value-type-error)))
     (while (< index count)
       (let
         [arm : i64
@@ -7190,6 +7235,10 @@
   (Ok bool)
   (Err OwnershipNormalizeFailure))
 
+;; `NormalizeBool` failures (see `normalize-body-unsupported`).
+(define (normalize-bool-typed [error : typed.TypedError]) : NormalizeBool
+  (NormalizeBool.Err (OwnershipNormalizeFailure.Typed error)))
+
 ;; Whether occurrence `id` is a control-flow store receiver (form 151).
 (define (normalize-receiver-occurrence?
   [store : (&mut store typed.TypedStore)]
@@ -7203,8 +7252,7 @@
               (typed.TypedPrimitive.Builtin code _))
             (= code 151)]
           [_ false]))]
-    [(typed.TypedNodeResult.Err error)
-      (NormalizeBool.Err (OwnershipNormalizeFailure.Typed error))]))
+    [(typed.TypedNodeResult.Err error) (normalize-bool-typed error)]))
 
 (define (normalize-mutable-borrow-occurrence?
   [store : (&mut store typed.TypedStore)]
@@ -7216,8 +7264,7 @@
         (match (& view.operation)
           [(typed.TypedOperation.Borrow true) true]
           [_ false]))]
-    [(typed.TypedNodeResult.Err error)
-      (NormalizeBool.Err (OwnershipNormalizeFailure.Typed error))]))
+    [(typed.TypedNodeResult.Err error) (normalize-bool-typed error)]))
 
 ;; Form the place a store's mutable-borrow receiver names, as
 ;; `normalize-reserve-emit!` does, leaving its reservation to the store.
@@ -7331,7 +7378,7 @@
                   (replace! state.receiver-targets saved)]
                 (unless
                   (= (array-length select.children) 1)
-                  (return (NormalizeValueResult.Err (normalize-type-error))))
+                  (return (normalize-value-type-error)))
                 (try (normalize-retain-node! state select selected.place))
                 (set! selection (NormalizeMaybeSelection.Some targets type))
                 (NormalizeValue
@@ -7430,7 +7477,7 @@
         [(NormalizeMaybeDeferred.Some receiver)
           (try (normalize-retain-node! state receiver.node -1))]
         [(NormalizeMaybeDeferred.No) unit])
-      (return (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))))
+      (return (normalize-value-exit)))
     (match selection
       [(NormalizeMaybeSelection.Some targets type)
         (let
@@ -7602,7 +7649,7 @@
     (if (= node.type 13)
       (begin
         (try (normalize-terminate! state active own.OwnershipTerminator.Abort))
-        (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1)))
+        (normalize-value-exit))
       (let
         [result : NormalizeValue
           (try (normalize-value! state active node.type (& node.source)))]
@@ -7667,8 +7714,7 @@
           (match (typed.typed-binder-at! store lease (array-ref records index))
             [(typed.TypedBinderResult.Ok id) id]
             [(typed.TypedBinderResult.Err error)
-              (return
-                (NormalizeUnit.Err (OwnershipNormalizeFailure.Typed error)))])]
+              (return (normalize-unit-typed error))])]
         [place : i64 (try (normalize-binder! state store lease id))]
         (normalize-push! state.global-binders (array-ref records index))
         (normalize-push! state.global-places place))
@@ -7851,9 +7897,8 @@
     (when
       (< place 0)
       (return
-        (NormalizeUnit.Err
-          (OwnershipNormalizeFailure.Structural
-            "ownership normalization: unresolved global binder"))))
+        (normalize-unit-structural
+          "ownership normalization: unresolved global binder")))
     (if pending?
       (let
         [marker : i64 (try (normalize-local! state 0 true source))]
@@ -8213,14 +8258,13 @@
     (unless
       valid?
       (return
-        (NormalizeValueResult.Err
-          (OwnershipNormalizeFailure.Structural
-            "ownership normalization: selected child arity"))))
+        (normalize-value-structural
+          "ownership normalization: selected child arity")))
     (match (& node.operation)
       [(NormalizeOperation.Literal literal)
         (if (normalize-literal-type? literal node.type)
           (normalize-value! state block node.type (& node.source))
-          (NormalizeValueResult.Err (normalize-type-error)))]
+          (normalize-value-type-error))]
       [(NormalizeOperation.Read binder)
         (let
           [source : i64
@@ -8232,9 +8276,7 @@
                 (typed.TypedBinderId
                   (typed.typed-handle-copy (& binder.handle)))))]
           [type : i64 (array-ref state.body.places source).type.index]
-          (unless
-            (= type node.type)
-            (return (NormalizeValueResult.Err (normalize-type-error))))
+          (unless (= type node.type) (return (normalize-value-type-error)))
           (let
             [dest : i64
               (try (normalize-local! state type false (& node.source)))]
@@ -8428,10 +8470,8 @@
         (normalize-replace-place! state store lease node block depth)]
       [(NormalizeOperation.Match borrowed?)
         (normalize-match! state store lease node borrowed? block depth)]
-      [(NormalizeOperation.Arm)
-        (NormalizeValueResult.Err (normalize-type-error))]
-      [(NormalizeOperation.Pattern _)
-        (NormalizeValueResult.Err (normalize-type-error))]
+      [(NormalizeOperation.Arm) (normalize-value-type-error)]
+      [(NormalizeOperation.Pattern _) (normalize-value-type-error)]
       [(NormalizeOperation.Borrow mutable?)
         (normalize-borrow! state store lease node mutable? block depth)])))
 
@@ -8449,9 +8489,7 @@
   [scrutinee : i64]
   [block : i64]
   [depth : i64]) : NormalizeInt
-  (unless
-    (< depth state.limits.depth)
-    (return (NormalizeInt.Err OwnershipNormalizeFailure.Resource)))
+  (unless (< depth state.limits.depth) (return (normalize-int-resource)))
   (normalize-pattern-node!
     state
     store
@@ -8488,9 +8526,8 @@
             (when
               (= (array-length node.children) 0)
               (return
-                (NormalizeInt.Err
-                  (OwnershipNormalizeFailure.Structural
-                    "ownership normalization: pattern without a position"))))
+                (normalize-int-structural
+                  "ownership normalization: pattern without a position")))
             (try
               (normalize-walk!
                 state
@@ -8507,9 +8544,8 @@
             (>= state.formed-loan 0)
             (and state.formed-indexed (not state.formed-boxed)))
           (return
-            (NormalizeInt.Err
-              (OwnershipNormalizeFailure.Unsupported
-                "ownership normalization: match on a place behind a reference or at an array element"))))
+            (normalize-int-unsupported
+              "ownership normalization: match on a place behind a reference or at an array element")))
         (set! boxed state.formed-indexed)
         (set! position formed.place)))
     (match (& node.operation)
@@ -8564,15 +8600,13 @@
                 (& node.source)))]
           [(NormalizePattern.Alternatives)
             (return
-              (NormalizeInt.Err
-                (OwnershipNormalizeFailure.Structural
-                  "ownership normalization: binding or-pattern below an arm's top")))]
+              (normalize-int-structural
+                "ownership normalization: binding or-pattern below an arm's top"))]
           [_ unit])]
       [_
         (return
-          (NormalizeInt.Err
-            (OwnershipNormalizeFailure.Structural
-              "ownership normalization: arm pattern is not a pattern")))])
+          (normalize-int-structural
+            "ownership normalization: arm pattern is not a pattern"))])
     (let
       ;; A slice pattern's elements are reached through its reference:
       ;; they have no positions and derive from that reference.
@@ -8773,6 +8807,10 @@
   (Ok NormalizeArmEntry)
   (Err OwnershipNormalizeFailure))
 
+;; `NormalizeArmEntryResult` failures (see `normalize-body-unsupported`).
+(define (normalize-arm-entry-structural [message : String]) : NormalizeArmEntryResult
+  (NormalizeArmEntryResult.Err (OwnershipNormalizeFailure.Structural message)))
+
 ;; An arm's pattern test and bindings, from `active`. A binding or-pattern
 ;; tests its candidates in turn: each binds the arm's binders from its own
 ;; positions in a block of its own, and all of them join where the body
@@ -8841,9 +8879,8 @@
                 (< step.next 0)
                 (< (+ candidate 1) (array-length node.children)))
               (return
-                (NormalizeArmEntryResult.Err
-                  (OwnershipNormalizeFailure.Structural
-                    "ownership normalization: unreachable or-pattern candidate"))))
+                (normalize-arm-entry-structural
+                  "ownership normalization: unreachable or-pattern candidate")))
             (try
               (normalize-terminate!
                 state
@@ -9398,10 +9435,8 @@
     ;; A diverging scrutinee is an exit: no arm is entered.
     (when
       (= scrutinee.type 13)
-      (return
-        (if (= node.type 13)
-          (NormalizeValueResult.Ok scrutinee)
-          (NormalizeValueResult.Err (normalize-type-error)))))
+      (unless (= node.type 13) (return (normalize-value-type-error)))
+      (return (normalize-value-ok (& scrutinee))))
     ;; Matching a move-only module value by value would consume its
     ;; permanent place (SPEC global places).
     (when
@@ -9413,9 +9448,7 @@
           (& state)
           (array-ref state.body.places scrutinee.place).local.index))
       (return
-        (NormalizeValueResult.Err
-          (try
-            (normalize-global-move-out state scrutinee.place (& node.source))))))
+        (normalize-value-global-move-out state scrutinee.place (& node.source))))
     (when
       (or
         (< scrutinee.block 0)
@@ -9427,9 +9460,8 @@
           borrowed?
           (= (normalize-reference-kind (& state) scrutinee.place) 0)))
       (return
-        (NormalizeValueResult.Err
-          (OwnershipNormalizeFailure.Unsupported
-            "ownership normalization: match scrutinee outside the subset"))))
+        (normalize-value-unsupported
+          "ownership normalization: match scrutinee outside the subset")))
     (while (< arm (array-length node.children))
       (let
         [arm-node : NormalizeNode
@@ -9441,9 +9473,8 @@
         (unless
           (and (normalize-arm? (& arm-node)) (>= active 0))
           (return
-            (NormalizeValueResult.Err
-              (OwnershipNormalizeFailure.Structural
-                "ownership normalization: match arm shape"))))
+            (normalize-value-structural
+              "ownership normalization: match arm shape")))
         (let
           [entry : NormalizeArmEntry
             (try
@@ -9473,7 +9504,7 @@
                   0))]
             (unless
               (or (= body.type 13) (= body.type node.type))
-              (return (NormalizeValueResult.Err (normalize-type-error))))
+              (return (normalize-value-type-error)))
             (when
               (>= body.block 0)
               (begin
@@ -9509,8 +9540,8 @@
     ;; When every arm diverges the match does too, whatever type the
     ;; context gave it.
     (cond
-      [(not reached?) (NormalizeValueResult.Ok (NormalizeValue 13 -1 -1))]
-      [(= node.type 13) (NormalizeValueResult.Err (normalize-type-error))]
+      [(not reached?) (normalize-value-exit)]
+      [(= node.type 13) (normalize-value-type-error)]
       [else (NormalizeValueResult.Ok (NormalizeValue node.type result merge))])))
 
 ;; The entry block issues every parameter loan before the body runs. Without
@@ -9593,6 +9624,10 @@
 (defenum NormalizeShapesResult
   (Ok NormalizeShapes)
   (Err OwnershipNormalizeFailure))
+
+;; `NormalizeShapesResult` failures (see `normalize-body-unsupported`).
+(define (normalize-shapes-typed [error : typed.TypedError]) : NormalizeShapesResult
+  (NormalizeShapesResult.Err (OwnershipNormalizeFailure.Typed error)))
 
 ;; A shape position records its lifetime name, whether it is invariant, and
 ;; the position of the reference (or view) it lies under, or -1: that
@@ -9844,7 +9879,7 @@
         [_ false])]
     (unless
       (normalize-shape-walk variances ty false (&mut out) -1 0)
-      (return (NormalizeInt.Err OwnershipNormalizeFailure.Resource)))
+      (return (normalize-int-resource)))
     (when
       (and (= (array-length out.names) 0) (not view?) (not reference?))
       (return (normalize-empty-shape! shapes)))
@@ -9900,8 +9935,7 @@
                   (set! (array-ref shapes.cache-plain record) (+ id 1))))
               (NormalizeInt.Ok id)]
             [(NormalizeInt.Err failure) (NormalizeInt.Err failure)]))]
-      [(typed.TypedTypeValueResult.Err error)
-        (NormalizeInt.Err (OwnershipNormalizeFailure.Typed error))])))
+      [(typed.TypedTypeValueResult.Err error) (normalize-int-typed error)])))
 
 (define (normalize-shape-names-into!
   [shapes : (& shapes NormalizeShapes)]
@@ -9988,27 +10022,23 @@
           (array-ref shapes.place-shapes place)
           (cond
             [(>= record 0)
-              (match (normalize-typed-shape!
-                (&mut shapes)
-                (& state.variances)
-                store
-                lease
-                record
-                false)
-                [(NormalizeInt.Ok id) id]
-                [(NormalizeInt.Err failure)
-                  (return (NormalizeShapesResult.Err failure))])]
+              (try
+                (normalize-typed-shape!
+                  (&mut shapes)
+                  (& state.variances)
+                  store
+                  lease
+                  record
+                  false))]
             [(and (>= through 0) (>= (array-ref state.place-typed through) 0))
-              (match (normalize-typed-shape!
-                (&mut shapes)
-                (& state.variances)
-                store
-                lease
-                (array-ref state.place-typed through)
-                true)
-                [(NormalizeInt.Ok id) id]
-                [(NormalizeInt.Err failure)
-                  (return (NormalizeShapesResult.Err failure))])]
+              (try
+                (normalize-typed-shape!
+                  (&mut shapes)
+                  (& state.variances)
+                  store
+                  lease
+                  (array-ref state.place-typed through)
+                  true))]
             [else -1])))
       (set! place (+ place 1)))
     ;; Calls: the callee signature's formal parameter and result shapes.
@@ -10035,29 +10065,25 @@
                       (if (and
                         (>= operand first)
                         (< (- operand first) (ast.ast-type-list-len (& params))))
-                        (match (normalize-shape-add!
-                          (&mut shapes)
-                          (& state.variances)
-                          (ast.ty-node-get
-                            (ast.ast-type-list-get
-                              (& params)
-                              (- operand first)
-                              (ast.ast-type-id-fallback))))
-                          [(NormalizeInt.Ok id) id]
-                          [(NormalizeInt.Err failure)
-                            (return (NormalizeShapesResult.Err failure))])
+                        (try
+                          (normalize-shape-add!
+                            (&mut shapes)
+                            (& state.variances)
+                            (ast.ty-node-get
+                              (ast.ast-type-list-get
+                                (& params)
+                                (- operand first)
+                                (ast.ast-type-id-fallback)))))
                         -1)]
                     (normalize-i64s-push! (&mut shapes.call-shapes) shape))
                   (set! operand (+ operand 1)))
                 (let
                   [shape : i64
-                    (match (normalize-shape-add!
-                      (&mut shapes)
-                      (& state.variances)
-                      (ast.ty-node-get ret))
-                      [(NormalizeInt.Ok id) id]
-                      [(NormalizeInt.Err failure)
-                        (return (NormalizeShapesResult.Err failure))])]
+                    (try
+                      (normalize-shape-add!
+                        (&mut shapes)
+                        (& state.variances)
+                        (ast.ty-node-get ret)))]
                   (normalize-i64s-push! (&mut shapes.call-ret-shapes) shape)))]
             [_
               (let
@@ -10067,8 +10093,7 @@
                   (set! operand (+ operand 1)))
                 (normalize-i64s-push! (&mut shapes.call-ret-shapes) -1))])]
         [(typed.TypedTypeValueResult.Err error)
-          (return
-            (NormalizeShapesResult.Err (OwnershipNormalizeFailure.Typed error)))])
+          (return (normalize-shapes-typed error))])
       (set! index (+ index 1)))
     ;; The universal names: those of every parameter binder's type and the
     ;; declared return type.
@@ -10081,38 +10106,37 @@
             (array-ref state.place-typed (array-ref state.binders index).place)]
           (when
             (>= record 0)
-            (match (normalize-typed-shape!
+            (let
+              [id : i64
+                (try
+                  (normalize-typed-shape!
+                    (&mut shapes)
+                    (& state.variances)
+                    store
+                    lease
+                    record
+                    false))]
+              [names : (__tl_dyn-array i64) (normalize-no-i64s)]
+              (normalize-shape-names-into! (& shapes) id (&mut names))
+              (normalize-append-unique! (&mut shapes.universal) (& names))))))
+      (set! index (+ index 1)))
+    (when
+      (>= return-type 0)
+      (let
+        [id : i64
+          (try
+            (normalize-typed-shape!
               (&mut shapes)
               (& state.variances)
               store
               lease
-              record
-              false)
-              [(NormalizeInt.Ok id)
-                (let
-                  [names : (__tl_dyn-array i64) (normalize-no-i64s)]
-                  (normalize-shape-names-into! (& shapes) id (&mut names))
-                  (normalize-append-unique! (&mut shapes.universal) (& names)))]
-              [(NormalizeInt.Err failure)
-                (return (NormalizeShapesResult.Err failure))]))))
-      (set! index (+ index 1)))
-    (when
-      (>= return-type 0)
-      (match (normalize-typed-shape!
-        (&mut shapes)
-        (& state.variances)
-        store
-        lease
-        return-type
-        false)
-        [(NormalizeInt.Ok id)
-          (set! shapes.return-shape id)
-          (let
-            [names : (__tl_dyn-array i64) (normalize-no-i64s)]
-            (normalize-shape-names-into! (& shapes) id (&mut names))
-            (normalize-append-unique! (&mut shapes.universal) (& names)))]
-        [(NormalizeInt.Err failure)
-          (return (NormalizeShapesResult.Err failure))]))
+              return-type
+              false))]
+        (set! shapes.return-shape id)
+        (let
+          [names : (__tl_dyn-array i64) (normalize-no-i64s)]
+          (normalize-shape-names-into! (& shapes) id (&mut names))
+          (normalize-append-unique! (&mut shapes.universal) (& names)))))
     (NormalizeShapesResult.Ok shapes)))
 
 ;; Region nodes: one per universal name (key -1), per name of a region root's
@@ -11013,9 +11037,7 @@
           (= (array-length state.reborrow-loans) 0)
           (= (array-length state.deref-places) 0)))
       (return (NormalizeUnit.Ok unit)))
-    (unless
-      (<= places (/ 16777216 width))
-      (return (NormalizeUnit.Err OwnershipNormalizeFailure.Resource)))
+    (unless (<= places (/ 16777216 width)) (return (normalize-unit-resource)))
     (let
       ;; Per use, the value places a reassigned binding's use reads instead
       ;; (`normalize-split-reassigned!`).
@@ -11050,7 +11072,7 @@
             (not edges.exhausted)
             (not aim-edges.exhausted)
             (<= (+ count 2) (/ 16777216 words)))
-          (return (NormalizeUnit.Err OwnershipNormalizeFailure.Resource)))
+          (return (normalize-unit-resource)))
         (try
           (normalize-charge!
             state
@@ -11429,9 +11451,8 @@
                 (shl 1 (bit-and expected 63))
                 0))
             (return
-              (NormalizeUnit.Err
-                (OwnershipNormalizeFailure.Unsupported
-                  "ownership normalization: dereference of a joined or reassigned reference"))))
+              (normalize-unit-unsupported
+                "ownership normalization: dereference of a joined or reassigned reference")))
           (set! word (+ word 1)))
         (set! index (+ index 1))))
     (NormalizeUnit.Ok unit)))
@@ -11539,9 +11560,8 @@
         (unless
           (and (= count 1) (< parent child))
           (return
-            (NormalizeUnit.Err
-              (OwnershipNormalizeFailure.Unsupported
-                "ownership normalization: reborrow of a joined or later origin"))))
+            (normalize-unit-unsupported
+              "ownership normalization: reborrow of a joined or later origin")))
         (set!
           (array-ref state.body.loans child).place
           (own.ownership-place-id-copy
@@ -11863,9 +11883,8 @@
             (unless
               (= cursor last)
               (return
-                (NormalizeUnit.Err
-                  (OwnershipNormalizeFailure.Structural
-                    "ownership normalization: unordered reference use"))))))
+                (normalize-unit-structural
+                  "ownership normalization: unordered reference use")))))
         (set! block (+ block 1))))
     (NormalizeUnit.Ok unit)))
 
@@ -13079,7 +13098,7 @@
       (<= limits.depth 4096)
       (>= limits.work 32)
       (>= limits.source-bytes 1))
-    (return (OwnershipNormalizeResult.Err OwnershipNormalizeFailure.Resource)))
+    (return (normalize-body-resource)))
   (let
     [types : (__tl_dyn-array own.OwnershipType)
       (__tl_make-array own.OwnershipType normalize-first-value-type)]
@@ -13272,9 +13291,8 @@
         (when
           (normalize-deferred-pending? (& state))
           (return
-            (OwnershipNormalizeResult.Err
-              (OwnershipNormalizeFailure.Unsupported
-                "ownership normalization: unissued referent loan"))))]
+            (normalize-body-unsupported
+              "ownership normalization: unissued referent loan")))]
       (unless
         (or (= value.type 13) (= value.type result-type))
         (return (OwnershipNormalizeResult.Err (normalize-type-error))))
@@ -13296,9 +13314,7 @@
                   [(typed.TypedOriginView.Ok source)
                     (try (normalize-source-copy! (&mut state) source))]
                   [(typed.TypedOriginView.Err error)
-                    (return
-                      (OwnershipNormalizeResult.Err
-                        (OwnershipNormalizeFailure.Typed error)))])]
+                    (return (normalize-body-typed error))])]
               (try
                 (normalize-exit-owners! (&mut state) value.block 0 5 (& source)))))
           (try (normalize-retire-function! (&mut state) value.block))
@@ -13366,15 +13382,11 @@
         [(own.OwnershipResult.Err failure)
           (OwnershipNormalizeResult.Err
             (match (normalize-core-limit (& failure))
-              [(NormalizeCoreLimit.Resource)
-                (return
-                  (OwnershipNormalizeResult.Err
-                    OwnershipNormalizeFailure.Resource))]
+              [(NormalizeCoreLimit.Resource) (return (normalize-body-resource))]
               [(NormalizeCoreLimit.Unsupported)
                 (return
-                  (OwnershipNormalizeResult.Err
-                    (OwnershipNormalizeFailure.Unsupported
-                      "ownership normalization: core unsupported shape")))]
+                  (normalize-body-unsupported
+                    "ownership normalization: core unsupported shape"))]
               [(NormalizeCoreLimit.No)
                 (match (normalize-escape-diagnostic (& state) (& failure))
                   [(NormalizeEscapeResult.Some diagnostic)

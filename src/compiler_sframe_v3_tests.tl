@@ -1,4 +1,5 @@
 ;; Independent golden and mutation coverage for compiler_sframe_v3.tl.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import compiler_sframe_v3 as sframe)
 (import stdlib.string)
@@ -101,10 +102,8 @@
     u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
-    [index : i64 0]
-    (while (< index (array-length bytes))
-      (set! (array-ref out index) (array-ref bytes index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (array-length bytes))]
+      (set! (array-ref out index) (array-ref bytes index)))
     out))
 
 (define (sframe-v3-test-bytes-eq?
@@ -117,7 +116,7 @@
       (when
         (!= (array-ref left index) (array-ref right index))
         (set! same? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same?))
 
 (define (sframe-v3-test-write-i64!
@@ -126,12 +125,10 @@
   [value : i64]) : unit
   (let
     [bits : u64 (cast value : u64)]
-    [index : i64 0]
-    (while (< index 8)
+    (for [index (iterator.range 0 8)]
       (set!
         (array-ref bytes (+ offset index))
-        (cast (bit-and (shr bits (* index 8)) (cast 255 : u64)) : u8))
-      (set! index (+ index 1)))))
+        (cast (bit-and (shr bits (* index 8)) (cast 255 : u64)) : u8)))))
 
 ;; This intentionally shares no production reader or constants.  It catches a
 ;; producer/consumer bug that could otherwise agree on the same wrong layout.

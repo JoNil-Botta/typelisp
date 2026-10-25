@@ -12931,7 +12931,7 @@
            entry:
              %0 = alloc PackedStorage
              %1 = alloc PackedStorage
-             %2 = addr_of %1
+             %2 = addr_of %1 storage 2
              %3 = gep %2, 0 : u8
              %4 = mov %3 : u64
              %5 = pack "
@@ -12939,7 +12939,7 @@
           " : Pair
              %6 = alloc PackedStorage
              %7 = alloc PackedStorage
-             %8 = addr_of %7
+             %8 = addr_of %7 storage 2
              store_ptr %8, 99 : i64
              %9 = word %5, 0 : u64
              return %9

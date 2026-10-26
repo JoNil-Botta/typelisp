@@ -1,0 +1,34 @@
+name: Linux tools matched baseline
+on:
+  pull_request:
+    branches: [t3/issue-9305-ci-tool-package-reuse]
+permissions:
+  contents: read
+jobs:
+  original-install:
+    strategy:
+      matrix:
+        observation: [a, b]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record runner identity
+        shell: bash
+        run: |
+          mkdir -p target/exp/9305-original
+          cat /etc/os-release > target/exp/9305-original/identity.txt
+          printf '%s\n' "$RUNNER_OS" "$ImageOS" "$ImageVersion" >> target/exp/9305-original/identity.txt
+          dpkg --print-architecture >> target/exp/9305-original/identity.txt
+      - name: Original Linux instruction-count tools installation
+        shell: bash
+        run: |
+          started=$(date +%s%3N)
+          sudo apt-get install -y --no-install-recommends valgrind \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
+          printf 'original-install\t%s\n' "$(($(date +%s%3N) - started))" > target/exp/9305-original/timing.tsv
+          dpkg-query -W -f='${Package}\t${Version}\n' valgrind libc6-dbg > target/exp/9305-original/versions.tsv
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: original-linux-tools-${{ matrix.observation }}
+          path: target/exp/9305-original/

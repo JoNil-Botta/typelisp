@@ -2,6 +2,7 @@ name: Linux tools cache probe
 on:
   pull_request:
     branches: [t3/issue-9305-ci-tool-package-reuse]
+    types: [labeled]
 permissions:
   contents: read
 jobs:

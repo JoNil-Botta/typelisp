@@ -162,8 +162,11 @@ every merge c with parent p. It uses three quantities, each subtraction taken
 over values of one measurement identity:
 
 - `step = M(c) − M(p)`;
-- the merged PR's `own = M(T) − M(B)`;
-- `A = step − own`.
+- the merged PR's `own = M(T) − M(B)`, as its CI reported it (its own T and B
+  records, in its own identity). This is the `own` the account sums;
+- `A = step − own'`, where `own'` is the comparable own cost: the reported one
+  when the PR's identity matches the pair's, otherwise the reproduced one
+  (`own_reproduced`) measured in the pair's identity.
 
 Incomparable values are never subtracted:
 
@@ -179,7 +182,10 @@ Incomparable values are never subtracted:
 Each merge is then checked as follows:
 
 - **Class S** (the landed tree is the tested tree):
-  - R = M(c) − M(T). Warn above 1,000 Ir; fail above 10,000 Ir.
+  - R = M(c) − M(T) in one identity (`r_method direct`); after a reproduction,
+    R = `own_reproduced − own` (`r_method paired-delta`), two deltas of the same
+    T and B trees each taken within one identity. Warn above 1,000 Ir; fail
+    above 10,000 Ir.
   - T (the tested merge) and c (its squash) are different commits of one tree.
     The compiler's commit stamp also reaches content-derived assembly labels and
     the compressed embedded stdlib image, so their compilers are never

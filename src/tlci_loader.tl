@@ -443,7 +443,10 @@
 ;; cannot inherit an owner by omission; the arity is the enforcement.
 (define (tlci-loader-alloc-i64-array-in-arena [owner-arena : i64] [count : i64]) : (__tl_dyn-array
     i64)
-  (in-arena (arena.Arena owner-arena) (__tl_make-array i64 count)))
+  (in-arena
+    (unsafe
+      (arena.Arena owner-arena))
+    (__tl_make-array i64 count)))
 
 (define (tlci-loader-host-table-storage
   [owner-arena : i64]
@@ -685,7 +688,10 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     0
-    (in-arena (arena.Arena owner-arena) (__tl_make-array true))))
+    (in-arena
+      (unsafe
+        (arena.Arena owner-arena))
+      (__tl_make-array true))))
 
 (define (tlci-loader-loaded-image-with-registration
   [loaded : TlciLoadedImage]
@@ -1343,7 +1349,8 @@
           [index-arena : i64 (arena.tl_arena_make_small)]
           [result : ResultTlciLoadedImage
             (in-arena
-              (arena.Arena index-arena)
+              (unsafe
+                (arena.Arena index-arena))
               (tlci-loader-build-macro-index loaded index-arena))]
           (match result
             [(Err message)
@@ -1446,7 +1453,9 @@
   [resolved : TlciResolvedMacroEntry]) : ResultTlciLoaderUnit
   (let
     [_ (try (tlci-loader-resolved-macro-entry loaded resolved))]
-    [states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
+    [states : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-reference-shared-view
+        (& loaded.macro-index-entry-states))]
     [index : i64 resolved.entry-index]
     (if (not (= (array-length states) loaded.macro-entry-count))
       (Err "tlci loader: macro entry state index is unavailable")

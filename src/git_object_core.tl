@@ -696,15 +696,17 @@
                 (&mut entries)
                 (GitTreeEntry mode (git-object-tree-kind mode-code) name id)))
             (set! cursor (+ (+ nul 1) width))))))
+    ;; The plain vector reads its elements by clone, as its own `get` does.
     (let
       [count : i64 (tree-entries.len (& entries))]
       [items : (__tl_dyn-array GitTreeEntry)
         (__tl_make-array GitTreeEntry count)]
-      (tree-entries.copy-range!
-        (&mut items)
-        (tree-entries.slots (& entries))
-        0
-        count)
+      [slots : (& entries (__tl_dyn-array GitTreeEntry))
+        (tree-entries.slots (& entries))]
+      [index : i64 0]
+      (while (< index count)
+        (set! (array-ref items index) (clone (array-ref slots index)))
+        (set! index (+ index 1)))
       (Ok (GitTree items)))))
 
 (defstruct GitTag

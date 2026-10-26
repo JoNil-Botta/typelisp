@@ -123,7 +123,10 @@
   (let
     [owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
     [shared : String
-      (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
+      (in-arena
+        (unsafe
+          (arena.Arena owner))
+        (string.copy "shared reader storage"))]
     (for [index (iterator.range 0 2049)]
       (reader.sp-node-push
         (Int index (reader.sp-text-id "") (token.SourceSpan 1 1 1 1)))

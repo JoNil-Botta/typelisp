@@ -468,28 +468,49 @@
 ;: caller-owned Formatter cell and recover the updated value afterward.
 (unsafe
   (define (formatter-write-string-at! [address : i64] [text : String]) : unit
+    (unsafe
+      (formatter-write-raw-at! address text))))
+
+;: `formatter-write-raw!` on the Formatter stored at `address`. The cell is read
+;: and updated through its fields, in place: reading the whole Formatter into a
+;: value would be a private copy to write back.
+(unsafe
+  (define (formatter-write-raw-at! [address : i64] [data : String]) : unit
     (let
       [slot : (MutPtr Formatter)
         (unsafe
           (int->ptr (cast address : u64) : (MutPtr Formatter)))]
-      [formatter : Formatter
-        (unsafe
-          (ptr-read (ptr-cast slot : (Ptr Formatter))))]
-      (formatter-write-string! (&mut formatter) text)
-      (unsafe
-        (ptr-write! slot formatter)))))
+      (if (<= (string.string-length (& data)) 0)
+        unit
+        (if (!=
+          (unsafe
+            (deref slot).status)
+          0)
+          unit
+          (let
+            [write-raw : (-> i64 String i64)
+              (unsafe
+                (deref slot).write-raw)]
+            [status : i64
+              (write-raw
+                (unsafe
+                  (deref slot).context)
+                data)]
+            (if (= status 0)
+              unit
+              (unsafe
+                (set! (deref slot).status status)))))))))
 
 ;: Read the result of the Formatter stored at `address`.
 (unsafe
   (define (formatter-result-at [address : i64]) : FormatResult
     (let
-      [slot : (Ptr Formatter)
+      [status : i64
         (unsafe
-          (int->ptr (cast address : u64) : (Ptr Formatter)))]
-      [formatter : Formatter
-        (unsafe
-          (ptr-read slot))]
-      (formatter-result (& formatter)))))
+          (formatter-status-at address))]
+      (if (= status 0)
+        (FormatOk)
+        (FormatErr status)))))
 
 ;: Read the raw destination status stored at `address`.
 ;:
@@ -501,10 +522,8 @@
       [slot : (Ptr Formatter)
         (unsafe
           (int->ptr (cast address : u64) : (Ptr Formatter)))]
-      [formatter : Formatter
-        (unsafe
-          (ptr-read slot))]
-      formatter.status)))
+      (unsafe
+        (deref slot).status))))
 
 ;: Validate one runtime-provided width before allocation or arithmetic.
 (define (format-width-count-runtime [count : i64]) : i64
@@ -584,6 +603,12 @@
   [rendered : String]
   [numeric? : bool]
   [options : FormatOptions]) : String
+  ;; FormatOptions is public; parser validation is not a caller capability.
+  (when
+    (or
+      (< options.width 0)
+      (and options.precision-present (< options.precision 0)))
+    (format-runtime-abort-string "format: negative width or precision"))
   (let
     [rendered-len : i64 (string.string-length (& rendered))]
     [display-len : i64
@@ -6896,13 +6921,22 @@
 
 ;: Render exact decimal digits at `scale`, extending to requested precision.
 ;:
-;: `precision >= scale`. Rounding has already happened when precision is below
-;: the source value's exact terminating-decimal scale.
+;: Digits must be nonempty and `precision >= scale`. Rounding has already
+;: happened when precision is below the source value's exact decimal scale.
 (define (ftoa-render-fixed
   [neg : bool]
   [digits : String]
   [scale : i64]
   [precision : i64]) : String
+  ;; This helper is callable directly; establish its documented shape before
+  ;; deriving any raw destination ranges from scale or precision.
+  (when
+    (or (< scale 0) (< precision scale))
+    (format-runtime-abort-string
+      "format: invalid fixed float scale or precision"))
+  (when
+    (= (string.string-length (& digits)) 0)
+    (format-runtime-abort-string "format: fixed float digits must not be empty"))
   (let
     [digits-len : i64 (string.string-length (& digits))]
     [decimal-position : i64 (- digits-len scale)]

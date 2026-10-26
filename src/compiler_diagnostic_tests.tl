@@ -822,11 +822,13 @@
         [advisories : cdiag.CompilerAdvisoryList
           (if (= (deref data).payload-arena 0)
             (in-arena
-              (arena.Arena payload-arena)
+              (unsafe
+                (arena.Arena payload-arena))
               (cdiag.compiler-advisory-list-with-capacity 4))
             (deref data).advisories)]
         (in-arena
-          (arena.Arena payload-arena)
+          (unsafe
+            (arena.Arena payload-arena))
           (compiler-advisory-list-push!
             (&mut advisories)
             (compiler-advisory-phase-copy phase)

@@ -253,7 +253,8 @@
       (>= surface-typecheck-facts-recording-current-call 0)
       (>= root-key 0))
       (in-arena
-        (arena.Arena surface-typecheck-facts-recording-arena)
+        (unsafe
+          (arena.Arena surface-typecheck-facts-recording-arena))
         (surface-clone-observation-seq-push!
           (&mut surface-typecheck-facts-recording-observations)
           (SurfaceCloneObservation

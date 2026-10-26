@@ -259,10 +259,10 @@
       [bad : trace.CompilerIncrementalTrace
         (trace.CompilerIncrementalTrace
           a.schema
-          a.parent
+          (clone a.parent)
           a.edge-count
           bytes
-          a.fingerprint)]
+          (clone a.fingerprint))]
       (match (trace.compiler-trace-compare (& a) (& bad) (& limits))
         [(Corrupt error) (= error.code trace.compiler-trace-error-corrupt)]
         [_ false]))))

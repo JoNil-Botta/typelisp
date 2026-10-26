@@ -1185,7 +1185,7 @@
           [(= i 2)
             (set!
               bad.key
-              (string.substring-copy-checked
+              (string.substring
                 (& bad.key)
                 0
                 (- (string.string-length bad.key) 1)))]

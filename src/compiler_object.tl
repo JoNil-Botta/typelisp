@@ -229,35 +229,45 @@
   [src : (__tl_dyn-array CompilerObjectDataRecord)]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-instr-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectX64Instr))]
   [src : (__tl_dyn-array CompilerObjectX64Instr)]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-symbol-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectSymbol))]
   [src : (__tl_dyn-array CompilerObjectSymbol)]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-relocation-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectRelocation))]
   [src : (__tl_dyn-array CompilerObjectRelocation)]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-section-builder-copy-range!
   [dst : (&mut dst (__tl_dyn-array CompilerObjectSection))]
   [src : (__tl_dyn-array CompilerObjectSection)]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (compiler-object-data-record-builder-grow
   [builder : CompilerObjectDataRecordBuilder]) : CompilerObjectDataRecordBuilder

@@ -1177,11 +1177,16 @@
         cfgs
         pools)
         [(Ok decls paths _ _)
+          ;; Lower for the target the example is emitted for, as `compile`
+          ;; does: the return-storage authority records the lowering ABI and
+          ;; the backend refuses one captured for another target.
           (match (lower.lower-compiler-program-with-decl-paths-mode-cache-and-pools
             (owned_view.compiler-owned-shared-view virtual-path)
             (ast.ast-program decls)
             paths
-            (Scalar)
+            (driver.compiler-driver-lower-mode-for-target
+              target
+              (backend.CompilerBackendMode.Scalar))
             stdlib-roots
             cfgs
             (tc.tc-prefix-default-cache-scope)
@@ -1751,7 +1756,7 @@
       [dep-root : String
         (compiler_load.compiler-load-normalize-path
           (if (compiler_load.compiler-load-absolute-path? dep-path)
-            dep-path
+            (string.copy (& dep-path))
             (compiler_load.compiler-load-join-root-path
               (owned_view.compiler-owned-shared-view manifest-dir)
               (owned_view.compiler-owned-shared-view dep-path))))]

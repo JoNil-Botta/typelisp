@@ -1,4 +1,5 @@
 ;; Build-configured embedded stdlib comptime image and production loader path.
+(import compiler_abort as abort)
 (import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (cfg test (import compiler_embedded_stdlib_tlci_payload_seed as payload))
@@ -170,7 +171,8 @@
 ;: for the whole pass, so the message it hands back must not be.
 (define (compiler-embedded-stdlib-tlci-session-own-text [text : String]) : String
   (in-arena
-    (arena.Arena (compiler-embedded-stdlib-tlci-session-arena))
+    (unsafe
+      (arena.Arena (compiler-embedded-stdlib-tlci-session-arena)))
     (string.substring (& text) 0 (string.string-length text))))
 
 ;; The image is embedded through a TLCI-only canonical-Huffman layer over the
@@ -200,7 +202,8 @@
         (compiler-embedded-stdlib-tlci-raw-limit))
         [(Ok raw-len _ _) raw-len]
         [(Err _)
-          (string.tl_oob_abort)
+          (abort.compiler-abort
+            "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-length: invalid embedded TLCI frame\n")
           0]))))
 
 (define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
@@ -214,7 +217,8 @@
         (compiler-embedded-stdlib-tlci-raw-limit))
         [(Ok bytes) bytes]
         [(Err _)
-          (string.tl_oob_abort)
+          (abort.compiler-abort
+            "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy: invalid embedded TLCI bytes\n")
           (__tl_make-array u8 0)]))))
 
 ;; Publish the owner only after its immutable bytes are complete. Nested users
@@ -248,7 +252,8 @@
     (if (<= owner 0)
       (compiler-embedded-stdlib-tlci-copy)
       (in-arena
-        (arena.Arena owner)
+        (unsafe
+          (arena.Arena owner))
         (let
           ;; Decoder tables are transient; only its byte result belongs to
           ;; the retained surface owner.
@@ -558,7 +563,7 @@
         (< index compiler-comptime-host-operand-cap))
         (set!
           (array-ref compiler-comptime-host-operands index)
-          (array-ref operands index))
+          (owned_view.compiler-owned-element-view operands index))
         (+= index 1)))
     (set! compiler-comptime-host-operand-count operand-count)
     (set! compiler-comptime-host-session-fuel fuel)
@@ -671,7 +676,9 @@
     (for [index (iterator.range 0 compiler-comptime-host-stack-len)]
       (set!
         (array-ref bigger index)
-        (array-ref compiler-comptime-host-stack index)))
+        (owned_view.compiler-owned-element-view
+          compiler-comptime-host-stack
+          index)))
     (set! compiler-comptime-host-stack bigger)))
 
 (define (compiler-comptime-host-push! [value : ctfe_support.CompilerCtfeValue]) : i64
@@ -5476,7 +5483,8 @@
       (while (< capacity needed)
         (set! capacity (* capacity 2)))
       (in-arena
-        (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!))
+        (unsafe
+          (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!)))
         (let
           [next : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
           (for [index (iterator.range 0 used)]
@@ -5580,7 +5588,8 @@
 ;; so a later entry for the same key replaces the stale one again.
 (define (compiler-comptime-host-batch-cache-rehash! [capacity : i64]) : unit
   (in-arena
-    (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!))
+    (unsafe
+      (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!)))
     (set!
       compiler-comptime-host-batch-cache-slots
       (__tl_make-array i64 capacity)))

@@ -366,9 +366,12 @@
         (let
           [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
           [out-index : i64 0]
-          [main-lookup : (__tl_dyn-array i64) main-table.lookup]
-          [distance-lookup : (__tl_dyn-array i64) distance-table.lookup]
-          [length-lookup : (__tl_dyn-array i64) length-table.lookup]
+          [main-lookup : (__tl_dyn-array i64)
+            (owned_view.compiler-owned-shared-view main-table.lookup)]
+          [distance-lookup : (__tl_dyn-array i64)
+            (owned_view.compiler-owned-shared-view distance-table.lookup)]
+          [length-lookup : (__tl_dyn-array i64)
+            (owned_view.compiler-owned-shared-view length-table.lookup)]
           [fast-limit : i64
             (- bit-len (compiler-embedded-stdlib-tlci-codec-lookup-bits))]
           [next-byte : i64 bit-start]

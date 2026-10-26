@@ -1172,7 +1172,7 @@
   (let
     [count : i64 0]
     (for [index (iterator.range 0 (array-length tests))]
-      (match (array-ref tests index)
+      (match (owned_view.compiler-owned-element-view tests index)
         [(Case _ _ _ _ _ _ _ _ selection)
           (let
             [kind : i64

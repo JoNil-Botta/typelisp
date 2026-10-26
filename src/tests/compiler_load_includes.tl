@@ -60,7 +60,7 @@
                         bytes
                         (match kind
                           [(LzssString)
-                            (ctfe.ctfe-embedded-stdlib-binary-data-bytes
+                            (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2
                               (& contents))]
                           [_ contents]))]
                     [_ false]))]))]

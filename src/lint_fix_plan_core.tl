@@ -436,7 +436,7 @@
               (set!
                 (array-ref outcomes outcome-count)
                 (LintFixOutcome
-                  candidate.id
+                  (clone candidate.id)
                   fix-at
                   (diag.compiler-diagnostic-path candidate.diagnostic)
                   (if (>= primary 0)

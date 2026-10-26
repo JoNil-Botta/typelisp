@@ -714,7 +714,10 @@
             [(Match _ arms)
               (and
                 (= arms.len 2)
-                (match (array-ref arms.slots 0)
+                (match (ast.ast-match-arm-list-get
+                  (& arms)
+                  0
+                  (ast.ast-match-arm-fallback))
                   [(Arm pattern _)
                     (match pattern
                       [(Variant name-id args-box)
@@ -733,7 +736,10 @@
                             [_ false]))]
                       [_ false])]
                   [_ false])
-                (match (array-ref arms.slots 1)
+                (match (ast.ast-match-arm-list-get
+                  (& arms)
+                  1
+                  (ast.ast-match-arm-fallback))
                   [(Arm pattern _)
                     (match pattern
                       [(Binding name-id)
@@ -1339,7 +1345,7 @@
             [(Match _ arms)
               (and
                 (= arms.len 2)
-                (match (array-ref arms.slots 0)
+                (match (owned_view.compiler-owned-element-view arms.slots 0)
                   [(Arm _ body)
                     (match (producer-test-expr-get (& pools) body)
                       [(Begin items)
@@ -1372,7 +1378,7 @@
                             [_ false]))]
                       [_ false])]
                   [_ false])
-                (match (array-ref arms.slots 1)
+                (match (owned_view.compiler-owned-element-view arms.slots 1)
                   [(Arm _ body)
                     (match (producer-test-expr-get (& pools) body)
                       [(Return inner) (= inner operand)]

@@ -341,7 +341,9 @@
           (roots.new)
           (check.compiler-check-language-cfgs)
           (tc.tc-serial-job-state)
-          owner
+          ;; The request borrows the facts arena destroyed after it.
+          (unsafe
+            (arena.Arena owner.handle))
           false
           0
           semantic-facts-test-consumer))]
@@ -497,7 +499,9 @@
           (roots.new)
           (check.compiler-check-language-cfgs)
           (tc.tc-serial-job-state)
-          owner
+          ;; The request borrows the facts arena destroyed after it.
+          (unsafe
+            (arena.Arena owner.handle))
           false
           0
           semantic-facts-test-consumer))]
@@ -515,7 +519,9 @@
           (roots.new)
           (check.compiler-check-language-cfgs)
           (tc.tc-serial-job-state)
-          package-owner
+          ;; The request borrows the facts arena destroyed after it.
+          (unsafe
+            (arena.Arena package-owner.handle))
           false
           0
           semantic-facts-test-consumer))]
@@ -691,7 +697,10 @@
 (define (semantic-facts-test-consumer-in-owner
   [owner : i64]
   [snapshot : (& snapshot facts.CompilerSemanticFacts)]) : unit
-  (in-arena (arena.Arena owner) (semantic-facts-test-consumer 0 snapshot)))
+  (in-arena
+    (unsafe
+      (arena.Arena owner))
+    (semantic-facts-test-consumer 0 snapshot)))
 
 (define (semantic-facts-test-owned-job [source : String] [generated : bool]) : bool
   (let
@@ -703,7 +712,8 @@
         [owner : arena.Arena (arena.make)]
         [checked : bool
           (in-arena
-            (arena.Arena (array-ref scope.frontend-arena 0))
+            (unsafe
+              (arena.Arena (array-ref scope.frontend-arena 0)))
             (match (facts.compiler-check-semantic-request
               (facts.CompilerSemanticCheckRequest
                 (check.CompilerSemanticCheckInput.Source
@@ -712,7 +722,9 @@
                 (roots.new)
                 (check.compiler-check-language-cfgs)
                 (driver.compiler-driver-state-typecheck (& scope.state))
-                owner
+                ;; The request borrows the facts arena destroyed after it.
+                (unsafe
+                  (arena.Arena owner.handle))
                 generated
                 home.handle
                 semantic-facts-test-consumer-in-owner))

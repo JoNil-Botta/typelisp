@@ -1841,7 +1841,7 @@ route_rows wildcard embedded <<'ROWS'
 c typecheck.macro.stdlib_tlci_native_dispatches >= 1
 c typecheck.macro.stdlib_tlci_native_module_results >= 1
 has stdlib.hash/hash arity=1
-has stdlib.hash/inline-hash arity=2
+has stdlib.hash/inline-hash arity=3
 has stdlib.eq/inline-eq arity=3
 ROWS
 route_rows wildcard interpreted <<'ROWS'

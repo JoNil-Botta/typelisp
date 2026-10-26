@@ -39,7 +39,8 @@
           (C)
           link
           (ast.ast-extern-link-input-list-new)
-          false))]
+          false
+          (ir.CompilerIrReturnStorage.None)))]
     [index (backend.compiler-backend-runtime-index-empty)]
     [refs (backend.BackendSymbolSeq (__tl_make-array i64 1) 0)]
     ;; An unused extern declaration is deliberately insufficient. Keep the

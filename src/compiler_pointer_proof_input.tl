@@ -134,7 +134,8 @@
     [owner : i64 (arena.tl_arena_make_small)]
     [address : u64
       (in-arena
-        (arena.Arena owner)
+        (unsafe
+          (arena.Arena owner))
         (let
           [storage : (__tl_dyn-array PointerProofStorage)
             (__tl_make-array PointerProofStorage 1)]
@@ -186,7 +187,8 @@
     (when
       (= (string.string-length (& storage.default-path)) 0)
       (in-arena
-        (arena.Arena storage.arena)
+        (unsafe
+          (arena.Arena storage.arena))
         (set! storage.default-path (string.copy (& path)))
         (pointer-proof-input-store! input storage)))))
 
@@ -213,7 +215,8 @@
     (when
       (= (string.string-length (& storage.failure)) 0)
       (in-arena
-        (arena.Arena storage.arena)
+        (unsafe
+          (arena.Arena storage.arena))
         (set! storage.failure (string.copy (& message)))
         (pointer-proof-input-store! input storage)))))
 
@@ -227,7 +230,8 @@
     (when
       (= (string.string-length (& storage.failure)) 0)
       (in-arena
-        (arena.Arena storage.arena)
+        (unsafe
+          (arena.Arena storage.arena))
         (set! storage.failure (string.copy (& message)))
         (set! storage.failure-path (string.copy (& path)))
         (set! storage.failure-span span)
@@ -261,7 +265,8 @@
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
     [index : i64 (use_vec.len (& storage.uses))]
     (in-arena
-      (arena.Arena storage.arena)
+      (unsafe
+        (arena.Arena storage.arena))
       (match source-type
         [(Missing)
           (pointer-proof-input-fail-at!
@@ -299,7 +304,8 @@
   (let
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
     (in-arena
-      (arena.Arena storage.arena)
+      (unsafe
+        (arena.Arena storage.arena))
       (symbol_map.insert-ref!
         (&mut storage.function-indices)
         (ir.compiler-ir-symbol-id-value function.symbol)
@@ -310,7 +316,10 @@
 (define (pointer-proof-input-operands [input : PointerProofInput]) : ref_vec.Vec
   (let
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
-    (in-arena (arena.Arena storage.arena) (ref_vec.new))))
+    (in-arena
+      (unsafe
+        (arena.Arena storage.arena))
+      (ref_vec.new))))
 
 (define (pointer-proof-input-push-operand!
   [input : PointerProofInput]
@@ -319,14 +328,15 @@
   (let
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
     (in-arena
-      (arena.Arena storage.arena)
+      (unsafe
+        (arena.Arena storage.arena))
       (ref_vec.push-ref! operands reference))))
 
 (define (pointer-proof-program-identity
   [program : ir.CompilerIrProgram]
   [spans : ir.CompilerSourceSpans]) : PointerProofProgramIdentity
   (match program
-    [(Program globals functions externs)
+    [(Program globals functions externs _authority)
       (match spans
         [(Spans entries instructions _ _)
           (PointerProofProgramIdentity
@@ -354,7 +364,7 @@
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
     (match (unsafe
       (ptr-read (ptr-addr-of program)))
-      [(Program _ functions _)
+      [(Program _ functions _ _authority)
         (unless
           (= functions.len (function_vec.len (& storage.functions)))
           (pointer-proof-input-fail!

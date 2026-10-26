@@ -1,5 +1,6 @@
-;; Mutable reborrows through stored iterator references preserve an aggregate
-;; element's original source lifetime as well as its nominal element type.
+;; A mutable reborrow through a stored iterator reference keeps an aggregate
+;; element's nominal type; it borrows the iterator, so the item lends from it
+;; (#8449).
 (defstruct AggregateReborrowItem
   (value i64))
 
@@ -9,12 +10,12 @@
   (index i64))
 
 (defenum AggregateReborrowNext
-  (:lifetimes source)
+  (:lifetimes item)
   (Done)
-  (Item (&mut source AggregateReborrowItem)))
+  (Item (&mut item AggregateReborrowItem)))
 
-(define (next [iter : (&mut state (AggregateReborrowIter source))]) : (AggregateReborrowNext
-    source)
+(define (next [iter : (&mut item (AggregateReborrowIter source))]) : (AggregateReborrowNext
+    item)
   (let
     [index : i64 iter.index]
     (if (>= index 1)

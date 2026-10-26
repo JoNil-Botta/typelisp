@@ -477,11 +477,14 @@
         state.base-arena
         state.exhausted
         (in-arena
-          (arena.Arena state.base-arena)
+          (unsafe
+            (arena.Arena state.base-arena))
           (ast.ty-node-dedup-slots-new 8))
         state.dedup-count
         state.storage-arena
-        state.segment-count)]
+        state.segment-count
+        state.revision
+        state.revision-cell)]
     (ast.ast-type-pool-cell-write! pools.type-pool small)
     (ast.ast-node-pool-context-type-push pools (I64))
     (ast.ast-node-pool-context-type-push pools (Var 0))
@@ -2124,7 +2127,11 @@
               (& early)
               (& views)
               (- early-total 1))
-            (ast.ast-node-pool-context-expr-span-oracle-ok? early))]
+            ;; Every copy of a pool state shares the live node count (one
+            ;; cursor, so a stale copy appends instead of overwriting), so
+            ;; the early snapshot's oracle would read nodes past its own span
+            ;; records; the live pool's oracle is checked here instead.
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
         [snapshot : ast.AstNodePoolContext
           (ast.ast-node-pool-context-snapshot pools)]
         [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
@@ -3152,6 +3159,404 @@
             " views")))
       (set! index (+ index 1)))))
 
+(define (compiler-ast-type-pool-stamp
+  [pools : (& pools ast.AstNodePoolContext)]) : ast.AstTypePoolStamp
+  (match (ast.ast-node-pool-context-type-stamp pools)
+    [(ast.AstMaybeTypePoolStamp.Some stamp) stamp]
+    [(ast.AstMaybeTypePoolStamp.No)
+      (ci.intern-runtime-abort-string
+        "tl: test expected a live type pool stamp\n")]))
+
+(define (compiler-ast-type-pool-stamp-smoke?) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [a-id : i64 (ast.ast-node-pool-context-type-push a (ast.AstType.I64))]
+    [b-id : i64 (ast.ast-node-pool-context-type-push b (ast.AstType.Char))]
+    [a-stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& a))]
+    [b-stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& b))]
+    [ok : bool
+      (and
+        (= a-id 0)
+        (= b-id 0)
+        (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp))
+        (ast.ast-node-pool-context-type-stamp-valid? (& b) (& b-stamp))
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& a) (& b-stamp)))
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& b) (& a-stamp))))]
+    [i : i64 0]
+    ;; Distinct appended types force segment growth and preserve old ids.
+    (while (< i 1030)
+      (begin
+        (ast.ast-node-pool-context-type-push a (ast.AstType.Var i))
+        (set! i (+ i 1))))
+    (set!
+      ok
+      (and ok (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp))))
+    (ast.ast-node-pool-context-install! b)
+    (ast.ty-node-push (& (ast.AstType.Bool)))
+    (ast.ast-node-pool-context-install! a)
+    (set!
+      ok
+      (and
+        ok
+        (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp))
+        (ast.ast-node-pool-context-type-stamp-valid? (& b) (& b-stamp))))
+    (ast.ty-node-pool-truncate! 1)
+    (set!
+      ok
+      (and
+        ok
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp)))
+        (ast.ast-node-pool-context-type-stamp-valid? (& b) (& b-stamp))))
+    (let
+      [current : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& a))]
+      [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone a)]
+      [alias-stamp : ast.AstTypePoolStamp
+        (compiler-ast-type-pool-stamp (& alias))]
+      ;; An alias of the same storage shares its cursor, so evidence taken
+      ;; through either context is valid through both until truncation.
+      (set!
+        ok
+        (and
+          ok
+          (ast.ast-node-pool-context-type-stamp-valid? (& alias) (& current))
+          (ast.ast-node-pool-context-type-stamp-valid? (& a) (& alias-stamp))))
+      (ast.ast-node-pool-context-reset-to! a 0 0)
+      (ast.ast-node-pool-context-type-push a (ast.AstType.String))
+      (set!
+        ok
+        (and
+          ok
+          (not (ast.ast-node-pool-context-type-stamp-valid? (& a) (& current)))
+          (not
+            (ast.ast-node-pool-context-type-stamp-valid?
+              (& alias)
+              (& alias-stamp))))))
+    ;; An old alias's cached length is stale once another alias appends.
+    ;; The shared cursor still issues it a fresh id: the newer node survives
+    ;; and append-only evidence through both aliases remains valid.
+    (let
+      [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone b)]
+      [appended : i64
+        (ast.ast-node-pool-context-type-push b (ast.AstType.String))]
+      [after-append : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& b))]
+      [aliased : i64
+        (ast.ast-node-pool-context-type-push alias (ast.AstType.U8))]
+      [alias-stamp : ast.AstTypePoolStamp
+        (compiler-ast-type-pool-stamp (& alias))]
+      (set!
+        ok
+        (and
+          ok
+          (= aliased (+ appended 1))
+          (= (ast.ast-node-pool-context-type-len b) (+ aliased 1))
+          (match (ast.ast-node-pool-context-type-get (& b) appended)
+            [(ast.AstType.String) true]
+            [_ false])
+          (match (ast.ast-node-pool-context-type-get (& b) aliased)
+            [(ast.AstType.U8) true]
+            [_ false])
+          (ast.ast-node-pool-context-type-stamp-valid? (& b) (& after-append))
+          (ast.ast-node-pool-context-type-stamp-valid?
+            (& alias)
+            (& alias-stamp))))
+      (ast.ast-node-pool-context-adopt-newer! b alias))
+    (let
+      [clone : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-clone-types-only a)]
+      [source-stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& a))]
+      [clone-stamp : ast.AstTypePoolStamp
+        (compiler-ast-type-pool-stamp (& clone))]
+      (ast.ast-node-pool-context-install! saved)
+      (ast.ast-node-pool-context-destroy-storage! a)
+      (set!
+        ok
+        (and
+          ok
+          (not
+            (ast.ast-node-pool-context-type-stamp-valid? (& a) (& source-stamp)))
+          (not
+            (ast.ast-node-pool-context-type-stamp-valid?
+              (& clone)
+              (& source-stamp)))
+          (ast.ast-node-pool-context-type-stamp-valid?
+            (& clone)
+            (& clone-stamp))
+          (match (ast.ast-node-pool-context-type-get (& clone) 0)
+            [(ast.AstType.String) true]
+            [_ false])))
+      (ast.ast-node-pool-context-destroy-storage! clone))
+    (ast.ast-node-pool-context-destroy-storage! b)
+    ok))
+
+(test
+  compiler-ast-type-pool-stamp
+  (tl_test.assert-true
+    (compiler-ast-type-pool-stamp-smoke?)
+    "type pool stamps name storage by its cursor, preserve appends through aliases, and reject other storage, truncation and retirement"))
+
+(define (compiler-ast-type-writer-sync-case? [compat? : bool] [cells? : bool]) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [other : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& pools))]
+    [ok : bool true]
+    [i : i64 0]
+    (if compat?
+      (ast.ast-node-pool-compat-context-use! pools)
+      (ast.ast-node-pool-context-install! pools))
+    (let
+      [generation : i64 (ast.ty-node-pool-generation-value)]
+      ;; Alternate the explicit and legacy append routes across segment
+      ;; growth. Each cursor and dedup count must be published before the
+      ;; other writer runs; retaining only shared segment pointers is not
+      ;; enough to prevent a later append overwriting the previous id.
+      (while (and ok (< i 1040))
+        (let
+          [explicit-id : i64
+            (if cells?
+              (ast.ast-node-pool-context-type-push-cells
+                (ast.ast-pool-cell-data pools.expr-pool)
+                (ast.ast-pool-cell-data pools.type-pool)
+                (& (ast.AstType.Var i)))
+              (ast.ast-node-pool-context-type-push pools (ast.AstType.Var i)))]
+          [global-id : i64 (ast.ty-node-push (& (ast.AstType.Var (+ i 1))))]
+          [state : ast.AstTypeNodePoolState
+            (ast.ast-type-pool-cell-read pools.type-pool)]
+          (set!
+            ok
+            (and
+              (= explicit-id i)
+              (= global-id (+ i 1))
+              (= state.count (+ i 2))
+              (= state.dedup-count state.count)
+              (ast.ast-node-pool-context-type-stamp-valid? (& pools) (& stamp))
+              (match (ast.ast-node-pool-context-type-get (& pools) explicit-id)
+                [(ast.AstType.Var name) (= name i)]
+                [_ false])
+              (match (ast.ast-node-pool-context-type-get (& pools) global-id)
+                [(ast.AstType.Var name) (= name (+ i 1))]
+                [_ false])
+              (= (ast.ty-node-push (& (ast.AstType.Var i))) explicit-id)
+              (=
+                (ast.ast-node-pool-context-type-push
+                  pools
+                  (ast.AstType.Var (+ i 1)))
+                global-id)))
+          (set! i (+ i 2))))
+      ;; Replacing the dedup backing table must publish its complete state
+      ;; too; duplicate lookups cannot repair a stale cursor by appending.
+      (unless compat? (ast.ty-node-dedup-grow!))
+      (set! ok (and ok (= (ast.ty-node-push (& (ast.AstType.Var 0))) 0)))
+      ;; A write to another owner's cells must not publish into this job.
+      (ast.ast-node-pool-context-type-push-cells
+        (ast.ast-pool-cell-data other.expr-pool)
+        (ast.ast-pool-cell-data other.type-pool)
+        (& (ast.AstType.String)))
+      (set!
+        ok
+        (and
+          ok
+          (= (ast.ty-node-push (& (ast.AstType.Bool))) 1040)
+          (= (ast.ast-node-pool-context-type-len other) 1)
+          (match (ast.ast-node-pool-context-type-get (& other) 0)
+            [(ast.AstType.String) true]
+            [_ false])
+          (= generation (ast.ty-node-pool-generation-value))
+          (ast.ast-node-pool-context-type-stamp-valid? (& pools) (& stamp)))))
+    (if compat?
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-install! saved))
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    (ast.ast-node-pool-context-destroy-storage! other)
+    ok))
+
+(define (compiler-ast-type-writer-sync-smoke?) : bool
+  (and
+    (compiler-ast-type-writer-sync-case? false false)
+    (compiler-ast-type-writer-sync-case? false true)
+    (compiler-ast-type-writer-sync-case? true false)
+    (compiler-ast-type-writer-sync-case? true true)))
+
+(define (compiler-ast-type-adopt-active-smoke?) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [active : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [_first : i64
+      (ast.ast-node-pool-context-type-push active (ast.AstType.I64))]
+    [caller : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-snapshot active)]
+    [other : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& caller))]
+    [ok : bool true]
+    (ast.ast-node-pool-context-install! active)
+    (ast.ty-node-push (& (ast.AstType.Char)))
+    ;; Model macro operand checking through an installed snapshot, followed
+    ;; by caller-origin wrapping through a distinct expression state cell
+    ;; over the same storage.
+    (ast.ast-node-pool-context-expr-push
+      caller
+      (ast.AstExpr.Literal (ast.ast-lit-int 42)))
+    (ast.ast-node-pool-context-type-adopt-active! (& caller))
+    (ast.ast-node-pool-context-type-adopt-active! (& other))
+    ;; Both contexts address one expression storage and its single cursor,
+    ;; so the caller's append is visible through the active alias too.
+    (set!
+      ok
+      (and
+        (= (ast.ast-node-pool-context-type-len caller) 2)
+        (= (ast.ast-node-pool-context-expr-len caller) 1)
+        (= (ast.ast-node-pool-context-expr-len active) 1)
+        (= (ast.ast-node-pool-context-type-len other) 0)))
+    (ast.ast-node-pool-context-install! caller)
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ty-node-push (& (ast.AstType.Bool))) 2)
+        (match (ast.ast-node-pool-context-type-get (& caller) 1)
+          [(ast.AstType.Char) true]
+          [_ false])
+        (ast.ast-node-pool-context-type-stamp-valid? (& caller) (& stamp))))
+    ;; An intentional type rewind has a different shared revision; it must
+    ;; neither be undone by adoption nor revive the old prefix certificate.
+    (ast.ast-node-pool-context-reset-to! active 0 1)
+    (ast.ast-node-pool-context-type-adopt-active! (& active))
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ast-node-pool-context-type-len active) 1)
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& caller) (& stamp)))))
+    (ast.ast-node-pool-context-install! saved)
+    (ast.ast-node-pool-context-destroy-storage! active)
+    (ast.ast-node-pool-context-destroy-storage! other)
+    ok))
+
+(define (compiler-ast-type-stale-dedup-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [x : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    [y : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.Char))]
+    ;; The alias keeps a private copy of the dedup table that still maps Char
+    ;; to `y` after the owner truncates below it. The slot physically retains
+    ;; Char, so only the live-length check keeps the alias from reusing `y`.
+    [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone pools)]
+    [_truncate : unit (ast.ast-node-pool-context-reset-to! pools 0 1)]
+    [aliased : i64
+      (ast.ast-node-pool-context-type-push alias (ast.AstType.Char))]
+    [later : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.Bool))]
+    [ok : bool
+      (and
+        (= x 0)
+        (= y 1)
+        (= aliased 1)
+        (= later 2)
+        (= (ast.ast-node-pool-context-type-len pools) 3)
+        (match (ast.ast-node-pool-context-type-get (& alias) aliased)
+          [(ast.AstType.Char) true]
+          [_ false])
+        (match (ast.ast-node-pool-context-type-get (& pools) later)
+          [(ast.AstType.Bool) true]
+          [_ false]))]
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    ok))
+
+(define (compiler-ast-expr-stale-alias-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    ;; A snapshot has its own state cell (and cached length) over the same
+    ;; expression storage.
+    [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot pools)]
+    [first : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [second : i64
+      (ast.ast-node-pool-context-expr-push
+        alias
+        (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [i : i64 0]
+    [ok : bool
+      (and
+        (= first 0)
+        (= second 1)
+        (= (ast.ast-node-pool-context-expr-len pools) 2)
+        (= (ast.ast-node-pool-context-expr-len alias) 2)
+        (match (ast.ast-node-pool-context-expr-get (& pools) first)
+          [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 1)]
+          [_ false])
+        (match (ast.ast-node-pool-context-expr-get (& pools) second)
+          [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 2)]
+          [_ false]))]
+    ;; Alternating writers across segment growth never reuse an id.
+    (while (and ok (< i 70000))
+      (let
+        [a : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Literal (ast.ast-lit-int i)))]
+        [b : i64
+          (ast.ast-node-pool-context-expr-push
+            alias
+            (ast.AstExpr.Literal (ast.ast-lit-int (+ i 1))))]
+        (set!
+          ok
+          (and
+            (= b (+ a 1))
+            (match (ast.ast-node-pool-context-expr-get (& pools) a)
+              [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value i)]
+              [_ false])))
+        (set! i (+ i 2))))
+    ;; Truncation is explicit and cannot extend the live length.
+    (ast.ast-node-pool-context-expr-truncate! alias 1)
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ast-node-pool-context-expr-len pools) 1)
+        (=
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Literal (ast.ast-lit-int 3)))
+          1)))
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    ok))
+
+(test
+  compiler-ast-expr-stale-alias
+  (tl_test.assert-true
+    (compiler-ast-expr-stale-alias-smoke?)
+    "expression aliases share one cursor: appends never overwrite, truncation is explicit"))
+
+(test
+  compiler-ast-type-stale-dedup
+  (tl_test.assert-true
+    (compiler-ast-type-stale-dedup-smoke?)
+    "a dedup entry at or beyond the live length is never reissued"))
+
+(test
+  compiler-ast-type-writer-sync
+  (tl_test.assert-true
+    (compiler-ast-type-writer-sync-smoke?)
+    "explicit and legacy type writers publish cursor, dedup state, and owner identity without invalidating append stamps"))
+
+(test
+  compiler-ast-type-adopt-active
+  (tl_test.assert-true
+    (compiler-ast-type-adopt-active-smoke?)
+    "caller publication preserves newer appends through shared cursors while isolating unrelated owners and retired revisions"))
+
 (define (compiler-ast-captured-span-state? [pools : ast.AstNodePoolContext]) : bool
   (let
     [live : ast.AstExprNodePoolState
@@ -4019,7 +4424,12 @@
     (and tags-ok independent-ok growth-ok reuse-ok installed-ok compacted-ok)))
 
 (define (main) : i64
-  (unless (compiler-ast-spmd-presence-segments?) (return 32))
+  (unless (compiler-ast-spmd-presence-segments?) (return 33))
+  (unless (compiler-ast-expr-stale-alias-smoke?) (return 32))
+  (unless (compiler-ast-type-stale-dedup-smoke?) (return 31))
+  (unless (compiler-ast-type-adopt-active-smoke?) (return 30))
+  (unless (compiler-ast-type-writer-sync-smoke?) (return 29))
+  (unless (compiler-ast-type-pool-stamp-smoke?) (return 28))
   (unless
     (compiler-ast-packed-span-records?)
     (io.panic "compiler-ast-packed-span-records failed"))

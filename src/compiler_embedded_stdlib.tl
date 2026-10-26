@@ -1,6 +1,7 @@
 ;; compiler_embedded_stdlib.tl - Compressed stdlib source fallback: each module's
 ;; source with its inline tests blanked (#8713) and its prose comments cut to
 ;; their first `;` (#8659).
+(import compiler_abort as abort)
 (cfg test (import compiler_embedded_stdlib_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_payload as payload))
 (import stdlib.iterator)
@@ -40,7 +41,8 @@
           (CompilerEmbeddedStdlibSomeSource
             (compiler-embedded-stdlib-bytes->string bytes))]
         [(Err _)
-          (string.tl_oob_abort)
+          (abort.compiler-abort
+            "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid embedded stdlib payload\n")
           (CompilerEmbeddedStdlibNoSource)])]))
 
 ;; Whether `c` ends an atom: whitespace or one of `()[]";`. Most source bytes

@@ -139,7 +139,6 @@
             (if (>= index (compiler-profile-summary-exact-scope-capacity scope))
               (io.panic "compile-profile summary exact scope capacity exceeded")
               unit)
-            (set! (array-ref names (+ dense-offset index)) name)
             (set! (array-ref keys (+ dense-offset index)) key)
             (set! (array-ref slots slot) (+ index 1))
             (set! (array-ref counts scope-index) (+ index 1))
@@ -155,6 +154,8 @@
                     table-offset
                     (% (+ (- slot table-offset) 1) table-capacity)))
                 (+= probes 1)))))))
+    ;; A fresh slot takes the name once, after the probe loop.
+    (when fresh (set! (array-ref names (+ dense-offset index)) name))
     (if (< index 0)
       (io.panic "compile-profile summary exact table is full")
       (compiler-profile-summary-record-at! state scope index elapsed fresh))))

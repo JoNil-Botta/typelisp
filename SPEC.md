@@ -1498,6 +1498,14 @@ representation). Their public API is length/index/iteration-oriented;
 Recursive cons cells are not part of the public contract, and cons-list
 bridge names are not part of the public macro ABI.
 
+Syntax and reflection values follow ordinary ownership: like their
+declarations, `Expr`, `ExprList` and the other well-known types are
+move-only (an `Expr` holds strings and boxed nodes). Using one twice
+requires building it again. A by-value `match` on a syntax value moves only
+the parts its arm binds, so a fallback arm can still return the whole value.
+A `(Box Expr)` payload such as `Expr.If`'s condition binds as the `Expr`
+itself, since macro CTFE boxes nodes transparently.
+
 The public enum variant policy follows the dotted qualified variant
 direction: stdlib declarations use short variant names such as `Var`, `Call`,
 `Struct`, or `Enum`, and source code refers to them through enum-qualified
@@ -1835,6 +1843,32 @@ types accept `T`. It is **not** a subtype where the value would leave the
 region's scope: as the result of the `with-arena` form, stored into an outer
 `let` or global, captured by an escaping closure, or returned from an enclosing
 function.
+
+**Views read through a reference.** Reading a region-taggable value by value
+through a reference, such as `r.items` for `r : (& r S)` or an element of an
+array reached through a reference, produces a value tagged with the
+reference's lifetime. A Copy value is an ordinary copy. A move-only value is a
+*view*: it shares the referent's storage, so it may be read, matched, lent with
+`(& ...)`, passed where the region rules admit it, and bound by value (the
+binder is a view too). A view cannot become an owned value of its plain type:
+an `if` or `match` join with an owned value, a `let` declared with the plain
+type, or a function result would move the value out from behind the reference,
+which section 3.4's `deref` rule rejects ("cannot move non-Copy value through
+shared reference"). A view keeps the references it was read through. Read
+through `&mut` references only, it is a *mutable view*: writing its elements
+or fields, `replace!` of its parts and lending it with `(&mut ...)` write the
+referent itself, and a view read through it, a copy of it, or a binding of a
+`match` on it (a view of the matched part) is mutable too.
+A mutable view that is written holds its path exclusively while it is used, as
+a `&mut` reborrow does: using the owner, or another view of the same storage,
+before the view's last use is rejected ("cannot ... borrowed place"). A view
+that is never written stays a shared borrow. Read through any `&`, a view is
+shared: writing its elements or fields, or lending it with `(&mut ...)`, writes
+through the shared reference and is rejected ("cannot mutably borrow ...
+behind a shared reference", or "mutable borrow through a shared reference"
+when the write reaches a `&mut` through that `&`). The non-escaping subtype
+rule above concerns
+arena regions; it does not make a view writable or owned.
 
 **Confinement rule:** A region-tagged value may cross a function boundary only
 when the signature explicitly preserves its input-tied lifetime. For example,
@@ -2215,7 +2249,9 @@ does a renamed copy.
 lifetime from the owner:
 
 - A local or parameter root named `x` gives references rooted in `x` the
-  lifetime name `x`.
+  lifetime name `x`. A by-value parameter's storage belongs to the call, like a
+  local's, so its name cannot appear as a lifetime in the function's return
+  type: such a reference would outlive the call.
 - A global root named `x` gives references rooted in `x` the lifetime name
   `x`, unless its arena-tagged type supplies the owner lifetime below.
 - A field, tuple element, or array element projection inherits the lifetime
@@ -2229,6 +2265,22 @@ For `(& name place)`, `name` must match the inferred lifetime. In function
 parameter types, lifetime names are signature-local binders for incoming
 references. Multiple parameters using the same name require the same caller
 lifetime.
+
+**Storage outlives its borrows.** Whatever lifetime a reference's type spells,
+a borrow of a local's or a by-value parameter's storage cannot outlive that
+storage. A binding's storage ends on every edge that leaves its scope (the end
+of its `let` or `with`, of a match arm for its pattern binders, of each loop
+iteration for a binding in the loop body, a `break`, `continue`, `return` or
+`try` propagation), after the scope's cleanups; a parameter's ends when the
+call returns. Global storage never ends, and arena-allocated storage ends
+with its arena (section 3.9). A borrow still used after its storage ends, or
+stored where the caller can reach it (through a `&mut` parameter at any
+depth, or in the function's result, whose lifetimes are live until the call
+returns), is rejected (E0205): "`x` does not live long enough", or "cannot
+return a reference to local `x`" (or "to parameter `x`") for a returned one,
+as Rust's E0597 and E0515. This holds when a local or parameter is spelled
+like a caller lifetime: a borrow of a parameter `[a : i64]` stored through
+`[b : (&mut a (RefBox a))]` is rejected.
 
 **Immutable call-site auto-borrowing.** When a typed TypeLisp call, function
 value/lambda call, or constructor call has a formal parameter of type
@@ -2283,7 +2335,11 @@ fixed arrays such as `(Array (& n i64) 1)`, tuple elements, and nested
 structural types. Those lifetimes are preserved through `array-ref` and
 `tuple-ref`. Structural return types that expose the reference lifetime
 directly, such as `(& n T)`, `(Tuple (& n T))`, and `(Array (& n T) k)`, may be
-returned when the lifetime is tied to an input.
+returned when the lifetime is tied to an input: a lifetime named in a
+parameter's type (an incoming reference or a lifetime-parameterized
+aggregate), or `program`. A by-value parameter's own name is not such a
+lifetime; returning a borrow of the parameter, or of its fields or elements,
+is rejected.
 
 #### 3.10.1 Function-signature lifetime elision
 
@@ -2509,6 +2565,36 @@ stand in for it:
 
 (define (make-named) : Named
   (Named "world"))
+```
+
+A call never instantiates the reserved `program` lifetime: a `program`
+parameter, like a `program` field, takes only a `program` reference, never a
+borrow of a local ("source lifetime ... does not outlive required lifetime
+`program`"). A parameter named `program` names its own lifetime instead, as any
+parameter named like a lifetime does. A `(&mut program T)` is Rust's
+`&'static mut T`. A struct field of that type needs no lifetime parameter, and
+its holder is read, written through, passed, stored and matched like any owned
+value. A reborrow of the field through a reference to the holder lives no
+longer than that reference, so it cannot be returned as a `program` one. A
+`&mut` reborrowed into a `program` position (a `(&mut program T)` parameter or
+field) may be kept for the rest of the program, so it stays borrowed for the
+rest of the body: a later use of it, or a second such reborrow, is rejected
+("cannot mutably borrow borrowed place").
+
+```lisp test=check name=program-mut-holder-ok
+(defstruct Counter
+  (n i64))
+
+(defstruct Holder
+  (counter (&mut program Counter)))
+
+(define (wrap [c : (&mut program Counter)]) : Holder
+  (Holder c))
+
+(define (bump [h : Holder]) : i64
+  (begin
+    (set! (deref h.counter).n (+ (deref h.counter).n 1))
+    (deref h.counter).n))
 ```
 
 A store through a mutable reference is checked against the destination's own
@@ -3710,8 +3796,14 @@ runtime-static sibling of `include-str` and `include-bin`. It uses the same
 explicit input and path-resolution rules, deterministically LZSS-compresses
 the file's bytes at the loader boundary, and defines an opaque static
 `name : (__tl_dyn-array u8)`. The bounded binary-data payload starts with the
-compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the decimal
-uncompressed byte length and a newline, followed by the token stream.
+compiler-owned `__typelisp_embedded_stdlib_lzss_v2__` marker, the decimal
+uncompressed byte length and a newline, followed by the token stream coded
+under one fixed canonical Huffman model (a literal-or-match symbol, then for a
+match a distance bucket with extra bits and a length symbol), most significant
+bit first and zero-padded to a byte. The model's code lengths are part of the
+compiler, so a payload carries no tables. The decoder also accepts the earlier
+`__typelisp_embedded_stdlib_lzss_v1__` envelope, whose token stream is uncoded,
+so a payload built by an older compiler stays readable.
 
 - A `path` that does not end in `.tl` is compressed exactly. Like
   `include-bin`, and unlike `include-str`, the input is never decoded or
@@ -4353,12 +4445,18 @@ propagation, and a `break` or `continue` that leaves the loop the binding is in.
 The declared cleanup function is identified by its declaration, so a
 module-qualified or import-aliased call counts, while a same-named or
 same-typed function does not. The following are rejected with a diagnostic
-naming the binding: passing the value by value to any other function, moving
-only part of it, leaving it on one exit edge, and discharging it on only some
-of the paths that meet at an `if`, `match`, `and`/`or` or loop exit. A path
+naming the binding: passing the value by value to any other function, leaving
+it only partly discharged at a normal exit, leaving it on one exit edge, and
+discharging it on only some of the paths that meet at an `if`, `match`,
+`and`/`or` or loop exit. A path
 that ends in a call of a `never` function, such as a panic, needs no discharge.
 Function parameters do not yet carry a cleanup obligation (#6947); an
 `(:invalidate r)` parameter carries the destroy obligation of section 5.16.
+
+A partial move does not discharge the whole binding. As with other
+cleanup-owning structs, a moved field may be definitely reinitialized before
+the restored whole value is cleaned or transferred. Both the transferred
+field and the restored owner retain their respective cleanup responsibilities.
 
 These transfers also recognize transparent value forms (`begin`, `unsafe`,
 and nested scopes) and `if`/`match` arms that all yield the same visible owner
@@ -4563,22 +4661,28 @@ move-only values and as copies for copyable values:
   destructor, deep clone, or implicit allocation. Non-Copy globals and active
   or nested cleanup-owning places reject; Copy globals follow ordinary safe
   whole-place mutation rules.
-- `match` scrutinees. Matching a move-only enum by value consumes the whole
-  enum value. Payload bindings then own the active payload values for that
-  arm. Matching `(& place)` when the borrowed referent is an enum is the
-  non-consuming borrowed form described below.
-- Tuple patterns. Matching an owned tuple with `(tuple p1 ... pn)` consumes a
-  move-only tuple and transfers its slots to bindings from left to right. A
-  copyable tuple is copied at the by-value match boundary. Matching
-  `(& place)` binds the selected tuple slots by the borrowed-pattern binding
-  rule of section 5.13 instead and leaves the owner initialized subject to the
-  live borrow.
+- `match` scrutinees. A by-value `match` of a place moves only what the
+  selected arm's pattern binds by move (Rust's place semantics): a binding of
+  a move-only payload moves that payload out of the scrutinee, which is then
+  partially moved; a binding of a copyable payload copies it, and a wildcard
+  or a variant pattern without move bindings moves nothing, so the scrutinee
+  stays whole and usable after the `match`. A scrutinee that is not a place
+  (a call result) is a temporary the `match` consumes. Payload bindings own
+  the values they moved for that arm. Matching `(& place)` when the borrowed
+  referent is an enum is the non-consuming borrowed form described below.
+- Tuple patterns. Matching an owned tuple with `(tuple p1 ... pn)` moves the
+  move-only slots its subpatterns bind, from left to right, and copies the
+  copyable ones; a slot matched by `_` stays in the tuple, so the slots not
+  moved remain usable. Matching `(& place)` binds the selected tuple slots by
+  the borrowed-pattern binding rule of section 5.13 instead and leaves the
+  owner initialized subject to the live borrow.
 - Fixed-array patterns. Matching an owned fixed array with
   `(array p1 ... pn)` requires exactly `N` subpatterns for `(Array T N)`.
-  A move-only array is consumed and transfers its elements to bindings from
-  left to right; a copyable array is copied. Matching `(& place)` binds the
-  selected elements by the borrowed-pattern binding rule of section 5.13 and
-  leaves the owner initialized subject to the live borrow.
+  The move-only elements its subpatterns bind move out from left to right and
+  copyable ones are copied; an element matched by `_` stays in the array.
+  Matching `(& place)` binds the selected elements by the borrowed-pattern
+  binding rule of section 5.13 and leaves the owner initialized subject to the
+  live borrow.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
@@ -4772,15 +4876,10 @@ Dotted field projection and `tuple-ref` may copy out only copyable fields or
 slots, and may move out move-only fields/slots only where this tracked-path
 policy accepts the path. Fixed-array reads follow the matrix above: a non-`Copy`
 literal-index read moves a tracked path, while a `Copy` read copies. A by-value
-enum `match` is an
-exception: it moves the whole scrutinee first, then binds payload values owned
-by the selected arm. Constructor-shaped tuple destructuring likewise consumes
-the whole owned tuple and transfers every bound slot; direct partial move-out
-continues to use `(tuple-ref place literal-index)`. Dotted numeric tuple
+`match` of a place follows the same tracked-path rule: it moves only the
+payloads, tuple slots or array elements its patterns bind by move, and the
+rest of the scrutinee stays initialized (a partial move). Dotted numeric tuple
 projection syntax is not introduced.
-Constructor-shaped fixed-array destructuring likewise consumes the whole owned
-array and transfers every bound element from left to right; direct partial
-move-out continues to use `(array-ref place literal-index)`.
 
 **Diagnostics.** Move checking must produce source-located diagnostics for:
 
@@ -5189,12 +5288,20 @@ guards.
 - The place is evaluated first, left-to-right through its receiver and
   projections, retaining each receiver and index value before evaluating
   `expr` once. Rebinding a receiver or changing an index does not retarget the
-  store. An array-element place denotes that logical index in the selected
+  store: a reference, slice, Box or dynamic-array receiver keeps the storage it
+  selected. A by-value array, struct or tuple receiver is its variable's own
+  storage, so assigning that variable in `expr` writes the same storage the
+  store then updates, and the two variables never share storage afterwards.
+  An array-element place denotes that logical index in the selected
   array: after `expr`, the store checks the current length and uses the current
   buffer, including when `expr` grows the array. Checks needed to read an
   intermediate projection run when that projection is evaluated. The final
   array bounds check follows the value's effects, including for zero-sized
-  elements; an earlier trap prevents the remaining evaluation.
+  elements; an earlier trap prevents the remaining evaluation. Field and tuple
+  projections of an element read nothing, so an element followed only by them
+  is final: `(set! (array-ref a i).f v)` checks `i` after `v`, as
+  `(set! (array-ref a i) v)` does. Indexing an element's inline array, or
+  reading a reference or Box stored in it, reads that element.
 - The type of `expr` must match `var`'s type. Assignment is subject to the
   same move, borrow, and region/lifetime rules as other writes.
 - Returns `unit`.
@@ -5208,6 +5315,22 @@ guards.
 - Aggregate mutation through place forms follows the receiver's ownership
   mode: array-element, tuple-element, and field assignment require an owned
   place or a mutable reference receiver; immutable references are rejected.
+- Evaluate the destination place exactly once before the right-hand side,
+  including each projection, index expression, and intermediate bounds check.
+  Capture its storage identity, evaluate the right-hand side once, then store
+  its value there. An initialized inline aggregate local, parameter, or global
+  retains its storage home when assigned a new value, so an already selected
+  field still names that field of the same binding.
+  For a dynamic-array element, capture the descriptor identity and index, then
+  resolve its current backing buffer after the right-hand side. Growth of that
+  descriptor preserves the selected element; rebinding the array variable does
+  not change the captured descriptor. Check the captured index against the
+  descriptor's current live extent before storing; a removed element traps,
+  even when an intermediate check passed before the right-hand side. Nested
+  inline projections, including an element of an inline array field, retain
+  that same selected element. A failing intermediate bounds check prevents
+  right-hand-side evaluation. Zero-size elements retain these evaluations and
+  checks.
 - `ByteBuf`/`bytes` mutation follows the same rule: byte writes require an
   owned `ByteBuf` place, a mutable reference to a `ByteBuf`, or an exclusive
   `(&mut r bytes)` view. Immutable `(& r bytes)`, `(& r str)`, and `String`
@@ -7579,6 +7702,10 @@ explicit unsafe expression when they perform an unsafe call.
 
 The unsafe operation set:
 
+Operands of raw-pointer, atomic, volatile, and syscall forms are evaluated once
+from left to right. Each operand's value is captured before evaluating the next
+operand; later mutation of its source binding does not change that value.
+
 | Form | Safe? | Type rule | Notes |
 |------|-------|-----------|-------|
 | `(ptr-null : (Ptr T))` / `(ptr-null : (MutPtr T))` | Yes | returns the requested raw pointer type | Constructs a typed null pointer. |
@@ -9165,6 +9292,24 @@ arena helper signatures, and an `arena.Arena` cannot be passed where an
 values do not switch the active arena, free arena chains, rewind allocation,
 or invalidate live safe handles.
 
+Constructing the canonical `arena.Arena` from an integer requires `unsafe`,
+including through import aliases and generated expressions. Its constructor
+has the ordinary unsafe-callable effect and cannot be erased into a plain
+function value. The caller must establish that the raw handle identifies a
+live arena for every use of the resulting wrapper. Zero identifies the
+runtime's default arena; `(init : arena.Arena)` therefore remains valid.
+Reading `.handle` produces an inert integer and is safe. Writing that field,
+replacing it, or exposing an exclusive reference to it requires `unsafe` and
+the same live-handle obligation. The rule belongs to the canonical arena
+declaration, not an unrelated user type with the same short name.
+
+An `in-arena` target may also be a shared or exclusive reference to a branded
+`(arena.Arena storage)`. Allocation provenance is `storage`, independent of the
+reference's own loan lifetime, and entering the allocation extent does not move
+the owner. Ordinary value wrappers around the reference preserve this rule.
+The scratch-cloning `with-escape` operation retains its separate value-target
+contract.
+
 Programs may opt into poison-on-reclaim mode with:
 
 ```lisp test=check name=arena-poison-enable-extern
@@ -9316,9 +9461,10 @@ and not a general manual memory management feature.
   through annotation, `cast` and macro-expansion wrappers, both `if` arms,
   every `match` arm body, the `let` body, the last form of `begin` or
   `unsafe`, and the receivers of `deref`, field, tuple and array projections.
-  The rest of the operand keeps ordinary ownership rules: `if` conditions,
+  The rest of the operand keeps its ordinary use rules: `if` conditions,
   `match` scrutinees, `let` initializers, earlier `begin`/`unsafe` forms,
-  array indices, and call and constructor arguments still move. This applies
+  array indices, and call and constructor arguments are used as anywhere
+  else, so a non-Copy value there is moved. This applies
   only when `clone` names the compiler-special form, not a binding, function
   or constructor of that name.
 - The transitional compiler-special `clone` rejects unsupported

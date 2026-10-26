@@ -285,7 +285,8 @@
   [state : load.CompilerLoadSessionState]
   [owner : i64]) : bool
   (in-arena
-    (arena.Arena owner)
+    (unsafe
+      (arena.Arena owner))
     (match (tlci_loader_tests.tlci-loader-test-emit-with-real-fixup)
       [(Err _) false]
       [(Ok bytes)

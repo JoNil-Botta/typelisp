@@ -52,6 +52,7 @@
 (import (vector.vector LinkerDwarfAbbrevTable core) as dwarf_table_vec)
 (import (vector.vector LinkerDwarfReference core) as dwarf_reference_vec)
 (import (vector.vector LinkerDwarfLedgerEntry core) as dwarf_ledger_vec)
+(import compiler_owned_view as owned_view)
 
 ;; --- section families ----------------------------------------------------------
 (define linker-dwarf-section-info : i64
@@ -3008,7 +3009,7 @@
       (while (< index count)
         (set!
           (array-ref sorted index)
-          (array-ref views (array-ref order index)))
+          (owned_view.compiler-owned-element-view views (array-ref order index)))
         (+= index 1))
       (let
         [scan : LinkerDwarfScan (linker-dwarf-scan-new sorted limits)]
@@ -3070,22 +3071,26 @@
               (__tl_make-array LinkerDwarfLedgerEntry scan.ledger.len)]
             (dwarf_unit_vec.copy-range!
               (&mut units)
-              (& scan.units.slots)
+              (unsafe
+                (__tl_array-data scan.units.slots))
               0
               scan.units.len)
             (dwarf_table_vec.copy-range!
               (&mut tables)
-              (& scan.tables.slots)
+              (unsafe
+                (__tl_array-data scan.tables.slots))
               0
               scan.tables.len)
             (dwarf_reference_vec.copy-range!
               (&mut references)
-              (& scan.references.slots)
+              (unsafe
+                (__tl_array-data scan.references.slots))
               0
               scan.references.len)
             (dwarf_ledger_vec.copy-range!
               (&mut ledger)
-              (& scan.ledger.slots)
+              (unsafe
+                (__tl_array-data scan.ledger.slots))
               0
               scan.ledger.len)
             (Ok

@@ -58,7 +58,7 @@
         (smoke-cfg-index-test-block label 44)
         (smoke-cfg-index-test-block label 55))]
     [_refresh : unit
-      (opt.opt-cfg-index-refresh-blocks! (&mut index) replacement-blocks)]
+      (opt.opt-cfg-index-refresh-blocks! (& index) (& replacement-blocks))]
     [dense-second : i64
       (smoke-cfg-index-block-return (opt.opt-cfg-index-block index 1))]
     [_newer-index : opt.OptCfgIndex
@@ -3624,6 +3624,13 @@
     "Sinking single-use gep;load pairs next to their consuming ALU ops"))
 
 (test
+  store-addr-sink-next-to-store
+  (test.assert-i64-eq
+    (ot.compiler-optimize-store-addr-sink-self-test)
+    42
+    "Sinking a store's single-use address gep next to the store"))
+
+(test
   cmp-dup-per-branch-copies
   (test.assert-i64-eq
     (ot.compiler-optimize-cmp-dup-self-test)
@@ -4069,6 +4076,10 @@
 (test
   scratch-region
   (smoke-require-42 (ot.compiler-optimize-scratch-region-self-test)))
+
+(test
+  merge-functions
+  (smoke-require-42 (ot.compiler-optimize-merge-functions-self-test)))
 
 (test
   function-index-leaf-starts

@@ -192,7 +192,8 @@ Summary:
   [bytes : (__tl_dyn-array u8)]
   [image : tlci_core.TlciImage]) : String
   (let
-    [metadata : tlci_core.TlciMetadata image.metadata]
+    [metadata : tlci_core.TlciMetadata
+      (owned_view.compiler-owned-shared-view image.metadata)]
     [host-platform : i64 image.host-platform]
     (str_cat.str-cat
       "tlci image\n"
@@ -228,10 +229,10 @@ Summary:
         (tlci_core.tlci-read-u64 bytes tlci_core.tlci-file-size-field-offset))
       "\n"
       "metadata-version: "
-      metadata.version
+      (owned_view.compiler-owned-shared-view metadata.version)
       "\n"
       "package-name: "
-      metadata.package-name
+      (owned_view.compiler-owned-shared-view metadata.package-name)
       "\n"
       "package-version: "
       (owned_view.compiler-owned-shared-view metadata.package-version)

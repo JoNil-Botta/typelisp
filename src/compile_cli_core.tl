@@ -515,9 +515,11 @@
     (if (=
       (compiler_driver_core.compiler-driver-state-intern-generation state)
       0)
-      (ci.intern-compat-state-reset!
-        (compiler_driver_core.compiler-driver-state-owned-interns-mut
-          (owned_view.compiler-owned-shared-view state)))
+      (let
+        [cells : (__tl_dyn-array ci.InternCompatState)
+          (compiler_driver_core.compiler-driver-state-intern-cells
+            (owned_view.compiler-owned-shared-view state))]
+        (ci.intern-compat-state-reset! (&mut (array-ref cells 0))))
       unit)
     (compiler_driver_core.compiler-driver-state-install-pools! state)
     (compiler_driver_core.compiler-driver-state-install-interns! state)
@@ -561,11 +563,13 @@
                 (compiler_driver_core.compiler-driver-state-backend (& state))
                 (compile-cli-shared-object-requested?))
               (let
+                [intern-cells : (__tl_dyn-array ci.InternCompatState)
+                  (compiler_driver_core.compiler-driver-state-intern-cells
+                    (owned_view.compiler-owned-shared-view state))]
                 [emit-cfgs : sym_i64_env.SymI64Env
                   (target_cfg.compiler-target-user-cfgs-with-intern-state
                     cfgs
-                    (compiler_driver_core.compiler-driver-state-owned-interns-mut
-                      (owned_view.compiler-owned-shared-view state)))]
+                    (&mut (array-ref intern-cells 0)))]
                 [_file-state-reset-end : unit
                   (cfg
                     compile-startup-profile
@@ -779,9 +783,11 @@
     (if (=
       (compiler_driver_core.compiler-driver-state-intern-generation state)
       0)
-      (ci.intern-compat-state-reset!
-        (compiler_driver_core.compiler-driver-state-owned-interns-mut
-          (owned_view.compiler-owned-shared-view state)))
+      (let
+        [cells : (__tl_dyn-array ci.InternCompatState)
+          (compiler_driver_core.compiler-driver-state-intern-cells
+            (owned_view.compiler-owned-shared-view state))]
+        (ci.intern-compat-state-reset! (&mut (array-ref cells 0))))
       unit)
     (compiler_driver_core.compiler-driver-state-install-pools! state)
     (compiler_driver_core.compiler-driver-state-install-interns! state)
@@ -809,11 +815,13 @@
             (string.copy (& compile-cli-dump-ir-pass))
             compile-cli-verify-ir-requested)
           (let
+            [intern-cells : (__tl_dyn-array ci.InternCompatState)
+              (compiler_driver_core.compiler-driver-state-intern-cells
+                (owned_view.compiler-owned-shared-view state))]
             [emit-cfgs : sym_i64_env.SymI64Env
               (target_cfg.compiler-target-user-cfgs-with-intern-state
                 cfgs
-                (compiler_driver_core.compiler-driver-state-owned-interns-mut
-                  (owned_view.compiler-owned-shared-view state)))]
+                (&mut (array-ref intern-cells 0)))]
             [_file-state-reset-end : unit
               (cfg
                 compile-startup-profile

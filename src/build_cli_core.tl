@@ -1905,14 +1905,16 @@
   (let
     [v : BuildPackageGraphNodeVec
       (owned_view.compiler-owned-reference-shared-view v)]
-    (array-ref v.slots index)))
+    (owned_view.compiler-owned-element-view v.slots index)))
 
 (define (build-package-graph-node-vec-copy-range!
   [dst : (&mut dst (__tl_dyn-array BuildPackageGraphNode))]
   [src : (__tl_dyn-array BuildPackageGraphNode)]
   [count : i64]) : unit
   (for [index (iterator.range 0 count)]
-    (set! (array-ref dst index) (array-ref src index))))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))))
 
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
   (let

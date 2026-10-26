@@ -66,8 +66,9 @@
     (set! p.a (write-sibling (&mut p)))
     (and (= p.a 7) (= p.b 20) (= calls 1))))
 
-;; A whole write through a reference mutates the selected object; a whole
-;; local assignment below replaces the binding with another value.
+;; A whole write through a reference mutates the selected object. A by-value
+;; receiver is its variable's own storage (SPEC 5.10): a whole local assignment
+;; in the value writes that storage, and the field store then updates it.
 (define (borrowed-whole) : bool
   (let
     [p : Pair (Pair 1 2)]
@@ -84,7 +85,7 @@
         (when replace (set! p q))
         5))
     (if replace
-      (and (= p.a 7) (= p.b 8))
+      (and (= p.a 5) (= p.b 8))
       (and (= p.a 5) (= p.b 2)))))
 
 (define (pair-rebind [replace : bool]) : bool
@@ -97,7 +98,7 @@
         (when replace (set! p q))
         5))
     (if replace
-      (and (= p.a 7) (= p.b 8))
+      (and (= p.a 5) (= p.b 8))
       (and (= p.a 5) (= p.b 2)))))
 
 (define (wide-rebind) : bool
@@ -109,7 +110,7 @@
       (begin
         (set! p q)
         5))
-    (and (= p.a 7) (= p.b 8) (= p.c 9))))
+    (and (= p.a 5) (= p.b 8) (= p.c 9))))
 
 (define (equal-rebind) : bool
   (let
@@ -119,7 +120,7 @@
       (begin
         (set! p (Pair 1 2))
         5))
-    (and (= p.a 1) (= p.b 2))))
+    (and (= p.a 5) (= p.b 2))))
 
 (define (nested-rebind) : bool
   (let
@@ -129,7 +130,7 @@
       (begin
         (set! p (Nested (Small 7 8) 90))
         5))
-    (and (= p.inner.a 7) (= p.inner.b 8) (= p.tail 90))))
+    (and (= p.inner.a 5) (= p.inner.b 8) (= p.tail 90))))
 
 (define (nested-stores-rebind) : bool
   (let
@@ -143,7 +144,7 @@
             (set! p (Pair 7 8))
             4))
         5))
-    (and (= p.a 7) (= p.b 8))))
+    (and (= p.a 5) (= p.b 4))))
 
 (define (loop-rebind) : bool
   (let
@@ -156,7 +157,7 @@
           (set! p (Pair (+ 7 i) 8))
           (+= i 1))
         5))
-    (and (= p.a 9) (= p.b 8))))
+    (and (= p.a 5) (= p.b 8))))
 
 (define (shadow-rebind) : bool
   (let
@@ -208,20 +209,15 @@
           (begin
             (set! p (tuple 7 8))
             5))
-        (and (= (tuple-ref p 0) 7) (= (tuple-ref p 1) 8))))))
+        (and (= (tuple-ref p 0) 5) (= (tuple-ref p 1) 8))))))
 
 ;; Compare both packed representations with a scalar state-transition oracle.
-;; Equal-content replacement must still replace the selected object.
+;; Every action ends with the field store into the variable's storage.
 (define (transition-property [x : i64] [y : i64] [action : i64]) : bool
   (let
     [small : Small (Small (cast x : i32) (cast y : i32))]
     [pair : Pair (Pair x y)]
-    [expected-a : i64
-      (if (= action 0)
-        7
-        (if (= action 1)
-          (+ x 2)
-          x))]
+    [expected-a : i64 7]
     [expected-b : i64
       (if (= action 0)
         (+ y 1)
@@ -258,9 +254,13 @@
   (test.assert-true (nested-sibling) "nested sibling update")
   (test.assert-true (borrowed-sibling) "one RHS call through mutable reference")
   (test.assert-true (borrowed-whole) "whole referent write keeps object")
-  (test.assert-true (small-rebind true) "one-word replacement keeps new value")
+  (test.assert-true
+    (small-rebind true)
+    "one-word replacement, then the field store")
   (test.assert-true (small-rebind false) "one-word untaken replacement")
-  (test.assert-true (pair-rebind true) "two-word replacement keeps new value")
+  (test.assert-true
+    (pair-rebind true)
+    "two-word replacement, then the field store")
   (test.assert-true (pair-rebind false) "two-word untaken replacement")
   (test.assert-true (wide-rebind) "memory-class replacement control")
   (test.assert-true (equal-rebind) "replacement with equal contents")

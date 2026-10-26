@@ -224,11 +224,15 @@
             (unsafe
               (ptr-cast (__tl_array-data fresh) : (MutPtr GeneratedHashmapSlot)))]
           (while (< scan old-capacity)
+            ;; Peek the old slot's fields through the pointer and move the
+            ;; whole slot only once it has a bucket: a slot bound by value
+            ;; would be a private copy of every scanned slot.
             (let
-              [old-slot : GeneratedHashmapSlot
+              [old-ptr : (Ptr GeneratedHashmapSlot)
                 (unsafe
-                  (ptr-read (ptr-offset old-data scan)))]
-              (match (__tl-project-field-name old-slot "state")
+                  (ptr-offset old-data scan))]
+              (match (unsafe
+                (__tl-project-field-name (deref old-ptr) "state"))
                 [GeneratedHashmapSlotState.Occupied
                   (let
                     ;; No stored hash on a scalar slot: recompute the same
@@ -236,17 +240,21 @@
                     ;; key lands in the bucket the stored word used to name.
                     ;; One multiply per live slot at growth, against a word
                     ;; per slot of probe traffic on every lookup.
-                    [key : ,K (__tl-project-field-name old-slot "key")]
-                    [index : i64 (bit-and (* key 6364136223846793005) mask)]
-                    (while (match (__tl-project-field-name
+                    [key : ,K
                       (unsafe
-                        (ptr-read (ptr-offset fresh-data index)))
-                      "state")
+                        (__tl-project-field-name (deref old-ptr) "key"))]
+                    [index : i64 (bit-and (* key 6364136223846793005) mask)]
+                    (while (match (unsafe
+                      (__tl-project-field-name
+                        (deref (ptr-offset fresh-data index))
+                        "state"))
                       [GeneratedHashmapSlotState.Empty false]
                       [_ true])
                       (set! index (bit-and (+ index 1) mask)))
                     (unsafe
-                      (ptr-write! (ptr-offset fresh-data index) old-slot)))]
+                      (ptr-write!
+                        (ptr-offset fresh-data index)
+                        (ptr-read old-ptr))))]
                 [_ unit]))
             (set! scan (+ scan 1))))
         `(let
@@ -452,11 +460,7 @@
             unit)
           (let
             [hash : i64 (hash-key ,owned-query-key)]
-            (match (probe
-              (& map.slots)
-              (capacity-mut map)
-              ,owned-query-key
-              hash)
+            (match (probe (& map.slots) (capacity map) ,owned-query-key hash)
               [(GeneratedHashmapProbe.Found index) ,update-slot-body]
               [(GeneratedHashmapProbe.Absent index)
                 (let

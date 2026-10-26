@@ -182,12 +182,12 @@
     (test.assert-true
       (and
         (match (ast.ast-node-pool-context-type-get
-          a.context.pools
+          (& a.context.pools)
           (producer-owner-annotation (& a)))
           [(Ptr _) true]
           [_ false])
         (match (ast.ast-node-pool-context-type-get
-          b.context.pools
+          (& b.context.pools)
           (producer-owner-annotation (& b)))
           [(Box _) true]
           [_ false])
@@ -211,25 +211,25 @@
       (> (occurrences (& a.serial-source) "fnalpha") 0)
       "A's serial source contains its own callee")
     (test.assert-true
-      (not (string.eq a.serial-source b.serial-source))
+      (not (string.eq (& a.serial-source) (& b.serial-source)))
       "the fixtures produce distinct source")
     (producer.embedded-native-full-blocker-report-set! true)
     (while (< round 3)
       (test.assert-owned-string-eq
         (producer-owner-source (& a))
-        a.serial-source
+        (clone a.serial-source)
         "A ignores installed expression/type pools and intern names")
       (test.assert-owned-string-eq
         (producer-owner-reasons)
-        a.serial-reasons
+        (clone a.serial-reasons)
         "A's unsupported-body diagnostic is stable")
       (test.assert-owned-string-eq
         (producer-owner-source (& b))
-        b.serial-source
+        (clone b.serial-source)
         "B ignores installed expression/type pools and intern names")
       (test.assert-owned-string-eq
         (producer-owner-reasons)
-        b.serial-reasons
+        (clone b.serial-reasons)
         "B's unsupported-body diagnostic is stable")
       (test.assert-true
         (>
@@ -248,7 +248,7 @@
     (ast.ast-node-pool-context-reset-to! a.context.pools 0 0)
     (test.assert-owned-string-eq
       (producer-owner-source (& b))
-      b.serial-source
+      (clone b.serial-source)
       "resetting A preserves B's captured source")
     (test.assert-i64-eq
       (ci.intern-active-table-id)

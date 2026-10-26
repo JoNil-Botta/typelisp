@@ -279,7 +279,7 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
     (let
       [result : (__tl_dyn-array String) (__tl_make-array String count)]
       (for [index (iterator.range 0 count)]
-        (set! (array-ref result index) (array-ref out index)))
+        (set! (array-ref result index) (replace! (array-ref out index) "")))
       result)))
 
 ;: `target`'s providers in first-use order, without repeats.

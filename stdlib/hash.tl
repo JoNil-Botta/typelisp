@@ -21,18 +21,6 @@
 (import stdlib.string as string_mod)
 (cfg test (import stdlib.test))
 
-;: Return a representation-level shared view of a hash input place.
-(defmacro (hash-shared-view [place : comptime.Expr]) : comptime.Expr
-  `(unsafe
-    (ptr-read (ptr-addr-of ,place))))
-
-;: Return a representation-level shared view of an array element to hash.
-(defmacro (hash-array-shared-view
-  [items : comptime.Expr]
-  [index : comptime.Expr]) : comptime.Expr
-  `(unsafe
-    (ptr-read (ptr-offset (__tl_array-data ,items) ,index))))
-
 ;: Return the fixed hash modulus.
 (define (modulus) : i64
   2147483647)
@@ -128,12 +116,36 @@
 (define (key-string-eq? [a : (& a str)] [b : (& b str)]) : bool
   (string_mod.eq a b))
 
-;: Emit one deterministic scalar or aggregate component hash.
-(defmacro (inline-hash [value : comptime.Expr] [path-expr : comptime.Expr]) : comptime.Expr
+;; Generated hashing reads its operand through shared borrows, as eq.tl's
+;; equality does: nothing is copied out or moved, so a hashed value keeps its
+;; owner and its cleanup. The hashed type is passed down explicitly; an operand
+;; is a place of that type, a shared reference to one, or the value a match
+;; through a reference binds for a Copy payload.
+;: Return a shared reference to a hash operand.
+(defmacro (hash-ref [operand : comptime.Expr]) : comptime.Expr
+  (match (type-kind (comptime.expr-type operand))
+    ["ref" operand]
+    ["mut-ref" `(& (deref ,operand))]
+    [_ `(& ,operand)]))
+
+;: Return the value a hash operand of a Copy scalar type holds.
+(defmacro (hash-value [operand : comptime.Expr]) : comptime.Expr
+  (match (type-kind (comptime.expr-type operand))
+    ["ref" `(deref ,operand)]
+    ["mut-ref" `(deref ,operand)]
+    [_ operand]))
+
+;: Emit one deterministic scalar or aggregate component hash of an operand of
+;: type `T`.
+(defmacro (inline-hash
+  [T : type]
+  [operand : comptime.Expr]
+  [path-expr : comptime.Expr]) : comptime.Expr
   (let
     [path : String (comptime.expr-string-value path-expr)]
-    [value-type (comptime.expr-type value)]
-    (match (type-kind value-type)
+    [value : comptime.Expr `(stdlib.hash.hash-value ,operand)]
+    [borrowed : comptime.Expr `(stdlib.hash.hash-ref ,operand)]
+    (match (type-kind T)
       ["unit" `(stdlib.hash.combine 11 0)]
       ["bool"
         `(stdlib.hash.combine
@@ -159,63 +171,70 @@
         `(stdlib.hash.combine 43 (stdlib.hash.normalize (cast ,value : i64)))]
       ["u8"
         `(stdlib.hash.combine 47 (stdlib.hash.normalize (cast ,value : i64)))]
-      ["string"
-        `(let
-          [__hash_string_value : String ,value]
-          (stdlib.hash.combine
-            53
-            (stdlib.hash.string-key (& __hash_string_value))))]
+      ["string" `(stdlib.hash.combine 53 (stdlib.hash.string-key ,borrowed))]
       ["struct"
         `(let
-          [__hash_struct_value ,value]
-          (stdlib.hash.struct-hash-fields 0 __hash_struct_value 59 ,path-expr))]
+          [__hash_struct_value ,borrowed]
+          (stdlib.hash.struct-hash-fields
+            ,T
+            0
+            __hash_struct_value
+            59
+            ,path-expr))]
       ["tuple"
         `(let
-          [__hash_tuple_value ,value]
-          (stdlib.hash.tuple-hash-elements 0 __hash_tuple_value 61 ,path-expr))]
+          [__hash_tuple_value ,borrowed]
+          (stdlib.hash.tuple-hash-elements
+            ,T
+            0
+            __hash_tuple_value
+            61
+            ,path-expr))]
       ["array"
-        (if (array-dynamic? value-type)
+        (if (array-dynamic? T)
           (comptime.comptime-error
             (comptime.string-append
               "hash: unsupported type "
               (comptime.string-append
-                (type-key value-type)
+                (type-key T)
                 (comptime.string-append " at " path))))
           (let
-            [length-expr : comptime.Expr
-              (comptime.expr-int (array-length value-type))]
+            [element-type : comptime.Expr (array-element-type T)]
+            [length-expr : comptime.Expr (comptime.expr-int (array-length T))]
             [element-path : String (comptime.string-append path "[]")]
             `(stdlib.hash.inline-fixed-array-hash
+              ,element-type
               ,length-expr
-              ,value
+              ,borrowed
               ,(comptime.expr-string element-path))))]
       ["enum"
         `(let
-          [__hash_enum_value ,value]
-          (stdlib.hash.enum-hash-dispatch __hash_enum_value 0 ,path-expr))]
+          [__hash_enum_value ,borrowed]
+          (stdlib.hash.enum-hash-dispatch ,T __hash_enum_value 0 ,path-expr))]
       [_
         (comptime.comptime-error
           (comptime.string-append
             "hash: unsupported type "
             (comptime.string-append
-              (type-key value-type)
+              (type-key T)
               (comptime.string-append " at " path))))])))
 
-;: Emit ordered field hashing for a struct.
+;: Emit ordered field hashing for the struct VALUE refers to.
 (defmacro (struct-hash-fields
+  [T : type]
   [index-expr : comptime.Expr]
   [value : comptime.Expr]
   [seed : comptime.Expr]
   [path-expr : comptime.Expr]) : comptime.Expr
   (let
     [path : String (comptime.expr-string-value path-expr)]
-    [value-type (comptime.expr-type value)]
     (match index-expr
       [(comptime.Expr.Int index)
-        (if (>= index (struct-field-count value-type))
+        (if (>= index (struct-field-count T))
           seed
           (let
-            [field-name : String (struct-field-name value-type index)]
+            [field-name : String (struct-field-name T index)]
+            [field-type : comptime.Expr (struct-field-type T index)]
             [field-value : comptime.Expr
               (comptime.expr-struct-get value field-name)]
             [field-path : String
@@ -228,9 +247,11 @@
               `(stdlib.hash.combine
                 (stdlib.hash.combine ,seed ,position-expr)
                 (stdlib.hash.inline-hash
-                  (stdlib.hash.hash-shared-view ,field-value)
+                  ,field-type
+                  ,field-value
                   ,(comptime.expr-string field-path)))]
             `(stdlib.hash.struct-hash-fields
+              ,T
               ,next-index
               ,value
               ,next-seed
@@ -239,22 +260,23 @@
         (comptime.comptime-error
           "hash: struct field index must be an integer literal")])))
 
-;: Emit ordered element hashing for a tuple.
+;: Emit ordered element hashing for the tuple VALUE refers to.
 (defmacro (tuple-hash-elements
+  [T : type]
   [index-expr : comptime.Expr]
   [value : comptime.Expr]
   [seed : comptime.Expr]
   [path-expr : comptime.Expr]) : comptime.Expr
   (let
     [path : String (comptime.expr-string-value path-expr)]
-    [value-type (comptime.expr-type value)]
     (match index-expr
       [(comptime.Expr.Int index)
-        (if (>= index (tuple-element-count value-type))
+        (if (>= index (tuple-element-count T))
           seed
           (let
+            [element-type : comptime.Expr (tuple-element-type T index)]
             [element-value : comptime.Expr
-              (comptime.expr-tuple-ref value index)]
+              (comptime.expr-tuple-ref `(deref ,value) index)]
             [element-path : String
               (comptime.string-append
                 path
@@ -267,9 +289,11 @@
               `(stdlib.hash.combine
                 (stdlib.hash.combine ,seed ,position-expr)
                 (stdlib.hash.inline-hash
-                  (stdlib.hash.hash-shared-view ,element-value)
+                  ,element-type
+                  ,element-value
                   ,(comptime.expr-string element-path)))]
             `(stdlib.hash.tuple-hash-elements
+              ,T
               ,next-index
               ,value
               ,next-seed
@@ -278,8 +302,9 @@
         (comptime.comptime-error
           "hash: tuple element index must be an integer literal")])))
 
-;: Emit allocation-free traversal of a fixed array.
+;: Emit allocation-free traversal of the fixed array VALUE refers to.
 (defmacro (inline-fixed-array-hash
+  [element-type : type]
   [length-expr : comptime.Expr]
   [value : comptime.Expr]
   [path-expr : comptime.Expr]) : comptime.Expr
@@ -293,13 +318,15 @@
         (stdlib.hash.combine
           (stdlib.hash.combine __hash_seed (+ 3000 __hash_i))
           (stdlib.hash.inline-hash
-            (stdlib.hash.hash-array-shared-view __hash_array __hash_i)
+            ,element-type
+            (__tl_array-ref (deref __hash_array) __hash_i)
             ,path-expr)))
       (set! __hash_i (+ __hash_i 1)))
     __hash_seed))
 
 ;: Emit ordered hashing for one matched enum variant's payloads.
 (defmacro (enum-hash-payloads
+  [enum-type : type]
   [enum-value : comptime.Expr]
   [variant-index-expr : comptime.Expr]
   [payload-index-expr : comptime.Expr]
@@ -307,7 +334,6 @@
   [path-expr : comptime.Expr]) : comptime.Expr
   (let
     [path : String (comptime.expr-string-value path-expr)]
-    [enum-type (comptime.expr-type enum-value)]
     (match variant-index-expr
       [(comptime.Expr.Int variant-index)
         (match payload-index-expr
@@ -326,6 +352,11 @@
                       "_p")
                     (comptime.int->string payload-index))]
                 [payload-value : comptime.Expr (comptime.expr-var payload-name)]
+                [payload-type : comptime.Expr
+                  (enum-variant-payload-type
+                    enum-type
+                    variant-index
+                    payload-index)]
                 [variant-name : String
                   (enum-variant-name enum-type variant-index)]
                 [payload-path : String
@@ -348,9 +379,11 @@
                   `(stdlib.hash.combine
                     (stdlib.hash.combine ,seed ,position-expr)
                     (stdlib.hash.inline-hash
+                      ,payload-type
                       ,payload-value
                       ,(comptime.expr-string payload-path)))]
                 `(stdlib.hash.enum-hash-payloads
+                  ,enum-type
                   ,enum-value
                   ,variant-index-expr
                   ,next-index
@@ -363,61 +396,68 @@
         (comptime.comptime-error
           "hash: enum variant index must be an integer literal")])))
 
-;: Emit a staged enum match with variant and payload domain separation.
+;: Emit a staged match through VALUE, a shared reference to a `T` enum, with
+;: variant and payload domain separation.
 (defmacro (enum-hash-dispatch
+  [value-type : type]
   [value : comptime.Expr]
   [variant-index-expr : comptime.Expr]
   [path-expr : comptime.Expr]) : comptime.Expr
-  (let
-    [value-type (comptime.expr-type value)]
-    (match variant-index-expr
-      [(comptime.Expr.Int variant-index)
-        (if (>= variant-index (enum-variant-count value-type))
-          `0
-          (let
-            [variant-name : String (enum-variant-name value-type variant-index)]
-            [payload-count : i64
-              (enum-variant-payload-count value-type variant-index)]
-            [payload-prefix : String
+  (match variant-index-expr
+    [(comptime.Expr.Int variant-index)
+      (if (>= variant-index (enum-variant-count value-type))
+        `0
+        (let
+          [variant-name : String (enum-variant-name value-type variant-index)]
+          [payload-count : i64
+            (enum-variant-payload-count value-type variant-index)]
+          [payload-prefix : String
+            (comptime.string-append
               (comptime.string-append
-                (comptime.string-append
-                  "__hash_v"
-                  (comptime.int->string variant-index))
-                "_p")]
-            [pattern : comptime.Pattern
-              (comptime.pattern-variant
-                variant-name
-                (comptime.pattern-list-bindings payload-prefix payload-count))]
-            [variant-seed : comptime.Expr
-              `(stdlib.hash.combine
-                71
-                ,(comptime.expr-int (+ 5000 variant-index)))]
-            [body : comptime.Expr
-              `(stdlib.hash.enum-hash-payloads
-                ,value
-                ,variant-index-expr
-                0
-                ,variant-seed
-                ,path-expr)]
-            [next-index : comptime.Expr (comptime.expr-int (+ variant-index 1))]
-            [fallback : comptime.Expr
-              `(stdlib.hash.enum-hash-dispatch ,value ,next-index ,path-expr)]
-            (comptime.expr-match
-              `(stdlib.hash.hash-shared-view ,value)
+                "__hash_v"
+                (comptime.int->string variant-index))
+              "_p")]
+          [pattern : comptime.Pattern
+            (comptime.pattern-variant
+              variant-name
+              (comptime.pattern-list-bindings payload-prefix payload-count))]
+          [variant-seed : comptime.Expr
+            `(stdlib.hash.combine
+              71
+              ,(comptime.expr-int (+ 5000 variant-index)))]
+          [body : comptime.Expr
+            `(stdlib.hash.enum-hash-payloads
+              ,value-type
+              ,value
+              ,variant-index-expr
+              0
+              ,variant-seed
+              ,path-expr)]
+          [next-index : comptime.Expr (comptime.expr-int (+ variant-index 1))]
+          [fallback : comptime.Expr
+            `(stdlib.hash.enum-hash-dispatch
+              ,value-type
+              ,value
+              ,next-index
+              ,path-expr)]
+          (comptime.expr-match
+            value
+            (comptime.match-arm-list-cons
+              (comptime.match-arm pattern body)
               (comptime.match-arm-list-cons
-                (comptime.match-arm pattern body)
-                (comptime.match-arm-list-cons
-                  (comptime.match-arm (comptime.pattern-wildcard) fallback)
-                  (comptime.match-arm-list-empty))))))]
-      [_
-        (comptime.comptime-error
-          "hash: enum variant index must be an integer literal")])))
+                (comptime.match-arm (comptime.pattern-wildcard) fallback)
+                (comptime.match-arm-list-empty))))))]
+    [_
+      (comptime.comptime-error
+        "hash: enum variant index must be an integer literal")]))
 
 ;: Evaluate one public hash operand and dispatch its inferred concrete type.
 (defmacro (hash-once [value : comptime.Expr]) : comptime.Expr
-  `(let
-    [__hash_value ,value]
-    (stdlib.hash.inline-hash __hash_value "value")))
+  (let
+    [value-type : comptime.Expr (comptime.expr-type value)]
+    `(let
+      [__hash_value ,value]
+      (stdlib.hash.inline-hash ,value-type __hash_value "value"))))
 
 ;: Generate a deterministic, unkeyed structural-hash module for finite `T`.
 ;:

@@ -44,7 +44,7 @@
   (let
     [p : Pair (Pair 1 2)]
     p.x))
-(define (tagged [owner : i64]) : (TaggedPair owner)
+(define (tagged [owner : (& owner i64)]) : (TaggedPair owner)
   (TaggedPair 1))
 (defmacro (empty [T : type (:kind c-function)]) : Expr
   `(init : ,T))
@@ -1435,6 +1435,115 @@
       [(not (= package-macro-status 1)) 185]
       [else 42])))
 
+;; Constructor effects follow the declaration identity through an import alias.
+;; A same-spelled struct in another module stays an ordinary safe constructor.
+(define (lint-driver-smoke-arena-constructor-effect-self-test) : i64
+  (load.compiler-load-test-mkdir "target/lint_unsafe_surface")
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/arena_effect.tl"
+    "(import stdlib.arena as pool)
+(define (main) : i64
+  (let [value (unsafe (pool.Arena 0))] value.handle))")
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/arena_effect_again.tl"
+    "(import stdlib.arena as other)
+(define (main) : i64
+  (let [value (unsafe (other.Arena 0))] value.handle))")
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/nominal_dep.tl"
+    "(module nominal_dep)
+(defstruct Arena (handle i64))")
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/arena_lookalike.tl"
+    "(import nominal_dep as arena)
+(define (main) : i64
+  (let [value (unsafe (arena.Arena 42))] value.handle))")
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/arena_local.tl"
+    "(module arena_local)
+(defstruct Arena (handle i64))
+(define (main) : i64
+  (let [value (unsafe (Arena 42))] value.handle))")
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/arena_moduleless.tl"
+    "(defstruct Arena (handle i64))
+(define (main) : i64
+  (let [value (unsafe (Arena 42))] value.handle))")
+  (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)
+  (let
+    [required : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/arena_effect.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [required-again : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/arena_effect_again.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [required-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [required-parses : i64
+      (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count)]
+    [required-hits : i64
+      (driver_tests.selfhost-lint-unsafe-surface-cache-hit-count)]
+    [lookalike : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/arena_lookalike.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [local : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/arena_local.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [known-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [moduleless : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/arena_moduleless.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [moduleless-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    (cond
+      [(not (= required 0)) 186]
+      [(not (= required-again 0)) 187]
+      [(not (= required-fallbacks 0)) 188]
+      [(not (= required-parses 1)) 189]
+      [(not (= required-hits 1)) 190]
+      [(not (= lookalike 1)) 191]
+      [(not (= local 1)) 192]
+      [(not (= known-fallbacks 0)) 193]
+      [(not (= moduleless 1)) 194]
+      [(not (= moduleless-fallbacks 1)) 195]
+      [else 42])))
+
 (define (lint-driver-smoke-copy-on-update-struct-self-test) : i64
   (let
     [rule : String (lint_core.lint-rule-copy-on-update-struct-id)]
@@ -1940,6 +2049,8 @@
     [unused-unsafe-result : i64 (lint-driver-smoke-unused-unsafe-self-test)]
     [raw-arena-result : i64 (lint-driver-smoke-raw-arena-op-self-test)]
     [unsafe-surface-result : i64 (lint-driver-smoke-unsafe-surface-self-test)]
+    [arena-constructor-effect-result : i64
+      (lint-driver-smoke-arena-constructor-effect-self-test)]
     [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
     [dotted-compat-result : i64
       (lint-driver-smoke-prefer-dotted-field-compat-self-test)]
@@ -1964,6 +2075,8 @@
       [(not (= unused-unsafe-result 42)) unused-unsafe-result]
       [(not (= raw-arena-result 42)) raw-arena-result]
       [(not (= unsafe-surface-result 42)) unsafe-surface-result]
+      [(not (= arena-constructor-effect-result 42))
+        arena-constructor-effect-result]
       [(not (= copy-result 42)) copy-result]
       [(not (= dotted-compat-result 42)) dotted-compat-result]
       [(not (= name-case-result 42)) name-case-result]

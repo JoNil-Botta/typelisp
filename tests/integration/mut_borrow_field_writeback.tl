@@ -19,6 +19,10 @@
   (x f64)
   (y f64))
 
+(defstruct PackedFloats
+  (x f32)
+  (y f32))
+
 (defstruct Wide
   (x i64)
   (y i64)
@@ -53,6 +57,13 @@
 
 (define (bump-float! [x : (&mut x f64)]) : unit
   (set! (deref x) (+ (deref x) 1.5)))
+
+(define (write-packed-floats! [x : (&mut x f32)] [y : (&mut y f32)]) : unit
+  (set! (deref x) (+ (deref x) (cast 1.5 : f32)))
+  (set! (deref y) (+ (deref y) (cast 2.5 : f32))))
+
+(define (write-packed-whole! [p : (&mut p PackedFloats)]) : unit
+  (write-packed-floats! (&mut p.x) (&mut p.y)))
 
 (define (bump-pair! [p : (&mut p Pair)]) : unit
   (set! p.x (+ p.x 4))
@@ -151,6 +162,18 @@
     (bump-float! (&mut p.y))
     (and (= p.x 2.0) (= p.y 4.0))))
 
+(define (packed-float-siblings) : bool
+  (let
+    [p : PackedFloats (PackedFloats (cast 1.0 : f32) (cast 2.0 : f32))]
+    (write-packed-floats! (&mut p.x) (&mut p.y))
+    (and (= p.x (cast 2.5 : f32)) (= p.y (cast 4.5 : f32)))))
+
+(define (packed-float-whole-local) : bool
+  (let
+    [p : PackedFloats (PackedFloats (cast 1.0 : f32) (cast 2.0 : f32))]
+    (write-packed-whole! (&mut p))
+    (and (= p.x (cast 2.5 : f32)) (= p.y (cast 4.5 : f32)))))
+
 (define (memory-backed) : bool
   (let
     [p : Wide (Wide 1 2 3)]
@@ -184,6 +207,8 @@
       [(not (nested-later-sibling-effects)) 8]
       [(not (repeated-calls)) 9]
       [(not (float-fields)) 10]
+      [(not (packed-float-siblings)) 14]
+      [(not (packed-float-whole-local)) 15]
       [(not (memory-backed)) 11]
       [(not (borrowed-receiver (&mut borrowed))) 12]
       [(not (whole-local-control)) 13]

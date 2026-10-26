@@ -27745,7 +27745,10 @@
           (lower-state-emit-at-expr
             ctx
             load-state
-            (ir.CompilerIrInstr.Mov local-id loaded referent-ty)
+            (ir.CompilerIrInstr.Mov
+              local-id
+              loaded
+              (lower-one-word-register-storage-type ctx referent-ty))
             origin)])]
     [(LowerArgWriteback.FieldWriteback field storage origin)
       (if (= (lower-type-size ctx (& field.ty)) 0)
@@ -27784,7 +27787,10 @@
                     (lower-state-emit-at-expr
                       ctx
                       merged
-                      (ir.CompilerIrInstr.Mov field.local-id root field.root-ty)
+                      (ir.CompilerIrInstr.Mov
+                        field.local-id
+                        root
+                        (lower-one-word-register-storage-type ctx field.root-ty))
                       origin)])])]))]
     [(LowerArgWriteback.Cleanup value value-ty copied cleanup-symbol origin)
       (match (if copied

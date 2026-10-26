@@ -536,11 +536,22 @@ gate_optimization_opt2_correctness() {
         --cases "$_ci_cases"
 }
 
-# check-instruction-counts.sh reports and skips without valgrind; required CI
-# must not, so ci-host-tools.tsv makes valgrind a host tool of both
-# instruction-count gates, required before any gate starts.
+# check-instruction-counts.sh reports and skips without valgrind outside GitHub
+# Actions; required CI must not, so ci-host-tools.tsv makes valgrind a host tool
+# of the instruction-count gates, required before any gate starts, and both
+# scripts fail in Actions without it. The benchmark gate keeps its own work
+# directory: the self_compile gate measures under target/instruction-count-check,
+# which preserves the historical measured argv.
 gate_instruction_counts() {
-    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh
+    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
+        --output target/instruction-count-benchmarks
+}
+
+# self_compile has no checked row: this gate records the measurement and its
+# identity, and in CI scripts/self-compile.sh check gates the PR's own cost
+# against main's reference for the tested base after ci-verify (perf/README.md).
+gate_self_compile_measurement() {
+    scripts/self-compile.sh measure --compiler "$STAGE2_BIN"
 }
 
 gate_heavy_instruction_counts() {

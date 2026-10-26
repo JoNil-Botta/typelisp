@@ -9,6 +9,10 @@
   (x f64)
   (y f64))
 
+(defstruct PairF64I64
+  (x f64)
+  (n i64))
+
 ;; The issue's reproduction: System V passes i and j on the stack while c..h
 ;; stay in their incoming registers.
 (define (fin
@@ -151,6 +155,75 @@
                                       (* 131072.0 a17)
                                       (+ (* 262144.0 a18) (* 524288.0 a19)))))))))))))))))))))
 
+;; A pair at positions 3 and 4 straddles Win64's register/stack boundary: its
+;; first word arrives in %xmm3, its second on the stack. The floats after it
+;; arrive on the stack on both ABIs.
+(define (fin-straddle
+  [a : f64]
+  [b : f64]
+  [c : f64]
+  [p : PairF64]
+  [d : f64]
+  [e : f64]
+  [f : f64]
+  [g : f64]
+  [h : f64]
+  [i : f64]
+  [j : f64]
+  [k : f64]) : f64
+  (+
+    a
+    (+
+      (* 2.0 b)
+      (+
+        (* 4.0 c)
+        (+
+          (* 8.0 p.x)
+          (+
+            (* 16.0 p.y)
+            (+
+              (* 32.0 d)
+              (+
+                (* 64.0 e)
+                (+
+                  (* 128.0 f)
+                  (+
+                    (* 256.0 g)
+                    (+
+                      (* 512.0 h)
+                      (+ (* 1024.0 i) (+ (* 2048.0 j) (* 4096.0 k))))))))))))))
+
+;; A group with one SSE and one INTEGER word after eight floats: System V
+;; passes it on the stack, and a float after it follows on the stack.
+(define (fin-mixed
+  [a : f64]
+  [b : f64]
+  [c : f64]
+  [d : f64]
+  [e : f64]
+  [f : f64]
+  [g : f64]
+  [h : f64]
+  [m : PairF64I64]
+  [i : f64]) : f64
+  (+
+    a
+    (+
+      (* 2.0 b)
+      (+
+        (* 4.0 c)
+        (+
+          (* 8.0 d)
+          (+
+            (* 16.0 e)
+            (+
+              (* 32.0 f)
+              (+
+                (* 64.0 g)
+                (+
+                  (* 128.0 h)
+                  (+ (* 256.0 m.x) (+ (* 512.0 (cast m.n : f64)) (* 1024.0 i))))))))))))
+
 ;; f32 parameters take the same copy with single-precision moves.
 (define (fin-f32
   [a : f32]
@@ -243,9 +316,35 @@
       (cast 10.0 : f32))
     (cast 9217.0 : f32)))
 
+(define (straddle-ok?) : bool
+  ;; Sum over k of (k + 1) * 2^k for k = 0..12 is 12 * 2^13 + 1.
+  (=
+    (fin-straddle
+      1.0
+      2.0
+      3.0
+      (PairF64 4.0 5.0)
+      6.0
+      7.0
+      8.0
+      9.0
+      10.0
+      11.0
+      12.0
+      13.0)
+    98305.0))
+
+(define (mixed-ok?) : bool
+  ;; Sum over k of (k + 1) * 2^k for k = 0..10 is 10 * 2^11 + 1.
+  (=
+    (fin-mixed 1.0 2.0 3.0 4.0 5.0 6.0 7.0 8.0 (PairF64I64 9.0 10) 11.0)
+    20481.0))
+
 (define (main) : i64
   (unless (= (fin-case) 42) (return 1))
   (unless (pair-ok?) (return 2))
   (unless (wide-ok?) (return 3))
   (unless (f32-ok?) (return 4))
+  (unless (straddle-ok?) (return 5))
+  (unless (mixed-ok?) (return 6))
   42)

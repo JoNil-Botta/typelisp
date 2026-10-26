@@ -1957,6 +1957,10 @@ Borrow expressions:
   only as immediate call arguments. The compiler materializes a temporary and
   writes it back after the call. Binding or storing such a mutable reference is
   rejected.
+- Immediate mutable call-argument borrows of fields rooted in register-resident
+  struct locals likewise write back after the call. Each writeback updates only
+  the borrowed field, preserving disjoint sibling updates from other arguments
+  and their evaluation.
 - Borrow expressions are the explicit spelling. At call sites, a parameter of
   type `(& lifetime T)` may also auto-borrow an argument place under the same
   immutable borrow rules below. There is no general implicit conversion from

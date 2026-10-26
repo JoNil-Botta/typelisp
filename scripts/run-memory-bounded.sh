@@ -4,12 +4,14 @@ set -eu
 # Cross-host fail-closed process-tree memory cap with a stable report.
 #
 # Linux requires the user-systemd cgroup backend of lib-linux-memory-limit.sh
-# (MemoryMax with swap disabled). Its delegated workload child retains the exact
+# (MemoryMax with swap disabled). Its delegated workload node retains the exact
 # requested cap; a separate sampler leaf has 64 MiB of bounded headroom. The
-# sampler provides the observed process-tree peak, plus a monotonic wall clock. Windows
-# delegates to the suspended-start Job Object wrapper. A missing
-# enforcement/measurement backend is a wrapper failure, never an unbounded
-# fallback.
+# sampler provides the observed process-tree peak, plus a monotonic wall clock.
+# A run started from inside another bounded workload nests in that workload's
+# cgroup, so every enclosing cap also bounds it (see the library). Windows
+# delegates to the suspended-start Job Object wrapper, whose jobs nest inside
+# an enclosing job. A missing enforcement/measurement backend is a wrapper
+# failure, never an unbounded fallback.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 

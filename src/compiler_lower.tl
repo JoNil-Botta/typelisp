@@ -19024,8 +19024,10 @@
 ;; aggregate) has no address, so a shared borrow points at a copy in a fresh
 ;; frame slot. The shared loan keeps the local unchanged while the reference
 ;; lives, so the copy always reads as the local does, and the slot lives for
-;; the whole activation, longer than the binding the checker ties the reference
-;; to. The copy must not be allocated in the current arena: a `with-arena` or
+;; the whole activation. No borrow outlives its binder's storage, which ends
+;; within the activation: a lambda's capture is the call's own copy, retired
+;; at every return like a parameter (`normalize-parameters!`). The copy must
+;; not be allocated in the current arena: a `with-arena` or
 ;; `in-arena` around the borrow would rewind or destroy it while the reference
 ;; is still live (#9297).
 (define (lower-borrow-var-address-by-value

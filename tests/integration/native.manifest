@@ -282,6 +282,7 @@ arena_pool_context_escape|all|-|tests/integration/arena_pool_context_escape.tl|4
 arena_lazy_singleton_raw_addr_escape|all|-|tests/integration/arena_lazy_singleton_raw_addr_escape.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
 with_arena_scalar_borrow|all|0,1,2|tests/integration/with_arena_scalar_borrow.tl|42|-|-|-|-
 borrow_local_frame_storage|all|0,1,2|tests/integration/borrow_local_frame_storage.tl|42|-|-|stdlib/arena.tl stdlib/profile.tl|-
+capture_borrow_storage|all|0,1,2|tests/integration/capture_borrow_storage.tl|42|-|-|-|-
 argv|all|-|tests/integration/argv.tl|7|alpha\n|alpha beta|stdlib/io.tl stdlib/string.tl|-
 # Backend/regalloc campaign fixtures recovered from llvm-inlining.
 arg_register_swap_cycle|all|-|tests/integration/arg_register_swap_cycle.tl|42|-|-|stdlib/io.tl|-

@@ -317,6 +317,20 @@ around borrows of locals. Both run at opt0/1/2 on both hosts, and the
 `borrow-local-no-alloc` assembly case forbids `tl_alloc` in the borrowing
 function on both targets.
 
+A lambda's by-value capture is storage of each call, so its frame-slot copy
+is only sound because the ownership graph retires the capture at every return.
+The `capture_borrow_*_reject` safety rows return or store a borrow of a
+capture (scalar, register-resident field, under `with-arena`, `in-arena` with
+`arena.destroy-safe!`, auto-borrowed into a lifetime-carrying call, nested
+lambdas, a captured lambda parameter); main accepted each, and each must
+report the capture's E0205. Two controls keep the inferred-result and
+lambda-parameter diagnostics. `capture_borrow_storage.tl` runs the accepted
+side at opt0/1/2 on both hosts: captured references returned or reborrowed,
+non-escaping borrows (lent, annotated with the capture's lifetime, in a loop),
+shadowing, nested lambdas and field borrows. Its lambdas differ in signature
+or body, because opt2 still fails to link two identical capturing lambdas
+(#9317).
+
 `tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
 in one frame, including register-resident enum spills. Their tail jumps and
 opt2 loops are checked on both targets. The frame-provenance corpus also

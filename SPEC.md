@@ -2277,8 +2277,8 @@ with its arena (section 3.9). A borrow still used after its storage ends, or
 stored where the caller can reach it (through a `&mut` parameter at any
 depth, or in the function's result, whose lifetimes are live until the call
 returns), is rejected (E0205): "`x` does not live long enough", or "cannot
-return a reference to local `x`" (or "to parameter `x`") for a returned one,
-as Rust's E0597 and E0515. This holds when a local or parameter is spelled
+return a reference to local `x`" (or "to parameter `x`", or "to captured
+`x`") for a returned one, as Rust's E0597 and E0515. This holds when a local or parameter is spelled
 like a caller lifetime: a borrow of a parameter `[a : i64]` stored through
 `[b : (&mut a (RefBox a))]` is rejected.
 
@@ -2842,6 +2842,39 @@ moves that unique reference into the closure environment and the source binding
 cannot be used afterward. The referent remains exclusively borrowed through
 the closure's last direct use under section 3.10.3. Capturing region-tagged
 owner values such as `(in r String)` is governed by section 3.9.
+
+**Borrowing a by-value capture.** Section 3.10's "storage outlives its
+borrows" applies to captures. A capture that is not a reference is a snapshot,
+read into storage of each invocation, not the enclosing source binding.
+Borrowing it, or an owned field or element of it, borrows the snapshot, so the
+borrow cannot outlive the lambda invocation, whatever lifetime name the
+reference type spells; the same restriction applies to a by-value lambda
+parameter. Returning such a borrow (directly or inside an aggregate), or
+storing it where the caller or the closure's creator can reach it (through a
+captured `&mut` at any depth), is rejected (E0205): "cannot return a reference
+to captured `x`", or "captured `x` does not live long enough". An annotation
+cannot extend that storage: inside the body, a lifetime spelled like a capture
+names the snapshot. A captured reference keeps its referent's lifetime and
+provenance, so returning it, or a reborrow through it, is accepted: borrow the
+enclosing binding outside the lambda and capture that reference.
+
+```lisp test=run name=closure-captured-reference-return exit=42 stdout=""
+(define (main) : i64
+  (let
+    [x : i64 42]
+    [rx : (& x i64) (& x)]
+    [f (lambda () : (& x i64) rx)]
+    (deref (f))))
+```
+
+```lisp test=ignore name=closure-capture-borrow-return-reject reason="negative example for the capture storage rule"
+(define (main) : i64
+  (let
+    [x : i64 42]
+    ; Rejected: `(& x)` borrows the lambda's own copy of `x`.
+    [f (lambda () : (& x i64) (& x))]
+    (deref (f))))
+```
 
 The source function type `(-> args ... ret)` does not encode captured
 lifetimes, call capability, or the Copy class of a concrete environment.

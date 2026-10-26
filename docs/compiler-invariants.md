@@ -1534,8 +1534,12 @@ variable's heap handle. A shared borrow of a scalar or register-resident
 variable is not: lowering copies the value into a frame slot of the borrowing
 function, never into the current arena, which a `with-arena` or `in-arena`
 around the borrow may rewind or destroy while the reference still borrows the
-live variable (#9297). Such a call stays an ordinary call, like a borrow of a
-local aggregate. Local reference/view aliases, unknown call results and
+live variable (#9297). The frame slot is sound because the borrow never
+outlives the borrowed binder's storage, which ends no later than the frame:
+for a lambda's capture the ownership graph retires the capture at every
+return of the lambda, as it does a by-value parameter, so a borrow of the
+capture cannot be returned or stored past the call. Such a call stays an
+ordinary call, like a borrow of a local aggregate. Local reference/view aliases, unknown call results and
 Copy aggregates materialized from heap elements do not acquire a proof.
 Slice-pattern rest views inherit a proven external scrutinee's storage;
 their IR IDs are retained in a persistent set so lowering-state forks do not

@@ -12454,7 +12454,14 @@
               (match (& (array-ref instructions at).operation)
                 [(ownership.OwnershipOperation.Move source _) source.index]
                 [(ownership.OwnershipOperation.Consume place) place.index]
-                [(ownership.OwnershipOperation.Invalidate place) place.index]
+                ;; A capture's storage ending at a return is the call's own
+                ;; copy ending, not the body ending the capture (#9297).
+                [(ownership.OwnershipOperation.Invalidate place)
+                  (if (ownership_normalize.normalize-i64-member?
+                    (& output.storage-ends)
+                    (+ (* index 4294967296) at))
+                    -1
+                    place.index)]
                 [_ -1])]
             [place : i64 0]
             (when
@@ -122386,18 +122393,29 @@
     [owner : String
       (cond
         [temporary? "a temporary value"]
+        [diagnostic.capture?
+          (str_cat.str-cat "captured `" (string.copy (& name)) "`")]
         [diagnostic.parameter?
           (str_cat.str-cat "parameter `" (string.copy (& name)) "`")]
         [else (str_cat.str-cat "local `" (string.copy (& name)) "`")])]
+    ;; A by-value capture is spelled like the binding it copies, so say whose
+    ;; storage ends (#9297).
+    [why : String
+      (if diagnostic.capture?
+        ": a by-value capture is this lambda's own copy and does not outlive the call"
+        "")]
     [message : String
       (cond
         [(= diagnostic.kind 1)
-          (str_cat.str-cat "typecheck: cannot return a reference to " owner)]
+          (str_cat.str-cat "typecheck: cannot return a reference to " owner why)]
         [(= diagnostic.kind 2)
           (str_cat.str-cat
             "typecheck: cannot return a value referencing "
-            owner)]
+            owner
+            why)]
         [temporary? "typecheck: temporary value does not live long enough"]
+        [diagnostic.capture?
+          (str_cat.str-cat "typecheck: " owner " does not live long enough" why)]
         [else
           (str_cat.str-cat "typecheck: `" name "` does not live long enough")])]
     [label : String
@@ -122416,7 +122434,9 @@
             (cdiag.compiler-diagnostic-typecheck-tag
               (cdiag.CompilerTypecheckKind.RegionEscape))
             message)
-          (tc-reference-escape-help)
+          (if diagnostic.capture?
+            "borrow the binding outside the lambda and capture that reference instead"
+            (tc-reference-escape-help))
           (tc-selected-source-span (& diagnostic.use))
           label)))))
 

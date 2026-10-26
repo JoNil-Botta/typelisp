@@ -19640,7 +19640,7 @@
       [else ""])))
 
 (define (compiler-backend-emit-load-float-memory
-  [addr : String]
+  [addr : (& addr str)]
   [reg : (& reg str)]
   [ty : (& ty compiler_ast_types.AstType)]) : String
   (str_cat.str-cat
@@ -61951,7 +61951,7 @@
                           entry
                           (str_cat.str-cat
                             (compiler-backend-emit-load-float-memory
-                              (compiler-backend-global-shared-view addr)
+                              addr
                               stage
                               ty)
                             (compiler-backend-emit-store-float-var

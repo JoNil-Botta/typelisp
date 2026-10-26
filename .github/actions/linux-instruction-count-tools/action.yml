@@ -1,0 +1,56 @@
+name: Verified Linux instruction-count packages
+description: Reuse authenticated apt archives; always install and check exact versions
+runs:
+  using: composite
+  steps:
+    - name: Resolve Linux instruction-count packages
+      id: resolve
+      shell: bash
+      run: bash scripts/ci-linux-tools.sh prepare
+    - name: Start package-cache restore timer
+      shell: bash
+      run: echo "LINUX_TOOLS_RESTORE_START=$(date +%s%3N)" >> "$GITHUB_ENV"
+    - name: Restore Linux instruction-count packages
+      id: restore
+      continue-on-error: true
+      uses: actions/cache/restore@v4
+      with:
+        path: target/ci-linux-tools/packages
+        key: ${{ steps.resolve.outputs.key }}
+    - name: Record package-cache restore time
+      shell: bash
+      env:
+        CACHE_OUTCOME: ${{ steps.restore.outcome }}
+      run: printf 'cache-restore\t%s\t%s\n' "$(($(date +%s%3N) - LINUX_TOOLS_RESTORE_START))" "$CACHE_OUTCOME" | tee -a target/ci-linux-tools/timing.tsv
+    - name: Install Linux instruction-count tools
+      id: install
+      shell: bash
+      # On noble libc6-dbg is a hard dependency. No Recommends excludes gdb,
+      # while preserving libc6-dbg and valgrind and the complete gate matrix.
+      run: bash scripts/ci-linux-tools.sh install
+    - name: Start package-cache save timer
+      shell: bash
+      run: echo "LINUX_TOOLS_SAVE_START=$(date +%s%3N)" >> "$GITHUB_ENV"
+    - name: Save verified Linux instruction-count packages
+      id: save
+      if: steps.restore.outputs.cache-hit != 'true' || steps.install.outputs.key != steps.resolve.outputs.key
+      continue-on-error: true
+      uses: actions/cache/save@v4
+      with:
+        path: target/ci-linux-tools/packages
+        key: ${{ steps.install.outputs.key }}
+    - name: Record package-cache save time
+      shell: bash
+      env:
+        CACHE_OUTCOME: ${{ steps.save.outcome }}
+      run: printf 'cache-save\t%s\t%s\n' "$(($(date +%s%3N) - LINUX_TOOLS_SAVE_START))" "$CACHE_OUTCOME" | tee -a target/ci-linux-tools/timing.tsv
+    - name: Upload Linux package provenance and timings
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: linux-instruction-tools-${{ github.job }}
+        path: |
+          target/ci-linux-tools/*.txt
+          target/ci-linux-tools/*.tsv
+          target/ci-linux-tools/SHA256SUMS
+        if-no-files-found: warn

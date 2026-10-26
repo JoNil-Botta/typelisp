@@ -19647,13 +19647,14 @@ entry:
 (define (compiler-backend-debug-private-param-provenance-ok?
   [target : backend.CompilerBackendTarget]) : bool
   (let
+    [_initialize : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [previous-debug : bool (ir.compiler-debug-info-enabled?)]
     [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
     [name : ir.CompilerIrSymbolId
       (ir.compiler-ir-symbol-typed-id
         (ir.compiler-ir-test-symbol "__tl_spmd_ret_varying_debug_private"))]
     [path : i64 (ci.intern "debug_private.tl")]
-    ;; Disjoint scalar definitions would share a slot without provenance pins.
+    ;; Instruction locations must follow their destination IDs through remapping.
     [spans : ir.CompilerSourceSpans
       (ir.compiler-source-spans-insert-instr-located
         (ir.compiler-source-spans-insert-instr-located
@@ -19696,9 +19697,10 @@ entry:
 (define (compiler-backend-private-param-homes-and-provenance-ok?
   [target : backend.CompilerBackendTarget]) : bool
   (and
+    ;; Run provenance first so the fixture also covers fresh-process setup.
+    (compiler-backend-debug-private-param-provenance-ok? target)
     (compiler-backend-empty-private-param-homes-ok? target false)
-    (compiler-backend-empty-private-param-homes-ok? target true)
-    (compiler-backend-debug-private-param-provenance-ok? target)))
+    (compiler-backend-empty-private-param-homes-ok? target true)))
 
 (test
   backend-empty-private-body-keeps-entry-stores-inside-frame

@@ -1890,8 +1890,8 @@ frame layout continues to use only the physical slot count.
 Private AVX2 parameter entry stores participate in the full-width stack-home
 census even when optimization removes every body use and liveness interval.
 An empty body still needs disjoint YMM homes inside its accepted frame.
-Debug private AVX2 functions use this same census and coloring path; spanned
-value IDs remain distinct and their provenance keys are remapped with the IR.
+Debug private AVX2 functions use this same census and coloring path; their
+instruction-span keys are remapped with the IR.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes

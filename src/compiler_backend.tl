@@ -71238,8 +71238,8 @@
             (not (compiler_ir_types.compiler-debug-info-enabled?))
             (compiler_regalloc.compiler-reg-spmd-avx2-special-params?
               (& params)))]
-        ;; Value ids are provenance keys: keep spanned values in distinct
-        ;; private slots and remap their keys alongside the emitted IR.
+        ;; Value ids are provenance keys: pin spanned scalars against sharing
+        ;; and remap their keys alongside the emitted IR.
         [source-span-pinned-vars : compiler_liveness.CompilerLiveI64Set
           (if color-stack-slots?
             (compiler-backend-source-span-pinned-vars

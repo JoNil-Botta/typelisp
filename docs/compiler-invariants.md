@@ -8,6 +8,12 @@ This page describes the compiler pipeline and command-line surface. Run
 
 ## Architecture
 
+Ownership (moves, borrows, lifetimes of loans, cleanup obligations) has one
+authority, the [ownership IR](ownership-ir.md) (#8449): the type checker
+records each body's typed occurrences, the normalizer builds the body's
+ownership MIR from them, and the core certifies it; a body the core does not
+certify is rejected.
+
 ```
 Source (.tl)
     ↓  Lexer, reader → spanned s-expressions (lex.tl, read.tl)
@@ -370,7 +376,9 @@ when one of them can write that storage. For a read through a name, that is a
 `set!`, `replace!`, field or element store, push, take, mutable borrow or
 `ptr-addr-of` rooted at the name. Other local storage, such as a block result,
 counts any such form. An address-taken local counts any later argument that
-is not a plain read. A global read is not copied yet (#8680). The typed, untyped, call-aware and C ABI
+is not a plain read. A global read has no local root, so it is copied whenever
+a later argument has any effect: lowering has no call write facts yet to prove
+a call leaves it alone (#8680). The typed, untyped, call-aware and C ABI
 argument collectors all apply it (#8433). The write scan skips closure bodies.
 Once a call's remaining arguments are found free of writes, the collectors
 pass that on, so the arguments after them are not scanned again. Memory-class
@@ -392,26 +400,41 @@ store those values without an aggregate copy. Box assignment captures its
 selected pointer before value effects. Zero-sized array values still run their
 effects before the final bounds check.
 
-Store lowering uses the operand's actual flow type independently of its
-contextual value type. `Never` from a receiver, index or value stops evaluation
-before further operands, bounds checks, writes or packed-local refreshes.
-Annotations preserve that flow. Argument collectors carry an explicit `Exit`
-state, which callers propagate without snapshots, remaining arguments, calls
-or writebacks. Direct constructors and array-literal builders return their
-flow type so an exit cannot become a successful store through a state-only
-result. Box and tuple literals preserve the same flow before allocation,
-stores, later elements or result materialization. Tuple element builders carry
-that flow in `ResultLowerExpr`. Conditional exits still leave the surviving
-path available to commit.
+Every element step of a store place is a `LowerStorePlace` that owes its
+bounds check (`LowerPendingBounds`): a fixed array or slice element carries its
+index and length, and a dynamic element checks the current length when the
+store resolves the live buffer. Inline field and tuple projections
+(`lower-store-place-project`) read no element bytes, so they carry the pending
+check: `(set! (array-ref a i).f v)` checks `i` after `v`, as
+`(set! (array-ref a i) v)` does. `lower-store-place-address` emits it at the
+store, after the value and before any address of the element exists. A step
+that reads the element first runs it then, through
+`lower-store-place-check-now`: an indirection through a reference field, an
+element step into an inline array (`set_intermediate_bounds_before_value_trap`)
+and a branch arm publishing its place. An element step whose receiver still
+owes a check, and a merge of such places, are internal errors rather than
+dropped checks. A dynamic place's base is the typed descriptor snapshot, and
+its length and buffer reads are the typed descriptor words that
+`lower-array-element-addr` uses, so the optimizer keeps distinguishing element
+stores from header loads. Dynamic and pending places evaluate the value first;
+a direct constructor builds into them through a deferred
+`LowerStoreDestination.Place`.
 
-An exiting constructor or annotation reports `Never` with no value, so every
-consumer of an operand follows the same rule. Let and `with` bindings stop
-before later initializers and the body (`ResultLowerLetBindings` and
-`LowerResourceBindings` carry an `Exit` state). Match scrutinees, field, tuple
-and array projections, `deref`, casts, unary and binary operands, `if`
-conditions and owned `for` sources return the exit's state as `Never` instead
-of dispatching on the missing value. The exit itself cleans earlier `with`
-resources.
+Store lowering follows an operand's flow, not its contextual type: `Never`
+from a receiver, index or value ends the store there, before later operands,
+bounds checks, writes or packed-local refreshes, and annotations keep that
+flow. Call arguments, constructor fields and box, tuple and array literal
+elements end at an exiting operand the same way: later operands, snapshots,
+the call and its writebacks are never emitted, so an exit never becomes a
+store or a result. Let and `with` bindings stop before later initializers and
+the body (`LowerResourceBindings.Diverged`), and the exit itself cleans the
+earlier `with` resources. Match scrutinees, projections, `deref`, casts,
+unary and binary operands, `if` conditions and owned `for` sources return the
+exit as `Never` without dispatching on a missing value. Conditional exits
+leave the surviving path to commit. `compiler-lower-store-exits`,
+`compiler-lower-literal-constructor-exits` and
+`compiler-lower-operand-consumer-exits` check that no instruction follows a
+terminator in its block.
 
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
@@ -1404,40 +1427,30 @@ loop. `lower-make-array-zero-fill-supported?` decides which applies:
 Types outside that list, such as `String` and `Box`, keep the loop. A `Box`
 default, for one, is a live allocation.
 
-Packed struct field assignment keeps the receiver selected before the RHS
-without restoring stale sibling fields afterward. When the existing operand
-write scan proves the RHS cannot mutate or alias the local, lowering keeps the
-packed temporary path. Otherwise it takes the local's real frame address, so
-RHS field writes and mutable-reference calls reach the same selected value.
-A compiler-side guard stack records that local's IR identity while lowering the
-RHS. Whole-local `set!` clears each active matching runtime flag; projected or
-reference writes leave it live. The final field store is conditional on that
-flag, and the current local value is reloaded from its home. Rebinding makes the
-old unaliased receiver dead, so omitting its unit-valued store preserves the new
-binding. Equal contents do not imply equal receiver identity, and shadowed
-locals have different IR identities. Guards allocate only compiler data and
-runtime scalar flags, not program heap objects. Control-flow state copies share
-the immutable guard links until the corresponding RHS finishes; nested guards
-are popped in lowering order. This rule is specific to unit-valued field stores;
-`replace!`, which returns the old value, retains its separate place lowering.
+A field store into a packed (register-resident) struct local writes through
+the local's frame address and then reloads the packed value
+(`lower-refresh-register-resident-root-after-store`). RHS field writes and
+mutable-reference calls therefore reach the same selected value, and no stale
+sibling field is restored afterward. A by-value array, struct or tuple receiver is its variable's own storage
+(SPEC 5.10). While the value of a store into a captured place is lowered, the
+receiver's root binding (`lower-store-receiver-home-var`) is pinned to that home
+(`lower-state-home-pinned?`): a whole-variable `set!` in the value copies into
+the home instead of repointing the binding at the value's fresh storage, and the
+store then lands in the variable. Field, tuple-element and array-element places
+share this path (`lower-store-expr-into-receiver-place-result`), so the rule needs
+no runtime flag or guard. `replace!`, which returns the old value, retains its
+separate place lowering.
 
-Memory-class aggregate expressions carry addresses into inline storage.
-Whole-global assignment copies the shallow container through the private
-`tl_alloc_global` entry before emitting the ordinary IR `Store`. Keeping that
-store preserves the backend's global-writer and inline-storage eligibility
-analysis; mutating one permanent home would incorrectly retarget a receiver
-captured before the replacement. A private atomic arena starts with one static
-page and uses ordinary arena growth after it fills. Constant allocations up to
-64 bytes reserve space with an inline compare-and-swap; other allocations
-temporarily select the private root, then restore the caller's current arena.
-Every segment has program lifetime, so an allocation can finish on an older
-head while another thread grows the arena. The root and its segments are never
-exposed to source reset or destruction. Payloads retain their checked source lifetimes;
-this transport does not clone them. Global initialization and ordinary heap
-allocation continue to use `tl_alloc`. The existing runtime-leaf mask selects
-this helper and its private arena only when referenced on either target. Each
-platform wrapper has its own catalog row; ordinary allocator variants keep
-their original payloads. Internal mutable diagnostic state keeps its latest
+Memory-class aggregate expressions carry addresses into inline storage. An
+initialized inline aggregate global keeps one static home: whole-global
+assignment copies the value's bytes into it (`lower-global-storage-assignment`),
+as an assignment to a local or parameter does. A place captured before the
+replacement therefore still names that binding, and the store allocates
+nothing, so a temporary arena cannot own any part of a global. The private
+`tl_alloc_global` runtime entry and its atomic arena remain available to the
+runtime-leaf mask, which emits them only when referenced; no compiler-generated
+global store references them. Global initialization and ordinary heap
+allocation use `tl_alloc`. Internal mutable diagnostic state keeps its latest
 unbound-name snapshot in one fixed array slot, avoiding a new retained global
 container for every lookup and reset.
 
@@ -1451,19 +1464,20 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
-`lower-store-place` retains a selected array descriptor, index and inline
-field offset until the replacement value has been evaluated. The shared
-`lower-array-store-place` snapshot rules prevent later receiver/index writes
-from retargeting the store. `lower-store-destination-address` then checks the
-current length and uses the descriptor's current buffer. Struct and tuple
-projections add their `lower-inline-field-info` offsets without reading the
-element. A projection through a box or reference reads that indirection before
-the value runs, so its intermediate bounds checks remain eager. An inline
-fixed-array field of an element, as in
-`(set! (array-ref (array-ref a i).cells j) v)`, is still lowered as an eager
-array receiver: when `v` grows `a`, that store targets the buffer selected
-before the value ran (#9057). Borrow and `replace!` address selection
-continues to use `lower-mutable-place-address`.
+A field or tuple store into an array element (#8932) retains the selected
+array descriptor, index and inline field offset until the replacement value
+has been evaluated (`lower-capture-array-store-place`). The snapshot rules of
+`lower-store-index` and the descriptor capture prevent later receiver/index
+writes from retargeting the store. `lower-store-place-address` then checks the
+current length and uses the descriptor's current buffer. A projection through
+a box or reference reads that indirection before the value runs, so its
+intermediate bounds checks remain eager. An inline fixed-array field of a
+dynamic-array element, as in `(set! (array-ref (array-ref a i).cells j) v)`,
+keeps `a`'s descriptor as its root: indexing `cells` checks `i` before `v`,
+and the store checks `i` against the live length again and addresses the
+buffer current after `v`, so growth of `a` in `v` does not strand the store in
+the old buffer (#9057). Borrow and `replace!` address selection continues to
+use `lower-mutable-place-address`.
 
 A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
 the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).

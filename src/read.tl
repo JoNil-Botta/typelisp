@@ -5,6 +5,7 @@
 ;; `spanned-result` reads source forms for the parser; `data-result` reads one
 ;; plain data form (a lockfile, TLCI metadata) from source text. Consumers that
 ;; do not need spans walk a tree through `sexpr-view`.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 
 (module read)
@@ -232,12 +233,10 @@
         (__tl_make-array (__tl_dyn-array SpannedSexpr) new-cap)]
       [starts : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
       [bases : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
-      [i : i64 0]
-      (while (< i sp-node-pool-slot-count)
+      (for [i (iterator.range 0 sp-node-pool-slot-count)]
         (set! (array-ref segments i) (sp-node-pool-segment i))
         (set! (array-ref starts i) (array-ref sp-node-pool-segment-starts i))
-        (set! (array-ref bases i) (array-ref sp-node-pool-segment-bases i))
-        (set! i (+ i 1)))
+        (set! (array-ref bases i) (array-ref sp-node-pool-segment-bases i)))
       (set! sp-node-pool-segments segments)
       (set! sp-node-pool-segment-starts starts)
       (set! sp-node-pool-segment-bases bases))))
@@ -272,7 +271,8 @@
   (let
     [slot : i64 sp-node-pool-slot-count]
     (in-arena
-      (arena.Arena (sp-node-pool-storage-root))
+      (unsafe
+        (arena.Arena (sp-node-pool-storage-root)))
       (sp-node-pool-directory-reserve! (+ slot 1))
       (sp-node-pool-install-slot!
         slot
@@ -293,14 +293,13 @@
         1024
         (* old-cap 2))]
     (in-arena
-      (arena.Arena (sp-node-pool-storage-root))
+      (unsafe
+        (arena.Arena (sp-node-pool-storage-root)))
       (let
         [new-slots : (__tl_dyn-array SpannedSexpr)
           (__tl_make-array SpannedSexpr new-cap)]
-        [i : i64 0]
-        (while (< i sp-builder-count)
-          (set! (array-ref new-slots i) (array-ref sp-builder-slots i))
-          (set! i (+ i 1)))
+        (for [i (iterator.range 0 sp-builder-count)]
+          (set! (array-ref new-slots i) (array-ref sp-builder-slots i)))
         (set! sp-builder-slots new-slots)))))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
@@ -358,7 +357,7 @@
           (sp-node-pool-ensure! boundary)
           (while (< sp-node-pool-count boundary)
             (sp-node-pool-fill! sp-node-pool-count (sp-node-filler))
-            (set! sp-node-pool-count (+ sp-node-pool-count 1)))
+            (+= sp-node-pool-count 1))
           (if (<= length rows)
             (sp-node-pool-ensure! (+ boundary length))
             (sp-node-pool-install-long! boundary length))
@@ -397,9 +396,10 @@
             (<= candidate-start start)
             (<= (+ (- start candidate-start) length) (array-length segment)))
           (set! reuse-slot candidate)))
-      (set! candidate (+ candidate 1)))
+      (+= candidate 1))
     (in-arena
-      (arena.Arena (sp-node-pool-storage-root))
+      (unsafe
+        (arena.Arena (sp-node-pool-storage-root)))
       (let
         [long : (__tl_dyn-array SpannedSexpr)
           (if (= reuse-slot -1)
@@ -409,16 +409,14 @@
           (if (= reuse-slot -1)
             start
             (array-ref sp-node-pool-segment-starts reuse-slot))]
-        [slot : i64 first]
         (sp-node-pool-ensure! start)
         (sp-node-pool-directory-reserve! end-slot)
-        (while (< slot end-slot)
+        (for [slot (iterator.range first end-slot)]
           (sp-node-pool-install-slot!
             slot
             (unsafe
               (ptr-read (ptr-addr-of long)))
-            long-start)
-          (set! slot (+ slot 1)))
+            long-start))
         (when
           (< sp-node-pool-slot-count end-slot)
           (set! sp-node-pool-slot-count end-slot))))))
@@ -460,7 +458,7 @@
   (sp-node-pool-truncate! 0)
   (set! sp-builder-count 0)
   (set! sp-node-pool-retained-arena 0)
-  (set! sp-node-pool-reset-generation (+ sp-node-pool-reset-generation 1)))
+  (+= sp-node-pool-reset-generation 1))
 
 ;; Row ids and builder ranges name indices, never backing-array addresses.
 ;; Payloads belong to source/interner owners; neither array owns their strings.
@@ -487,9 +485,9 @@
         (unsafe
           (ptr-read (ptr-addr-of sp-builder-released-slots)))
         (in-arena
-          (arena.Arena transfer-arena)
+          (unsafe
+            (arena.Arena transfer-arena))
           (__tl_make-array SpannedSexpr builder-capacity)))]
-    [index : i64 0]
     (set!
       sp-node-pool-segments
       (unsafe
@@ -506,7 +504,8 @@
     (when
       (> live-slots 0)
       (in-arena
-        (arena.Arena transfer-arena)
+        (unsafe
+          (arena.Arena transfer-arena))
         (let
           [slot : i64 0]
           (sp-node-pool-directory-reserve! live-slots)
@@ -535,14 +534,13 @@
                       (< k limit)
                       (< (+ slot k) live-slots)
                       (= (array-ref old-starts (+ slot k)) old-start))
-                      (set! k (+ k 1)))
+                      (+= k 1))
                     k)
                   1)]
               [from : i64 (- slot-start old-start)]
               [copy : (__tl_dyn-array SpannedSexpr)
                 (__tl_make-array SpannedSexpr (* covered rows))]
               [row : i64 0]
-              [mapped : i64 0]
               (while (and
                 (< row (* covered rows))
                 (< (+ slot-start row) sp-node-pool-count))
@@ -553,19 +551,17 @@
                       (ptr-offset
                         (ptr-cast (__tl_array-data old) : (Ptr SpannedSexpr))
                         (+ from row)))))
-                (set! row (+ row 1)))
-              (while (< mapped covered)
+                (+= row 1))
+              (for [mapped (iterator.range 0 covered)]
                 (sp-node-pool-install-slot!
                   (+ slot mapped)
                   (unsafe
                     (ptr-read (ptr-addr-of copy)))
-                  slot-start)
-                (set! mapped (+ mapped 1)))
-              (set! slot (+ slot covered))
+                  slot-start))
+              (+= slot covered)
               (set! sp-node-pool-slot-count slot))))))
-    (while (< index sp-builder-count)
-      (set! (array-ref next-builders index) (array-ref sp-builder-slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 sp-builder-count)]
+      (set! (array-ref next-builders index) (array-ref sp-builder-slots index)))
     (set! sp-builder-slots next-builders)
     (set! sp-node-pool-base-arena transfer-arena)
     (set! sp-node-pool-retained-arena transfer-arena)
@@ -645,7 +641,7 @@
     (sp-builder-grow!)
     unit)
   (set! (array-ref sp-builder-slots sp-builder-count) item)
-  (set! sp-builder-count (+ sp-builder-count 1))
+  (+= sp-builder-count 1)
   builder)
 
 ;; The builder's rows become one list, placed so its children share an array.
@@ -656,12 +652,10 @@
     [builder-start : i64 builder.start]
     [len : i64 (- sp-builder-count builder-start)]
     [start : i64 (sp-node-pool-list-start! len)]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (sp-node-pool-fill!
         (+ start i)
-        (sp-builder-shared-view (+ builder-start i)))
-      (set! i (+ i 1)))
+        (sp-builder-shared-view (+ builder-start i))))
     (set! sp-node-pool-count (+ start len))
     (set! sp-builder-count builder-start)
     (List start len span)))
@@ -676,10 +670,8 @@
     [(List start length _)
       (let
         [out : SpannedSexprBuilder builder]
-        [i : i64 0]
-        (while (< i length)
-          (set! out (spanned-sexpr-builder-push out (sp-node-get (+ start i))))
-          (set! i (+ i 1)))
+        (for [i (iterator.range 0 length)]
+          (set! out (spanned-sexpr-builder-push out (sp-node-get (+ start i)))))
         out)]
     [_ (io.panic "reader: list builder extend requires a proper list")]))
 
@@ -739,12 +731,10 @@
       (let
         [builder : SpannedSexprBuilder
           (spanned-sexpr-builder-push (spanned-sexpr-builder-new) head)]
-        [i : i64 0]
-        (while (< i length)
+        (for [i (iterator.range 0 length)]
           (set!
             builder
-            (spanned-sexpr-builder-push builder (sp-node-get (+ start i))))
-          (set! i (+ i 1)))
+            (spanned-sexpr-builder-push builder (sp-node-get (+ start i)))))
         (spanned-sexpr-list-from-builder builder span))]
     [_ (io.panic "reader: list prepend requires a proper list")]))
 
@@ -1106,7 +1096,7 @@
   (let
     [end : i64 index]
     (while (and (< end length) (!= (string.string-ref text end) '.'))
-      (set! end (+ end 1)))
+      (+= end 1))
     end))
 
 (define (projection-suffix-error [message : String] [span : token.SourceSpan]) : ResultSpannedSexpr

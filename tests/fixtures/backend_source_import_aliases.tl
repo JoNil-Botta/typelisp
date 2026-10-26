@@ -17,7 +17,12 @@
 
 (define (main) : i64
   (if (and
-    (= (qualified-length (arena.Arena 0) "abc") 3)
+    (=
+      (qualified-length
+        (unsafe
+          (arena.Arena 0))
+        "abc")
+      3)
     (= (size "ok") 2)
     (logic.or false true)
     (= (text.string-length "import") 6)

@@ -30,13 +30,25 @@ name: Bootstrap Stage0
 on:
   push:
     branches: [main]
+  # Reproduce publication build/smoke/fixpoint on the exact PR candidate when
+  # its payload decoder or publication checks change. Publication stays push-only.
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/bootstrap-stage0.yml'
+      - 'scripts/*stage0*.sh'
+      - 'src/compiler_ctfe.tl'
+      - 'src/compiler_lzss.tl'
+      - 'src/compiler_load.tl'
+      - 'src/compiler_embedded_stdlib*'
+      - 'src/compiler_x64_executable_template_catalog*'
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: stage0-bootstrap
-  cancel-in-progress: false
+  group: stage0-bootstrap-${{ github.event.pull_request.number || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-linux:
@@ -44,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Check native toolchain
         run: |
@@ -87,6 +101,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Fetch previously published stage0 (seed)
         shell: bash
@@ -140,6 +156,9 @@ jobs:
 
   publish:
     name: Publish Stage0 Releases
+    if: github.event_name == 'push'
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     needs:
       - build-linux

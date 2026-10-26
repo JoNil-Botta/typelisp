@@ -35,7 +35,8 @@
   (CopyFwd)
   (Copy8Fwd)
   (MemFill8)
-  (GlobalAlloc))
+  (GlobalAlloc)
+  (ArenaSanitizer))
 
 (defenum CompilerX64TemplateContributionKind
   (RuntimeFunctions)
@@ -111,11 +112,11 @@
                   (set! (array-ref out write-at) (cast '\\' : u8))]
                 [else
                   (io.panic "x64 executable template: unknown catalog escape")])
-              (set! read-at (+ read-at 2))))
+              (+= read-at 2)))
           (begin
             (set! (array-ref out write-at) (cast current : u8))
-            (set! read-at (+ read-at 1))))
-        (set! write-at (+ write-at 1))))
+            (+= read-at 1)))
+        (+= write-at 1)))
     (unsafe
       (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) write-at))))
 
@@ -130,7 +131,7 @@
 (define (compiler-x64-template-feature-from-catalog [value : (& value str)]) : CompilerX64TemplateFeature
   (let
     [tag : i64 (catalog.compiler-x64-template-catalog-tag value)]
-    (if (or (< tag 0) (>= tag 25))
+    (if (or (< tag 0) (>= tag 26))
       (io.panic "x64 executable template: evidence enum tag is out of range")
       (unsafe
         (ptr-read

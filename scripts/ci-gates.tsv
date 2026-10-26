@@ -35,7 +35,7 @@ stage0-release-publication-verifier-self-tests	all	stage0 release publication ve
 stage0-latest-staged-publication-self-tests	all	stage0 latest staged publication self-tests	-	-	256	-	scripts/publish-stage0-latest.sh --self-test
 bootstrap-adaptive-control-flow	all	bootstrap adaptive control flow	-	-	256	-	scripts/verify-bootstrap-fixpoint-control.sh
 bootstrap-fixpoint	all	bootstrap fixpoint	-	-	6400	-	gate_bootstrap_fixpoint
-stage0-size-ratchet	all	stage0 size ratchet	bootstrap-fixpoint	stage2	256	-	scripts/check-stage0-size.sh --self-test && scripts/check-stage0-size.sh "$STAGE2_BIN"
+stage0-size-ratchet	all	stage0 size ratchet	bootstrap-fixpoint	stage2	256	-	scripts/check-stage0-size.sh --self-test && scripts/check-stage0-size.sh "$STAGE2_BIN" && scripts/verify-stage0-lzss-scanner.sh && scripts/analyze-stage0-size.sh "$STAGE2_BIN"
 stage2-opt1-opt2-build-invariance	linux	stage2 opt1/opt2 build-invariance	bootstrap-fixpoint	stage2	5632	-	gate_build_invariance
 embedded-stdlib-tlci-image	all	embedded stdlib tlci image	bootstrap-fixpoint	stage2	6144	embedded-image	scripts/verify-embedded-stdlib-tlci.sh
 stage2-opt2-built-cli-compile-cross-fixpoint-regression	all	stage2 opt2-built CLI compile + cross-fixpoint regression	bootstrap-fixpoint,stage2-opt1-opt2-build-invariance@linux	stage2	7680	build-stamp,root-release	gate_opt2_cli_regression
@@ -59,6 +59,7 @@ stage2-public-tool-surface	all	stage2 public tool surface	bootstrap-fixpoint	sta
 stage2-app-workflow-corpus	all	stage2 application workflow corpus	bootstrap-fixpoint	stage2	512	-	scripts/verify-app-corpus.sh
 ir-observability-golden	all	IR observability golden	bootstrap-fixpoint	stage2	2304	-	scripts/verify-ir-observability.sh
 compiler-arena-debug-native-matrix	all	compiler arena debug native matrix	bootstrap-fixpoint	stage2	2048	-	scripts/verify-compiler-arena-debug.sh
+stage2-arena-sanitizer-selfhost	linux	stage2 arena sanitizer self-host	bootstrap-fixpoint,embedded-stdlib-tlci-image	stage2	2816	build-stamp,embedded-image	scripts/verify-arena-sanitizer-selfhost.sh
 tlci-format-corpus	all	TLCI format corpus	bootstrap-fixpoint	stage2	256	-	scripts/verify-tlci-corpus.sh
 stage2-spmd-runtime-dispatch	all	stage2 SPMD runtime dispatch	bootstrap-fixpoint	stage2	256	-	scripts/verify-spmd-runtime-dispatch.sh
 stage2-spmd-package-calls	all	stage2 SPMD package calls	bootstrap-fixpoint	stage2	256	spmd-package	scripts/verify-spmd-package-calls.sh
@@ -86,6 +87,7 @@ stage2-pic-relocation-verifier	all	stage2 PIC relocation verifier	bootstrap-fixp
 stage2-linux-shared-object-code-model	linux	stage2 Linux shared-object code model	bootstrap-fixpoint	stage2	2560	-	scripts/verify-linux-shared-object-code-model.sh
 stage2-coff-relocation-overflow-verifier	all	stage2 COFF relocation-overflow verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-coff-relocation-overflow.sh
 stage2-safety-corpus	all	stage2 safety corpus	bootstrap-fixpoint	stage2	1792	-	scripts/verify-safety-corpus.sh
+stage2-ownership-model	all	ownership core model and production comparison	bootstrap-fixpoint	stage2	1280	-	scripts/verify-ownership-model.sh
 integration-manifest-validator-self-tests	all	integration manifest validator self-tests	-	-	256	-	scripts/verify-integration-manifest-validator.sh
 windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	-	-	256	-	scripts/verify-windows-coff-plan-validator.sh
 docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	-	-	256	-	scripts/verify-doc-site.sh --self-test-search-manifests

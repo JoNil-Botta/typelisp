@@ -210,7 +210,13 @@ growth for register and memory-class elements, nested struct/tuple projections,
 one-time index selection and mutable slices at opt0/1/2 on both hosts. Its
 safety rows keep final bounds checks after the value's effects and reject
 immutable receivers; intermediate projection traps remain independently pinned
-by `set_intermediate_bounds_before_value_trap.tl`.
+by `set_intermediate_bounds_before_value_trap.tl`. The fixed-array and slice
+`set_*_field_value_before_bounds_trap.tl` rows hold every array kind to the
+same final check, and `compiler-lower-projected-store-checks` keeps a dynamic
+element's field store at one check. `inline_array_field_store_growth.tl` covers
+stores through an inline array field of a dynamic-array element after growth
+(#9057), and `set_inline_array_bounds_before_value_trap.tl` the element check
+that indexing its inline array needs before the value.
 
 The `inline-checked-register-pool-isolation` optimizer smoke keeps inline
 pricing identical before and after backend frame-pointer omission enables an
@@ -339,8 +345,10 @@ the paired private-store rejects show that values read back from that storage
 stay varying.
 
 The aggregate-global backend escape fixture rejects the safe-reference shape
-with E0222 and checks its raw-pointer counterpart against boxed-cell assertions.
-The indirect-call shape remains independently covered.
+with E0222 and checks its raw-pointer counterpart against the inline-home
+assertions (SPEC 4.x: an initialized aggregate global is one storage home whose
+assignment keeps that home). The indirect-call shape remains independently
+covered.
 
 `package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
 runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
@@ -367,20 +375,22 @@ opt0/1/2 on both hosts. The `gep-split-mutable-global-capture` optimizer test
 covers implicit `Global` and `RuntimeGlobal` reads in both GEP operands across
 stores and calls, with stable literal, address and SSA splitting controls.
 
-`global_aggregate_storage_lifetime.tl` checks shallow global container storage
-after scratch and explicit arena destruction, nested scopes, repeated writes,
-large arrays, MoveOnly Box payloads, and local/global receivers retained across
-conditional, transitive and recursive whole-global replacement.
-It also checks that the allocator restores the caller's arena and remains
-visible to allocation profiling. `global_aggregate_storage_threads.tl` races
-first use from two workers writing distinct globals and reads the results only
-after join. `global_aggregate_storage_boundary.tl` fills the private static page
-exactly and retains an old receiver across the first growth. All three fixtures
-run at opt0/1/2 on both hosts. The existing
-`scratch_body_global_store_reject.tl` keeps source allocation escape illegal.
-The arena-debug gate repeats all three fixtures with debug, profile, and backtrace
-instrumentation together, using a test-enabled emitter and checking that each
-runtime feature is present. The shared-object backend test pins both TLS
+`global_aggregate_storage_lifetime.tl` checks that an inline aggregate global
+keeps its static home (SPEC 5.10) after scratch and explicit arena destruction,
+nested scopes, repeated writes, large arrays, MoveOnly Box payloads, and
+local/global receivers captured across conditional, transitive and recursive
+whole-global replacement: a store into a captured element of the global lands
+in its home. It also checks that the caller's arena is restored and that these
+stores allocate nothing. `global_aggregate_storage_threads.tl` races first use
+from two workers writing distinct globals and reads the results only after
+join. `global_aggregate_storage_boundary.tl` repeats 258 replacements in
+temporary arenas while an element place into the home is captured, and checks
+that every store lands and none allocates. All three fixtures run at opt0/1/2
+on both hosts. The existing `scratch_body_global_store_reject.tl` keeps source
+allocation escape illegal. The arena-debug gate repeats all three fixtures with
+debug, profile, and backtrace instrumentation together, using a test-enabled
+emitter, checking that each runtime feature is present and that no store
+reaches the private global allocator. The shared-object backend test pins both TLS
 switches and their scratch register, which must preserve the allocation result.
 
 The parser origin-column tests exercise all thirteen kinds, compact-span
@@ -414,10 +424,12 @@ remain accepted; explicit unknown `pkg:` include aliases remain E0303.
 `packed_field_receiver.tl` runs at opt0/1/2 on both hosts. It checks one-word
 and two-word sibling writes, mutable-reference calls and whole-referent writes,
 conditional and equal-content rebinding, nested stores, loops, shadowing,
-zero-sized fields, and tuple/memory-class controls. A scalar transition oracle
-checks both packed widths across 99 input/action combinations. The lowerer test
-pins the pure packed path, guarded frame homes, and absence of runtime heap
-allocation. The paired safety fixtures retain rejection of live borrowed roots
+zero-sized fields, and tuple/memory-class controls. A rebind in the value
+copies into the receiver's home, so the store lands in the variable (SPEC 5.10).
+A scalar transition oracle checks both packed widths across 99 input/action
+combinations. The lowerer test pins the absence of runtime guards and heap
+allocation. `set_place_eval_order.tl` covers the same rule for element, element
+field and tuple-element field places. The paired safety fixtures retain rejection of live borrowed roots
 and immutable field access.
 The existing `raw_pointer_register_addr_of.tl` and `struct_field_set.tl`
 fixtures also run at opt0/1/2: they cover an address exposed before the RHS,
@@ -485,6 +497,42 @@ shared reference: directly, in a tuple, array, struct field or Box payload, as
 a Copy field, through two copies of one shared reference, and with a shared
 reference between two mutable ones. Each must report the `&mut` borrow
 diagnostic (E0207), not an incidental move error.
+
+`replace!` takes the place's own old value (#8889): the move-test tables check
+box contents reached through `&mut` (directly, through a field, nested) as
+returned owned values, the referent of a computed reference held in a
+temporary, and the writability of every reference on the place's path, which
+rejects a `&mut` reached through `&` with E0207 "mutable borrow through a
+shared reference" for each container shape and for `set!` (main's
+`replace_place_through_*` rows, the `replace_through_shared_*` and
+`set_*through_shared_mut_reject` safety rows). The `replace_place_paths`
+native matrix runs the accepted shapes at opt0/1/2.
+
+A view's writability follows the references it was read through: the
+`view_mut_*_ok` safety rows pin main's exit values for writes, `replace!`, a
+mutable loan and a view of a view through `&mut`, the `view_*_reject` rows keep
+the owner and other views unusable while a mutable view is written and every
+write through a `&` path rejected, and the `view_mut_write` native matrix runs
+each write form, a copied view and a loop at opt0/1/2. The move-test table
+`compiler-typecheck-view-writability-ok?` checks both sides. A binding of a
+match on a view keeps the view's writability: the `view_match_binder_*_ok`
+rows pin main's exit values for a field store, box contents, `replace!`, a
+mutable loan, a match on a view binder and a loop; the `view_match_binder_*`
+rejects keep the owner, another view of the path and a second match's binding
+unusable while a binding is written, and reject every write through a `&`
+path; the `view_match_binder_write` native matrix runs each form, an
+or-pattern, two payloads and a binding of a binding at opt0/1/2, and
+`compiler-typecheck-view-match-binder-ok?` checks both sides.
+
+A `(&mut program T)` is Rust's `&'static mut`: `program_mut_holder_uses_ok`
+(main's typecheck-smoke holder among them) reads, writes, passes, stores,
+moves and matches holders of one; the `program_mut_*_reject` rows reject a
+`&mut` reborrowed into a `program` region and used again (main accepts the
+aliasing), a reborrow through a holder returned as `program`, a store through
+a payload bound through `&`, and a borrow of a local passed for a `program`
+parameter (`program_param_*`; `program_param_shadow_ok` keeps a parameter named
+`program` an ordinary borrow); `compiler-typecheck-program-mut-holder-ok?`
+checks both sides.
 
 ## Linux thread storage
 
@@ -703,6 +751,21 @@ proof walks terminate conservatively. String
 operands alone use constructed IR because their text spelling is not lossless;
 the instructions and expected replacements use parsed IR text. Keep these
 checks with the existing literal-length and native equality coverage.
+
+The `copy-call-byte-copy` test also verifies copy/fill exit-value suffixes:
+the counter step must follow the memory operation, and only copies and the
+loop comparison may follow that step. Its authored IR shares `i + 1` directly
+between addresses and the step, retains later address/arithmetic/load uses,
+and keeps a valid post-store step with a copied exit value as a positive.
+`tests/integration/copy_call_shifted_step.tl` checks shifted byte and word
+copies at zero, one, four and nine trips at opt0/1/2, including unchanged
+sentinels and the returned counter. Spare initialized storage keeps the
+historical wrong-offset copy in bounds, making a value mismatch the witness.
+The same self-test verifies actual positive-bound entry facts for copy and
+fill loops: selected signed comparisons, a true conjunction and a forwarding
+preheader admit the helper; fabricated guard names, bypass paths, wrong edges,
+unsigned or mismatched counter types and proof-budget exhaustion retain the
+original loop. Each authored input is verified before transformation.
 
 ## Move joins and diverging arms
 
@@ -1076,6 +1139,25 @@ retirement while continuing to reject ordinary reset/destroy of protected roots.
 contains the optional debug templates) and checks all fifteen native fixture
 operations on each CI host, including grown-owner retirement and invalid handles.
 
+`compiler_ast_types_smoke.tl` checks retained type-pool stamps against
+independent contexts, append growth, global installs, truncation, shallow views,
+old-cursor ID reuse, types-only copying and storage retirement. Removing the
+revision change, shared append high-water check or actual cell-identity check
+must make its dedicated stamp witness fail. A copied type prefix has a new
+authority, even when its numeric type IDs are unchanged.
+
+Explicit compiler invariant failures use the dependency-free `compiler_abort`
+leaf with a static message identifying the table and caller. Do not call the
+site-free `tl_oob_abort` from non-test compiler code. `check-tl-lint.sh` checks
+the source token stream and exercises a split-call rejection probe while
+allowing comments, strings and extern declarations. The native manifest runs
+`compiler_abort_sites.tl` at opt0/1/2 on both hosts: intern IDs, structural
+sessions, SSA rename checkpoints and token access each have an exact stderr
+oracle and managed exit 134, with a successful table-use control. The same
+fixture exercises type-pool revision exhaustion and append after retirement.
+These explicit failure paths call the out-of-line runtime diagnostic; message
+formatting and allocation must not be introduced on successful table reads.
+
 For a regression test of retained mid-walk state, exercise the invalidating
 sequence rather than only testing insertion and lookup in one context:
 
@@ -1096,6 +1178,281 @@ that should fail at an invalid reset/destroy/install operation is tracked in
 [#5510](https://github.com/JoNil-Botta/typelisp/issues/5510).
 
 ## Coverage layers
+
+### Ownership core and independent model
+
+`compiler_typed_occurrence_tests.tl` tests the bounded selected-occurrence
+store through `src/tests/compiler_typed_occurrence_smoke.tl`. Build the driver
+with `--stdlib-root src --stdlib-root stdlib`; success exits 42. It covers
+contextual occurrences sharing an AST ID, generated literal payloads, ordered
+callee/argument children, nested rollback and slot reuse, query isolation,
+resolver and interner identities, revoked leases, cumulative work, terminal
+resource/serial exhaustion, and charged array growth with retained handles.
+Mutation cases also reject negative/overflowed child spans and malformed logical
+table extents before indexing storage.
+Typed-place controls additionally cover nested dynamic-index child order,
+formation versus value categories, exact acquisition identity/type, mismatched
+projection containers, foreign owners, restored-slot reuse, nested rollback,
+growth with retained place handles, Query refusal and forged cyclic paths or
+scalar categories. These authored place facts are not source projection or
+ownership-admission coverage.
+Projection source handles are validated too; forging their serial is rejected
+before a source payload is exposed.
+This exercises producer plumbing, not ownership admission. The native manifest requires this
+smoke on both hosts at opt0/1/2; the compiler manifest includes the module and
+its tests.
+
+The source fixture `ownership_certified_scalar_control.tl` covers captured
+operand values, signed comparison, loop-local initialization, continue/break,
+short-circuit effects, early return and unsigned ABI arguments through the
+ownership graph and the ordinary lowerer (exit 42 on both hosts at opt0/1/2).
+
+`compiler_ownership_normalize_tests.tl` exercises the primitive selected-node
+normalizer through `src/tests/compiler_ownership_normalize_smoke.tl` (exit 42).
+The native manifest requires both hosts and opt0/1/2. Tests cover distinct
+canonical scalar types, owned provenance after lease retirement, ordered
+temporaries, short-circuit initialization and shadow identities, normal and
+return edges, binder read/write type agreement, unique local declaration
+initializers, duplicate executable edges, malformed child spans, stale owners,
+resource limits and unsupported dead forms. They use selected-occurrence
+fixtures; broader source producer coverage and lowering admission remain
+separate obligations.
+Isolated production mutations removing the repeated-occurrence guard or
+forcing an `and` RHS to execute are rejected by the focused expectations with
+normal exit 1; compilation failures or crashes are not mutation witnesses.
+
+The `selected-inference-transactions` inline test in
+`tests/compiler_typecheck_core_tests.tl`, also called by the typechecker smoke,
+exercises the real selected inference entry: distinct contextual types for one
+AST ID, generated values, chosen child order, failed and unrepresented parents,
+query isolation, terminal resource failure, and a decoy installed interner
+rejected before a bogus expression ID is read. Grown compatibility and mirrored
+pool cells verify that Query bounds follow the canonical reader without
+mutating the saved cursor, reject wrong source owners/generations, and cannot
+relax Capture's exact leased bounds. The API self-test and
+`tests/integration/selected_inference_dotted.tl` preserve the original ID route
+for hygienic dotted reads/assignments and generated lambda bodies. The latter
+runs on both hosts at opt0/1/2. These tests do not claim full source normalization
+or successful ownership certification.
+
+The same producer smoke exercises the live-lease normalizer hook: primitive
+success, structural result-type mismatch, source-located uninitialized read,
+hard resource failure and explicit Unsupported migration. Canonical return
+compatibility runs before this hook; the existing exact return-mismatch API
+test preserves that diagnostic. Legacy source admission still runs, and the
+checked primitive body is not yet retained into lowering.
+
+The lexical producer controls pin the actual plain/unsafe lookup winner,
+shadowing, persistent fallback, distinct carrier epochs and reused slot
+generations. Parameter associations are created by the canonical bind loop;
+the selected Read names that parameter's typed binder. A foreign carrier with
+the same ordinal/generation, an old winner after restore, a reused unmapped
+slot and a wrong body owner are refused. Epoch/generation exhaustion is sticky
+and fails before source access; MAX-1/MAX controls also catch exhaustion caused
+by post-inference scope restoration. `begin` tests ordered children with a
+shared AST ID but different contextual types and preserve checking of a tail
+after an early return. `let` controls retain ordered initialization, contextual
+types from shared syntax, nested shadowing, repeated reuse of a restored slot,
+exact selected initializer origins, and successful owned-IR normalization.
+Unsupported parents and canonical initializer errors discard their retained
+children and restore scope; the inline test counts one inference per
+initializer. Assignment controls retain the pre-RHS winner across RHS-local
+shadowing, infer that RHS once, and refuse to invent a binder for persistent
+targets. Return controls distinguish the canonical contextual type from
+intrinsic `Never` through selected let/begin/if, retain explicit return operands,
+normalize the resulting control flow, and preserve missing-function/type-error
+diagnostics. Divergent binary operands and initializers stay explicitly
+unrepresented and roll back their retained children.
+
+Primitive producer controls also cover contextual/plain unary operand types,
+overflow and invalid-operator rollback, and noncontextual conditionals with
+distinct occurrences for shared branch syntax. Plain binary comparisons retain
+ordered operands and their canonical types. Literal-left integer/float narrowing
+and float fallback retain exactly the selected children, binders and source
+origins. Initializer counters pin one inference for a chosen probe and two for
+the canonical fallback/retry. Rejected fallback rolls everything back without
+refunding work or serials; resource exhaustion cannot become legacy success.
+
+Tuple projection producer controls bind a nested tuple parameter through the
+canonical parameter loop and inspect its exact selected place path. Copying a
+scalar sibling of a Box and moving the Box each retain only formation and
+acquisition occurrences, with no read of the whole tuple. Query type/error
+parity, out-of-range rollback and a successful projection under an abandoned
+parent are checked. Aggregate/place normalization remains explicitly Unsupported;
+these controls do not certify aggregate ownership.
+The public tuple fixture also reads the Copy sibling after moving its nested Box;
+the safety fixture pins a repeated Box move to the second move's exact location.
+
+Array producer controls cover nested fixed and dynamic arrays, distinct selected
+index children for reused syntax, exact index and per-projection origins, fresh
+index-local binder generations and one canonical inference per index. An invalid
+receiver still checks its index before receiver classification, matching the
+canonical diagnostic order. Invalid indices and unsupported annotation/borrowed
+receivers restore selected places and child/binder counts. These source facts
+remain outside the current scalar normalization and lowering certificate.
+
+`tests/integration/macro_try_operand.tl` covers recursive macro expansion under
+`try`, including a macro-generated try, hygienic caller locals, single operand
+evaluation and early error propagation. The native manifest requires both hosts
+and opt0/1/2. This fixes expansion before typechecking and does not claim a
+selected ownership producer for try itself.
+
+The `tc-dotted-identity-boundary` test also runs through the typechecker smoke.
+It pins competing use-site and definition-site import aliases, valid variant
+lookup, exact unbound diagnostics, and rejection of local/composite identities,
+unpublished interner slots, malformed global payloads, foreign owners and stale
+generations before raw dotted-name metadata is read.
+
+`compiler_ownership_core_tests.tl` tests the standalone typed ownership graph
+through `compiler_ownership_core_smoke.tl`, registered in the native manifest
+for both hosts at opt0/1/2. Cases cover nested partial moves, exact
+reinitialization, disjoint fields, distinct shadow bindings, joins, repeated
+loop iterations, break/return/abort edges, retained exit uses and Copy versus
+MoveOnly transfers. Malformed owners, generations, revisions, types and place
+forests fail structurally; unclassified operations fail even in dead blocks.
+The tests distinguish semantic rejection from resource exhaustion and check
+deterministic dumps, identity widths and source-provenance framing.
+
+`compiler_ownership_loan_tests.tl` adds shared/exclusive capabilities, nested
+reborrows, disjoint access, last-use expiry, explicit ending, diamond and loop
+liveness, and malformed loan identities. Its registered native smoke runs at
+opt0/1/2 on both hosts. These authored graph tests distinguish initialized-place
+failures from loan conflicts and require bounded resource failures to remain
+failures. Additional controls cover direct and sibling conflicts, three-deep
+grant chains, Copy/Move and Copy-consuming operations, terminator reads and
+EndLoan demand across a backedge. Direct liveness observations require a
+parent to remain live before its definition when an existing child is live;
+overall rejection alone could hide this behind a zero-iteration path. Dead
+shared writes and exclusive children of shared parents fail structurally.
+An isolated mutation restoring unconditional definition kill builds and makes
+the direct liveness expectation fail with normal exit 1.
+Resource cases reach the loan solver itself: a fixture requires exactly 48
+reserved cells (40 fails), eight points exceed a seven-point limit, and a
+50-loan/300-place/1,000-instruction graph completes under default limits.
+Observation controls pin owned row dimensions and the state before/after
+Borrow, and require the first semantic error to remain sticky when diagnostic
+inspection continues. A fixture accepted with 38 ordinary state cells needs
+60 cells for inspection, including a per-point failure-kind row; 59 returns
+Resource with incomplete observations. Earlier and later loan errors both
+remain visible in the per-point row even when the first diagnostic is retained.
+
+`compiler_ownership_cleanup_tests.tl` runs through the cleanup smoke at opt0/1/2
+on both hosts. Authored cases pin exact retained dependencies across transfer,
+loan conflicts after transfer, rejection of simultaneous root aliases and
+successful reuse after Leave, missing owned-root declarations, and ordered
+initialization/scope diagnostics with all per-point failure bits retained.
+Metadata controls reject ordinary containers of owned fields and incomplete
+cleanup plans, while admitting ordinary Copy fields and context-only Copy
+cleanup hooks. A body whose structural validation fits 64 cells must still fail
+its larger cleanup expansion with Resource; default limits admit its valid
+control. Dump checks require type ownership, exact contracts, parent identities
+and retained operands in version 3. Registration describes required coverage,
+not proof that every host run has completed.
+
+`compiler_ownership_normalize_tests.tl` includes structured scalar While,
+Break and Continue cases through the registered normalizer smoke. Each selected
+condition/body occurs once and must become a CFG cycle. Tests pin nearest-loop
+targets, nested target restoration, repeated Copy declarations, outer Assign,
+zero-iteration and first-entry initialization, and malformed/dead control forms.
+Isolated mutations of the repeat edge and lexical target restoration must build
+and fail their exact witnesses normally; compiler rejection or a crash does not
+count. The selected-inference producer smoke additionally runs twelve source
+loop cases against the shared Query/Capture checker: nested controls, repeated
+syntax with distinct binders, single initializer inference, scope restoration,
+unsupported/error rollback, and exact condition-before-body failure ordering.
+Invalid conditions prevent a later invalid initializer from being checked.
+These controls do not claim complete source normalization or lowering admission.
+
+`tools/ownership-model/README.md` documents the independent concrete model,
+finite bounds and separate production comparison adapter. Run
+`TYPELISP_BIN=<compiler> scripts/verify-ownership-model.sh` for the bounded
+native opt0/1/2 campaign and retained resource/identity reports. These tests do
+not exercise a production AST normalizer: the core is not yet the authoritative
+source ownership checker. Native fixture construction itself exercises
+aggregate value copies and borrowed enum descriptor payloads; a compiler bug
+there must fail the campaign rather than count as an ownership rejection.
+
+### Safety rejection oracle
+
+`scripts/verify-safety-corpus.sh` requires a normal checker exit of 1 and a
+structured, source-located diagnostic for every `check-fail` row. The expected
+substring must occur in diagnostic text or metadata, not a location path or
+an echoed source line;
+its primary location must belong to the expected source. The fourth manifest
+field can name another source for imported-body errors, or pin
+`source:line:column` for an intended operation. `-` selects the fixture source.
+Pin exact operations when adding safety regressions; a located error somewhere
+else in a large fixture is weaker evidence.
+
+A matching diagnostic followed by a crash, timeout or killed process fails the
+gate. `rejections.tsv` beside the retained output records exit status and the
+classification: accepted-invalid, rejected-invalid, wrong-diagnostic,
+malformed-output, compiler-crash, or infrastructure-resource-failure. A kill
+status alone cannot distinguish OOM from an external kill, so both remain
+resource failures. Empty, duplicate and incompletely executed manifests fail.
+
+The gate always runs planted outcome and diagnostic mutations, including a
+child that emits the expected diagnostic and then aborts. Run
+`scripts/verify-safety-corpus.sh --self-test` for those fast oracle tests without
+building a compiler. These tests validate the harness; they do not establish
+coverage of compiler ownership obligations.
+
+`aggregate_local_value_snapshot.tl` exercises local binding and assignment
+copies from nested projections and value-producing wrappers. It also preserves
+Box identity during a move, distinguishing a shallow storage transfer from a
+deep clone. `borrowed_pattern_descriptor.tl` distinguishes borrowed dynamic-array
+descriptor handles from their enum, tuple and fixed-array storage slots, with
+String, Box and inline-array controls for each pattern form. These are shared
+patterns; mutable borrowed patterns are outside the supported syntax.
+`aggregate_parameter_storage.tl` checks private by-value struct and enum
+storage through direct, indirect, tail-position and captured-closure calls.
+It checks caller values after callee mutation, a mutable-reference control,
+and Box identity through moved aggregate parameters and returns.
+`tail_call_aggregate_storage.tl` keeps caller-owned aggregate and projected
+reference storage alive across tail-position calls, with a scalar forwarding
+control. These native-manifest rows run at opt0/1/2 on Linux and Windows;
+agreeing optimization levels must still produce the independently specified
+exit 42. Backend module tests also author raw tail-call IR directly, testing
+named, extern C and indirect closure fallback on both target ABIs. Identity
+forwarding tests retain the spill-free scalar case and reject modified,
+unknown or narrow operands and repeated snapshot destinations.
+
+`pointer_eval_order.tl` fixes expected values for pointer offset, pointer writes,
+atomic/volatile stores, fetch-add and CAS when later operands rebind an earlier
+operand's source. `array_set_eval_order.tl` covers fixed/dynamic arrays, borrowed
+Slices, direct and materialized aggregate RHS values, and zero-size elements.
+`aggregate_assignment_storage.tl` keeps local storage identity when the RHS
+reassigns a selected field's receiver and snapshots the final aggregate
+constructor operand before destination writes; packed locals, tuples, enums,
+global storage and shallow Box transfers provide controls. `array_store_place.tl` grows the
+captured dynamic descriptor during the RHS, including through nested inline
+projections, and distinguishes descriptor rebinding from descriptor mutation.
+Wrapper controls merge mixed fixed/dynamic places and unequal dynamic root
+layouts, preserve a copied Let local's private home, and check exact condition,
+selected-arm, index and RHS effect order. The Return arm must retain its exit.
+`array_store_scope.tl` adds scalar, nominal and borrowed match receivers,
+resource cleanup before index/RHS evaluation, arena scopes, fresh literal/call
+receivers, clone-out scopes and returned mutable-reference controls.
+The lower module's store-place test pins the initial and commit-time dynamic
+bounds checks, with a single-check fixed-array control.
+The two `array_set_*bounds_order.tl` rows require a bounds abort with empty stdout
+before the RHS prints its marker. The native manifest pins all three
+optimization levels. Array receiver reassignment during a read is not evidence
+of by-value array copying: that operation's place semantics must be resolved
+separately.
+
+`compiler_ir_types_smoke.tl` tests the shared tail-transfer frame-exposure guard
+against linked, dense and mixed blocks, both storage producers, spare slots and
+malformed logical lengths. The optimizer's `tailrec` test authors frame-derived
+arguments through alias/Gep/cast instructions directly, so a lowerer refusing
+the source form cannot hide an unsafe optimizer rewrite; the scalar control
+still converts to a loop.
+
+Raw buffer boundary tests for #7945 are described in
+[`../docs/ownership-ir.md`](../docs/ownership-ir.md#raw-buffer-boundary-seed-7945).
+Invalid-pointer fixtures are check-only. Native forged-length witnesses use the
+guarded wrappers and require the exact deterministic abort, with separate valid
+full/empty and cleanup-count controls.
 
 `regalloc-assignment-table-empty` checks empty and sparse assignment tables,
 every occupied position through the last slot, ignored out-of-range inserts,
@@ -1580,11 +1937,12 @@ budget gate.
 Use [`../scripts/analyze-stage0-size.sh`](../scripts/analyze-stage0-size.sh)
 for linked stage0 binary size comparisons. It reports total file bytes, section
 raw sizes from `llvm-readobj`, `readelf`, or `objdump`, plus bounded static,
-compressed-token, and expanded exact-source embedded stdlib payload bytes:
+compressed-token, and expanded compiler-owned payload bytes. LZSS totals cover
+both the embedded stdlib and the executable-template catalog; TLCH/TLCI totals
+are reported separately and depend on the host and generated image inputs:
 
 ```sh
 scripts/fetch-stage0.sh
-scripts/analyze-stage0-size.sh target/stage0/typelisp
 scripts/build-stage0.sh target/stage0/typelisp target/stage0-branch/typelisp
 scripts/analyze-stage0-size.sh target/stage0-branch/typelisp
 ```
@@ -1592,7 +1950,11 @@ scripts/analyze-stage0-size.sh target/stage0-branch/typelisp
 On Windows, run the shell commands from Git Bash after fetching the Windows
 seed (`target/stage0/typelisp.exe`) and use a `.exe` output path. The stage0
 publication smoke also prints this report when a section reader is available,
-but it remains a measurement report rather than a size budget gate.
+and required PR CI runs it beside the size ratchet on both hosts. It remains
+a measurement report rather than a size budget gate. The declaration inventory
+must match the binary: analyze a downloaded seed from the source checkout that
+built it, or rebuild first as above. A seed with a different declaration set
+fails with an explicit expected/found count diagnostic against current sources.
 
 ### Instruction counts and LSP latency
 

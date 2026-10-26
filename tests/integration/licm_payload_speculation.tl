@@ -77,7 +77,9 @@
       (set! i (+ i 1)))
     sum))
 
-;; The same struct as a frame object of the looping function.
+;; The same struct as a frame object of the looping function. The payload is
+;; matched through a borrow of the field: binding it by value would move it out
+;; of `w.val` on the first trip (#8449).
 (define (sum-local-wrap [pick : i64] [first : i64]) : i64
   (let
     [w : Wrap (Wrap 7 (make-val pick))]
@@ -86,7 +88,7 @@
     (while (< i 10)
       (when
         (>= i first)
-        (match w.val
+        (match (& w.val)
           [(Val.Hold h) (set! sum (+ sum (array-length h.xs)))]
           [(Val.Num _) (set! sum (+ sum 1))]))
       (set! i (+ i 1)))

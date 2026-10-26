@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import compiler_load as load)
 (import compiler_load_tests as load_tests)
 (import compiler_ast_types as ast)
@@ -59,7 +60,7 @@
                         bytes
                         (match kind
                           [(LzssString)
-                            (ctfe.ctfe-embedded-stdlib-binary-data-bytes
+                            (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2
                               (& contents))]
                           [_ contents]))]
                     [_ false]))]))]
@@ -109,8 +110,7 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
     [ambient-count : i64 (ast.ast-node-pool-len)]
-    [index : i64 0]
-    (while (< index 4)
+    (for [index (iterator.range 0 4)]
       (let
         [kind : load.CompilerLoadIncludeKind (array-ref kinds index)]
         [result : load.ResultCompilerLoadInclude
@@ -178,8 +178,7 @@
               package-result
               (string.copy contents))
             "package resolver and active-pool adapter preserve every kind"))
-        (set! ambient-count (ast.ast-node-pool-len))
-        (set! index (+ index 1))))))
+        (set! ambient-count (ast.ast-node-pool-len))))))
 
 (test include-kind-matrix (check-includes))
 
@@ -197,7 +196,6 @@
       [kinds : (Array load.CompilerLoadIncludeKind 4) (include-kinds)]
       [pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 1 1)]
-      [index : i64 0]
       [resolved : String (cfg linux "stdlib\\option.tl" "stdlib/option.tl")]
       (match (embedded.compiler-embedded-stdlib-lookup "option.tl")
         [(CompilerEmbeddedStdlibSomeSource contents)
@@ -206,7 +204,7 @@
               (if (io.file-exists? (string.copy resolved))
                 (load.compiler-load-read-file-text (string.copy resolved))
                 contents)]
-            (while (< index 4)
+            (for [index (iterator.range 0 4)]
               (let
                 [kind : load.CompilerLoadIncludeKind (array-ref kinds index)]
                 (test.assert-true
@@ -225,7 +223,6 @@
                         (embedded.compiler-embedded-stdlib-payload-source
                           (string.copy source))]
                       [_ (string.copy source)]))
-                  "embedded fallback retains every materialization kind")
-                (set! index (+ index 1))))
+                  "embedded fallback retains every materialization kind")))
             42)]
         [_ 0]))))

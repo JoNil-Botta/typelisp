@@ -2,11 +2,12 @@
   0)
 
 ;: The mutable borrow is established before a reachable continue edge and can
-;: therefore overlap the next iteration.
+;: therefore overlap the next iteration. The borrowed `items` is caller
+;: storage, so the overlap is the only error (#8890).
 (define (bad
   [run : bool]
   [leave : bool]
-  [items : (__tl_dyn-array i64)]
+  [items : (&mut items (__tl_dyn-array i64))]
   [refs : (__tl_dyn-array (&mut items i64))]) : i64
   (begin
     (while run

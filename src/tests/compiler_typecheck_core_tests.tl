@@ -21,6 +21,8 @@
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
+(import stdlib.option)
+(import (option.option i64) as option_i64)
 (import (vector.vector String) as svec)
 (import token)
 (cfg test (import stdlib.test))
@@ -32,6 +34,9 @@
 (import read as reader)
 (import lex as lexer)
 (import compiler_owned_view as owned_view)
+(import compiler_typed_occurrence as typed)
+(import compiler_ownership_core as ownership)
+(import compiler_ownership_normalize as ownership_normalize)
 
 ;; Layout queries need the struct names unqualified. Lint does not count a use
 ;; inside `(type ...)`.
@@ -192,6 +197,8 @@
           (when
             rename?
             (set! env (tc_core.macro-hygiene-env-bind-raw env name renamed)))]
+        [context : tc_core.MacroHygieneContext
+          (tc_core.MacroHygieneContext -1 -1 -1 0)]
         [_scratch : unit
           (unsafe
             (arena.set! scratch))]
@@ -199,15 +206,15 @@
           : i64
           ;; Compound child lists live in the output owner, as at the real
           ;; expansion boundary. Scalar span commits also tolerate scratch.
-          (in-arena
-            (if shared?
+          ;; One `in-arena` per arm: an `if` choosing between the two
+          ;; move-only handles would move `owner` before it is reinstalled.
+          (if shared?
+            (in-arena
               owner
-              scratch)
-            (tc_core.macro-hygiene-produced-expr
-              root
-              env
-              (tc_core.MacroHygieneContext -1 -1 -1 0)
-              0))]
+              (tc_core.macro-hygiene-produced-expr root env context 0))
+            (in-arena
+              scratch
+              (tc_core.macro-hygiene-produced-expr root env context 0)))]
         [_leave : unit
           (unsafe
             (arena.set! owner))]
@@ -459,7 +466,8 @@
     (let
       [scratch : i64 (arena.tl_arena_make)]
       (in-arena
-        (arena.Arena scratch)
+        (unsafe
+          (arena.Arena scratch))
         (for [index (iterator.range 0 257)]
           (tc_core.tc-checked-let-binding-fact-record!
             c
@@ -650,7 +658,8 @@
       (let
         [scratch : i64 (arena.tl_arena_make)]
         (in-arena
-          (arena.Arena scratch)
+          (unsafe
+            (arena.Arena scratch))
           (for [index (iterator.range 0 257)]
             (tc_core.tc-checked-let-binding-facts-set-current-declaration!
               facts
@@ -1857,16 +1866,11 @@
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [pools-b : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
-    [name-id : i64 (ci.intern "owned-read/value")]
     [span : ast.AstSourceSpan (ast.ast-source-span 2 1 2 9)]
     ;; call classification: a call in A, a literal at the same id in B
     [call-a : i64
       (owned-read-pool-node pools-a (Call 0 (ast.ast-expr-list-new)))]
     [call-b : i64 (owned-read-pool-node pools-b (Literal (Int 1 "1")))]
-    ;; borrow check: A's value names `name-id`, B's names another binding
-    [var-a : i64 (owned-read-pool-node pools-a (Var name-id))]
-    [var-b : i64
-      (owned-read-pool-node pools-b (Var (ci.intern "owned-read/decoy")))]
     ;; CTFE predicate: a type literal in A, a plain literal in B
     [type-a : i64 (owned-read-pool-node pools-a (TypeLiteral 0))]
     [type-b : i64 (owned-read-pool-node pools-b (Literal (Int 2 "2")))]
@@ -1875,23 +1879,15 @@
       (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
     [_decoy : unit (ast.ast-node-pool-context-install! pools-b)]
     [call? : bool (tc_core.tc-call-expr? bases-a (Spanned call-a span))]
-    [uses? : bool
-      (tc_core.tc-borrow-check-composite-value-uses-name?
-        bases-a
-        (Spanned var-a span)
-        name-id)]
     [typed? : bool
       (tc_core.ctfe-node-has-type-literal? bases-a macro-state type-a)]
     (ast.ast-node-pool-context-install! installed)
     (test.assert-true
-      (and (= call-a call-b) (= var-a var-b) (= type-a type-b))
+      (and (= call-a call-b) (= type-a type-b))
       "the two pools give the probed nodes the same ids")
     (test.assert-true
       call?
       "call classification (tc-call-expr?) reads the call from its owning pool, not the installed decoy")
-    (test.assert-true
-      uses?
-      "the composite-value borrow check reads the value from its owning pool, not the installed decoy")
     (test.assert-true
       typed?
       "the CTFE type-literal predicate reads the node from its owning pool, not the installed decoy")))
@@ -6497,6 +6493,199 @@
           (ci.intern-reset!)
           (cbi.compiler-builtin-initialize-for-parse!))))))
 
+(define (tc-dotted-identity-refused?
+  [ctx : tc_core.TcContext]
+  [env : tc_core.TcTypeEnv]
+  [key : i64]) : bool
+  (and
+    (match (tc_core.tc-dotted-alias-flat-variant-key-id ctx env "" key)
+      [(option_i64.None) true]
+      [_ false])
+    (match (tc_core.tc-dotted-alias-variant-key-id ctx "" key)
+      [(option_i64.None) true]
+      [_ false])
+    (match (tc_core.tc-dotted-alias-variant-handle ctx "" key)
+      [(option_i64.None) true]
+      [_ false])
+    (match (tc_core.tc-dotted-alias-variant-handle-for-enum-id
+      ctx
+      key
+      (ci.intern "Choice")
+      (ci.intern "Some"))
+      [(option_i64.None) true]
+      [_ false])))
+
+(define (tc-dotted-identity-diagnostic?
+  [ctx : tc_core.TcContext]
+  [env : tc_core.TcTypeEnv]
+  [key : i64]) : bool
+  (match (tc_core.tc-locate-spanned-error-with-context
+    ctx
+    env
+    (ast.AstExpr.Var key)
+    (ast.ast-source-span 7 3 7 9)
+    (str_cat.str-cat (tc_core.tc-unbound-name-message-prefix) "api.Choice.Some"))
+    [(tc_core.ResultTcType.Err message)
+      (string.eq
+        message
+        (tc_core.tc-located-error
+          (ast.ast-source-span 7 3 7 9)
+          (str_cat.str-cat
+            (tc_core.tc-unbound-name-message-prefix)
+            "api.Choice.Some")))]
+    [_ false]))
+
+(define (tc-dotted-identity-boundary-self-test) : bool
+  (ci.intern-reset!)
+  (let
+    [definition : i64 (ci.intern "definition")]
+    [use-module : i64 (ci.intern "use")]
+    [definition-target : i64 (ci.intern "definition.target")]
+    [use-target : i64 (ci.intern "use.target")]
+    [alias : i64 (ci.intern "api")]
+    [source : i64 (ci.intern "api.Choice.Some")]
+    [bare : i64 (ci.intern "missing")]
+    [enum-id : i64 (ci.intern "Choice")]
+    [variant : i64 (ci.intern "Some")]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-program (ast.ast-decl-list-new))
+        (csym.compiler-symbols-empty)
+        (csym.compiler-registries-empty)
+        "use"
+        use-module
+        pools)]
+    [session : cis.InternStructuralSessionHandle
+      (tc_core.tc-context-structural-session ctx)]
+    [global : i64
+      (tc_core.macro-hygiene-global-id session definition source false)]
+    [global-bare : i64
+      (tc_core.macro-hygiene-global-id session definition bare false)]
+    [macro-definition : cis.InternMacroDefinitionIdentity
+      (cis.intern-structural-session-macro-definition-identity
+        session
+        definition
+        (ci.intern "fixture"))]
+    [local : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          session
+          macro-definition
+          0
+          source))]
+    [fresh : i64
+      (cis.intern-fresh-local-identity-raw
+        (cis.intern-structural-session-fresh-local-identity session 1 source))]
+    [composite : i64
+      (cis.intern-structural-key-raw
+        (cis.intern-structural-session-composite-pair-key
+          session
+          definition
+          source))]
+    [slack : i64 (+ (ci.intern-pool-len) 100)]
+    [bad-source : i64
+      (tc_core.macro-hygiene-global-id session definition slack false)]
+    [bad-module : i64
+      (tc_core.macro-hygiene-global-id session slack source false)]
+    [definition-key : i64
+      (csym.compiler-symbol-module-key-id-by-id
+        definition-target
+        (csym.compiler-enum-qualified-variant-name-id enum-id variant))]
+    [use-key : i64
+      (csym.compiler-symbol-module-key-id-by-id
+        use-target
+        (csym.compiler-enum-qualified-variant-name-id enum-id variant))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id
+        (tc_core.tc-bind-id
+          (tc_core.tc-empty-env)
+          definition-key
+          (ast.AstType.I64))
+        use-key
+        (ast.AstType.I64))]
+    (tc_core.tc-lazy-import-stub-record-for-job!
+      (tc_core.tc-context-job-state ctx)
+      definition
+      alias
+      definition-target
+      false)
+    (tc_core.tc-lazy-import-stub-record-for-job!
+      (tc_core.tc-context-job-state ctx)
+      use-module
+      alias
+      use-target
+      false)
+    (let
+      [valid? : bool
+        (and
+          (=
+            (tc_core.tc-unbound-suggestion-scope-module-id ctx source)
+            use-target)
+          (=
+            (tc_core.tc-unbound-suggestion-scope-module-id ctx global)
+            definition-target)
+          (=
+            (tc_core.tc-unbound-suggestion-scope-module-id ctx global-bare)
+            definition)
+          (=
+            (tc_core.tc-unbound-suggestion-scope-module-id ctx local)
+            use-module)
+          (=
+            (tc_core.tc-unbound-suggestion-scope-module-id ctx fresh)
+            use-module)
+          (match (tc_core.tc-dotted-alias-flat-variant-key-id ctx env "" source)
+            [(option_i64.Some key) (= key use-key)]
+            [_ false])
+          (match (tc_core.tc-dotted-alias-flat-variant-key-id ctx env "" global)
+            [(option_i64.Some key) (= key definition-key)]
+            [_ false])
+          (tc-dotted-identity-refused? ctx env local)
+          (tc-dotted-identity-refused? ctx env fresh)
+          (tc-dotted-identity-refused? ctx env composite)
+          (tc-dotted-identity-refused? ctx env slack)
+          (tc-dotted-identity-refused? ctx env bad-source)
+          (tc-dotted-identity-refused? ctx env bad-module)
+          (tc-dotted-identity-refused? ctx env 9223372036854775807)
+          (tc-dotted-identity-diagnostic? ctx env local)
+          (match (tc_core.tc-var-expr-after-local-field-check
+            ctx
+            env
+            local
+            "api.Choice.Some")
+            [(tc_core.ResultTcType.Err message)
+              (tc_core.tc-unbound-name-message? message)]
+            [_ false])
+          (tc-dotted-identity-diagnostic? ctx env bad-source)
+          (tc-dotted-identity-diagnostic? ctx env bad-module))]
+      [saved : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+      [_install : unit (ci.intern-compat-state-install! (& decoy))]
+      [foreign? : bool
+        (and
+          (= (tc_core.tc-unbound-suggestion-scope-module-id ctx global) -1)
+          (tc-dotted-identity-refused? ctx env global))]
+      [_restore : unit (ci.intern-compat-state-install! (& saved))]
+      [restored? : bool
+        (=
+          (tc_core.tc-unbound-suggestion-scope-module-id ctx global)
+          definition-target)]
+      [_reset : unit (ci.intern-reset!)]
+      [stale? : bool
+        (and
+          (= (tc_core.tc-unbound-suggestion-scope-module-id ctx global) -1)
+          (tc-dotted-identity-refused? ctx env global))]
+      (and valid? foreign? restored? stale?))))
+
+(cfg
+  test
+  (test
+    tc-dotted-identity-boundary
+    (test.assert-true
+      (tc-dotted-identity-boundary-self-test)
+      "dotted diagnostics preserve source ownership, definition scopes and invalid-key rejection")))
+
 (cfg
   test
   (test
@@ -7014,9 +7203,15 @@
     [owner-a : i64 (arena.tl_arena_make_small)]
     [owner-b : i64 (arena.tl_arena_make_small)]
     [job-a : tc_core.TcJobState
-      (in-arena (arena.Arena owner-a) (tc_core.tc-job-state-new))]
+      (in-arena
+        (unsafe
+          (arena.Arena owner-a))
+        (tc_core.tc-job-state-new))]
     [job-b : tc_core.TcJobState
-      (in-arena (arena.Arena owner-b) (tc_core.tc-job-state-new))]
+      (in-arena
+        (unsafe
+          (arena.Arena owner-b))
+        (tc_core.tc-job-state-new))]
     [state-a : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-a)]
     [state-b : tc_core.TcMacroState (tc_core.tc-job-state-macro-state job-b)]
     [intern-a : ci.InternCompatState (ci.intern-compat-state-new)]
@@ -7058,7 +7253,8 @@
       (io.panic
         "typecheck: module index idle job allocated or collision missing"))
     (in-arena
-      (arena.Arena scratch)
+      (unsafe
+        (arena.Arena scratch))
       (tc_core.tc-module-decl-index-ensure! state-a (& decls-a)))
     (unsafe
       (arena.tl_arena_destroy scratch))
@@ -7176,7 +7372,8 @@
             (io.panic
               "typecheck: module index used the installed interner stamp"))))
       (in-arena
-        (arena.Arena owner-b)
+        (unsafe
+          (arena.Arena owner-b))
         (tc_core.tc-job-state-retire-owned-storage! job-a)
         (tc_core.tc-module-decl-index-release! state-a))
       (let
@@ -7941,246 +8138,6 @@
       unit
       (io.panic "typecheck: quasiquote template pool isolation failed"))))
 
-(define (tc-moved-capacity [set : tc_core.TcMovedSet]) : i64
-  (let
-    [roots : tc_i64_i64_map.Map
-      (tc_core.tc-moved-roots (tc_core.tc-global-shared-view set))]
-    [partials : tc_i64_i64_map.Map
-      (tc_core.tc-moved-partials (tc_core.tc-global-shared-view set))]
-    [paths : tc_core.TcMovedPathFacts
-      (tc_core.tc-moved-paths (tc_core.tc-global-shared-view set))]
-    [hidden : tc_i64_i64_map.Map (tc_core.tc-moved-hidden-atomic-users set)]
-    (+
-      (+
-        (tc_i64_i64_map.capacity (& roots))
-        (tc_i64_i64_map.capacity (& partials)))
-      (+
-        (tc_core.tc-moved-path-facts-len paths)
-        (tc_i64_i64_map.capacity (& hidden))))))
-
-(define (tc-move-path-segments-storage-node-count
-  [segments : tc_core.TcMovePathSegments]) : i64
-  (if (= segments.store-address 0)
-    0
-    (__tl-project-field
-      (tc_core.tc-move-path-segment-store-read segments.store-address)
-      len)))
-
-(define (tc-move-path-segments-storage-capacity
-  [segments : tc_core.TcMovePathSegments]) : i64
-  (if (= segments.store-address 0)
-    0
-    (array-length
-      (__tl-project-field
-        (tc_core.tc-move-path-segment-store-read segments.store-address)
-        nodes))))
-
-(define (tc-move-path-hash-combine [seed : i64] [component : i64]) : i64
-  (bit-xor (* seed 2654435761) (+ component 40503)))
-
-(define (tc-move-path-segments-hash [segments : tc_core.TcMovePathSegments]) : i64
-  (let
-    [cursor : i64 segments.tail]
-    [remaining : i64 segments.len]
-    [out : i64 17]
-    (while (> remaining 0)
-      (let
-        [node : tc_core.TcMovePathSegmentNode
-          (tc_core.tc-move-path-segments-node segments cursor)]
-        [seed : i64
-          (cond
-            [(= node.kind tc_core.tc-move-path-segment-kind-field) 23]
-            [(= node.kind tc_core.tc-move-path-segment-kind-tuple) 29]
-            [(= node.kind tc_core.tc-move-path-segment-kind-array) 31]
-            [(= node.kind tc_core.tc-move-path-segment-kind-slice-split) 37]
-            [else 41])]
-        (set!
-          out
-          (tc-move-path-hash-combine
-            (tc-move-path-hash-combine seed node.value)
-            out))
-        (set! cursor node.parent)
-        (-= remaining 1)))
-    out))
-
-(define (tc-moved-path-fact-path [fact : tc_core.TcMovedPathFact]) : tc_core.TcMovePath
-  fact.path)
-
-(define (tc-move-path-dense-storage-smoke?) : bool
-  (let
-    [root-id : i64 (ci.intern "dense-root")]
-    [other-root-id : i64 (ci.intern "dense-other")]
-    [alpha-id : i64 (ci.intern "alpha")]
-    [beta-id : i64 (ci.intern "beta")]
-    [empty : tc_core.TcMovePathSegments (tc_core.tc-move-path-segments-empty)]
-    [alpha : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-field empty alpha-id)]
-    [tuple : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-tuple alpha 2)]
-    [array : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-array tuple 3)]
-    [mixed : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-field array beta-id)]
-    ;; Append a sibling after retaining `mixed`; both share the immutable
-    ;; `alpha.2` prefix, and neither may overwrite the other's tail.
-    [sibling : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-array tuple 4)]
-    [same : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-field
-        (tc_core.tc-move-path-segments-append-array
-          (tc_core.tc-move-path-segments-append-tuple
-            (tc_core.tc-move-path-segments-append-field
-              (tc_core.tc-move-path-segments-empty)
-              alpha-id)
-            2)
-          3)
-        beta-id)]
-    [field-kind : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-field
-        (tc_core.tc-move-path-segments-empty)
-        alpha-id)]
-    [tuple-kind : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-tuple
-        (tc_core.tc-move-path-segments-empty)
-        alpha-id)]
-    [array-kind : tc_core.TcMovePathSegments
-      (tc_core.tc-move-path-segments-append-array
-        (tc_core.tc-move-path-segments-empty)
-        alpha-id)]
-    [root : tc_core.TcMovePath
-      (tc_core.TcMovePath root-id (tc_core.tc-move-path-segments-empty))]
-    [prefix : tc_core.TcMovePath (tc_core.TcMovePath root-id tuple)]
-    [mixed-path : tc_core.TcMovePath (tc_core.TcMovePath root-id mixed)]
-    [same-path : tc_core.TcMovePath (tc_core.TcMovePath root-id same)]
-    [sibling-path : tc_core.TcMovePath (tc_core.TcMovePath root-id sibling)]
-    [other-root : tc_core.TcMovePath (tc_core.TcMovePath other-root-id mixed)]
-    [split-left : tc_core.TcMovePath
-      (tc_core.tc-move-slice-split-half-path root 17 0)]
-    [split-right : tc_core.TcMovePath
-      (tc_core.tc-move-slice-split-half-path root 17 1)]
-    [split-nested-left : tc_core.TcMovePath
-      (tc_core.tc-move-slice-split-half-path split-right 18 0)]
-    [expected-hash : i64
-      (tc-move-path-hash-combine
-        (tc-move-path-hash-combine 23 alpha-id)
-        (tc-move-path-hash-combine
-          (tc-move-path-hash-combine 29 2)
-          (tc-move-path-hash-combine
-            (tc-move-path-hash-combine 31 3)
-            (tc-move-path-hash-combine
-              (tc-move-path-hash-combine 23 beta-id)
-              17))))]
-    [deep : tc_core.TcMovePathSegments (tc_core.tc-move-path-segments-empty)]
-    [deep-render : String ""]
-    (for [index (iterator.range 0 128)]
-      (cond
-        [(= (% index 3) 0)
-          (set! deep (tc_core.tc-move-path-segments-append-field deep alpha-id))
-          (set! deep-render (str_cat.str-cat deep-render ".alpha"))]
-        [(= (% index 3) 1)
-          (set! deep (tc_core.tc-move-path-segments-append-tuple deep index))
-          (set!
-            deep-render
-            (str_cat.str-cat deep-render "." (string.int->string index)))]
-        [else
-          (set! deep (tc_core.tc-move-path-segments-append-array deep index))
-          (set!
-            deep-render
-            (str_cat.str-cat deep-render "[" (string.int->string index) "]"))]))
-    (and
-      (tc_core.tc-move-path-eq? mixed-path same-path)
-      (not (tc_core.tc-move-path-eq? mixed-path sibling-path))
-      (not (tc_core.tc-move-path-segments-eq? field-kind tuple-kind))
-      (not (tc_core.tc-move-path-segments-eq? field-kind array-kind))
-      (tc_core.tc-move-path-conflicts? root mixed-path)
-      (tc_core.tc-move-path-conflicts? prefix mixed-path)
-      (tc_core.tc-move-path-conflicts? mixed-path same-path)
-      (not (tc_core.tc-move-path-conflicts? mixed-path sibling-path))
-      (not (tc_core.tc-move-path-conflicts? mixed-path other-root))
-      (tc_core.tc-move-path-conflicts? root split-left)
-      (not (tc_core.tc-move-path-conflicts? split-left split-right))
-      (tc_core.tc-move-path-conflicts? split-right split-nested-left)
-      (not (tc_core.tc-move-path-conflicts? split-left split-nested-left))
-      (tc_core.tc-move-path-slice-half? split-left 0)
-      (tc_core.tc-move-path-slice-half? split-right 1)
-      (string.eq
-        (tc_core.tc-move-path-render split-left)
-        "dense-root.<slice-split>.0")
-      (string.eq (tc_core.tc-move-path-render prefix) "dense-root.alpha.2")
-      (string.eq
-        (tc_core.tc-move-path-render mixed-path)
-        "dense-root.alpha.2[3].beta")
-      (string.eq
-        (tc_core.tc-move-path-render sibling-path)
-        "dense-root.alpha.2[4]")
-      (= (tc-move-path-segments-hash mixed) expected-hash)
-      (= (tc-move-path-segments-storage-node-count mixed) 5)
-      (= deep.len 128)
-      (= (tc-move-path-segments-storage-node-count deep) 128)
-      (= (tc-move-path-segments-storage-capacity deep) 128)
-      (string.eq (tc_core.tc-move-path-segments-render deep) deep-render))))
-
-(test
-  tc-move-path-dense-storage
-  (if (tc-move-path-dense-storage-smoke?)
-    unit
-    (io.panic "typecheck: dense move-path storage smoke failed")))
-
-;; The fallback walk runs only for bodies without recorded facts, which no
-;; source fixture reaches, so its shapes are checked on constructed nodes.
-(test
-  tc-move-tail-diverges-shapes
-  (let
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 16 8)]
-    [value : i64 (ast.ast-node-pool-context-expr-push pools (Literal (Unit)))]
-    [returns : i64 (ast.ast-node-pool-context-expr-push pools (Return value))]
-    [breaks : i64 (ast.ast-node-pool-context-expr-push pools Break)]
-    [continues : i64 (ast.ast-node-pool-context-expr-push pools Continue)]
-    [ends-in-return : ast.AstExprList (ast.ast-expr-list-new)]
-    [return-then-value : ast.AstExprList (ast.ast-expr-list-new)]
-    [_fill : unit
-      (begin
-        (ast.ast-expr-list-push (&mut ends-in-return) value)
-        (ast.ast-expr-list-push (&mut ends-in-return) returns)
-        (ast.ast-expr-list-push (&mut return-then-value) returns)
-        (ast.ast-expr-list-push (&mut return-then-value) value))]
-    [tail-return : i64
-      (ast.ast-node-pool-context-expr-push pools (Begin ends-in-return))]
-    [tail-value : i64
-      (ast.ast-node-pool-context-expr-push pools (Begin return-then-value))]
-    [empty : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (Begin (ast.ast-expr-list-new)))]
-    [both-leave : i64
-      (ast.ast-node-pool-context-expr-push pools (If value tail-return breaks))]
-    [one-leaves : i64
-      (ast.ast-node-pool-context-expr-push pools (If value continues value))]
-    [spanned : i64
-      (ast.ast-expr-source-view-with-pools
-        pools
-        both-leave
-        (ast.ast-source-span 3 1 3 9))]
-    [ctx : tc_core.TcContext (tc-literal-pool-test-context pools)]
-    [bases : i64 (tc_core.tc-context-expr-bases ctx)]
-    (unless
-      (and
-        (tc_core.tc-move-tail-diverges? ctx bases returns)
-        (tc_core.tc-move-tail-diverges? ctx bases breaks)
-        (tc_core.tc-move-tail-diverges? ctx bases continues)
-        (tc_core.tc-move-tail-diverges? ctx bases tail-return)
-        (tc_core.tc-move-tail-diverges? ctx bases both-leave)
-        (tc_core.tc-move-tail-diverges? ctx bases spanned)
-        (not (tc_core.tc-move-tail-diverges? ctx bases value))
-        (not (tc_core.tc-move-tail-diverges? ctx bases tail-value))
-        (not (tc_core.tc-move-tail-diverges? ctx bases empty))
-        (not (tc_core.tc-move-tail-diverges? ctx bases one-leaves))
-        ;; Without recorded facts the arm query is the walk.
-        (tc_core.tc-move-arm-diverges? ctx bases both-leave)
-        (not (tc_core.tc-move-arm-diverges? ctx bases one-leaves)))
-      (io.panic "typecheck: tail divergence shape was misjudged"))))
-
 (define (tc-dependency-tlci-route-counter-value-for-job
   [state : tc_core.TcJobState]
   [counter : i64]) : i64
@@ -8555,7 +8512,7 @@
               [(Cons path rest)
                 (set! (array-ref suffix.slots write-index) path)
                 (ast.ast-decl-path-list-set-owner-and-provenance-id-at-physical-index!
-                  suffix.owner-ids
+                  (owned_view.compiler-owned-shared-view suffix.owner-ids)
                   (array-length suffix.slots)
                   write-index
                   owner-id
@@ -8740,9 +8697,10 @@
       (tc_core.macro-segmented-program-view-data address)]
     [empty-head : i64
       (in-arena
-        (arena.Arena
-          (tc_core.macro-expand-scratch-arena-get
-            (tc_core.tc-job-state-macro-state state)))
+        (unsafe
+          (arena.Arena
+            (tc_core.macro-expand-scratch-arena-get
+              (tc_core.tc-job-state-macro-state state))))
         (tc_core.macro-program-segment-node-new-current
           (ast.ast-decl-list-new)
           (ast.ast-decl-path-list-new)
@@ -12027,9 +11985,8 @@
                     [_ false])
                   "bound expressions cannot overwrite the body's binding types")]))))
       (in-arena
-        (arena.Arena
-          (unsafe
-            (deref state-a).arena))
+        (unsafe
+          (arena.Arena (deref state-a).arena))
         (let
           [graph : global_effects.Graph
             (unsafe
@@ -12123,172 +12080,3573 @@
           2
           "appended graph rebuilds query caches in its destination arena")))))
 
-(cfg
-  test
-  (test
-    global-borrow-prefix-metadata
-    (let
-      [local : i64 (ci.intern "metadata-local")]
-      [global : i64 (ci.intern "metadata-global")]
-      [facts : tc_core.TcMovedPathFacts (tc_core.TcMovedPathFacts.Nil)]
-      [saved : tc_core.TcMovedPathFacts (tc_core.TcMovedPathFacts.Nil)]
-      (for [index (iterator.range 0 64)]
-        (set!
-          facts
-          (tc_core.tc-moved-path-facts-cons
-            facts
-            (tc_core.TcMovedPathFact
-              (tc_core.tc-move-path-capture-owner
-                (tc_core.TcMovePath
-                  (if (= index 31)
-                    global
-                    local)
-                  (tc_core.tc-move-path-segments-empty))
-                (if (= index 31)
-                  0
-                  -1))
-              (tc_core.TcMovedPathKind.BorrowShared)
-              (tc_core.tc-moved-no-origin-id))))
-        (when (= index 30) (set! saved (tc_core.tc-global-shared-view facts)))
-        (test.assert-true
-          (=
-            (tc_core.tc-moved-path-facts-have-globals?
-              (tc_core.tc-global-shared-view facts))
-            (>= index 31))
-          "every prefix has exactly the globals introduced in that prefix"))
-      (test.assert-false
-        (tc_core.tc-moved-path-facts-have-globals? saved)
-        "growth and later global facts do not alter an earlier snapshot")
-      (let
-        [locals : tc_core.TcMovedPathFacts
-          (tc_core.tc-moved-path-facts-filter
-            facts
-            (tc_core.TcMovedPathFactsFilter.Root global false))]
-        (test.assert-false
-          (tc_core.tc-moved-path-facts-have-globals? locals)
-          "filtering the global rebuilds local-only prefixes")))))
+;; Selected results are produced by the same contextual inference used by source
+;; checking. No second expression walk or expression-ID type cache supplies them.
+(define (tc-selected-test-context [pools : ast.AstNodePoolContext]) : tc_core.TcContext
+  (tc_core.tc-context-new
+    (ast.ast-program (ast.ast-decl-list-new))
+    (csym.compiler-symbols-empty)
+    (csym.compiler-registries-empty)
+    ""
+    cbi.compiler-builtin-id-fix-empty
+    pools))
 
-(cfg
-  test
-  (test
-    global-borrow-owner-key-full-width
-    (for [index (iterator.range 0 3)]
-      (let
-        [name : i64
+(define (tc-selected-test-lease
+  [ctx : tc_core.TcContext]
+  [intern-state : (& intern-state ci.InternCompatState)]) : (typed.TypedBodyLease
+    intern-state)
+  (let
+    [state : tc_core.TcBodyState (tc_core.tc-context-body-state ctx)]
+    [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
+    [body : ownership.OwnershipBodyId
+      (ownership.OwnershipBodyId
+        data.selected-owner
+        (cast (ci.intern-compat-state-generation intern-state) : u64)
+        (cast 1 : u64))]
+    (set! data.selected-revision (cast 1 : u64))
+    (tc_core.tc-body-state-data-set! state data)
+    (typed.typed-body-lease
+      body
+      (tc_core.tc-context-pools ctx)
+      intern-state
+      body
+      0
+      (typed.typed-resolution-unavailable intern-state))))
+
+(define (tc-selected-test-store
+  [lease : (& lease (typed.TypedBodyLease intern))]) : typed.TypedStore
+  (match (typed.typed-store-new-growing
+    lease
+    (typed.TypedLimits 128 256 128 1000000))
+    [(typed.TypedStoreResult.Ok store) store]
+    [(typed.TypedStoreResult.Err error)
+      (io.panic (tc_core.tc-selected-error error))]))
+
+(define (tc-selected-test-infer!
+  [ctx : tc_core.TcContext]
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [id : i64]
+  [want : ast.AstType]) : typed.TypedOccurrenceId
+  (let
+    [bindings : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new lease)]
+    (match (tc_core.tc-infer-selected-id
+      ctx
+      (tc_core.tc-empty-env)
+      id
+      (ast.AstMaybeType.Some want)
+      (ownership.OwnershipSource "selected.tl" 7 3 "")
+      (tc_core.tc-selected-capture store lease (&mut bindings)))
+      [(tc_core.TcSelectedResult.Ok _ occurrence _)
+        (match occurrence
+          [(tc_core.TcSelectedOccurrence.Selected root) root]
+          [_ (io.panic "selected inference: missing root")])]
+      [(tc_core.TcSelectedResult.Err message _) (io.panic message)])))
+
+(define (tc-selected-test-type?
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [id : typed.TypedOccurrenceId]
+  [want : ast.AstType]) : bool
+  (let
+    [type-id : typed.TypedTypeId
+      (match (typed.typed-occurrence-get! store lease id)
+        [(typed.TypedNodeResult.Ok node) node.type]
+        [_ (io.panic "selected inference: stale test root")])]
+    (match (typed.typed-type-get! store lease type-id)
+      [(typed.TypedTypeResult.Ok actual)
+        (match actual
+          [(ast.AstType.I8)
+            (match want
+              [(ast.AstType.I8) true]
+              [_ false])]
+          [(ast.AstType.I64)
+            (match want
+              [(ast.AstType.I64) true]
+              [_ false])]
+          [(ast.AstType.I32)
+            (match want
+              [(ast.AstType.I32) true]
+              [_ false])]
+          [(ast.AstType.U16)
+            (match want
+              [(ast.AstType.U16) true]
+              [_ false])]
+          [(ast.AstType.Bool)
+            (match want
+              [(ast.AstType.Bool) true]
+              [_ false])]
+          [(ast.AstType.F32)
+            (match want
+              [(ast.AstType.F32) true]
+              [_ false])]
+          [(ast.AstType.F64)
+            (match want
+              [(ast.AstType.F64) true]
+              [_ false])]
+          [_ false])]
+      [_ false])))
+
+(define (tc-selected-test-child!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [root : typed.TypedOccurrenceId]
+  [index : i64]) : typed.TypedOccurrenceId
+  (match (typed.typed-child-get! store lease root index)
+    [(typed.TypedChildResult.Ok child) child]
+    [_ (io.panic "selected inference: missing selected child")]))
+
+(define (tc-selected-contextual-results-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [condition : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [sum : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Add literal literal))]
+    [branch : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.If condition sum literal))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-1 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [narrow : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        literal
+        ast.AstType.I8)]
+    [wide : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        literal
+        ast.AstType.I64)]
+    [root : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        branch
+        ast.AstType.I64)]
+    [cond-child : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 0)]
+    [then-child : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 1)]
+    [else-child : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 2)]
+    [left-child : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) then-child 0)]
+    [right-child : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) then-child 1)]
+    [different : bool
+      (and
+        (!= narrow.handle.serial wide.handle.serial)
+        (< cond-child.handle.serial left-child.handle.serial)
+        (< left-child.handle.serial right-child.handle.serial)
+        (< right-child.handle.serial else-child.handle.serial)
+        (tc-selected-test-type?
+          (&mut store)
+          (& lease)
+          cond-child
+          ast.AstType.Bool)
+        (tc-selected-test-type?
+          (&mut store)
+          (& lease)
+          left-child
+          ast.AstType.I64)
+        (tc-selected-test-type?
+          (&mut store)
+          (& lease)
+          right-child
+          ast.AstType.I64)
+        (tc-selected-test-type? (&mut store) (& lease) narrow ast.AstType.I8)
+        (tc-selected-test-type? (&mut store) (& lease) wide ast.AstType.I64)
+        (tc-selected-test-type? (&mut store) (& lease) root ast.AstType.I64))]
+    [generated : bool
+      (match (tc_core.tc-infer-selected
+        ctx
+        (tc_core.tc-empty-env)
+        (ast.AstExpr.Literal (ast.ast-lit-int 9))
+        typed.TypedSyntax.Generated
+        (ast.AstMaybeType.Some ast.AstType.U16)
+        (ownership.OwnershipSource "generated.tl" 3 4 "test expansion")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-1)))
+        [(tc_core.TcSelectedResult.Ok
+            _
+            (tc_core.TcSelectedOccurrence.Selected id)
+            sink)
+          (match sink
+            [(tc_core.TcSelectedSink.Capture output owner _)
+              (tc-selected-test-type? output owner id ast.AstType.U16)]
+            [_ false])]
+        [_ false])]
+    [query-count : i64 store.occurrence-count]
+    [query : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        branch
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "query.tl" 1 1 "")
+        tc_core.TcSelectedSink.Query)
+        [(tc_core.TcSelectedResult.Ok _ occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Unrepresented) true]
+            [_ false])]
+        [_ false])]
+    (typed.typed-store-retire! (&mut store))
+    (and different generated query (= query-count store.occurrence-count))))
+
+(define (tc-selected-unary-and-plain-if-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [number : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [large : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 300)))]
+    [condition : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [negate : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.Neg number))]
+    [invert : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.BitNot number))]
+    [logical : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.Not condition))]
+    [bad : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.Not number))]
+    [overflow : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.Neg large))]
+    [branch : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.If logical negate negate))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-4 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-3 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-2 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [root : typed.TypedOccurrenceId
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        branch
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "unary.tl" 3 2 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-2)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I32) occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected id) id]
+            [_ (io.panic "selected plain if: missing selected root")])]
+        [_ (io.panic "selected plain if: canonical result")])]
+    [left : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 1)]
+    [right : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 2)]
+    [operand : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) left 0)]
+    [narrow : typed.TypedOccurrenceId
+      (tc-selected-test-infer! ctx (&mut store) (& lease) negate ast.AstType.I8)]
+    [bits : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        invert
+        ast.AstType.I64)]
+    [fallback : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        negate
+        ast.AstType.Bool)]
+    [shape : bool
+      (match (typed.typed-occurrence-get! (&mut store) (& lease) left)
+        [(typed.TypedNodeResult.Ok node)
+          (and
+            (= node.child-count 1)
+            (match node.operation
+              [(typed.TypedOperation.Unary op)
+                (match op
+                  [(ast.AstUnOp.Neg) true]
+                  [_ false])]
+              [_ false]))]
+        [_ false])]
+    [types : bool
+      (and
+        (!= left.handle.serial right.handle.serial)
+        (tc-selected-test-type? (&mut store) (& lease) operand ast.AstType.I32)
+        (tc-selected-test-type? (&mut store) (& lease) narrow ast.AstType.I8)
+        (tc-selected-test-type? (&mut store) (& lease) bits ast.AstType.I64)
+        (tc-selected-test-type? (&mut store) (& lease) fallback ast.AstType.I32))]
+    [return-type : typed.TypedTypeId
+      (match (typed.typed-type-add! (&mut store) (& lease) ast.AstType.I32)
+        [(typed.TypedTypeIdResult.Ok id) id]
+        [_ (io.panic "selected plain if: return type")])]
+    [normalized : bool
+      (match (ownership_normalize.ownership-normalize!
+        (&mut store)
+        (& lease)
+        root
+        return-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+        (ownership_normalize.ownership-normalize-default-limits))
+        [(ownership_normalize.OwnershipNormalizeResult.Ok _) true]
+        [_ false])]
+    [count : i64 store.occurrence-count]
+    [rejected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        bad
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "unary.tl" 8 2 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-3)))
+        [(tc_core.TcSelectedResult.Err _ _) true]
+        [_ false])]
+    [overflow-rejected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        overflow
+        (ast.AstMaybeType.Some ast.AstType.I8)
+        (ownership.OwnershipSource "unary.tl" 9 2 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-4)))
+        [(tc_core.TcSelectedResult.Err _ _) true]
+        [_ false])]
+    [query : bool
+      (match (tc_core.tc-expr-id ctx (tc_core.tc-empty-env) branch)
+        [(tc_core.ResultTcType.Ok (ast.AstType.I32)) true]
+        [_ false])]
+    (typed.typed-store-retire! (&mut store))
+    (and
+      shape
+      types
+      normalized
+      rejected
+      overflow-rejected
+      query
+      (= count store.occurrence-count))))
+
+(define (tc-selected-plain-binary-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [number : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [truth : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [negative : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.Neg number))]
+    [less : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Lt negative number))]
+    [sum : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Add negative number))]
+    [literal-sum : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Add number number))]
+    [probe-name : i64 (ci.intern-generated-name "selected-binary-probe")]
+    [probe : i64
+      (tc-selected-test-let-id pools probe-name ast.AstType.I64 number truth)]
+    [bad : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Add number probe))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-7 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-6 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-5 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [root : typed.TypedOccurrenceId
+      (tc-selected-test-infer! ctx (&mut store) (& lease) less ast.AstType.Bool)]
+    [left : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 0)]
+    [right : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 1)]
+    [shape : bool
+      (match (typed.typed-occurrence-get! (&mut store) (& lease) root)
+        [(typed.TypedNodeResult.Ok node)
+          (match node.operation
+            [(typed.TypedOperation.Binary op)
+              (match op
+                [(ast.AstBinOp.Lt) true]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [types : bool
+      (and
+        (< left.handle.serial right.handle.serial)
+        (tc-selected-test-type? (&mut store) (& lease) left ast.AstType.I32)
+        (tc-selected-test-type? (&mut store) (& lease) right ast.AstType.I32)
+        (tc-selected-test-type? (&mut store) (& lease) root ast.AstType.Bool))]
+    [plain : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        sum
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "binary.tl" 3 2 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-5)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I32) occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected _) true]
+            [_ false])]
+        [_ false])]
+    [return-type : typed.TypedTypeId
+      (match (typed.typed-type-add! (&mut store) (& lease) ast.AstType.Bool)
+        [(typed.TypedTypeIdResult.Ok id) id]
+        [_ (io.panic "selected binary: return type")])]
+    [normalized : bool
+      (match (ownership_normalize.ownership-normalize!
+        (&mut store)
+        (& lease)
+        root
+        return-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+        (ownership_normalize.ownership-normalize-default-limits))
+        [(ownership_normalize.OwnershipNormalizeResult.Ok _) true]
+        [_ false])]
+    [count : i64 store.occurrence-count]
+    [literal-selected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        literal-sum
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "binary.tl" 5 2 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-6)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I32) occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected _) true]
+            [_ false])]
+        [_ false])]
+    [_checks-before : i64
+      (cfg test (tc_core.tc-let-binding-init-type-call-count-for-test) 0)]
+    [rejected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        bad
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "binary.tl" 7 2 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-7)))
+        [(tc_core.TcSelectedResult.Err _ _) true]
+        [_ false])]
+    [twice : bool
+      (cfg
+        test
+        (=
+          (-
+            (tc_core.tc-let-binding-init-type-call-count-for-test)
+            _checks-before)
+          2)
+        true)]
+    [query : bool
+      (match (tc_core.tc-binop-expr-types
+        ctx
+        (tc_core.tc-empty-env)
+        ast.AstBinOp.Lt
+        (ast.AstExpr.Unary ast.AstUnOp.Neg number)
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))
+        [(tc_core.ResultTcBinOpTypes.Ok types)
+          (match types
+            [(tc_core.TcBinOpTypes left-ty right-ty result-ty)
+              (and
+                (tc_core.tc-type-eq left-ty ast.AstType.I32)
+                (tc_core.tc-type-eq right-ty ast.AstType.I32)
+                (tc_core.tc-type-eq result-ty ast.AstType.Bool))])]
+        [_ false])]
+    (typed.typed-store-retire! (&mut store))
+    (and
+      shape
+      types
+      plain
+      normalized
+      literal-selected
+      rejected
+      twice
+      query
+      (= (+ count 3) store.occurrence-count))))
+
+;; 0 integer narrowing, 1 float narrowing, 2 float fallback/retry, 3 rejected
+;; fallback, 4 hard resource exhaustion. Successful paths retain six nodes and
+;; one binder regardless of whether the original RHS probe was discarded.
+(define (tc-selected-literal-probe-case? [mode : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [name : i64 (ci.intern-generated-name "selected-literal-probe")]
+    [want : ast.AstType
+      (cond
+        [(= mode 0) ast.AstType.I8]
+        [(= mode 1) ast.AstType.F32]
+        [(= mode 3) ast.AstType.Bool]
+        [else ast.AstType.F64])]
+    [left-value : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal
+          (if (or (= mode 0) (= mode 3))
+            (ast.ast-lit-int 1)
+            (ast.AstLiteral.Float "1.25"))))]
+    [left-id : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Spanned left-value (ast.ast-source-span 8 5 8 9)))]
+    [right-value : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal
           (cond
-            [(= index 0) 0]
-            [(= index 1) 4294967296]
-            [else 9223372036854775807])]
-        [local : tc_core.TcMovePath
-          (tc_core.TcMovePath name (tc_core.tc-move-path-segments-empty))]
-        [global : tc_core.TcMovePath
-          (tc_core.tc-move-path-capture-owner local 137)]
-        [fact : tc_core.TcMovedPathFact
-          (tc_core.TcMovedPathFact
-            (tc_core.tc-move-path-capture-owner global 137)
-            (tc_core.TcMovedPathKind.BorrowShared)
-            9223372036854775807)]
-        [both : tc_core.TcMovedSet
-          (tc_core.tc-moved-add-path-fact
-            (tc_core.tc-moved-add-path-fact
-              (tc_core.tc-moved-empty)
-              local
-              (tc_core.TcMovedPathKind.BorrowShared)
-              -1)
-            (tc_core.tc-move-path-capture-owner global 137)
-            (tc_core.TcMovedPathKind.BorrowShared)
-            9223372036854775807)]
-        [local-only : tc_core.TcMovedSet
-          (tc_core.tc-moved-remove-path-kind
-            both
-            (tc_core.tc-move-path-capture-owner global 137)
-            (tc_core.TcMovedPathKind.BorrowShared))]
-        (test.assert-i64-eq
-          (tc_core.tc-move-path-source-root-id global)
-          name
-          "global source ID roundtrips without narrowing")
-        (test.assert-i64-eq
-          fact.origin
-          9223372036854775807
-          "full origin is independent of ownership key")
-        (test.assert-i64-eq
-          fact.path.root
-          global.root
-          "capturing an existing global key is idempotent")
-        (test.assert-false
-          (tc_core.tc-move-path-conflicts? local global)
-          "same-name local and global remain distinct")
-        (test.assert-true
-          (tc_core.tc-moved-path-facts-contains-exact-kind?
-            (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local-only))
-            local
-            (tc_core.TcMovedPathKind.BorrowShared))
-          "ending the global loan preserves a same-name local")
-        (test.assert-false
-          (tc_core.tc-moved-path-facts-contains-exact-kind?
-            (tc_core.tc-moved-paths (tc_core.tc-global-shared-view local-only))
-            global
-            (tc_core.TcMovedPathKind.BorrowShared))
-          "global loan ends under its captured key")))))
+            [(= mode 0) (ast.ast-lit-int 2)]
+            [(= mode 3) (ast.AstLiteral.Bool true)]
+            [else (ast.AstLiteral.Float "2.5")])))]
+    [read : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name))]
+    [right-id : i64
+      (tc-selected-test-let-id
+        pools
+        name
+        (tc_core.tc-global-shared-view want)
+        right-value
+        read)]
+    [sum : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Add left-id right-id))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-8 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [saved : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter!
+        (tc_core.tc-type-env-scoped-carrier-from-env env))]
+    [_checks : i64
+      (cfg test (tc_core.tc-let-binding-init-type-call-count-for-test) 0)]
+    [work : i64 store.work]
+    [_budget : unit (when (= mode 4) (set! store.limits.work (+ work 10)))]
+    [result : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        sum
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "literal-probe.tl" 7 2 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-8)))
+        [(tc_core.TcSelectedResult.Err message _)
+          (if (= mode 4)
+            (string.eq
+              message
+              (tc_core.tc-selected-error typed.TypedError.Budget))
+            (= mode 3))]
+        [(tc_core.TcSelectedResult.Ok actual occurrence sink)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Unrepresented) false]
+            [(tc_core.TcSelectedOccurrence.Selected root)
+              (match sink
+                [(tc_core.TcSelectedSink.Query) false]
+                [(tc_core.TcSelectedSink.Capture output owner _)
+                  (let
+                    [left : typed.TypedOccurrenceId
+                      (tc-selected-test-child! output owner root 0)]
+                    [right : typed.TypedOccurrenceId
+                      (tc-selected-test-child! output owner root 1)]
+                    [origin : ownership.OwnershipSource
+                      (match (tc_core.tc-selected-occurrence-origin-copy!
+                        output
+                        owner
+                        left)
+                        [(tc_core.TcSelectedOriginResult.Ok source) source]
+                        [_ (io.panic "literal probe: origin")])]
+                    [types : bool
+                      (and
+                        (tc_core.tc-type-eq
+                          actual
+                          (tc_core.tc-global-shared-view want))
+                        (tc-selected-test-type?
+                          output
+                          owner
+                          left
+                          (tc_core.tc-global-shared-view want))
+                        (tc-selected-test-type?
+                          output
+                          owner
+                          right
+                          (tc_core.tc-global-shared-view want)))]
+                    [return-type : typed.TypedTypeId
+                      (match (typed.typed-type-add! output owner want)
+                        [(typed.TypedTypeIdResult.Ok id) id]
+                        [_ (io.panic "literal probe: return type")])]
+                    [normalized : bool
+                      (match (ownership_normalize.ownership-normalize!
+                        output
+                        owner
+                        root
+                        return-type
+                        (__tl_make-array
+                          ownership_normalize.OwnershipNormalizeTypeClass
+                          0)
+                        (ownership_normalize.ownership-normalize-default-limits))
+                        [(ownership_normalize.OwnershipNormalizeResult.Ok _)
+                          true]
+                        [_ false])]
+                    (and
+                      (< mode 3)
+                      types
+                      normalized
+                      (= origin.line 8)
+                      (= origin.column 5)
+                      (if (= mode 2)
+                        (< left.handle.serial right.handle.serial)
+                        (> left.handle.serial right.handle.serial))
+                      (= output.occurrence-count 6)
+                      (= output.binder-count 1)
+                      (= output.attempt-count 0)))])])])]
+    [checks-ok : bool
+      (cfg
+        test
+        (if (= mode 4)
+          true
+          (=
+            (- (tc_core.tc-let-binding-init-type-call-count-for-test) _checks)
+            (if (or (= mode 2) (= mode 3))
+              2
+              1)))
+        true)]
+    [rollback : bool
+      (if (= mode 3)
+        (and
+          (= store.occurrence-count 0)
+          (= store.binder-count 0)
+          (= store.attempt-count 0)
+          (> store.work work)
+          (> store.next-serial (cast 1 : u64)))
+        true)]
+    (tc_core.tc-type-env-scoped-runtime-restore! saved)
+    (typed.typed-store-retire! (&mut store))
+    (and result checks-ok rollback)))
 
-(cfg
-  test
-  (test
-    captured-global-reference-lifetime-survives-local-shadow
-    (cbi.compiler-builtin-initialize-for-parse!)
+(define (tc-selected-abandoned-parent-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [condition : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [bad : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Add literal condition))]
+    ;; A runtime `quote` is a fresh syntax value (#8449 M5): the sequence, and
+    ;; so the branch, is represented. (No well-typed form is left that the
+    ;; producer leaves unrepresented; an abandoned subtree's rollback is the
+    ;; same transaction as the failed one above.)
+    [quoted : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Quote literal))]
+    [unsupported : i64
+      (let
+        [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
+        (ast.ast-expr-list-push (&mut items) quoted)
+        (ast.ast-expr-list-push (&mut items) literal)
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items)))]
+    [branch : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.If condition literal unsupported))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-11 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-10 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-9 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [root : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        literal
+        ast.AstType.I64)]
+    [serial : u64 store.next-serial]
+    [before : i64 store.work]
+    [failed : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        bad
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "bad.tl" 2 1 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-9)))
+        [(tc_core.TcSelectedResult.Err _ _) true]
+        [_ false])]
+    [rolled-back : bool
+      (and
+        failed
+        (= store.occurrence-count 1)
+        (= store.attempt-count 0)
+        (> store.next-serial serial)
+        (> store.work before))]
+    [unrepresented : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        branch
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "unsupported.tl" 2 1 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-10)))
+        [(tc_core.TcSelectedResult.Ok _ occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected _) true]
+            [_ false])]
+        [_ false])]
+    [retained : bool
+      (and
+        (> store.occurrence-count 1)
+        (= store.attempt-count 0)
+        (tc-selected-test-type? (&mut store) (& lease) root ast.AstType.I64))]
+    [_budget : unit (set! store.limits.work store.work)]
+    [hard-failure : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        literal
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "budget.tl" 2 1 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-11)))
+        [(tc_core.TcSelectedResult.Err message _)
+          (string.eq
+            message
+            (tc_core.tc-selected-error typed.TypedError.Budget))]
+        [_ false])]
+    (typed.typed-store-retire! (&mut store))
+    (and rolled-back unrepresented retained hard-failure)))
+
+(define (tc-selected-query-reader-owner-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-13 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-12 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [expanded : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-snapshot pools)]
+    [condition : i64
+      (ast.ast-node-pool-context-expr-push
+        expanded
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [value : i64
+      (ast.ast-node-pool-context-expr-push
+        expanded
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    ;; A snapshot shares its storage's single cursor: both contexts see the
+    ;; appended nodes, and the first id past the live end exists in neither.
+    [past-end : i64 (ast.ast-node-pool-context-expr-len pools)]
+    [shared-cursor : bool
+      (and
+        (= past-end (+ value 1))
+        (= (ast.ast-node-pool-context-expr-len expanded) past-end))]
+    [_install : unit (ast.ast-node-pool-compat-context-use! expanded)]
+    [query : bool
+      (match (tc_core.tc-expr-if-with-expected-or-actual
+        ctx
+        (tc_core.tc-empty-env)
+        condition
+        value
+        value
+        ast.AstType.I64)
+        [(tc_core.ResultTcType.Ok ty) (tc_core.tc-type-eq ty ast.AstType.I64)]
+        [_ false])]
+    [unknown : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        9223372036854775807
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        tc_core.TcSelectedSink.Query)
+        [(tc_core.TcSelectedResult.Err message _)
+          (string.eq
+            message
+            (tc_core.tc-selected-error typed.TypedError.Unknown))]
+        [_ false])]
+    ;; The same compatibility override cannot redirect a captured body's read.
+    ;; An invalid index also proves the lease is rejected before any AST access.
+    [capture : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        9223372036854775807
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-12)))
+        [(tc_core.TcSelectedResult.Err message _)
+          (string.eq message (tc_core.tc-selected-error typed.TypedError.Lease))]
+        [_ false])]
+    [_clear : unit (ast.ast-node-pool-compat-context-clear!)]
+    [ordinary : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        past-end
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        tc_core.TcSelectedSink.Query)
+        [(tc_core.TcSelectedResult.Err message _)
+          (string.eq
+            message
+            (tc_core.tc-selected-error typed.TypedError.Unknown))]
+        [_ false])]
+    [_live : unit (ast.ast-node-pool-context-install! expanded)]
+    [mirrored-query : bool
+      (match (tc_core.tc-expr-if-with-expected-or-actual
+        ctx
+        (tc_core.tc-empty-env)
+        condition
+        value
+        value
+        ast.AstType.I64)
+        [(tc_core.ResultTcType.Ok ty) (tc_core.tc-type-eq ty ast.AstType.I64)]
+        [_ false])]
+    [capture-bound : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        (tc_core.tc-empty-env)
+        past-end
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "query-pools.tl" 1 1 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-13)))
+        [(tc_core.TcSelectedResult.Err message _)
+          (string.eq
+            message
+            (tc_core.tc-selected-error typed.TypedError.Unknown))]
+        [_ false])]
+    [decoy : ci.InternCompatState (ci.intern-compat-state-new)]
+    [_decoy : unit (ci.intern-compat-state-install! (& decoy))]
+    [wrong-owner : bool
+      (match (tc_core.tc-context-expr-query-id-ok ctx past-end)
+        [(typed.TypedResult.Err error)
+          (match error
+            [(typed.TypedError.Lease) true]
+            [_ false])]
+        [_ false])]
+    [decoy-ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [_reset-decoy : unit (ci.intern-compat-state-reset! (&mut decoy))]
+    [_new-generation : unit (ci.intern-compat-state-install! (& decoy))]
+    [wrong-generation : bool
+      (match (tc_core.tc-context-expr-query-id-ok decoy-ctx past-end)
+        [(typed.TypedResult.Err error)
+          (match error
+            [(typed.TypedError.Lease) true]
+            [_ false])]
+        [_ false])]
+    [_restore-intern : unit (ci.intern-compat-state-install! (& intern-state))]
+    [unchanged-cursor : bool
+      (= (ast.ast-node-pool-context-expr-len pools) past-end)]
+    [_restore-pools : unit (ast.ast-node-pool-context-install! pools)]
+    [unpublished : bool
+      (and (= store.occurrence-count 0) (= store.type-count 0))]
+    (typed.typed-store-retire! (&mut store))
+    (and
+      shared-cursor
+      query
+      unknown
+      capture
+      ordinary
+      mirrored-query
+      capture-bound
+      wrong-owner
+      wrong-generation
+      unchanged-cursor
+      unpublished)))
+
+(define (tc-selected-normalizer-hook-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [root : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        literal
+        ast.AstType.I64)]
+    [return-type : typed.TypedTypeId
+      (match (typed.typed-type-add! (&mut store) (& lease) ast.AstType.I64)
+        [(typed.TypedTypeIdResult.Ok id) id]
+        [_ (io.panic "selected normalization: result type")])]
+    [wrong-type : typed.TypedTypeId
+      (match (typed.typed-type-add! (&mut store) (& lease) ast.AstType.Bool)
+        [(typed.TypedTypeIdResult.Ok id) id]
+        [_ (io.panic "selected normalization: wrong result type")])]
+    [normal : bool
+      (match (tc_core.tc-selected-consume-body
+        (&mut store)
+        (& lease)
+        (tc_core.TcSelectedOccurrence.Selected
+          (typed.TypedOccurrenceId (typed.typed-handle-copy (& root.handle))))
+        (typed.TypedTypeId (typed.typed-handle-copy (& return-type.handle)))
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0))
+        [(tc_core.ResultTcUnit.Ok) true]
+        [_ false])]
+    [mismatch : bool
+      (match (tc_core.tc-selected-consume-body
+        (&mut store)
+        (& lease)
+        (tc_core.TcSelectedOccurrence.Selected root)
+        wrong-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0))
+        [(tc_core.ResultTcUnit.Err message)
+          (string.eq
+            message
+            "typecheck: ownership normalization: selected operation/type mismatch")]
+        [_ false])]
+    [origin : typed.TypedOriginId
+      (match (typed.typed-origin-add!
+        (&mut store)
+        (& lease)
+        (ownership.OwnershipSource "selected.tl" 7 3 ""))
+        [(typed.TypedOriginResult.Ok id) id]
+        [_ (io.panic "selected normalization: origin")])]
+    [binder : typed.TypedBinderId
+      (match (typed.typed-binder-add!
+        (&mut store)
+        (& lease)
+        (typed.TypedTypeId (typed.typed-handle-copy (& return-type.handle)))
+        typed.TypedBinderKind.Local
+        (typed.TypedOriginId (typed.typed-handle-copy (& origin.handle)))
+        -1)
+        [(typed.TypedBinderResult.Ok id) id]
+        [_ (io.panic "selected normalization: local")])]
+    [children : (__tl_dyn-array typed.TypedOccurrenceId)
+      (__tl_make-array typed.TypedOccurrenceId 0)]
+    [read : typed.TypedOccurrenceId
+      (match (typed.typed-occurrence-add!
+        (&mut store)
+        (& lease)
+        (typed.TypedTypeId (typed.typed-handle-copy (& return-type.handle)))
+        typed.TypedSyntax.Generated
+        origin
+        (typed.TypedOperation.Read binder)
+        (& children))
+        [(typed.TypedOccurrenceResult.Ok id) id]
+        [_ (io.panic "selected normalization: read")])]
+    [core-failure : bool
+      (match (tc_core.tc-selected-consume-body
+        (&mut store)
+        (& lease)
+        (tc_core.TcSelectedOccurrence.Selected read)
+        return-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0))
+        [(tc_core.ResultTcUnit.Err message)
+          (let
+            [diagnostic : cdiag.CompilerDiagnostic
+              (tc_core.tc-diag-at-start (string.copy message))]
+            (and
+              (string.eq
+                message
+                (tc_core.tc-located-error
+                  (ast.ast-source-span 7 3 7 3)
+                  "typecheck: ownership check failed: value may be moved or uninitialized"))
+              (= diagnostic.primary.start-line 7)
+              (= diagnostic.primary.start-col 3)
+              (= diagnostic.primary.end-line 7)
+              (= diagnostic.primary.end-col 3)
+              (string.eq
+                diagnostic.message
+                "typecheck: ownership check failed: value may be moved or uninitialized")))]
+        [_ false])]
+    ;; The certifier's own record/work bounds are not a verdict on the
+    ;; program: a body too large to certify is uncertified exactly like an
+    ;; unsupported form (the caller rejects a named body with the reason,
+    ;; E0211), never an ownership error.
+    [resource : bool
+      (match (tc_core.tc-selected-normalization-failure
+        (&mut store)
+        (& lease)
+        ownership_normalize.OwnershipNormalizeFailure.Resource)
+        [(tc_core.ResultTcUnit.Ok) true]
+        [_ false])]
+    [unsupported : bool
+      (match (tc_core.tc-selected-normalization-failure
+        (&mut store)
+        (& lease)
+        (ownership_normalize.OwnershipNormalizeFailure.Unsupported
+          "migration gap"))
+        [(tc_core.ResultTcUnit.Ok) true]
+        [_ false])]
+    (typed.typed-store-retire! (&mut store))
+    (and normal mismatch core-failure resource unsupported)))
+
+(define (tc-selected-test-binding
+  [env : tc_core.TcTypeEnv]
+  [name : i64]
+  [unsafe? : bool]) : tc_core.ResultTcBinding
+  (tc_core.tc-lookup-binding-selected-id
+    env
+    name
+    (tc_core.tc-env-name-key-id
+      (tc_core.tc-type-env-structural-session env)
+      name)
+    name
+    unsafe?))
+
+(define (tc-selected-test-coordinate [env : tc_core.TcTypeEnv] [name : i64]) : tc_core.TcScopedBindingCoordinate
+  (match (tc-selected-test-binding env name true)
+    [(tc_core.ResultTcBinding.Ok _ _ origin)
+      (match origin
+        [(tc_core.TcBindingOrigin.Scoped coordinate) coordinate]
+        [_ (io.panic "selected winner: expected scoped provenance")])]
+    [_ (io.panic "selected winner: expected canonical binding")]))
+
+(define (tc-selected-binding-winner-ok?) : bool
+  (let
+    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
+    [name : i64 (ci.intern "selected-winner-local")]
+    [global : i64 (ci.intern "selected-winner-global")]
+    [base : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id
+        (tc_core.tc-empty-env-with-job-state job)
+        global
+        ast.AstType.I32)]
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (tc_core.tc-type-env-scoped-carrier-bind-return-type
+        (tc_core.tc-type-env-scoped-carrier-bind-id
+          (tc_core.tc-type-env-scoped-carrier-from-env base)
+          name
+          ast.AstType.I64)
+        ast.AstType.I64)]
+    [env : tc_core.TcTypeEnv (tc_core.tc-type-env-scoped-carrier-env carrier)]
+    [save : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+    [outer : tc_core.TcScopedBindingCoordinate
+      (tc-selected-test-coordinate env name)]
+    [scope : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-save env)]
+    [inner-env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-unsafe-id env name ast.AstType.Bool)]
+    [inner : tc_core.TcScopedBindingCoordinate
+      (tc-selected-test-coordinate inner-env name)]
+    [shadow : bool
+      (and
+        (= outer.env-store inner.env-store)
+        (= outer.scoped-state inner.scoped-state)
+        (= outer.lookup-epoch inner.lookup-epoch)
+        (!= outer.slot-index inner.slot-index)
+        (match (tc-selected-test-binding inner-env name true)
+          [(tc_core.ResultTcBinding.Ok (ast.AstType.Bool) unsafe? _) unsafe?]
+          [_ false])
+        (match (tc_core.tc-lookup-id inner-env name)
+          [(tc_core.ResultTcType.Ok (ast.AstType.Bool)) true]
+          [_ false])
+        (match (tc_core.tc-lookup-unsafe-id inner-env name)
+          [(tc_core.ResultTcTypeUnsafe.Ok (ast.AstType.Bool) unsafe?) unsafe?]
+          [_ false]))]
+    [persistent : bool
+      (match (tc-selected-test-binding inner-env global true)
+        [(tc_core.ResultTcBinding.Ok (ast.AstType.I32) unsafe? origin)
+          (and
+            (not unsafe?)
+            (match origin
+              [(tc_core.TcBindingOrigin.Unrepresented) true]
+              [_ false]))]
+        [_ false])]
+    [_restored : unit (tc_core.tc-type-env-scoped-runtime-restore! scope)]
+    [again : tc_core.TcScopedBindingCoordinate
+      (tc-selected-test-coordinate env name)]
+    [replacement-env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-unsafe-id env name ast.AstType.I16)]
+    [replacement : tc_core.TcScopedBindingCoordinate
+      (tc-selected-test-coordinate replacement-env name)]
+    [restored : bool
+      (and
+        (= outer.env-store again.env-store)
+        (= outer.scoped-state again.scoped-state)
+        (= outer.lookup-epoch again.lookup-epoch)
+        (= outer.slot-index again.slot-index)
+        (= outer.slot-generation again.slot-generation)
+        (= inner.slot-index replacement.slot-index)
+        (!= inner.slot-generation replacement.slot-generation))]
+    [_outer-restored : unit (tc_core.tc-type-env-scoped-runtime-restore! save)]
+    [next-carrier : tc_core.TcTypeEnvScopedCarrier
+      (tc_core.tc-type-env-scoped-carrier-bind-id
+        (tc_core.tc-type-env-scoped-carrier-from-env base)
+        name
+        ast.AstType.I64)]
+    [next-env : tc_core.TcTypeEnv
+      (tc_core.tc-type-env-scoped-carrier-env next-carrier)]
+    [next-save : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter! next-carrier)]
+    [next : tc_core.TcScopedBindingCoordinate
+      (tc-selected-test-coordinate next-env name)]
+    [distinct : bool
+      (and
+        (= outer.env-store next.env-store)
+        (= outer.scoped-state next.scoped-state)
+        (= outer.slot-index next.slot-index)
+        (= outer.slot-generation next.slot-generation)
+        (!= outer.lookup-epoch next.lookup-epoch))]
+    (tc_core.tc-type-env-scoped-runtime-restore! next-save)
+    (unless shadow (io.panic "selected winner: shadow type and unsafe flag"))
+    (unless
+      persistent
+      (io.panic "selected winner: persistent entries have no binder identity"))
+    (unless
+      restored
+      (io.panic "selected winner: restored and reused slot generations"))
+    (unless distinct (io.panic "selected winner: distinct carrier epochs"))
+    true))
+
+(define (tc-selected-binding-exhaustion-ok?) : bool
+  (let
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-job-state-new))]
+    [state : tc_core.TcTypeEnvScopedState
+      (tc_core.tc-type-env-scoped-state env)]
+    [name : i64 (ci.intern "selected-exhaustion")]
+    [ctx : tc_core.TcContext
+      (tc-selected-test-context (ast.ast-node-pool-context-capture-active))]
+    (unsafe
+      (set!
+        (deref (tc_core.tc-type-env-scoped-state-ptr state)).next-lookup-epoch
+        9223372036854775807))
     (let
-      [ctx : tc_core.TcContext
-        (macro-prepare-test-ctx (ast.ast-node-pool-context-capture-active))]
-      [name : i64 (ci.intern "captured-global-ref")]
-      [global-region : i64 (ci.intern "global-region")]
-      [local-region : i64 (ci.intern "local-region")]
-      [scalar : ast.AstType (ast.AstType.I64)]
-      (for [shape (iterator.range 0 3)]
+      [last : i64 (tc_core.tc-type-env-scoped-state-next-lookup-epoch! state)]
+      [exhausted : i64
+        (tc_core.tc-type-env-scoped-state-next-lookup-epoch! state)]
+      [sticky : i64 (tc_core.tc-type-env-scoped-state-next-lookup-epoch! state)]
+      [carrier : tc_core.TcTypeEnvScopedCarrier
+        (tc_core.tc-type-env-scoped-carrier-bind-id
+          (tc_core.tc-type-env-scoped-carrier-from-env env)
+          name
+          ast.AstType.I64)]
+      [save : tc_core.TcTypeEnvScopedRuntimeSave
+        (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+      [winner : bool
+        (match (tc-selected-test-binding env name true)
+          [(tc_core.ResultTcBinding.Fault error)
+            (match error
+              [(typed.TypedError.Exhausted) true]
+              [_ false])]
+          [_ false])]
+      ;; Invalid syntax must never be dereferenced once the carrier identity
+      ;; is exhausted, even when the client requests only a type.
+      [query : bool
+        (match (tc_core.tc-expr-id ctx env -1)
+          [(tc_core.ResultTcType.Err message)
+            (string.eq
+              message
+              (tc_core.tc-selected-error typed.TypedError.Exhausted))]
+          [_ false])]
+      [_restored : unit (tc_core.tc-type-env-scoped-runtime-restore! save)]
+      [generation-env : tc_core.TcTypeEnv
+        (tc_core.tc-empty-env-with-job-state (tc_core.tc-job-state-new))]
+      [generation-carrier : tc_core.TcTypeEnvScopedCarrier
+        (tc_core.tc-type-env-scoped-carrier-bind-id
+          (tc_core.tc-type-env-scoped-carrier-from-env generation-env)
+          name
+          ast.AstType.I64)]
+      (set!
+        generation-carrier.sidecar.stack.cache-generation
+        9223372036854775807)
+      (let
+        [generation-save : tc_core.TcTypeEnvScopedRuntimeSave
+          (tc_core.tc-type-env-scoped-runtime-enter! generation-carrier)]
+        [mark : tc_core.TcTypeEnvScopedRuntimeSave
+          (tc_core.tc-type-env-scoped-runtime-save generation-env)]
+        [_rollback : unit (tc_core.tc-type-env-scoped-runtime-restore! mark)]
+        [generation : bool
+          (match (tc-selected-test-binding generation-env name false)
+            [(tc_core.ResultTcBinding.Fault error)
+              (match error
+                [(typed.TypedError.Exhausted) true]
+                [_ false])]
+            [_ false])]
+        [second-mark : tc_core.TcTypeEnvScopedRuntimeSave
+          (tc_core.tc-type-env-scoped-runtime-save generation-env)]
+        [_second : unit
+          (tc_core.tc-type-env-scoped-runtime-restore! second-mark)]
+        [still-exhausted : bool
+          (tc_core.tc-type-env-scoped-identity-exhausted? generation-env)]
+        (tc_core.tc-type-env-scoped-runtime-restore! generation-save)
+        (and
+          (= last 9223372036854775807)
+          (= exhausted 0)
+          (= sticky 0)
+          winner
+          query
+          generation
+          still-exhausted)))))
+
+(define (tc-selected-restore-exhaustion-case? [contextual? : bool]) : bool
+  (let
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-job-state-new))]
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (tc_core.tc-type-env-scoped-carrier-from-env env)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [expr : ast.AstExpr
+      (ast.AstExpr.Let
+        (box
+          (ast.AstLet.Let (ast.ast-let-binding-list-with-capacity 0) literal)))]
+    (set! carrier.sidecar.stack.cache-generation 9223372036854775806)
+    (let
+      [save : tc_core.TcTypeEnvScopedRuntimeSave
+        (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+      [last-valid : bool
+        (match (tc_core.tc-expr ctx env (tc_core.tc-global-shared-view expr))
+          [(tc_core.ResultTcType.Ok (ast.AstType.I32)) true]
+          [_ false])]
+      [terminal : bool
+        (match (if contextual?
+          (tc_core.tc-expr-with-expected-or-actual ctx env expr ast.AstType.I64)
+          (tc_core.tc-expr ctx env expr))
+          [(tc_core.ResultTcType.Err message)
+            (string.eq
+              message
+              (tc_core.tc-selected-error typed.TypedError.Exhausted))]
+          [_ false])]
+      (tc_core.tc-type-env-scoped-runtime-restore! save)
+      (and last-valid terminal))))
+
+(define (tc-selected-negative-slot-exhaustion-ok?) : bool
+  (let
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-job-state-new))]
+    [name : i64 (ci.intern "selected-negative-slot")]
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (tc_core.tc-type-env-scoped-carrier-bind-id
+        (tc_core.tc-type-env-scoped-carrier-from-env env)
+        name
+        ast.AstType.I64)]
+    (set! (array-ref carrier.sidecar.stack.slots 0).generation -1)
+    (let
+      [save : tc_core.TcTypeEnvScopedRuntimeSave
+        (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+      [rejected : bool
+        (match (tc_core.tc-lookup-id env name)
+          [(tc_core.ResultTcType.Err message)
+            (string.eq
+              message
+              (tc_core.tc-selected-error typed.TypedError.Exhausted))]
+          [_ false])]
+      (tc_core.tc-type-env-scoped-runtime-restore! save)
+      rejected)))
+
+(define (tc-selected-begin-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [returns : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Return literal))]
+    [items : ast.AstExprList (ast.ast-expr-list-new)]
+    [early-items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_fill : unit
+      (begin
+        (ast.ast-expr-list-push (&mut items) literal)
+        (ast.ast-expr-list-push (&mut items) literal)
+        (ast.ast-expr-list-push (&mut early-items) returns)
+        (ast.ast-expr-list-push (&mut early-items) literal))]
+    [begin-id : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items))]
+    [early-id : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Begin early-items))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-15 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-14 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [root : typed.TypedOccurrenceId
+      (tc-selected-test-infer!
+        ctx
+        (&mut store)
+        (& lease)
+        begin-id
+        ast.AstType.I8)]
+    [first : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 0)]
+    [last : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 1)]
+    [selected : bool
+      (and
+        (< first.handle.serial last.handle.serial)
+        (< last.handle.serial root.handle.serial)
+        (tc-selected-test-type? (&mut store) (& lease) first ast.AstType.I32)
+        (tc-selected-test-type? (&mut store) (& lease) last ast.AstType.I8)
+        (match (typed.typed-occurrence-get! (&mut store) (& lease) root)
+          [(typed.TypedNodeResult.Ok node)
+            (match node.operation
+              [(typed.TypedOperation.Sequence) true]
+              [_ false])]
+          [_ false]))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-return-type (tc_core.tc-empty-env) ast.AstType.I64)]
+    ;; A sequence ends at its diverging child: the unreachable tail is typed
+    ;; but not represented.
+    [early-occurrence : tc_core.TcSelectedOccurrence
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        early-id
+        (ast.AstMaybeType.Some ast.AstType.I8)
+        (ownership.OwnershipSource "selected.tl" 7 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-14)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I8) occurrence _) occurrence]
+        [_ tc_core.TcSelectedOccurrence.Unrepresented])]
+    [early : bool
+      (match early-occurrence
+        [(tc_core.TcSelectedOccurrence.Selected id)
+          (match (typed.typed-occurrence-get! (&mut store) (& lease) id)
+            [(typed.TypedNodeResult.Ok node) (= node.child-count 1)]
+            [_ false])]
+        [_ false])]
+    [unreachable-checked : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        early-id
+        (ast.AstMaybeType.Some ast.AstType.Bool)
+        (ownership.OwnershipSource "selected.tl" 7 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-15)))
+        ;; Canonical expected-or-actual returns the actual integer type for
+        ;; this mismatch. The tail must still be checked after the return.
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I32) _ _) true]
+        [_ false])]
+    (typed.typed-store-retire! (&mut store))
+    (unless selected (io.panic "selected begin: ordered contextual children"))
+    (unless early (io.panic "selected begin: early return ends the sequence"))
+    (unless
+      unreachable-checked
+      (io.panic "selected begin: unreachable tail checked"))
+    true))
+
+(define (tc-selected-test-binder-index!
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [id : typed.TypedOccurrenceId]
+  [initialize? : bool]) : i64
+  (match (typed.typed-occurrence-get! store lease id)
+    [(typed.TypedNodeResult.Ok node)
+      (match node.operation
+        [(typed.TypedOperation.Initialize binder)
+          (if initialize?
+            binder.handle.index
+            -1)]
+        [(typed.TypedOperation.Read binder)
+          (if initialize?
+            -1
+            binder.handle.index)]
+        [_ -1])]
+    [_ -1]))
+
+(define (tc-selected-let-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [name : i64 (ci.intern "selected-let-shadow")]
+    [literal-value : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Spanned literal-value (ast.ast-source-span 11 5 11 7)))]
+    [read : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name))]
+    [inner-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-list-with-capacity 1)]
+    [outer-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-list-with-capacity 1)]
+    [abandoned-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-list-with-capacity 1)]
+    [rejected-bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-list-with-capacity 2)]
+    [_bindings : unit
+      (begin
+        (ast.ast-let-binding-list-push
+          (&mut inner-bindings)
+          (ast.AstLetBinding.Binding
+            name
+            (ast.AstMaybeType.Some ast.AstType.I64)
+            literal))
+        (ast.ast-let-binding-list-push
+          (&mut outer-bindings)
+          (ast.AstLetBinding.Binding
+            name
+            (ast.AstMaybeType.Some ast.AstType.I8)
+            literal))
+        (ast.ast-let-binding-list-push
+          (&mut abandoned-bindings)
+          (ast.AstLetBinding.Binding
+            name
+            (ast.AstMaybeType.Some ast.AstType.I8)
+            literal))
+        (ast.ast-let-binding-list-push
+          (&mut rejected-bindings)
+          (ast.AstLetBinding.Binding
+            name
+            (ast.AstMaybeType.Some ast.AstType.I8)
+            literal))
+        (ast.ast-let-binding-list-push
+          (&mut rejected-bindings)
+          (ast.AstLetBinding.Binding
+            name
+            (ast.AstMaybeType.Some ast.AstType.Bool)
+            literal)))]
+    [inner : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Let (box (ast.AstLet.Let inner-bindings read))))]
+    [items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_items : unit
+      (begin
+        (ast.ast-expr-list-push (&mut items) inner)
+        (ast.ast-expr-list-push (&mut items) inner)
+        (ast.ast-expr-list-push (&mut items) read))]
+    [body : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items))]
+    [outer : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Let (box (ast.AstLet.Let outer-bindings body))))]
+    ;; A runtime `quote` in the body: a fresh syntax value (#8449 M5).
+    [quoted : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Quote literal))]
+    [unsupported : i64
+      (let
+        [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
+        (ast.ast-expr-list-push (&mut items) quoted)
+        (ast.ast-expr-list-push (&mut items) literal)
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items)))]
+    [abandoned : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Let (box (ast.AstLet.Let abandoned-bindings unsupported))))]
+    [rejected : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Let (box (ast.AstLet.Let rejected-bindings read))))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-18 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-17 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-16 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [saved : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter!
+        (tc_core.tc-type-env-scoped-carrier-from-env env))]
+    [checks-before : i64
+      (cfg test (tc_core.tc-let-binding-init-type-call-count-for-test) 0)]
+    [root : typed.TypedOccurrenceId
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        outer
+        (ast.AstMaybeType.Some ast.AstType.I8)
+        (ownership.OwnershipSource "selected-let.tl" 7 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-16)))
+        [(tc_core.TcSelectedResult.Ok _ occurrence sink)
+          (match sink
+            [(tc_core.TcSelectedSink.Capture _ _ associations)
+              (unless
+                (= associations.len 0)
+                (io.panic "selected let: visible scope restored"))]
+            [_ (io.panic "selected let: lost capture")])
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected root) root]
+            [_ (io.panic "selected let: missing root")])]
+        [(tc_core.TcSelectedResult.Err message _) (io.panic message)])]
+    [once? : bool
+      (cfg
+        test
+        (=
+          (-
+            (tc_core.tc-let-binding-init-type-call-count-for-test)
+            checks-before)
+          3)
+        (= checks-before 0))]
+    [outer-init : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 0)]
+    [sequence : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 1)]
+    [first : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) sequence 0)]
+    [second : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) sequence 1)]
+    [outer-read : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) sequence 2)]
+    [first-init : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) first 0)]
+    [second-init : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) second 0)]
+    [first-read : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) first 1)]
+    [second-read : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) second 1)]
+    [narrow : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) outer-init 0)]
+    [wide : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) first-init 0)]
+    [identities : bool
+      (and
+        (= store.binder-count 3)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            outer-init
+            true)
+          0)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            outer-read
+            false)
+          0)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            first-init
+            true)
+          1)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            first-read
+            false)
+          1)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            second-init
+            true)
+          2)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            second-read
+            false)
+          2)
+        (tc-selected-test-type? (&mut store) (& lease) narrow ast.AstType.I8)
+        (tc-selected-test-type? (&mut store) (& lease) wide ast.AstType.I64)
+        (< narrow.handle.serial wide.handle.serial)
+        (< first.handle.serial second.handle.serial))]
+    [return-type : typed.TypedTypeId
+      (match (typed.typed-type-add! (&mut store) (& lease) ast.AstType.I8)
+        [(typed.TypedTypeIdResult.Ok id) id]
+        [_ (io.panic "selected let: return type")])]
+    [normalized : bool
+      (match (ownership_normalize.ownership-normalize!
+        (&mut store)
+        (& lease)
+        root
+        return-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+        (ownership_normalize.ownership-normalize-default-limits))
+        [(ownership_normalize.OwnershipNormalizeResult.Ok _) true]
+        [_ false])]
+    [located : bool
+      (match (tc_core.tc-selected-occurrence-origin-copy!
+        (&mut store)
+        (& lease)
+        outer-init)
+        [(tc_core.TcSelectedOriginResult.Ok origin)
+          (and
+            (= origin.line 11)
+            (= origin.column 5)
+            (string.eq origin.path "selected-let.tl"))]
+        [_ false])]
+    [abandoned? : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        abandoned
+        (ast.AstMaybeType.Some ast.AstType.I8)
+        (ownership.OwnershipSource "selected-let.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-17)))
+        [(tc_core.TcSelectedResult.Ok _ occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected _) true]
+            [_ false])]
+        [_ false])]
+    [count : i64 store.occurrence-count]
+    [binders : i64 store.binder-count]
+    [query : bool
+      (match (tc_core.tc-expr-id ctx env outer)
+        [(tc_core.ResultTcType.Ok (ast.AstType.I8)) true]
+        [_ false])]
+    [rejected? : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        rejected
+        (ast.AstMaybeType.Some ast.AstType.I8)
+        (ownership.OwnershipSource "selected-let.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-18)))
+        [(tc_core.TcSelectedResult.Err message _)
+          (let
+            [diagnostic : cdiag.CompilerDiagnostic
+              (tc_core.tc-diag-at-start message)]
+            (and
+              (= diagnostic.primary.start-line 11)
+              (= diagnostic.primary.start-col 5)
+              (= diagnostic.primary.end-line 11)
+              (= diagnostic.primary.end-col 7)
+              (string.eq
+                diagnostic.message
+                "typecheck: let binding `selected-let-shadow` type mismatch: expected bool, found i32")))]
+        [_ false])]
+    [restored : bool
+      (match (tc_core.tc-lookup-id env name)
+        [(tc_core.ResultTcType.Err _) true]
+        [_ false])]
+    [rolled-back : bool
+      (and (= count store.occurrence-count) (= binders store.binder-count))]
+    (tc_core.tc-type-env-scoped-runtime-restore! saved)
+    (typed.typed-store-retire! (&mut store))
+    (unless identities (io.panic "selected let: contextual shadow identities"))
+    (unless normalized (io.panic "selected let: normalization"))
+    (unless located (io.panic "selected let: selected initializer origin"))
+    (unless once? (io.panic "selected let: each initializer inferred once"))
+    (unless abandoned? (io.panic "selected let: quoted body"))
+    (unless query (io.panic "selected let: canonical query"))
+    (unless
+      rejected?
+      (io.panic "selected let: canonical located initializer failure"))
+    (unless restored (io.panic "selected let: canonical scope restored"))
+    (unless rolled-back (io.panic "selected let: abandoned initialization"))
+    true))
+
+(define (tc-selected-test-let-id
+  [pools : ast.AstNodePoolContext]
+  [name : i64]
+  [type : ast.AstType]
+  [init : i64]
+  [body : i64]) : i64
+  (let
+    [bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-list-with-capacity 1)]
+    (ast.ast-let-binding-list-push
+      (&mut bindings)
+      (ast.AstLetBinding.Binding name (ast.AstMaybeType.Some type) init))
+    (ast.ast-node-pool-context-expr-push
+      pools
+      (ast.AstExpr.Let (box (ast.AstLet.Let bindings body))))))
+
+(define (tc-selected-set-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [name : i64 (ci.intern "selected-set-target")]
+    [global : i64 (ci.intern "selected-set-persistent")]
+    [zero : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
+    [forty-two : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [read : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name))]
+    [inner : i64
+      (tc-selected-test-let-id pools name ast.AstType.I64 forty-two read)]
+    [assign : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Set name inner))]
+    [persistent-assign : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Set global forty-two))]
+    [items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_items : unit
+      (begin
+        (ast.ast-expr-list-push (&mut items) assign)
+        (ast.ast-expr-list-push (&mut items) read))]
+    [body : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items))]
+    [outer : i64 (tc-selected-test-let-id pools name ast.AstType.I64 zero body)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-20 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-19 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id
+        (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))
+        global
+        ast.AstType.I64)]
+    [saved : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter!
+        (tc_core.tc-type-env-scoped-carrier-from-env env))]
+    [before : i64
+      (cfg test (tc_core.tc-let-binding-init-type-call-count-for-test) 0)]
+    [root : typed.TypedOccurrenceId
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        outer
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-set.tl" 7 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-19)))
+        [(tc_core.TcSelectedResult.Ok _ occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected root) root]
+            [_ (io.panic "selected set: missing root")])]
+        [(tc_core.TcSelectedResult.Err message _) (io.panic message)])]
+    [once? : bool
+      (cfg
+        test
+        (= (- (tc_core.tc-let-binding-init-type-call-count-for-test) before) 2)
+        (= before 0))]
+    [sequence : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 1)]
+    [assignment : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) sequence 0)]
+    [outer-read : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) sequence 1)]
+    [rhs : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) assignment 0)]
+    [inner-read : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) rhs 1)]
+    [winner : bool
+      (and
+        (= store.binder-count 2)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            outer-read
+            false)
+          0)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            inner-read
+            false)
+          1)
+        (match (typed.typed-occurrence-get! (&mut store) (& lease) assignment)
+          [(typed.TypedNodeResult.Ok node)
+            (match node.operation
+              [(typed.TypedOperation.Assign binder) (= binder.handle.index 0)]
+              [_ false])]
+          [_ false]))]
+    [return-type : typed.TypedTypeId
+      (match (typed.typed-type-add! (&mut store) (& lease) ast.AstType.I64)
+        [(typed.TypedTypeIdResult.Ok id) id]
+        [_ (io.panic "selected set: return type")])]
+    [normalized : bool
+      (match (ownership_normalize.ownership-normalize!
+        (&mut store)
+        (& lease)
+        root
+        return-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+        (ownership_normalize.ownership-normalize-default-limits))
+        [(ownership_normalize.OwnershipNormalizeResult.Ok _) true]
+        [_ false])]
+    [count : i64 store.occurrence-count]
+    [persistent : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        persistent-assign
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "selected-set.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-20)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.Unit) occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Unrepresented) true]
+            [_ false])]
+        [_ false])]
+    [query : bool
+      (match (tc_core.tc-expr-id ctx env outer)
+        [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+        [_ false])]
+    [unchanged : bool (= count store.occurrence-count)]
+    (tc_core.tc-type-env-scoped-runtime-restore! saved)
+    (typed.typed-store-retire! (&mut store))
+    (unless
+      winner
+      (io.panic "selected set: original winner survives RHS shadow"))
+    (unless once? (io.panic "selected set: RHS inferred once"))
+    (unless normalized (io.panic "selected set: normalized assignment"))
+    (unless
+      persistent
+      (io.panic "selected set: persistent winner stays unrepresented"))
+    (unless query (io.panic "selected set: canonical query"))
+    (unless unchanged (io.panic "selected set: persistent child rolled back"))
+    true))
+
+(define (tc-selected-return-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [name : i64 (ci.intern "selected-return-local")]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [condition : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [read : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name))]
+    [returns : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Return read))]
+    [bad-return : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Return condition))]
+    [direct-return : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Return literal))]
+    [divergent-binary : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Binary ast.AstBinOp.Add direct-return literal))]
+    [divergent-unary : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Unary ast.AstUnOp.Neg direct-return))]
+    [divergent-init : i64
+      (tc-selected-test-let-id pools name ast.AstType.I64 direct-return read)]
+    [branch : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.If condition returns returns))]
+    [items : ast.AstExprList (ast.ast-expr-list-new)]
+    [_items : unit
+      (begin
+        (ast.ast-expr-list-push (&mut items) literal)
+        (ast.ast-expr-list-push (&mut items) branch))]
+    [body : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items))]
+    [outer : i64
+      (tc-selected-test-let-id pools name ast.AstType.I64 literal body)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-25 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-27 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-24 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-23 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-22 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [selected-bindings-21 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [base : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [env : tc_core.TcTypeEnv (tc_core.tc-bind-return-type base ast.AstType.I64)]
+    [saved : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter!
+        (tc_core.tc-type-env-scoped-carrier-from-env env))]
+    [root : typed.TypedOccurrenceId
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        outer
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-return.tl" 7 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-21)))
+        [(tc_core.TcSelectedResult.Ok ty occurrence _)
+          (unless
+            (tc_core.tc-type-eq ty ast.AstType.I64)
+            (io.panic "selected return: canonical contextual result"))
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected root) root]
+            [_ (io.panic "selected return: missing root")])]
+        [(tc_core.TcSelectedResult.Err message _) (io.panic message)])]
+    [sequence : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) root 1)]
+    [branch-node : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) sequence 1)]
+    [left : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) branch-node 1)]
+    [right : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) branch-node 2)]
+    [left-read : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) left 0)]
+    [right-read : typed.TypedOccurrenceId
+      (tc-selected-test-child! (&mut store) (& lease) right 0)]
+    [return-shape : bool
+      (match (typed.typed-occurrence-get! (&mut store) (& lease) left)
+        [(typed.TypedNodeResult.Ok node)
+          (match node.operation
+            [(typed.TypedOperation.Return) true]
+            [_ false])]
+        [_ false])]
+    [intrinsic : bool
+      (and
+        (match (tc_core.tc-selected-occurrence-never!
+          (&mut store)
+          (& lease)
+          root)
+          [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+          [_ false])
+        (match (tc_core.tc-selected-occurrence-never!
+          (&mut store)
+          (& lease)
+          sequence)
+          [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+          [_ false])
+        (match (tc_core.tc-selected-occurrence-never!
+          (&mut store)
+          (& lease)
+          branch-node)
+          [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+          [_ false])
+        return-shape
+        (!= left.handle.serial right.handle.serial)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            left-read
+            false)
+          0)
+        (=
+          (tc-selected-test-binder-index!
+            (&mut store)
+            (& lease)
+            right-read
+            false)
+          0))]
+    [return-type : typed.TypedTypeId
+      (match (typed.typed-type-add! (&mut store) (& lease) ast.AstType.I64)
+        [(typed.TypedTypeIdResult.Ok id) id]
+        [_ (io.panic "selected return: return type")])]
+    [normalized : bool
+      (match (ownership_normalize.ownership-normalize!
+        (&mut store)
+        (& lease)
+        root
+        return-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+        (ownership_normalize.ownership-normalize-default-limits))
+        [(ownership_normalize.OwnershipNormalizeResult.Ok _) true]
+        [_ false])]
+    ;; A divergent binary operand is represented: the return is the operand's
+    ;; Never occurrence and the unreachable remainder is never evaluated.
+    [binary-selected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        divergent-binary
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-22)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence _)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected _) true]
+            [_ false])]
+        [_ false])]
+    ;; A divergent operand is an exit: the unary operation is represented, its
+    ;; own result Never while its checked type stays the contextual one.
+    [unary-occurrence : tc_core.TcSelectedOccurrence
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        divergent-unary
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-27)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence _)
+          occurrence]
+        [_ tc_core.TcSelectedOccurrence.Unrepresented])]
+    [unary-exit : bool
+      (match unary-occurrence
+        [(tc_core.TcSelectedOccurrence.Selected id)
+          (match (tc_core.tc-selected-occurrence-never!
+            (&mut store)
+            (& lease)
+            id)
+            [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+            [_ false])]
+        [_ false])]
+    ;; A divergent initializer is an exit: the `let` is its prefix through
+    ;; the initializer (the return, typed Never), and the never-initialized
+    ;; local has no binder.
+    [initializer-binders : i64 store.binder-count]
+    [initializer-occurrence : tc_core.TcSelectedOccurrence
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        divergent-init
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-24)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence _)
+          occurrence]
+        [_ tc_core.TcSelectedOccurrence.Unrepresented])]
+    [initializer-exit : bool
+      (match initializer-occurrence
+        [(tc_core.TcSelectedOccurrence.Selected id)
+          (let
+            [exit : typed.TypedOccurrenceId
+              (tc-selected-test-child!
+                (&mut store)
+                (& lease)
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& id.handle)))
+                0)]
+            (and
+              (= store.binder-count initializer-binders)
+              (match (tc_core.tc-selected-occurrence-never!
+                (&mut store)
+                (& lease)
+                (typed.TypedOccurrenceId
+                  (typed.typed-handle-copy (& id.handle))))
+                [(tc_core.TcSelectedBoolResult.Ok never?) never?]
+                [_ false])
+              (match (typed.typed-occurrence-get! (&mut store) (& lease) id)
+                [(typed.TypedNodeResult.Ok node) (= node.child-count 1)]
+                [_ false])
+              (match (typed.typed-occurrence-get! (&mut store) (& lease) exit)
+                [(typed.TypedNodeResult.Ok node)
+                  (match node.operation
+                    [(typed.TypedOperation.Return) true]
+                    [_ false])]
+                [_ false])))]
+        [_ false])]
+    [count : i64 store.occurrence-count]
+    [query : bool
+      (and
+        (match (tc_core.tc-expr-id ctx env outer)
+          [(tc_core.ResultTcType.Ok (ast.AstType.Never)) true]
+          [_ false])
+        (match (tc_core.tc-expr-with-expected-or-actual-id
+          ctx
+          env
+          outer
+          ast.AstType.I64)
+          [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+          [_ false]))]
+    [mismatch : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        bad-return
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-23)))
+        [(tc_core.TcSelectedResult.Err message _)
+          (let
+            [diagnostic : cdiag.CompilerDiagnostic
+              (tc_core.tc-diag-at-start message)]
+            (string.eq
+              diagnostic.message
+              "typecheck: return type mismatch: expected i64, found bool"))]
+        [_ false])]
+    [_restored : unit (tc_core.tc-type-env-scoped-runtime-restore! saved)]
+    [missing : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        base
+        bad-return
+        ast.AstMaybeType.No
+        (ownership.OwnershipSource "selected-return.tl" 9 3 "")
+        (tc_core.tc-selected-capture
+          (&mut store)
+          (& lease)
+          (&mut selected-bindings-25)))
+        [(tc_core.TcSelectedResult.Err message _)
+          (string.eq message "typecheck: return requires enclosing function")]
+        [_ false])]
+    [unchanged : bool (= count store.occurrence-count)]
+    (typed.typed-store-retire! (&mut store))
+    (unless
+      intrinsic
+      (io.panic "selected return: intrinsic Never and explicit operands"))
+    (unless normalized (io.panic "selected return: owned control flow"))
+    (unless query (io.panic "selected return: canonical Query type"))
+    (unless mismatch (io.panic "selected return: return mismatch preserved"))
+    (unless
+      binary-selected
+      (io.panic "selected return: divergent binary operand selected"))
+    (unless
+      unary-exit
+      (io.panic "selected return: divergent unary operand is an exit"))
+    (unless
+      initializer-exit
+      (io.panic "selected return: divergent initializer ends its let"))
+    (unless missing (io.panic "selected return: enclosing function required"))
+    (unless unchanged (io.panic "selected return: failed operand retired"))
+    true))
+
+(define (tc-selected-test-origin [env : tc_core.TcTypeEnv] [name : i64]) : tc_core.TcBindingOrigin
+  (match (tc-selected-test-binding env name true)
+    [(tc_core.ResultTcBinding.Ok _ _ origin) origin]
+    [_ (io.panic "selected binding test: canonical lookup")]))
+
+(define (tc-selected-parameter-association-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [bindings : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [source : ownership.OwnershipSource
+      (ownership.OwnershipSource "selected.tl" 7 3 "")]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [name : i64 (ci.intern "selected-parameter")]
+    [local-name : i64 (ci.intern "selected-parameter-inner")]
+    [params : ast.AstParamList (ast.ast-param-list-new)]
+    [_param : unit
+      (ast.ast-param-list-push
+        (&mut params)
+        (ast.AstParam.Param name ast.AstType.I64 false))]
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (match (tc_core.tc-type-env-scoped-carrier-bind-params
+        ctx
+        (tc_core.tc-type-env-scoped-carrier-from-env env)
+        (& params)
+        (&mut store)
+        (& lease)
+        (&mut bindings)
+        (tc_core.tc-global-shared-view source))
+        [(tc_core.ResultTcScopedCarrier.Ok carrier) carrier]
+        [(tc_core.ResultTcScopedCarrier.Err message) (io.panic message)])]
+    [save : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+    [other : tc_core.TcTypeEnvScopedCarrier
+      (tc_core.tc-type-env-scoped-carrier-bind-id
+        (tc_core.tc-type-env-scoped-carrier-from-env env)
+        name
+        ast.AstType.I64)]
+    [foreign-pin : bool
+      (match (tc_core.tc-selected-bindings-pin!
+        (&mut bindings)
+        (& lease)
+        (& other))
+        [(typed.TypedResult.Err error)
+          (match error
+            [(typed.TypedError.Stale) true]
+            [_ false])]
+        [_ false])]
+    [other-save : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter! other)]
+    [foreign-read : bool
+      (match (tc_core.tc-selected-binding-find!
+        (&mut store)
+        (& lease)
+        (& bindings)
+        env
+        (tc-selected-test-origin env name))
+        [(tc_core.TcSelectedBinderLookup.Ok found)
+          (match found
+            [(tc_core.TcSelectedBinder.Unrepresented) true]
+            [_ false])]
+        [_ false])]
+    [_other-restored : unit
+      (tc_core.tc-type-env-scoped-runtime-restore! other-save)]
+    [scope : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-save env)]
+    [local-env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id env local-name ast.AstType.I64)]
+    [_noted : unit
+      (match (tc_core.tc-selected-current-binding-note!
+        (&mut store)
+        (& lease)
+        (&mut bindings)
+        local-env
+        ast.AstType.I64
+        typed.TypedBinderKind.Local
+        (& source))
+        [(typed.TypedResult.Ok _) unit]
+        [_ (io.panic "selected binding test: local association")])]
+    [old-origin : tc_core.TcBindingOrigin
+      (tc-selected-test-origin local-env local-name)]
+    [_scope-restored : unit (tc_core.tc-type-env-scoped-runtime-restore! scope)]
+    [_visible-restored : unit (set! bindings.len 1)]
+    [replacement-env : tc_core.TcTypeEnv
+      (tc_core.tc-bind-id env local-name ast.AstType.I64)]
+    [stale-winner : bool
+      (match (tc_core.tc-selected-binding-find!
+        (&mut store)
+        (& lease)
+        (& bindings)
+        replacement-env
+        old-origin)
+        [(tc_core.TcSelectedBinderLookup.Err error)
+          (match error
+            [(typed.TypedError.Stale) true]
+            [_ false])]
+        [_ false])]
+    [replacement-unmapped : bool
+      (match (tc_core.tc-selected-binding-find!
+        (&mut store)
+        (& lease)
+        (& bindings)
+        replacement-env
+        (tc-selected-test-origin replacement-env local-name))
+        [(tc_core.TcSelectedBinderLookup.Ok found)
+          (match found
+            [(tc_core.TcSelectedBinder.Unrepresented) true]
+            [_ false])]
+        [_ false])]
+    [owner : u64 bindings.body-owner]
+    [_wrong-owner : unit (set! bindings.body-owner (+ owner (cast 1 : u64)))]
+    [owner-rejected : bool
+      (match (tc_core.tc-selected-binding-find!
+        (&mut store)
+        (& lease)
+        (& bindings)
+        env
+        (tc-selected-test-origin env name))
+        [(tc_core.TcSelectedBinderLookup.Err error)
+          (match error
+            [(typed.TypedError.Lease) true]
+            [_ false])]
+        [_ false])]
+    [_owner-restored : unit (set! bindings.body-owner owner)]
+    [read-id : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name))]
+    [selected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        read-id
+        (ast.AstMaybeType.Some ast.AstType.I64)
+        source
+        (tc_core.TcSelectedSink.Capture (&mut store) (& lease) (&mut bindings)))
+        [(tc_core.TcSelectedResult.Ok (ast.AstType.I64) occurrence sink)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected root)
+              (match sink
+                [(tc_core.TcSelectedSink.Capture output owner _)
+                  (match (typed.typed-occurrence-get! output owner root)
+                    [(typed.TypedNodeResult.Ok node)
+                      (match node.operation
+                        [(typed.TypedOperation.Read binder)
+                          (and
+                            (= binder.handle.index 0)
+                            (match (typed.typed-binder-get!
+                              output
+                              owner
+                              (typed.TypedBinderId
+                                (typed.typed-handle-copy (& binder.handle))))
+                              [(typed.TypedBinderView.Ok record)
+                                (match (& record.kind)
+                                  [(typed.TypedBinderKind.Parameter) true]
+                                  [_ false])]
+                              [_ false]))]
+                        [_ false])]
+                    [_ false])]
+                [_ false])]
+            [_ false])]
+        [(tc_core.TcSelectedResult.Err message _) (io.panic message)]
+        [_ false])]
+    (tc_core.tc-type-env-scoped-runtime-restore! save)
+    (typed.typed-store-retire! (&mut store))
+    (and
+      foreign-pin
+      foreign-read
+      stale-winner
+      replacement-unmapped
+      owner-rejected
+      selected)))
+
+;; A tuple field is acquired from its retained place. No executable Read of
+;; the enclosing MoveOnly parameter may appear before that acquisition.
+(define (tc-selected-tuple-path-ok?
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [root : typed.TypedOccurrenceId]
+  [moving : bool]) : bool
+  (let
+    [place : typed.TypedPlaceId
+      (match (typed.typed-occurrence-get! store lease root)
+        [(typed.TypedNodeResult.Ok node)
+          (match node.operation
+            [(typed.TypedOperation.CopyPlace id)
+              (if moving
+                (return false)
+                id)]
+            [(typed.TypedOperation.MovePlace id)
+              (if moving
+                id
+                (return false))]
+            [_ (return false)])]
+        [_ (return false)])]
+    [formation : typed.TypedOccurrenceId
+      (match (typed.typed-child-get! store lease root 0)
+        [(typed.TypedChildResult.Ok id) id]
+        [_ (return false)])]
+    [formed : bool
+      (match (typed.typed-occurrence-get! store lease formation)
+        [(typed.TypedNodeResult.Ok node)
+          (and
+            (= node.child-count 0)
+            (match (& node.category)
+              [(typed.TypedOccurrenceCategory.Place id)
+                (typed.typed-handle-equal? (& id.handle) (& place.handle))]
+              [_ false])
+            (match (& node.operation)
+              [(typed.TypedOperation.FormPlace id)
+                (typed.typed-handle-equal? (& id.handle) (& place.handle))]
+              [_ false]))]
+        [_ false])]
+    [depth : i64 2]
+    [cursor : typed.TypedPlaceId place]
+    [path : bool true]
+    [_walked : unit
+      (while (> depth 0)
         (let
-          [global-type : ast.AstType
-            (cond
-              [(= shape 0) (ast.ast-ty-ref global-region (& scalar))]
-              [(= shape 1) (ast.ast-ty-mut-ref global-region (& scalar))]
-              [else (ast.ast-ty-region global-region (& scalar))])]
-          [globals : tc_core.TcTypeEnv
-            (tc_core.tc-bind-id (tc_core.tc-type-env-new) name global-type)]
-          [shadowed : tc_core.TcTypeEnv
-            (tc_core.tc-bind-id
-              (tc_core.tc-hygiene-global-env globals)
-              name
-              (ast.ast-ty-ref local-region (& scalar)))]
-          [local : tc_core.TcMovePath
-            (tc_core.TcMovePath name (tc_core.tc-move-path-segments-empty))]
-          [saved : tc_core.TcTypeEnvScopedRuntimeSave
-            (tc_core.tc-type-env-scoped-runtime-enter-env! shadowed)]
-          (tc_core.tc-hygiene-reset-active-top-env!
-            (tc_core.tc-context-macro-state ctx)
-            globals)
-          (for [identity (iterator.range 0 3)]
-            (let
-              [global-name : i64
-                (if (= identity 0)
-                  name
-                  (tc_core.macro-hygiene-global-id
-                    (tc_core.tc-context-structural-session ctx)
-                    cbi.compiler-builtin-id-fix-empty
-                    name
-                    (= identity 1)))]
-              [global : tc_core.TcMovePath
-                (tc_core.tc-move-path-capture-owner
-                  (tc_core.TcMovePath
-                    global-name
-                    (tc_core.tc-move-path-segments-empty))
-                  137)]
-              (test.assert-i64-eq
-                (tc_core.tc-borrow-check-path-lifetime ctx shadowed global)
-                global-region
-                "captured globals preserve declared lifetimes across local shadowing")))
-          (test.assert-i64-eq
-            (tc_core.tc-borrow-check-path-lifetime ctx shadowed local)
-            local-region
-            "global lookup restores scoped locals and their lifetimes")
-          (tc_core.tc-type-env-scoped-runtime-restore! saved))))))
+          [projection : typed.TypedProjectionId
+            (match (typed.typed-place-get! store lease cursor)
+              [(typed.TypedPlaceView.Ok row)
+                (match row.kind
+                  [(typed.TypedPlaceKind.Projection parent projection)
+                    (set!
+                      cursor
+                      (typed.TypedPlaceId
+                        (typed.typed-handle-copy (& parent.handle))))
+                    (typed.TypedProjectionId
+                      (typed.typed-handle-copy (& projection.handle)))]
+                  [_ (return false)])]
+              [_ (return false)])]
+          [ordinal : i64
+            (if (and (= depth 2) moving)
+              1
+              0)]
+          (set!
+            path
+            (and
+              path
+              (match (typed.typed-projection-get! store lease projection)
+                [(typed.TypedProjectionView.Ok row)
+                  (match (& row.kind)
+                    [(typed.TypedProjectionKind.TupleElement index)
+                      (= index ordinal)]
+                    [_ false])]
+                [_ false])))
+          (set! depth (- depth 1))))]
+    [parameter : bool
+      (match (typed.typed-place-get! store lease cursor)
+        [(typed.TypedPlaceView.Ok row)
+          (match (& row.kind)
+            [(typed.TypedPlaceKind.Root binder) (= binder.handle.index 0)]
+            [_ false])]
+        [_ false])]
+    [return-type : typed.TypedTypeId
+      (match (typed.typed-occurrence-get! store lease root)
+        [(typed.TypedNodeResult.Ok node) node.type]
+        [_ (return false)])]
+    [unsupported : bool
+      (match (ownership_normalize.ownership-normalize!
+        store
+        lease
+        root
+        return-type
+        (__tl_make-array ownership_normalize.OwnershipNormalizeTypeClass 0)
+        (ownership_normalize.ownership-normalize-default-limits))
+        [(ownership_normalize.OwnershipNormalizeResult.Err error)
+          (match error
+            [(ownership_normalize.OwnershipNormalizeFailure.Unsupported _) true]
+            [_ false])]
+        [_ false])]
+    (and
+      formed
+      path
+      parameter
+      unsupported
+      (= store.occurrence-count 2)
+      (= store.place-count 3))))
+
+(define (tc-selected-tuple-place-case? [mode : i64]) : bool
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [reader-explicit : bool ast.ast-node-pool-reader-explicit?]
+    [reader : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 32 32)]
+    ;; The canonical resolver and its type-list adapters use the current
+    ;; reader. Pin it to the same owner as the authored composite type.
+    [_installed : unit (ast.ast-node-pool-context-install! pools)]
+    [_reader : unit (ast.ast-node-pool-reader-use! pools)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [name : i64 (ci.intern "selected-tuple-parameter")]
+    [type : ast.AstType
+      (ast.ast-ty-tuple
+        (ast.ast-type-cons-with-pools
+          pools
+          (&
+            (ast.ast-ty-tuple
+              (ast.ast-type-cons-with-pools
+                pools
+                (& (ast.AstType.I64))
+                (&
+                  (ast.ast-type-cons-with-pools
+                    pools
+                    (& (ast.ast-ty-box-with-pools pools (& (ast.AstType.I64))))
+                    (& (ast.ast-type-list-new)))))))
+          (&
+            (ast.ast-type-cons-with-pools
+              pools
+              (& (ast.AstType.Bool))
+              (& (ast.ast-type-list-new))))))]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name))]
+    [outer : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.TupleRef var 0))]
+    [field : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.TupleRef
+          outer
+          (if (= mode 2)
+            9
+            (if (= mode 1)
+              1
+              0))))]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Int 1 "1")))]
+    ;; A sequence holding a runtime `quote` (a fresh syntax value since #8449
+    ;; M5): the binary is represented whole, its place operand included.
+    [unrepresented : i64
+      (let
+        [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
+        (ast.ast-expr-list-push
+          (&mut items)
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Quote literal)))
+        (ast.ast-expr-list-push (&mut items) literal)
+        (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Begin items)))]
+    [input : i64
+      (if (= mode 3)
+        (ast.ast-node-pool-context-expr-push
+          pools
+          (ast.AstExpr.Binary ast.AstBinOp.Add field unrepresented))
+        field)]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [bindings : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [source : ownership.OwnershipSource
+      (ownership.OwnershipSource "selected-tuple.tl" 4 9 "")]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [params : ast.AstParamList (ast.ast-param-list-new)]
+    [_param : unit
+      (ast.ast-param-list-push
+        (&mut params)
+        (ast.AstParam.Param name type false))]
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (match (tc_core.tc-type-env-scoped-carrier-bind-params
+        ctx
+        (tc_core.tc-type-env-scoped-carrier-from-env env)
+        (& params)
+        (&mut store)
+        (& lease)
+        (&mut bindings)
+        (tc_core.tc-global-shared-view source))
+        [(tc_core.ResultTcScopedCarrier.Ok value) value]
+        [(tc_core.ResultTcScopedCarrier.Err message) (io.panic message)])]
+    [save : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+    [query : bool
+      (match (tc_core.tc-expr-id ctx env input)
+        [(tc_core.ResultTcType.Ok result)
+          (if (= mode 2)
+            false
+            (match result
+              [(ast.AstType.I64) (not (= mode 1))]
+              [(ast.AstType.Box _) (= mode 1)]
+              [_ false]))]
+        [(tc_core.ResultTcType.Err message)
+          (and
+            (= mode 2)
+            (string.eq message "typecheck: tuple index out of bounds"))])]
+    [selected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        input
+        ast.AstMaybeType.No
+        source
+        (tc_core.TcSelectedSink.Capture (&mut store) (& lease) (&mut bindings)))
+        [(tc_core.TcSelectedResult.Ok _ occurrence sink)
+          (match occurrence
+            [(tc_core.TcSelectedOccurrence.Selected root)
+              (match sink
+                [(tc_core.TcSelectedSink.Capture output owner _)
+                  (or
+                    (= mode 3)
+                    (and
+                      (< mode 2)
+                      (tc-selected-tuple-path-ok? output owner root (= mode 1))))]
+                [_ false])]
+            [(tc_core.TcSelectedOccurrence.Unrepresented) false])]
+        [(tc_core.TcSelectedResult.Err message _)
+          (and
+            (= mode 2)
+            (string.eq message "typecheck: tuple index out of bounds"))])]
+    [rollback : bool
+      (or
+        (< mode 2)
+        (= mode 3)
+        (and
+          (= store.occurrence-count 0)
+          (= store.place-count 0)
+          (= store.projection-count 0)
+          (= store.binder-count 1)))]
+    (tc_core.tc-type-env-scoped-runtime-restore! save)
+    (typed.typed-store-retire! (&mut store))
+    (ast.ast-node-pool-context-install! installed)
+    (if reader-explicit
+      (ast.ast-node-pool-reader-use! reader)
+      (ast.ast-node-pool-reader-clear!))
+    (and query selected rollback)))
+
+(define (tc-selected-array-path-ok?
+  [store : (&mut store typed.TypedStore)]
+  [lease : (& lease (typed.TypedBodyLease intern))]
+  [root : typed.TypedOccurrenceId]
+  [deref? : bool]) : bool
+  (let
+    [place : typed.TypedPlaceId
+      (match (typed.typed-occurrence-get! store lease root)
+        [(typed.TypedNodeResult.Ok node)
+          (match node.operation
+            [(typed.TypedOperation.CopyPlace id) id]
+            [_ (return false)])]
+        [_ (return false)])]
+    [formation : typed.TypedOccurrenceId
+      (match (typed.typed-child-get! store lease root 0)
+        [(typed.TypedChildResult.Ok id) id]
+        [_ (return false)])]
+    [formed : bool
+      (match (typed.typed-occurrence-get! store lease formation)
+        [(typed.TypedNodeResult.Ok node)
+          (and
+            (= node.child-count 2)
+            (match (& node.operation)
+              [(typed.TypedOperation.FormPlace id)
+                (typed.typed-handle-equal? (& id.handle) (& place.handle))]
+              [_ false]))]
+        [_ false])]
+    [at : i64 0]
+    [order : bool true]
+    [previous-serial : u64 (cast 0 : u64)]
+    [_indices : unit
+      (while (< at 2)
+        (let
+          [child : typed.TypedOccurrenceId
+            (match (typed.typed-child-get! store lease formation at)
+              [(typed.TypedChildResult.Ok id) id]
+              [_ (return false)])]
+          [origin : typed.TypedOriginId
+            (match (typed.typed-occurrence-get! store lease child)
+              [(typed.TypedNodeResult.Ok node)
+                (typed.TypedOriginId
+                  (typed.typed-handle-copy (& node.origin.handle)))]
+              [_ (return false)])]
+          [located : bool
+            (match (typed.typed-origin-get! store lease origin)
+              [(typed.TypedOriginView.Ok source) (= source.line (+ 8 at))]
+              [_ false])]
+          (set!
+            order
+            (and order located (> child.handle.serial previous-serial)))
+          (set! previous-serial child.handle.serial)
+          (set! at (+ at 1))))]
+    [index-count : bool
+      (match (typed.typed-place-get! store lease place)
+        [(typed.TypedPlaceView.Ok row) (= row.index-count 2)]
+        [_ false])]
+    [cursor : typed.TypedPlaceId place]
+    [depth : i64 2]
+    [projection-origins : bool true]
+    [_origins : unit
+      (while (> depth 0)
+        (let
+          [projection : typed.TypedProjectionId
+            (match (typed.typed-place-get! store lease cursor)
+              [(typed.TypedPlaceView.Ok row)
+                (match (& row.kind)
+                  [(typed.TypedPlaceKind.Projection parent step)
+                    (set!
+                      cursor
+                      (typed.TypedPlaceId
+                        (typed.typed-handle-copy (& parent.handle))))
+                    (typed.TypedProjectionId
+                      (typed.typed-handle-copy (& step.handle)))]
+                  [_ (return false)])]
+              [_ (return false)])]
+          [origin : typed.TypedOriginId
+            (match (typed.typed-projection-get! store lease projection)
+              [(typed.TypedProjectionView.Ok row)
+                (typed.TypedOriginId
+                  (typed.typed-handle-copy (& row.origin.handle)))]
+              [_ (return false)])]
+          [located : bool
+            (match (typed.typed-origin-get! store lease origin)
+              [(typed.TypedOriginView.Ok source)
+                (=
+                  source.line
+                  (if (= depth 2)
+                    4
+                    6))]
+              [_ false])]
+          (set! projection-origins (and projection-origins located))
+          (set! depth (- depth 1))))]
+    ;; Through a reference receiver the elements project from its referent.
+    [dereferenced : bool
+      (if deref?
+        (match (typed.typed-place-get! store lease cursor)
+          [(typed.TypedPlaceView.Ok row)
+            (match (& row.kind)
+              [(typed.TypedPlaceKind.Projection _ step)
+                (match (typed.typed-projection-get!
+                  store
+                  lease
+                  (typed.TypedProjectionId
+                    (typed.typed-handle-copy (& step.handle))))
+                  [(typed.TypedProjectionView.Ok view)
+                    (match (& view.kind)
+                      [(typed.TypedProjectionKind.Deref) true]
+                      [_ false])]
+                  [_ false])]
+              [_ false])]
+          [_ false])
+        true)]
+    (and
+      formed
+      order
+      index-count
+      projection-origins
+      dereferenced
+      (=
+        store.place-count
+        (if deref?
+          4
+          3))
+      (= store.binder-count 3)
+      (= store.occurrence-count 10))))
+
+;; The same index syntax is selected twice, with two source origins and fresh
+;; lexical binder generations. Outside a body check no type facts are recorded,
+;; so every visit types the index's let initializer anew. The capture counted
+;; below captures both occurrences with no query of its own (a slice element is
+;; a place like an array element, so no receiver is classified first); the
+;; exact count keeps that linear.
+(define (tc-selected-array-place-case? [mode : i64]) : bool
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [reader-explicit : bool ast.ast-node-pool-reader-explicit?]
+    [reader : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 32 32)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [_reader : unit (ast.ast-node-pool-reader-use! pools)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [name : i64 (ci.intern "selected-array-parameter")]
+    [local : i64 (ci.intern "selected-array-index")]
+    [row : ast.AstType
+      (ast.ast-ty-array-with-pools pools (& (ast.AstType.I64)) 2)]
+    [matrix : ast.AstType
+      (if (= mode 1)
+        (ast.ast-ty-dyn-array-with-pools pools row)
+        (ast.ast-ty-array-with-pools pools row 2))]
+    [type : ast.AstType
+      (cond
+        [(= mode 2) ast.AstType.Bool]
+        [(= mode 5) (ast.ast-ty-ref-with-pools pools 0 matrix)]
+        [else matrix])]
+    [var : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var name))]
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
+    [local-read : i64
+      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var local))]
+    [locals : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
+    [_local : unit
+      (ast.ast-let-binding-list-push
+        (&mut locals)
+        (ast.AstLetBinding.Binding
+          local
+          (ast.AstMaybeType.Some ast.AstType.I64)
+          literal))]
+    [index : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Let (box (ast.AstLet.Let locals local-read))))]
+    [chosen : i64
+      (cond
+        [(= mode 3)
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+        [(= mode 4)
+          ;; A runtime `quote` in the index sequence (represented since M5).
+          (let
+            [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
+            (ast.ast-expr-list-push
+              (&mut items)
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (ast.AstExpr.Quote literal)))
+            (ast.ast-expr-list-push (&mut items) index)
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Begin items)))]
+        [else index])]
+    [first : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Spanned chosen (ast.ast-source-span 8 3 8 12)))]
+    [second : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Spanned index (ast.ast-source-span 9 3 9 12)))]
+    [inner-array : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.ArrayRef var first))]
+    [outer : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Spanned inner-array (ast.ast-source-span 6 3 8 12)))]
+    [input : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.ArrayRef outer second))]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [bindings : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [source : ownership.OwnershipSource
+      (ownership.OwnershipSource "selected-array.tl" 4 9 "")]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [params : ast.AstParamList (ast.ast-param-list-new)]
+    [_param : unit
+      (ast.ast-param-list-push
+        (&mut params)
+        (ast.AstParam.Param name type false))]
+    [carrier : tc_core.TcTypeEnvScopedCarrier
+      (match (tc_core.tc-type-env-scoped-carrier-bind-params
+        ctx
+        (tc_core.tc-type-env-scoped-carrier-from-env env)
+        (& params)
+        (&mut store)
+        (& lease)
+        (&mut bindings)
+        (tc_core.tc-global-shared-view source))
+        [(tc_core.ResultTcScopedCarrier.Ok value) value]
+        [(tc_core.ResultTcScopedCarrier.Err message) (io.panic message)])]
+    [save : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter! carrier)]
+    [query-result : tc_core.ResultTcType (tc_core.tc-expr-id ctx env input)]
+    [_before : i64
+      (cfg test (tc_core.tc-let-binding-init-type-call-count-for-test) 0)]
+    [selected : bool
+      (match (tc_core.tc-infer-selected-id
+        ctx
+        env
+        input
+        ast.AstMaybeType.No
+        source
+        (tc_core.TcSelectedSink.Capture (&mut store) (& lease) (&mut bindings)))
+        [(tc_core.TcSelectedResult.Ok _ occurrence sink)
+          (and
+            (match query-result
+              [(tc_core.ResultTcType.Ok (ast.AstType.I64)) true]
+              [_ false])
+            (match occurrence
+              [(tc_core.TcSelectedOccurrence.Selected root)
+                (match sink
+                  [(tc_core.TcSelectedSink.Capture output owner _)
+                    (or
+                      (= mode 4)
+                      (and
+                        (or (< mode 2) (= mode 5))
+                        (tc-selected-array-path-ok?
+                          output
+                          owner
+                          root
+                          (= mode 5))))]
+                  [_ false])]
+              [(tc_core.TcSelectedOccurrence.Unrepresented) false]))]
+        [(tc_core.TcSelectedResult.Err message _)
+          (and
+            (or (= mode 2) (= mode 3))
+            (match query-result
+              [(tc_core.ResultTcType.Err expected) (string.eq message expected)]
+              [_ false]))])]
+    [once : bool
+      (cfg
+        test
+        ;; A Bool receiver fails at the first captured occurrence; a Bool
+        ;; literal index (mode 3) never reaches the let.
+        (=
+          (- (tc_core.tc-let-binding-init-type-call-count-for-test) _before)
+          (cond [(= mode 2) 1] [(= mode 3) 0] [else 2]))
+        true)]
+    [rollback : bool
+      (or
+        (< mode 2)
+        (= mode 4)
+        (= mode 5)
+        (and
+          (= store.occurrence-count 0)
+          (= store.place-count 0)
+          (= store.projection-count 0)
+          (= store.binder-count 1)))]
+    (tc_core.tc-type-env-scoped-runtime-restore! save)
+    (typed.typed-store-retire! (&mut store))
+    (ast.ast-node-pool-context-install! installed)
+    (if reader-explicit
+      (ast.ast-node-pool-reader-use! reader)
+      (ast.ast-node-pool-reader-clear!))
+    (and selected once rollback)))
+
+(define (tc-selected-field-winner-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [left : i64 (ci.intern "SelectedFieldLeft")]
+    [right : i64 (ci.intern "SelectedFieldRight")]
+    [member : i64 (ci.intern "shared-field")]
+    [first : i64 (ci.intern "first-field")]
+    [fields-a : ast.AstFieldDefList (ast.ast-field-def-list-new)]
+    [fields-b : ast.AstFieldDefList (ast.ast-field-def-list-new)]
+    [_fields : unit
+      (begin
+        (ast.ast-field-def-list-push
+          (&mut fields-a)
+          (ast.ast-field-def-id
+            (ci.intern-syntax-id-from-raw first)
+            ast.AstType.Bool
+            ast.AstFieldCleanup.No))
+        (ast.ast-field-def-list-push
+          (&mut fields-a)
+          (ast.ast-field-def-id
+            (ci.intern-syntax-id-from-raw member)
+            ast.AstType.I64
+            ast.AstFieldCleanup.No))
+        (ast.ast-field-def-list-push
+          (&mut fields-b)
+          (ast.ast-field-def-id
+            (ci.intern-syntax-id-from-raw member)
+            ast.AstType.Bool
+            ast.AstFieldCleanup.No)))]
+    [decls : ast.AstDeclList (ast.ast-decl-list-new)]
+    [_decls : unit
+      (begin
+        (ast.ast-decl-list-push
+          (&mut decls)
+          (ast.ast-decl-def-struct-id
+            left
+            ast.AstStructRepr.Default
+            ast.AstStructCleanup.No
+            fields-a))
+        (ast.ast-decl-list-push
+          (&mut decls)
+          (ast.ast-decl-def-struct-id
+            right
+            ast.AstStructRepr.Default
+            ast.AstStructCleanup.No
+            fields-b)))]
+    [program : ast.AstProgram (ast.ast-program decls)]
+    [symbols : csym.CompilerSymbols
+      (match (csym.build-compiler-symbols (& program))
+        [(csym.ResultCompilerSymbols.Ok value) value]
+        [(csym.ResultCompilerSymbols.Err message) (io.panic message)])]
+    [registries : csym.CompilerRegistries
+      (match (csym.build-compiler-registries-with-symbols
+        (& program)
+        (& symbols))
+        [(csym.ResultCompilerRegistries.Ok value) value]
+        [(csym.ResultCompilerRegistries.Err message) (io.panic message)])]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        program
+        symbols
+        registries
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        pools)]
+    [left-ok : bool
+      (match (tc_core.tc-struct-get-selected-id
+        ctx
+        (ast.AstType.Struct left)
+        member)
+        [(tc_core.ResultTcField.Ok field)
+          (and
+            (match field.type
+              [(ast.AstType.I64) true]
+              [_ false])
+            (match field.identity
+              [(tc_core.TcFieldIdentity.Nominal declaration ordinal)
+                (and (= declaration 0) (= ordinal 1))]
+              [_ false]))]
+        [_ false])]
+    [right-ok : bool
+      (match (tc_core.tc-struct-get-selected-id
+        ctx
+        (ast.AstType.Struct right)
+        member)
+        [(tc_core.ResultTcField.Ok field)
+          (and
+            (match field.type
+              [(ast.AstType.Bool) true]
+              [_ false])
+            (match field.identity
+              [(tc_core.TcFieldIdentity.Nominal declaration ordinal)
+                (and (= declaration 1) (= ordinal 0))]
+              [_ false]))]
+        [_ false])]
+    [intrinsic : bool
+      (match (tc_core.tc-struct-get-selected-id
+        ctx
+        ast.AstType.ExprList
+        cbi.compiler-builtin-id-fix-len)
+        [(tc_core.ResultTcField.Ok field)
+          (and
+            (match field.type
+              [(ast.AstType.I64) true]
+              [_ false])
+            (match field.identity
+              [(tc_core.TcFieldIdentity.Intrinsic) true]
+              [_ false]))]
+        [_ false])]
+    [legacy : bool
+      (match (tc_core.tc-struct-get-result-type-id
+        ctx
+        (ast.AstType.Struct left)
+        member)
+        [(tc_core.ResultTcType.Ok ty)
+          (match ty
+            [(ast.AstType.I64) true]
+            [_ false])]
+        [_ false])]
+    [invalid : bool
+      (match (tc_core.tc-struct-get-selected-id ctx ast.AstType.Bool member)
+        [(tc_core.ResultTcField.Err message)
+          (match (tc_core.tc-struct-get-result-type-id
+            ctx
+            ast.AstType.Bool
+            member)
+            [(tc_core.ResultTcType.Err legacy-message)
+              (string.eq message legacy-message)]
+            [_ false])]
+        [_ false])]
+    (and left-ok right-ok intrinsic legacy invalid)))
+
+(define (compiler-typecheck-selected-inference-ok?) : bool
+  ;; The isolated inline runner starts without the native smoke's parser
+  ;; initialization. A live source lease requires its initialized generation.
+  (cbi.compiler-builtin-initialize-for-parse!)
+  ;; Earlier inline tests reset the intern table; like a production entry,
+  ;; bind the serial job's source names to the active session before use
+  ;; (its lazy binding would otherwise keep the pre-reset session, which the
+  ;; structural interner rejects as stale).
+  (tc_core.tc-macro-state-bind-source-names!
+    (tc_core.tc-job-state-macro-state (tc_core.tc-serial-job-state))
+    (ci.intern-source-name-session-capture-active-handle))
+  (and
+    (tc-selected-contextual-results-ok?)
+    (tc-selected-unary-and-plain-if-ok?)
+    (tc-selected-plain-binary-ok?)
+    (tc-selected-literal-probe-case? 0)
+    (tc-selected-literal-probe-case? 1)
+    (tc-selected-literal-probe-case? 2)
+    (tc-selected-literal-probe-case? 3)
+    (tc-selected-literal-probe-case? 4)
+    (tc-selected-abandoned-parent-ok?)
+    (tc-selected-query-reader-owner-ok?)
+    (tc-selected-normalizer-hook-ok?)
+    (tc-selected-binding-winner-ok?)
+    (tc-selected-binding-exhaustion-ok?)
+    (tc-selected-restore-exhaustion-case? false)
+    (tc-selected-restore-exhaustion-case? true)
+    (tc-selected-negative-slot-exhaustion-ok?)
+    (tc-selected-begin-ok?)
+    (tc-selected-let-ok?)
+    (tc-selected-set-ok?)
+    (tc-selected-return-ok?)
+    (tc-selected-while-ok?)
+    (tc-selected-parameter-association-ok?)
+    (tc-selected-tuple-place-case? 0)
+    (tc-selected-tuple-place-case? 1)
+    (tc-selected-tuple-place-case? 2)
+    (tc-selected-tuple-place-case? 3)
+    (tc-selected-array-place-case? 0)
+    (tc-selected-array-place-case? 1)
+    (tc-selected-array-place-case? 2)
+    (tc-selected-array-place-case? 3)
+    (tc-selected-array-place-case? 4)
+    (tc-selected-array-place-case? 5)
+    (tc-selected-field-winner-ok?)))
+
+;; A macro-hygienic let binder is a structural key, not an intern id. The
+;; free-name analyses render binders through the key's session; they used to
+;; read the raw intern pool with such a key, an out-of-bounds read that
+;; crashed the compiler on `io.print-format` inside borrow-checked bodies.
+(define (tc-free-names-hygienic-binder-ok?) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [init : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [bindings : ast.AstLetBindingList
+      (ast.ast-let-binding-list-with-capacity 1)]
+    (ast.ast-let-binding-list-push
+      (&mut bindings)
+      (ast.ast-let-binding-id
+        (+ (ci.intern-structural-key-base) 7)
+        (ast.AstMaybeType.No)
+        init))
+    (not
+      (tc_core.tc-let-binding-list-uses-free-names?
+        (ast.ast-node-pool-context-expr-segment-bases (& pools))
+        bindings
+        (tc_core.TcStringList.One "free-name-probe")
+        (tc_core.TcStringList.Nil)
+        false))))
+
+(test
+  free-names-hygienic-binder
+  (test.assert-true
+    (tc-free-names-hygienic-binder-ok?)
+    "free-name analysis renders a hygienic binder through its session"))
+
+;; A signature's arena brand (#8449): the lifetime an arena owner parameter
+;; binds, by value or behind `&`, brands its `(in r T)` parameters. The call
+;; slice takes such a parameter as an owned value of that arena, and an
+;; argument only with exactly that brand.
+(define (tc-selected-arena-branded-signature-ok?) : bool
+  (let
+    [_init : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [_installed : unit (ast.ast-node-pool-context-install! pools)]
+    [_reader : unit (ast.ast-node-pool-reader-use! pools)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [brand : i64 (ci.intern "selected-signature-brand")]
+    [other : i64 (ci.intern "selected-signature-other")]
+    [borrow : i64 (ci.intern "selected-signature-borrow")]
+    [brands : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+    [_brands : unit (ast.ast-lifetime-list-push (&mut brands) brand)]
+    [owner : ast.AstType
+      (ast.ast-ty-struct-args cbi.compiler-builtin-id-arena-type brands)]
+    [branded : ast.AstType
+      (ast.ast-ty-region-with-pools pools brand (& (ast.AstType.String)))]
+    [foreign : ast.AstType
+      (ast.ast-ty-region-with-pools pools other (& (ast.AstType.String)))]
+    [by-value : ast.AstTypeList
+      (ast.ast-type-cons-with-pools
+        pools
+        (& owner)
+        (&
+          (ast.ast-type-cons-with-pools
+            pools
+            (& branded)
+            (& (ast.ast-type-list-new)))))]
+    [by-reference : ast.AstTypeList
+      (ast.ast-type-cons-with-pools
+        pools
+        (& (ast.ast-ty-ref-with-pools pools borrow (& owner)))
+        (&
+          (ast.ast-type-cons-with-pools
+            pools
+            (& branded)
+            (& (ast.ast-type-list-new)))))]
+    [regions : (__tl_dyn-array i64)
+      (tc_core.tc-selected-signature-arena-regions ctx (& by-value))]
+    [none : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [value-marks : (__tl_dyn-array bool)
+      (tc_core.tc-selected-arena-branded-params ctx (& by-value))]
+    [reference-marks : (__tl_dyn-array bool)
+      (tc_core.tc-selected-arena-branded-params ctx (& by-reference))]
+    (and
+      (= (array-length regions) 1)
+      (= (array-ref regions 0) brand)
+      (not (array-ref value-marks 0))
+      (array-ref value-marks 1)
+      (not (array-ref reference-marks 0))
+      (array-ref reference-marks 1)
+      ;; Without the signature's brand the branded parameter has no graph type.
+      (not
+        (tc_core.tc-selected-call-param-type-ok?
+          ctx
+          (tc_core.tc-selected-signature-arena-erase
+            ctx
+            (& none)
+            (tc_core.tc-global-shared-view branded))))
+      (tc_core.tc-selected-call-param-type-ok?
+        ctx
+        (tc_core.tc-selected-signature-arena-erase
+          ctx
+          (& regions)
+          (tc_core.tc-global-shared-view branded)))
+      (tc_core.tc-selected-arena-brand-exact?
+        (tc_core.tc-global-shared-view branded)
+        (tc_core.tc-global-shared-view branded))
+      (tc_core.tc-selected-arena-brand-exact?
+        ast.AstType.String
+        (tc_core.tc-global-shared-view branded))
+      (not (tc_core.tc-selected-arena-brand-exact? foreign branded)))))
+
+(test
+  selected-arena-branded-signature
+  (test.assert-true
+    (tc-selected-arena-branded-signature-ok?)
+    "an arena parameter's brand makes the call's (in r T) parameters owned, with exactly that brand"))
+
+(test
+  selected-inference-transactions
+  (test.assert-true
+    (compiler-typecheck-selected-inference-ok?)
+    "selected inference keeps contextual occurrences, abandons probes, and validates body leases"))
+
+;; Source inference and the selected graph share the original while checks.
+;; Reusing syntax twice must still select two executions and fresh binders.
+(define (tc-selected-while-case? [mode : i64]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+    [name : i64 (ci.intern "selected-while-local")]
+    [boolean : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.AstLiteral.Bool true)))]
+    [number : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 42)))]
+    [unit-id : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+    [break-id : i64
+      (ast.ast-node-pool-context-expr-push pools ast.AstExpr.Break)]
+    [continue-id : i64
+      (ast.ast-node-pool-context-expr-push pools ast.AstExpr.Continue)]
+    [condition : i64
+      (cond [(= mode 4) break-id] [(= mode 7) number] [else boolean])]
+    [body : i64
+      (cond
+        [(= mode 0) continue-id]
+        [(= mode 1) break-id]
+        [(= mode 2)
+          (let
+            [inner : i64
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (ast.AstExpr.While
+                  boolean
+                  (ast.ast-expr-cons break-id (& (ast.ast-expr-list-new)))))]
+            [items : ast.AstExprList (ast.ast-expr-list-new)]
+            (ast.ast-expr-list-push (&mut items) inner)
+            (ast.ast-expr-list-push (&mut items) continue-id)
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Begin items)))]
+        [(or (= mode 3) (= mode 11))
+          (tc-selected-test-let-id pools name ast.AstType.I64 number unit-id)]
+        [(= mode 5) number]
+        [(= mode 6)
+          (let
+            [unsupported : i64
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (ast.AstExpr.Ann
+                  number
+                  (ast.ast-node-pool-context-type-push pools ast.AstType.I64)))]
+            [items : ast.AstExprList (ast.ast-expr-list-new)]
+            (ast.ast-expr-list-push (&mut items) unsupported)
+            (ast.ast-expr-list-push (&mut items) unit-id)
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Begin items)))]
+        [(or (= mode 7) (= mode 10))
+          (tc-selected-test-let-id pools name ast.AstType.Bool number unit-id)]
+        [else unit-id])]
+    [while-id : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.While
+          condition
+          (ast.ast-expr-cons body (& (ast.ast-expr-list-new)))))]
+    [expression : i64
+      (cond
+        [(= mode 8) break-id]
+        [(= mode 9) continue-id]
+        [(= mode 11)
+          (let
+            [items : ast.AstExprList (ast.ast-expr-list-new)]
+            (ast.ast-expr-list-push (&mut items) while-id)
+            (ast.ast-expr-list-push (&mut items) while-id)
+            (ast.ast-node-pool-context-expr-push
+              pools
+              (ast.AstExpr.Begin items)))]
+        [else while-id])]
+    [intern-state : ci.InternCompatState
+      (ci.intern-compat-state-capture-active)]
+    [lease : (typed.TypedBodyLease intern-state)
+      (tc-selected-test-lease ctx (& intern-state))]
+    [selected-bindings-26 : tc_core.TcSelectedBindings
+      (tc_core.tc-selected-bindings-new (& lease))]
+    [store : typed.TypedStore (tc-selected-test-store (& lease))]
+    [env : tc_core.TcTypeEnv
+      (tc_core.tc-empty-env-with-job-state (tc_core.tc-context-job-state ctx))]
+    [saved : tc_core.TcTypeEnvScopedRuntimeSave
+      (tc_core.tc-type-env-scoped-runtime-enter!
+        (tc_core.tc-type-env-scoped-carrier-from-env env))]
+    [initializers : i64
+      (cfg test (tc_core.tc-let-binding-init-type-call-count-for-test) 0)]
+    [accepted : bool
+      (tc-selected-while-result?
+        ctx
+        env
+        expression
+        mode
+        initializers
+        (tc_core.tc-infer-selected-id
+          ctx
+          env
+          expression
+          ast.AstMaybeType.No
+          (ownership.OwnershipSource "selected-while.tl" 19 3 "")
+          (tc_core.tc-selected-capture
+            (&mut store)
+            (& lease)
+            (&mut selected-bindings-26))))]
+    [restored : bool (not (tc_core.tc-in-loop-target? env))]
+    [query : bool
+      (if (or
+        (= mode 4)
+        (= mode 5)
+        (= mode 7)
+        (= mode 8)
+        (= mode 9)
+        (= mode 10))
+        true
+        (match (tc_core.tc-expr-id ctx env expression)
+          [(tc_core.ResultTcType.Ok (ast.AstType.Unit)) true]
+          [_ false]))]
+    (tc_core.tc-type-env-scoped-runtime-restore! saved)
+    (typed.typed-store-retire! (&mut store))
+    (and accepted restored query)))
+
+(define (tc-selected-while-result?
+  [ctx : tc_core.TcContext]
+  [env : tc_core.TcTypeEnv]
+  [expression : i64]
+  [mode : i64]
+  [_initializers : i64]
+  [result : (tc_core.TcSelectedResult store lease intern bind)]) : bool
+  (match result
+    [(tc_core.TcSelectedResult.Err message sink)
+      (match sink
+        [(tc_core.TcSelectedSink.Query) false]
+        [(tc_core.TcSelectedSink.Capture store _ associations)
+          (and
+            (or
+              (= mode 4)
+              (= mode 5)
+              (= mode 7)
+              (= mode 8)
+              (= mode 9)
+              (= mode 10))
+            (= store.occurrence-count 0)
+            (= store.binder-count 0)
+            (= associations.len 0)
+            ;; Both condition and body are invalid in mode 7. Condition failure
+            ;; must win without inferring the later binding initializer.
+            (or
+              (!= mode 7)
+              (and
+                (string.contains message "while condition must be bool")
+                (cfg
+                  test
+                  (=
+                    (tc_core.tc-let-binding-init-type-call-count-for-test)
+                    _initializers)
+                  true)))
+            (or (!= mode 5) (string.contains message "while body must be unit"))
+            (or
+              (and (!= mode 4) (!= mode 8) (!= mode 9))
+              (string.contains message "requires enclosing scalar while"))
+            (match (tc_core.tc-expr-id ctx env expression)
+              [(tc_core.ResultTcType.Err query-message)
+                (string.eq message query-message)]
+              [_ false]))])]
+    [(tc_core.TcSelectedResult.Ok (ast.AstType.Unit) occurrence sink)
+      (match sink
+        [(tc_core.TcSelectedSink.Query) false]
+        [(tc_core.TcSelectedSink.Capture store lease associations)
+          (and
+            (= associations.len 0)
+            (match occurrence
+              [(tc_core.TcSelectedOccurrence.Unrepresented)
+                (and
+                  (= mode 6)
+                  (= store.occurrence-count 0)
+                  (= store.binder-count 0))]
+              [(tc_core.TcSelectedOccurrence.Selected root)
+                (let
+                  [once? : bool
+                    (cfg
+                      test
+                      (=
+                        (-
+                          (tc_core.tc-let-binding-init-type-call-count-for-test)
+                          _initializers)
+                        (cond [(= mode 3) 1] [(= mode 11) 2] [else 0]))
+                      true)]
+                  [type : typed.TypedTypeId
+                    (match (typed.typed-type-add! store lease ast.AstType.Unit)
+                      [(typed.TypedTypeIdResult.Ok type) type]
+                      [_ (io.panic "selected while: return type")])]
+                  [normalized : bool
+                    (match (ownership_normalize.ownership-normalize!
+                      store
+                      lease
+                      root
+                      type
+                      (__tl_make-array
+                        ownership_normalize.OwnershipNormalizeTypeClass
+                        0)
+                      (ownership_normalize.ownership-normalize-default-limits))
+                      [(ownership_normalize.OwnershipNormalizeResult.Ok output)
+                        (and
+                          (=
+                            (array-length output.body.blocks)
+                            (if (or (= mode 2) (= mode 11))
+                              7
+                              4))
+                          (or (!= mode 11) (= store.binder-count 2)))]
+                      [_ false])]
+                  (and once? normalized))]))])]
+    [_ false]))
+
+(define (tc-selected-while-ok?) : bool
+  (let
+    [mode : i64 0]
+    (while (< mode 12)
+      (unless
+        (tc-selected-while-case? mode)
+        (io.panic
+          (str_cat.str-cat "selected while: mode " (string.int->string mode))))
+      (set! mode (+ mode 1)))
+    true))
 
 ;; The failed-operand channel (#8871): a noted node is only re-checked for the
 ;; generic `expr-type` failure and only inside the context's pool, and every
@@ -12647,466 +16005,6 @@
       compact
       "over a compact marker, it keeps the marker's Spanned view")))
 
-;; A Copy field projection through `deref` consults the checked receiver fact
-;; through a source or macro view of the projection; non-Copy and unknown fields
-;; keep the consuming dereference (#8994).
-(test
-  tc-copy-projection-source-views-reuse-checked-receiver-facts
-  (let
-    [installed : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-capture-active)]
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 64 16)]
-    [_ (ast.ast-node-pool-context-install! pools)]
-    [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
-    [ctx : tc_core.TcContext
-      (tc_core.tc-context-new-with-source-names-and-job-state
-        (ast.ast-program (ast.ast-decl-list-new))
-        (csym.compiler-symbols-empty)
-        (csym.compiler-registries-empty)
-        ""
-        cbi.compiler-builtin-id-fix-empty
-        pools
-        (ci.intern-source-name-session-capture-active-handle)
-        job)]
-    [env : tc_core.TcTypeEnv (tc_core.tc-empty-env-with-job-state job)]
-    [state : tc_core.TcBodyState (tc_core.tc-context-body-state ctx)]
-    [sources
-      (array
-        "(deref unknown).len"
-        "(deref unknown).items"
-        "(deref unknown).missing")]
-    [bases : i64 (tc_core.tc-context-expr-bases ctx)]
-    (for [index (iterator.range 0 3)]
-      (let
-        [body-id : i64
-          (match (parser.parse-ast-source-with-cfg-and-pools
-            (&
-              (str_cat.str-cat
-                "(define (probe) : i64 "
-                (string.copy (array-ref sources index))
-                ")"))
-            (parser.compiler-cfg-empty)
-            pools)
-            [(Ok (Program decls-box))
-              (match (ast.ast-decl-list-step (deref decls-box))
-                [(Cons (DefFn _ _ _ _ body-box _) _) body-box]
-                [_ -1])]
-            [(Err _) -1])]
-        (test.assert-true (>= body-id 0) "source projection parses")
-        (for [wrapper (iterator.range 0 2)]
-          (let
-            [projection : ast.AstExpr
-              (if (= wrapper 0)
-                (tc_core.tc-context-expr-get ctx body-id)
-                (MacroExpansion body-id 0 0))]
-            (match (ast.ast-expr-unspan-with-segment-bases bases (& projection))
-              [(StructGet receiver-id _)
-                ;; The missing local makes re-inference fail: only the checked
-                ;; receiver fact can prove that .len is a Copy projection.
-                (tc_core.tc-body-type-fact-storage-start!
-                  state
-                  (ast.ast-node-pool-context-expr-len pools))
-                (tc_core.tc-body-type-facts-start-recording! state)
-                (tc_core.tc-body-type-fact-record! state receiver-id (ExprList))
-                (tc_core.tc-body-type-facts-start-consuming! state)
-                (let
-                  [receiver : ast.AstExpr
-                    (tc_core.tc-move-projection-receiver
-                      ctx
-                      env
-                      bases
-                      projection
-                      (tc_core.tc-context-expr-get ctx receiver-id))]
-                  (test.assert-true
-                    (match (ast.ast-expr-unspan-with-segment-bases
-                      bases
-                      (& receiver))
-                      [(Var _) (= index 0)]
-                      [(BoxTake _) (!= index 0)]
-                      [_ false])
-                    (str_cat.str-cat
-                      "checked source projection: "
-                      (string.copy (array-ref sources index)))))
-                (tc_core.tc-body-type-fact-storage-release! state)]
-              [_ (io.panic "expected a parsed field projection")])))))
-    (tc_core.tc-job-state-retire-owned-storage! job)
-    (ast.ast-node-pool-context-install! installed)
-    (ast.ast-node-pool-context-destroy-storage! pools)))
-
-;; A node with no source span of its own, such as a dotted name's root, is
-;; viewed at the enclosing read's span without a new node. A spanned node keeps
-;; its own view, and an unspanned enclosing view leaves the node bare (#8994).
-(test
-  tc-move-located-view-names-the-enclosing-read
-  (let
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 64 8)]
-    [bases : i64 (ast.ast-node-pool-context-expr-segment-bases pools)]
-    [read-span : ast.AstSourceSpan (ast.ast-source-span 9 3 9 5)]
-    [own-span : ast.AstSourceSpan (ast.ast-source-span 4 7 4 9)]
-    [root : i64
-      (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "p")))]
-    [read : i64 (ast.ast-expr-source-view-with-pools pools root read-span)]
-    [spanned : i64 (ast.ast-expr-source-view-with-pools pools root own-span)]
-    [count : i64 (ast.ast-node-pool-context-expr-len pools)]
-    (test.assert-true
-      (match (tc_core.tc-move-located-view
-        bases
-        (& (ast.ast-node-pool-context-expr-get pools read))
-        root)
-        [(Spanned inner span)
-          (and (= inner root) (ast.ast-source-span-eq? span read-span))]
-        [_ false])
-      "an unspanned root is viewed at the enclosing read")
-    (test.assert-true
-      (match (tc_core.tc-move-located-view
-        bases
-        (& (ast.ast-node-pool-context-expr-get pools read))
-        spanned)
-        [(Spanned inner span)
-          (and (= inner root) (ast.ast-source-span-eq? span own-span))]
-        [_ false])
-      "a spanned node keeps its own view")
-    (test.assert-true
-      (match (tc_core.tc-move-located-view
-        bases
-        (& (ast.ast-node-pool-context-expr-get pools root))
-        root)
-        [(Var _) true]
-        [_ false])
-      "an unspanned enclosing view leaves the node bare")
-    (test.assert-i64-eq
-      (ast.ast-node-pool-context-expr-len pools)
-      count
-      "viewing allocates no node")
-    (ast.ast-node-pool-context-destroy-storage! pools)))
-
-(test
-  tc-clone-read-shared-node-occurrences
-  (let
-    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 1 1)]
-    [_install : unit (ast.ast-node-pool-context-install! pools)]
-    [receiver : i64 (ast.ast-node-push (ast.AstExpr.Var 0))]
-    [shared : i64 (ast.ast-node-push (ast.AstExpr.BoxTake receiver))]
-    [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
-    [_prefix : unit (ast.ast-expr-list-push (&mut items) shared)]
-    [_tail : unit (ast.ast-expr-list-push (&mut items) shared)]
-    [source : i64 (ast.ast-node-push (ast.AstExpr.Begin items))]
-    [read : ast.AstExpr
-      (ast.ast-node-get (tc_core.tc-read-value-expr-id (& pools) source))]
-    (test.assert-true
-      (match read
-        [(Begin rewritten)
-          (and
-            (= (ast.ast-expr-list-get (& rewritten) 0 -1) shared)
-            (match (ast.ast-node-get (ast.ast-expr-list-get (& rewritten) 1 -1))
-              [(BoxGet id)
-                (match (ast.ast-node-get id)
-                  [(Var name) (= name 0)]
-                  [_ false])]
-              [_ false])
-            (match (ast.ast-node-get shared)
-              [(BoxTake id) (= id receiver)]
-              [_ false]))]
-        [_ false])
-      "a shared AST node remains owning in the prefix and read-only in the tail")
-    (ast.ast-node-pool-context-install! saved)))
-
-(test
-  tc-read-value-reuses-source-ids
-  (let
-    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 4 1)]
-    [_install : unit (ast.ast-node-pool-context-install! pools)]
-    [source : i64 (ast.ast-node-push (ast.AstExpr.Var (ci.intern "owner")))]
-    [count : i64 (ast.ast-node-pool-context-expr-len pools)]
-    [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
-    (test.assert-i64-eq read source "an unchanged read retains its source ID")
-    (test.assert-i64-eq
-      (ast.ast-node-pool-context-expr-len pools)
-      count
-      "an unchanged read appends no expression")
-    (ast.ast-node-pool-context-install! saved)
-    (ast.ast-node-pool-context-destroy-storage! pools)))
-
-(cfg
-  test
-  (define (tc-read-test-expr
-    [pools : ast.AstNodePoolContext]
-    [kind : i64]
-    [leaf : i64]
-    [other : i64]
-    [type-id : i64]) : i64
-    (in-arena
-      (arena.Arena pools.owner-arena)
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (match kind
-          [0 (ast.AstExpr.Spanned leaf (ast.ast-source-span 2 3 2 9))]
-          [1 (ast.AstExpr.Ann leaf type-id)]
-          [2 (ast.AstExpr.Cast leaf type-id)]
-          [3 (ast.AstExpr.MacroExpansion leaf 71 72)]
-          [(or 4 5 14 15)
-            (let
-              [items : ast.AstExprList (ast.ast-expr-list-with-capacity 2)]
-              (ast.ast-expr-list-push (&mut items) other)
-              (ast.ast-expr-list-push (&mut items) leaf)
-              (match kind
-                [4 (ast.AstExpr.Begin items)]
-                [5 (ast.AstExpr.Unsafe items)]
-                [14 (ast.AstExpr.Call other items)]
-                [_ (ast.AstExpr.While other items)]))]
-          [6 (ast.AstExpr.If other leaf leaf)]
-          [7
-            (let
-              [bindings : ast.AstLetBindingList
-                (ast.ast-let-binding-list-with-capacity 1)]
-              (ast.ast-let-binding-list-push
-                (&mut bindings)
-                (ast.AstLetBinding.Binding 73 (ast.AstMaybeType.No) other))
-              (ast.AstExpr.Let (box (ast.AstLet.Let bindings leaf))))]
-          [8
-            (let
-              [arms : ast.AstMatchArmList
-                (ast.ast-match-arm-list-with-capacity 2)]
-              (ast.ast-match-arm-list-push
-                (&mut arms)
-                (ast.AstMatchArm.Arm (ast.AstPattern.Wildcard) leaf))
-              (ast.ast-match-arm-list-push
-                (&mut arms)
-                (ast.AstMatchArm.Arm (ast.AstPattern.Binding 74) leaf))
-              (ast.AstExpr.Match (box (ast.AstMatch.Match other arms))))]
-          [9 (ast.AstExpr.StructGet leaf 75)]
-          [10 (ast.AstExpr.TupleRef leaf 3)]
-          [11 (ast.AstExpr.ArrayRef leaf other)]
-          [12 (ast.AstExpr.BoxGet leaf)]
-          [13 (ast.AstExpr.BoxTake leaf)]
-          [_ (io.panic "invalid read fixture kind")])))))
-
-(test
-  tc-read-value-unchanged-result-paths
-  (let
-    [pools : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities 1 1)]
-    [leaf : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.Var 100))]
-    [other : i64
-      (ast.ast-node-pool-context-expr-push pools (ast.AstExpr.BoxTake leaf))]
-    [type-id : i64
-      (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
-    (for [kind (iterator.range 0 16)]
-      (unless
-        (= kind 13)
-        (let
-          [source : i64 (tc-read-test-expr pools kind leaf other type-id)]
-          [count : i64 (ast.ast-node-pool-context-expr-len pools)]
-          [allocation-start : i64 (profile.alloc-total)]
-          [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
-          [allocated : i64 (- (profile.alloc-total) allocation-start)]
-          (test.assert-i64-eq
-            allocated
-            0
-            "unchanged result reads allocate no payload")
-          (test.assert-i64-eq read source "unchanged result path keeps its ID")
-          (test.assert-i64-eq
-            (ast.ast-node-pool-context-expr-len pools)
-            count
-            "unchanged wrappers and non-result children append no nodes"))))
-    (for [kind (iterator.range 0 3)]
-      (let
-        [source : i64
-          (ast.ast-node-pool-context-expr-push
-            pools
-            (match kind
-              [0 (ast.AstExpr.Begin (ast.ast-expr-list-with-capacity 0))]
-              [1 (ast.AstExpr.Unsafe (ast.ast-expr-list-with-capacity 0))]
-              [_
-                (ast.AstExpr.Match
-                  (box
-                    (ast.AstMatch.Match
-                      other
-                      (ast.ast-match-arm-list-with-capacity 0))))]))]
-        [count : i64 (ast.ast-node-pool-context-expr-len pools)]
-        [allocation-start : i64 (profile.alloc-total)]
-        [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
-        [allocated : i64 (- (profile.alloc-total) allocation-start)]
-        (test.assert-i64-eq
-          allocated
-          0
-          "empty result reads allocate no payload")
-        (test.assert-i64-eq read source "an empty result sequence is unchanged")
-        (test.assert-i64-eq
-          (ast.ast-node-pool-context-expr-len pools)
-          count
-          "empty sequences append no nodes")))
-    (let
-      [arms : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity 2)]
-      [_first : unit
-        (ast.ast-match-arm-list-push
-          (&mut arms)
-          (ast.AstMatchArm.Arm (ast.AstPattern.Wildcard) leaf))]
-      [_last : unit
-        (ast.ast-match-arm-list-push
-          (&mut arms)
-          (ast.AstMatchArm.Arm (ast.AstPattern.Binding 74) other))]
-      [source : i64
-        (ast.ast-node-pool-context-expr-push
-          pools
-          (ast.AstExpr.Match (box (ast.AstMatch.Match other arms))))]
-      [read : i64 (tc_core.tc-read-value-expr-id (& pools) source)]
-      [children : ast.AstExprList
-        (ast.ast-expr-child-ids (ast.ast-node-pool-context-expr-get pools read))]
-      [original : ast.AstExprList
-        (ast.ast-expr-child-ids
-          (ast.ast-node-pool-context-expr-get pools source))]
-      (test.assert-true
-        (and
-          (!= read source)
-          (= (array-ref children.slots 0) other)
-          (= (array-ref children.slots 1) leaf)
-          (tc-read-test-box-get? pools (array-ref children.slots 2) leaf))
-        "a later changed arm preserves the scrutinee and earlier unchanged arm")
-      (test.assert-i64-eq
-        (array-ref original.slots 2)
-        other
-        "the source arm remains owning"))
-    (test.assert-true
-      (match (ast.ast-node-pool-context-expr-get pools other)
-        [(BoxTake id) (= id leaf)]
-        [_ false])
-      "conditions, initializers, scrutinees, indices and prefixes remain owning")
-    (ast.ast-node-pool-context-destroy-storage! pools)))
-
-(cfg
-  test
-  (define (tc-read-test-box-get?
-    [pools : ast.AstNodePoolContext]
-    [id : i64]
-    [receiver : i64]) : bool
-    (match (ast.ast-node-pool-context-expr-get pools id)
-      [(BoxGet source) (= source receiver)]
-      [_ false])))
-
-(test
-  tc-read-value-owner-growth-and-retirement
-  (let
-    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [owner-a : arena.Arena (arena.make)]
-    [owner-b : arena.Arena (arena.make)]
-    [a : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities-in-arena
-        1
-        1
-        (arena.raw-handle owner-a))]
-    [b : ast.AstNodePoolContext
-      (ast.ast-node-pool-context-new-with-capacities-in-arena
-        1
-        1
-        (arena.raw-handle owner-b))]
-    [leaf-a : i64 (ast.ast-node-pool-context-expr-push a (ast.AstExpr.Var 100))]
-    [leaf-b : i64 (ast.ast-node-pool-context-expr-push b (ast.AstExpr.Var 200))]
-    [take-a : i64
-      (ast.ast-node-pool-context-expr-push a (ast.AstExpr.BoxTake leaf-a))]
-    [take-b : i64
-      (ast.ast-node-pool-context-expr-push b (ast.AstExpr.BoxTake leaf-b))]
-    [type-id : i64 (ast.ast-node-pool-context-type-push a (ast.AstType.I64))]
-    [reads : (__tl_dyn-array i64) (__tl_make-array i64 14)]
-    [peer-count : i64 (ast.ast-node-pool-context-expr-len b)]
-    (test.assert-i64-eq leaf-a leaf-b "independent owners have colliding IDs")
-    (test.assert-i64-eq take-a take-b "nested IDs collide too")
-    (ast.ast-node-pool-context-install! b)
-    (for [kind (iterator.range 0 14)]
-      (let
-        [source : i64 (tc-read-test-expr a kind take-a take-a type-id)]
-        [read : i64
-          (in-arena owner-b (tc_core.tc-read-value-expr-id (& a) source))]
-        (test.assert-true (!= source read) "a real result read gets a new root")
-        (test.assert-true
-          (< read (ast.ast-node-pool-context-expr-len a))
-          "the new root belongs to the supplied owner")
-        (set! (array-ref reads kind) read)))
-    (let
-      [source : i64 (tc-read-test-expr a 0 take-a take-a type-id)]
-      [boundary : i64 ast.ast-expr-node-pool-segment-size]
-      (while (< (ast.ast-node-pool-context-expr-len a) (- boundary 1))
-        (let
-          [_node : i64
-            (ast.ast-node-pool-context-expr-push a (ast.AstExpr.Var 0))]
-          unit))
-      (let
-        [read : i64
-          (in-arena owner-b (tc_core.tc-read-value-expr-id (& a) source))]
-        (test.assert-i64-eq read boundary "a changed wrapper crosses a segment")
-        (test.assert-i64-eq
-          (ast.ast-node-pool-context-expr-len a)
-          (+ boundary 1)
-          "only the changed leaf and wrapper are appended")
-        (test.assert-true
-          (match (ast.ast-node-pool-context-expr-get a read)
-            [(Spanned inner span)
-              (and
-                (tc-read-test-box-get? a inner leaf-a)
-                (ast.ast-source-span-eq? span (ast.ast-source-span 2 3 2 9)))]
-            [_ false])
-          "growth preserves the source view and owning receiver")))
-    (test.assert-i64-eq
-      (ast.ast-node-pool-context-expr-len b)
-      peer-count
-      "the installed peer receives no rows")
-    (ast.ast-node-pool-context-install! saved)
-    (ast.ast-node-pool-context-destroy-storage! b)
-    (unsafe
-      (arena.destroy owner-b))
-    (for [kind (iterator.range 0 14)]
-      (let
-        [children : ast.AstExprList
-          (ast.ast-expr-child-ids
-            (ast.ast-node-pool-context-expr-get a (array-ref reads kind)))]
-        [slot : i64
-          (cond
-            [(or (= kind 4) (= kind 5) (= kind 7)) (- children.len 1)]
-            [(or (= kind 6) (= kind 8)) 1]
-            [else 0])]
-        (test.assert-true
-          (tc-read-test-box-get? a (array-ref children.slots slot) leaf-a)
-          "rewritten payloads survive destruction of the current arena")
-        (when
-          (or (= kind 6) (= kind 8))
-          (test.assert-true
-            (tc-read-test-box-get? a (array-ref children.slots 2) leaf-a)
-            "every result branch is rewritten"))
-        (when
-          (or (= kind 4) (= kind 5) (= kind 6) (= kind 7) (= kind 8))
-          (test.assert-i64-eq
-            (array-ref children.slots 0)
-            take-a
-            "non-result positions retain the shared owning node"))
-        (when
-          (= kind 11)
-          (test.assert-i64-eq
-            (array-ref children.slots 1)
-            take-a
-            "an array index does not inherit the read"))
-        (when
-          (= kind 13)
-          (test.assert-true
-            (match (ast.ast-node-pool-context-expr-get a (array-ref reads kind))
-              [(BoxGet _) true]
-              [_ false])
-            "a nested BoxTake changes kind too"))))
-    (test.assert-true
-      (match (ast.ast-node-pool-context-expr-get a take-a)
-        [(BoxTake id) (= id leaf-a)]
-        [_ false])
-      "shared source occurrences are never rewritten")
-    (ast.ast-node-pool-context-destroy-storage! a)
-    (unsafe
-      (arena.destroy owner-a))))
-
 (cfg
   test
   (test
@@ -13211,7 +16109,8 @@
     [owner : i64 (arena.tl_arena_make_small)]
     [state-a : tc_core.TcMacroState
       (in-arena
-        (arena.Arena owner)
+        (unsafe
+          (arena.Arena owner))
         (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new)))]
     [state-b : tc_core.TcMacroState
       (tc_core.tc-job-state-macro-state (tc_core.tc-job-state-new))]
@@ -13248,7 +16147,8 @@
       ;; The current owner has never been rewound: array-zero's fresh-storage
       ;; shortcut would leave these deliberately overwritten live keys intact.
       (in-arena
-        (arena.Arena owner)
+        (unsafe
+          (arena.Arena owner))
         (tc_core.macro-unqualified-import-cache-initialize! state-a))
       (let
         [exact : bool true]

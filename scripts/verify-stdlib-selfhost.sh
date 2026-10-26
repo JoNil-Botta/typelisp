@@ -26,10 +26,10 @@ esac
 # scripts/verify-stdlib.sh.
 reject_diag() {
     case "$1" in
-        stdlib/tests/string_raw_copy_reject.tl | stdlib/tests/string_raw_owned_copy_reject.tl | stdlib/tests/string_raw_borrowed_copy_reject.tl | stdlib/tests/string_raw_copy_alias_reject.tl)
-            printf 'requires unsafe context' ;;
         stdlib/tests/string_raw_copy_function_value_reject.tl)
             printf 'is an unsafe callable and cannot be used as a plain function value' ;;
+        stdlib/tests/string_raw_*_reject.tl|stdlib/tests/format_raw_fill_reject.tl|stdlib/tests/format_raw_copy_reject.tl|stdlib/tests/format_raw_debug_*_reject.tl)
+            printf 'requires unsafe context' ;;
         stdlib/tests/arena_policy_escape_string.tl | stdlib/tests/arena_policy_escape_text_buf.tl)
             printf 'region-tagged value cannot escape with-arena' ;;
         stdlib/tests/arena_policy_escape_text_buf_borrowed.tl)
@@ -220,19 +220,19 @@ reject_diag() {
         stdlib/tests/hashmap_value_borrow_resize_live.tl)
             printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl)
-            printf 'typecheck: cannot read mutably borrowed place `m`' ;;
+            printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/hashmap_mut_entry_double_live.tl)
-            printf 'typecheck: cannot read mutably borrowed place `m`' ;;
+            printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/hashmap_mut_entry_put_live.tl)
-            printf 'typecheck: cannot read mutably borrowed place `m`' ;;
+            printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/hashmap_mut_entry_resize_live.tl)
-            printf 'typecheck: cannot read mutably borrowed place `m`' ;;
+            printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/hashmap_mut_entry_value_borrow_live.tl)
             printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/hashmap_macro_value_borrow_insert_live.tl)
             printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/hashmap_macro_mut_entry_insert_live.tl)
-            printf 'typecheck: cannot read mutably borrowed place `m`' ;;
+            printf 'typecheck: cannot mutably borrow borrowed place `m`' ;;
         stdlib/tests/process_borrowed_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/queue_cleanup_element_reject.tl)
@@ -244,9 +244,9 @@ reject_diag() {
         stdlib/tests/vector_native_slice_grow_live.tl)
             printf 'typecheck: cannot mutably borrow borrowed place `items`' ;;
         stdlib/tests/vector_native_slice_split_grow_live.tl)
-            printf 'typecheck: cannot read mutably borrowed place `items`' ;;
+            printf 'typecheck: cannot mutably borrow borrowed place `items`' ;;
         stdlib/tests/vector_native_slice_alias_reject.tl)
-            printf 'typecheck: cannot read mutably borrowed place `items`' ;;
+            printf 'typecheck: cannot immutably borrow mutably borrowed place `items`' ;;
         *) printf '' ;;
     esac
 }

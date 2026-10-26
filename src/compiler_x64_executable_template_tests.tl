@@ -1,4 +1,5 @@
 ;; compiler_x64_executable_template_tests.tl - Registry, identity, and drift tests.
+(import stdlib.iterator)
 (import compiler_x64_executable_template as x64)
 (import compiler_x64_executable_template_events as x64_events)
 (import compiler_x64_executable_template_evidence as x64_evidence)
@@ -10,6 +11,54 @@
 (import compiler_backend_runtime_windows as runtime_windows)
 (import stdlib.string)
 (import stdlib.test)
+
+(test
+  compiler-x64-template-arena-sanitizer-variants
+  (let
+    [mode : i64 0]
+    (while (< mode 4)
+      (let
+        [features : runtime_common.CompilerBackendRuntimeFeatures
+          (runtime_common.CompilerBackendRuntimeFeatures
+            true
+            true
+            true
+            (!= (bit-and mode 1) 0)
+            (!= (bit-and mode 2) 0)
+            false
+            false
+            false
+            ;; Every runtime leaf except the global allocator (32); 64 is the
+            ;; arena sanitizer entry.
+            95)]
+        [linux : String
+          (runtime_linux.compiler-backend-runtime-functions (& features))]
+        [windows : String
+          (runtime_windows.compiler-backend-runtime-functions (& features))]
+        ;; Each call above passes the exact registered payload identity for
+        ;; its target/profile/debug combination before reaching these checks.
+        (test.assert-true
+          (string.contains (& linux) "tl_arena_sanitize_enable:")
+          "Linux selects the sanitizer entry")
+        (test.assert-true
+          (string.contains (& linux) "movq $28, %rax")
+          "Linux quarantine discards resident pages")
+        (test.assert-true
+          (string.contains (& linux) "movq $10, %rax")
+          "Linux quarantine makes retired mappings inaccessible")
+        (test.assert-false
+          (string.contains (& linux) "movq $11, %rax")
+          "Linux retirement never releases quarantined address ranges")
+        (test.assert-true
+          (string.contains (& windows) "tl_arena_sanitize_enable:")
+          "Windows selects the sanitizer entry")
+        (test.assert-true
+          (string.contains (& windows) "movq $0x4000, %r8")
+          "Windows quarantine decommits without releasing the reservation")
+        (test.assert-true
+          (string.contains (& windows) "rep stosb")
+          "Windows poisons in-segment rewind ranges")
+        (set! mode (+ mode 1))))))
 
 (define (compiler-x64-template-test-kind-eq?
   [left : x64_events.CompilerX64TemplateEventKind]
@@ -24,16 +73,14 @@
   (let
     [events : x64_events.CompilerX64TemplateEventSeq
       (x64_events.compiler-x64-template-events transcript)]
-    [at : i64 0]
     [count : i64 0]
-    (while (< at events.count)
+    (for [at (iterator.range 0 events.count)]
       (match (x64_events.compiler-x64-template-event-ref events at)
         [(Ok event)
           (when
             (compiler-x64-template-test-kind-eq? event.kind expected)
-            (set! count (+ count 1)))]
-        [(Err _) unit])
-      (set! at (+ at 1)))
+            (+= count 1))]
+        [(Err _) unit]))
     count))
 
 (define (compiler-x64-template-test-custom-row
@@ -125,18 +172,15 @@
           [parsed-events : x64_events.CompilerX64TemplateEventSeq
             (x64_events.compiler-x64-template-events row.events)]
           [event-at : i64 0]
-          (set! event-count (+ event-count row.event-count))
-          (set!
-            event-bytes
-            (+ event-bytes (string.string-length (& row.events))))
+          (+= event-count row.event-count)
+          (+= event-bytes (string.string-length (& row.events)))
           (if (>= row.expected-rendered-size 0)
             (begin
-              (set! pinned-payloads (+ pinned-payloads 1))
+              (+= pinned-payloads 1)
               (when (< row.expected-rendered-hash 0) (set! events-valid false)))
             (match row.render-kind
-              [(Assembly) (set! unpinned-assembly (+ unpinned-assembly 1))]
-              [(StructuredObject)
-                (set! unpinned-structured (+ unpinned-structured 1))]
+              [(Assembly) (+= unpinned-assembly 1)]
+              [(StructuredObject) (+= unpinned-structured 1)]
               [(OpaqueBytes) (set! events-valid false)]))
           (while (and events-valid (< event-at row.event-count))
             (match (x64_events.compiler-x64-template-event-ref
@@ -144,24 +188,24 @@
               event-at)
               [(Ok _) unit]
               [(Err _) (set! events-valid false)])
-            (set! event-at (+ event-at 1)))
-          (set! at (+ at 1))))
-      (test.assert-i64-eq ids.len 86 "closed executable-template row count")
+            (+= event-at 1))
+          (+= at 1)))
+      (test.assert-i64-eq ids.len 102 "closed executable-template row count")
       (test.assert-i64-eq
         (array-length ids.slots)
-        96
+        112
         "bounded all-row construction capacity")
       (test.assert-i64-eq
         event-count
-        3267
+        4311
         "reviewed ordered control/frame event count")
       (test.assert-i64-eq
         event-bytes
-        19273
+        26115
         "reviewed event-transcript byte count")
       (test.assert-i64-eq
         pinned-payloads
-        73
+        89
         "fixed assembly and opaque payloads are pinned")
       (test.assert-i64-eq
         unpinned-assembly
@@ -422,9 +466,7 @@
             (runtime_linux.compiler-backend-runtime-memcpy-functions)
             "tl_memcpy_fwd:"
             "xl_memcpy_fwd:")]
-        (set!
-          changed.expected-rendered-size
-          (+ changed.expected-rendered-size 1))
+        (+= changed.expected-rendered-size 1)
         (test.assert-true
           (x64_evidence.compiler-x64-template-rendered-payload-valid?
             matching

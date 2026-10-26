@@ -96,15 +96,25 @@
                 target)
                 [(Ok text) (> (string.string-length text) 0)]
                 [(Err _) false])))
+          ;; Direct object emission takes only programs object eligibility
+          ;; admits (a bounds check has no direct encoding); the rest use
+          ;; the assembly route above.
           (set!
             ok
             (and
               ok
-              (match (backend.compiler-backend-emit-source-object-image-for-target
-                (string.copy (& (array-ref sources index)))
-                target)
-                [(Ok _) true]
-                [(Err _) false]))))
+              (let
+                [status : String
+                  (source-object-status
+                    (string.copy (& (array-ref sources index)))
+                    target)]
+                (if (string.eq (& status) "eligible")
+                  (match (backend.compiler-backend-emit-source-object-image-for-target
+                    (string.copy (& (array-ref sources index)))
+                    target)
+                    [(Ok _) true]
+                    [(Err _) false])
+                  true)))))
         (set!
           ok
           (and

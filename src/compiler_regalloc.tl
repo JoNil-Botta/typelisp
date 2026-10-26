@@ -27119,7 +27119,8 @@
 ;; have a register home, dead raw-id holes, and register-only scratch pseudo-vars
 ;; receive free non-slot ids, and stack-homed register groups are remapped by
 ;; their word0 id; the backend places word1 in the matching second var-region.
-;; Plans with no intervals pass through unchanged. Stack-only opt0/opt1 plans
+;; Plans with no intervals pass through unchanged unless private AVX2 entry
+;; stores need full-width homes. Stack-only opt0/opt1 plans
 ;; provide conservative CFG intervals so they can take this path without
 ;; running scalar register allocation. The result's slot count replaces the raw
 ;; var count in the backend's frame layout.
@@ -27239,6 +27240,14 @@
     (compiler-reg-string-prefix? name "__tl_spmd_active_mask_avx2")
     (compiler-reg-string-prefix? name "__tl_spmd_varying_arg_avx2_")
     (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_avx2_")))
+
+(define (compiler-reg-spmd-avx2-special-params?
+  [params : (& ir.CompilerIrParamSeq)]) : bool
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-borrow params position)
+      [(Param name _ _)
+        (when (compiler-reg-spmd-avx2-special-param? name) (return true))]))
+  false)
 
 (define (compiler-reg-vector-stack-words-params!
   [params : (& ir.CompilerIrParamSeq)]
@@ -30162,7 +30171,10 @@
     [intervals : CompilerRegIntervalSeq
       (compiler-reg-plan-intervals
         (owned_view.compiler-owned-reference-shared-view plan))]
-    (if (compiler-reg-interval-seq-empty? intervals)
+    ;; Entry stores still need full-width homes when the body has no uses.
+    (if (and
+      (compiler-reg-interval-seq-empty? intervals)
+      (not (compiler-reg-spmd-avx2-special-params? params)))
       None
       (let
         [has-group-vars? : bool

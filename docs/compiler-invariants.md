@@ -1895,6 +1895,9 @@ variable extent. Wide homes can move IDs above the original plan count, while
 register-only IDs can remain above the compacted frame. Final liveness, type and
 home tables, use facts and scavenger contexts cover the maximum of both domains;
 frame layout continues to use only the physical slot count.
+Private AVX2 parameter entry stores participate in the full-width stack-home
+census even when optimization removes every body use and liveness interval.
+An empty body still needs disjoint YMM homes inside its accepted frame.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes

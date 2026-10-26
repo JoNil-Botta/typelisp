@@ -1441,6 +1441,18 @@ share this path (`lower-store-expr-into-receiver-place-result`), so the rule nee
 no runtime flag or guard. `replace!`, which returns the old value, retains its
 separate place lowering.
 
+Zero-sized struct-field reads produce the canonical unit value after evaluating
+the receiver exactly once. They emit no field address, memory load or packed-word
+extraction, including trailing fields beyond a register group's final word and
+projections through checked/raw references. Named lookup still validates the
+field. A pattern binding materializes a non-variable result only when the local
+environment requires a variable. Unit equality evaluates both operands in order
+and chooses its boolean result without a machine comparison; an operand's exit
+still stops subsequent evaluation. This does not change structural tuple/array
+call-transport admission.
+Borrowed patterns bind zero-sized Copy fields to that same canonical value;
+non-Copy fields retain the reference-valued place and ownership path.
+
 Memory-class aggregate expressions carry addresses into inline storage. An
 initialized inline aggregate global keeps one static home: whole-global
 assignment copies the value's bytes into it (`lower-global-storage-assignment`),

@@ -61660,6 +61660,41 @@
         (compiler-backend-target-abi target)
         (Internal)))))
 
+;; Is this stack-passed parameter an entry copy: a float homed in a frame slot?
+(define (compiler-backend-param-entry-float-copy?
+  [is-float : bool]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [var-id : i64]
+  [backend-state : CompilerBackendState]) : bool
+  (and
+    is-float
+    (string.eq
+      (compiler-backend-var-register-home backend-state assignments var-id)
+      "")))
+
+;; Append the entry copy of the float parameter `var-id` from its incoming
+;; stack slot `addr` to its frame home.
+(define (compiler-backend-param-entry-float-copy!
+  [entry : (&mut entry CompilerBackendAsmBuf)]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [var-id : i64]
+  [addr : (& addr str)]
+  [ty : (& compiler_ast_types.AstType)]
+  [backend-state : CompilerBackendState]) : unit
+  (let
+    [stage : String (compiler-backend-param-entry-xmm-stage target)]
+    (compiler-backend-asm-append
+      entry
+      (str_cat.str-cat
+        (compiler-backend-emit-load-float-memory addr stage ty)
+        (compiler-backend-emit-store-float-var
+          assignments
+          var-id
+          stage
+          ty
+          backend-state)))))
+
 (define (compiler-backend-emit-param-spills-from
   [entry : (&mut entry CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
@@ -61929,37 +61964,25 @@
                       (compiler-backend-incoming-stack-arg-offset
                         target
                         stack-idx))]
-                  ;; A frame-homed float is an entry copy (see
-                  ;; compiler-backend-param-entry-xmm-stage); a float with a
-                  ;; register home loads straight into it below.
+                  ;; A float with a register home loads straight into it
+                  ;; below.
                   [entry-copy? : bool
-                    (and
+                    (compiler-backend-param-entry-float-copy?
                       is-float
-                      (string.eq
-                        (compiler-backend-var-register-home
-                          backend-state
-                          assignments
-                          var-id)
-                        ""))]
+                      assignments
+                      var-id
+                      backend-state)]
                   [_entry-copy : unit
                     (when
                       entry-copy?
-                      (let
-                        [stage : String
-                          (compiler-backend-param-entry-xmm-stage target)]
-                        (compiler-backend-asm-append
-                          entry
-                          (str_cat.str-cat
-                            (compiler-backend-emit-load-float-memory
-                              addr
-                              stage
-                              ty)
-                            (compiler-backend-emit-store-float-var
-                              assignments
-                              var-id
-                              stage
-                              ty
-                              backend-state)))))]
+                      (compiler-backend-param-entry-float-copy!
+                        entry
+                        target
+                        assignments
+                        var-id
+                        addr
+                        ty
+                        backend-state))]
                   [tail
                     (try
                       (compiler-backend-emit-param-spills-from

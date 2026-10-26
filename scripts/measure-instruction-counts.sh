@@ -17,8 +17,8 @@ set -eu
 # local/CI loader environments.
 #
 # The self_compile metric measures an opt2-built stage2 compiling src/main.tl,
-# matching check-instruction-counts.sh (the CI gate) and the number it ratchets
-# (self_compile/compile_cli_opt1). When no compiler is given explicitly, the
+# matching the linux-self-compile-measurement CI gate (scripts/self-compile.sh,
+# self_compile/compile_cli_opt1). When no compiler is given explicitly, the
 # harness builds that stage2 from the seed (seed -> stage1 -> stage2, opt2) so a
 # standalone run measures the same register-allocated compiler CI does rather
 # than the older seed. Pass a compiler explicitly (positional arg or

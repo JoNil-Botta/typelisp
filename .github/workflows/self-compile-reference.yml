@@ -1,0 +1,138 @@
+name: Self-Compile Reference
+
+# The CI-owned self_compile reference of every main commit, and the ledger that
+# accounts for each merge (#9307, council decision D-C15-9307, perf/README.md).
+#
+# `measure` runs the same `linux-self-compile-measurement` gate as PR CI on the
+# pushed commit and uploads its record. PR CI accepts a commit's reference only
+# from the latest successful attempt of this job in a push-to-main run of this
+# workflow, with a measurement identity equal to its own; otherwise it measures
+# the base in place.
+#
+# `ledger` compares the landed merge with its PR's own reported cost, classifies
+# it, and carries the cumulative account forward from the anchor (the merge that
+# introduced this workflow). Its outcome file names pending, warning or the
+# failure class the merge-pause rules act on.
+on:
+  push:
+    branches: [main]
+  # Dry run of the measurement on the exact PR candidate when the workflow or
+  # its scripts change. Its record is never accepted as a reference: consumers
+  # reject every `pull_request` record, and `reference` proves that here.
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/self-compile-reference.yml'
+      - 'scripts/self-compile.sh'
+      - 'scripts/lib-self-compile.sh'
+      - 'scripts/self-compile-self-test.sh'
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+# One run per commit, never cancelled: every main commit needs its reference.
+concurrency:
+  group: self-compile-reference-${{ github.event_name }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  measure:
+    name: Self-compile reference (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux instruction-count tools
+        shell: bash
+        run: |
+          # The same install as ci.yml, so the measured environment matches.
+          sudo apt-get install -y --no-install-recommends valgrind \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
+
+      - name: Enable Linux kernel memory limits
+        shell: bash
+        run: |
+          bounded_uid=$(id -u)
+          sudo systemctl start "user@${bounded_uid}.service"
+          export XDG_RUNTIME_DIR="/run/user/${bounded_uid}"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          printf 'XDG_RUNTIME_DIR=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' \
+            "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          . scripts/lib-linux-memory-limit.sh
+          linux_memory_limit_systemd_available || {
+            echo 'Kernel-enforced, swap-disabled backend memory limits are unavailable' >&2
+            exit 1
+          }
+
+      - name: Measure self_compile
+        shell: bash
+        run: scripts/ci-verify.sh --gates linux-self-compile-measurement
+
+      - name: Publish the reference record
+        shell: bash
+        run: scripts/self-compile.sh reference
+
+      - name: Upload the reference record
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-compile-reference
+          path: target/self-compile/reference/record.tsv
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true
+
+  ledger:
+    name: Self-compile ledger
+    needs: measure
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    # Usually minutes. The bound covers waiting for a pending parent and, when
+    # identities differ, measuring up to four trees on this runner (the
+    # commit, its parent, and the merged PR's tested base and merge).
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # First-parent history back to the anchor or the nearest account.
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Install Linux instruction-count tools
+        shell: bash
+        run: |
+          sudo apt-get install -y --no-install-recommends valgrind \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
+
+      - name: Enable Linux kernel memory limits
+        shell: bash
+        run: |
+          bounded_uid=$(id -u)
+          sudo systemctl start "user@${bounded_uid}.service"
+          export XDG_RUNTIME_DIR="/run/user/${bounded_uid}"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          printf 'XDG_RUNTIME_DIR=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' \
+            "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          . scripts/lib-linux-memory-limit.sh
+          linux_memory_limit_systemd_available || {
+            echo 'Kernel-enforced, swap-disabled backend memory limits are unavailable' >&2
+            exit 1
+          }
+
+      - name: Account for the merge
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/self-compile.sh ledger
+
+      - name: Upload the ledger
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-compile-ledger
+          path: target/self-compile/ledger/
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true

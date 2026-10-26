@@ -83,7 +83,9 @@ directly from the linked binary. It requires exact equality with the source
 declarations: the embedded-stdlib manifests plus all top-level
 `include-str-lzss` declarations in the production `src/*.tl` modules. The
 inventory is conservative: a declaration in an unlinked module fails the
-count rather than being silently excluded. `--compiler-sources "file ..."`
+count rather than being silently excluded. A token walk recognizes whitespace,
+comments, strings and character delimiters; escaped or multiline input paths
+fail explicitly. `--compiler-sources "file ..."`
 can specify a known source set for a different compiler, together with
 `--embedded-stdlib "file ..."`. The report lists declaration categories and
 input paths; its aggregate LZSS byte totals include every counted stream,

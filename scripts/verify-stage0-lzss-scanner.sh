@@ -184,8 +184,60 @@ printf '(include-str catalog "catalog.tsv")\n' > "$work/catalog.tl"
     frame 2 4 '\365\211\000'
 } > "$work/frame"
 analyze_reject 'expected 1 compiler-owned LZSS payloads'
+
+# Legal layouts must never hide a declaration or let a later one overwrite it.
+# Strings, comments and character delimiters must not manufacture declarations.
+printf B > "$work/catalog2.tsv"
+for layout in trailing-comment indented newline-after-open same-line comments-between; do
+    case "$layout" in
+        trailing-comment) first='(include-str-lzss catalog "catalog.tsv") ; one' ;;
+        indented) first='  (include-str-lzss catalog "catalog.tsv")' ;;
+        newline-after-open) first='(\n include-str-lzss catalog "catalog.tsv")' ;;
+        same-line) first='(include-str-lzss catalog "catalog.tsv") ' ;;
+        comments-between) first='( ; head\n include-str-lzss ; name\n catalog ; path\n "catalog.tsv" ; close\n )' ;;
+    esac
+    {
+        printf '%b' "$first"
+        [ "$layout" = same-line ] || printf '\n'
+        printf '(include-str-lzss catalog2 "catalog2.tsv")\n'
+        printf '; (include-str-lzss decoy "absent")\n'
+        printf '(define decoy : String "(include-str-lzss x \\"absent\\")")\n'
+        printf "(define open-char : char '(')\n(define close-char : char ')')\n"
+    } > "$work/catalog.tl"
+    {
+        frame 1 1 '\001A'
+        frame 1 1 '\001B'
+    } > "$work/frame"
+    label=$layout-missing-first-catalog
+    analyze_reject 'expected 3 compiler-owned LZSS payloads'
+    frame 2 4 '\365\211\000' >> "$work/frame"
+    analyze > "$work/report"
+    grep -Fx "other_compiler_owned_lzss_declarations${tab}2" "$work/report" >/dev/null
+done
 label=missing-catalog-input
 printf '(include-str-lzss catalog "catalog.tsv")\n' > "$work/catalog.tl"
+{
+    frame 1 1 '\001A'
+    frame 2 4 '\365\211\000'
+} > "$work/frame"
 rm "$work/catalog.tsv"
 analyze_reject 'payload not found'
+
+# The same token inventory supplies the unchanged TLCH declaration/path checks.
+printf AAAA > "$work/catalog.tsv"
+printf X > "$work/image.bin"
+printf ' (\n include-bin image "image.bin.tlch") ; image\n' >> "$work/manifest.tl"
+{
+    printf '__typelisp_embedded_stdlib_tlch_v1__'
+    printf '\001\000\000\000\000\000\000\000\001\000\000\000\000\000\000\000'
+    dd if=/dev/zero bs=4369 count=1 2>/dev/null
+    printf '\000'
+} > "$work/tlch"
+label=missing-tlch
+analyze_reject 'expected 1 embedded stdlib TLCH payloads'
+cat "$work/tlch" >> "$work/frame"
+analyze > "$work/report"
+grep -Fx "tlci_envelope_raw_bytes${tab}1" "$work/report" >/dev/null
+grep -Fx "tlci_envelope_static_bytes${tab}4422" "$work/report" >/dev/null
+grep -Fx "static_payload_bytes${tab}4503" "$work/report" >/dev/null
 echo 'stage0 LZSS scanner formats and malformed payloads passed'

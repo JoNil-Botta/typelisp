@@ -332,82 +332,18 @@ done
     exit 1
 }
 
-awk '
-function emit_input() {
-    path = declaration
-    sub(/^[^"]*"/, "", path)
-    sub(/".*$/, "", path)
-    if (path ~ /^\.\.\/stdlib\//) {
-        sub(/^\.\.\/stdlib\//, "", path)
-        print "stdlib/" path
-    } else {
-        directory = declaration_file
-        sub(/[^\/]*$/, "", directory)
-        sub(/\.tlch$/, "", path)
-        print directory path
-    }
-    declaration = ""
-    collecting = 0
-}
-/^\(include-str-lzss([ \t]|$)|^\(include-bin([ \t]|$)/ {
-    declaration = $0
-    declaration_file = FILENAME
-    collecting = 1
-    if ($0 ~ /\)[ \t]*$/) {
-        emit_input()
-    }
-    next
-}
-collecting {
-    declaration = declaration " " $0
-    if ($0 ~ /\)[ \t]*$/) {
-        emit_input()
-    }
-}
-' $EMBEDDED_STDLIB | sort > "$payload_paths"
+. "$ROOT/scripts/lib-stage0-declarations.sh"
+declarations="$tmp_dir/declarations.tsv"
+stage0_payload_declarations "$EMBEDDED_STDLIB" "$COMPILER_SOURCES" > "$declarations"
+awk -F '\t' '{ print $4 }' "$declarations" | sort > "$payload_paths"
 
 [ -s "$payload_paths" ] || {
     echo "embedded stdlib build-input declaration list is empty" >&2
     exit 1
 }
 expected_payload_streams=$(wc -l < "$payload_paths" | tr -d ' ')
-expected_tlch_streams=$(awk '/^\(include-bin([ \t]|$)/ { count += 1 } END { print count + 0 }' $EMBEDDED_STDLIB)
-
-# Inventory the source declarations, independently of binary observations.
-# Scanning every production compiler module also makes an unaccounted new
-# declaration fail closed, rather than silently ignoring a non-stdlib stream.
-awk -v manifests="$EMBEDDED_STDLIB" '
-BEGIN {
-    n = split(manifests, files, " ")
-    for (i = 1; i <= n; i++) manifest[files[i]] = 1
-}
-FNR == 1 {
-    if (collecting) { print "unfinished LZSS declaration in " previous_file > "/dev/stderr"; exit 1 }
-    previous_file = FILENAME
-    skip = seen[FILENAME]++
-}
-skip { next }
-function emit_input() {
-    path = declaration
-    sub(/^[^"]*"/, "", path)
-    sub(/".*$/, "", path)
-    if (path ~ /^\.\.\/stdlib\//) {
-        sub(/^\.\.\/stdlib\//, "", path)
-        path = "stdlib/" path
-    } else {
-        directory = FILENAME
-        sub(/[^\/]*$/, "", directory)
-        path = directory path
-    }
-    category = (FILENAME in manifest ? "embedded_stdlib_manifest" : "other_compiler_owned")
-    print category "\t" FILENAME "\t" path
-    collecting = 0
-}
-/^\(include-str-lzss([ \t]|$)/ { declaration = $0; collecting = 1; if ($0 ~ /\)[ \t]*$/) emit_input(); next }
-collecting { declaration = declaration " " $0; if ($0 ~ /\)[ \t]*$/) emit_input() }
-END { if (collecting) { print "unfinished LZSS declaration in " FILENAME > "/dev/stderr"; exit 1 } }
-' $EMBEDDED_STDLIB $COMPILER_SOURCES > "$lzss_declarations"
-sort "$lzss_declarations" -o "$lzss_declarations"
+expected_tlch_streams=$(awk -F '\t' '$1 == "include-bin" { n++ } END { print n + 0 }' "$declarations")
+awk -F '\t' '$1 == "include-str-lzss" { print $2 "\t" $3 "\t" $4 }' "$declarations" | sort > "$lzss_declarations"
 expected_lzss_streams=$(wc -l < "$lzss_declarations" | tr -d ' ')
 [ "$expected_lzss_streams" -gt 0 ] || {
     echo "compiler-owned LZSS declaration inventory is empty" >&2
@@ -415,8 +351,6 @@ expected_lzss_streams=$(wc -l < "$lzss_declarations" | tr -d ' ')
 }
 manifest_lzss_streams=$(awk -F '\t' '$1 == "embedded_stdlib_manifest" { n++ } END { print n + 0 }' "$lzss_declarations")
 other_lzss_streams=$(awk -F '\t' '$1 == "other_compiler_owned" { n++ } END { print n + 0 }' "$lzss_declarations")
-awk -F '\t' '$1 == "other_compiler_owned" { print $3 }' "$lzss_declarations" >> "$payload_paths"
-expected_payload_streams=$((expected_payload_streams + other_lzss_streams))
 
 # Recover each bounded static LZSS stream directly from the linked binary;
 # there is no base64/generated source to read instead.

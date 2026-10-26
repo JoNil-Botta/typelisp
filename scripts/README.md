@@ -10,7 +10,11 @@ The workflow files are authoritative:
 
 - `.github/workflows/ci.yml` runs `check-implementation-languages.sh` and
   `check-gitignore.sh`, then `ci-verify.sh`, and uploads the `ci-timing-<host>`
-  artifact.
+  artifact. On Linux it then runs `self-compile.sh check`, which gates the PR's
+  own `self_compile` cost against main (`perf/README.md`).
+- `.github/workflows/self-compile-reference.yml` runs on every push to main:
+  `ci-verify.sh --gates linux-self-compile-measurement` publishes the commit's
+  `self_compile` reference, and `self-compile.sh ledger` accounts for the merge.
 - `.github/workflows/bootstrap-stage0.yml` runs the stage0 fetch/build/smoke
   and bootstrap-fixpoint scripts.
 - `.github/workflows/docs-pages.yml` runs after a successful
@@ -124,7 +128,7 @@ the exact PR head; only a push to main can publish releases.
 | Check ISPC corpus contracts | `verify-codegen-cases.sh tests/codegen/ispc.cases` (one gate per case) |
 | Check docs and stdlib | `verify-doc-site.sh`, `verify-doc-tests.sh`, `verify-stdlib.sh` (owns `check-stdlib-concat-lint.sh`), `verify-stdlib-selfhost.sh`, `verify-stdlib-docs.sh` |
 | Check handwritten x86-64 template ownership | `check-x64-executable-template-registry.sh` pins every runtime/startup composition gate, all target-owned opaque byte helpers, structured contribution boundaries, and Windows data-only unwind relations. |
-| Check performance policy | `check-instruction-counts.sh`, `check-compiler-scaling.sh` (compiler cost growth per input dimension against `perf/compiler-scaling-budgets.tsv`), `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `check-stage0-size.sh` (the stage0 size ratchet against `stage0-size-policy.tsv`), `bench.sh`, `run-optimization-benchmarks.sh` |
+| Check performance policy | `check-instruction-counts.sh` (exact benchmark rows), `self-compile.sh` (`self_compile` measurement, the main-relative PR check, the reference record and the ledger; logic in `lib-self-compile.sh`, fixtures in `self-compile-self-test.sh`), `check-compiler-scaling.sh` (compiler cost growth per input dimension against `perf/compiler-scaling-budgets.tsv`), `check-opt2-cli-regression.sh`, `check-build-invariance.sh`, `check-tlci-native-route-size.sh`, `check-stage0-size.sh` (the stage0 size ratchet against `stage0-size-policy.tsv`), `bench.sh`, `run-optimization-benchmarks.sh` |
 
 `ci-gates.tsv` is the gate table: one row per gate, in run order, with its
 stable `id`, `hosts` (`all`, `linux` or `windows`), `label` (the display and
@@ -227,6 +231,7 @@ never run at once:
 | `build-stamp` | `target/build-stage0/git-hash.txt`, which compiles with `compiler-build-identity` include and root package builds rewrite (the CLI smoke poisons it on purpose) |
 | `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
 | `embedded-payload` | `target/embedded-stdlib-payload-verify/`, which the payload gate and the stdlib gate (through `verify-embedded-stdlib-payload.sh`) both reset |
+| `instruction-count` | `target/instruction-count-check/`, where the benchmark instruction-count gate (which resets it) and the `self_compile` gate both measure at their historical paths, because measured paths reach the counts |
 | `root-release` | `target/release/`, the root package build's output |
 | `spmd-package` | `tests/spmd/package_callable/target/` and `tests/spmd/package_consumer/target/` |
 
@@ -299,7 +304,7 @@ Some gate-owned helpers deliberately retain measurement-oriented names:
 
 | Helper | Owning gate |
 | --- | --- |
-| `measure-instruction-counts.sh` | `check-instruction-counts.sh` and gate `c-measured-region-instruction-harness-self-tests` |
+| `measure-instruction-counts.sh` | `check-instruction-counts.sh`, `self-compile.sh` (gate `linux-self-compile-measurement`) and gate `c-measured-region-instruction-harness-self-tests` |
 | `measure-spmd-mode-instruction-counts.sh` | gate `spmd-mode-instruction-count-harness-self-tests` and SPMD baseline checks |
 | `measure-compile-batch-memory.ps1` | `verify-compile-profile.sh` |
 | `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` |

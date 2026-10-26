@@ -29,6 +29,7 @@ shared-view-count-ratchet	all	shared-view count ratchet	-	-	256	-	scripts/check-
 spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-	-	256	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test
 c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-	-	256	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test
 instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-	-	256	-	scripts/check-instruction-counts.sh --self-test
+self-compile-gate-self-tests	all	self-compile gate self-tests	-	-	256	-	scripts/self-compile.sh --self-test
 compiler-scaling-comparison-self-tests	all	compiler scaling comparison self-tests	-	-	256	-	scripts/check-compiler-scaling.sh --self-test
 cli-tools-benchmark-repetition-self-test	all	CLI tools benchmark repetition self-test	-	-	256	-	sh scripts/benchmark-cli-tools.sh --self-test
 stage0-release-publication-verifier-self-tests	all	stage0 release publication verifier self-tests	-	-	256	-	scripts/verify-stage0-release.sh --self-test
@@ -43,7 +44,8 @@ stage2-compile-profile-verifier	all	stage2 compile-profile verifier	bootstrap-fi
 stage2-cli-build-run-and-chooser-smoke	all	stage2 cli build/run and chooser smoke	bootstrap-fixpoint	stage2	7424	build-stamp,root-release	scripts/verify-selfhost-cli-build-run.sh
 embedded-stdlib-tlci-bounded-resource-report	all	embedded stdlib TLCI bounded resource report	bootstrap-fixpoint	stage2	6400	build-stamp,embedded-image	scripts/verify-embedded-stdlib-tlci-resources.sh
 stage2-native-integration-corpus	all	stage2 native integration corpus	bootstrap-fixpoint	stage2	4608	-	scripts/verify-integration.sh
-linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	2048	-	gate_instruction_counts
+linux-self-compile-measurement	linux	Linux self-compile measurement	bootstrap-fixpoint	stage2	2048	instruction-count	gate_self_compile_measurement
+linux-instruction-count-baseline	linux	Linux instruction-count baseline	bootstrap-fixpoint	stage2	2048	instruction-count	gate_instruction_counts
 tlci-mutation-bootstrap-fixpoint	all	TLCI mutation bootstrap fixpoint	-	-	6400	-	env TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-tlci-mutation" TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 TYPELISP_BOOTSTRAP_TLCI_MUTATION=1 scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
 stage2-inline-typelisp-tests	all	stage2 inline TypeLisp tests	bootstrap-fixpoint	stage2	6144	-	scripts/verify-inline-tests.sh
 stage2-selfhost-compile-manifest	all	stage2 selfhost compile manifest	bootstrap-fixpoint	stage2	3328	-	env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh

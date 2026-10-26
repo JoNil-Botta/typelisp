@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
+phi links, capacity growth, missing labels and renamed-block logical positions.
+The optimizer smoke's `dense-storage` test also checks edge captures before
+rollback, independent sibling versions, missing predecessors and unbound
+candidate variables. Keep both entry points when changing SSA storage; the
+fixed-source compiler/benchmark and CFG scaling comparisons require complete
+SSA IR (including value numbering) and raw assembly equality.
+
 `compiler-lower-unit-field-reads` requires canonical unit results without
 addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
 `unit_struct_fields` exercises empty, one/two-word and memory-class structs,

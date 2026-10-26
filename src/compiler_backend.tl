@@ -20801,32 +20801,41 @@
       "\n")))
 
 (define (compiler-backend-emit-group-word-copy
+  [entry : (&mut entry CompilerBackendAsmBuf)]
+  [target : CompilerBackendTarget]
   [src : String]
   [dst : String]
   [sse? : bool]
   [exclude : (__tl_dyn-array String)]
   [exclude-n : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (if (or
-    (compiler-backend-peephole-register-operand? src)
-    (compiler-backend-peephole-register-operand? dst))
-    (Ok (compiler-backend-emit-group-word-move src dst sse?))
-    (let
-      ;; Incoming parameter materialization runs before the emitted body. The
-      ;; body's cursor is nevertheless left at its final instruction by the
-      ;; time this text is assembled, so an ordinary `*-here` query observes
-      ;; unrelated end-of-body pressure. Parameter homes are already excluded
-      ;; by the caller; choose the remaining staging register against the true
-      ;; pre-body occupancy (zero), as scalar stack parameters do.
-      [scratch : String
-        (if sse?
-          (compiler-backend-scavenge-pick-from-mask
-            (compiler-backend-state-function-state backend-state)
-            0
-            exclude
-            exclude-n
-            "%xmm2"
-            compiler-backend-scavenge-xmm-candidate-pool)
+  (cond
+    [(or
+        (compiler-backend-peephole-register-operand? src)
+        (compiler-backend-peephole-register-operand? dst))
+      (Ok (compiler-backend-emit-group-word-move src dst sse?))]
+    ;; An SSE word bound for a frame slot is an entry copy
+    ;; (compiler-backend-param-entry-xmm-stage): the XMM pool below would
+    ;; fall back to a pinned parameter home.
+    [sse?
+      (let
+        [stage : String (compiler-backend-param-entry-xmm-stage target)]
+        (compiler-backend-asm-append
+          entry
+          (str_cat.str-cat
+            (compiler-backend-emit-group-word-move src stage true)
+            (compiler-backend-emit-group-word-move stage dst true)))
+        (Ok ""))]
+    [else
+      (let
+        ;; Incoming parameter materialization runs before the emitted body.
+        ;; The body's cursor is nevertheless left at its final instruction by
+        ;; the time this text is assembled, so an ordinary `*-here` query
+        ;; observes unrelated end-of-body pressure. Parameter homes are already
+        ;; excluded by the caller; choose the remaining staging register
+        ;; against the true pre-body occupancy (zero), as scalar stack
+        ;; parameters do.
+        [scratch : String
           (compiler-backend-scavenge-pick-with-mask
             (compiler-backend-state-function-state backend-state)
             true
@@ -20834,11 +20843,11 @@
             0
             exclude
             exclude-n
-            "%r8"))]
-      (Ok
-        (str_cat.str-cat
-          (compiler-backend-emit-group-word-move src scratch sse?)
-          (compiler-backend-emit-group-word-move scratch dst sse?))))))
+            "%r8")]
+        (Ok
+          (str_cat.str-cat
+            (compiler-backend-emit-group-word-move src scratch false)
+            (compiler-backend-emit-group-word-move scratch dst false))))]))
 
 (define (compiler-backend-emit-load-pack-word
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -21951,6 +21960,7 @@
           word-index)))))
 
 (define (compiler-backend-emit-group-word-stack-param
+  [entry : (&mut entry CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -21973,6 +21983,8 @@
           vars
           backend-state))]
     (compiler-backend-emit-group-word-copy
+      entry
+      target
       (compiler-backend-frame-offset-with-backend-state
         backend-state
         (compiler-backend-incoming-stack-arg-offset target stack-idx))
@@ -21987,6 +21999,7 @@
       backend-state)))
 
 (define (compiler-backend-emit-group-word-param
+  [entry : (&mut entry CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -22017,6 +22030,7 @@
       float-idx
       position)
       (compiler-backend-emit-group-word-stack-param
+        entry
         type-segment-bases
         target
         assignments
@@ -61627,7 +61641,27 @@
             backend-state)))
       (str_cat.str-cat "    leaq " addr ", " home "\n"))))
 
+;; #8894: a float parameter word that arrives in the incoming stack area and
+;; lives in a frame slot is copied memory to memory through an XMM register.
+;; Picking that register at the word's place in the walk was unsound: the
+;; earlier parameters already occupy their homes, the scavenger's occupancy
+;; is the cursor the body left behind, and its XMM pool (%xmm2-%xmm5) runs
+;; out when those four are pinned parameter homes, so the pick fell back to a
+;; pinned register and overwrote that parameter. These copies are entry
+;; copies instead: they run first, before any incoming register is written,
+;; when only the incoming argument registers are live. The first XMM register
+;; past the target's float argument bank (System V %xmm8, Win64 %xmm4) is
+;; caller-saved and never carries an argument, so it is free there.
+(define (compiler-backend-param-entry-xmm-stage
+  [target : CompilerBackendTarget]) : String
+  (compiler_abi.compiler-abi-register-spelling
+    (compiler_abi.compiler-abi-xmm-register-id
+      (compiler_abi.compiler-abi-float-arg-register-count
+        (compiler-backend-target-abi target)
+        (Internal)))))
+
 (define (compiler-backend-emit-param-spills-from
+  [entry : (&mut entry CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -61671,6 +61705,7 @@
                 [tail
                   (try
                     (compiler-backend-emit-param-spills-from
+                      entry
                       type-segment-bases
                       target
                       assignments
@@ -61769,6 +61804,7 @@
                     [head0
                       (try
                         (compiler-backend-emit-group-word-stack-param
+                          entry
                           type-segment-bases
                           target
                           assignments
@@ -61784,6 +61820,7 @@
                     [head1
                       (try
                         (compiler-backend-emit-group-word-stack-param
+                          entry
                           type-segment-bases
                           target
                           assignments
@@ -61799,6 +61836,7 @@
                     [tail
                       (try
                         (compiler-backend-emit-param-spills-from
+                          entry
                           type-segment-bases
                           target
                           assignments
@@ -61817,6 +61855,7 @@
                     [head0
                       (try
                         (compiler-backend-emit-group-word-param
+                          entry
                           type-segment-bases
                           target
                           assignments
@@ -61835,6 +61874,7 @@
                     [head1
                       (try
                         (compiler-backend-emit-group-word-param
+                          entry
                           type-segment-bases
                           target
                           assignments
@@ -61853,6 +61893,7 @@
                     [tail
                       (try
                         (compiler-backend-emit-param-spills-from
+                          entry
                           type-segment-bases
                           target
                           assignments
@@ -61882,9 +61923,47 @@
                 float-idx
                 position)
                 (let
+                  [addr : String
+                    (compiler-backend-frame-offset-with-backend-state
+                      backend-state
+                      (compiler-backend-incoming-stack-arg-offset
+                        target
+                        stack-idx))]
+                  ;; A frame-homed float is an entry copy (see
+                  ;; compiler-backend-param-entry-xmm-stage); a float with a
+                  ;; register home loads straight into it below.
+                  [entry-copy? : bool
+                    (and
+                      is-float
+                      (string.eq
+                        (compiler-backend-var-register-home
+                          backend-state
+                          assignments
+                          var-id)
+                        ""))]
+                  [_entry-copy : unit
+                    (when
+                      entry-copy?
+                      (let
+                        [stage : String
+                          (compiler-backend-param-entry-xmm-stage target)]
+                        (compiler-backend-asm-append
+                          entry
+                          (str_cat.str-cat
+                            (compiler-backend-emit-load-float-memory
+                              (compiler-backend-global-shared-view addr)
+                              stage
+                              ty)
+                            (compiler-backend-emit-store-float-var
+                              assignments
+                              var-id
+                              stage
+                              ty
+                              backend-state)))))]
                   [tail
                     (try
                       (compiler-backend-emit-param-spills-from
+                        entry
                         type-segment-bases
                         target
                         assignments
@@ -61900,12 +61979,6 @@
                         backend-state))]
                   (Ok
                     (let
-                      [addr : String
-                        (compiler-backend-frame-offset-with-backend-state
-                          backend-state
-                          (compiler-backend-incoming-stack-arg-offset
-                            target
-                            stack-idx))]
                       [exclude-n : i64
                         (compiler-backend-param-register-exclude-count
                           backend-state
@@ -61917,31 +61990,34 @@
                           all-params
                           assignments)]
                       (str_cat.str-cat
-                        (if is-float
-                          (compiler-backend-emit-load-float-address-to-var
-                            assignments
-                            var-id
-                            addr
-                            ty
-                            backend-state)
-                          (compiler-backend-emit-load-scalar-address-to-var
-                            type-segment-bases
-                            assignments
-                            var-id
-                            addr
-                            ty
-                            (compiler-backend-global-shared-view exclude)
-                            exclude-n
-                            (compiler-backend-scavenge-pick-with-mask
-                              (compiler-backend-state-function-state
-                                backend-state)
-                              true
-                              0
-                              0
-                              exclude
+                        (cond
+                          [entry-copy? ""]
+                          [is-float
+                            (compiler-backend-emit-load-float-address-to-var
+                              assignments
+                              var-id
+                              addr
+                              ty
+                              backend-state)]
+                          [else
+                            (compiler-backend-emit-load-scalar-address-to-var
+                              type-segment-bases
+                              assignments
+                              var-id
+                              addr
+                              ty
+                              (compiler-backend-global-shared-view exclude)
                               exclude-n
-                              "%r8")
-                            backend-state))
+                              (compiler-backend-scavenge-pick-with-mask
+                                (compiler-backend-state-function-state
+                                  backend-state)
+                                true
+                                0
+                                0
+                                exclude
+                                exclude-n
+                                "%r8")
+                              backend-state)])
                         tail))))
                 (match (if is-float
                   (compiler-backend-target-float-arg-reg-for-banks
@@ -61959,6 +62035,7 @@
                       [tail
                         (try
                           (compiler-backend-emit-param-spills-from
+                            entry
                             type-segment-bases
                             target
                             assignments
@@ -62000,20 +62077,29 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (compiler-backend-emit-param-spills-from
-    type-segment-bases
-    target
-    assignments
-    (compiler-backend-global-shared-view params)
-    params
-    0
-    int-idx
-    float-idx
-    position
-    stack-idx
-    program-index
-    vars
-    backend-state))
+  (let
+    ;; The walk's entry copies (compiler-backend-param-entry-xmm-stage) run
+    ;; ahead of every other parameter copy.
+    [entry : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    [copies
+      (try
+        (compiler-backend-emit-param-spills-from
+          (&mut entry)
+          type-segment-bases
+          target
+          assignments
+          (compiler-backend-global-shared-view params)
+          params
+          0
+          int-idx
+          float-idx
+          position
+          stack-idx
+          program-index
+          vars
+          backend-state))]
+    (Ok (str_cat.str-cat (compiler-backend-asm-buf-finish (& entry)) copies))))
 
 (define (compiler-backend-emit-windows-main-argv-capture
   [target : CompilerBackendTarget]

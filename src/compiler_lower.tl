@@ -67465,30 +67465,15 @@
         [(ResultLowerExpr.Ok lowered)
           (match lowered
             [(LowerExpr.Expr field-state field-value _)
-              (let
-                [bound : LowerExpr
-                  (match (& field-value)
-                    [(ir.CompilerIrValue.Var _)
-                      (Expr field-state field-value field-ty)]
-                    [_
-                      (try (lower-materialize field-state field-value field-ty))])]
-                (match bound
-                  [(LowerExpr.Expr bound-state bound-value bound-ty)
-                    (match bound-value
-                      [(ir.CompilerIrValue.Var field-var)
-                        (lower-bind-owned-pattern-name
-                          ctx
-                          bound-state
-                          env
-                          type-env
-                          name
-                          field-var
-                          bound-ty)]
-                      [_
-                        (ResultLowerEnv.Err
-                          (box
-                            (lower-diagnostic
-                              "lower: internal struct field pattern load failed")))])]))])]
+              (lower-bind-element-name
+                ctx
+                field-state
+                env
+                type-env
+                (Owned)
+                field-value
+                name
+                field-ty)])]
         [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)])]
     [(Tuple patterns-box)
       (let
@@ -67884,27 +67869,34 @@
   [value : ir.CompilerIrValue]
   [name : i64]
   [elem-ty : ast.AstType]) : ResultLowerEnv
-  (match value
-    [(Var value-var)
-      (let
-        [bound-ty : ast.AstType
-          (lower-bind-mode-ref-type ctx bind-mode elem-ty)]
+  (let
+    [bound-ty : ast.AstType
+      (lower-bind-mode-ref-type
+        ctx
+        (lower-global-shared-view bind-mode)
+        elem-ty)]
+    [bound : LowerExpr
+      (match (& value)
+        [(Var _) (Expr state value bound-ty)]
+        [_ (try (lower-materialize state value bound-ty))])]
+    (match bound
+      [(Expr bound-state (Var value-var) actual-ty)
         (lower-bind-owned-pattern-name
           ctx
-          state
+          bound-state
           env
           type-env
           name
           value-var
-          bound-ty))]
-    [_
-      (Err
-        (box
-          (lower-diagnostic
-            (match bind-mode
-              [(Owned) "lower: internal tuple element pattern load failed"]
-              [(Borrowed _)
-                "lower: internal borrowed tuple element address failed"]))))]))
+          actual-ty)]
+      [_
+        (Err
+          (box
+            (lower-diagnostic
+              (match bind-mode
+                [(Owned) "lower: internal tuple element pattern load failed"]
+                [(Borrowed _)
+                  "lower: internal borrowed tuple element address failed"]))))])))
 
 (define (lower-bind-element-access
   [ctx : tc_core.TcContext]

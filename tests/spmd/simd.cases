@@ -598,6 +598,26 @@ not-match %zmm[0-9]+|%k[0-7]
 match call _tl___tl_spmd_
 match leaq? .*\(%rsp\), %r10
 
+case private-helper-entry-uniform-float-run
+source tests/spmd/private_helper_entry_uniform_float.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+in asm
+if-mode avx2 avx512
+match call _tl___tl_spmd_
+end-if
+if-mode avx2
+not-match %zmm[0-9]+|%k[0-7]
+match vmovdqu .*%ymm
+end-if
+if-mode avx512
+contains foreach_avx512_mask_body
+end-if
+
 case private-helper-masked-load-avx2
 source tests/spmd/private_helper_masked_load.tl
 mode avx2

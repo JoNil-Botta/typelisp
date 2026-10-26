@@ -18949,39 +18949,6 @@
       (box
         (lower-diagnostic-at-expr ctx origin (lower-reference-support-message))))))
 
-(define (lower-borrow-copy-to-storage
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [referent-ty : ast.AstType]
-  [result-ty : ast.AstType]) : LowerExpr
-  (let
-    [resolved : ast.AstType
-      (tc_core.tc-type-without-regions
-        (tc_core.tc-resolve-type ctx referent-ty))]
-    [size : i64 (lower-type-size ctx resolved)]
-    (match (lower-reserve-heap-storage
-      state
-      (if (= size 0)
-        1
-        size)
-      result-ty
-      (lower-tl-alloc-symbol))
-      [(Expr base-state base _)
-        (Expr
-          (if (> size 0)
-            (lower-store-inline-value-at-offset
-              ctx
-              base-state
-              base
-              0
-              value
-              resolved
-              size)
-            base-state)
-          base
-          result-ty)])))
-
 (define (lower-borrow-copy-to-inline-storage
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -19053,6 +19020,14 @@
           (Global (lower-resolve-name-symbol-id state name-id))
           result-ty)))))
 
+;; A local whose borrow is not its own value (a scalar or a register-resident
+;; aggregate) has no address, so a shared borrow points at a copy in a fresh
+;; frame slot. The shared loan keeps the local unchanged while the reference
+;; lives, so the copy always reads as the local does, and the slot lives for
+;; the whole activation, longer than the binding the checker ties the reference
+;; to. The copy must not be allocated in the current arena: a `with-arena` or
+;; `in-arena` around the borrow would rewind or destroy it while the reference
+;; is still live (#9297).
 (define (lower-borrow-var-address-by-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -19085,7 +19060,7 @@
           [_
             (if (not (lower-state-deferred-copy? state id))
               (ResultLowerExpr.Ok
-                (lower-borrow-copy-to-storage
+                (lower-borrow-copy-to-inline-storage
                   ctx
                   state
                   (Var id)
@@ -19101,7 +19076,7 @@
                 (lower-global-shared-view referent-ty))
                 [(LowerExpr.Expr read-state value _)
                   (ResultLowerExpr.Ok
-                    (lower-borrow-copy-to-storage
+                    (lower-borrow-copy-to-inline-storage
                       ctx
                       read-state
                       value
@@ -19202,7 +19177,7 @@
   ;; word to a fresh slot, then take the field address through the same memory
   ;; helper used for borrowed struct references.
   (if (tc_core.tc-name-register-resident-id? ctx struct-id)
-    (match (lower-borrow-copy-to-storage
+    (match (lower-borrow-copy-to-inline-storage
       ctx
       state
       receiver-value
@@ -72052,9 +72027,10 @@
         [place : ast.AstExpr (lower-context-expr-get ctx place-id)]
         (or
           (lower-tail-call-external-place? ctx state env type-env (& place))
-          ;; A shared borrow of a plain scalar variable is copied by
-          ;; lower-borrow-copy-to-storage into tl_alloc storage. A projection
-          ;; does not take that path; a copied view can still name this frame.
+          ;; A shared borrow of a plain dynamic-array variable, or of a String
+          ;; variable lent as `str`, is the variable's heap handle. A borrow of
+          ;; any other plain variable names this frame: its own storage or a
+          ;; copy in a frame slot (`lower-borrow-var-address-by-value`).
           (and
             (not mutable)
             (match (ast.ast-expr-unspan (& place))
@@ -72063,7 +72039,12 @@
                   (not (tc_core.tc-dotted-local-field-name-id? type-env name))
                   (match (tc_core.tc-lookup-id type-env name)
                     [(Ok ty)
-                      (not (lower-tail-call-frame-sensitive-type? ctx ty))]
+                      (match (tc_core.tc-type-strip-region
+                        (tc_core.tc-resolve-type
+                          ctx
+                          (tc_core.tc-borrow-referent-type ty)))
+                        [(or (Str) (DynArray _)) true]
+                        [_ false])]
                     [(Err _) false]))]
               [_ false]))))]
     [(Call callee args)

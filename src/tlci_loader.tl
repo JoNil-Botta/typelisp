@@ -5,6 +5,7 @@
 ;; finalize code pages as RX through tlci_pages, and run the image registration
 ;; entry point through the backend runtime's raw C-ABI bridge, validate its
 ;; macro table, and invoke registered entries through the six-argument ABI.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
@@ -118,12 +119,7 @@
 (define (tlci-loader-destroy-index-arena [index-arena : i64]) : unit
   (if (> index-arena 0)
     (begin
-      (cfg
-        test
-        (set!
-          tlci-loader-test-index-arena-destroys
-          (+ tlci-loader-test-index-arena-destroys 1))
-        unit)
+      (cfg test (+= tlci-loader-test-index-arena-destroys 1) unit)
       (unsafe
         (arena.tl_arena_destroy index-arena)))
     unit))
@@ -193,37 +189,30 @@
 
 (define (tlci-loader-validate-fixups-at
   [fixups : (& fixups (__tl_dyn-array u8))]
-  [index : i64]
   [count : i64]
   [rodata-offset : i64]
   [rodata-len : i64]
   [code-offset : i64]
   [code-len : i64]) : ResultTlciLoaderUnit
-  (if (>= index count)
-    (Ok)
+  (for [index (iterator.range 0 count)]
     (let
       [slot-offset : i64
         (tlci.tlci-read-u64
           fixups
           (* index tlci.tlci-section-fixup-record-size))]
-      (if (tlci-loader-fixup-offset-ok?
-        slot-offset
-        rodata-offset
-        rodata-len
-        code-offset
-        code-len)
-        (tlci-loader-validate-fixups-at
-          fixups
-          (+ index 1)
-          count
+      (unless
+        (tlci-loader-fixup-offset-ok?
+          slot-offset
           rodata-offset
           rodata-len
           code-offset
           code-len)
-        (Err
-          (str_cat.str-cat
-            "tlci loader: fixup offset outside loadable sections: "
-            (string.int->string slot-offset)))))))
+        (return
+          (Err
+            (str_cat.str-cat
+              "tlci loader: fixup offset outside loadable sections: "
+              (string.int->string slot-offset)))))))
+  (Ok))
 
 (define (tlci-loader-validate-fixups
   [image : (& image tlci.TlciImage)]
@@ -231,7 +220,6 @@
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-fixups-at
     image.fixups
-    0
     (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)
     rodata-offset
     (array-length image.rodata)
@@ -240,38 +228,31 @@
 
 (define (tlci-loader-validate-imports-at
   [imports : (& imports (__tl_dyn-array u8))]
-  [index : i64]
   [count : i64]
   [rodata-offset : i64]
   [rodata-len : i64]
   [code-offset : i64]
   [code-len : i64]) : ResultTlciLoaderUnit
-  (if (>= index count)
-    (Ok)
+  (for [index (iterator.range 0 count)]
     (let
       [record : i64
         (+
           tlci.tlci-section-import-header-size
           (* index tlci.tlci-section-import-record-size))]
       [slot-offset : i64 (tlci.tlci-read-u64 imports record)]
-      (if (tlci-loader-fixup-offset-ok?
-        slot-offset
-        rodata-offset
-        rodata-len
-        code-offset
-        code-len)
-        (tlci-loader-validate-imports-at
-          imports
-          (+ index 1)
-          count
+      (unless
+        (tlci-loader-fixup-offset-ok?
+          slot-offset
           rodata-offset
           rodata-len
           code-offset
           code-len)
-        (Err
-          (str_cat.str-cat
-            "tlci loader: import slot outside loadable sections: "
-            (string.int->string slot-offset)))))))
+        (return
+          (Err
+            (str_cat.str-cat
+              "tlci loader: import slot outside loadable sections: "
+              (string.int->string slot-offset)))))))
+  (Ok))
 
 (define (tlci-loader-validate-imports
   [image : (& image tlci.TlciImage)]
@@ -279,7 +260,6 @@
   [code-offset : i64]) : ResultTlciLoaderUnit
   (tlci-loader-validate-imports-at
     image.imports
-    0
     (tlci.tlci-import-section-count image.imports)
     rodata-offset
     (array-length image.rodata)
@@ -300,15 +280,15 @@
   [symbols : (& symbols (__tl_dyn-array u8))]
   [offset : i64]
   [expected : (& expected str)]
-  [index : i64]
   [len : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  (for [index (iterator.range 0 len)]
+    (unless
       (=
         (tlci.tlci-byte-at symbols (+ offset index))
         (cast (tlci.tlci-string-ref expected index) : i64))
-      (tlci-loader-symbol-name-eq-at? symbols offset expected (+ index 1) len))))
+      (return false))
+    unit)
+  true)
 
 (define (tlci-loader-symbol-name-eq?
   [symbols : (& symbols (__tl_dyn-array u8))]
@@ -318,20 +298,16 @@
   (and
     (= len (tlci.tlci-string-length expected))
     (tlci-loader-symbol-range-ok? symbols offset len)
-    (tlci-loader-symbol-name-eq-at? symbols offset expected 0 len)))
+    (tlci-loader-symbol-name-eq-at? symbols offset expected len)))
 
 (define (tlci-loader-find-entry-at
   [entries : (& entries (__tl_dyn-array u8))]
   [symbols : (& symbols (__tl_dyn-array u8))]
-  [index : i64]
   [count : i64]
   [code-len : i64]
   [found : bool]
   [found-code-offset : i64]) : ResultTlciLoaderI64
-  (if (>= index count)
-    (if found
-      (Ok found-code-offset)
-      (Err "tlci loader: missing tlci_image_entry entry"))
+  (for [index (iterator.range 0 count)]
     (let
       [record-offset : i64 (* index tlci.tlci-section-entry-record-size)]
       [name-offset : i64
@@ -348,33 +324,23 @@
           (+ record-offset tlci-loader-entry-code-offset))]
       (cond
         [(not (tlci-loader-symbol-range-ok? symbols name-offset name-len))
-          (Err "tlci loader: entry name range outside symbol table")]
+          (return (Err "tlci loader: entry name range outside symbol table"))]
         [(or (< code-offset 0) (>= code-offset code-len))
-          (Err "tlci loader: entry code offset outside code section")]
+          (return (Err "tlci loader: entry code offset outside code section"))]
         [(tlci-loader-symbol-name-eq?
             symbols
             name-offset
             name-len
             (tlci.tlci-image-entry-symbol-shared-view))
           (if found
-            (Err "tlci loader: duplicate tlci_image_entry entry")
-            (tlci-loader-find-entry-at
-              entries
-              symbols
-              (+ index 1)
-              count
-              code-len
-              true
-              code-offset))]
-        [else
-          (tlci-loader-find-entry-at
-            entries
-            symbols
-            (+ index 1)
-            count
-            code-len
-            found
-            found-code-offset)]))))
+            (return (Err "tlci loader: duplicate tlci_image_entry entry"))
+            (begin
+              (set! found true)
+              (set! found-code-offset code-offset)))]
+        [else unit])))
+  (if found
+    (Ok found-code-offset)
+    (Err "tlci loader: missing tlci_image_entry entry")))
 
 ;; A native package image (normal-backend transformers, refs #5213) carries a
 ;; single entries record named tlci_macro_table whose code offset points at an
@@ -401,7 +367,7 @@
             (tlci.tlci-macro-table-symbol-shared-view)))
           (set! found (tlci.tlci-read-u64 entries (+ record-offset 16)))
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (tlci-loader-native-image? [image : (& image tlci.TlciImage)]) : bool
@@ -417,7 +383,6 @@
       (tlci-loader-find-entry-at
         image.entries
         image.symbols
-        0
         entry-count
         code-len
         false
@@ -478,7 +443,10 @@
 ;; cannot inherit an owner by omission; the arity is the enforcement.
 (define (tlci-loader-alloc-i64-array-in-arena [owner-arena : i64] [count : i64]) : (__tl_dyn-array
     i64)
-  (in-arena (arena.Arena owner-arena) (__tl_make-array i64 count)))
+  (in-arena
+    (unsafe
+      (arena.Arena owner-arena))
+    (__tl_make-array i64 count)))
 
 (define (tlci-loader-host-table-storage
   [owner-arena : i64]
@@ -522,10 +490,8 @@
 (define (tlci-loader-apply-fixups-at!
   [image-base : i64]
   [fixups : (& (__tl_dyn-array u8))]
-  [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (for [index (iterator.range 0 count)]
     (let
       [slot-offset : i64
         (tlci.tlci-read-u64
@@ -534,7 +500,7 @@
       [slot-addr : i64 (+ image-base slot-offset)]
       [current : i64 (tlci-loader-read-mapped-i64 slot-addr)]
       (tlci-loader-write-mapped-i64! slot-addr (+ current image-base))
-      (tlci-loader-apply-fixups-at! image-base fixups (+ index 1) count))))
+      unit)))
 
 (define (tlci-loader-apply-fixups!
   [image-base : i64]
@@ -542,7 +508,6 @@
   (tlci-loader-apply-fixups-at!
     image-base
     (& image.fixups)
-    0
     (/ (array-length image.fixups) tlci.tlci-section-fixup-record-size)))
 
 ;; Resolve one image import against the compiler's static host registry. The
@@ -557,7 +522,7 @@
     (while (and (< found 0) (< index count))
       (if (string.eq (array-ref host-table.import-names index) name)
         (set! found index)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if (< found 0)
       (Err name)
       (Ok (array-ref host-table.import-callbacks found)))))
@@ -569,10 +534,8 @@
   [imports : (& (__tl_dyn-array u8))]
   [image-identity : String]
   [host-table : (& host-table tlci.TlciHostCallbackTable)]
-  [index : i64]
   [count : i64]) : ResultTlciLoaderUnit
-  (if (>= index count)
-    (Ok)
+  (for [index (iterator.range 0 count)]
     (let
       [record : i64
         (+
@@ -584,23 +547,19 @@
       [name : String (tlci.tlci-bytes->string imports name-offset name-len)]
       (match (tlci-loader-host-import-address host-table name)
         [(Err missing)
-          (Err
-            (str_cat.str-cat
-              "tlci loader: image `"
+          (return
+            (Err
               (str_cat.str-cat
-                image-identity
+                "tlci loader: image `"
                 (str_cat.str-cat
-                  "` has unresolved host import `"
-                  (str_cat.str-cat missing "`")))))]
+                  image-identity
+                  (str_cat.str-cat
+                    "` has unresolved host import `"
+                    (str_cat.str-cat missing "`"))))))]
         [(Ok address)
           (tlci-loader-write-mapped-i64! (+ image-base slot-offset) address)
-          (tlci-loader-bind-imports-at!
-            image-base
-            imports
-            image-identity
-            host-table
-            (+ index 1)
-            count)]))))
+          unit])))
+  (Ok))
 
 (define (tlci-loader-bind-imports!
   [image-base : i64]
@@ -613,7 +572,6 @@
       (string.copy (& image.metadata.package-name))
       (str_cat.str-cat "@" (string.copy (& image.metadata.package-version))))
     host-table
-    0
     (tlci.tlci-import-section-count image.imports)))
 
 (define (tlci-loader-protect-rodata
@@ -730,7 +688,10 @@
     (__tl_make-array i64 0)
     (__tl_make-array i64 0)
     0
-    (in-arena (arena.Arena owner-arena) (__tl_make-array true))))
+    (in-arena
+      (unsafe
+        (arena.Arena owner-arena))
+      (__tl_make-array true))))
 
 (define (tlci-loader-loaded-image-with-registration
   [loaded : TlciLoadedImage]
@@ -1038,18 +999,18 @@
 (define (tlci-loader-mapped-name-eq-at?
   [addr : i64]
   [expected : (& expected str)]
-  [index : i64]
   [len : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  (for [index (iterator.range 0 len)]
+    (unless
       (=
         (cast
           (unsafe
             (ptr-read (ptr-offset (pages.tlci-pages-addr->ptr-u8 addr) index)))
           : i64)
         (cast (tlci.tlci-string-ref expected index) : i64))
-      (tlci-loader-mapped-name-eq-at? addr expected (+ index 1) len))))
+      (return false))
+    unit)
+  true)
 
 (define (tlci-loader-mapped-name-eq?
   [loaded : (& loaded TlciLoadedImage)]
@@ -1059,7 +1020,7 @@
   (and
     (= len (tlci.tlci-string-length expected))
     (tlci-loader-image-range-contained? loaded addr len)
-    (tlci-loader-mapped-name-eq-at? addr expected 0 len)))
+    (tlci-loader-mapped-name-eq-at? addr expected len)))
 
 (define (tlci-loader-read-macro-entry
   [loaded : (& loaded TlciLoadedImage)]
@@ -1113,17 +1074,17 @@
 (define (tlci-loader-mapped-name-ranges-eq-at?
   [left : i64]
   [right : i64]
-  [index : i64]
   [len : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  (for [index (iterator.range 0 len)]
+    (unless
       (=
         (unsafe
           (ptr-read (ptr-offset (pages.tlci-pages-addr->ptr-u8 left) index)))
         (unsafe
           (ptr-read (ptr-offset (pages.tlci-pages-addr->ptr-u8 right) index))))
-      (tlci-loader-mapped-name-ranges-eq-at? left right (+ index 1) len))))
+      (return false))
+    unit)
+  true)
 
 (define (tlci-loader-mapped-name-hash [addr : i64] [len : i64]) : i64
   (let
@@ -1183,7 +1144,7 @@
           (if (>= reduced 0x7fffffff)
             (- reduced 0x7fffffff)
             reduced))
-        (set! index (+ index 4))))
+        (+= index 4)))
     (while (< index len)
       (let
         [next : i64
@@ -1202,7 +1163,7 @@
           (if (>= reduced 0x7fffffff)
             (- reduced 0x7fffffff)
             reduced))
-        (set! index (+ index 1))))
+        (+= index 1)))
     value))
 
 (define (tlci-loader-macro-index-capacity [count : i64]) : i64
@@ -1216,9 +1177,7 @@
   0)
 
 (define (tlci-loader-macro-index-generation-next!) : i64
-  (set!
-    tlci-loader-macro-index-next-generation
-    (+ tlci-loader-macro-index-next-generation 1))
+  (+= tlci-loader-macro-index-next-generation 1)
   (if (<= tlci-loader-macro-index-next-generation 0)
     (set! tlci-loader-macro-index-next-generation 1)
     unit)
@@ -1297,12 +1256,11 @@
               (tlci-loader-mapped-name-ranges-eq-at?
                 (array-ref name-addrs candidate)
                 entry.name-addr
-                0
                 entry.name-len))
               (set! duplicate true)
               (begin
                 (set! slot (% (+ slot 1) capacity))
-                (set! probes (+ probes 1))))))))
+                (+= probes 1)))))))
     (cond
       [duplicate (Err "tlci loader: duplicate macro entry name")]
       [inserted (Ok)]
@@ -1339,7 +1297,7 @@
             [(Err index-message)
               (set! failed true)
               (set! message index-message)]
-            [(Ok) (set! index (+ index 1))])]))
+            [(Ok) (+= index 1)])]))
     (if (cfg test tlci-loader-test-fail-index-after-alloc false)
       (Err "tlci loader: injected macro index failure")
       (if failed
@@ -1391,7 +1349,8 @@
           [index-arena : i64 (arena.tl_arena_make_small)]
           [result : ResultTlciLoadedImage
             (in-arena
-              (arena.Arena index-arena)
+              (unsafe
+                (arena.Arena index-arena))
               (tlci-loader-build-macro-index loaded index-arena))]
           (match result
             [(Err message)
@@ -1451,7 +1410,7 @@
                       (set! done true))
                     (begin
                       (set! slot (% (+ slot 1) capacity))
-                      (set! probes (+ probes 1))))))))
+                      (+= probes 1)))))))
           (if (< found 0)
             Missing
             (let
@@ -1494,7 +1453,9 @@
   [resolved : TlciResolvedMacroEntry]) : ResultTlciLoaderUnit
   (let
     [_ (try (tlci-loader-resolved-macro-entry loaded resolved))]
-    [states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
+    [states : (__tl_dyn-array i64)
+      (owned_view.compiler-owned-reference-shared-view
+        (& loaded.macro-index-entry-states))]
     [index : i64 resolved.entry-index]
     (if (not (= (array-length states) loaded.macro-entry-count))
       (Err "tlci loader: macro entry state index is unavailable")

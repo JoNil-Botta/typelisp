@@ -4,6 +4,7 @@
 (import compiler_incremental_identity as identity)
 (import compiler_incremental_trace as trace)
 (import compiler_incremental_binary as binary)
+(import compiler_abort as abort)
 (import stdlib.string)
 (import stdlib.str_cat)
 (import stdlib.vector)
@@ -666,8 +667,12 @@
           [(Ok builder)
             (match (graph.compiler-graph-finalize builder)
               [(Ok value) value]
-              [_ (string.tl_oob_abort)])]
-          [_ (string.tl_oob_abort)])]
+              [_
+                (abort.compiler-abort
+                  "tl: compiler_incremental_plan.compiler-plan-begin: empty graph finalize failed under validated limits\n")])]
+          [_
+            (abort.compiler-abort
+              "tl: compiler_incremental_plan.compiler-plan-begin: empty graph begin failed under validated limits\n")])]
       [cold : i64 0]
       [snapshot : graph.CompilerIncrementalGraph
         (match prior
@@ -904,7 +909,9 @@
   (match (& plan (array-ref plan.nodes.slots node).result)
     [(Reused value) value]
     [(Recomputed value) value]
-    [Pending (string.tl_oob_abort)]))
+    [Pending
+      (abort.compiler-abort
+        "tl: compiler_incremental_plan.plan-result: node result is still pending\n")]))
 
 (define (plan-query [plan : (& plan CompilerIncrementalPlan)] [node : i64]) : (&
     plan
@@ -1484,7 +1491,9 @@
 (define (plan-child-request [key : (& key trace.CompilerIncrementalTraceKey)]) : identity.CompilerIncrementalIdentity
   (match key
     [(Child _ _ query) (identity.clone-compiler-incremental-identity query)]
-    [_ (string.tl_oob_abort)]))
+    [_
+      (abort.compiler-abort
+        "tl: compiler_incremental_plan.plan-child-request: trace key is not a child request\n")]))
 
 (define (plan-self-child?
   [key : (& key trace.CompilerIncrementalTraceKey)]

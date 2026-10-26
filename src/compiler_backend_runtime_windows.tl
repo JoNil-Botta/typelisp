@@ -1,5 +1,6 @@
 ;; compiler_backend_runtime_windows.tl - Windows backend runtime leaf emitter.
 (import compiler_backend_runtime_common as runtime_common)
+(import compiler_backend_runtime_sanitize as sanitize)
 (import compiler_x64_executable_template as x64_template)
 (import compiler_x64_executable_template_catalog as x64_catalog)
 (import stdlib.str_cat_runtime as str_cat)
@@ -32,14 +33,16 @@
 
 (define (compiler-backend-runtime-data
   [features : (& features runtime_common.CompilerBackendRuntimeFeatures)]) : String
-  (str_cat.str-cat
-    (runtime_common.compiler-backend-runtime-common-data
-      features
-      (runtime_common.compiler-backend-runtime-arena-poison-data
-        (runtime_common.compiler-backend-runtime-arena-debug-text?
-          features.arena-debug)))
-    (runtime_common.compiler-backend-runtime-null-arena-data)
-    "    .section .rodata
+  (let
+    [data : String
+      (str_cat.str-cat
+        (runtime_common.compiler-backend-runtime-common-data
+          features
+          (runtime_common.compiler-backend-runtime-arena-poison-data
+            (runtime_common.compiler-backend-runtime-arena-debug-text?
+              features.arena-debug)))
+        (runtime_common.compiler-backend-runtime-null-arena-data)
+        "    .section .rodata
 .L_tl_main_stack_reservation_msg:
     .ascii \"typelisp runtime: 1 GiB main-stack reservation failed\\n\"
     .set .L_tl_main_stack_reservation_msg_len, . - .L_tl_main_stack_reservation_msg
@@ -52,8 +55,14 @@
 .L_tl_main_stack_written:
     .zero 8
 
-"))
+")]
+    (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
+      (sanitize.runtime-sanitize-data data)
+      data)))
 
+;; The OS command line has at most 32767 UTF-16 code units. Its narrow UTF-8
+;; copy plus 32768 pointers fits the 524288-byte boot pool. Decoding compacts
+;; bytes with write<=read and retains argv[0] pathname quoting separately.
 (define (compiler-backend-runtime-windows-libc-shim-functions
   [startup-profile : bool]) : String
   (str_cat.str-cat
@@ -111,7 +120,7 @@ tl_setup_argv:
     jmp .L_tl_argv_cp
 .L_tl_argv_cpd:
     movb $0, (%r13,%r12)
-    movq $2056, %rcx
+    movq $262144, %rcx
     subq $32, %rsp
     call .L_tl_boot_alloc
     addq $32, %rsp
@@ -120,44 +129,85 @@ tl_setup_argv:
     movq %r13, %rbx
 .L_tl_argv_scan:
     movb (%rbx), %al
-    cmpb $0, %al
+    testb %al, %al
     je .L_tl_argv_done
-    cmpb $0x20, %al
+    cmpb $32, %al
+    je .L_tl_argv_skip
+    cmpb $9, %al
     jne .L_tl_argv_tokstart
+.L_tl_argv_skip:
     incq %rbx
     jmp .L_tl_argv_scan
 .L_tl_argv_tokstart:
-    cmpq $255, %r15
-    jge .L_tl_argv_done
-    movq %rbx, (%r14,%r15,8)
+    movq %r13, (%r14,%r15,8)
     incq %r15
     xorl %r9d, %r9d
 .L_tl_argv_tok:
     movb (%rbx), %al
-    cmpb $0, %al
-    je .L_tl_argv_done
-    cmpb $0x22, %al
-    jne .L_tl_argv_notq
-    xorl $1, %r9d
-    movq %rbx, %rcx
-.L_tl_argv_shift:
-    movb 1(%rcx), %al
-    movb %al, (%rcx)
-    incq %rcx
-    cmpb $0, %al
-    jne .L_tl_argv_shift
-    jmp .L_tl_argv_tok
-.L_tl_argv_notq:
-    cmpb $0x20, %al
-    jne .L_tl_argv_adv
+    testb %al, %al
+    je .L_tl_argv_final
+    cmpb $32, %al
+    je .L_tl_argv_space
+    cmpb $9, %al
+    jne .L_tl_argv_notspace
+.L_tl_argv_space:
     testl %r9d, %r9d
-    jnz .L_tl_argv_adv
-    movb $0, (%rbx)
+    jnz .L_tl_argv_notspace
     incq %rbx
+    movb $0, (%r13)
+    incq %r13
     jmp .L_tl_argv_scan
-.L_tl_argv_adv:
+.L_tl_argv_notspace:
+    cmpq $1, %r15
+    je .L_tl_argv_program
+    cmpb $92, %al
+    jne .L_tl_argv_quote
+    xorq %r12, %r12
+.L_tl_argv_slashes:
+    incq %r12
+    incq %rbx
+    cmpb $92, (%rbx)
+    je .L_tl_argv_slashes
+    movq %r12, %r10
+    cmpb $34, (%rbx)
+    jne .L_tl_argv_copy_slashes
+    shrq $1, %r10
+.L_tl_argv_copy_slashes:
+    testq %r10, %r10
+    jz .L_tl_argv_slashes_done
+    movb $92, (%r13)
+    incq %r13
+    decq %r10
+    jmp .L_tl_argv_copy_slashes
+.L_tl_argv_slashes_done:
+    movb (%rbx), %al
+    cmpb $34, %al
+    jne .L_tl_argv_tok
+    testb $1, %r12b
+    jnz .L_tl_argv_copy
+.L_tl_argv_quote:
+    cmpb $34, %al
+    jne .L_tl_argv_copy
+    testl %r9d, %r9d
+    jz .L_tl_argv_toggle
+    cmpb $34, 1(%rbx)
+    jne .L_tl_argv_toggle
+    incq %rbx
+    jmp .L_tl_argv_copy
+.L_tl_argv_program:
+    cmpb $34, %al
+    jne .L_tl_argv_copy
+.L_tl_argv_toggle:
+    xorl $1, %r9d
     incq %rbx
     jmp .L_tl_argv_tok
+.L_tl_argv_copy:
+    movb %al, (%r13)
+    incq %r13
+    incq %rbx
+    jmp .L_tl_argv_tok
+.L_tl_argv_final:
+    movb $0, (%r13)
 .L_tl_argv_done:
     movq $0, (%r14,%r15,8)
     movq %r15, .L_tl_argc(%rip)
@@ -2051,14 +2101,21 @@ tl_tlci_call_macro_entry:
         (compiler-backend-runtime-tlci-macro-entry-functions))
       (compiler-backend-runtime-windows-render
         true
-        (x64_catalog.compiler-x64-template-select-four
-          (WindowsRuntimeArena)
-          (WindowsRuntimeArenaDebug)
-          (WindowsRuntimeArenaProfile)
-          (WindowsRuntimeArenaProfileDebug)
-          profile
-          arena-debug)
-        (compiler-backend-runtime-windows-arena-functions profile debug-text))
+        (x64_catalog.compiler-x64-template-with-sanitizer
+          (x64_catalog.compiler-x64-template-select-four
+            (WindowsRuntimeArena)
+            (WindowsRuntimeArenaDebug)
+            (WindowsRuntimeArenaProfile)
+            (WindowsRuntimeArenaProfileDebug)
+            profile
+            arena-debug)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
+          (sanitize.runtime-sanitize-windows-arena
+            (compiler-backend-runtime-windows-arena-functions
+              profile
+              debug-text))
+          (compiler-backend-runtime-windows-arena-functions profile debug-text)))
       (compiler-backend-runtime-windows-render
         profile
         (CommonProfile)
@@ -2099,16 +2156,23 @@ tl_tlci_call_macro_entry:
         (compiler-backend-runtime-region-mark-functions))
       (compiler-backend-runtime-windows-render
         features.region-reset
-        (x64_catalog.compiler-x64-template-select-four
-          (WindowsRuntimeRegionReset)
-          (WindowsRuntimeRegionResetDebug)
-          (WindowsRuntimeRegionResetProfile)
-          (WindowsRuntimeRegionResetProfileDebug)
-          profile
-          arena-debug)
-        (compiler-backend-runtime-windows-region-reset-functions
-          profile
-          debug-text))
+        (x64_catalog.compiler-x64-template-with-sanitizer
+          (x64_catalog.compiler-x64-template-select-four
+            (WindowsRuntimeRegionReset)
+            (WindowsRuntimeRegionResetDebug)
+            (WindowsRuntimeRegionResetProfile)
+            (WindowsRuntimeRegionResetProfileDebug)
+            profile
+            arena-debug)
+          (runtime_common.compiler-backend-runtime-features-leaf? features 64))
+        (if (runtime_common.compiler-backend-runtime-features-leaf? features 64)
+          (sanitize.runtime-sanitize-windows-reset
+            (compiler-backend-runtime-windows-region-reset-functions
+              profile
+              debug-text))
+          (compiler-backend-runtime-windows-region-reset-functions
+            profile
+            debug-text)))
       (compiler-backend-runtime-windows-render
         true
         (WindowsRuntimeThread)

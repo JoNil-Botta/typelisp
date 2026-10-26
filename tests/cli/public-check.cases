@@ -1543,7 +1543,7 @@ stderr contains error[E0208]: typecheck: cannot move a `String` out of a
 stderr contains reference; `String` is not Copy
 stderr contains main.tl:3:
 stderr contains this reads the value through a reference
-stderr contains help: borrow it with `(& ...)` instead, or use an owned clone
+stderr contains help: pass an owned clone, or make the parameter a reference and pass `(& ...)`
 step compile
 run compile "{{dir}}/main.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/invalid.s"
 exit 1

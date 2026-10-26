@@ -574,6 +574,7 @@
   (let
     [old-len : i64 buf.len]
     (byte_buf.check-range (byte_buf.bytes-length src) start count)
+    (byte_buf.check-range (array-length buf.slots) 0 old-len)
     (buffer-reserve! buf (+ old-len count))
     ;; A public length does not prove the reserved raw destination is live.
     (byte_buf.check-range (array-length buf.slots) old-len count)

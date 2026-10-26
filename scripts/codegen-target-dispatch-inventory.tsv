@@ -22,20 +22,22 @@ src/compiler_backend.tl	compiler-backend-current-arena-store	adapter	runtime	Com
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	adapter	entry	compiler-backend-target-linux[?]	1	Linux CRT entry captures argv for main.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	adapter	entry	compiler-backend-target-windows[?]	1	Windows entry captures argv for main.
 src/compiler_backend.tl	compiler-backend-entry-for-target-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform process entry sequence.
-src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	adapter	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the System V or Win64 outgoing-argument space computation.
+src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	adapter	abi	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	4	Selects the System V or Win64 outgoing-argument space computation for indirect calls and indirect tail calls.
 src/compiler_backend.tl	compiler-backend-object-image-for-target	adapter	object-format	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|target-linux|target-windows	4	Selects the ELF or COFF object-image leaf.
 src/compiler_backend.tl	compiler-backend-runtime-data-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's data section.
 src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's externs.
-src/compiler_backend.tl	compiler-backend-runtime-features-for-emission	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Linux prunes runtime leaves by use; both targets select the private global allocator only when referenced.
+src/compiler_backend.tl	compiler-backend-runtime-features-for-emission	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Linux prunes runtime leaves by use and Windows only the arena sanitizer's; both targets select the private global allocator only when referenced.
 src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's functions.
 src/compiler_backend.tl	compiler-backend-runtime-usable-end-offset	adapter	runtime	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the runtime leaf's segment bound for inline allocation.
 src/compiler_backend.tl	compiler-backend-target-entry-text-with-crt	adapter	entry	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Selects the platform entry section text.
 src/compiler_backend.tl	compiler-backend-extern-metadata-symbol-ok?	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows	2	Self-test of extern symbol metadata on both targets.
 src/compiler_backend.tl	compiler-backend-windows-driver-runtime-ok?	test	test-only	CompilerBackendTarget[.]Windows	1	Self-test of the Windows driver runtime.
+src/compiler_backend.tl	compiler-backend-object-instr	adapter	abi	CompilerBackendTarget[.]Linux	1	The object encoder encodes a raw syscall only under the Linux kernel ABI.
+src/compiler_backend.tl	compiler-backend-state-authorize-return-storage!	policy	abi	compiler-backend-target-windows[?]	2	The return-storage authority must have been captured for the target's C ABI (Win64 or System V); a mismatch is rejected.
 src/compiler_backend_object_target_linux.tl	compiler-backend-object-target-linux-image	leaf	object-format	target-linux	1	The Linux leaf owns ELF entry and image policy.
 src/compiler_backend_object_target_tests.tl	*	test	test-only	target-linux|target-windows	4	Object-target tests name the targets they exercise.
 src/compiler_backend_object_target_windows.tl	compiler-backend-object-target-windows-image	leaf	object-format	target-windows	1	The Windows leaf owns COFF entry, unwind, and manifest policy.
-src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]|linux-x86_64|target-linux|target-windows|windows-x86_64	404	Backend tests name the targets they exercise.
+src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]|linux-x86_64|target-linux|target-windows|windows-x86_64	415	Backend tests name the targets they exercise.
 src/compiler_backend_tests.tl	compiler-backend-spmd-source-site-retention-ok?	test	test-only	CompilerLowerMode[.]LinuxAvx2	1	SPMD source-site retention fixture exercises SIMD backend register remapping.
 src/compiler_lower.tl	enum:CompilerLowerMode	lower	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	6	Target-aware lower modes preserve host ABI while selecting scalar or SIMD lowering.
 src/compiler_lower.tl	lower-c-abi-aggregate-class-from-layout	lower	abi	lower-mode-(linux|windows)-c-abi[?]	3	System V and Win64 C aggregate layout classes intentionally differ.
@@ -52,6 +54,8 @@ src/compiler_lower.tl	lower-mode-linux-c-abi?	lower	abi	lower-mode-linux-c-abi[?
 src/compiler_lower.tl	lower-mode-of	lower	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	6	Rebuilding a mode from its axes keeps the target ABI while changing the ISA mode (source dispatch).
 src/compiler_lower.tl	lower-mode-simd	lower	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	6	Target-aware lower modes project onto the same SIMD axis as the target-neutral modes.
 src/compiler_lower.tl	lower-mode-windows-c-abi?	lower	abi	lower-mode-windows-c-abi[?]	1	Windows-target lower modes select Win64 C ABI lowering.
+src/compiler_lower.tl	lower-compiler-program-checked-with-names-mode	lower	abi	lower-mode-windows-c-abi[?]	1	The return-storage authority records the lowering mode's C ABI (Win64 or System V).
+src/compiler_lower.tl	lower-return-storage-extern	lower	abi	lower-mode-windows-c-abi[?]	1	A C extern's hidden return storage follows the Win64 or System V convention of the lowering mode.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-payload-enum-shape-ok?	test	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI payload enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-linux-tag-only-enum-shape-ok?	test	test-only	CompilerLowerMode.LinuxScalar	1	Inline lowerer test asserts Linux C ABI enum aggregate shape.
 src/compiler_lower_tests.tl	compiler-lower-c-abi-windows-byref-aggregate-shape-ok?	test	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer test asserts Win64 by-reference aggregate shape.

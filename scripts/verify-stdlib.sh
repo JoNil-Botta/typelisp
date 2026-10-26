@@ -293,6 +293,10 @@ stdlib/tests/string_raw_copy_api.tl|42|-|-|-
 stdlib/tests/byte_buf_live_extent.tl|42|-|-|literal:shared-equal
 stdlib/tests/vector_live_extent.tl|42|-|-|literal:valid
 stdlib/tests/wire_byte_buf_live_extent.tl|42|-|-|literal:tls-equal-one
+stdlib/tests/raw_copy_api.tl|42|-|-
+stdlib/tests/format_fixed_invalid_shape.tl|134|-|literal:format: invalid fixed float scale or precision|-
+stdlib/tests/format_fixed_empty_digits.tl|134|-|literal:format: fixed float digits must not be empty|-
+stdlib/tests/format_negative_precision.tl|134|-|literal:format: negative width or precision|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
 stdlib/tests/base64_api.tl|42|-|-|-
 stdlib/tests/crypto_p256_api.tl|42|-|-|-
@@ -337,6 +341,7 @@ stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|prin
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-
 stdlib/tests/process_runtime.tl|42|-|-
+stdlib/tests/process_argv.tl|42|-|-|-
 stdlib/tests/process_runtime_stderr.tl|42|-|-
 stdlib/tests/process_exact_env.tl|42|-|-|-
 stdlib/tests/profile_concurrent_api.tl|42|-|-|-
@@ -398,6 +403,16 @@ stdlib/tests/format_bare_capture_reject.tl|fail|format: bare '_' is not a captur
 stdlib/tests/format_duplicate_named_reject.tl|fail|format: duplicate named argument name
 stdlib/tests/format_debug_nominal_reject.tl|fail|format: Debug is not implemented for nominal type
 stdlib/tests/format_debug_pointer_safe_reject.tl|fail|requires unsafe context
+stdlib/tests/string_raw_substring_reject.tl|fail|requires unsafe context
+stdlib/tests/string_raw_integer_byte_reject.tl|fail|requires unsafe context
+stdlib/tests/string_raw_integer_digits_reject.tl|fail|requires unsafe context
+stdlib/tests/format_raw_fill_reject.tl|fail|requires unsafe context
+stdlib/tests/format_raw_copy_reject.tl|fail|requires unsafe context
+stdlib/tests/format_raw_debug_read_reject.tl|fail|requires unsafe context
+stdlib/tests/format_raw_debug_length_reject.tl|fail|requires unsafe context
+stdlib/tests/format_raw_debug_write_reject.tl|fail|requires unsafe context
+stdlib/tests/format_raw_debug_byte_reject.tl|fail|requires unsafe context
+stdlib/tests/format_raw_debug_render_reject.tl|fail|requires unsafe context
 stdlib/tests/format_debug_tuple_reject.tl|fail|format: Debug is not implemented for type tuple_
 stdlib/tests/format_debug_box_reject.tl|fail|format: Debug is not implemented for type box_
 stdlib/tests/format_exponent_bool_reject.tl|fail|format: 'e' selector requires an integer or float argument; got bool
@@ -468,13 +483,13 @@ stdlib/tests/hashmap_value_borrow_insert_live.tl|fail|typecheck: cannot mutably 
 stdlib/tests/hashmap_value_borrow_remove_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_value_borrow_put_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_value_borrow_resize_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
-stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
-stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
-stdlib/tests/hashmap_mut_entry_put_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
-stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
+stdlib/tests/hashmap_mut_borrow_insert_or_update_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_mut_entry_double_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_mut_entry_put_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
+stdlib/tests/hashmap_mut_entry_resize_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_macro_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
-stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
+stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/core_macros_for_missing_protocol.tl|fail|is missing protocol function
 stdlib/tests/core_macros_for_offset_slots_reject.tl|fail|is missing protocol function iterator
 stdlib/tests/core_macros_for_owned_dyn_array_reject.tl|fail|sources must be borrowed: write (& source) or (&mut source)
@@ -484,8 +499,8 @@ stdlib/tests/queue_cleanup_element_reject.tl|fail|queue.deque: cleanup-owning el
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_native_slice_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/vector_native_slice_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`
-stdlib/tests/vector_native_slice_split_grow_live.tl|fail|typecheck: cannot read mutably borrowed place `items`
-stdlib/tests/vector_native_slice_alias_reject.tl|fail|typecheck: cannot read mutably borrowed place `items`
+stdlib/tests/vector_native_slice_split_grow_live.tl|fail|typecheck: cannot mutably borrow borrowed place `items`
+stdlib/tests/vector_native_slice_alias_reject.tl|fail|typecheck: cannot immutably borrow mutably borrowed place `items`
 stdlib/tests/string_raw_copy_reject.tl|fail|requires unsafe context
 stdlib/tests/string_raw_owned_copy_reject.tl|fail|requires unsafe context
 stdlib/tests/string_raw_borrowed_copy_reject.tl|fail|requires unsafe context

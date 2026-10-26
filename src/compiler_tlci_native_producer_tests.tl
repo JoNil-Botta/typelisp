@@ -3,6 +3,7 @@
 ;; of them. The host side of the batch format is covered by
 ;; src/tests/comptime_host_smoke.tl, and the gates that compile every stdlib
 ;; macro through both routes cover the end-to-end expansions. Refs #8274.
+(import stdlib.iterator)
 (import compiler_tlci_native_producer as producer)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
@@ -181,12 +182,12 @@
     (test.assert-true
       (and
         (match (ast.ast-node-pool-context-type-get
-          a.context.pools
+          (& a.context.pools)
           (producer-owner-annotation (& a)))
           [(Ptr _) true]
           [_ false])
         (match (ast.ast-node-pool-context-type-get
-          b.context.pools
+          (& b.context.pools)
           (producer-owner-annotation (& b)))
           [(Box _) true]
           [_ false])
@@ -210,25 +211,25 @@
       (> (occurrences (& a.serial-source) "fnalpha") 0)
       "A's serial source contains its own callee")
     (test.assert-true
-      (not (string.eq a.serial-source b.serial-source))
+      (not (string.eq (& a.serial-source) (& b.serial-source)))
       "the fixtures produce distinct source")
     (producer.embedded-native-full-blocker-report-set! true)
     (while (< round 3)
       (test.assert-owned-string-eq
         (producer-owner-source (& a))
-        a.serial-source
+        (clone a.serial-source)
         "A ignores installed expression/type pools and intern names")
       (test.assert-owned-string-eq
         (producer-owner-reasons)
-        a.serial-reasons
+        (clone a.serial-reasons)
         "A's unsupported-body diagnostic is stable")
       (test.assert-owned-string-eq
         (producer-owner-source (& b))
-        b.serial-source
+        (clone b.serial-source)
         "B ignores installed expression/type pools and intern names")
       (test.assert-owned-string-eq
         (producer-owner-reasons)
-        b.serial-reasons
+        (clone b.serial-reasons)
         "B's unsupported-body diagnostic is stable")
       (test.assert-true
         (>
@@ -247,7 +248,7 @@
     (ast.ast-node-pool-context-reset-to! a.context.pools 0 0)
     (test.assert-owned-string-eq
       (producer-owner-source (& b))
-      b.serial-source
+      (clone b.serial-source)
       "resetting A preserves B's captured source")
     (test.assert-i64-eq
       (ci.intern-active-table-id)
@@ -409,12 +410,12 @@
       (let
         [c : char (string.string-ref text index)]
         (cond
-          [(and in-string (= c '\\')) (set! index (+ index 1))]
+          [(and in-string (= c '\\')) (+= index 1)]
           [(= c '"') (set! in-string (not in-string))]
-          [(and (not in-string) (= c '(')) (set! depth (+ depth 1))]
-          [(and (not in-string) (= c ')')) (set! depth (- depth 1))]
+          [(and (not in-string) (= c '(')) (+= depth 1)]
+          [(and (not in-string) (= c ')')) (-= depth 1)]
           [else unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     depth))
 
 ;; Occurrences of `needle` in `text`.
@@ -426,9 +427,9 @@
     (while (<= (+ index length) (string.string-length text))
       (if (string.eq (string.substring text index length) (& needle))
         (begin
-          (set! count (+ count 1))
-          (set! index (+ index length)))
-        (set! index (+ index 1))))
+          (+= count 1)
+          (+= index length))
+        (+= index 1)))
     count))
 
 ;; A batch name entry: this build's row hint, the length and the name.
@@ -532,12 +533,10 @@
   (let
     [count : i64 (+ tlci_core.tlci-run-ops-names-cap 1)]
     [ops : (__tl_dyn-array String) (__tl_make-array String count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref ops index)
-        (op-line (str_cat.str-cat "op-" (string.int->string index)) "0 0 0"))
-      (set! index (+ index 1)))
+        (op-line (str_cat.str-cat "op-" (string.int->string index)) "0 0 0")))
     (let
       [text : String (producer.embedded-native-ops-open-text ops count)]
       (test.assert-i64-eq

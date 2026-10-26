@@ -114,6 +114,9 @@
           (set! p.sibling 20)
           (box 7)))
       (and (= (deref p.value) 7) (= p.sibling 20)))
+    ;; A by-value receiver is its variable's storage (SPEC 5.10): the
+    ;; assignment in the value writes that storage, and the store then lands
+    ;; in it.
     (let
       [p : Owner (Owner (box 1) 2)]
       (set!
@@ -121,7 +124,7 @@
         (begin
           (set! p (Owner (box 7) 8))
           (box 5)))
-      (and (= (deref p.value) 7) (= p.sibling 8)))))
+      (and (= (deref p.value) 5) (= p.sibling 8)))))
 
 (define (main) : i64
   (when (not (boxed-field-effects)) (return 2))

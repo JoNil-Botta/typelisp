@@ -1,5 +1,5 @@
-;: A lending reference used by an earlier call argument ends before a later
-;: nested argument writes its owner.
+;: A reference passed as an earlier call argument stays live until the call
+;: itself; a later argument cannot write its owner first (Rust E0506).
 (define (use-two [_ref : (& n i64)] [value : i64]) : i64
   value)
 

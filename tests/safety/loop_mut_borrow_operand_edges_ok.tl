@@ -28,10 +28,12 @@
     (array-ref items 0)))
 
 ;: A stored borrow that leaves through an operand's break may still be read
-;: through the holder after the loop.
+;: through the holder after the loop. The borrowed `items` is caller storage:
+;: a borrow of a by-value parameter stored under the signature lifetime
+;: `items` would outlive the call (#8890).
 (define (stored-break-read
   [run : bool]
-  [items : (__tl_dyn-array i64)]
+  [items : (&mut items (__tl_dyn-array i64))]
   [refs : (__tl_dyn-array (&mut items i64))]) : i64
   (begin
     (while run

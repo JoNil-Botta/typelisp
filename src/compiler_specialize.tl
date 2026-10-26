@@ -233,7 +233,9 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (set! (array-ref dst index) (array-ref src index))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))
     (spec-generated-symbol-records-copy-range dst src (+ index 1) count)))
 
 (define (spec-generated-symbol-records-grow!
@@ -464,7 +466,9 @@
   [count : i64]) : unit
   (unless
     (>= index count)
-    (set! (array-ref dst index) (array-ref src index))
+    (set!
+      (array-ref dst index)
+      (owned_view.compiler-owned-element-view src index))
     (spec-template-list-copy-range dst src (+ index 1) count)))
 
 (define (spec-template-list-grow
@@ -497,7 +501,9 @@
       (__tl_make-array ctfe.CompilerCtfeValue (+ count 1))]
     (set! (array-ref slots 0) head)
     (for [at (iterator.range 0 count)]
-      (set! (array-ref slots (+ at 1)) (array-ref rest.slots at)))
+      (set!
+        (array-ref slots (+ at 1))
+        (owned_view.compiler-owned-element-view rest.slots at)))
     (SpecValueList slots (+ count 1))))
 
 (define (spec-value-subst-new) : SpecValueSubst
@@ -1124,7 +1130,7 @@
         data.shadow-head
         slot))
       (None)
-      (array-ref data.values slot))))
+      (spec-array-shared-view data.values slot))))
 
 (define (spec-template-env-shadow-name
   [templates : (& templates SpecTemplateEnv)]
@@ -2140,8 +2146,13 @@
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
     [handle : i64
       (spec_ci.intern-compat-state-generated-symbol-handle (&mut intern-state))]
+    ;; The owner context is shared; its record cell is explicit interior
+    ;; mutability.
+    [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
+      (owned_view.compiler-owned-reference-shared-view
+        (& owner.generated-symbol-records))]
     (spec-generated-symbol-records-push!
-      (&mut (array-ref owner.generated-symbol-records 0))
+      (&mut (array-ref records 0))
       (SpecGeneratedSymbolRecord
         (spec-structural-key-raw key)
         handle
@@ -2171,11 +2182,17 @@
 
 (define (spec-materialize-owner-generated-symbols!
   [owner : (&mut owner SpecOwnerContext)]) : unit
-  (spec-materialize-generated-symbol-records-with-owner!
-    owner
-    (& (array-ref owner.generated-symbol-records 0)))
-  (spec-generated-symbol-records-clear!
-    (&mut (array-ref owner.generated-symbol-records 0))))
+  (let
+    ;; The owner context is shared; its record cell is explicit interior
+    ;; mutability.
+    [records : (__tl_dyn-array SpecGeneratedSymbolRecords)
+      (owned_view.compiler-owned-reference-shared-view
+        (& owner.generated-symbol-records))]
+    (spec-materialize-generated-symbol-records-with-owner!
+      owner
+      (& (array-ref records 0)))
+    (spec-generated-symbol-records-clear! (&mut (array-ref records 0)))
+    unit))
 
 (define (gen-registry-empty) : GenRegistry
   (let
@@ -3420,7 +3437,7 @@
 ;; readers then borrow `(array-ref lazy.env 0)`.
 (define (gen-lazy-ctfe-env-force!
   [owner : (& owner SpecOwnerContext)]
-  [lazy : (& lazy GenLazyCtfeEnv)]
+  [lazy : (&mut lazy GenLazyCtfeEnv)]
   [program : (& program ast.AstProgram)]) : unit
   (unless
     (array-ref lazy.built 0)
@@ -3433,7 +3450,7 @@
 
 (define (gen-register-generated-decl-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [env : (& env GenLazyCtfeEnv)]
+  [env : (&mut env GenLazyCtfeEnv)]
   [program : (& program ast.AstProgram)]
   [template : (& ast.AstDecl)]
   [module-id : i64]
@@ -3510,7 +3527,7 @@
   [owner : (& owner SpecOwnerContext)]
   [meta-key : String]
   [args : (& args ast.AstExprList)]
-  [env : (& env GenLazyCtfeEnv)]
+  [env : (&mut env GenLazyCtfeEnv)]
   [program : (& program ast.AstProgram)]) : ResultGenKey
   (if (> (string.string-length meta-key) 0)
     (Ok meta-key (ctfe.ctfe-fuel-limit))
@@ -3534,7 +3551,7 @@
   [decl : (& ast.AstDecl)]
   [module-id : i64]
   [registry : (& GenRegistry)]
-  [env : (& env GenLazyCtfeEnv)]
+  [env : (&mut env GenLazyCtfeEnv)]
   [program : (& program ast.AstProgram)]
   [generator : String]
   [item : String]
@@ -3622,7 +3639,7 @@
   [decl : (& ast.AstDecl)]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env GenLazyCtfeEnv)]
+  [env : (&mut env GenLazyCtfeEnv)]
   [program : (& program ast.AstProgram)]) : ResultGenDecl
   (match decl
     [(Module name) (Ok (gen-single-decl-list decl) registry name)]
@@ -3686,7 +3703,7 @@
   [decls : ast.AstDeclList]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env GenLazyCtfeEnv)]
+  [env : (&mut env GenLazyCtfeEnv)]
   [program : (& program ast.AstProgram)]) : ResultGenDecls
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
@@ -3773,7 +3790,7 @@
   [fallback-path : String]
   [module-id : i64]
   [registry : GenRegistry]
-  [env : (& env GenLazyCtfeEnv)]
+  [env : (&mut env GenLazyCtfeEnv)]
   [program : (& program ast.AstProgram)]) : ResultGenDeclsWithPaths
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
@@ -3905,7 +3922,7 @@
           decls
           -1
           (gen-registry-empty)
-          (& env)
+          (&mut env)
           program)
           [(Ok rewritten _ _) (Ok (ast.ast-program rewritten))]
           [(Err diag) (Err diag)]))]))
@@ -3927,7 +3944,7 @@
           fallback-path
           -1
           (gen-registry-empty)
-          (& env)
+          (&mut env)
           program)
           [(Ok rewritten rewritten-paths _ _)
             (Ok (ast.ast-program rewritten) rewritten-paths)]
@@ -4846,7 +4863,7 @@
               (match (spec-ctfe-eval state (& arg) (ctfe.ctfe-fuel-limit))
                 [(Ok value _)
                   (if (spec-type-kind? (& param-ty))
-                    (match (spec-place-shared-view value)
+                    (match (& value)
                       [(Type _)
                         (match (spec-rewrite-specialized-args-at
                           params

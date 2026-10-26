@@ -267,6 +267,11 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   deterministic setup, vfork, child wiring, exec-status channel, stdin, wait,
   capture, signal, and close failures; each failure is followed by a successful
   command plus exact descriptor and child-reaping checks.
+- `process_argv.tl` pins Microsoft C quoting goldens, encoded-size boundaries,
+  and rejection before spawn. A native child checks consecutive empty values,
+  whitespace, quotes, backslash runs and non-ASCII bytes through captured and
+  inherited execution, plus the full 4096-argument public count boundary.
+  Captured argv is also compared as exact length-framed output.
 - `thread_api.tl` keeps the standalone native thread runtime coverage: two
   native worker threads, semaphore signaling, join return values, and the
   checked `String`/array/box join wrappers. A zero-count semaphore also holds a

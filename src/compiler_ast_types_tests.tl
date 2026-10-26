@@ -1,6 +1,7 @@
 ;; compiler_ast_types_tests.tl - White-box tests for the AST node pools, list
 ;; helpers and span oracles.
 (cfg test (import stdlib.str_cat_runtime as str_cat))
+(import stdlib.iterator)
 (import compiler_intern as ci)
 (cfg test (import compiler_intern_tests as intern_tests))
 (import compiler_builtin_ids as cbi)
@@ -66,7 +67,7 @@
   (ast.ast-expr-node-pool-state-reset-to pool mark))
 
 (define (ty-node-pool-capacity) : i64
-  (* ast.ty-node-pool-segment-count ast.ast-type-node-pool-segment-size))
+  (ast.ty-node-pool-capacity))
 
 (define (ast-type-node-pool-state-exhausted?
   [pool : (& pool ast.AstTypeNodePoolState)]) : bool
@@ -86,9 +87,13 @@
   [id : i64]
   [node : ast.AstType]) : ast.AstTypeNodePoolState
   (let
+    [count : i64 (ast.ast-type-node-pool-state-len pool)]
     [base-arena : i64 pool.base-arena]
     [persistent : ast.AstType
-      (in-arena (arena.Arena base-arena) (ast.ty-node-persist (& node)))]
+      (in-arena
+        (unsafe
+          (arena.Arena base-arena))
+        (ast.ty-node-persist (& node)))]
     [biased-base : i64
       (unsafe
         (ptr-read
@@ -107,7 +112,7 @@
       (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2))))
     ;; Overwriting an existing id can make hash entries stale. Clear the
     ;; private table and let future pushes repopulate it from new candidates.
-    (ast.ast-type-node-pool-state-dedup-clear pool)))
+    (ast.ast-type-node-pool-state-reset-to pool count)))
 
 (define (ast-node-pool-context-expr-canonical-span
   [pools : (& pools ast.AstNodePoolContext)]
@@ -128,15 +133,13 @@
   (let
     [out : ast.AstExprClauseList
       (ast.ast-expr-clause-list-with-capacity (- items.len 1))]
-    [index : i64 1]
-    (while (< index items.len)
+    (for [index (iterator.range 1 items.len)]
       (ast.ast-expr-clause-list-push
         (&mut out)
         (ast.ast-expr-clause-list-get
           (& items)
           index
-          (ast.ast-expr-clause-fallback)))
-      (set! index (+ index 1)))
+          (ast.ast-expr-clause-fallback))))
     out))
 
 (define (ast-expr-binding-clause-list-tail
@@ -144,15 +147,13 @@
   (let
     [out : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-with-capacity (- items.len 1))]
-    [index : i64 1]
-    (while (< index items.len)
+    (for [index (iterator.range 1 items.len)]
       (ast.ast-expr-binding-clause-list-push
         (&mut out)
         (ast.ast-expr-binding-clause-list-get
           (& items)
           index
-          (ast.ast-expr-binding-clause-fallback)))
-      (set! index (+ index 1)))
+          (ast.ast-expr-binding-clause-fallback))))
     out))
 
 ;; The AstType-taking constructors intern the type themselves, so call sites
@@ -510,16 +511,20 @@
                     [_ false])))]
             [_ false]))])))
 
-;; The ty-node pool grows on demand (see ty-node-pool-grow!) rather
-;; than failing closed, so a push at capacity allocates a larger backing array and
-;; assigns the next sequential id -- it never exhausts. Verify that growth.
+;; The ty-node pool grows on demand (see ast-type-pool-cursor-cover!) rather
+;; than failing closed, so a push at capacity installs another segment and
+;; assigns the next sequential id. Fill every installed slot with distinct
+;; nodes (a truncate cannot extend the live length), then verify that growth.
 (define (compiler-ast-type-pool-exhaustion-smoke?) : bool
   (let
     [capacity : i64 (ty-node-pool-capacity)]
     (ast.ty-node-pool-reset!)
-    (ast.ty-node-pool-truncate! capacity)
+    (while (< (ast.ty-node-pool-len) capacity)
+      (begin
+        (ast.ty-node-push (& (ast.AstType.Var (ast.ty-node-pool-len))))
+        unit))
     (let
-      [id : i64 (ast.ty-node-push (& (I64)))]
+      [id : i64 (ast.ty-node-push (& (ast.AstType.I64)))]
       [len : i64 (ast.ty-node-pool-len)]
       [exhausted : bool (ast.ty-node-pool-exhausted?)]
       [grew : bool (> (ty-node-pool-capacity) capacity)]

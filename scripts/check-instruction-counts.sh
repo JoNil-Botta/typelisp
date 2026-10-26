@@ -6,18 +6,13 @@ set -eu
 # Benchmark metrics are exact. Each scalar TypeLisp benchmark is paired with a
 # scalar-fair clang -O2 -fno-vectorize/-fno-slp-vectorize row. Measurement may
 # also report auto-vectorized clang -O2, but a baseline chooses whether that row
-# is gated by including benchmark/c/<name>. The self-compile metric carries a
-# small CI tolerance, but its absolute cachegrind count is not portable between
-# local WSL/Linux environments and GitHub-hosted Linux. Local comparisons
-# therefore report that row without gating it; reviewers measure branch deltas
-# by running measure-instruction-counts.sh on both trees on one host.
+# is gated by including benchmark/c/<name>.
 #
-# That tolerance absorbs real drift as well as noise, and a tolerated result
-# never refreshes the baseline. Drift is therefore cumulative against a fixed
-# baseline: once it approaches the tolerance, the next change to cross the line
-# reports the accumulated total rather than its own cost, and gets blamed for it.
-# Rows using a large share of their budget are flagged so that is visible before
-# it happens rather than after.
+# self_compile is not a row of any baseline. Its absolute count is
+# environment-specific, so scripts/self-compile.sh measures it in the
+# `linux-self-compile-measurement` gate and gates each PR's own cost against
+# main's CI-owned reference for the tested base (perf/README.md, #9307). A
+# self_compile row in a baseline file is a stale pin and fails here.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -30,40 +25,30 @@ DEFAULT_WORKDIR="target/instruction-count-check"
 BASELINE=${TYPELISP_IR_CHECK_BASELINE:-$DEFAULT_BASELINE}
 RUNS=${TYPELISP_IR_CHECK_RUNS:-1}
 BENCHMARKS=${TYPELISP_IR_CHECK_BENCHMARKS:-$DEFAULT_BENCHMARKS}
-SELF_COMPILE_TOLERANCE_PPM=${TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM:-5000}
-STALE_BUDGET_PCT=${TYPELISP_IR_STALE_BUDGET_PCT:-60}
 WORKDIR=${TYPELISP_IR_CHECK_OUT:-$DEFAULT_WORKDIR}
 UPDATE_BASELINE=0
-BENCHMARKS_ONLY=0
-SELF_COMPILE_ONLY=0
 SELF_TEST=0
 SEED_ARG=
-SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=0
-if [ "${GITHUB_ACTIONS:-}" = true ]; then
-    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
-fi
 
 usage() {
     cat <<'EOF'
 usage: scripts/check-instruction-counts.sh [options] [typelisp-seed]
 
 Options:
-  --update-baseline    Regenerate the selected baseline TSV; selections that
-                       include self_compile are restricted to GitHub Actions
+  --update-baseline    Rewrite the selected benchmark rows of the baseline TSV,
+                       preserving every other row
   --baseline FILE      Baseline TSV path (default: perf/insn-exec-baseline.tsv)
   --runs N             Cachegrind runs per metric (default: 1)
   --benchmarks LIST    Comma-separated benchmark names for the per-PR gate
-  --benchmarks-only    Measure benchmark cases only, not self_compile
+  --benchmarks-only    Accepted for compatibility: benchmark rows are all this
+                       checker measures
   --self-test          Check the comparison logic against fixtures and exit;
                        needs no compiler, valgrind, or Linux host
-  --self-compile-only  Measure and compare self_compile/compile_cli_opt1 only;
-                       with --update-baseline, rewrites only that row and
-                       preserves every benchmark row (benchmark/c-scalar rows
-                       depend on the local clang;
-                       benchmark/typelisp rows are deterministic and unaffected
-                       by a self-compile ratchet)
   --output DIR         Work directory (default: target/instruction-count-check)
   -h, --help           Show this help
+
+self_compile is measured by `scripts/self-compile.sh measure` and gated
+main-relative in CI; see perf/README.md.
 
 Environment:
   TYPELISP_BIN                  Seed compiler when no argument is given
@@ -73,11 +58,6 @@ Environment:
   TYPELISP_IR_CHECK_RUNS        Default --runs
   TYPELISP_IR_CHECK_BENCHMARKS  Default --benchmarks
   TYPELISP_IR_CHECK_BASELINE    Default --baseline
-  TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM
-                                Default self_compile tolerance in ppm (5000 = 0.5%)
-  TYPELISP_IR_STALE_BUDGET_PCT  Warn when a tolerated row uses this share of its
-                                tolerance (default 60), so accumulated drift is
-                                visible before it lands on an unrelated change
   TYPELISP_IR_CHECK_OUT         Default --output
 EOF
 }
@@ -113,12 +93,13 @@ while [ "$#" -gt 0 ]; do
             shift 2
             ;;
         --benchmarks-only)
-            BENCHMARKS_ONLY=1
             shift
             ;;
         --self-compile-only)
-            SELF_COMPILE_ONLY=1
-            shift
+            echo "self_compile is no longer a checked baseline row (#9307):" >&2
+            echo "measure it with scripts/self-compile.sh measure; CI gates each" >&2
+            echo "PR's own cost against main (perf/README.md)" >&2
+            exit 2
             ;;
         --self-test)
             SELF_TEST=1
@@ -166,20 +147,6 @@ case "$BENCHMARKS" in
         ;;
 esac
 
-case "$SELF_COMPILE_TOLERANCE_PPM" in
-    "" | *[!0-9]*)
-        echo "TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM must be a non-negative integer: $SELF_COMPILE_TOLERANCE_PPM" >&2
-        exit 2
-        ;;
-esac
-
-case "$STALE_BUDGET_PCT" in
-    "" | *[!0-9]* | 0)
-        echo "TYPELISP_IR_STALE_BUDGET_PCT must be a positive integer: $STALE_BUDGET_PCT" >&2
-        exit 2
-        ;;
-esac
-
 # The comparison program, held in a variable so --self-test can exercise the
 # exact logic CI runs rather than a copy of it. Contains no single quotes.
 IR_COMPARE_AWK='
@@ -202,47 +169,24 @@ function signed(n,    s) {
     }
     return s
 }
-function tolerance_for(name, base) {
-    if (name == "self_compile/compile_cli_opt1") {
-        return int(((base + 0) * self_compile_tolerance_ppm) / 1000000)
-    }
-    return 0
-}
 function pct(delta, base) {
     if (base == 0) {
         return "n/a"
     }
     return sprintf("%+.6f%%", (delta * 100.0) / base)
 }
-# Share of the tolerance for a row consumed by `delta`, as a percentage. Rows
-# with a zero tolerance are exact and can never be partially consumed.
-function budget_used(delta, tolerance,    d) {
-    if (tolerance <= 0) {
-        return 0
-    }
-    d = delta < 0 ? -delta : delta
-    return (d * 100.0) / tolerance
-}
 BEGIN {
     selected_count = split(benchmarks, selected_name, ",")
     for (selected_i = 1; selected_i <= selected_count; selected_i++) {
         selected_benchmark[selected_name[selected_i]] = 1
     }
-    print "metric | baseline | current | delta | pct | tolerance | status"
-    stale = 0
-    unverified = 0
+    print "metric | baseline | current | delta | pct | status"
 }
 NR == FNR {
     if (FNR == 1 && $1 == "name") {
         next
     }
     if (NF < 2) {
-        next
-    }
-    if (self_compile_only == 1 && $1 != "self_compile/compile_cli_opt1") {
-        next
-    }
-    if (benchmarks_only == 1 && $1 == "self_compile/compile_cli_opt1") {
         next
     }
     if (!selected_metric($1)) {
@@ -271,58 +215,28 @@ END {
         name = baseline_order[i]
         base = baseline[name]
         if (!(name in current)) {
-            print name " | " base " | <missing> | n/a | n/a | n/a | missing-current"
+            print name " | " base " | <missing> | n/a | n/a | missing-current"
             failed = 1
             continue
         }
         now = current[name]
         delta = (now + 0) - (base + 0)
-        tolerance = tolerance_for(name, base)
         status = "ok"
-        if (name == "self_compile/compile_cli_opt1" &&
-            self_compile_absolute_authoritative != 1) {
-            status = "local-absolute-unverified"
-            unverified = 1
-        } else {
-            if (delta > tolerance) {
-                status = "REGRESSION"
-                failed = 1
-            } else if (delta < -tolerance) {
-                status = "IMPROVEMENT"
-                failed = 1
-            } else if (delta != 0) {
-                status = "within-tolerance"
-            }
-            used = budget_used(delta, tolerance)
-            if (used >= stale_budget_pct) {
-                status = status " (" sprintf("%d", used) "% of tolerance)"
-                stale = 1
-            }
+        if (delta > 0) {
+            status = "REGRESSION"
+            failed = 1
+        } else if (delta < 0) {
+            status = "IMPROVEMENT"
+            failed = 1
         }
-        print name " | " base " | " now " | " signed(delta) " | " pct(delta, base + 0) " | " tolerance " | " status
+        print name " | " base " | " now " | " signed(delta) " | " pct(delta, base + 0) " | " status
     }
     for (i = 1; i <= current_count; i++) {
         name = current_order[i]
         if (!(name in baseline)) {
-            print name " | <missing> | " current[name] " | n/a | n/a | n/a | extra-current"
+            print name " | <missing> | " current[name] " | n/a | n/a | extra-current"
             failed = 1
         }
-    }
-    if (stale) {
-        print ""
-        print "[ir-check] a tolerance-carrying row is at " stale_budget_pct "%+ of its budget."
-        print "[ir-check] the tolerance absorbs cross-runner noise, but it also absorbs real"
-        print "[ir-check] drift, and a tolerated result never refreshes the baseline. Once"
-        print "[ir-check] the baseline lags main, the next change to cross the line reports"
-        print "[ir-check] the accumulated total rather than its own cost. Refresh the row"
-        print "[ir-check] against main before attributing a regression to a change. Refs #5641."
-    }
-    if (unverified) {
-        print ""
-        print "[ir-check] local self_compile absolute counts are environment-specific and"
-        print "[ir-check] are not gated against the CI-owned baseline. Measure base and"
-        print "[ir-check] branch back to back on this host and compare their delta instead."
-        print "[ir-check] See perf/README.md. Refs #5757."
     }
     exit failed ? 1 : 0
 }
@@ -332,63 +246,27 @@ END {
 # Exits non-zero when any row regresses, improves, or is missing or extra.
 compare_counts() {
     awk -F '	' \
-        -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" \
-        -v benchmarks_only="$BENCHMARKS_ONLY" \
-        -v self_compile_only="$SELF_COMPILE_ONLY" \
-        -v self_compile_absolute_authoritative="$SELF_COMPILE_ABSOLUTE_AUTHORITATIVE" \
-        -v stale_budget_pct="$STALE_BUDGET_PCT" \
         -v benchmarks="$BENCHMARKS" \
         "$IR_COMPARE_AWK" "$1" "$2"
 }
 
-# Host-independent coverage for the comparison itself: no compiler, no
-# valgrind, no measurement.
-self_test_row() {
-    printf 'name\tir_count\nbenchmark/typelisp/arith_loop\t%s\nself_compile/compile_cli_opt1\t%s\n' \
-        "$1" "$2"
-}
-
-self_test_case() {
-    _stc_name=$1
-    _stc_current=$2
-    _stc_want_status=$3
-    _stc_want_exit=$4
-    _stc_want_note=$5
-
-    set +e
-    _stc_out=$(compare_counts "$SELF_TEST_DIR/base.tsv" "$_stc_current" 2>&1)
-    _stc_exit=$?
-    set -e
-
-    if [ "$_stc_exit" -ne "$_stc_want_exit" ]; then
-        echo "self-test $_stc_name: exit $_stc_exit, want $_stc_want_exit" >&2
-        echo "$_stc_out" >&2
-        return 1
-    fi
-    case "$_stc_out" in
-        *"$_stc_want_status"*) ;;
-        *)
-            echo "self-test $_stc_name: missing status '$_stc_want_status'" >&2
-            echo "$_stc_out" >&2
-            return 1
-            ;;
-    esac
-    case "$_stc_out" in
-        *"of its budget."*) _stc_saw_note=yes ;;
-        *) _stc_saw_note=no ;;
-    esac
-    if [ "$_stc_saw_note" != "$_stc_want_note" ]; then
-        echo "self-test $_stc_name: drift note $_stc_saw_note, want $_stc_want_note" >&2
-        echo "$_stc_out" >&2
+# A self_compile row is a pin of the retired checked-row contract. Refuse it
+# in any baseline, so an old ratchet commit cannot quietly re-enter and so no
+# refresh carries it forward.
+assert_no_self_compile_row() {
+    if awk -F '\t' '$1 ~ /^self_compile\// { found = 1 } END { exit found ? 0 : 1 }' "$1"; then
+        echo "[ir-check] $1 carries a self_compile row" >&2
+        echo "[ir-check] self_compile is gated main-relative by scripts/self-compile.sh;" >&2
+        echo "[ir-check] remove the row (perf/README.md, #9307)" >&2
         return 1
     fi
 }
 
 # A refresh that writes nothing must not report success. `--update-baseline` is
-# a required pre-PR step whose whole job is to rewrite rows, and a tolerated
-# row never refreshes on its own, so a no-op refresh that still prints
-# "baseline updated" is how baseline drift accumulates against an author who
-# ran the step and saw it pass. Every measured row must reach the file.
+# a required pre-PR step whose whole job is to rewrite rows, so a no-op refresh
+# that still prints "baseline updated" would leave a stale row against an
+# author who ran the step and saw it pass. Every measured row must reach the
+# file.
 count_baseline_rows() {
     if [ ! -f "$1" ]; then
         printf '0\n'
@@ -413,28 +291,8 @@ assert_baseline_refreshed() {
     fi
 }
 
-# The benchmark rows reproduce exactly across the supported local and CI
-# environments, but self_compile measures the complete compiler process and its
-# absolute count does not. Let local authors refresh benchmark selections while
-# keeping the CI-owned self_compile ratchet impossible to overwrite silently.
-assert_baseline_update_origin() {
-    _abuo_update=$1
-    _abuo_benchmarks_only=$2
-    _abuo_authoritative=$3
-    if [ "$_abuo_update" -eq 1 ] &&
-        [ "$_abuo_benchmarks_only" -eq 0 ] &&
-        [ "$_abuo_authoritative" -ne 1 ]; then
-        echo "[ir-check] refusing to update a self_compile baseline outside GitHub Actions" >&2
-        echo "[ir-check] its absolute count is environment-specific; local runs measure" >&2
-        echo "[ir-check] a delta between base and branch on the same host" >&2
-        echo "[ir-check] use --benchmarks-only for a local benchmark refresh; see perf/README.md" >&2
-        return 2
-    fi
-}
-
-# Merge only the rows selected for a partial refresh. In particular, a local
-# --benchmarks-only refresh must preserve the CI-owned self_compile row, just as
-# --self-compile-only already preserves every benchmark row.
+# Merge only the measured rows into the baseline, preserving every other row,
+# so a benchmark subset refresh leaves the remaining rows untouched.
 merge_baseline_rows() {
     _mbr_current=$1
     _mbr_baseline=$2
@@ -506,62 +364,60 @@ assert_scalar_fair_baseline() {
     ' "$_asfb_baseline"
 }
 
+# Host-independent coverage for the comparison itself: no compiler, no
+# valgrind, no measurement.
+self_test_case() {
+    _stc_name=$1
+    _stc_baseline=$2
+    _stc_current=$3
+    _stc_want_status=$4
+    _stc_want_exit=$5
+
+    set +e
+    _stc_out=$(compare_counts "$_stc_baseline" "$_stc_current" 2>&1)
+    _stc_exit=$?
+    set -e
+
+    if [ "$_stc_exit" -ne "$_stc_want_exit" ]; then
+        echo "self-test $_stc_name: exit $_stc_exit, want $_stc_want_exit" >&2
+        echo "$_stc_out" >&2
+        return 1
+    fi
+    case "$_stc_out" in
+        *"$_stc_want_status"*) ;;
+        *)
+            echo "self-test $_stc_name: missing status '$_stc_want_status'" >&2
+            echo "$_stc_out" >&2
+            return 1
+            ;;
+    esac
+}
+
 self_test() {
     SELF_TEST_DIR=${TMPDIR:-/tmp}/ir-check-self-test.$$
     mkdir -p "$SELF_TEST_DIR"
-    # Exercise the CI gate semantics first. A separate case below pins the
-    # non-authoritative local rendering.
-    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
     BENCHMARKS=arith_loop
-    # 55356290376 is the committed self_compile baseline these cases were taken
-    # against; 276781451 is its 0.5% tolerance.
-    self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/base.tsv"
-    self_test_row 437500077 55608478646 > "$SELF_TEST_DIR/drifted.tsv"
-    self_test_row 437500077 55667745289 > "$SELF_TEST_DIR/regressed.tsv"
-    self_test_row 437500077 55366290376 > "$SELF_TEST_DIR/small.tsv"
-    self_test_row 437500077 55356290376 > "$SELF_TEST_DIR/exact.tsv"
-    self_test_row 437000000 55356290376 > "$SELF_TEST_DIR/improved.tsv"
-    printf 'name\tir_count\nself_compile/compile_cli_opt1\t55356290376\n' \
+    printf 'name\tir_count\nbenchmark/typelisp/arith_loop\t437500077\nbenchmark/c-scalar/arith_loop\t500001469\n' \
+        > "$SELF_TEST_DIR/base.tsv"
+    printf 'benchmark/typelisp/arith_loop\t437500077\nbenchmark/c-scalar/arith_loop\t500001469\n' \
+        > "$SELF_TEST_DIR/exact.tsv"
+    printf 'benchmark/typelisp/arith_loop\t437500078\nbenchmark/c-scalar/arith_loop\t500001469\n' \
+        > "$SELF_TEST_DIR/regressed.tsv"
+    printf 'benchmark/typelisp/arith_loop\t437500076\nbenchmark/c-scalar/arith_loop\t500001469\n' \
+        > "$SELF_TEST_DIR/improved.tsv"
+    printf 'benchmark/typelisp/arith_loop\t437500077\n' \
         > "$SELF_TEST_DIR/missing-row.tsv"
+    printf 'benchmark/typelisp/arith_loop\t437500077\nbenchmark/c-scalar/arith_loop\t500001469\nbenchmark/c/arith_loop\t1\n' \
+        > "$SELF_TEST_DIR/extra-row.tsv"
 
     _st_status=0
-    # A tolerated row at 91% of budget still passes, and says so.
-    self_test_case drifted "$SELF_TEST_DIR/drifted.tsv" \
-        "within-tolerance (91% of tolerance)" 0 yes || _st_status=1
-    # A regression still fails, with the share of budget it used.
-    self_test_case regressed "$SELF_TEST_DIR/regressed.tsv" \
-        "REGRESSION (112% of tolerance)" 1 yes || _st_status=1
-    # Ordinary small drift stays quiet so the note keeps its meaning.
-    self_test_case small "$SELF_TEST_DIR/small.tsv" \
-        "| within-tolerance" 0 no || _st_status=1
-    self_test_case exact "$SELF_TEST_DIR/exact.tsv" "| ok" 0 no || _st_status=1
-    # Exact-tolerance rows cannot be partially consumed, so they never annotate.
-    self_test_case improved "$SELF_TEST_DIR/improved.tsv" \
-        "| IMPROVEMENT" 1 no || _st_status=1
+    # Every row is exact, in both directions, by one instruction.
+    self_test_case exact "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/exact.tsv" "| ok" 0 || _st_status=1
+    self_test_case regressed "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/regressed.tsv" "| REGRESSION" 1 || _st_status=1
+    self_test_case improved "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/improved.tsv" "| IMPROVEMENT" 1 || _st_status=1
     # Fail-closed shapes still fail.
-    self_test_case missing-row "$SELF_TEST_DIR/missing-row.tsv" \
-        "missing-current" 1 no || _st_status=1
-
-    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=0
-    set +e
-    _st_local_out=$(compare_counts \
-        "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/regressed.tsv" 2>&1)
-    _st_local_exit=$?
-    set -e
-    case "$_st_local_out" in
-        *"local-absolute-unverified"*"Measure base and"*"branch back to back"*) ;;
-        *)
-            echo "self-test local-unverified: missing local delta guidance" >&2
-            echo "$_st_local_out" >&2
-            _st_status=1
-            ;;
-    esac
-    if [ "$_st_local_exit" -ne 0 ]; then
-        echo "self-test local-unverified: exit $_st_local_exit, want 0" >&2
-        echo "$_st_local_out" >&2
-        _st_status=1
-    fi
-    SELF_COMPILE_ABSOLUTE_AUTHORITATIVE=1
+    self_test_case missing-row "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/missing-row.tsv" "missing-current" 1 || _st_status=1
+    self_test_case extra-row "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/extra-row.tsv" "extra-current" 1 || _st_status=1
 
     # Explicit benchmark subsets compare only their selected rows, even when
     # the baseline carries other cases. Selected mismatches still fail.
@@ -572,61 +428,33 @@ self_test() {
     printf 'benchmark/typelisp/a\t21\nbenchmark/c-scalar/a\t10\n' \
         > "$SELF_TEST_DIR/subset-regressed.tsv"
     BENCHMARKS=a
-    BENCHMARKS_ONLY=1
-    set +e
-    _st_subset_out=$(compare_counts \
-        "$SELF_TEST_DIR/subset-base.tsv" "$SELF_TEST_DIR/subset-current.tsv" 2>&1)
-    _st_subset_exit=$?
-    _st_subset_regressed_out=$(compare_counts \
-        "$SELF_TEST_DIR/subset-base.tsv" "$SELF_TEST_DIR/subset-regressed.tsv" 2>&1)
-    _st_subset_regressed_exit=$?
-    set -e
-    if [ "$_st_subset_exit" -ne 0 ] ||
-        printf '%s\n' "$_st_subset_out" | grep -q 'missing-current'; then
-        echo "self-test benchmark-subset: unselected baseline rows affected comparison" >&2
-        echo "$_st_subset_out" >&2
+    self_test_case benchmark-subset "$SELF_TEST_DIR/subset-base.tsv" "$SELF_TEST_DIR/subset-current.tsv" "| ok" 0 ||
         _st_status=1
-    fi
-    if [ "$_st_subset_regressed_exit" -ne 1 ] ||
-        ! printf '%s\n' "$_st_subset_regressed_out" | grep -q 'REGRESSION'; then
-        echo "self-test benchmark-subset-regression: selected mismatch passed" >&2
-        echo "$_st_subset_regressed_out" >&2
-        _st_status=1
-    fi
+    self_test_case benchmark-subset-regression "$SELF_TEST_DIR/subset-base.tsv" "$SELF_TEST_DIR/subset-regressed.tsv" \
+        "REGRESSION" 1 || _st_status=1
     BENCHMARKS=arith_loop
-    BENCHMARKS_ONLY=0
 
-    set +e
-    _st_update_out=$(assert_baseline_update_origin 1 0 0 2>&1)
-    _st_update_exit=$?
-    set -e
-    if [ "$_st_update_exit" -ne 2 ]; then
-        echo "self-test local-update: exit $_st_update_exit, want 2" >&2
-        echo "$_st_update_out" >&2
+    # An old baseline-only self_compile pin edit is rejected, wherever it is.
+    printf 'name\tir_count\nbenchmark/typelisp/a\t20\nself_compile/compile_cli_opt1\t116113939625\nbenchmark/c-scalar/a\t10\n' \
+        > "$SELF_TEST_DIR/pinned.tsv"
+    if (assert_no_self_compile_row "$SELF_TEST_DIR/pinned.tsv") >/dev/null 2>&1; then
+        echo "self-test pin-row: a self_compile pin row was accepted" >&2
         _st_status=1
     fi
-    case "$_st_update_out" in
-        *"refusing to update a self_compile baseline"*) ;;
-        *)
-            echo "self-test local-update: missing refusal diagnostic" >&2
-            echo "$_st_update_out" >&2
-            _st_status=1
-            ;;
-    esac
-    if ! (assert_baseline_update_origin 1 1 0) >/dev/null 2>&1; then
-        echo "self-test benchmark-update: local benchmark refresh was rejected" >&2
+    if ! (assert_no_self_compile_row "$SELF_TEST_DIR/subset-base.tsv") >/dev/null 2>&1; then
+        echo "self-test pin-row: a benchmark-only baseline was rejected" >&2
         _st_status=1
     fi
-    if ! (assert_baseline_update_origin 1 0 1) >/dev/null 2>&1; then
-        echo "self-test ci-update: GitHub Actions self_compile refresh was rejected" >&2
+    if (sh "$ROOT/scripts/check-instruction-counts.sh" --self-compile-only) >/dev/null 2>&1; then
+        echo "self-test self-compile-only: the retired self_compile mode still runs" >&2
         _st_status=1
     fi
 
     # The refresh guard: a baseline that was not actually rewritten must not
     # report success.
-    printf 'self_compile/compile_cli_opt1\t1\n' \
+    printf 'benchmark/typelisp/a\t1\n' \
         > "$SELF_TEST_DIR/refresh-current.tsv"
-    printf 'name\tir_count\nself_compile/compile_cli_opt1\t1\n' \
+    printf 'name\tir_count\nbenchmark/typelisp/a\t1\n' \
         > "$SELF_TEST_DIR/refresh-written.tsv"
     : > "$SELF_TEST_DIR/refresh-empty.tsv"
     if (assert_baseline_refreshed "$SELF_TEST_DIR/refresh-empty.tsv" \
@@ -645,7 +473,7 @@ self_test() {
         _st_status=1
     fi
 
-    printf 'name\tir_count\nself_compile/compile_cli_opt1\t10\nbenchmark/typelisp/a\t20\n' \
+    printf 'name\tir_count\nbenchmark/typelisp/b\t10\nbenchmark/typelisp/a\t20\n' \
         > "$SELF_TEST_DIR/merge-base.tsv"
     printf 'benchmark/typelisp/a\t21\nbenchmark/c-scalar/a\t7\n' \
         > "$SELF_TEST_DIR/merge-current.tsv"
@@ -654,12 +482,12 @@ self_test() {
         "$SELF_TEST_DIR/merge-base.tsv" \
         "$SELF_TEST_DIR/merge-result.tsv"
     if ! awk -F '\t' '
-        $1 == "self_compile/compile_cli_opt1" && $2 == 10 { self = 1 }
+        $1 == "benchmark/typelisp/b" && $2 == 10 { other = 1 }
         $1 == "benchmark/typelisp/a" && $2 == 21 { tl = 1 }
         $1 == "benchmark/c-scalar/a" && $2 == 7 { c = 1 }
-        END { exit self && tl && c ? 0 : 1 }
+        END { exit other && tl && c ? 0 : 1 }
     ' "$SELF_TEST_DIR/merge-result.tsv"; then
-        echo "self-test partial-refresh: selected rows did not merge while preserving self_compile" >&2
+        echo "self-test partial-refresh: selected rows did not merge while preserving the others" >&2
         _st_status=1
     fi
 
@@ -682,11 +510,15 @@ self_test() {
     fi
     for _st_baseline in perf/insn-exec-baseline.tsv \
         perf/insn-exec-heavy-baseline.tsv; do
-        if [ -f "$ROOT/$_st_baseline" ] &&
-            ! (assert_scalar_fair_baseline "$ROOT/$_st_baseline") \
+        [ -f "$ROOT/$_st_baseline" ] || continue
+        if ! (assert_scalar_fair_baseline "$ROOT/$_st_baseline") \
             >/dev/null 2>&1; then
             echo "self-test committed-baseline: $_st_baseline lacks a" \
                 "scalar-fair row" >&2
+            _st_status=1
+        fi
+        if ! (assert_no_self_compile_row "$ROOT/$_st_baseline") >/dev/null 2>&1; then
+            echo "self-test committed-baseline: $_st_baseline carries a self_compile pin row" >&2
             _st_status=1
         fi
     done
@@ -717,36 +549,29 @@ case "$BASELINE" in
         ;;
 esac
 
-if [ "$BENCHMARKS_ONLY" -eq 1 ] && [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
-    echo "--benchmarks-only and --self-compile-only are mutually exclusive" >&2
-    exit 2
-fi
-
-assert_baseline_update_origin \
-    "$UPDATE_BASELINE" \
-    "$BENCHMARKS_ONLY" \
-    "$SELF_COMPILE_ABSOLUTE_AUTHORITATIVE"
-
-# Scalar-fair C rows are required of every benchmark leg, not of one baseline
-# file: keying the requirement off a baseline's name leaves the other legs'
-# cases measured only against auto-vectorized clang, which conflates "our
-# scalar codegen is behind" with "their auto-vectorizer won".
-SCALAR_FAIR=1
-if [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
-    SCALAR_FAIR=0
-fi
-
 case "$(uname -s)" in
     Linux*) ;;
     *)
+        if [ "${GITHUB_ACTIONS:-}" = true ]; then
+            echo "[ir-check] instruction-count baseline is Linux-only; a GitHub Actions run on $(uname -s) cannot pass it" >&2
+            exit 1
+        fi
         echo "[ir-check] instruction-count baseline is Linux-only; skipping on $(uname -s)"
         exit 0
         ;;
 esac
 
 if ! command -v valgrind >/dev/null 2>&1; then
+    if [ "${GITHUB_ACTIONS:-}" = true ]; then
+        echo "[ir-check] valgrind not found: GitHub Actions never passes the instruction-count gate without it" >&2
+        exit 1
+    fi
     echo "[ir-check] valgrind not found; skipping instruction-count baseline"
     exit 0
+fi
+
+if [ -f "$BASELINE" ]; then
+    assert_no_self_compile_row "$BASELINE" || exit 1
 fi
 
 bench_compiler "$SEED_ARG"
@@ -760,12 +585,6 @@ if [ "$RUNS" != 1 ]; then
 fi
 if [ "$BENCHMARKS" != "$DEFAULT_BENCHMARKS" ]; then
     update_command="$update_command --benchmarks $BENCHMARKS"
-fi
-if [ "$BENCHMARKS_ONLY" -eq 1 ]; then
-    update_command="$update_command --benchmarks-only"
-fi
-if [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
-    update_command="$update_command --self-compile-only"
 fi
 if [ "$WORKDIR" != "$DEFAULT_WORKDIR" ]; then
     update_command="$update_command --output $WORKDIR"
@@ -816,21 +635,13 @@ else
 fi
 
 echo "[ir-check] measure instruction-count subset"
-measure_args=
-if [ "$BENCHMARKS_ONLY" -eq 1 ]; then
-    measure_args="--benchmarks-only"
-elif [ "$SELF_COMPILE_ONLY" -eq 1 ]; then
-    measure_args="--self-compile-only"
-fi
-if [ "$SELF_COMPILE_ONLY" -eq 0 ] && [ "$SCALAR_FAIR" -eq 1 ]; then
-    measure_args="$measure_args --c-scalar"
-fi
 env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
     scripts/measure-instruction-counts.sh \
     --runs "$RUNS" \
     --cases "$BENCHMARKS" \
     --output "$MEASURE_OUT" \
-    $measure_args \
+    --benchmarks-only \
+    --c-scalar \
     "$CHECK_COMPILER"
 
 awk -F '\t' -v gate_auto_c="$GATE_AUTO_C" '
@@ -842,10 +653,7 @@ $1 == "benchmark/c" && gate_auto_c != 1 { next }
 
 if [ "$UPDATE_BASELINE" -eq 1 ]; then
     mkdir -p "$(dirname -- "$BASELINE")"
-    if [ -f "$BASELINE" ] &&
-        { [ "$SELF_COMPILE_ONLY" -eq 1 ] || [ "$BENCHMARKS_ONLY" -eq 1 ]; }; then
-        # Partial refreshes replace only selected rows. In particular, local
-        # benchmark refreshes preserve the CI-owned self_compile ratchet.
+    if [ -f "$BASELINE" ]; then
         merge_baseline_rows "$CURRENT" "$BASELINE" "$BASELINE.tmp"
         mv "$BASELINE.tmp" "$BASELINE"
     else
@@ -866,9 +674,7 @@ if [ ! -f "$BASELINE" ]; then
     exit 1
 fi
 
-if [ "$SELF_COMPILE_ONLY" -eq 0 ]; then
-    assert_scalar_fair_baseline "$BASELINE" || exit 1
-fi
+assert_scalar_fair_baseline "$BASELINE" || exit 1
 
 if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
     cat "$DIFF_OUT"

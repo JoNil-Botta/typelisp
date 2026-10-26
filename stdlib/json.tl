@@ -23,6 +23,7 @@
 ;# (define sample : String (json.stringify (json.JsonBool true)))
 ;# ```
 (import stdlib.comptime)
+(import stdlib.byte_buf)
 (import stdlib.checked_size)
 (import stdlib.format)
 (import stdlib.str_cat)
@@ -748,13 +749,13 @@
 
 ;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
 ;:
-;: Only tab, newline, carriage return, and printable ASCII are supported.
+;: ASCII controls and printable ASCII are supported.
 ;: Successful decoded strings allocate in the active arena.
 (define (codepoint-string [code : i64]) : JsonCodepointStringResult
   (cond
-    [(= code 9) (OkJsonCodepointString "\t")]
-    [(= code 10) (OkJsonCodepointString "\n")]
-    [(= code 13) (OkJsonCodepointString "\r")]
+    [(and (>= code 0) (< code 32))
+      (OkJsonCodepointString
+        (byte_buf.to-string (byte_buf.push (byte_buf.new) (cast code : u8))))]
     [(and (>= code 32) (<= code 126))
       (OkJsonCodepointString
         (string.substring ascii-printable-table (- code 32) 1))]
@@ -801,6 +802,15 @@
         [(= code 34) (OkJsonParseEscape "\"" (+ pos 1))]
         [(= code 92) (OkJsonParseEscape "\\" (+ pos 1))]
         [(= code 47) (OkJsonParseEscape "/" (+ pos 1))]
+        [(or (= code 98) (= code 102))
+          (let
+            [decoded
+              (try
+                (stdlib.json.codepoint-string
+                  (if (= code 98)
+                    8
+                    12)))]
+            (OkJsonParseEscape decoded (+ pos 1)))]
         [(= code 110) (OkJsonParseEscape "\n" (+ pos 1))]
         [(= code 114) (OkJsonParseEscape "\r" (+ pos 1))]
         [(= code 116) (OkJsonParseEscape "\t" (+ pos 1))]

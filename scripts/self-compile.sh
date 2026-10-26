@@ -1045,14 +1045,21 @@ sc_cmd_ledger() {
     if [ -z "$_scl_outcome" ]; then
         # After every re-measurement: one commit measured twice with the same
         # as/ld must have measured the same compiler bytes.
-        for _scl_pair in landed-reference:landed parent-reference:parent pr-base:rep-base \
-            pr-base:parent pr-head:rep-head; do
-            _scl_one=$_scl_in/${_scl_pair%%:*}.tsv
-            _scl_two=$_scl_in/${_scl_pair#*:}.tsv
-            [ -f "$_scl_one" ] && [ -f "$_scl_two" ] || continue
-            if ! _scl_msg=$(sc_same_commit_binary "$_scl_one" "$_scl_two"); then
-                echo "$_scl_msg" >> "$_scl_in/binary-problem"
-            fi
+        # Every pair of records held; sc_same_commit_binary applies only to
+        # one commit built with the same as/ld at the same workspace.
+        _scl_records=
+        for _scl_kind in landed-reference landed parent-reference parent pr-head pr-base rep-head rep-base; do
+            [ -f "$_scl_in/$_scl_kind.tsv" ] && _scl_records="$_scl_records $_scl_kind"
+        done
+        _scl_rest=$_scl_records
+        for _scl_one in $_scl_records; do
+            _scl_rest=${_scl_rest# }
+            _scl_rest=${_scl_rest#"$_scl_one"}
+            for _scl_two in $_scl_rest; do
+                if ! _scl_msg=$(sc_same_commit_binary "$_scl_in/$_scl_one.tsv" "$_scl_in/$_scl_two.tsv"); then
+                    echo "$_scl_one/$_scl_two: $_scl_msg" >> "$_scl_in/binary-problem"
+                fi
+            done
         done
         sc_ledger_entry "$_scl_in" > "$_scl_out/entry.tsv"
         sc_record_line pair_source "$SC_PAIR_SOURCE" >> "$_scl_out/entry.tsv"

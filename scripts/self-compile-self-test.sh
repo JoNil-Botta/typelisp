@@ -888,8 +888,8 @@ st_e2e_ledger_repo() {
     )
 }
 
-# st_e2e_pr_api C PR HEAD RUN T_IR B_IR B [KERNEL]  ->  the merged PR of C
-# and its CI, measured on KERNEL (default: the fixture identity's).
+# st_e2e_pr_api C PR HEAD RUN T_IR B_IR B [OVERRIDES]  ->  the merged PR of
+# C and its CI; OVERRIDES (space-separated key=value) apply to its T and B.
 st_e2e_pr_api() {
     printf '[{"number": %s, "merge_commit_sha": "%s", "merged_at": "2026-10-26T00:00:00Z", "base": {"ref": "main"}, "head": {"sha": "%s"}}]\n' \
         "$2" "$1" "$3" | st_api_put "repos/$ST_REPO/commits/$1/pulls"
@@ -903,10 +903,11 @@ st_e2e_pr_api() {
     _sepa=$ST_ART/$4/$SC_MEASUREMENT_ARTIFACT
     mkdir -p "$_sepa"
     # The tested merge is the landed tree (class S) on base B.
-    _sepa_kernel=${8:-6.11.0-1018-azure}
+    # shellcheck disable=SC2086
     st_record "$_sepa/head.tsv" commit="$ST_SHA_D" tree="$(st_tree "$1")" ir_count="$5" run.id="$4" run.event=pull_request \
-        key.kernel="$_sepa_kernel"
-    st_record "$_sepa/base.tsv" commit="$7" tree="$(st_tree "$7")" ir_count="$6" key.kernel="$_sepa_kernel"
+        ${8:-}
+    # shellcheck disable=SC2086
+    st_record "$_sepa/base.tsv" commit="$7" tree="$(st_tree "$7")" ir_count="$6" ${8:-}
     {
         sc_record_line schema "$SC_RESULT_SCHEMA"
         sc_record_line pr "$2"
@@ -947,8 +948,12 @@ st_e2e_ledger() {
             st_record "$1"
         }
         sc_run_fallback() {
+            _self_sha=${ST_FALLBACK_SHA:-7777777777777777777777777777777777777777777777777777777777777777}
+            if [ "$4" = base-fallback ] && [ -n "${ST_FALLBACK_BASE_SHA:-}" ]; then
+                _self_sha=$ST_FALLBACK_BASE_SHA
+            fi
             st_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role="$4" \
-                run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="${ST_FALLBACK_SHA:-7777777777777777777777777777777777777777777777777777777777777777}"
+                run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="$_self_sha"
         }
         _sel_rc=0
         (sc_cmd_ledger) > "$_sel_dir/ledger.log" 2>&1 || _sel_rc=$?
@@ -1068,15 +1073,26 @@ st_e2e() {
     # A PR measured on another kernel is reproduced; a reproduced base whose
     # compiler bytes differ from the PR's base (same commit, as/ld and
     # workspace) fails the entry.
-    st_e2e_ledger_set e3 - 116000050100 6.8.0-1036-azure
+    st_e2e_ledger_set e3 - 116000050100 key.kernel=6.8.0-1036-azure
     st_eq "e2e ledger reproduces a PR from another kernel" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e3)" "0 ok yes clean 1"
     st_eq "e2e ledger records the reproduction" \
         "$(sc_record_get "$ST_E2E/e3-c0/repo/target/self-compile/ledger/entry.tsv" own_source)" \
         "reproduced in the landed pair's identity"
-    st_e2e_ledger_set e4 - 116000050100 6.8.0-1036-azure
+    st_e2e_ledger_set e4 - 116000050100 key.kernel=6.8.0-1036-azure
     st_eq "e2e ledger fails a reproduced base with other compiler bytes" \
         "$(ST_FALLBACK_SHA=5555555555555555555555555555555555555555555555555555555555555555 st_e2e_ledger c0 "$ST_SET_C0" 900 e4)" \
         "1 comparability-failure yes unresolved 1"
+    # The PR's B is the landed parent but was built with an older assembler:
+    # neither PR comparison applies, so the ledger's own measurements of that
+    # one commit (the parent and the reproduced B) must still agree.
+    st_e2e_ledger_set e5 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
+    st_eq "e2e ledger compares the parent with the reproduced base" \
+        "$(ST_FALLBACK_BASE_SHA=5555555555555555555555555555555555555555555555555555555555555555 st_e2e_ledger c0 "$ST_SET_C0" 900 e5)" \
+        "1 comparability-failure yes unresolved 1"
+    st_eq "e2e ledger names the disagreeing pair" \
+        "$(sc_record_get "$ST_E2E/e5-c0/repo/target/self-compile/ledger/entry.tsv" binary_problem | cut -d: -f1)" parent/rep-base
+    st_e2e_ledger_set e6 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
+    st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 }
 
 sc_self_test() {

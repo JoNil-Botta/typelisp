@@ -4,7 +4,7 @@ set -eu
 # analyze-stage0-size.sh - linked stage0 binary size and embedded stdlib report.
 #
 # This reports file bytes, linked section raw sizes, and compressed/expanded
-# embedded stdlib payload bytes. It is a measurement helper, not a size budget
+# compiler-owned payload bytes. It is a measurement helper, not a size budget
 # gate.
 
 usage() {
@@ -14,6 +14,8 @@ usage: scripts/analyze-stage0-size.sh [options] <stage0-binary>
 Options:
   --embedded-stdlib <file>  payload build-input declaration file to count
                             (default: the embedded stdlib payload module)
+  --compiler-sources <files>  other compiler source files to inventory
+                              (default: all top-level src/*.tl modules)
 
 The section report uses llvm-readobj when available, then readelf, then objdump.
 It reports only the supplied binary format; Linux and Windows binaries can be
@@ -28,6 +30,7 @@ cd "$ROOT"
 # here or the stream counts below reject the report. Source fallback modules use
 # independent LZSS frames; the generated TLCI image uses one TLCH envelope.
 EMBEDDED_STDLIB="src/compiler_embedded_stdlib_payload.tl src/compiler_embedded_stdlib_tlci_payload.tl"
+COMPILER_SOURCES="src/*.tl"
 BINARY=
 
 while [ "$#" -gt 0 ]; do
@@ -39,6 +42,11 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             }
             EMBEDDED_STDLIB=$1
+            ;;
+        --compiler-sources)
+            shift
+            [ "$#" -gt 0 ] || { usage; exit 2; }
+            COMPILER_SOURCES=$1
             ;;
         -h | --help)
             usage
@@ -100,6 +108,7 @@ trap 'rm -rf "$tmp_dir"' EXIT HUP INT TERM
 sections_tsv="$tmp_dir/sections.tsv"
 payload_paths="$tmp_dir/payload-paths.txt"
 payloads_tsv="$tmp_dir/payloads.tsv"
+lzss_declarations="$tmp_dir/lzss-declarations.tsv"
 tab=$(printf '\t')
 : > "$payloads_tsv"
 
@@ -362,100 +371,68 @@ collecting {
     exit 1
 }
 expected_payload_streams=$(wc -l < "$payload_paths" | tr -d ' ')
-expected_lzss_streams=$(awk '/^\(include-str-lzss([ \t]|$)/ { count += 1 } END { print count + 0 }' $EMBEDDED_STDLIB)
 expected_tlch_streams=$(awk '/^\(include-bin([ \t]|$)/ { count += 1 } END { print count + 0 }' $EMBEDDED_STDLIB)
+
+# Inventory the source declarations, independently of binary observations.
+# Scanning every production compiler module also makes an unaccounted new
+# declaration fail closed, rather than silently ignoring a non-stdlib stream.
+awk -v manifests="$EMBEDDED_STDLIB" '
+BEGIN {
+    n = split(manifests, files, " ")
+    for (i = 1; i <= n; i++) manifest[files[i]] = 1
+}
+FNR == 1 {
+    if (collecting) { print "unfinished LZSS declaration in " previous_file > "/dev/stderr"; exit 1 }
+    previous_file = FILENAME
+    skip = seen[FILENAME]++
+}
+skip { next }
+function emit_input() {
+    path = declaration
+    sub(/^[^"]*"/, "", path)
+    sub(/".*$/, "", path)
+    if (path ~ /^\.\.\/stdlib\//) {
+        sub(/^\.\.\/stdlib\//, "", path)
+        path = "stdlib/" path
+    } else {
+        directory = FILENAME
+        sub(/[^\/]*$/, "", directory)
+        path = directory path
+    }
+    category = (FILENAME in manifest ? "embedded_stdlib_manifest" : "other_compiler_owned")
+    print category "\t" FILENAME "\t" path
+    collecting = 0
+}
+/^\(include-str-lzss([ \t]|$)/ { declaration = $0; collecting = 1; if ($0 ~ /\)[ \t]*$/) emit_input(); next }
+collecting { declaration = declaration " " $0; if ($0 ~ /\)[ \t]*$/) emit_input() }
+END { if (collecting) { print "unfinished LZSS declaration in " FILENAME > "/dev/stderr"; exit 1 } }
+' $EMBEDDED_STDLIB $COMPILER_SOURCES > "$lzss_declarations"
+sort "$lzss_declarations" -o "$lzss_declarations"
+expected_lzss_streams=$(wc -l < "$lzss_declarations" | tr -d ' ')
+[ "$expected_lzss_streams" -gt 0 ] || {
+    echo "compiler-owned LZSS declaration inventory is empty" >&2
+    exit 1
+}
+manifest_lzss_streams=$(awk -F '\t' '$1 == "embedded_stdlib_manifest" { n++ } END { print n + 0 }' "$lzss_declarations")
+other_lzss_streams=$(awk -F '\t' '$1 == "other_compiler_owned" { n++ } END { print n + 0 }' "$lzss_declarations")
+awk -F '\t' '$1 == "other_compiler_owned" { print $3 }' "$lzss_declarations" >> "$payload_paths"
+expected_payload_streams=$((expected_payload_streams + other_lzss_streams))
 
 # Recover each bounded static LZSS stream directly from the linked binary;
 # there is no base64/generated source to read instead.
-set -- $(od -An -v -tu1 "$BINARY" | awk '
-BEGIN {
-    split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 108 122 115 115 95 118 49 95 95", prefix)
-    prefix_len = 36
-    mode = "scan"
-}
-function reset_scan() {
-    mode = "scan"
-    prefix_index = 0
-}
-function finish_payload() {
-    payload_count += 1
-    compressed_total += compressed_bytes
-    static_total += prefix_len + header_digits + 1 + compressed_bytes
-    reset_scan()
-}
-{
-    for (field = 1; field <= NF; field += 1) {
-        byte = $field + 0
-        if (mode == "scan") {
-            if (byte == prefix[prefix_index + 1]) {
-                prefix_index += 1
-            } else if (byte == prefix[1]) {
-                prefix_index = 1
-            } else {
-                prefix_index = 0
-            }
-            if (prefix_index == prefix_len) {
-                mode = "header"
-                raw_len = 0
-                header_digits = 0
-            }
-        } else if (mode == "header") {
-            if (byte >= 48 && byte <= 57) {
-                raw_len = (raw_len * 10) + byte - 48
-                header_digits += 1
-            } else if (byte == 10 && header_digits > 0) {
-                compressed_bytes = 0
-                out_bytes = 0
-                bit = 8
-                if (raw_len == 0) {
-                    finish_payload()
-                } else {
-                    mode = "flags"
-                }
-            } else {
-                reset_scan()
-            }
-        } else if (mode == "flags") {
-            flags = byte
-            compressed_bytes += 1
-            bit = 0
-            mode = "token"
-        } else if (mode == "token") {
-            if (int(flags / (2 ^ bit)) % 2 == 1) {
-                compressed_bytes += 1
-                out_bytes += 1
-                bit += 1
-                if (out_bytes >= raw_len) {
-                    finish_payload()
-                } else if (bit == 8) {
-                    mode = "flags"
-                }
-            } else {
-                compressed_bytes += 1
-                mode = "reference-second"
-            }
-        } else if (mode == "reference-second") {
-            compressed_bytes += 1
-            out_bytes += (byte % 16) + 3
-            bit += 1
-            if (out_bytes >= raw_len) {
-                finish_payload()
-            } else if (bit == 8) {
-                mode = "flags"
-            } else {
-                mode = "token"
-            }
-        }
-    }
-}
-END { printf "%d %d %d\n", payload_count, compressed_total, static_total }
-')
+. "$ROOT/scripts/lib-stage0-lzss.sh"
+lzss_counts=$(scan_stage0_lzss "$BINARY") || exit 1
+set -- $lzss_counts
 payload_streams=$1
 compressed_payload_bytes=$2
 static_payload_bytes=$3
+lzss_v1_streams=$4
+lzss_v2_streams=$5
+lzss_raw_bytes=$6
 encoded_payload_bytes=0
 [ "$payload_streams" -eq "$expected_lzss_streams" ] || {
-    echo "expected $expected_lzss_streams embedded stdlib LZSS payloads in binary, found $payload_streams" >&2
+    echo "expected $expected_lzss_streams compiler-owned LZSS payloads from source declarations ($manifest_lzss_streams embedded stdlib, $other_lzss_streams other), found $payload_streams" >&2
+    echo "binary and source declaration sets must match; use the source checkout that built the binary" >&2
     exit 1
 }
 
@@ -567,6 +544,9 @@ while IFS= read -r path; do
         target/* | */target/*) bucket=generated_images ;;
         *) bucket=other ;;
     esac
+    if awk -F '\t' -v path="$path" '$1 == "other_compiler_owned" && $3 == path { found = 1 } END { exit !found }' "$lzss_declarations"; then
+        bucket=other_compiler_owned
+    fi
     printf '%s\t%s\t%s\n' "$bucket" "$bytes" "$path" >> "$payloads_tsv"
 done < "$payload_paths"
 
@@ -592,10 +572,17 @@ sort -n -t "$tab" -k1,1 "$sections_tsv" \
     | awk -F '\t' '{ printf "%s\t%s\t%s\n", $2, $3, $4 }'
 
 echo
-echo "embedded_stdlib_payloads"
+echo "all_compiler_owned_payloads"
 printf 'source_manifest\t%s\n' "$EMBEDDED_STDLIB"
+printf 'compiler_source_inventory\t%s\n' "$COMPILER_SOURCES"
+printf 'embedded_stdlib_manifest_lzss_declarations\t%s\n' "$manifest_lzss_streams"
+printf 'other_compiler_owned_lzss_declarations\t%s\n' "$other_lzss_streams"
 printf 'total_files\t%s\n' "$payload_files"
 printf 'expanded_source_bytes\t%s\n' "$payload_total"
+printf 'lzss_payload_streams\t%s\n' "$payload_streams"
+printf 'lzss_v1_streams\t%s\n' "$lzss_v1_streams"
+printf 'lzss_v2_streams\t%s\n' "$lzss_v2_streams"
+printf 'lzss_raw_bytes\t%s\n' "$lzss_raw_bytes"
 printf 'compressed_token_bytes\t%s\n' "$compressed_payload_bytes"
 printf 'tlci_envelope_raw_bytes\t%s\n' "$tlch_raw_bytes"
 printf 'tlci_envelope_bitstream_bytes\t%s\n' "$tlch_bitstream_bytes"
@@ -604,7 +591,7 @@ printf 'static_payload_bytes\t%s\n' "$static_payload_bytes"
 printf 'encoded_payload_bytes\t%s\n' "$encoded_payload_bytes"
 printf 'bucket\tfiles\tbytes\n'
 for bucket in stdlib_top_level_modules stdlib_tests stdlib_other \
-    generated_images generated_unavailable other; do
+    generated_images generated_unavailable other other_compiler_owned; do
     awk -F '\t' -v bucket="$bucket" '
 $1 == bucket {
     files += 1
@@ -617,7 +604,12 @@ END {
 done
 
 echo
-echo "embedded_stdlib_files"
+echo "compiler_owned_lzss_declarations"
+printf 'category\tdeclaration_source\tinput_path\n'
+cat "$lzss_declarations"
+
+echo
+echo "compiler_owned_payload_files"
 printf 'bytes\tbucket\tpath\n'
 sort -t "$tab" -k3,3 "$payloads_tsv" \
     | awk -F '\t' '{ printf "%s\t%s\t%s\n", $2, $1, $3 }'

@@ -4,6 +4,24 @@
 # optimization and ordered roots). Only equal input paths inside that invocation
 # may share an output. Keep the original case records for every byte comparison.
 # There is no cross-chunk, cross-producer or on-disk cache lookup.
+build_invariance_chunk_is_selfhost() {
+    [ "$(wc -l < "$1" | tr -d ' ')" -eq 1 ] || return 1
+    case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$1")" in
+        selfhost_main_opt1 | selfhost_main_opt2) return 0 ;;
+    esac
+    return 1
+}
+
+build_invariance_chunk_timeout_seconds() {
+    # Selfhost compiles previously had only the workflow deadline. Give these
+    # larger workloads their own bound when admitting them to the pool.
+    if build_invariance_chunk_is_selfhost "$1"; then
+        printf '1200\n'
+    else
+        printf '600\n'
+    fi
+}
+
 build_invariance_plan_chunk() {
     _bib_cases=$1
     _bib_entries=$2

@@ -119,6 +119,7 @@ fi
 POOL_BUDGET_MIB=12288
 POOL_FULL_CAP_MIB=8192
 POOL_CHUNK_CAP_MIB=4096
+# Backend tests keep their deadline; chunk deadlines use the shared policy.
 POOL_JOB_TIMEOUT_SECONDS=600
 
 WORKDIR="$ROOT/target/build-invariance"
@@ -390,14 +391,6 @@ verify_batch_outputs() {
     done < "$verify_case_chunk"
 }
 
-chunk_is_selfhost() {
-    [ "$(wc -l < "$1" | tr -d ' ')" -eq 1 ] || return 1
-    case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$1")" in
-        selfhost_main_opt1 | selfhost_main_opt2) return 0 ;;
-    esac
-    return 1
-}
-
 run_batch_chunk() {
     batch_compiler_label=$1
     batch_compiler=$2
@@ -408,6 +401,7 @@ run_batch_chunk() {
     batch_entries=$7
     # The cap the chunk's queue record reserved.
     batch_cap_mib=$8
+    batch_timeout_seconds=$(build_invariance_chunk_timeout_seconds "$batch_case_chunk")
     batch_logical_cases=$(wc -l < "$batch_case_chunk" | tr -d ' ')
     batch_label="build-invariance $batch_compiler_label opt$batch_opt_level chunk $batch_id ($batch_entries compile(s), $batch_logical_cases case(s), serial)"
 
@@ -462,7 +456,7 @@ run_batch_chunk() {
     fi
     set -- "$ROOT/scripts/run-memory-bounded.sh" \
         --limit-mib "$batch_cap_mib" --report "$batch_memory_report" \
-        --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- "$@"
+        --timeout-seconds "$batch_timeout_seconds" -- "$@"
     if ! ci_timing_run "$batch_timing_label" compile \
         run_with_heartbeat_capture \
         "$batch_label" \
@@ -605,7 +599,7 @@ run_batch_sentinels() {
 }
 
 pool_job_cap_mib() {
-    if build_invariance_chunk_is_codegen_smoke "$1" || chunk_is_selfhost "$1"; then
+    if build_invariance_chunk_is_codegen_smoke "$1" || build_invariance_chunk_is_selfhost "$1"; then
         printf '%s\n' "$POOL_FULL_CAP_MIB"
     else
         printf '%s\n' "$POOL_CHUNK_CAP_MIB"
@@ -898,7 +892,10 @@ print_top_chunks
 # the same logical records, producer identities and invocation flags.
 opt1_producer_identity=$("$OPT1_COMPILER" --producer-identity)
 opt2_producer_identity=$("$COMPILER" --producer-identity)
-[ -n "$opt1_producer_identity" ] && [ -n "$opt2_producer_identity" ]
+if [ -z "$opt1_producer_identity" ] || [ -z "$opt2_producer_identity" ]; then
+    echo "[build-invariance] compiler producer identity is empty" >&2
+    exit 1
+fi
 cat > "$WORKDIR/provenance.txt" <<EOF
 schema_version=1
 source_commit=$(git rev-parse HEAD)

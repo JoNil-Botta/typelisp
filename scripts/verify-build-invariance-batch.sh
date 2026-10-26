@@ -19,6 +19,30 @@ ALIASES="$WORKDIR/aliases"
 record() {
     printf '%s|%s|%s|%s/%s.s|%s\n' "$1" "$2" "$2" "$3" "$1" "$4"
 }
+
+# Both producers' opt1/opt2 selfhost jobs retain their full cap and get a
+# separate timeout. Ordinary and complete codegen chunks keep the old timeout.
+for timeout_producer in left right; do
+    for timeout_opt in 1 2; do
+        record "selfhost_main_opt$timeout_opt" src/main.tl \
+            "$WORKDIR/$timeout_producer" "$timeout_opt" > "$WORKDIR/timeout-cases"
+        build_invariance_chunk_is_selfhost "$WORKDIR/timeout-cases"
+        test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 1200
+    done
+done
+record ordinary input.tl "$WORKDIR/left" 2 > "$WORKDIR/timeout-cases"
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+record smoke src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2 > "$WORKDIR/timeout-cases"
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+record selfhost_main_opt2 src/main.tl "$WORKDIR/left" 2 >> "$WORKDIR/timeout-cases"
+if build_invariance_chunk_is_selfhost "$WORKDIR/timeout-cases"; then
+    echo 'mixed chunk acquired selfhost timeout' >&2
+    exit 1
+fi
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+record selfhost_main_opt2_alias src/main.tl "$WORKDIR/left" 2 > "$WORKDIR/timeout-cases"
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+
 plan() {
     build_invariance_plan_chunk "$CASES" "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
 }

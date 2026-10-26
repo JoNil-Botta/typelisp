@@ -2675,10 +2675,13 @@ assembly, and receive their own byte comparison. Integration case names retain
 their manifest spelling; the build-invariance corpus requests opt2 for them,
 while its two selfhost rows request opt1 and opt2.
 
-Each job runs through `scripts/run-memory-bounded.sh` with swap disabled and a
-600 s timeout: 8192 MiB for the backend-tests build, both producers' complete
+Each job runs through `scripts/run-memory-bounded.sh` with swap disabled:
+8192 MiB for the backend-tests build, both producers' complete
 codegen smoke and all four selfhost compiles, and 4096 MiB for every other
-chunk. A job starts only while the caps of all running jobs fit 12288 MiB,
+chunk. Selfhost compiles have a 1200 s timeout; every other job retains its
+600 s timeout. Before joining the pool, selfhost compiles had no per-job
+timeout and were bounded only by the workflow deadline. A job starts only
+while the caps of all running jobs fit 12288 MiB,
 so no two 8 GiB jobs overlap; a job whose cap does not fit waits while later
 jobs that fit run. The existing outer CI scheduler still owns the complete
 verification graph. Chunk metrics and the chunk log lines carry every chunk's

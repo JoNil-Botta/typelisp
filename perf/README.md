@@ -109,8 +109,9 @@ the PR's honoured declaration in ppm, or 0. `TYPELISP_IR_SELF_COMPILE_TOLERANCE_
   - that run's `Self-compile reference (Linux)` job succeeded in its latest
     executed attempt (a "re-run failed jobs" copy of a successful job counts as
     the attempt that ran it);
-  - the record names that run, attempt, commit and tree, and a compiler stamped
-    with that commit;
+  - the record is the newest unexpired artifact of that name from the run (a
+    re-run adds an artifact without removing the earlier attempt's) and names
+    that run, attempt, commit and tree, and a compiler stamped with that commit;
   - its comparable identity (argv, cwd, env, harness hash and the environment
     reuse key) equals T's record. The compiler SHA-256 is recorded and bound to
     the commit; it is compared only between measurements of one commit.
@@ -217,7 +218,7 @@ these compact records. Every unresolved failure stays listed.
 
 - Only a reviewed row in `perf/self-compile-ledger-resolutions.tsv`
   (`commit<TAB>outcome<TAB>reference`) resolves a failure. It is refused for a
-  merge whose step was never measured.
+  merge whose step was never measured or whose attribution is missing.
 - A missing measurement is repaired by re-running that merge's ledger job: a
   later run replaces the entry with the repaired one and re-folds every total.
 - If the artifact chain is lost, a reviewed

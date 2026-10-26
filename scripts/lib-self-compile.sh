@@ -488,6 +488,17 @@ sc_job_latest() {
         | [(.run_attempt | tostring), .status, (.conclusion // "")] | @tsv' "$1" | tr -d '\r'
 }
 
+# sc_select_artifact LISTING NAME RUN  ->  the id of the newest unexpired
+# artifact called NAME uploaded by RUN, or nothing. A run's listing holds
+# every attempt's upload of a name (an upload cannot remove an earlier
+# attempt's artifact), so the newest is the latest attempt's; the record it
+# holds is then bound to the producing attempt.
+sc_select_artifact() {
+    jq -r --arg name "$2" --argjson run "$3" '
+        [.artifacts[] | select(.name == $name and .expired == false and .workflow_run.id == $run)]
+        | sort_by(.id) | last // empty | .id | tostring' "$1" | tr -d '\r'
+}
+
 # sc_select_pr_run RUNS_JSON REPO HEAD  ->  the id of the newest successful
 # pull_request CI run of this repository's ci.yml for HEAD, or nothing.
 sc_select_pr_run() {
@@ -647,6 +658,7 @@ sc_ledger_entry() {
     # pair's identity (rep-head.tsv, rep-base.tsv), with the original kept.
     _sle_th=
     _sle_tbr=
+    _sle_reproduced=no
     if ! _sle_pdiff=$(sc_records_comparable "$_sle_dir/pr-head.tsv" "$_sle_dir/landed.tsv"); then
         sc_record_line pr_identity_differences "$(printf '%s' "$_sle_pdiff" | tr '\n' ';')"
     fi
@@ -664,6 +676,7 @@ sc_ledger_entry() {
         sc_records_comparable "$_sle_dir/rep-base.tsv" "$_sle_dir/landed.tsv" >/dev/null; then
         _sle_th=$_sle_dir/rep-head.tsv
         _sle_tbr=$_sle_dir/rep-base.tsv
+        _sle_reproduced=yes
         sc_record_line own_source "reproduced in the landed pair's identity"
     else
         sc_record_line class none
@@ -674,20 +687,39 @@ sc_ledger_entry() {
     _sle_tt=$(sc_record_get "$_sle_th" tree)
     _sle_tb=$(sc_record_get "$_sle_tbr" tree)
     _sle_mt=$(sc_record_get "$_sle_th" ir_count)
+    # own: the PR-reported cost, from its own T and B in its own identity.
+    # The comparable own (reproduced or the same) is what A subtracts.
+    _sle_own_reported=$(sc_bn sub "$(sc_record_get "$_sle_dir/pr-head.tsv" ir_count)" \
+        "$(sc_record_get "$_sle_dir/pr-base.tsv" ir_count)")
     _sle_own=$(sc_bn sub "$_sle_mt" "$(sc_record_get "$_sle_tbr" ir_count)")
     _sle_a=$(sc_bn sub "$_sle_step" "$_sle_own")
-    sc_record_line own "$_sle_own"
+    sc_record_line own "$_sle_own_reported"
+    if [ "$_sle_reproduced" = yes ]; then
+        sc_record_line own_reproduced "$_sle_own"
+    fi
     sc_record_line a "$_sle_a"
     sc_record_line a_ppm "$(sc_ppm_display "$_sle_a" "$_sle_mp")"
 
     if [ "$_sle_tt" = "$_sle_tc" ]; then
         _sle_class=S
-        # Reproduction residual: the landed tree against the measurement of the
-        # same tree in the same identity.
-        if _sle_y=$(sc_records_same_compiler "$_sle_th" "$_sle_dir/landed.tsv"); then
+        # Reproduction residual. In one identity: the landed tree against the
+        # PR's measurement of the same tree. Reproduced: the reproduced own
+        # cost against the reported one, two deltas of the same T and B trees,
+        # each taken within one identity (the comparable paired-delta form).
+        if [ "$_sle_reproduced" = yes ]; then
+            _sle_r=$(sc_bn sub "$_sle_own" "$_sle_own_reported")
+            sc_record_line r "$_sle_r"
+            sc_record_line r_method paired-delta
+            _sle_y=
+        elif _sle_y=$(sc_records_same_compiler "$_sle_th" "$_sle_dir/landed.tsv"); then
             _sle_r=$(sc_bn sub "$_sle_mc" "$_sle_mt")
             sc_record_line r "$_sle_r"
+            sc_record_line r_method direct
             sc_record_line r_compiler "$_sle_y"
+        else
+            _sle_r=
+        fi
+        if [ -n "$_sle_r" ]; then
             if [ "$(sc_abs_exceeds "$_sle_r" "$SC_CLASS_S_FAIL_IR")" = yes ]; then
                 _sle_failures="$_sle_failures class-s"
             elif [ "$(sc_abs_exceeds "$_sle_r" "$SC_CLASS_S_WARN_IR")" = yes ]; then
@@ -821,6 +853,7 @@ sc_account_resolve() {
             next
         }
         $1 == "resolved" { have[$2 SUBSEP $3] = 1 }
+        $1 == "resolution_refused" { refused[$2 SUBSEP $3] = 1 }
         $1 == "entry" { outcome[$2] = $5; step[$2] = $6; own[$2] = $7 }
         { print }
         END {
@@ -830,7 +863,8 @@ sc_account_resolve() {
                 split(key, k, SUBSEP)
                 if (!(k[1] in outcome) || outcome[k[1]] != k[2]) continue
                 if (step[k[1]] == "-" || own[k[1]] == "-") {
-                    print "resolution_refused", k[1], k[2], "incomplete quantities; repair the entry first"
+                    if (!(key in refused))
+                        print "resolution_refused", k[1], k[2], "incomplete quantities; repair the entry first"
                     continue
                 }
                 print "resolved", k[1], k[2], want[key]

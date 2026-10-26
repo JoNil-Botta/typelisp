@@ -259,7 +259,8 @@ sc_json_ok() {
 sc_api() {
     _sa_try=1
     while :; do
-        if gh api -H 'Accept: application/vnd.github+json' "$1" > "$2.attempt-$_sa_try" 2>&1 &&
+        if gh api -H 'Accept: application/vnd.github+json' "$1" > "$2.attempt-$_sa_try" \
+            2> "$2.attempt-$_sa_try.stderr" &&
             sc_json_ok "$2.attempt-$_sa_try"; then
             cp "$2.attempt-$_sa_try" "$2"
             return 0
@@ -270,8 +271,12 @@ sc_api() {
     done
 }
 
+# sc_download_artifact ID DEST  ->  the artifact with that id, unpacked in DEST.
 sc_download_artifact() {
-    gh run download "$1" --repo "$GITHUB_REPOSITORY" --name "$2" --dir "$3"
+    mkdir -p "$2" || return 1
+    gh api -H 'Accept: application/vnd.github+json' \
+        "repos/$GITHUB_REPOSITORY/actions/artifacts/$1/zip" > "$2.zip" 2> "$2.zip.stderr" &&
+        unzip -q -o "$2.zip" -d "$2"
 }
 
 # sc_fetch_run_artifact KIND COMMIT JOB ARTIFACT DEST
@@ -344,15 +349,13 @@ sc_fetch_run_artifact() {
         echo "$_sfra_kind: the artifacts listing of run $SC_RUN_ID is not valid JSON" >> "$_sfra_dest/reasons"
         return 0
     fi
-    if ! jq -e --arg name "$_sfra_artifact" --argjson run "$SC_RUN_ID" '
-        [.artifacts[] | select(.name == $name and .expired == false
-                               and .workflow_run.id == $run)] | length == 1' \
-        "$_sfra_dest/artifacts.json" >/dev/null; then
+    _sfra_id=$(sc_select_artifact "$_sfra_dest/artifacts.json" "$_sfra_artifact" "$SC_RUN_ID")
+    if [ -z "$_sfra_id" ]; then
         SC_RUN_STATUS=rejected
-        echo "$_sfra_kind: run $SC_RUN_ID has no single unexpired $_sfra_artifact artifact" >> "$_sfra_dest/reasons"
+        echo "$_sfra_kind: run $SC_RUN_ID has no unexpired $_sfra_artifact artifact" >> "$_sfra_dest/reasons"
         return 0
     fi
-    if ! sc_download_artifact "$SC_RUN_ID" "$_sfra_artifact" "$_sfra_dest/artifact"; then
+    if ! sc_download_artifact "$_sfra_id" "$_sfra_dest/artifact"; then
         SC_RUN_STATUS=api-error
         echo "$_sfra_kind: downloading $_sfra_artifact from run $SC_RUN_ID failed" >> "$_sfra_dest/reasons"
         return 0
@@ -751,11 +754,10 @@ sc_fetch_pr_record() {
     sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$_sfpr_id/artifacts?name=$SC_MEASUREMENT_ARTIFACT&per_page=100" \
         "$_sfpr_dest/api/artifacts.json" ||
         { SC_LEDGER_INFRA="listing artifacts of CI run $_sfpr_id failed"; _sfpr_problem "API error listing artifacts of run $_sfpr_id"; return 1; }
-    jq -e --arg name "$SC_MEASUREMENT_ARTIFACT" --argjson run "$_sfpr_id" '
-        [.artifacts[] | select(.name == $name and .expired == false and .workflow_run.id == $run)] | length == 1' \
-        "$_sfpr_dest/api/artifacts.json" >/dev/null ||
-        { _sfpr_problem "CI run $_sfpr_id has no single unexpired $SC_MEASUREMENT_ARTIFACT artifact"; return 1; }
-    sc_download_artifact "$_sfpr_id" "$SC_MEASUREMENT_ARTIFACT" "$_sfpr_dest/artifact" ||
+    _sfpr_art=$(sc_select_artifact "$_sfpr_dest/api/artifacts.json" "$SC_MEASUREMENT_ARTIFACT" "$_sfpr_id")
+    [ -n "$_sfpr_art" ] ||
+        { _sfpr_problem "CI run $_sfpr_id has no unexpired $SC_MEASUREMENT_ARTIFACT artifact"; return 1; }
+    sc_download_artifact "$_sfpr_art" "$_sfpr_dest/artifact" ||
         { SC_LEDGER_INFRA="downloading $SC_MEASUREMENT_ARTIFACT from run $_sfpr_id failed"; _sfpr_problem "download failed"; return 1; }
     _sfpr_a=$_sfpr_dest/artifact
     for _sfpr_f in result.tsv head.tsv base.tsv; do
@@ -840,7 +842,13 @@ sc_ledger_pair() {
     _slp_dest=$3
     _slp_work=$4
     mkdir -p "$_slp_dest" "$_slp_work"
-    sc_download_artifact "$GITHUB_RUN_ID" "$SC_REFERENCE_ARTIFACT" "$_slp_work/this-run" ||
+    sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$SC_REFERENCE_ARTIFACT&per_page=100" \
+        "$_slp_work/this-run-artifacts.json" ||
+        { SC_LEDGER_INFRA="listing this run's artifacts failed"; return 1; }
+    _slp_art=$(sc_select_artifact "$_slp_work/this-run-artifacts.json" "$SC_REFERENCE_ARTIFACT" "$GITHUB_RUN_ID")
+    [ -n "$_slp_art" ] ||
+        { echo "this run has no $SC_REFERENCE_ARTIFACT artifact" > "$_slp_dest/provenance-problem"; return 2; }
+    sc_download_artifact "$_slp_art" "$_slp_work/this-run" ||
         { SC_LEDGER_INFRA="downloading this run's reference failed"; return 1; }
     sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
         "$_slp_work/this-run-jobs.json" ||
@@ -904,6 +912,10 @@ sc_ledger_reproduce() {
         sc_ledger_measure_pair_here "$_slr_c" "$(cat "$_slr_dest/parent")" "$_slr_dest" ||
             { _slr_problem "measuring the pair on the ledger runner failed"; return 1; }
         SC_PAIR_SOURCE="parent and commit measured on the ledger runner (to reproduce the PR comparison)"
+        if sc_records_comparable "$_slr_dest/pr-head.tsv" "$_slr_dest/landed.tsv" >/dev/null &&
+            sc_records_comparable "$_slr_dest/pr-base.tsv" "$_slr_dest/landed.tsv" >/dev/null; then
+            return 0
+        fi
     fi
     _slr_b=$(sc_record_get "$_slr_dest/pr.tsv" base)
     _slr_h=$(sc_record_get "$_slr_dest/pr.tsv" head)

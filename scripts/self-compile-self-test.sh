@@ -360,9 +360,9 @@ st_resolve() {
         cp "$_f" "$2"
     }
     sc_download_artifact() {
-        [ -d "$ST_ART/$1/$2" ] || return 1
-        mkdir -p "$3"
-        cp "$ST_ART/$1/$2/"* "$3/"
+        [ -d "$ST_ART/id-$1" ] || return 1
+        mkdir -p "$2"
+        cp -R "$ST_ART/id-$1/." "$2/"
     }
     sc_commit_tree() {
         printf '%s\n' "$ST_TREE_1"
@@ -390,22 +390,37 @@ st_resolve() {
     st_eq "failed producing job" "$(_st_scenario)" rejected
     st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed success > "$ST_API/$(st_api_file "$_jobs")"
     st_eq "missing artifact" "$(_st_scenario)" rejected
-    printf '{"artifacts": [{"name": "%s", "expired": true, "workflow_run": {"id": 850}}]}\n' \
+    printf '{"artifacts": [{"id": 8501, "name": "%s", "expired": true, "workflow_run": {"id": 850}}]}\n' \
         "$SC_REFERENCE_ARTIFACT" > "$ST_API/$(st_api_file "$_arts")"
     st_eq "expired artifact" "$(_st_scenario)" rejected
-    printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": 850}}]}\n' \
+    printf '{"artifacts": [{"id": 8501, "name": "%s", "expired": false, "workflow_run": {"id": 850}}]}\n' \
         "$SC_REFERENCE_ARTIFACT" > "$ST_API/$(st_api_file "$_arts")"
     st_eq "download failure" "$(_st_scenario)" api-error
-    mkdir -p "$ST_ART/850/$SC_REFERENCE_ARTIFACT"
-    st_record "$ST_ART/850/$SC_REFERENCE_ARTIFACT/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1
+    mkdir -p "$ST_ART/id-8501"
+    st_record "$ST_ART/id-8501/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1
     st_eq "verified reference" "$(_st_scenario)" ok
     st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed success 2 completed success > "$ST_API/$(st_api_file "$_jobs")"
     st_eq "artifact from an older attempt" "$(_st_scenario)" rejected
     st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed success > "$ST_API/$(st_api_file "$_jobs")"
-    st_record "$ST_ART/850/$SC_REFERENCE_ARTIFACT/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 tree="$ST_TREE_2"
+    st_record "$ST_ART/id-8501/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 tree="$ST_TREE_2"
     st_eq "record tree is not the commit's" "$(_st_scenario)" rejected
-    st_record "$ST_ART/850/$SC_REFERENCE_ARTIFACT/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 key.valgrind=valgrind-3.24.0
+    st_record "$ST_ART/id-8501/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1 key.valgrind=valgrind-3.24.0
     st_eq "separate-job environment mismatch" "$(_st_scenario)" rejected
+    # A fully re-run reference job uploads a second artifact of the same name;
+    # the newest is the latest executed attempt's.
+    st_record "$ST_ART/id-8501/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1
+    mkdir -p "$ST_ART/id-8502"
+    st_record "$ST_ART/id-8502/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=2
+    printf '{"artifacts": [{"id": 8501, "name": "%s", "expired": false, "workflow_run": {"id": 850}}, {"id": 8502, "name": "%s", "expired": false, "workflow_run": {"id": 850}}]}\n' \
+        "$SC_REFERENCE_ARTIFACT" "$SC_REFERENCE_ARTIFACT" > "$ST_API/$(st_api_file "$_arts")"
+    printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r1"}, {"name": "%s", "run_attempt": 2, "status": "completed", "conclusion": "success", "started_at": "t3", "completed_at": "t4", "runner_name": "r2"}]}\n' \
+        "$SC_REFERENCE_JOB_NAME" "$SC_REFERENCE_JOB_NAME" > "$ST_API/$(st_api_file "$_jobs")"
+    st_eq "two attempts' artifacts: the newest is used" "$(_st_scenario)" ok
+    sc_resolve_reference "$ST_SHA_B" "$_d/head.tsv" "$_d/out-two-attempts"
+    st_eq "two attempts' artifacts: bound to the latest attempt" \
+        "$(sc_record_get "$_d/out-two-attempts/record.tsv" run.attempt)" 2
+    st_record "$ST_ART/id-8502/record.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1
+    st_eq "a newest artifact from an older attempt is rejected" "$(_st_scenario)" rejected
 
     # PR artifact binding.
     mkdir -p "$_d/pr"
@@ -538,8 +553,14 @@ st_ledger() {
     st_eq "class S cross-environment, reproduced" "$(st_entry_says "$_d/s-xenv-rep")" "S ok -"
     st_eq "class S reproduction is marked" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own_source)" \
         "reproduced in the landed pair's identity"
-    st_eq "class S reproduced residual" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" r)" -200
+    st_eq "class S reproduced residual is the paired delta" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" r)" 400
     st_eq "class S keeps the original report" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own_original)" 49800
+    st_eq "class S accounts the PR-reported own" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own)" 49800
+    st_eq "class S records the reproduced own" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own_reproduced)" 50200
+    # A PR report that its reproduction contradicts fails class S (probe P1).
+    st_entry "$_d/s-xenv-p1" "$_P" 100000050000 tkey=6.8.0-1036-azure own=250100 rmt=100000050000 rmb="$_P"
+    st_eq "a contradicted reproduced report fails class S" "$(st_entry_says "$_d/s-xenv-p1")" "S numerical-failure class-s"
+    st_eq "the contradiction is the residual" "$(sc_record_get "$_d/s-xenv-p1/entry.tsv" r)" -200100
     st_entry "$_d/s-xenv-badrep" "$_P" 100000050000 tkey=6.8.0-1036-azure rmt=100000050000 rmb="$_P"
     st_record "$_d/s-xenv-badrep/rep-base.tsv" commit="$ST_SHA_F" tree="$ST_TREE_4" ir_count="$_P"
     st_eq "a reproduction of another tree is refused" "$(st_entry_says "$_d/s-xenv-badrep")" \
@@ -568,7 +589,8 @@ st_ledger() {
     st_entry "$_d/m-xenv-rep" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=6.8.0-1036-azure \
         rmt=100000047000 rmb=99999999000
     st_eq "class M cross-environment, reproduced" "$(st_entry_says "$_d/m-xenv-rep")" "M ok -"
-    st_eq "class M reproduced own cost" "$(sc_record_get "$_d/m-xenv-rep/entry.tsv" own)" 48000
+    st_eq "class M reproduced own cost" "$(sc_record_get "$_d/m-xenv-rep/entry.tsv" own_reproduced)" 48000
+    st_eq "class M accounts the PR-reported own" "$(sc_record_get "$_d/m-xenv-rep/entry.tsv" own)" 50000
     st_entry "$_d/pair-xenv" "$_P" 100000050000 pkey=6.8.0-1036-azure
     st_eq "incomparable pair" "$(st_entry_says "$_d/pair-xenv")" "none comparability-failure comparability"
     st_entry "$_d/window" "$_P" 100500000001 mt=100500000001 mb="$_P"
@@ -754,9 +776,9 @@ st_e2e_mocks() {
         cp "$_f" "$2"
     }
     sc_download_artifact() {
-        [ -d "$ST_ART/$1/$2" ] || return 1
-        mkdir -p "$3"
-        cp -R "$ST_ART/$1/$2/." "$3/"
+        [ -d "$ST_ART/id-$1" ] || return 1
+        mkdir -p "$2"
+        cp -R "$ST_ART/id-$1/." "$2/"
     }
 }
 
@@ -772,10 +794,10 @@ st_reference_api() {
     printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}, {"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t3", "completed_at": "t4", "runner_name": "r2"}]}\n' \
         "$SC_REFERENCE_JOB_NAME" "$SC_LEDGER_JOB_NAME" |
         st_api_put "repos/$ST_REPO/actions/runs/$2/jobs?filter=all&per_page=100"
-    printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_REFERENCE_ARTIFACT" "$2" |
+    printf '{"artifacts": [{"id": %s1, "name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$2" "$SC_REFERENCE_ARTIFACT" "$2" |
         st_api_put "repos/$ST_REPO/actions/runs/$2/artifacts?name=$SC_REFERENCE_ARTIFACT&per_page=100"
-    mkdir -p "$ST_ART/$2/$SC_REFERENCE_ARTIFACT"
-    cp "$3" "$ST_ART/$2/$SC_REFERENCE_ARTIFACT/record.tsv"
+    mkdir -p "$ST_ART/id-${2}1"
+    cp "$3" "$ST_ART/id-${2}1/record.tsv"
 }
 
 st_tree() {
@@ -898,9 +920,9 @@ st_e2e_pr_api() {
         st_api_put "repos/$ST_REPO/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$3&per_page=50"
     printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}]}\n' \
         "$SC_CI_JOB_NAME" | st_api_put "repos/$ST_REPO/actions/runs/$4/jobs?filter=all&per_page=100"
-    printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_MEASUREMENT_ARTIFACT" "$4" |
+    printf '{"artifacts": [{"id": %s3, "name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$4" "$SC_MEASUREMENT_ARTIFACT" "$4" |
         st_api_put "repos/$ST_REPO/actions/runs/$4/artifacts?name=$SC_MEASUREMENT_ARTIFACT&per_page=100"
-    _sepa=$ST_ART/$4/$SC_MEASUREMENT_ARTIFACT
+    _sepa=$ST_ART/id-${4}3
     mkdir -p "$_sepa"
     # The tested merge is the landed tree (class S) on base B.
     # shellcheck disable=SC2086
@@ -964,8 +986,7 @@ st_e2e_ledger() {
             "$(sc_record_get "$_sel_o" account 2>/dev/null || echo none)" \
             "$(sc_record_get target/self-compile/ledger/summary.tsv merges 2>/dev/null || echo none)"
         # Publish this run's ledger as its artifact for the next merge.
-        mkdir -p "$ST_ART/$3"
-        cp -R target/self-compile/ledger "$ST_ART/$3/$SC_LEDGER_ARTIFACT"
+        cp -R target/self-compile/ledger "$ST_ART/id-${3}2"
     )
 }
 
@@ -992,7 +1013,7 @@ st_e2e_ledger_set() {
     printf '{"workflow_runs": []}\n' |
         st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_sels_p0&per_page=50"
     for _sels_run in 900 901; do
-        printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_LEDGER_ARTIFACT" "$_sels_run" |
+        printf '{"artifacts": [{"id": %s2, "name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$_sels_run" "$SC_LEDGER_ARTIFACT" "$_sels_run" |
             st_api_put "repos/$ST_REPO/actions/runs/$_sels_run/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
     done
 }
@@ -1039,7 +1060,7 @@ st_e2e() {
     printf '{"workflow_runs": []}\n' |
         st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_st_p0&per_page=50"
     for _st_run in 900 901; do
-        printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_LEDGER_ARTIFACT" "$_st_run" |
+        printf '{"artifacts": [{"id": %s2, "name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$_st_run" "$SC_LEDGER_ARTIFACT" "$_st_run" |
             st_api_put "repos/$ST_REPO/actions/runs/$_st_run/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
     done
     st_eq "e2e ledger seeds the anchor at the first merge" "$(st_e2e_ledger c0 "$_st_c0" 900)" "0 ok yes clean 1"
@@ -1091,6 +1112,37 @@ st_e2e() {
         "1 comparability-failure yes unresolved 1"
     st_eq "e2e ledger names the disagreeing pair" \
         "$(sc_record_get "$ST_E2E/e5-c0/repo/target/self-compile/ledger/entry.tsv" binary_problem | cut -d: -f1)" parent/rep-base
+    # A ledger re-run ("re-run failed jobs") uploads a second ledger artifact;
+    # the next merge's ledger uses the newest, bound to the attempt that ran.
+    st_e2e_ledger_set e7 - 116000050100
+    st_eq "e2e ledger before the re-run" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e7)" "0 ok yes clean 1"
+    cp -R "$ST_E2E/e7-art/id-9002" "$ST_E2E/e7-art/id-9003"
+    awk -F '\t' 'BEGIN { OFS = "\t" } $1 == "run.attempt" { $2 = 2 } { print }' \
+        "$ST_E2E/e7-art/id-9002/producer.tsv" > "$ST_E2E/e7-art/id-9003/producer.tsv"
+    ST_API=$ST_E2E/e7-api
+    printf '{"artifacts": [{"id": 9002, "name": "%s", "expired": false, "workflow_run": {"id": 900}}, {"id": 9003, "name": "%s", "expired": false, "workflow_run": {"id": 900}}]}\n' \
+        "$SC_LEDGER_ARTIFACT" "$SC_LEDGER_ARTIFACT" |
+        st_api_put "repos/$ST_REPO/actions/runs/900/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
+    printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}, {"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "failure", "started_at": "t3", "completed_at": "t4", "runner_name": "r2"}, {"name": "%s", "run_attempt": 2, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}, {"name": "%s", "run_attempt": 2, "status": "completed", "conclusion": "success", "started_at": "t5", "completed_at": "t6", "runner_name": "r3"}]}\n' \
+        "$SC_REFERENCE_JOB_NAME" "$SC_LEDGER_JOB_NAME" "$SC_REFERENCE_JOB_NAME" "$SC_LEDGER_JOB_NAME" |
+        st_api_put "repos/$ST_REPO/actions/runs/900/jobs?filter=all&per_page=100"
+    st_eq "e2e ledger uses a re-run ledger artifact" "$(st_e2e_ledger c1 "$ST_SET_C1" 901 e7)" "0 ok yes clean 2"
+    # A PR whose CI job ran twice uploaded two measurement artifacts; the
+    # ledger attributes the merge to the newest, bound to the attempt that ran.
+    st_e2e_ledger_set e8 - 116000050100
+    cp -R "$ST_E2E/e8-art/id-70503" "$ST_E2E/e8-art/id-70504"
+    for _st_f in result.tsv head.tsv; do
+        awk -F '\t' 'BEGIN { OFS = "\t" } $1 == "run.attempt" { $2 = 2 } { print }' \
+            "$ST_E2E/e8-art/id-70503/$_st_f" > "$ST_E2E/e8-art/id-70504/$_st_f"
+    done
+    ST_API=$ST_E2E/e8-api
+    printf '{"artifacts": [{"id": 70503, "name": "%s", "expired": false, "workflow_run": {"id": 7050}}, {"id": 70504, "name": "%s", "expired": false, "workflow_run": {"id": 7050}}]}\n' \
+        "$SC_MEASUREMENT_ARTIFACT" "$SC_MEASUREMENT_ARTIFACT" |
+        st_api_put "repos/$ST_REPO/actions/runs/7050/artifacts?name=$SC_MEASUREMENT_ARTIFACT&per_page=100"
+    printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}, {"name": "%s", "run_attempt": 2, "status": "completed", "conclusion": "success", "started_at": "t3", "completed_at": "t4", "runner_name": "r2"}]}\n' \
+        "$SC_CI_JOB_NAME" "$SC_CI_JOB_NAME" |
+        st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100"
+    st_eq "e2e ledger attributes a PR whose CI job ran twice" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e8)" "0 ok yes clean 1"
     st_e2e_ledger_set e6 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 }

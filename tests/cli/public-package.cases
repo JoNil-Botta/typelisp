@@ -609,3 +609,142 @@ stderr empty
 stdout contains ar/scalar reproducible and fresh
 stdout contains ar/avx2 reproducible and fresh
 stdout contains Linux deterministic archive checks passed
+
+# Source-loaded stdlib initializers must expand before dependency-prefix reuse.
+case package-embedded-math-initializers
+hosts all
+opt 0 1 2
+file typelisp.pkg
+(package
+  (name "math_package_consumer")
+  (version "0.1.0")
+  (kind "bin")
+  (dependencies (dep "vendor/dep")))
+end-file
+file vendor/dep/typelisp.pkg
+(package
+  (name "math_package_dep")
+  (version "0.1.0")
+  (kind "lib"))
+end-file
+file vendor/dep/src/lib.tl
+(define (answer [value : i64]) : i64 (+ value 41))
+end-file
+file src/main.tl
+(import stdlib.io)
+(import dep.src.lib as dep)
+(define (main) : i64
+  (let [x : i64 (io.arg-count)]
+    (if (= (dep.answer x) (+ x 41)) 42 1)))
+end-file
+cwd .
+step embedded-cold
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+stdout contains math_package_consumer
+step embedded-execute
+exec "{{dir}}/target/release/math_package_consumer{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step embedded-cached
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+stdout contains math_package_consumer
+step cached-execute
+exec "{{dir}}/target/release/math_package_consumer{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step disk-root
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+stdout contains math_package_consumer
+step disk-execute
+exec "{{dir}}/target/release/math_package_consumer{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
+# Entry-owned declarations before an admitted dependency remain source work.
+case package-source-prefix-macro
+hosts all
+opt 0 1 2
+file typelisp.pkg
+(package (name "prefix_consumer") (version "0.1.0") (kind "bin")
+  (dependencies (dep "vendor/dep")))
+end-file
+file vendor/dep/typelisp.pkg
+(package (name "prefix_dep") (version "0.1.0") (kind "lib"))
+end-file
+file vendor/dep/src/lib.tl
+(define (answer [value : i64]) : i64 (+ value 41))
+end-file
+file src/main.tl
+(module prefix_consumer)
+(defmacro (prefix-value) : Expr `41)
+(define prefix-answer : i64 (prefix-value))
+(import dep.src.lib as dep)
+(define (main) : i64 (+ prefix-answer 1))
+end-file
+cwd .
+step source-prefix-cold
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+step source-prefix-execute
+exec "{{dir}}/target/release/prefix_consumer{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step source-prefix-cached
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+step source-prefix-cached-execute
+exec "{{dir}}/target/release/prefix_consumer{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step source-prefix-disk
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+stderr empty
+step source-prefix-disk-execute
+exec "{{dir}}/target/release/prefix_consumer{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
+# A cached dependency cannot hide a source function's invalid return type.
+case package-source-prefix-return-type
+hosts all
+opt 0 1 2
+file typelisp.pkg
+(package (name "prefix_consumer") (version "0.1.0") (kind "bin")
+  (dependencies (dep "vendor/dep")))
+end-file
+file vendor/dep/typelisp.pkg
+(package (name "prefix_dep") (version "0.1.0") (kind "lib"))
+end-file
+file vendor/dep/src/lib.tl
+(define (answer [value : i64]) : i64 (+ value 41))
+end-file
+file src/main.tl
+(define (bad) : i64 true)
+(import dep.src.lib as dep)
+(define (main) : i64 (dep.answer 1))
+end-file
+cwd .
+step source-typecheck-cold
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+exit nonzero
+stderr contains error[E0206]
+stderr contains return type mismatch: expected i64, found bool
+step source-typecheck-cached
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+exit nonzero
+stderr contains error[E0206]
+stderr contains return type mismatch: expected i64, found bool
+step source-typecheck-disk
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --stdlib-root "{{root}}/stdlib"
+exit nonzero
+stderr contains error[E0206]
+stderr contains return type mismatch: expected i64, found bool

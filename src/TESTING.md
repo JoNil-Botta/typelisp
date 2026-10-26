@@ -403,6 +403,13 @@ assertions (SPEC 4.x: an initialized aggregate global is one storage home whose
 assignment keeps that home). The indirect-call shape remains independently
 covered.
 
+`package-embedded-math-initializers` and `package-source-prefix-macro` check
+source global macro initializers before dependency imports at opt0/1/2 on both
+hosts, with cold/cached dependencies and explicit disk-root comparisons.
+`package-source-prefix-return-type` rejects an invalid entry-owned function
+before the import on all three routes. Existing package native/surface gates
+retain their exact trusted-prefix, native/source parity and rollback assertions.
+
 `package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
 runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
 covers 8/16/24-byte integer structures, signed boundaries, floating and mixed

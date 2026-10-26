@@ -114589,8 +114589,7 @@
                 decl
                 decl-path)
               (begin
-                (if (macro-decl-expansion-can-change-program?
-                  (tc-global-shared-view decl))
+                (if (macro-decl-expansion-can-change-program? (& decl))
                   (macro-expand-program-structural-change-note!
                     (tc-context-macro-state ctx)
                     1)
@@ -115406,7 +115405,7 @@
 ;; the structural-change proof narrower than the inspection decision so an
 ;; unchanged Test (including one wrapped in Unsafe) cannot force a whole-program
 ;; detach.
-(define (macro-decl-expansion-can-change-program? [decl : ast.AstDecl]) : bool
+(define (macro-decl-expansion-can-change-program? [decl : (& decl ast.AstDecl)]) : bool
   (match decl
     [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _)) true]
     [(Import _ (Spec kind _ _ _ _))
@@ -115414,8 +115413,7 @@
         [(or (Macro _ _) (MacroDecls _ _)) true]
         [_ false])]
     [(Unsafe inner-box)
-      (macro-decl-expansion-can-change-program?
-        (ast.ast-decl-box-shared-view inner-box))]
+      (macro-decl-expansion-can-change-program? (& (deref inner-box)))]
     [_ false]))
 
 ;; Cheap, ctx-free, allocation-free over-approximation of "could the expander
@@ -115974,7 +115972,7 @@
 (define (macro-decl-cannot-fire?
   [state : TcMacroState]
   [expr-bases : i64]
-  [decl : ast.AstDecl]) : bool
+  [decl : (& decl ast.AstDecl)]) : bool
   (if (ast.ast-decl-comptime-only? decl)
     false
     (match decl
@@ -115994,7 +115992,7 @@
   [expr-bases : i64]
   [decl : ast.AstDecl]) : bool
   (let
-    [result : bool (macro-decl-cannot-fire? state expr-bases decl)]
+    [result : bool (macro-decl-cannot-fire? state expr-bases (& decl))]
     result))
 
 ;; Whether the program contains any `(type T)` literal (AstExpr.TypeLiteral). ALL
@@ -117504,8 +117502,10 @@
 
 ;; Package imports are flattened at their source import sites, between
 ;; entry-owned module/alias markers. Provenance is the stable discriminator:
-;; scan through the last declaration copied from an admitted dependency and
-;; include every harmless marker before it in the authenticated prefix.
+;; scan through the last declaration copied from an admitted dependency.
+;; Only authenticated embedded stdlib source may add semantic declarations;
+;; caller-owned module/import markers carry context, but caller-owned bodies
+;; must reach the ordinary checker.
 (define (tc-dependency-surface-prefix-candidate
   [load-state : (& cload.CompilerLoadSessionState)]
   [decls : (& ast.AstDeclList)]
@@ -117519,6 +117519,9 @@
     [remaining : i64 surface-count]
     [module : String ""]
     [module-id : i64 cbi.compiler-builtin-id-fix-empty]
+    [embedded-modules : sym_i64_env.SymI64Env
+      (cload.compiler-load-session-state-embedded-module-ids-shared-view
+        (owned_view.compiler-owned-reference-shared-view load-state))]
     (if (<= surface-count 0)
       No
       (begin
@@ -117535,7 +117538,17 @@
               load-state
               provenance-id)
               (-= remaining 1)
-              unit)
+              (unless
+                (or
+                  (match (& decl)
+                    [(Module _) true]
+                    [(Import _ (Spec (Module) _ _ _ _)) true]
+                    [_ false])
+                  (and
+                    (cload.compiler-load-stdlib-import?
+                      (ci.intern-str provenance-id))
+                    (sym_i64_env.sym-i64-contains-id embedded-modules module-id)))
+                (return No)))
             (match decl
               [(Module next-module)
                 (set! module (tc-env-key-name-text next-module))
@@ -117546,8 +117559,48 @@
           (Some (tc-prefix-key-start cache-scope) index module module-id)
           No)))))
 
+(define (macro-surface-source-decl-expanded?
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [decl : (& decl ast.AstDecl)]) : bool
+  (match decl
+    [(Unsafe inner)
+      (macro-surface-source-decl-expanded? state expr-bases (& (deref inner)))]
+    [_
+      (or
+        (not (macro-decl-expansion-can-change-program? decl))
+        (macro-decl-cannot-fire? state expr-bases decl))]))
+
+;; A dependency fragment authenticates its copied declarations, not source
+;; expressions interleaved before it. Those expressions must reach the macro
+;; walker whenever they can still expand.
+(define (macro-surface-prefix-source-expanded?
+  [load-state : (& load-state cload.CompilerLoadSessionState)]
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [decls : (& decls ast.AstDeclList)]
+  [paths : (& paths ast.AstDeclPathList)]
+  [count : i64]) : bool
+  (for [index (iterator.range 0 count)]
+    (unless
+      (cload.compiler-load-session-state-dependency-surface-provenance?
+        load-state
+        (ast.ast-decl-path-list-provenance-id
+          paths
+          index
+          cbi.compiler-builtin-id-fix-empty))
+      (unless
+        (macro-surface-source-decl-expanded?
+          state
+          expr-bases
+          (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
+        (return false))))
+  true)
+
 (define (macro-surface-prefix-plan
   [load-state : cload.CompilerLoadSessionState]
+  [state : TcMacroState]
+  [expr-bases : i64]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : MacroSurfacePrefixPlan
   (if (surface_facts.surface-typecheck-facts-active?)
@@ -117572,7 +117625,19 @@
           facts.macro-prefix-decl-count)]
       [decl-count : i64 (ast.ast-decl-list-len (& decls))]
       [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
-      (if (and (> count 0) (< count decl-count) (<= count path-count))
+      (if (and
+        (> count 0)
+        (< count decl-count)
+        (<= count path-count)
+        (or
+          (not (surface_facts.surface-typecheck-facts-composite-active?))
+          (macro-surface-prefix-source-expanded?
+            (& load-state)
+            state
+            expr-bases
+            (& decls)
+            (& paths)
+            count)))
         (let
           [prefix-decls : ast.AstDeclList
             (tc-decl-list-take (tc-global-shared-view decls) count)]
@@ -117617,6 +117682,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroDeclsWithPaths
   (match (macro-surface-prefix-plan
     (tc-global-shared-view load-state)
+    (tc-context-macro-state ctx)
+    (tc-context-expr-bases ctx)
     (tc-global-shared-view decls)
     (tc-global-shared-view paths))
     [(Cold)

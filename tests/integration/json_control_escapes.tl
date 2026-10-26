@@ -64,13 +64,9 @@
   (assert-rejected "\"\\u00xz\"")
   (assert-rejected "\"\\x\"")
   (assert-rejected "\"\\^@\"")
-  ;; Broader Unicode decoding remains outside the supported ASCII range.
-  (assert-rejected "\"\\u007f\"")
-  (assert-rejected "\"\\u0080\"")
-  (assert-rejected "\"\\u00e9\"")
+  ;; Invalid UTF-16 remains rejected; valid Unicode is covered separately.
   (assert-rejected "\"\\ud800\"")
-  (assert-rejected "\"\\udc00\"")
-  (assert-rejected "\"\\ud834\\udd1e\""))
+  (assert-rejected "\"\\udc00\""))
 
 (define (main) : i64
   (check-control-escapes)

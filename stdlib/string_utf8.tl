@@ -1,9 +1,10 @@
-;# Checked UTF-8 scalar decoding over borrowed byte strings.
+;# Checked UTF-8 scalar encoding and decoding.
 ;#
 ;# `decode-at` and `validate` allocate nothing and never replace invalid bytes.
 ;# They implement Unicode 17.0 section 3.9, Table 3-7 / RFC 3629. NUL,
 ;# noncharacters and unassigned scalar values are accepted; consumer policies
 ;# such as filename restrictions and normalization belong to the caller.
+;# `encode-scalar` rejects non-scalars and allocates UTF-8 in the active arena.
 ;#
 ;# ```typelisp
 ;# (import stdlib.string_utf8)
@@ -15,6 +16,7 @@
 ;#       [_ 1])))
 ;# ```
 (import stdlib.string)
+(import stdlib.byte_buf)
 
 ;: A decoded Unicode scalar, distinct from the byte-sized `char` type.
 ;: Decoder-produced values are 0..0x10ffff excluding 0xd800..0xdfff.
@@ -58,6 +60,44 @@
   (:must-use)
   (Valid)
   (Invalid DecodeError))
+
+;: UTF-8 encoding of one scalar, or rejection before allocation.
+(defenum EncodeResult
+  (:must-use)
+  (Encoded String)
+  (EncodeError ErrorKind))
+
+;: Encode U+0000..U+10FFFF excluding surrogates as shortest-form UTF-8.
+;: NUL, noncharacters and unassigned scalars follow the decoder's policy.
+(define (encode-scalar [value : i64]) : EncodeResult
+  (when (or (< value 0) (> value 0x10ffff)) (return (EncodeError (OutOfRange))))
+  (when
+    (and (>= value 0xd800) (<= value 0xdfff))
+    (return (EncodeError (Surrogate))))
+  (let
+    [width : i64
+      (cond
+        [(< value 0x80) 1]
+        [(< value 0x800) 2]
+        [(< value 0x10000) 3]
+        [else 4])]
+    [out : byte_buf.ByteBuf (byte_buf.with-capacity width)]
+    [shift : i64 (* (- width 1) 6)]
+    [lead : i64
+      (cond
+        [(= width 1) value]
+        [(= width 2) (+ 0xc0 (shr value shift))]
+        [(= width 3) (+ 0xe0 (shr value shift))]
+        [else (+ 0xf0 (shr value shift))])]
+    (set! out (byte_buf.push out (cast lead : u8)))
+    (while (> shift 0)
+      (set! shift (- shift 6))
+      (set!
+        out
+        (byte_buf.push
+          out
+          (cast (+ 0x80 (bit-and (shr value shift) 0x3f)) : u8))))
+    (Encoded (byte_buf.to-string out))))
 
 ;: Decode one scalar at `offset`. An interior continuation is an error;
 ;: preceding bytes are not rescanned. End is returned only at input length.

@@ -12,11 +12,12 @@ for exact expected output bytes. Check-only rows map a fixture path to `pass` or
 
 Coverage notes:
 
-`string_utf8_api.tl` runs the shared scalar decoder through both the native
+`string_utf8_api.tl` runs the shared scalar codec through both the native
 fixture manifest and inline tests. It covers every leading byte, every second
 byte in each constrained range, every truncation/continuation position, scalar
 boundaries, original-input error offsets, first-error ordering, NUL, borrowed
-substrings, static/copied/arena input, and retained results.
+substrings, static/copied/arena input, and retained results. Encoding checks
+scalar boundaries, rejected non-scalars and independent byte construction.
 
 The package-lock inline transaction test exercises `io.OpenWriteCreateNew`,
 file flushing, atomic sibling replacement, advisory coordination locks,
@@ -318,6 +319,9 @@ Inline stdlib coverage:
   deterministic finite f64/f32 number conversion, serializer helpers, and
   end-to-end parse/stringify behavior for invalid input, escapes, nesting,
   arrays, objects, duplicate-key lookup, and number forms.
+  `tests/integration/json_unicode_escapes.tl` adds every BMP scalar, UTF-16 pair
+  boundaries, every high/low code unit, exact invalid-surrogate byte locations,
+  and stringify/parse round trips at opt0/1/2 with source and embedded stdlib.
 - `env_api.tl` owns standalone tests for missing, empty, and present environment
   variables; process-local set/replace/empty/unset round trips and invalid-name
   rejection; host-separator PATH splitting/joining; vector-backed PATH

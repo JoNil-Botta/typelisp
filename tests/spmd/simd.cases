@@ -660,6 +660,58 @@ empty
 in asm
 match \.loc |\.cv_loc
 
+# #9340: debug SIMD callers use the same full-width home census as release.
+# Keep the independent correct-result oracle, including inactive shifts and
+# varying matches; agreement on a wrong exit is not sufficient.
+case debug-caller-results
+source tests/spmd/{{each}}.tl
+each byte_mul_value_types byte_shift_inactive_invalid byte_shift_value_types map_fused_reduce_i64 map_shift_value_types masked_if_shift_inactive masked_if_shift_value_types private_helper_bool private_helper_entry_uniform_float private_helper_f64 private_helper_i64 private_helper_mask_arg private_helper_masked_load private_helper_store private_helper_uniform_stack private_helper_uniform_stack_f64 varying_match_enum_payload varying_match_i64 word_shift_inactive_invalid word_shift_value_types
+do link-run
+mode scalar avx2 avx512
+opt 1 2
+args -g
+exit 42
+in stdout
+empty
+in stderr
+empty
+in asm
+match \.loc |\.cv_loc
+
+case debug-caller-shift-traps
+source tests/spmd/{{each}}.tl
+each byte_shift_large_trap byte_shift_negative_trap map_shift_negative_trap masked_if_shift_large_trap masked_if_shift_negative_trap word_shift_large_trap word_shift_negative_trap
+do link-run
+mode scalar avx2 avx512
+opt 1 2
+args -g
+exit 129
+in stdout
+empty
+in stderr
+contains shift count out of range
+
+case debug-caller-wide-uniform-stack
+source tests/spmd/private_helper_uniform_stack_f64_wide.tl
+do link-run
+mode scalar avx2
+opt 1 2
+args -g
+exit 42
+in stderr
+empty
+
+# This existing fixture exceeds the admitted AVX-512 private argument window.
+# Debug must retain its release diagnostic, rather than execute a partial ABI.
+case debug-caller-wide-avx512-boundary
+source tests/spmd/private_helper_uniform_stack_f64_wide.tl
+mode avx512
+opt 1 2
+args -g
+exit 1
+in stderr
+contains backend: private AVX-512 SPMD call supports at most 8 varying value arguments
+
 # --------------------------------------------------------------- reductions
 
 # A sum keeps one vector accumulator in the gang and reduces horizontally only

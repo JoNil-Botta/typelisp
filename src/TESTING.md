@@ -274,6 +274,13 @@ AVX2 parameter homes with and without debug info on both ABIs, plus distinct
 instruction locations after coloring. `empty-private-params-debug-run` runs
 the empty-body regression at opt1/2 alongside the non-debug controls.
 
+`backend-debug-simd-caller-provenance` checks ordinary callers on both SIMD
+widths and ABIs, with interleaved function locations, duplicate value keys and
+bounds locations. The `debug-caller-*` cases in `tests/spmd/simd.cases` execute
+the caller-home matrix witnesses at opt1/2 with their correct result or shift
+trap, alongside scalar debug controls. The wide uniform-stack fixture retains
+its existing AVX-512 private-argument diagnostic.
+
 `indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
 returns early, for language closures and C code pointers. Counts require one
 callee evaluation, no later argument effects and the enclosing cleanup. A

@@ -2024,7 +2024,12 @@
   (entries backend_i64_i64_map.Map)
   (values (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan))
   (debug-files CompilerBackendDebugFileIndex)
+  (instructions CompilerBackendInstrSpanIndex)
   (backend-state CompilerBackendState))
+
+(defenum CompilerBackendInstrSpanIndex
+  (None)
+  (Links backend_i64_i64_map.Map (__tl_dyn-array i64)))
 
 (defstruct CompilerBackendDebugFileBuildState
   (numbers backend_i64_i64_map.Map)
@@ -4651,8 +4656,67 @@
           values
           (compiler-backend-debug-file-index-build-with-backend-state
             backend-state
-            spans)
+            (compiler-backend-global-shared-view spans))
+          (compiler-backend-instr-span-index-build
+            (compiler-backend-global-shared-view spans))
           backend-state))]))
+
+;; Preserve insertion order, including duplicate keys, while selecting only the
+;; current function's instruction locations. Build once in the program arena;
+;; pinning, remapping and instruction lookup then visit function-local entries.
+;; Non-debug emission retains its existing span path and builds no links.
+(define (compiler-backend-instr-span-index-build
+  [spans : compiler_ir_types.CompilerSourceSpans]) : CompilerBackendInstrSpanIndex
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    None
+    (match spans
+      [(Spans entries instr-entries _ _)
+        (let
+          [heads : backend_i64_i64_map.Map
+            (backend_i64_i64_map.with-capacity (+ (* entries.len 2) 16))]
+          [next : (__tl_dyn-array i64) (__tl_make-array i64 instr-entries.len)]
+          [index : i64 instr-entries.len]
+          (while (> index 0)
+            (-= index 1)
+            (let
+              [entry : compiler_ir_types.CompilerSourceSpansInstrEntry
+                (array-ref instr-entries.slots index)]
+              [name : i64 entry.function.value]
+              (set!
+                (array-ref next index)
+                (match (backend_i64_i64_map.get (& heads) name)
+                  [(LookupFound slot) slot]
+                  [(LookupMissing) -1]))
+              (backend_i64_i64_map.insert-ref! (&mut heads) name index)
+              unit))
+          (Links heads next))])))
+
+(define (compiler-backend-function-source-spans
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [index : (& index CompilerBackendSourceSpanIndex)]
+  [function : i64]) : compiler_ir_types.CompilerSourceSpans
+  (match index.instructions
+    [(None) spans]
+    [(Links heads next)
+      (match spans
+        [(Spans entries instr-entries _ spmd)
+          (let
+            [local : compiler_ir_types.CompilerSourceSpansInstrEntryList
+              (compiler_ir_types.compiler-source-spans-instr-entry-list-empty)]
+            [slot : i64
+              (match (backend_i64_i64_map.get (& heads) function)
+                [(LookupFound found) found]
+                [(LookupMissing) -1])]
+            (while (>= slot 0)
+              (set!
+                local
+                (compiler_ir_types.compiler-source-spans-instr-entry-list-append
+                  local
+                  (array-ref instr-entries.slots slot)))
+              (set! slot (array-ref next slot)))
+            (let
+              [count : i64 local.len]
+              (Spans entries local count spmd)))])]))
 
 (define (compiler-backend-source-span-index-lookup
   [index : (& index CompilerBackendSourceSpanIndex)]
@@ -4691,8 +4755,8 @@
 ;; Instruction spans use the destination variable as their provenance key.
 ;; Stack-slot coloring may renumber that variable, so keep every keyed value
 ;; out of shared slots and rebuild those keys with the resulting bijection.
-;; Non-debug optimization retains only runtime-abort value spans. Debug private
-;; AVX2 functions use the same pin/remap path for their instruction locations.
+;; Non-debug optimization retains only runtime-abort value spans. Debug SIMD
+;; functions use the same pin/remap path for their instruction locations.
 (define (compiler-backend-source-span-pinned-vars
   [spans : compiler_ir_types.CompilerSourceSpans]
   [function : i64]
@@ -71231,19 +71295,27 @@
             (and
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))]
-        ;; Private AVX2 entry stores need full-width homes even under debug
-        ;; info. Other debug functions retain their original SSA identities.
+        ;; SIMD caller lanes and masks, as well as private entry stores, need
+        ;; full-width homes under debug info. Scalar debug keeps its raw IDs.
         [color-stack-slots? : bool
           (or
             (not (compiler_ir_types.compiler-debug-info-enabled?))
+            (not (compiler-backend-mode-scalar? mode))
             (compiler_regalloc.compiler-reg-spmd-avx2-special-params?
               (& params)))]
+        [coloring-spans : compiler_ir_types.CompilerSourceSpans
+          (if color-stack-slots?
+            (compiler-backend-function-source-spans
+              (compiler-backend-global-shared-view spans)
+              (& span-index)
+              name)
+            (compiler-backend-global-shared-view spans))]
         ;; Value ids are provenance keys: pin spanned scalars against sharing
         ;; and remap their keys alongside the emitted IR.
         [source-span-pinned-vars : compiler_liveness.CompilerLiveI64Set
           (if color-stack-slots?
             (compiler-backend-source-span-pinned-vars
-              (compiler-backend-global-shared-view spans)
+              (compiler-backend-global-shared-view coloring-spans)
               name
               scratch-vars)
             (compiler_liveness.compiler-live-set-empty))]
@@ -71293,17 +71365,17 @@
           (compiler_regalloc.compiler-reg-max scratch-vars slot-vars)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (match (compiler-backend-global-shared-view coloring)
-            [(None) (owned_view.compiler-owned-shared-view spans)]
+            [(None) (owned_view.compiler-owned-shared-view coloring-spans)]
             [(Remap remap _)
               (if (>
                 (compiler_liveness.compiler-live-set-word-count
                   source-span-pinned-vars)
                 0)
                 (compiler-backend-remap-source-spans
-                  (compiler-backend-global-shared-view spans)
+                  (compiler-backend-global-shared-view coloring-spans)
                   name
                   remap)
-                (owned_view.compiler-owned-shared-view spans))])]
+                (owned_view.compiler-owned-shared-view coloring-spans))])]
         [assignments : compiler_regalloc.CompilerRegAssignmentTable
           (match (compiler-backend-global-shared-view coloring)
             [(None)

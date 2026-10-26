@@ -37,8 +37,7 @@ on:
     paths:
       - '.github/workflows/bootstrap-stage0.yml'
       - 'scripts/*stage0*.sh'
-      - 'scripts/ci-gates.tsv'
-      - 'scripts/ci-host-tools.tsv'
+      - 'src/compiler_ctfe.tl'
       - 'src/compiler_lzss.tl'
       - 'src/compiler_load.tl'
       - 'src/compiler_embedded_stdlib*'
@@ -48,8 +47,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: stage0-bootstrap-${{ github.event_name == 'push' && 'main' || github.head_ref }}
-  cancel-in-progress: false
+  group: stage0-bootstrap-${{ github.event.pull_request.number || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-linux:

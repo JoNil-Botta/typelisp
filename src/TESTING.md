@@ -1929,11 +1929,12 @@ budget gate.
 Use [`../scripts/analyze-stage0-size.sh`](../scripts/analyze-stage0-size.sh)
 for linked stage0 binary size comparisons. It reports total file bytes, section
 raw sizes from `llvm-readobj`, `readelf`, or `objdump`, plus bounded static,
-compressed-token, and expanded exact-source embedded stdlib payload bytes:
+compressed-token, and expanded compiler-owned payload bytes. LZSS totals cover
+both the embedded stdlib and the executable-template catalog; TLCH/TLCI totals
+are reported separately and depend on the host and generated image inputs:
 
 ```sh
 scripts/fetch-stage0.sh
-scripts/analyze-stage0-size.sh target/stage0/typelisp
 scripts/build-stage0.sh target/stage0/typelisp target/stage0-branch/typelisp
 scripts/analyze-stage0-size.sh target/stage0-branch/typelisp
 ```
@@ -1941,7 +1942,11 @@ scripts/analyze-stage0-size.sh target/stage0-branch/typelisp
 On Windows, run the shell commands from Git Bash after fetching the Windows
 seed (`target/stage0/typelisp.exe`) and use a `.exe` output path. The stage0
 publication smoke also prints this report when a section reader is available,
-but it remains a measurement report rather than a size budget gate.
+and required PR CI runs it beside the size ratchet on both hosts. It remains
+a measurement report rather than a size budget gate. The declaration inventory
+must match the binary: analyze a downloaded seed from the source checkout that
+built it, or rebuild first as above. A seed with a different declaration set
+fails with an explicit expected/found count diagnostic against current sources.
 
 ### Instruction counts and LSP latency
 

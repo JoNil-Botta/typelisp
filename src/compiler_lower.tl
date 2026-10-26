@@ -31062,9 +31062,29 @@
                                   [(ResultLowerExpr.Ok right-lowered)
                                     (match right-lowered
                                       [(LowerExpr.Expr
-                                          right-state
-                                          right-value
-                                          _)
+                                        right-state
+                                        right-value
+                                        right-value-ty)
+                                        ;; Unit has one value and no machine-width operand.
+                                        ;; Exits retain the ordinary dead-block lowering path.
+                                        (when
+                                          (and
+                                            (lower-binop-group-eq? op)
+                                            (match (tc_core.tc-type-strip-region
+                                              (tc_core.tc-resolve-type
+                                                ctx
+                                                right-value-ty))
+                                              [(Unit) true]
+                                              [_ false]))
+                                          (return
+                                            (Ok
+                                              (Expr
+                                                right-state
+                                                (Bool
+                                                  (match op
+                                                    [(Eq) true]
+                                                    [_ false]))
+                                                result-ty))))
                                         (if (and
                                           (lower-binop-group-eq? op)
                                           (lower-type-register-group?
@@ -32605,6 +32625,12 @@
       (try (lower-struct-field-info ctx struct-id struct-name field))]
     (match info
       [(Info offset field-ty)
+        ;; The receiver is already evaluated. Zero-sized fields carry the unit
+        ;; value; there is no packed word or memory range to read, including a
+        ;; trailing field beyond the final word of a register group.
+        (when
+          (= (lower-type-size ctx field-ty) 0)
+          (return (Ok (Expr state Unit result-ty))))
         ;; When the receiver is a register-resident struct, its value is
         ;; the packed word itself; extract the field with shift/mask instead of
         ;; computing an address and loading from memory.
@@ -32663,6 +32689,9 @@
   [offset : i64]
   [field-ty : ast.AstType]
   [result-ty : ast.AstType]) : ResultLowerExpr
+  (when
+    (= (lower-type-size ctx field-ty) 0)
+    (return (Ok (Expr state Unit result-ty))))
   (match (lower-gep-byte state base offset)
     [(Expr ptr-state ptr _)
       ;; A register-resident field is carried as a packed word,
@@ -32870,6 +32899,19 @@
   [struct-name : String]
   [field : String]
   [result-ty : ast.AstType]) : ResultLowerExpr
+  ;; A checked reference's zero-sized projection needs no receiver load.
+  ;; The named reader still validates the field and its resolved layout.
+  (when
+    (= (lower-type-size ctx result-ty) 0)
+    (return
+      (lower-struct-get-named
+        ctx
+        state
+        receiver-value
+        struct-id
+        struct-name
+        field
+        result-ty)))
   (match (if (lower-type-register-resident? ctx referent-ty)
     (lower-load-register-resident-from-ptr ctx state receiver-value referent-ty)
     (Expr state receiver-value referent-ty))
@@ -67423,21 +67465,15 @@
         [(ResultLowerExpr.Ok lowered)
           (match lowered
             [(LowerExpr.Expr field-state field-value _)
-              (match field-value
-                [(ir.CompilerIrValue.Var field-var)
-                  (lower-bind-owned-pattern-name
-                    ctx
-                    field-state
-                    env
-                    type-env
-                    name
-                    field-var
-                    field-ty)]
-                [_
-                  (ResultLowerEnv.Err
-                    (box
-                      (lower-diagnostic
-                        "lower: internal struct field pattern load failed")))])])]
+              (lower-bind-element-name
+                ctx
+                field-state
+                env
+                type-env
+                (Owned)
+                field-value
+                name
+                field-ty)])]
         [(ResultLowerExpr.Err message) (ResultLowerEnv.Err message)])]
     [(Tuple patterns-box)
       (let
@@ -67833,27 +67869,31 @@
   [value : ir.CompilerIrValue]
   [name : i64]
   [elem-ty : ast.AstType]) : ResultLowerEnv
-  (match value
-    [(Var value-var)
-      (let
-        [bound-ty : ast.AstType
-          (lower-bind-mode-ref-type ctx bind-mode elem-ty)]
+  (let
+    [bound-ty : ast.AstType
+      (lower-bind-mode-ref-type ctx (clone bind-mode) elem-ty)]
+    [bound : LowerExpr
+      (match (& value)
+        [(Var _) (Expr state value bound-ty)]
+        [_ (try (lower-materialize state value bound-ty))])]
+    (match bound
+      [(Expr bound-state (Var value-var) actual-ty)
         (lower-bind-owned-pattern-name
           ctx
-          state
+          bound-state
           env
           type-env
           name
           value-var
-          bound-ty))]
-    [_
-      (Err
-        (box
-          (lower-diagnostic
-            (match bind-mode
-              [(Owned) "lower: internal tuple element pattern load failed"]
-              [(Borrowed _)
-                "lower: internal borrowed tuple element address failed"]))))]))
+          actual-ty)]
+      [_
+        (Err
+          (box
+            (lower-diagnostic
+              (match bind-mode
+                [(Owned) "lower: internal tuple element pattern load failed"]
+                [(Borrowed _)
+                  "lower: internal borrowed tuple element address failed"]))))])))
 
 (define (lower-bind-element-access
   [ctx : tc_core.TcContext]
@@ -67863,6 +67903,17 @@
   [offset : i64]
   [pattern : (& ast.AstPattern)]
   [elem-ty : ast.AstType]) : LowerExpr
+  ;; Copy fields in borrowed patterns have values, including canonical unit;
+  ;; no address or zero-width load is needed to bind their empty storage.
+  ;; Non-Copy borrowed fields retain their reference-valued place path.
+  (when
+    (and
+      (match (& bind-mode)
+        [(LowerBindMode.Borrowed _) true]
+        [_ false])
+      (= (lower-type-size ctx elem-ty) 0)
+      (tc_core.tc-type-copyable? ctx (clone elem-ty)))
+    (return (Expr state Unit elem-ty)))
   (match bind-mode
     [(LowerBindMode.Owned)
       (lower-load-inline-value-at-offset ctx state base offset elem-ty)]

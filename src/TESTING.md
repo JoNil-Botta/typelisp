@@ -8,6 +8,14 @@ candidate variables. Keep both entry points when changing SSA storage; the
 fixed-source compiler/benchmark and CFG scaling comparisons require complete
 SSA IR (including value numbering) and raw assembly equality.
 
+`compiler-lower-unit-field-reads` requires canonical unit results without
+addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
+`unit_struct_fields` exercises empty, one/two-word and memory-class structs,
+nested empty fields, checked/raw references, owned/borrowed destructuring,
+receiver effects and unit equality/inequality effects and early exits at
+opt0/1/2. Keep the separate
+unsupported tuple/array ABI checks.
+
 `backend-packed-literal-records` checks the physical byte and relocation contract
 for immutable literal pools: empty/singleton, independent and competing owners,
 suffix chains, input permutations, interior NUL, UTF-8 and larger collections.

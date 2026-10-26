@@ -29,7 +29,7 @@ shared-view-count-ratchet	all	shared-view count ratchet	-	-	256	-	scripts/check-
 spmd-mode-instruction-count-harness-self-tests	all	SPMD mode instruction-count harness self-tests	-	-	256	-	scripts/measure-spmd-mode-instruction-counts.sh --self-test
 c-measured-region-instruction-harness-self-tests	all	C measured-region instruction harness self-tests	-	-	256	-	scripts/measure-instruction-counts.sh --self-test --output target/instruction-count-c-region-self-test
 instruction-count-comparison-self-tests	all	instruction-count comparison self-tests	-	-	256	-	scripts/check-instruction-counts.sh --self-test
-self-compile-gate-self-tests	linux	self-compile gate self-tests	-	-	256	-	scripts/self-compile.sh --self-test
+self-compile-gate-self-tests	all	self-compile gate self-tests	-	-	256	-	scripts/self-compile.sh --self-test
 compiler-scaling-comparison-self-tests	all	compiler scaling comparison self-tests	-	-	256	-	scripts/check-compiler-scaling.sh --self-test
 cli-tools-benchmark-repetition-self-test	all	CLI tools benchmark repetition self-test	-	-	256	-	sh scripts/benchmark-cli-tools.sh --self-test
 stage0-release-publication-verifier-self-tests	all	stage0 release publication verifier self-tests	-	-	256	-	scripts/verify-stage0-release.sh --self-test

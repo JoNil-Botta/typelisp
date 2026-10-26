@@ -107,18 +107,26 @@ the PR's honoured declaration in ppm, or 0. `TYPELISP_IR_SELF_COMPILE_TOLERANCE_
   - the GitHub API shows a push-to-main run of the reviewed workflow, in this
     repository, for B;
   - that run's `Self-compile reference (Linux)` job succeeded in its latest
-    attempt;
-  - the record names that run, attempt, commit and tree;
-  - every identity field equals T's record.
+    executed attempt (a "re-run failed jobs" copy of a successful job counts as
+    the attempt that ran it);
+  - the record names that run, attempt, commit and tree, and a compiler stamped
+    with that commit;
+  - its comparable identity (argv, cwd, env, harness hash and the environment
+    reuse key) equals T's record. The compiler SHA-256 is recorded and bound to
+    the commit; it is compared only between measurements of one commit.
 
   A pending reference is awaited for up to 30 minutes.
 - Otherwise the job measures B in place. It sets T's `target/` aside and checks
   out B. It builds B's own fixpoint compiler with B's
   `ci-verify --gates bootstrap-fixpoint` and a freshly fetched seed, measures it
-  with T's harness at the same path, then restores T. The rejected reference, if
-  any, is kept alongside for comparison.
-- Nothing passes without a comparable M(B). An API error, a missing record or a
-  failed fallback fails the job.
+  with T's harness at the same path, then restores T, also when the job is
+  terminated. The rejected reference, if any, is kept alongside for comparison;
+  built with the same `as` and `ld`, it must have measured the same compiler
+  bytes.
+- Nothing passes without a valid, comparable M(B) of B's commit and tree. An API
+  error, a missing or rejected reference, or a pending one that does not finish
+  within the wait leads to the in-place measurement; if that also fails, the
+  job fails.
 - The job summary and the `self-compile-measurement` artifact record T, B, H,
   both values, the source of M(B), the own cost in Ir and ppm, and the status.
 
@@ -150,23 +158,32 @@ summary: Ir, ppm, and the source of M(B). Reviewers assess it.
 
 The `Self-compile ledger` job (`scripts/self-compile.sh ledger`) accounts for
 every merge c with parent p. It uses three quantities, each subtraction taken
-over a comparable pair:
+over values of one measurement identity:
 
 - `step = M(c) − M(p)`;
 - the merged PR's `own = M(T) − M(B)`;
 - `A = step − own`.
 
-Each merge is checked as follows:
+Incomparable values are never subtracted:
+
+- When p's reference is not comparable with c's, the ledger job measures p on
+  its own runner, and c as well when c's record is not comparable there.
+- When the merged PR's T and B were measured in another identity, the job
+  reproduces them on its runner in one identity with the pair. B is measured in
+  place. T is the landed commit when the trees are equal; otherwise it is
+  rebuilt with `git merge-tree` from B and the PR head and checked against the
+  recorded tested tree. The original report is kept alongside.
+- A mismatch that cannot be reproduced fails as a comparability failure.
+
+Each merge is then checked as follows:
 
 - **Class S** (the landed tree is the tested tree):
-  - R = M(c) − M(T) when the two records are comparable; otherwise R comes
-    from the paired deltas, when B and p have the same tree.
+  - R = M(c) − M(T). Warn above 1,000 Ir; fail above 10,000 Ir.
   - T (the tested merge) and c (its squash) are different commits of one tree.
     The compiler's commit stamp also reaches content-derived assembly labels and
     the compressed embedded stdlib image, so their compilers are never
     byte-identical, and this residual is the reproduction check. Two
     measurements of one commit must have byte-identical compilers.
-  - Warn above 1,000 Ir; fail above 10,000 Ir.
   - A is recorded too. When B and p have the same tree it has the same bounds;
     otherwise it is assessed as class M.
 - **Class M** (the landed tree or base differs from the tested composition):
@@ -175,10 +192,6 @@ Each merge is checked as follows:
 - **Landed gate window**, on every merge: fail when
   `|step × 10⁶ − d × M(p)| > 5000 × M(p)`.
 - **Missing PR record:** fails, whatever the numbers.
-- **Incomparable values** are never subtracted.
-  - When p's reference is not comparable with c's, the ledger job measures p on
-    its own runner, and c as well when c's record is not comparable there.
-  - An unresolved mismatch fails as a comparability failure.
 
 The ledger's `outcome.tsv` names the result for the merge-pause rules, with
 `complete` and the account state. The outcomes are `ok`, `warning`, `pending`,
@@ -186,23 +199,30 @@ The ledger's `outcome.tsv` names the result for the merge-pause rules, with
 `attribution-failure`, `continuity-failure`, `measurement-failure` and
 `infrastructure-failure`.
 
-The account accumulates from the anchor, including every subthreshold value. It
-records:
+The account is the anchor plus one compact line per merge since it. Each run
+re-folds its `summary.tsv` from those lines, including every subthreshold
+value:
 
 - Σstep, Σown and ΣA;
 - the class S and class M residuals;
 - warnings, failures and merges;
-- identity segments, and merges without a comparable step.
+- identity segments;
+- merges without a measured step or without attribution. Missing values are
+  never summed as zero, and either makes the totals incomplete.
 
 Each ledger run carries the account forward from its parent's run, so the
-account outlives the 90-day artifact retention. Every unresolved failure stays
-listed.
+account outlives the 90-day artifact retention as long as main merges at least
+once in that period; otherwise the checkpoint below restores it. The uploaded ledger holds only
+these compact records. Every unresolved failure stays listed.
 
 - Only a reviewed row in `perf/self-compile-ledger-resolutions.tsv`
-  (`commit<TAB>outcome<TAB>reference`) resolves a failure.
+  (`commit<TAB>outcome<TAB>reference`) resolves a failure. It is refused for a
+  merge whose step was never measured.
+- A missing measurement is repaired by re-running that merge's ledger job: a
+  later run replaces the entry with the repaired one and re-folds every total.
 - If the artifact chain is lost, a reviewed
-  `perf/self-compile-ledger-checkpoint.tsv` (a copy of a complete account)
-  restores continuity.
+  `perf/self-compile-ledger-checkpoint.tsv` (a copy of an account) restores
+  continuity.
 - The anchor is the merge that introduced the reference workflow. Its parent is
   measured on the ledger runner.
 - From the anchor on, a merge without a ledger entry fails as a continuity gap.

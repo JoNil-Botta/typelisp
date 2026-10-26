@@ -11,7 +11,7 @@ SC_METRIC=self_compile/compile_cli_opt1
 SC_RECORD_SCHEMA=typelisp-self-compile-record/1
 SC_RESULT_SCHEMA=typelisp-self-compile-result/1
 SC_ENTRY_SCHEMA=typelisp-self-compile-ledger-entry/1
-SC_ACCOUNT_SCHEMA=typelisp-self-compile-account/1
+SC_ACCOUNT_SCHEMA=typelisp-self-compile-account/2
 SC_REFERENCE_WORKFLOW=.github/workflows/self-compile-reference.yml
 SC_CI_WORKFLOW=.github/workflows/ci.yml
 SC_REFERENCE_JOB_NAME="Self-compile reference (Linux)"
@@ -140,6 +140,19 @@ sc_records_comparable() {
         fi
     done
     return "$_src_status"
+}
+
+# sc_same_commit_binary A B  ->  two records of one commit built with the same
+# assembler and linker must have measured byte-identical compilers. Prints a
+# problem and fails; succeeds (silently) when the check does not apply.
+sc_same_commit_binary() {
+    [ "$(sc_record_get "$1" commit)" = "$(sc_record_get "$2" commit)" ] || return 0
+    [ "$(sc_record_get "$1" key.as)" = "$(sc_record_get "$2" key.as)" ] || return 0
+    [ "$(sc_record_get "$1" key.ld)" = "$(sc_record_get "$2" key.ld)" ] || return 0
+    [ "$(sc_record_get "$1" compiler_sha256)" = "$(sc_record_get "$2" compiler_sha256)" ] || {
+        echo "commit $(sc_record_get "$1" commit) built with the same as/ld measured two different compilers: $(sc_record_get "$1" compiler_sha256) | $(sc_record_get "$2" compiler_sha256)"
+        return 1
+    }
 }
 
 # sc_records_same_compiler A B
@@ -449,17 +462,28 @@ sc_select_reference_run() {
                   and .head_repository.full_name == $repo)]
         | sort_by(.run_number, .id) | last // empty
         | [(.id | tostring), (.run_attempt | tostring), .status, (.conclusion // "")]
-        | @tsv' "$1"
+        | @tsv' "$1" | tr -d '\r'
 }
 
 # sc_job_latest JOBS_JSON NAME  ->  `attempt<TAB>status<TAB>conclusion` of the
-# named job's latest attempt in a run's all-attempts job list, or nothing.
-# A partial re-run keeps a successful job from an earlier attempt, so the
-# producing attempt is the job's, not the run's.
+# named job's latest executed instance in a run's all-attempts job list, or
+# nothing. "Re-run failed jobs" copies every job it does not re-run into the
+# new attempt, with that attempt's number but the original runner, start and
+# completion; such a copy uploaded nothing, so it resolves to the instance it
+# copies. A later instance that really ran (pending, failed or succeeded)
+# replaces earlier ones.
 sc_job_latest() {
     jq -r --arg name "$2" '
-        [.jobs[] | select(.name == $name)] | sort_by(.run_attempt) | last // empty
-        | [(.run_attempt | tostring), .status, (.conclusion // "")] | @tsv' "$1"
+        def executed(j):
+            if (j | length) > 1
+               and j[-1].started_at != null
+               and j[-1].started_at == j[-2].started_at
+               and j[-1].completed_at == j[-2].completed_at
+               and j[-1].runner_name == j[-2].runner_name
+            then executed(j[:-1]) else j[-1] end;
+        [.jobs[] | select(.name == $name)] | sort_by(.run_attempt)
+        | if length == 0 then empty else executed(.) end
+        | [(.run_attempt | tostring), .status, (.conclusion // "")] | @tsv' "$1" | tr -d '\r'
 }
 
 # sc_select_pr_run RUNS_JSON REPO HEAD  ->  the id of the newest successful
@@ -470,7 +494,7 @@ sc_select_pr_run() {
          | select(.event == "pull_request" and .head_sha == $h and .path == $path
                   and .repository.full_name == $repo
                   and .status == "completed" and .conclusion == "success")]
-        | sort_by(.run_number, .id) | last // empty | .id | tostring' "$1"
+        | sort_by(.run_number, .id) | last // empty | .id | tostring' "$1" | tr -d '\r'
 }
 
 # sc_reference_record_check REF HEAD REPO RUN_ID ATTEMPT COMMIT EXPECT_ROLE
@@ -528,6 +552,8 @@ sc_reference_record_check() {
 #   parent.tsv, landed.tsv      a comparable measurement pair of p and c
 #   pr.tsv                      optional: the merged PR's result, with
 #   pr-head.tsv, pr-base.tsv    its own head (T) and base (B) records
+#   rep-head.tsv, rep-base.tsv  optional: T and B reproduced in the landed
+#                               pair's identity when the PR's differs
 #   merges-between              optional: the B..p merges, one per line
 # The entry is classified S (the landed tree is the tested tree) or M, with
 # exact bounds, the landed gate window, and every failure named.
@@ -561,8 +587,7 @@ sc_ledger_entry() {
     fi
     if [ "$_sle_pair_ok" != yes ]; then
         sc_record_line class none
-        sc_record_line outcome comparability-failure
-        sc_record_line failures comparability
+        sc_ledger_finish comparability ""
         return 0
     fi
     _sle_mc=$(sc_record_get "$_sle_dir/landed.tsv" ir_count)
@@ -574,59 +599,94 @@ sc_ledger_entry() {
     sc_record_line step_ppm "$(sc_ppm_display "$_sle_step" "$_sle_mp")"
     sc_record_line pair_identity "$(sc_record_get "$_sle_dir/landed.tsv" key.kernel)|$(sc_record_get "$_sle_dir/landed.tsv" key.valgrind)|$(sc_record_get "$_sle_dir/landed.tsv" key.as)|$(sc_record_get "$_sle_dir/landed.tsv" procedure)"
 
+    # Landed gate window, for every merge with a step: the merge as it landed
+    # against its parent, with the PR's honoured declaration or 0.
+    _sle_declared=none
+    if [ -f "$_sle_dir/pr.tsv" ]; then
+        _sle_declared=$(sc_record_get "$_sle_dir/pr.tsv" declared_ppm 2>/dev/null || echo none)
+    fi
+    _sle_d=$_sle_declared
+    [ "$_sle_d" = none ] && _sle_d=0
+    if [ "$(sc_window "$_sle_step" "$_sle_mp" "$_sle_d" "$SC_TOLERANCE_PPM")" != in ]; then
+        _sle_failures="$_sle_failures landed-gate-window"
+    fi
+    if [ "$(sc_ppm_exceeds "$_sle_step" "$_sle_mp" 5000)" = yes ]; then
+        if [ "$(sc_bn cmp "$_sle_step" 0)" -gt 0 ]; then
+            sc_record_line routing non-routine
+        else
+            sc_record_line routing explain-improvement
+        fi
+    fi
+
     # Attribution: the merged PR's own CI result.
     if [ ! -f "$_sle_dir/pr.tsv" ] || [ ! -f "$_sle_dir/pr-head.tsv" ] || [ ! -f "$_sle_dir/pr-base.tsv" ]; then
         sc_record_line class none
         sc_record_line attribution missing
-        sc_record_line outcome attribution-failure
-        sc_record_line failures attribution
+        sc_ledger_finish "$_sle_failures attribution" "$_sle_warnings"
         return 0
     fi
-    _sle_own=$(sc_record_get "$_sle_dir/pr.tsv" own)
-    _sle_declared=$(sc_record_get "$_sle_dir/pr.tsv" declared_ppm)
-    _sle_tt=$(sc_record_get "$_sle_dir/pr-head.tsv" tree)
-    _sle_tb=$(sc_record_get "$_sle_dir/pr-base.tsv" tree)
-    _sle_mt=$(sc_record_get "$_sle_dir/pr-head.tsv" ir_count)
-    _sle_a=$(sc_bn sub "$_sle_step" "$_sle_own")
+    _sle_own_original=$(sc_record_get "$_sle_dir/pr.tsv" own)
     sc_record_line pr "$(sc_record_get "$_sle_dir/pr.tsv" pr)"
     sc_record_line pr_head "$(sc_record_get "$_sle_dir/pr.tsv" head)"
     sc_record_line pr_tested_merge "$(sc_record_get "$_sle_dir/pr.tsv" merge)"
     sc_record_line pr_tested_base "$(sc_record_get "$_sle_dir/pr.tsv" base)"
-    sc_record_line own "$_sle_own"
     sc_record_line declared_ppm "$_sle_declared"
+    sc_record_line own_original "$_sle_own_original"
+
+    # The PR's T and B must be comparable with the landed pair: its own report
+    # when its identity matches, else its comparison reproduced in the landed
+    # pair's identity (rep-head.tsv, rep-base.tsv), with the original kept.
+    _sle_th=
+    _sle_tbr=
+    if ! _sle_pdiff=$(sc_records_comparable "$_sle_dir/pr-head.tsv" "$_sle_dir/landed.tsv"); then
+        sc_record_line pr_identity_differences "$(printf '%s' "$_sle_pdiff" | tr '\n' ';')"
+    fi
+    if sc_records_comparable "$_sle_dir/pr-head.tsv" "$_sle_dir/landed.tsv" >/dev/null &&
+        sc_records_comparable "$_sle_dir/pr-base.tsv" "$_sle_dir/landed.tsv" >/dev/null; then
+        _sle_th=$_sle_dir/pr-head.tsv
+        _sle_tbr=$_sle_dir/pr-base.tsv
+        sc_record_line own_source "PR report"
+    elif [ -f "$_sle_dir/rep-head.tsv" ] && [ -f "$_sle_dir/rep-base.tsv" ] &&
+        sc_record_validate "$_sle_dir/rep-head.tsv" >/dev/null &&
+        sc_record_validate "$_sle_dir/rep-base.tsv" >/dev/null &&
+        [ "$(sc_record_get "$_sle_dir/rep-head.tsv" tree)" = "$(sc_record_get "$_sle_dir/pr-head.tsv" tree)" ] &&
+        [ "$(sc_record_get "$_sle_dir/rep-base.tsv" tree)" = "$(sc_record_get "$_sle_dir/pr-base.tsv" tree)" ] &&
+        sc_records_comparable "$_sle_dir/rep-head.tsv" "$_sle_dir/landed.tsv" >/dev/null &&
+        sc_records_comparable "$_sle_dir/rep-base.tsv" "$_sle_dir/landed.tsv" >/dev/null; then
+        _sle_th=$_sle_dir/rep-head.tsv
+        _sle_tbr=$_sle_dir/rep-base.tsv
+        sc_record_line own_source "reproduced in the landed pair's identity"
+    else
+        sc_record_line class none
+        sc_record_line detail "the PR's measurement identity differs from the landed pair and was not reproduced"
+        sc_ledger_finish "$_sle_failures comparability" "$_sle_warnings"
+        return 0
+    fi
+    _sle_tt=$(sc_record_get "$_sle_th" tree)
+    _sle_tb=$(sc_record_get "$_sle_tbr" tree)
+    _sle_mt=$(sc_record_get "$_sle_th" ir_count)
+    _sle_own=$(sc_bn sub "$_sle_mt" "$(sc_record_get "$_sle_tbr" ir_count)")
+    _sle_a=$(sc_bn sub "$_sle_step" "$_sle_own")
+    sc_record_line own "$_sle_own"
     sc_record_line a "$_sle_a"
     sc_record_line a_ppm "$(sc_ppm_display "$_sle_a" "$_sle_mp")"
 
     if [ "$_sle_tt" = "$_sle_tc" ]; then
         _sle_class=S
-        # Reproduction residual: the landed tree against the PR's measurement
-        # of the same tree, when comparable; otherwise the paired deltas.
-        if _sle_x=$(sc_records_comparable "$_sle_dir/pr-head.tsv" "$_sle_dir/landed.tsv"); then
-            if _sle_y=$(sc_records_same_compiler "$_sle_dir/pr-head.tsv" "$_sle_dir/landed.tsv"); then
-                _sle_r=$(sc_bn sub "$_sle_mc" "$_sle_mt")
-                sc_record_line r_method direct
-                sc_record_line r_compiler "$_sle_y"
-            else
-                sc_record_line r_problem "$_sle_y"
-                _sle_r=
-                _sle_failures="$_sle_failures comparability"
-            fi
-        elif [ "$_sle_tb" = "$_sle_tp" ]; then
-            _sle_r=$_sle_a
-            sc_record_line r_method paired-delta
-            sc_record_line r_identity_differences "$(printf '%s' "$_sle_x" | tr '\n' ';')"
-        else
-            _sle_r=
-            sc_record_line r_problem "PR and landed measurements are incomparable and the bases differ"
-            _sle_failures="$_sle_failures comparability"
-        fi
-        if [ -n "$_sle_r" ]; then
+        # Reproduction residual: the landed tree against the measurement of the
+        # same tree in the same identity.
+        if _sle_y=$(sc_records_same_compiler "$_sle_th" "$_sle_dir/landed.tsv"); then
+            _sle_r=$(sc_bn sub "$_sle_mc" "$_sle_mt")
             sc_record_line r "$_sle_r"
+            sc_record_line r_compiler "$_sle_y"
             if [ "$(sc_abs_exceeds "$_sle_r" "$SC_CLASS_S_FAIL_IR")" = yes ]; then
                 _sle_failures="$_sle_failures class-s"
             elif [ "$(sc_abs_exceeds "$_sle_r" "$SC_CLASS_S_WARN_IR")" = yes ]; then
                 _sle_warnings="$_sle_warnings class-s"
             fi
+        else
+            sc_record_line r_problem "$_sle_y"
+            _sle_failures="$_sle_failures comparability"
         fi
         if [ "$_sle_tb" = "$_sle_tp" ]; then
             sc_record_line a_class S
@@ -654,27 +714,45 @@ sc_ledger_entry() {
         fi
     fi
 
-    # Landed gate window: the merge as it landed, against its parent.
-    _sle_d=$_sle_declared
-    [ "$_sle_d" = none ] && _sle_d=0
-    if [ "$(sc_window "$_sle_step" "$_sle_mp" "$_sle_d" "$SC_TOLERANCE_PPM")" != in ]; then
-        _sle_failures="$_sle_failures landed-gate-window"
-    fi
-    if [ "$(sc_ppm_exceeds "$_sle_step" "$_sle_mp" 5000)" = yes ] &&
-        [ "$(sc_bn cmp "$_sle_step" 0)" -gt 0 ]; then
-        sc_record_line routing non-routine
-    fi
-
-    _sle_failures=$(printf '%s' "$_sle_failures" | sed 's/^ *//')
-    _sle_warnings=$(printf '%s' "$_sle_warnings" | sed 's/^ *//')
-    sc_record_line failures "${_sle_failures:--}"
-    sc_record_line warnings "${_sle_warnings:--}"
-    case " $_sle_failures " in
-        *" comparability "*) sc_record_line outcome comparability-failure ;;
-        "  ") if [ -n "$_sle_warnings" ]; then sc_record_line outcome warning; else sc_record_line outcome ok; fi ;;
-        *) sc_record_line outcome numerical-failure ;;
-    esac
+    sc_ledger_finish "$_sle_failures" "$_sle_warnings"
 }
+
+# sc_ledger_finish FAILURES WARNINGS  ->  the failure, warning and outcome
+# lines of an entry. The outcome names every failure class present, joined by
+# `+` (comparability, attribution, numerical), so a resolution must name all
+# of them; otherwise it is `warning` or `ok`.
+sc_ledger_finish() {
+    _slf_failures=$(printf '%s' "$1" | sed 's/^ *//; s/  */ /g')
+    _slf_warnings=$(printf '%s' "$2" | sed 's/^ *//; s/  */ /g')
+    sc_record_line failures "${_slf_failures:--}"
+    sc_record_line warnings "${_slf_warnings:--}"
+    _slf_outcome=
+    case " $_slf_failures " in
+        *" comparability "*) _slf_outcome=comparability-failure ;;
+    esac
+    case " $_slf_failures " in
+        *" attribution "*) _slf_outcome="${_slf_outcome:+$_slf_outcome+}attribution-failure" ;;
+    esac
+    case " $_slf_failures " in
+        *" class-s "* | *" class-s-attribution "* | *" class-m "* | *" landed-gate-window "*)
+            _slf_outcome="${_slf_outcome:+$_slf_outcome+}numerical-failure"
+            ;;
+    esac
+    if [ -z "$_slf_outcome" ]; then
+        if [ -n "$_slf_warnings" ]; then _slf_outcome=warning; else _slf_outcome=ok; fi
+    fi
+    sc_record_line outcome "$_slf_outcome"
+}
+
+# --- cumulative account ----------------------------------------------------------
+# The account carried from ledger run to ledger run is the anchor plus one
+# compact line per merge since it:
+#   entry  commit|class|a_class|outcome|step|own|a|r|pair_identity|failures
+# where a missing quantity is `-`, and the reviewed resolutions applied so far:
+#   resolved  commit|outcome|reference
+# Every sum and count is re-folded from those lines (sc_account_summary), so a
+# repaired entry replaces its line and every later total follows, and nothing
+# is summed from a value that was never measured.
 
 # sc_account_seed ANCHOR_COMMIT ANCHOR_PARENT PARENT_IR  ->  an empty account.
 sc_account_seed() {
@@ -683,118 +761,143 @@ sc_account_seed() {
     sc_record_line anchor.parent "$2"
     sc_record_line anchor.parent_ir "$3"
     sc_record_line last.commit "$2"
-    sc_record_line merges 0
-    sc_record_line sum.step 0
-    sc_record_line sum.own 0
-    sc_record_line sum.a 0
-    sc_record_line sum.r_s 0
-    sc_record_line sum.a_m 0
-    sc_record_line count.s 0
-    sc_record_line count.m 0
-    sc_record_line count.warnings 0
-    sc_record_line count.failures 0
-    sc_record_line count.missing_steps 0
-    sc_record_line segments 0
-    sc_record_line last.pair_identity -
-    sc_record_line complete yes
 }
 
-# sc_account_apply ACCOUNT ENTRY  ->  the account after appending ENTRY.
-# Every sum includes subthreshold values. A failing entry adds an
-# `unresolved` line that only a reviewed resolution removes.
+# sc_account_entry_line ENTRY  ->  the compact `entry` value of a ledger entry.
+sc_account_entry_line() {
+    _sael() { sc_record_get "$1" "$2" 2>/dev/null || printf -- -; }
+    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
+        "$(_sael "$1" commit)" "$(_sael "$1" class)" "$(_sael "$1" a_class)" \
+        "$(_sael "$1" outcome)" "$(_sael "$1" step)" "$(_sael "$1" own)" \
+        "$(_sael "$1" a)" "$(_sael "$1" r)" "$(_sael "$1" pair_identity)" \
+        "$(_sael "$1" failures)" | tr '\t' ' '
+}
+
+# sc_account_apply ACCOUNT ENTRY  ->  the account with ENTRY's line, replacing
+# an earlier line for the same commit (a repaired entry), and last.commit
+# advanced when the entry is a new merge.
 sc_account_apply() {
-    _saa_acc=$1
-    _saa_entry=$2
-    _saa_get() { sc_record_get "$_saa_acc" "$1"; }
-    _saa_eget() { sc_record_get "$_saa_entry" "$1" 2>/dev/null || printf '%s' "${2:-}"; }
-    _saa_outcome=$(_saa_eget outcome)
-    _saa_step=$(_saa_eget step 0)
-    _saa_own=$(_saa_eget own 0)
-    _saa_a=$(_saa_eget a 0)
-    _saa_r=$(_saa_eget r 0)
-    _saa_class=$(_saa_eget class none)
-    _saa_aclass=$(_saa_eget a_class none)
-    _saa_pid=$(_saa_eget pair_identity -)
-    _saa_segments=$(_saa_get segments)
-    if [ "$_saa_pid" != "$(_saa_get last.pair_identity)" ]; then
-        _saa_segments=$((_saa_segments + 1))
-    fi
-    _saa_s=$(_saa_get count.s)
-    _saa_m=$(_saa_get count.m)
-    _saa_rs=$(_saa_get sum.r_s)
-    _saa_am=$(_saa_get sum.a_m)
-    [ "$_saa_class" = S ] && { _saa_s=$((_saa_s + 1)); _saa_rs=$(sc_bn add "$_saa_rs" "$_saa_r"); }
-    [ "$_saa_class" = M ] && _saa_m=$((_saa_m + 1))
-    [ "$_saa_aclass" = M ] && _saa_am=$(sc_bn add "$_saa_am" "$_saa_a")
-    _saa_w=$(_saa_get count.warnings)
-    _saa_f=$(_saa_get count.failures)
-    _saa_ms=$(_saa_get count.missing_steps)
-    sc_record_get "$_saa_entry" step >/dev/null 2>&1 || _saa_ms=$((_saa_ms + 1))
-    [ "$(_saa_eget warnings -)" != - ] && _saa_w=$((_saa_w + 1))
-    case "$_saa_outcome" in
-        ok | warning) ;;
-        *) _saa_f=$((_saa_f + 1)) ;;
-    esac
-    sc_record_line schema "$SC_ACCOUNT_SCHEMA"
-    sc_record_line anchor.commit "$(_saa_get anchor.commit)"
-    sc_record_line anchor.parent "$(_saa_get anchor.parent)"
-    sc_record_line anchor.parent_ir "$(_saa_get anchor.parent_ir)"
-    sc_record_line last.commit "$(_saa_eget commit)"
-    sc_record_line merges "$(($(_saa_get merges) + 1))"
-    sc_record_line sum.step "$(sc_bn add "$(_saa_get sum.step)" "$_saa_step")"
-    sc_record_line sum.own "$(sc_bn add "$(_saa_get sum.own)" "$_saa_own")"
-    sc_record_line sum.a "$(sc_bn add "$(_saa_get sum.a)" "$_saa_a")"
-    sc_record_line sum.r_s "$_saa_rs"
-    sc_record_line sum.a_m "$_saa_am"
-    sc_record_line count.s "$_saa_s"
-    sc_record_line count.m "$_saa_m"
-    sc_record_line count.warnings "$_saa_w"
-    sc_record_line count.failures "$_saa_f"
-    sc_record_line count.missing_steps "$_saa_ms"
-    sc_record_line segments "$_saa_segments"
-    sc_record_line last.pair_identity "$_saa_pid"
-    sc_record_line complete yes
-    awk -F '\t' '$1 == "unresolved" { print }' "$_saa_acc"
-    case "$_saa_outcome" in
-        ok | warning) ;;
-        *)
-            sc_record_line unresolved "$(_saa_eget commit)|$_saa_outcome|$(_saa_eget failures -)"
-            ;;
-    esac
+    _saa_line=$(sc_account_entry_line "$2")
+    awk -F '\t' -v line="$_saa_line" '
+        BEGIN { split(line, f, "|"); commit = f[1] }
+        {
+            if ($1 == "entry") {
+                split($2, g, "|")
+                if (g[1] == commit) { out[++n] = "entry\t" line; replaced = 1; next }
+            }
+            out[++n] = $0
+        }
+        END {
+            for (i = 1; i <= n; i++) {
+                if (!replaced && out[i] ~ /^last\.commit\t/) { print "last.commit\t" commit; continue }
+                print out[i]
+            }
+            if (!replaced) print "entry\t" line
+        }
+    ' "$1"
 }
 
-# sc_account_resolve ACCOUNT RESOLUTIONS  ->  the account without the
-# unresolved entries a reviewed resolution names (`commit<TAB>outcome<TAB>ref`).
+# sc_account_resolve ACCOUNT RESOLUTIONS  ->  the account with each reviewed
+# resolution (`commit<TAB>outcome<TAB>reference`) that names a failing entry
+# whose actual cost (its step) is accounted. A resolution for an entry without
+# a step is refused: that needs a repaired entry first.
 sc_account_resolve() {
     if [ ! -f "$2" ]; then
         cat "$1"
         return 0
     fi
     awk -F '\t' '
+        BEGIN { OFS = "\t" }
         NR == FNR {
             sub(/\r$/, "")
             if ($0 ~ /^#/ || NF < 3) next
-            resolved[$1 "|" $2] = $3
+            want[$1 "|" $2] = $3
             next
         }
-        $1 == "unresolved" {
-            split($2, part, "|")
-            if ((part[1] "|" part[2]) in resolved) {
-                print "resolved\t" $2 "|" resolved[part[1] "|" part[2]]
-                next
+        $1 == "resolved" { split($2, r, "|"); have[r[1] "|" r[2]] = 1 }
+        $1 == "entry" { split($2, g, "|"); outcome[g[1]] = g[4]; step[g[1]] = g[5] }
+        { print }
+        END {
+            for (key in want) {
+                if (key in have) continue
+                split(key, k, "|")
+                if (!(k[1] in outcome) || outcome[k[1]] != k[2]) continue
+                if (step[k[1]] == "-") {
+                    print "resolution_refused", key "|no accounted step; repair the entry first"
+                    continue
+                }
+                print "resolved", key "|" want[key]
             }
         }
-        { print }
     ' "$2" "$1"
+}
+
+# sc_account_summary ACCOUNT  ->  the totals, re-folded from the entry lines.
+sc_account_summary() {
+    awk -F '\t' "$SC_BN_AWK"'
+        BEGIN { OFS = "\t"; sstep = "0"; sown = "0"; sa = "0"; srs = "0"; sam = "0" }
+        $1 == "anchor.commit" { anchor = $2 }
+        $1 == "last.commit" { last = $2 }
+        $1 == "resolved" { split($2, rv, "|"); resolved[rv[1] "|" rv[2]] = 1 }
+        $1 == "entry" { order[++n] = $2 }
+        END {
+            prev = ""
+            for (i = 1; i <= n; i++) {
+                split(order[i], e, "|")
+                commit = e[1]; class = e[2]; aclass = e[3]; outcome = e[4]
+                step = e[5]; own = e[6]; a = e[7]; r = e[8]; pid = e[9]
+                merges++
+                if (step == "-") missing_steps++; else sstep = bn_add(sstep, step)
+                if (own == "-") unattributed++; else sown = bn_add(sown, own)
+                if (a != "-") sa = bn_add(sa, a)
+                if (class == "S") { cs++; if (r != "-") srs = bn_add(srs, r) }
+                if (class == "M") cm++
+                if (aclass == "M" && a != "-") sam = bn_add(sam, a)
+                if (outcome == "warning") warnings++
+                if (outcome != "ok" && outcome != "warning") {
+                    failures++
+                    if (!((commit "|" outcome) in resolved)) unresolved[++u] = commit "|" outcome "|" e[10]
+                }
+                if (pid != "-" && pid != prev) segments++
+                if (pid != "-") prev = pid
+            }
+            print "anchor.commit", anchor
+            print "last.commit", last
+            print "merges", merges + 0
+            print "sum.step", sstep
+            print "sum.own", sown
+            print "sum.a", sa
+            print "sum.r_s", srs
+            print "sum.a_m", sam
+            print "count.s", cs + 0
+            print "count.m", cm + 0
+            print "count.warnings", warnings + 0
+            print "count.failures", failures + 0
+            print "count.missing_steps", missing_steps + 0
+            print "count.unattributed", unattributed + 0
+            print "segments", segments + 0
+            print "complete", (missing_steps + unattributed == 0) ? "yes" : "no"
+            print "count.unresolved", u + 0
+            for (i = 1; i <= u; i++) print "unresolved", unresolved[i]
+        }
+    ' "$1"
 }
 
 # sc_account_outcome ACCOUNT  ->  `clean` or `unresolved`.
 sc_account_outcome() {
-    if awk -F '\t' '$1 == "unresolved" { found = 1 } END { exit found ? 0 : 1 }' "$1"; then
-        echo unresolved
-    else
+    if [ "$(sc_account_summary "$1" | awk -F '\t' '$1 == "count.unresolved" { print $2 }')" = 0 ]; then
         echo clean
+    else
+        echo unresolved
     fi
+}
+
+# sc_account_valid ACCOUNT COMMIT  ->  succeeds for a well-formed account whose
+# last merge is COMMIT.
+sc_account_valid() {
+    [ "$(sc_record_get "$1" schema 2>/dev/null || true)" = "$SC_ACCOUNT_SCHEMA" ] &&
+        [ "$(sc_record_get "$1" last.commit 2>/dev/null || true)" = "$2" ] &&
+        sc_is_sha "$(sc_record_get "$1" anchor.commit 2>/dev/null || true)"
 }
 
 # sc_chain_plan WALK  ->  how the ledger reaches a complete account for c.

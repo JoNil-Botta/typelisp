@@ -194,6 +194,8 @@ sc_measure_into() {
     # binds that stamp to the measured commit.
     _smi_stamp=$("$_smi_compiler" --version 2>/dev/null | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
     sc_is_sha "$_smi_stamp" || sc_fail "the measured compiler reports no build commit (--version)"
+    [ "$_smi_stamp" = "$_smi_commit" ] ||
+        sc_fail "the measured compiler was built from $_smi_stamp, not the checkout $_smi_commit"
     mkdir -p "$(dirname -- "$_smi_record")"
     {
         sc_record_line schema "$SC_RECORD_SCHEMA"
@@ -243,10 +245,19 @@ sc_cmd_measure() {
 # Every call goes through these two functions; --self-test replaces them with
 # fixture readers.
 
+# sc_json_ok FILE  ->  succeeds when FILE holds one valid JSON document.
+sc_json_ok() {
+    jq -e . "$1" >/dev/null 2>&1
+}
+
+# sc_api ENDPOINT OUT  ->  the response body in OUT, from the first of three
+# attempts that succeeds. Each attempt writes its own OUT.attempt-N.
 sc_api() {
     _sa_try=1
     while :; do
-        if gh api -H 'Accept: application/vnd.github+json' "$1"; then
+        if gh api -H 'Accept: application/vnd.github+json' "$1" > "$2.attempt-$_sa_try" 2>&1 &&
+            sc_json_ok "$2.attempt-$_sa_try"; then
+            cp "$2.attempt-$_sa_try" "$2"
             return 0
         fi
         [ "$_sa_try" -lt 3 ] || return 1
@@ -277,12 +288,16 @@ sc_fetch_run_artifact() {
     SC_RUN_ATTEMPT=
     SC_JOB_CONCLUSION=
     if ! sc_api "repos/$GITHUB_REPOSITORY/actions/workflows/$(basename "$SC_REFERENCE_WORKFLOW")/runs?event=push&branch=main&head_sha=$_sfra_commit&per_page=50" \
-        > "$_sfra_dest/runs.json"; then
+        "$_sfra_dest/runs.json"; then
         SC_RUN_STATUS=api-error
         echo "$_sfra_kind: listing reference runs for $_sfra_commit failed" >> "$_sfra_dest/reasons"
         return 0
     fi
-    _sfra_sel=$(sc_select_reference_run "$_sfra_dest/runs.json" "$GITHUB_REPOSITORY" "$_sfra_commit")
+    if ! _sfra_sel=$(sc_select_reference_run "$_sfra_dest/runs.json" "$GITHUB_REPOSITORY" "$_sfra_commit"); then
+        SC_RUN_STATUS=api-error
+        echo "$_sfra_kind: the reference runs listing for $_sfra_commit is not valid JSON" >> "$_sfra_dest/reasons"
+        return 0
+    fi
     if [ -z "$_sfra_sel" ]; then
         SC_RUN_STATUS=absent
         echo "$_sfra_kind: no push-to-main run of $SC_REFERENCE_WORKFLOW for $_sfra_commit" >> "$_sfra_dest/reasons"
@@ -291,12 +306,16 @@ sc_fetch_run_artifact() {
     SC_RUN_ID=$(printf '%s' "$_sfra_sel" | cut -f1)
     _sfra_runstatus=$(printf '%s' "$_sfra_sel" | cut -f3)
     if ! sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$SC_RUN_ID/jobs?filter=all&per_page=100" \
-        > "$_sfra_dest/jobs.json"; then
+        "$_sfra_dest/jobs.json"; then
         SC_RUN_STATUS=api-error
         echo "$_sfra_kind: listing jobs of run $SC_RUN_ID failed" >> "$_sfra_dest/reasons"
         return 0
     fi
-    _sfra_jobstate=$(sc_job_latest "$_sfra_dest/jobs.json" "$_sfra_job")
+    if ! _sfra_jobstate=$(sc_job_latest "$_sfra_dest/jobs.json" "$_sfra_job"); then
+        SC_RUN_STATUS=api-error
+        echo "$_sfra_kind: the jobs listing of run $SC_RUN_ID is not valid JSON" >> "$_sfra_dest/reasons"
+        return 0
+    fi
     SC_RUN_ATTEMPT=$(printf '%s' "$_sfra_jobstate" | cut -f1)
     _sfra_jobstatus=$(printf '%s' "$_sfra_jobstate" | cut -f2)
     SC_JOB_CONCLUSION=$(printf '%s' "$_sfra_jobstate" | cut -f3)
@@ -311,9 +330,14 @@ sc_fetch_run_artifact() {
         return 0
     fi
     if ! sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$SC_RUN_ID/artifacts?name=$_sfra_artifact&per_page=100" \
-        > "$_sfra_dest/artifacts.json"; then
+        "$_sfra_dest/artifacts.json"; then
         SC_RUN_STATUS=api-error
         echo "$_sfra_kind: listing artifacts of run $SC_RUN_ID failed" >> "$_sfra_dest/reasons"
+        return 0
+    fi
+    if ! jq -e '.artifacts | type == "array"' "$_sfra_dest/artifacts.json" >/dev/null 2>&1; then
+        SC_RUN_STATUS=api-error
+        echo "$_sfra_kind: the artifacts listing of run $SC_RUN_ID is not valid JSON" >> "$_sfra_dest/reasons"
         return 0
     fi
     if ! jq -e --arg name "$_sfra_artifact" --argjson run "$SC_RUN_ID" '
@@ -407,24 +431,53 @@ sc_cmd_fallback() {
     _scf_hold=${RUNNER_TEMP:-/tmp}/self-compile-hold-$$
     [ ! -e "$_scf_hold" ] || sc_fail "hold path exists: $_scf_hold"
     mkdir -p "$_scf_hold"
-    if [ -d target ]; then
-        mv target "$_scf_hold/head-target"
-    fi
-    sc_log "fallback: measuring $_scf_base in place ($_scf_role), harness from $_scf_head"
     _scf_status=0
     _scf_at_base=0
+    _scf_moved=0
+    _scf_restored=0
+    # Restore the head checkout and its target/ whatever happens, including
+    # termination: undo the harness overlay so the base checkout is clean,
+    # return to the head, and put the head's target/ back.
+    sc_fallback_restore() {
+        [ "$_scf_restored" -eq 0 ] || return 0
+        _scf_restored=1
+        if [ "$_scf_at_base" -eq 1 ]; then
+            # shellcheck disable=SC2086
+            git checkout --quiet "$_scf_base" -- $SC_PROCEDURE_FILES ||
+                sc_log "could not undo the harness overlay on $_scf_base"
+        fi
+        git -c advice.detachedHead=false checkout --quiet --detach "$_scf_head" || {
+            sc_log "could not restore $_scf_head after the fallback"
+            return 1
+        }
+        if [ "$_scf_moved" -eq 1 ]; then
+            if [ -d target ]; then
+                mv target "$_scf_hold/base-target"
+            fi
+            mv "$_scf_hold/head-target" target
+        fi
+    }
+    trap 'sc_fallback_restore; exit 1' INT TERM HUP
+    trap 'sc_fallback_restore' EXIT
+    if [ -d target ]; then
+        mv target "$_scf_hold/head-target"
+        _scf_moved=1
+    fi
+    sc_log "fallback: measuring $_scf_base in place ($_scf_role), harness from $_scf_head"
     if git -c advice.detachedHead=false checkout --quiet --detach "$_scf_base"; then
         _scf_at_base=1
     else
         _scf_status=1
     fi
     if [ "$_scf_status" -eq 0 ]; then
-        # shellcheck disable=SC2086
-        git checkout --quiet "$_scf_head" -- $SC_PROCEDURE_FILES || _scf_status=1
-    fi
-    if [ "$_scf_status" -eq 0 ]; then
         env -u TYPELISP_BIN -u TYPELISP_CI_TIMING sh scripts/ci-verify.sh --gates bootstrap-fixpoint ||
             _scf_status=1
+    fi
+    # Overlay the head's harness after the base's own bootstrap, so the base
+    # compiler is built entirely by the base's scripts.
+    if [ "$_scf_status" -eq 0 ]; then
+        # shellcheck disable=SC2086
+        git checkout --quiet "$_scf_head" -- $SC_PROCEDURE_FILES || _scf_status=1
     fi
     if [ "$_scf_status" -eq 0 ]; then
         _scf_stage2=$(cat target/ci-verify-stage2.path 2>/dev/null || true)
@@ -433,22 +486,13 @@ sc_cmd_fallback() {
     if [ "$_scf_status" -eq 0 ]; then
         ( sc_measure_into "$_scf_stage2" "$_scf_hold/record.tsv" "$_scf_role" ) || _scf_status=1
     fi
-    # Restore the head checkout whatever happened: undo the harness overlay
-    # first so the base checkout is clean, then return to the head.
-    if [ "$_scf_at_base" -eq 1 ]; then
-        # shellcheck disable=SC2086
-        git checkout --quiet "$_scf_base" -- $SC_PROCEDURE_FILES ||
-            sc_fail "could not undo the harness overlay on $_scf_base"
-    fi
-    git -c advice.detachedHead=false checkout --quiet --detach "$_scf_head" ||
-        sc_fail "could not restore $_scf_head after the fallback"
-    if [ -d target ]; then
-        mv target "$_scf_hold/base-target"
-    fi
-    if [ -d "$_scf_hold/head-target" ]; then
-        mv "$_scf_hold/head-target" target
-    fi
+    sc_fallback_restore || sc_fail "could not restore the head checkout after the fallback"
+    trap - INT TERM HUP EXIT
     [ "$_scf_status" -eq 0 ] || sc_fail "fallback measurement of $_scf_base failed; see the log above"
+    _scf_msg=$(sc_record_validate "$_scf_hold/record.tsv" "$_scf_role") ||
+        sc_fail "the fallback record is invalid: $_scf_msg"
+    [ "$(sc_record_get "$_scf_hold/record.tsv" commit)" = "$_scf_base" ] ||
+        sc_fail "the fallback measured $(sc_record_get "$_scf_hold/record.tsv" commit), not $_scf_base"
     mkdir -p "$(dirname -- "$_scf_record")"
     cp "$_scf_hold/record.tsv" "$_scf_record"
     if [ -s "$_scf_hold/base-target/instruction-count-check/measure/logs/$SC_HARNESS_LOG" ]; then
@@ -539,12 +583,26 @@ sc_cmd_check() {
         sc_run_fallback "$_scc_b" "$_scc_t" "$_scc_out/base.tsv" base-fallback
         _scc_source="in-place fallback on this runner (reference $SC_REF_STATUS)"
     fi
+    # Whatever its source, M(B) must be a valid record of B's commit and tree,
+    # measured with a compiler stamped with B, comparable with M(T).
+    _scc_msg=$(sc_record_validate "$_scc_out/base.tsv" gate base-fallback) ||
+        sc_fail "invalid base measurement: $_scc_msg"
+    [ "$(sc_record_get "$_scc_out/base.tsv" commit)" = "$_scc_b" ] ||
+        sc_fail "the base measurement is not of $_scc_b"
+    [ "$(sc_record_get "$_scc_out/base.tsv" tree)" = "$(sc_commit_tree "$_scc_b")" ] ||
+        sc_fail "the base measurement's tree is not the tree of $_scc_b"
+    [ "$(sc_record_get "$_scc_out/base.tsv" authority)" = hosted ] ||
+        sc_fail "the base measurement is not from a GitHub-hosted runner"
+    if [ -f "$_scc_out/reference-rejected.tsv" ] &&
+        sc_record_validate "$_scc_out/reference-rejected.tsv" >/dev/null 2>&1 &&
+        [ "$(sc_record_get "$_scc_out/reference-rejected.tsv" key.workspace)" = "$(sc_record_get "$_scc_out/base.tsv" key.workspace)" ]; then
+        _scc_msg=$(sc_same_commit_binary "$_scc_out/reference-rejected.tsv" "$_scc_out/base.tsv") ||
+            sc_fail "comparability failure: $_scc_msg"
+    fi
     if ! _scc_diff=$(sc_records_comparable "$_scc_out/head.tsv" "$_scc_out/base.tsv"); then
         printf '%s\n' "$_scc_diff" >&2
         sc_fail "comparability failure: M(T) and M(B) have different measurement identities"
     fi
-    [ "$(sc_record_get "$_scc_out/base.tsv" commit)" = "$_scc_b" ] ||
-        sc_fail "the base measurement is not of $_scc_b"
 
     # A harness change is explicit: B was measured with this PR's harness.
     _scc_procedure_change=no
@@ -667,29 +725,29 @@ sc_fetch_pr_record() {
         echo "$*" > "$_sfpr_dest/attribution-problem"
         return 1
     }
-    sc_api "repos/$GITHUB_REPOSITORY/commits/$_sfpr_c/pulls" > "$_sfpr_dest/api/pulls.json" ||
+    sc_api "repos/$GITHUB_REPOSITORY/commits/$_sfpr_c/pulls" "$_sfpr_dest/api/pulls.json" ||
         { SC_LEDGER_INFRA="listing PRs of $_sfpr_c failed"; _sfpr_problem "API error listing PRs of $_sfpr_c"; return 1; }
     _sfpr_sel=$(jq -r --arg c "$_sfpr_c" '
         [.[] | select(.merge_commit_sha == $c and .merged_at != null and .base.ref == "main")]
         | if length == 1 then .[0] | [(.number | tostring), .head.sha] | @tsv else empty end' \
-        "$_sfpr_dest/api/pulls.json")
+        "$_sfpr_dest/api/pulls.json" | tr -d '\r')
     [ -n "$_sfpr_sel" ] || { _sfpr_problem "no single merged PR has merge commit $_sfpr_c"; return 1; }
     _sfpr_pr=$(printf '%s' "$_sfpr_sel" | cut -f1)
     _sfpr_h=$(printf '%s' "$_sfpr_sel" | cut -f2)
     sc_api "repos/$GITHUB_REPOSITORY/actions/workflows/$(basename "$SC_CI_WORKFLOW")/runs?event=pull_request&head_sha=$_sfpr_h&per_page=50" \
-        > "$_sfpr_dest/api/runs.json" ||
+        "$_sfpr_dest/api/runs.json" ||
         { SC_LEDGER_INFRA="listing CI runs of $_sfpr_h failed"; _sfpr_problem "API error listing CI runs of $_sfpr_h"; return 1; }
     _sfpr_id=$(sc_select_pr_run "$_sfpr_dest/api/runs.json" "$GITHUB_REPOSITORY" "$_sfpr_h")
     [ -n "$_sfpr_id" ] || { _sfpr_problem "PR #$_sfpr_pr head $_sfpr_h has no successful CI run"; return 1; }
     sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$_sfpr_id/jobs?filter=all&per_page=100" \
-        > "$_sfpr_dest/api/jobs.json" ||
+        "$_sfpr_dest/api/jobs.json" ||
         { SC_LEDGER_INFRA="listing jobs of CI run $_sfpr_id failed"; _sfpr_problem "API error listing jobs of run $_sfpr_id"; return 1; }
     _sfpr_job=$(sc_job_latest "$_sfpr_dest/api/jobs.json" "$SC_CI_JOB_NAME")
     _sfpr_attempt=$(printf '%s' "$_sfpr_job" | cut -f1)
     [ "$(printf '%s' "$_sfpr_job" | cut -f2-3)" = "$(printf 'completed\tsuccess')" ] ||
         { _sfpr_problem "CI run $_sfpr_id: '$SC_CI_JOB_NAME' did not succeed in its latest attempt"; return 1; }
     sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$_sfpr_id/artifacts?name=$SC_MEASUREMENT_ARTIFACT&per_page=100" \
-        > "$_sfpr_dest/api/artifacts.json" ||
+        "$_sfpr_dest/api/artifacts.json" ||
         { SC_LEDGER_INFRA="listing artifacts of CI run $_sfpr_id failed"; _sfpr_problem "API error listing artifacts of run $_sfpr_id"; return 1; }
     jq -e --arg name "$SC_MEASUREMENT_ARTIFACT" --argjson run "$_sfpr_id" '
         [.artifacts[] | select(.name == $name and .expired == false and .workflow_run.id == $run)] | length == 1' \
@@ -736,72 +794,142 @@ sc_pr_record_binding() {
     return "$_sprb_status"
 }
 
-# sc_ledger_pair C P DEST
+# sc_this_runner_record DEST LIKE  ->  the identity a measurement taken on
+# this runner of the checkout would have, with LIKE's measured argv.
+sc_this_runner_record() {
+    {
+        sc_record_line schema "$SC_RECORD_SCHEMA"
+        sc_record_line metric "$SC_METRIC"
+        sc_record_line argv_normalized "$(sc_record_get "$2" argv_normalized)"
+        sc_record_line cwd "$(pwd -P)"
+        sc_record_line env LC_ALL=C
+        sc_record_line procedure "$(sc_procedure_hash)"
+        sc_identity_lines
+    } > "$1"
+}
+
+# sc_ledger_measure_pair_here C P DEST
+#   Measure C (the checkout) and P on this runner, keeping the records they
+#   replace as *-reference.tsv. Returns 3 on a measurement failure.
+sc_ledger_measure_pair_here() {
+    if [ -f "$3/landed.tsv" ]; then
+        cp "$3/landed.tsv" "$3/landed-reference.tsv"
+    fi
+    if [ -f "$3/parent.tsv" ]; then
+        cp "$3/parent.tsv" "$3/parent-reference.tsv"
+    fi
+    env -u TYPELISP_BIN sh scripts/ci-verify.sh --gates linux-self-compile-measurement ||
+        { echo "measuring $1 on the ledger runner failed" > "$3/measurement-problem"; return 3; }
+    cp "$SC_GATE_RECORD" "$3/landed.tsv"
+    sc_run_fallback "$2" "$1" "$3/parent.tsv" parent-fallback ||
+        { echo "measuring $2 on the ledger runner failed" > "$3/measurement-problem"; return 3; }
+}
+
+# sc_ledger_pair C P DEST WORK
 #   A comparable measurement pair of P and C in DEST/parent.tsv and
 #   DEST/landed.tsv: C's reference from this run, with P's reference when
-#   comparable; otherwise P measured on this runner, and C too when C's
-#   reference is not comparable with this runner. Sets SC_PAIR_SOURCE.
+#   comparable; otherwise P measured on this runner, and C as well when C's
+#   reference is not comparable with this runner. Downloads go to WORK.
+#   Sets SC_PAIR_SOURCE. Returns 1 for an infrastructure failure, 2 for a
+#   provenance failure, 3 for a measurement failure.
 sc_ledger_pair() {
     _slp_c=$1
     _slp_p=$2
     _slp_dest=$3
-    mkdir -p "$_slp_dest"
-    sc_download_artifact "$GITHUB_RUN_ID" "$SC_REFERENCE_ARTIFACT" "$_slp_dest/this-run" ||
+    _slp_work=$4
+    mkdir -p "$_slp_dest" "$_slp_work"
+    sc_download_artifact "$GITHUB_RUN_ID" "$SC_REFERENCE_ARTIFACT" "$_slp_work/this-run" ||
         { SC_LEDGER_INFRA="downloading this run's reference failed"; return 1; }
-    _slp_landed=$_slp_dest/this-run/record.tsv
     sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
-        > "$_slp_dest/this-run-jobs.json" ||
+        "$_slp_work/this-run-jobs.json" ||
         { SC_LEDGER_INFRA="listing this run's jobs failed"; return 1; }
-    _slp_job=$(sc_job_latest "$_slp_dest/this-run-jobs.json" "$SC_REFERENCE_JOB_NAME")
+    _slp_job=$(sc_job_latest "$_slp_work/this-run-jobs.json" "$SC_REFERENCE_JOB_NAME")
     [ "$(printf '%s' "$_slp_job" | cut -f2-3)" = "$(printf 'completed\tsuccess')" ] ||
         { echo "this run's '$SC_REFERENCE_JOB_NAME' job did not succeed" > "$_slp_dest/provenance-problem"; return 2; }
-    _slp_msg=$(sc_reference_record_check "$_slp_landed" "$_slp_landed" "$GITHUB_REPOSITORY" \
-        "$GITHUB_RUN_ID" "$(printf '%s' "$_slp_job" | cut -f1)" "$_slp_c" gate) ||
+    _slp_msg=$(sc_reference_record_check "$_slp_work/this-run/record.tsv" "$_slp_work/this-run/record.tsv" \
+        "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$(printf '%s' "$_slp_job" | cut -f1)" "$_slp_c" gate) ||
         { echo "$_slp_msg" > "$_slp_dest/provenance-problem"; return 2; }
-    cp "$_slp_landed" "$_slp_dest/landed.tsv"
+    cp "$_slp_work/this-run/record.tsv" "$_slp_dest/landed.tsv"
     _slp_waited=0
     while :; do
-        sc_resolve_reference "$_slp_p" "$_slp_dest/landed.tsv" "$_slp_dest/parent-reference-$_slp_waited"
+        sc_resolve_reference "$_slp_p" "$_slp_dest/landed.tsv" "$_slp_work/parent-reference-$_slp_waited"
         [ "$SC_REF_STATUS" = pending ] || break
         [ "$_slp_waited" -lt "$SC_WAIT_SECONDS" ] || break
         sleep "$SC_POLL_SECONDS"
         _slp_waited=$((_slp_waited + SC_POLL_SECONDS))
     done
     if [ "$SC_REF_STATUS" = ok ]; then
-        cp "$_slp_dest/parent-reference-$_slp_waited/record.tsv" "$_slp_dest/parent.tsv"
+        cp "$_slp_work/parent-reference-$_slp_waited/record.tsv" "$_slp_dest/parent.tsv"
         SC_PAIR_SOURCE="references (parent run $SC_REF_RUN)"
         return 0
     fi
-    [ "$SC_REF_STATUS" = api-error ] && { SC_LEDGER_INFRA="resolving the parent reference failed"; return 1; }
-    # Measure on this runner. C's reference is reusable here only if a
-    # measurement taken here would be comparable with it.
-    {
-        sc_record_line schema "$SC_RECORD_SCHEMA"
-        sc_record_line metric "$SC_METRIC"
-        sc_record_line argv_normalized "$(sc_record_get "$_slp_dest/landed.tsv" argv_normalized)"
-        sc_record_line cwd "$(pwd -P)"
-        sc_record_line env LC_ALL=C
-        sc_record_line procedure "$(sc_procedure_hash)"
-        sc_identity_lines
-    } > "$_slp_dest/this-runner.tsv"
-    if sc_records_comparable "$_slp_dest/landed.tsv" "$_slp_dest/this-runner.tsv" > "$_slp_dest/runner-differences"; then
+    if [ "$SC_REF_STATUS" = api-error ]; then
+        SC_LEDGER_INFRA="resolving the parent reference failed"
+        return 1
+    fi
+    sc_this_runner_record "$_slp_work/this-runner.tsv" "$_slp_dest/landed.tsv"
+    if sc_records_comparable "$_slp_dest/landed.tsv" "$_slp_work/this-runner.tsv" > "$_slp_work/runner-differences"; then
         sc_run_fallback "$_slp_p" "$_slp_c" "$_slp_dest/parent.tsv" parent-fallback ||
             { echo "measuring $_slp_p on the ledger runner failed" > "$_slp_dest/measurement-problem"; return 3; }
         SC_PAIR_SOURCE="parent measured on the ledger runner (parent reference $SC_REF_STATUS)"
     else
-        env -u TYPELISP_BIN sh scripts/ci-verify.sh --gates linux-self-compile-measurement ||
-            { echo "measuring $_slp_c on the ledger runner failed" > "$_slp_dest/measurement-problem"; return 3; }
-        cp "$SC_GATE_RECORD" "$_slp_dest/landed-here.tsv"
-        cp "$_slp_dest/landed.tsv" "$_slp_dest/landed-reference.tsv"
-        cp "$_slp_dest/landed-here.tsv" "$_slp_dest/landed.tsv"
-        sc_run_fallback "$_slp_p" "$_slp_c" "$_slp_dest/parent.tsv" parent-fallback ||
-            { echo "measuring $_slp_p on the ledger runner failed" > "$_slp_dest/measurement-problem"; return 3; }
+        sc_ledger_measure_pair_here "$_slp_c" "$_slp_p" "$_slp_dest" || return 3
         SC_PAIR_SOURCE="parent and commit measured on the ledger runner (reference not comparable here)"
     fi
 }
 
-# sc_ledger_walk_line COMMIT DEST  ->  one sc_chain_plan line for an ancestor,
-# downloading its ledger artifact into DEST when there is one.
+# sc_ledger_reproduce C DEST WORK
+#   The merged PR's T and B were measured in an identity that differs from the
+#   landed pair's. Reproduce them on this runner in one identity with the pair
+#   (re-measuring the pair here first when it is not of this runner): B in
+#   place, and T as the landed commit when the trees are equal, otherwise
+#   rebuilt with git merge-tree from B and the PR head and checked against the
+#   recorded tested tree. Writes DEST/rep-head.tsv and DEST/rep-base.tsv, or
+#   DEST/reproduction-problem and fails.
+sc_ledger_reproduce() {
+    _slr_c=$1
+    _slr_dest=$2
+    _slr_work=$3
+    _slr_problem() {
+        echo "$*" > "$_slr_dest/reproduction-problem"
+        return 1
+    }
+    sc_this_runner_record "$_slr_work/reproduce-runner.tsv" "$_slr_dest/landed.tsv"
+    if ! sc_records_comparable "$_slr_dest/landed.tsv" "$_slr_work/reproduce-runner.tsv" >/dev/null; then
+        sc_ledger_measure_pair_here "$_slr_c" "$(cat "$_slr_dest/parent")" "$_slr_dest" ||
+            { _slr_problem "measuring the pair on the ledger runner failed"; return 1; }
+        SC_PAIR_SOURCE="parent and commit measured on the ledger runner (to reproduce the PR comparison)"
+    fi
+    _slr_b=$(sc_record_get "$_slr_dest/pr.tsv" base)
+    _slr_h=$(sc_record_get "$_slr_dest/pr.tsv" head)
+    _slr_tt=$(sc_record_get "$_slr_dest/pr-head.tsv" tree)
+    sc_is_sha "$_slr_b" && sc_is_sha "$_slr_h" && sc_is_sha "$_slr_tt" ||
+        { _slr_problem "the PR record lacks its tested base, head or tree"; return 1; }
+    sc_run_fallback "$_slr_b" "$_slr_c" "$_slr_dest/rep-base.tsv" base-fallback ||
+        { _slr_problem "measuring the tested base $_slr_b on the ledger runner failed"; return 1; }
+    if [ "$_slr_tt" = "$(sc_commit_tree "$_slr_c")" ]; then
+        cp "$_slr_dest/landed.tsv" "$_slr_dest/rep-head.tsv"
+        sc_record_line reproduction "T measured as the landed commit (same tree)" >> "$_slr_dest/reproduction"
+        return 0
+    fi
+    git cat-file -e "$_slr_h^{commit}" 2>/dev/null ||
+        git fetch --no-tags origin "$_slr_h" >/dev/null 2>&1 ||
+        { _slr_problem "cannot fetch the PR head $_slr_h"; return 1; }
+    _slr_tree=$(git merge-tree --write-tree "$_slr_b" "$_slr_h" 2>/dev/null | sed -n 1p) ||
+        { _slr_problem "the tested merge of $_slr_b and $_slr_h does not rebuild cleanly"; return 1; }
+    [ "$_slr_tree" = "$_slr_tt" ] ||
+        { _slr_problem "the rebuilt merge tree $_slr_tree is not the tested tree $_slr_tt"; return 1; }
+    _slr_t=$(GIT_AUTHOR_NAME=self-compile GIT_AUTHOR_EMAIL=self-compile@invalid \
+        GIT_COMMITTER_NAME=self-compile GIT_COMMITTER_EMAIL=self-compile@invalid \
+        git commit-tree "$_slr_tree" -p "$_slr_b" -p "$_slr_h" -m "self-compile ledger: rebuilt tested merge") ||
+        { _slr_problem "could not record the rebuilt tested merge"; return 1; }
+    sc_run_fallback "$_slr_t" "$_slr_c" "$_slr_dest/rep-head.tsv" head-reproduction ||
+        { _slr_problem "measuring the rebuilt tested merge on the ledger runner failed"; return 1; }
+    sc_record_line reproduction "T rebuilt as $_slr_t (tree $_slr_tree)" >> "$_slr_dest/reproduction"
+}
+
+# sc_ledger_walk_line COMMIT WORK  ->  one sc_chain_plan line for an ancestor,
+# downloading its ledger artifact into WORK when there is one.
 sc_ledger_walk_line() {
     _slwl_x=$1
     _slwl_dest=$2
@@ -810,10 +938,7 @@ sc_ledger_walk_line() {
         return 0
     fi
     _slwl_checkpoint=no
-    if [ -f "$SC_CHECKPOINT_FILE" ] &&
-        [ "$(sc_record_get "$SC_CHECKPOINT_FILE" schema 2>/dev/null || true)" = "$SC_ACCOUNT_SCHEMA" ] &&
-        [ "$(sc_record_get "$SC_CHECKPOINT_FILE" complete 2>/dev/null || true)" = yes ] &&
-        [ "$(sc_record_get "$SC_CHECKPOINT_FILE" last.commit 2>/dev/null || true)" = "$_slwl_x" ]; then
+    if [ -f "$SC_CHECKPOINT_FILE" ] && sc_account_valid "$SC_CHECKPOINT_FILE" "$_slwl_x"; then
         _slwl_checkpoint=yes
     fi
     sc_fetch_run_artifact ledger "$_slwl_x" "$SC_LEDGER_JOB_NAME" "$SC_LEDGER_ARTIFACT" "$_slwl_dest"
@@ -821,7 +946,7 @@ sc_ledger_walk_line() {
     _slwl_entry=missing
     case "$SC_RUN_STATUS" in
         pending) _slwl_entry=pending ;;
-        api-error) SC_LEDGER_INFRA="reading the ledger of $_slwl_x failed" ;;
+        api-error) echo "reading the ledger of $_slwl_x failed" > "$_slwl_dest/api-error" ;;
         ok)
             _slwl_a=$_slwl_dest/artifact
             if [ "$(sc_record_get "$_slwl_a/producer.tsv" commit 2>/dev/null || true)" = "$_slwl_x" ] &&
@@ -830,8 +955,7 @@ sc_ledger_walk_line() {
                 if [ "$(sc_record_get "$_slwl_a/entry.tsv" commit 2>/dev/null || true)" = "$_slwl_x" ]; then
                     _slwl_entry=present
                 fi
-                if [ "$(sc_record_get "$_slwl_a/account.tsv" last.commit 2>/dev/null || true)" = "$_slwl_x" ] &&
-                    [ "$(sc_record_get "$_slwl_a/account.tsv" complete 2>/dev/null || true)" = yes ]; then
+                if [ -f "$_slwl_a/account.tsv" ] && sc_account_valid "$_slwl_a/account.tsv" "$_slwl_x"; then
                     _slwl_account=complete
                 fi
             fi
@@ -840,15 +964,37 @@ sc_ledger_walk_line() {
     printf '%s\tyes\t%s\t%s\t%s\n' "$_slwl_x" "$_slwl_account" "$_slwl_entry" "$_slwl_checkpoint"
 }
 
+# sc_ledger_repair_entries ACCOUNT WORK OUT
+#   An entry without an accounted step is replaced when its commit's ledger has
+#   since been re-run and produced a complete entry.
+sc_ledger_repair_entries() {
+    cp "$1" "$3"
+    for _slre_c in $(awk -F '\t' '$1 == "entry" { split($2, e, "|"); if (e[5] == "-") print e[1] }' "$1"); do
+        _slre_dir=$2/repair-$_slre_c
+        sc_fetch_run_artifact ledger "$_slre_c" "$SC_LEDGER_JOB_NAME" "$SC_LEDGER_ARTIFACT" "$_slre_dir"
+        [ "$SC_RUN_STATUS" = ok ] || continue
+        [ "$(sc_record_get "$_slre_dir/artifact/producer.tsv" run.id 2>/dev/null || true)" = "$SC_RUN_ID" ] || continue
+        [ "$(sc_record_get "$_slre_dir/artifact/producer.tsv" run.attempt 2>/dev/null || true)" = "$SC_RUN_ATTEMPT" ] || continue
+        [ "$(sc_record_get "$_slre_dir/artifact/entry.tsv" commit 2>/dev/null || true)" = "$_slre_c" ] || continue
+        sc_record_get "$_slre_dir/artifact/entry.tsv" step >/dev/null 2>&1 || continue
+        sc_account_apply "$3" "$_slre_dir/artifact/entry.tsv" > "$3.next"
+        mv "$3.next" "$3"
+        sc_log "repaired the ledger entry of $_slre_c from its re-run"
+    done
+}
+
 sc_cmd_ledger() {
     sc_require_actions ledger
     [ "${GITHUB_EVENT_NAME:-}" = push ] || sc_fail "the ledger runs on pushes to main"
     _scl_c=$(git rev-parse HEAD)
     [ "$_scl_c" = "${GITHUB_SHA:-}" ] || sc_fail "checkout is not GITHUB_SHA"
     _scl_p=$(git rev-parse HEAD^1)
+    # The uploaded ledger holds only compact records; downloads stay in work.
     _scl_out=$SC_OUT/ledger
+    _scl_work=$SC_OUT/ledger-work
     [ ! -e "$_scl_out" ] || sc_fail "$_scl_out already exists"
-    mkdir -p "$_scl_out/entry-inputs" "$_scl_out/walk"
+    [ ! -e "$_scl_work" ] || sc_fail "$_scl_work already exists"
+    mkdir -p "$_scl_out/entry-inputs" "$_scl_work/walk"
     SC_LEDGER_INFRA=
     {
         sc_record_line commit "$_scl_c"
@@ -864,7 +1010,7 @@ sc_cmd_ledger() {
     _scl_outcome=
     _scl_detail=
     _scl_pair_rc=0
-    sc_ledger_pair "$_scl_c" "$_scl_p" "$_scl_in" || _scl_pair_rc=$?
+    sc_ledger_pair "$_scl_c" "$_scl_p" "$_scl_in" "$_scl_work/pair" || _scl_pair_rc=$?
     case "$_scl_pair_rc" in
         0) ;;
         1) _scl_outcome=infrastructure-failure; _scl_detail=$SC_LEDGER_INFRA ;;
@@ -872,27 +1018,51 @@ sc_cmd_ledger() {
         *) _scl_outcome=measurement-failure; _scl_detail=$(cat "$_scl_in/measurement-problem" 2>/dev/null || echo "pair measurement failed") ;;
     esac
     if [ -z "$_scl_outcome" ]; then
-        if sc_fetch_pr_record "$_scl_c" "$_scl_in"; then
+        for _scl_kind in landed parent; do
+            [ -f "$_scl_in/$_scl_kind-reference.tsv" ] || continue
+            if ! _scl_msg=$(sc_same_commit_binary "$_scl_in/$_scl_kind-reference.tsv" "$_scl_in/$_scl_kind.tsv"); then
+                echo "$_scl_msg" > "$_scl_in/binary-problem"
+            fi
+        done
+    fi
+    if [ -z "$_scl_outcome" ]; then
+        if sc_fetch_pr_record "$_scl_c" "$_scl_work/pr"; then
+            cp "$_scl_work/pr/pr.tsv" "$_scl_work/pr/pr-head.tsv" "$_scl_work/pr/pr-base.tsv" "$_scl_in/"
             _scl_b=$(sc_record_get "$_scl_in/pr.tsv" base)
             if git merge-base --is-ancestor "$_scl_b" "$_scl_p" 2>/dev/null; then
                 git log --first-parent --format=%H "$_scl_b..$_scl_p" > "$_scl_in/merges-between"
             fi
+            if ! sc_records_comparable "$_scl_in/pr-head.tsv" "$_scl_in/landed.tsv" >/dev/null ||
+                ! sc_records_comparable "$_scl_in/pr-base.tsv" "$_scl_in/landed.tsv" >/dev/null; then
+                sc_ledger_reproduce "$_scl_c" "$_scl_in" "$_scl_work/reproduce" ||
+                    sc_log "could not reproduce the PR comparison: $(cat "$_scl_in/reproduction-problem" 2>/dev/null)"
+            fi
         elif [ -n "$SC_LEDGER_INFRA" ]; then
             _scl_outcome=infrastructure-failure
             _scl_detail=$SC_LEDGER_INFRA
+        else
+            cp "$_scl_work/pr/attribution-problem" "$_scl_in/attribution-problem" 2>/dev/null || true
         fi
     fi
     if [ -z "$_scl_outcome" ]; then
         sc_ledger_entry "$_scl_in" > "$_scl_out/entry.tsv"
         sc_record_line pair_source "$SC_PAIR_SOURCE" >> "$_scl_out/entry.tsv"
+        if [ -f "$_scl_in/attribution-problem" ]; then
+            sc_record_line attribution_problem "$(cat "$_scl_in/attribution-problem")" >> "$_scl_out/entry.tsv"
+        fi
+        if [ -f "$_scl_in/binary-problem" ]; then
+            sc_record_line binary_problem "$(cat "$_scl_in/binary-problem")" >> "$_scl_out/entry.tsv"
+            sc_record_line outcome comparability-failure >> "$_scl_out/entry.tsv"
+        fi
+        if [ -f "$_scl_in/reproduction-problem" ]; then
+            sc_record_line reproduction_problem "$(cat "$_scl_in/reproduction-problem")" >> "$_scl_out/entry.tsv"
+        fi
         # A reconciliation stays explicit: c re-measured on this runner.
         if [ -f "$_scl_in/landed-reference.tsv" ]; then
             sc_record_line reconciliation \
                 "M(c) reference $(sc_record_get "$_scl_in/landed-reference.tsv" ir_count), ledger runner $(sc_record_get "$_scl_in/landed.tsv" ir_count)" \
                 >> "$_scl_out/entry.tsv"
         fi
-        [ -f "$_scl_in/attribution-problem" ] &&
-            sc_record_line attribution_problem "$(cat "$_scl_in/attribution-problem")" >> "$_scl_out/entry.tsv"
         _scl_outcome=$(sc_record_get "$_scl_out/entry.tsv" outcome)
     else
         {
@@ -907,102 +1077,121 @@ sc_cmd_ledger() {
 
     # 2. The cumulative account, from the nearest verified account, checkpoint
     #    or the anchor, through every merge since.
-    _scl_complete=no
+    _scl_chain=complete
     _scl_account_outcome=pending
-    if [ "$_scl_outcome" = infrastructure-failure ] || [ "$_scl_outcome" = provenance-failure ]; then
-        _scl_plan_outcome="entry not computed"
-    else
-        printf '%s\tyes\tself\tpresent\tno\n' "$_scl_c" > "$_scl_out/walk.tsv"
-        _scl_i=0
-        _scl_x=$_scl_p
-        _scl_plan=
-        while [ "$_scl_i" -lt "$SC_WALK_LIMIT" ]; do
-            _scl_i=$((_scl_i + 1))
-            _scl_line=$(sc_ledger_walk_line "$_scl_x" "$_scl_out/walk/$_scl_x-0")
-            _scl_waited=0
-            # The parent's ledger usually finishes first; wait for it briefly.
-            while [ "$_scl_i" -eq 1 ] && [ "$(printf '%s' "$_scl_line" | cut -f4)" = pending ] &&
-                [ "$_scl_waited" -lt "$SC_WAIT_SECONDS" ]; do
-                sleep "$SC_POLL_SECONDS"
-                _scl_waited=$((_scl_waited + SC_POLL_SECONDS))
-                _scl_line=$(sc_ledger_walk_line "$_scl_x" "$_scl_out/walk/$_scl_x-$_scl_waited")
-            done
-            if [ -d "$_scl_out/walk/$_scl_x-$_scl_waited" ]; then
-                mv "$_scl_out/walk/$_scl_x-$_scl_waited" "$_scl_out/walk/$_scl_x"
-            fi
-            printf '%s\n' "$_scl_line" >> "$_scl_out/walk.tsv"
-            _scl_plan=$(sc_chain_plan "$_scl_out/walk.tsv")
-            case "$_scl_plan" in
-                *"no account, checkpoint or anchor"*) ;;
-                *) break ;;
-            esac
-            _scl_x=$(git rev-parse "$_scl_x^1" 2>/dev/null) || break
+    printf '%s\tyes\tself\tpresent\tno\n' "$_scl_c" > "$_scl_out/walk.tsv"
+    _scl_i=0
+    _scl_x=$_scl_p
+    _scl_plan=
+    while [ "$_scl_i" -lt "$SC_WALK_LIMIT" ]; do
+        _scl_i=$((_scl_i + 1))
+        _scl_line=$(sc_ledger_walk_line "$_scl_x" "$_scl_work/walk/$_scl_x-0")
+        _scl_waited=0
+        # The parent's ledger usually finishes first; wait for it briefly.
+        while [ "$_scl_i" -eq 1 ] && [ "$(printf '%s' "$_scl_line" | cut -f4)" = pending ] &&
+            [ "$_scl_waited" -lt "$SC_WAIT_SECONDS" ]; do
+            sleep "$SC_POLL_SECONDS"
+            _scl_waited=$((_scl_waited + SC_POLL_SECONDS))
+            _scl_line=$(sc_ledger_walk_line "$_scl_x" "$_scl_work/walk/$_scl_x-$_scl_waited")
         done
-        printf '%s\n' "$_scl_plan" > "$_scl_out/plan.tsv"
-        _scl_plan_outcome=$(awk -F '\t' '$1 == "outcome" { print $2 ": " $3 }' "$_scl_out/plan.tsv")
-        if [ -z "$_scl_plan_outcome" ]; then
-            _scl_kind=$(awk -F '\t' '$1 == "base" { print $2 }' "$_scl_out/plan.tsv")
-            _scl_base=$(awk -F '\t' '$1 == "base" { print $3 }' "$_scl_out/plan.tsv")
-            case "$_scl_kind" in
-                account) cp "$_scl_out/walk/$_scl_base/artifact/account.tsv" "$_scl_out/account-base.tsv" ;;
-                checkpoint) cp "$SC_CHECKPOINT_FILE" "$_scl_out/account-base.tsv" ;;
-                anchor)
-                    _scl_c0=$(awk -F '\t' '$1 == "gap" { print $2; exit }' "$_scl_out/plan.tsv")
-                    if [ "$_scl_c0" = "$_scl_c" ]; then
-                        _scl_c0_entry=$_scl_out/entry.tsv
-                    else
-                        _scl_c0_entry=$_scl_out/walk/$_scl_c0/artifact/entry.tsv
-                    fi
-                    _scl_p0_ir=$(sc_record_get "$_scl_c0_entry" m_parent 2>/dev/null || true)
-                    sc_is_count "$_scl_p0_ir" || _scl_plan_outcome="continuity-failure: the anchor entry for $_scl_c0 has no seeded M(p0)"
-                    sc_account_seed "$_scl_c0" "$_scl_base" "${_scl_p0_ir:-0}" > "$_scl_out/account-base.tsv"
-                    ;;
-            esac
+        if [ -d "$_scl_work/walk/$_scl_x-$_scl_waited" ]; then
+            mv "$_scl_work/walk/$_scl_x-$_scl_waited" "$_scl_work/walk/$_scl_x"
         fi
-        if [ -z "$_scl_plan_outcome" ]; then
-            mkdir -p "$_scl_out/account-steps"
-            _scl_n=0
-            cp "$_scl_out/account-base.tsv" "$_scl_out/account-steps/0.tsv"
-            for _scl_g in $(awk -F '\t' '$1 == "gap" { print $2 }' "$_scl_out/plan.tsv"); do
-                if [ "$_scl_g" = "$_scl_c" ]; then
-                    _scl_e=$_scl_out/entry.tsv
+        printf '%s\n' "$_scl_line" >> "$_scl_out/walk.tsv"
+        _scl_plan=$(sc_chain_plan "$_scl_out/walk.tsv")
+        case "$_scl_plan" in
+            *"no account, checkpoint or anchor"*) ;;
+            *) break ;;
+        esac
+        _scl_x=$(git rev-parse "$_scl_x^1" 2>/dev/null) || break
+    done
+    printf '%s\n' "$_scl_plan" > "$_scl_out/plan.tsv"
+    _scl_plan_outcome=$(awk -F '\t' '$1 == "outcome" { print $2 ": " $3 }' "$_scl_out/plan.tsv")
+    for _scl_marker in "$_scl_work"/walk/*/api-error; do
+        [ -f "$_scl_marker" ] || continue
+        case "$_scl_plan_outcome" in
+            continuity-failure*)
+                _scl_plan_outcome="infrastructure-failure: $(cat "$_scl_marker")"
+                ;;
+        esac
+    done
+    if [ -z "$_scl_plan_outcome" ]; then
+        _scl_kind=$(awk -F '\t' '$1 == "base" { print $2 }' "$_scl_out/plan.tsv")
+        _scl_base=$(awk -F '\t' '$1 == "base" { print $3 }' "$_scl_out/plan.tsv")
+        case "$_scl_kind" in
+            account) cp "$_scl_work/walk/$_scl_base/artifact/account.tsv" "$_scl_work/account-base.tsv" ;;
+            checkpoint) cp "$SC_CHECKPOINT_FILE" "$_scl_work/account-base.tsv" ;;
+            anchor)
+                _scl_c0=$(awk -F '\t' '$1 == "gap" { print $2; exit }' "$_scl_out/plan.tsv")
+                if [ "$_scl_c0" = "$_scl_c" ]; then
+                    _scl_c0_entry=$_scl_out/entry.tsv
                 else
-                    _scl_e=$_scl_out/walk/$_scl_g/artifact/entry.tsv
+                    _scl_c0_entry=$_scl_work/walk/$_scl_c0/artifact/entry.tsv
                 fi
-                sc_account_apply "$_scl_out/account-steps/$_scl_n.tsv" "$_scl_e" \
-                    > "$_scl_out/account-steps/$((_scl_n + 1)).tsv"
-                _scl_n=$((_scl_n + 1))
-            done
-            sc_account_resolve "$_scl_out/account-steps/$_scl_n.tsv" "$SC_RESOLUTIONS_FILE" \
-                > "$_scl_out/account.tsv"
-            _scl_complete=yes
-            _scl_account_outcome=$(sc_account_outcome "$_scl_out/account.tsv")
-        fi
+                _scl_p0_ir=$(sc_record_get "$_scl_c0_entry" m_parent 2>/dev/null || true)
+                if sc_is_count "$_scl_p0_ir"; then
+                    sc_account_seed "$_scl_c0" "$_scl_base" "$_scl_p0_ir" > "$_scl_work/account-base.tsv"
+                else
+                    _scl_plan_outcome="continuity-failure: the anchor entry for $_scl_c0 has no seeded M(p0)"
+                fi
+                ;;
+        esac
+    fi
+    if [ -z "$_scl_plan_outcome" ]; then
+        mkdir -p "$_scl_work/account-steps" "$_scl_work/repair"
+        sc_ledger_repair_entries "$_scl_work/account-base.tsv" "$_scl_work/repair" "$_scl_work/account-steps/0.tsv"
+        _scl_n=0
+        for _scl_g in $(awk -F '\t' '$1 == "gap" { print $2 }' "$_scl_out/plan.tsv"); do
+            if [ "$_scl_g" = "$_scl_c" ]; then
+                _scl_e=$_scl_out/entry.tsv
+            else
+                _scl_e=$_scl_work/walk/$_scl_g/artifact/entry.tsv
+            fi
+            sc_account_apply "$_scl_work/account-steps/$_scl_n.tsv" "$_scl_e" \
+                > "$_scl_work/account-steps/$((_scl_n + 1)).tsv"
+            _scl_n=$((_scl_n + 1))
+        done
+        sc_account_resolve "$_scl_work/account-steps/$_scl_n.tsv" "$SC_RESOLUTIONS_FILE" \
+            > "$_scl_out/account.tsv"
+        sc_account_summary "$_scl_out/account.tsv" > "$_scl_out/summary.tsv"
+        _scl_account_outcome=$(sc_account_outcome "$_scl_out/account.tsv")
+    else
+        _scl_chain=$_scl_plan_outcome
     fi
 
     # 3. Outcome for D2: pending, ok, warning or a named failure class.
-    case "$_scl_plan_outcome" in
-        pending*) [ "$_scl_outcome" = ok ] && _scl_outcome=pending ;;
+    case "$_scl_chain" in
+        pending*) case "$_scl_outcome" in ok | warning) _scl_outcome=pending ;; esac ;;
         continuity-failure*) case "$_scl_outcome" in ok | warning) _scl_outcome=continuity-failure ;; esac ;;
+        infrastructure-failure*) case "$_scl_outcome" in ok | warning) _scl_outcome=infrastructure-failure ;; esac ;;
     esac
+    _scl_complete=no
+    if [ "$_scl_chain" = complete ] &&
+        [ "$(sc_record_get "$_scl_out/summary.tsv" complete 2>/dev/null || true)" = yes ]; then
+        _scl_complete=yes
+    fi
     {
         sc_record_line commit "$_scl_c"
         sc_record_line outcome "$_scl_outcome"
         sc_record_line complete "$_scl_complete"
-        sc_record_line chain "${_scl_plan_outcome:-complete}"
+        sc_record_line chain "$_scl_chain"
         sc_record_line account "$_scl_account_outcome"
         sc_record_line detail "${_scl_detail:--}"
     } > "$_scl_out/outcome.tsv"
     cat "$_scl_out/entry.tsv"
-    [ -f "$_scl_out/account.tsv" ] && cat "$_scl_out/account.tsv"
+    if [ -f "$_scl_out/summary.tsv" ]; then
+        cat "$_scl_out/summary.tsv"
+    fi
     cat "$_scl_out/outcome.tsv"
     sc_summary "### self_compile ledger: \`$_scl_c\`"
     sc_summary ""
-    sc_summary "outcome **$_scl_outcome**, complete $_scl_complete, account $_scl_account_outcome, chain ${_scl_plan_outcome:-complete}"
+    sc_summary "outcome **$_scl_outcome**, complete $_scl_complete, account $_scl_account_outcome, chain $_scl_chain"
     sc_summary ""
     sc_summary '```'
     sc_summary "$(cat "$_scl_out/entry.tsv")"
-    [ -f "$_scl_out/account.tsv" ] && sc_summary "$(cat "$_scl_out/account.tsv")"
+    if [ -f "$_scl_out/summary.tsv" ]; then
+        sc_summary "$(cat "$_scl_out/summary.tsv")"
+    fi
     sc_summary '```'
     case "$_scl_outcome" in
         ok | pending) ;;

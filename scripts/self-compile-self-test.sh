@@ -172,6 +172,11 @@ st_records() {
     st_fails "one commit, different compilers" sc_records_same_compiler "$_d/r.tsv" "$_d/other-code.tsv"
     st_record "$_d/other-tree.tsv" tree="$ST_TREE_2"
     st_fails "different trees" sc_records_same_compiler "$_d/r.tsv" "$_d/other-tree.tsv"
+    st_fails "one commit, same as/ld, two binaries" sc_same_commit_binary "$_d/r.tsv" "$_d/other-code.tsv"
+    st_record "$_d/other-ld.tsv" compiler_sha256=6666666666666666666666666666666666666666666666666666666666666666 key.ld="GNU ld 2.43"
+    st_succeeds "one commit, another linker" sc_same_commit_binary "$_d/r.tsv" "$_d/other-ld.tsv"
+    st_succeeds "two commits" sc_same_commit_binary "$_d/r.tsv" "$_d/same-tree.tsv"
+    st_succeeds "one commit, one binary" sc_same_commit_binary "$_d/r.tsv" "$_d/same-commit.tsv"
 }
 
 st_gate() {
@@ -283,8 +288,29 @@ st_selection() {
     st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed success 2 completed failure > "$_d/jobs.json"
     st_eq "latest job attempt" "$(sc_job_latest "$_d/jobs.json" "$SC_REFERENCE_JOB_NAME")" "$(printf '2\tcompleted\tfailure')"
     st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed success > "$_d/partial.json"
-    st_eq "partial re-run keeps the producing attempt" "$(sc_job_latest "$_d/partial.json" "$SC_REFERENCE_JOB_NAME")" \
+    st_eq "a single attempt" "$(sc_job_latest "$_d/partial.json" "$SC_REFERENCE_JOB_NAME")" \
         "$(printf '1\tcompleted\tsuccess')"
+    # Shaped like CI run 39449486169: "Re-run failed jobs" copied the
+    # successful job into attempt 2 with its original runner and times.
+    cat > "$_d/copied.json" <<EOF
+{"jobs": [
+ {"name": "Test + Integration (windows-latest)", "id": 118720167277, "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-20T15:33:22Z", "completed_at": "2026-10-20T16:22:11Z", "runner_name": "GitHub Actions 1000045711"},
+ {"name": "Test + Integration", "id": 118720167383, "run_attempt": 1, "status": "completed", "conclusion": "cancelled", "started_at": "2026-10-20T15:33:22Z", "completed_at": "2026-10-20T17:28:08Z", "runner_name": "GitHub Actions 1000045712"},
+ {"name": "Test + Integration", "id": 118779718552, "run_attempt": 2, "status": "completed", "conclusion": "success", "started_at": "2026-10-20T17:30:27Z", "completed_at": "2026-10-20T18:21:37Z", "runner_name": "GitHub Actions 1000045733"},
+ {"name": "Test + Integration (windows-latest)", "id": 118779721247, "run_attempt": 2, "status": "completed", "conclusion": "success", "started_at": "2026-10-20T15:33:22Z", "completed_at": "2026-10-20T16:22:11Z", "runner_name": "GitHub Actions 1000045711"}
+]}
+EOF
+    st_eq "a copied job resolves to the attempt that ran it" \
+        "$(sc_job_latest "$_d/copied.json" "Test + Integration (windows-latest)")" "$(printf '1\tcompleted\tsuccess')"
+    st_eq "a re-run job is its own latest attempt" \
+        "$(sc_job_latest "$_d/copied.json" "Test + Integration")" "$(printf '2\tcompleted\tsuccess')"
+    cat > "$_d/rerun-pending.json" <<EOF
+{"jobs": [
+ {"name": "j", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "2026-10-20T15:33:22Z", "completed_at": "2026-10-20T16:22:11Z", "runner_name": "r1"},
+ {"name": "j", "run_attempt": 2, "status": "queued", "conclusion": null, "started_at": null, "completed_at": null, "runner_name": null}
+]}
+EOF
+    st_eq "a queued re-run is pending" "$(sc_job_latest "$_d/rerun-pending.json" j)" "$(printf '2\tqueued\t')"
 
     st_record "$_d/head.tsv" commit="$ST_SHA_D" run.event=pull_request run.workflow_ref="$ST_REPO/.github/workflows/ci.yml@refs/pull/9/merge"
     st_record "$_d/ref.tsv" commit="$ST_SHA_B" run.id=850 run.attempt=1
@@ -328,7 +354,8 @@ st_resolve() {
     sc_api() {
         _f="$ST_API/$(st_api_file "$1")"
         [ -f "$_f" ] || return 1
-        cat "$_f"
+        sc_json_ok "$_f" || return 1
+        cp "$_f" "$2"
     }
     sc_download_artifact() {
         [ -d "$ST_ART/$1/$2" ] || return 1
@@ -352,6 +379,8 @@ st_resolve() {
     st_eq "api error" "$(_st_scenario)" api-error
     st_runs_json > "$ST_API/$(st_api_file "$_runs")"
     st_eq "jobs api error" "$(_st_scenario)" api-error
+    printf '<html>502</html>\n' > "$ST_API/$(st_api_file "$_jobs")"
+    st_eq "a non-JSON body is an api error" "$(_st_scenario)" api-error
     st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 in_progress "" > "$ST_API/$(st_api_file "$_jobs")"
     st_eq "pending reference" "$(_st_scenario)" pending
     st_jobs_json "$SC_REFERENCE_JOB_NAME" 1 completed failure > "$ST_API/$(st_api_file "$_jobs")"
@@ -403,6 +432,7 @@ st_resolve() {
 
 # st_entry DIR PARENT_IR COMMIT_IR [OPTIONS]  ->  ledger entry inputs.
 # Options: tc= tp= tt= tb= mt= mb= own= declared= nopr pkey= ckey= tkey= tcode=
+#          rmt= rmb= (a reproduction of T and B in the landed identity)
 st_entry() {
     _ste=$1
     [ ! -e "$_ste" ] || sc_fail "self-test entry directory exists: $_ste"
@@ -423,13 +453,18 @@ st_entry() {
     _ste_ckey=6.11.0-1018-azure
     _ste_tkey=6.11.0-1018-azure
     _ste_tcode=8888888888888888888888888888888888888888888888888888888888888888
+    _ste_mt_set=no
+    _ste_rmt=
+    _ste_rmb=
     for _ste_o in "$@"; do
         case "$_ste_o" in
             tc=*) _ste_tc=${_ste_o#tc=} ;;
             tp=*) _ste_tp=${_ste_o#tp=} ;;
             tt=*) _ste_tt=${_ste_o#tt=} ;;
             tb=*) _ste_tb=${_ste_o#tb=} ;;
-            mt=*) _ste_mt=${_ste_o#mt=} ;;
+            mt=*) _ste_mt=${_ste_o#mt=}; _ste_mt_set=yes ;;
+            rmt=*) _ste_rmt=${_ste_o#rmt=} ;;
+            rmb=*) _ste_rmb=${_ste_o#rmb=} ;;
             mb=*) _ste_mb=${_ste_o#mb=} ;;
             own=*) _ste_own=${_ste_o#own=} ;;
             declared=*) _ste_declared=${_ste_o#declared=} ;;
@@ -440,6 +475,9 @@ st_entry() {
             tcode=*) _ste_tcode=${_ste_o#tcode=} ;;
         esac
     done
+    if [ -n "$_ste_own" ] && [ "$_ste_mt_set" = no ]; then
+        _ste_mt=$(sc_bn add "$_ste_mb" "$_ste_own")
+    fi
     [ -n "$_ste_own" ] || _ste_own=$(sc_bn sub "$_ste_mt" "$_ste_mb")
     printf '%s\n' "$ST_SHA_C" > "$_ste/commit"
     printf '%s\n' "$ST_SHA_B" > "$_ste/parent"
@@ -462,6 +500,12 @@ st_entry() {
         st_record "$_ste/pr-base.tsv" commit="$ST_SHA_F" tree="$_ste_tb" ir_count="$_ste_mb" key.kernel="$_ste_tkey" \
             role=base-fallback run.event=pull_request
         printf '%s\n%s\n' "$ST_SHA_A" "$ST_SHA_F" > "$_ste/merges-between"
+        if [ -n "$_ste_rmt" ]; then
+            st_record "$_ste/rep-head.tsv" commit="$ST_SHA_E" tree="$_ste_tt" ir_count="$_ste_rmt" \
+                key.kernel="$_ste_ckey" role=head-reproduction
+            st_record "$_ste/rep-base.tsv" commit="$ST_SHA_F" tree="$_ste_tb" ir_count="$_ste_rmb" \
+                key.kernel="$_ste_ckey" role=base-fallback
+        fi
     fi
 }
 
@@ -478,17 +522,26 @@ st_ledger() {
     st_entry "$_d/s-ok" "$_P" 100000050000 mt=100000049700
     st_eq "class S within bounds" "$(st_entry_says "$_d/s-ok")" "S ok -"
     st_eq "class S residual" "$(sc_record_get "$_d/s-ok/entry.tsv" r)" 300
-    st_eq "class S direct" "$(sc_record_get "$_d/s-ok/entry.tsv" r_method)" direct
+    st_eq "class S from the PR's own report" "$(sc_record_get "$_d/s-ok/entry.tsv" own_source)" "PR report"
     st_entry "$_d/s-warn" "$_P" 100000050000 mt=100000048999
     st_eq "class S warning" "$(st_entry_says "$_d/s-warn")" "S warning -"
     st_entry "$_d/s-fail" "$_P" 100000050000 mt=100000039999
     st_eq "class S failure" "$(st_entry_says "$_d/s-fail")" "S numerical-failure class-s class-s-attribution"
+    # A PR measured in another identity is never subtracted from the landed
+    # pair: it is reproduced in the landed identity, or the entry fails closed.
     st_entry "$_d/s-xenv" "$_P" 100000050000 mt=100100049800 mb=100100000000 tkey=6.8.0-1036-azure
-    st_eq "class S cross-environment paired delta" "$(st_entry_says "$_d/s-xenv")" "S ok -"
-    st_eq "class S paired-delta method" "$(sc_record_get "$_d/s-xenv/entry.tsv" r_method)" paired-delta
-    st_eq "class S paired-delta residual" "$(sc_record_get "$_d/s-xenv/entry.tsv" r)" 200
-    st_entry "$_d/s-xenv-moved" "$_P" 100000050000 mt=100100049800 mb=100100000000 tkey=6.8.0-1036-azure tb="$ST_TREE_3"
-    st_eq "class S cross-environment with another base" "$(st_entry_says "$_d/s-xenv-moved")" "S comparability-failure comparability"
+    st_eq "class S cross-environment, not reproduced" "$(st_entry_says "$_d/s-xenv")" "none comparability-failure comparability"
+    st_entry "$_d/s-xenv-rep" "$_P" 100000050000 mt=100100049800 mb=100100000000 tkey=6.8.0-1036-azure \
+        rmt=100000050200 rmb="$_P"
+    st_eq "class S cross-environment, reproduced" "$(st_entry_says "$_d/s-xenv-rep")" "S ok -"
+    st_eq "class S reproduction is marked" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own_source)" \
+        "reproduced in the landed pair's identity"
+    st_eq "class S reproduced residual" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" r)" -200
+    st_eq "class S keeps the original report" "$(sc_record_get "$_d/s-xenv-rep/entry.tsv" own_original)" 49800
+    st_entry "$_d/s-xenv-badrep" "$_P" 100000050000 tkey=6.8.0-1036-azure rmt=100000050000 rmb="$_P"
+    st_record "$_d/s-xenv-badrep/rep-base.tsv" commit="$ST_SHA_F" tree="$ST_TREE_4" ir_count="$_P"
+    st_eq "a reproduction of another tree is refused" "$(st_entry_says "$_d/s-xenv-badrep")" \
+        "none comparability-failure comparability"
     st_entry "$_d/s-code" "$_P" 100000050000 tcode=6666666666666666666666666666666666666666666666666666666666666666
     st_eq "class S across commit-stamped builds" "$(st_entry_says "$_d/s-code")" "S ok -"
     st_eq "class S notes the commit stamp" "$(sc_record_get "$_d/s-code/entry.tsv" r_compiler)" commit-stamped
@@ -509,7 +562,11 @@ st_ledger() {
     st_entry "$_d/m-fail" "$_P" 100100050001 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000
     st_eq "class M failure" "$(st_entry_says "$_d/m-fail")" "M numerical-failure class-m"
     st_entry "$_d/m-xenv" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=6.8.0-1036-azure
-    st_eq "class M cross-environment PR report" "$(st_entry_says "$_d/m-xenv")" "M ok -"
+    st_eq "class M cross-environment, not reproduced" "$(st_entry_says "$_d/m-xenv")" "none comparability-failure comparability"
+    st_entry "$_d/m-xenv-rep" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=6.8.0-1036-azure \
+        rmt=100000047000 rmb=99999999000
+    st_eq "class M cross-environment, reproduced" "$(st_entry_says "$_d/m-xenv-rep")" "M ok -"
+    st_eq "class M reproduced own cost" "$(sc_record_get "$_d/m-xenv-rep/entry.tsv" own)" 48000
     st_entry "$_d/pair-xenv" "$_P" 100000050000 pkey=6.8.0-1036-azure
     st_eq "incomparable pair" "$(st_entry_says "$_d/pair-xenv")" "none comparability-failure comparability"
     st_entry "$_d/window" "$_P" 100500000001 mt=100500000001 mb="$_P"
@@ -519,60 +576,98 @@ st_ledger() {
     st_eq "declared landed cost within its window" "$(st_entry_says "$_d/window-declared")" "S ok -"
     st_entry "$_d/nopr" "$_P" 100000050000 nopr
     st_eq "missing attribution" "$(st_entry_says "$_d/nopr")" "none attribution-failure attribution"
+    st_entry "$_d/nopr-window" "$_P" 101000000000 nopr
+    st_eq "the landed window is checked without attribution" "$(st_entry_says "$_d/nopr-window")" \
+        "none attribution-failure+numerical-failure landed-gate-window attribution"
+    st_eq "an unattributed landed cost is routed" "$(sc_record_get "$_d/nopr-window/entry.tsv" routing)" non-routine
+    st_entry "$_d/xenv-window" "$_P" 101000000000 tkey=6.8.0-1036-azure
+    st_eq "the landed window is checked without a comparable PR report" "$(st_entry_says "$_d/xenv-window")" \
+        "none comparability-failure+numerical-failure landed-gate-window comparability"
+    st_entry "$_d/m-diff" "$_P" 100000050000 tt="$ST_TREE_3" tb="$ST_TREE_4" own=50000 tkey=6.8.0-1036-azure \
+        rmt=100000047000 rmb=99999999000
+    st_eq "a reproduced PR report keeps its identity differences" \
+        "$(st_entry_says "$_d/m-diff" >/dev/null; sc_record_get "$_d/m-diff/entry.tsv" pr_identity_differences | cut -d: -f1)" key.kernel
 }
 
 st_account() {
     _d=$1
     sc_account_seed "$ST_SHA_D" "$ST_SHA_F" 100000000000 > "$_d/acc0.tsv"
+    # _st_entry_file NAME COMMIT STEP OWN R OUTCOME FAILURES PAIR_IDENTITY
     _st_entry_file() {
         {
-            sc_record_line commit "$1"
+            sc_record_line commit "$2"
             sc_record_line class S
             sc_record_line a_class S
-            sc_record_line step "$2"
-            sc_record_line own "$3"
-            sc_record_line a "$(sc_bn sub "$2" "$3")"
-            sc_record_line r "$4"
-            sc_record_line outcome "$5"
-            sc_record_line failures "$6"
-            sc_record_line warnings -
-            sc_record_line pair_identity "$7"
+            [ "$3" = - ] || sc_record_line step "$3"
+            [ "$4" = - ] || sc_record_line own "$4"
+            if [ "$3" != - ] && [ "$4" != - ]; then
+                sc_record_line a "$(sc_bn sub "$3" "$4")"
+            fi
+            [ "$5" = - ] || sc_record_line r "$5"
+            sc_record_line outcome "$6"
+            sc_record_line failures "$7"
+            sc_record_line pair_identity "$8"
         } > "$_d/e-$1.tsv"
     }
-    _st_entry_file "$ST_SHA_A" 1500 1000 500 ok - k1
-    _st_entry_file "$ST_SHA_B" 1500 1000 500 ok - k1
-    _st_entry_file "$ST_SHA_C" 1500 1000 500 ok - k2
-    sc_account_apply "$_d/acc0.tsv" "$_d/e-$ST_SHA_A.tsv" > "$_d/acc1.tsv"
-    sc_account_apply "$_d/acc1.tsv" "$_d/e-$ST_SHA_B.tsv" > "$_d/acc2.tsv"
-    sc_account_apply "$_d/acc2.tsv" "$_d/e-$ST_SHA_C.tsv" > "$_d/acc3.tsv"
-    st_eq "subthreshold steps accumulate" "$(sc_record_get "$_d/acc3.tsv" sum.step)" 4500
-    st_eq "subthreshold reported costs accumulate" "$(sc_record_get "$_d/acc3.tsv" sum.own)" 3000
-    st_eq "subthreshold A accumulates" "$(sc_record_get "$_d/acc3.tsv" sum.a)" 1500
-    st_eq "subthreshold class S residuals accumulate" "$(sc_record_get "$_d/acc3.tsv" sum.r_s)" 1500
-    st_eq "merge count" "$(sc_record_get "$_d/acc3.tsv" merges)" 3
-    st_eq "identity segments" "$(sc_record_get "$_d/acc3.tsv" segments)" 2
+    _st_sum() {
+        sc_account_summary "$1" | awk -F '\t' -v k="$2" '$1 == k { print $2 }'
+    }
+    _st_entry_file a "$ST_SHA_A" 1500 1000 500 ok - k1
+    _st_entry_file b "$ST_SHA_B" 1500 1000 500 ok - k1
+    _st_entry_file c "$ST_SHA_C" 1500 1000 500 ok - k2
+    sc_account_apply "$_d/acc0.tsv" "$_d/e-a.tsv" > "$_d/acc1.tsv"
+    sc_account_apply "$_d/acc1.tsv" "$_d/e-b.tsv" > "$_d/acc2.tsv"
+    sc_account_apply "$_d/acc2.tsv" "$_d/e-c.tsv" > "$_d/acc3.tsv"
+    st_eq "subthreshold steps accumulate" "$(_st_sum "$_d/acc3.tsv" sum.step)" 4500
+    st_eq "subthreshold reported costs accumulate" "$(_st_sum "$_d/acc3.tsv" sum.own)" 3000
+    st_eq "subthreshold A accumulates" "$(_st_sum "$_d/acc3.tsv" sum.a)" 1500
+    st_eq "subthreshold class S residuals accumulate" "$(_st_sum "$_d/acc3.tsv" sum.r_s)" 1500
+    st_eq "merge count" "$(_st_sum "$_d/acc3.tsv" merges)" 3
+    st_eq "identity segments" "$(_st_sum "$_d/acc3.tsv" segments)" 2
+    st_eq "complete account" "$(_st_sum "$_d/acc3.tsv" complete)" yes
+    st_eq "last merge" "$(sc_record_get "$_d/acc3.tsv" last.commit)" "$ST_SHA_C"
     st_eq "clean account" "$(sc_account_outcome "$_d/acc3.tsv")" clean
-    _st_entry_file "$ST_SHA_E" 20000 1000 19000 numerical-failure class-s k2
-    sc_account_apply "$_d/acc3.tsv" "$_d/e-$ST_SHA_E.tsv" > "$_d/acc4.tsv"
+    st_succeeds "account names its last merge" sc_account_valid "$_d/acc3.tsv" "$ST_SHA_C"
+    st_fails "account is not another merge's" sc_account_valid "$_d/acc3.tsv" "$ST_SHA_B"
+    _st_entry_file e "$ST_SHA_E" 20000 1000 19000 numerical-failure class-s k2
+    sc_account_apply "$_d/acc3.tsv" "$_d/e-e.tsv" > "$_d/acc4.tsv"
     st_eq "failure is unresolved" "$(sc_account_outcome "$_d/acc4.tsv")" unresolved
-    _st_entry_file "$ST_SHA_F" 100 100 0 ok - k2
-    sc_account_apply "$_d/acc4.tsv" "$_d/e-$ST_SHA_F.tsv" > "$_d/acc5.tsv"
+    _st_entry_file f "$ST_SHA_F" 100 100 0 ok - k2
+    sc_account_apply "$_d/acc4.tsv" "$_d/e-f.tsv" > "$_d/acc5.tsv"
     st_eq "a later clean merge clears nothing" "$(sc_account_outcome "$_d/acc5.tsv")" unresolved
-    st_eq "failures count" "$(sc_record_get "$_d/acc5.tsv" count.failures)" 1
+    st_eq "failures count" "$(_st_sum "$_d/acc5.tsv" count.failures)" 1
     printf '%s\tnumerical-failure\thttps://example.invalid/diagnosis\n' "$ST_SHA_A" > "$_d/resolutions-other.tsv"
-    st_eq "a resolution for another merge clears nothing" \
-        "$(sc_account_resolve "$_d/acc5.tsv" "$_d/resolutions-other.tsv" > "$_d/acc6.tsv"; sc_account_outcome "$_d/acc6.tsv")" unresolved
-    printf '# commit\toutcome\treference\n%s\tnumerical-failure\thttps://example.invalid/diagnosis\n' "$ST_SHA_E" > "$_d/resolutions.tsv"
+    sc_account_resolve "$_d/acc5.tsv" "$_d/resolutions-other.tsv" > "$_d/acc6.tsv"
+    st_eq "a resolution for another merge clears nothing" "$(sc_account_outcome "$_d/acc6.tsv")" unresolved
+    printf '# commit\toutcome\treference\n%s\tnumerical-failure\thttps://example.invalid/diagnosis\n' \
+        "$ST_SHA_E" > "$_d/resolutions.tsv"
     sc_account_resolve "$_d/acc5.tsv" "$_d/resolutions.tsv" > "$_d/acc7.tsv"
     st_eq "reviewed resolution" "$(sc_account_outcome "$_d/acc7.tsv")" clean
     st_eq "resolution stays on record" "$(sc_record_get "$_d/acc7.tsv" resolved | cut -d'|' -f1)" "$ST_SHA_E"
-    {
-        sc_record_line commit "$ST_SHA_A"
-        sc_record_line outcome comparability-failure
-        sc_record_line failures comparability
-    } > "$_d/e-nostep.tsv"
-    sc_account_apply "$_d/acc7.tsv" "$_d/e-nostep.tsv" > "$_d/acc8.tsv"
-    st_eq "a merge without a comparable step is counted" "$(sc_record_get "$_d/acc8.tsv" count.missing_steps)" 1
+    st_eq "resolved failures stay counted" "$(_st_sum "$_d/acc7.tsv" count.failures)" 1
+    # A merge whose step was never measured keeps the totals incomplete; a
+    # resolution cannot clear it, only a repaired entry can.
+    _st_g=1234567890123456789012345678901234567890
+    _st_entry_file g "$_st_g" - - - comparability-failure comparability -
+    sc_account_apply "$_d/acc7.tsv" "$_d/e-g.tsv" > "$_d/acc8.tsv"
+    st_eq "a merge without a comparable step is counted" "$(_st_sum "$_d/acc8.tsv" count.missing_steps)" 1
+    st_eq "an unmeasured step makes the account incomplete" "$(_st_sum "$_d/acc8.tsv" complete)" no
+    st_eq "missing quantities are not summed as zero" "$(_st_sum "$_d/acc8.tsv" sum.step)" 24600
+    printf '%s\tcomparability-failure\thttps://example.invalid/x\n' "$_st_g" > "$_d/resolutions-nostep.tsv"
+    sc_account_resolve "$_d/acc8.tsv" "$_d/resolutions-nostep.tsv" > "$_d/acc9.tsv"
+    st_eq "a resolution without an accounted step is refused" "$(sc_account_outcome "$_d/acc9.tsv")" unresolved
+    st_eq "the refusal is recorded" "$(sc_record_get "$_d/acc9.tsv" resolution_refused | cut -d'|' -f1)" "$_st_g"
+    _st_entry_file g2 "$_st_g" 700 600 100 ok - k2
+    sc_account_apply "$_d/acc9.tsv" "$_d/e-g2.tsv" > "$_d/acc10.tsv"
+    st_eq "a repaired entry replaces its line" "$(grep -c "^entry	$_st_g" "$_d/acc10.tsv" | tr -d ' ')" 1
+    st_eq "the repair completes the totals" "$(_st_sum "$_d/acc10.tsv" complete)" yes
+    st_eq "the repair re-folds the sums" "$(_st_sum "$_d/acc10.tsv" sum.step)" 25300
+    st_eq "a repair does not move the last merge" "$(sc_record_get "$_d/acc10.tsv" last.commit)" "$_st_g"
+    st_eq "the repaired account is clean" "$(sc_account_outcome "$_d/acc10.tsv")" clean
+    _st_entry_file h "$ST_SHA_D" 100 - - attribution-failure attribution k2
+    sc_account_apply "$_d/acc10.tsv" "$_d/e-h.tsv" > "$_d/acc11.tsv"
+    st_eq "an unattributed merge is counted" "$(_st_sum "$_d/acc11.tsv" count.unattributed)" 1
+    st_eq "an unattributed merge keeps the totals incomplete" "$(_st_sum "$_d/acc11.tsv" complete)" no
 }
 
 st_chain() {
@@ -600,12 +695,300 @@ st_chain() {
         "outcome continuity-failure no account, checkpoint or anchor within 2 commits|"
 }
 
+# --- end-to-end orchestration ---------------------------------------------------
+# sc_cmd_check and sc_cmd_ledger run for real in throwaway git repositories;
+# only the GitHub API, artifact downloads and the expensive measurements are
+# replaced. Both commands are Linux-only, so these run on Linux.
+
+st_git() {
+    git -c user.email=self-test@invalid -c user.name=self-test -c commit.gpgsign=false "$@"
+}
+
+# st_e2e_env  ->  the GitHub Actions environment the commands require.
+st_e2e_env() {
+    GITHUB_ACTIONS=true
+    RUNNER_ENVIRONMENT=github-hosted
+    GITHUB_REPOSITORY=$ST_REPO
+    GITHUB_RUN_ATTEMPT=1
+    GITHUB_STEP_SUMMARY=
+    export GITHUB_ACTIONS RUNNER_ENVIRONMENT GITHUB_REPOSITORY GITHUB_RUN_ATTEMPT GITHUB_STEP_SUMMARY
+}
+
+# st_e2e_mocks API ART  ->  fixture readers for the API and artifacts.
+st_e2e_mocks() {
+    ST_API=$1
+    ST_ART=$2
+    mkdir -p "$ST_API" "$ST_ART"
+    sc_api() {
+        _f="$ST_API/$(st_api_file "$1")"
+        [ -f "$_f" ] || return 1
+        sc_json_ok "$_f" || return 1
+        cp "$_f" "$2"
+    }
+    sc_download_artifact() {
+        [ -d "$ST_ART/$1/$2" ] || return 1
+        mkdir -p "$3"
+        cp -R "$ST_ART/$1/$2/." "$3/"
+    }
+}
+
+st_api_put() {
+    cat > "$ST_API/$(st_api_file "$1")"
+}
+
+# st_reference_api COMMIT RUN RECORD  ->  a push-to-main reference run.
+st_reference_api() {
+    printf '{"workflow_runs": [{"id": %s, "run_number": %s, "run_attempt": 1, "event": "push", "head_branch": "main", "head_sha": "%s", "path": ".github/workflows/self-compile-reference.yml", "status": "completed", "conclusion": "success", "repository": {"full_name": "%s"}, "head_repository": {"full_name": "%s"}}]}\n' \
+        "$2" "$2" "$1" "$ST_REPO" "$ST_REPO" |
+        st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$1&per_page=50"
+    printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}, {"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t3", "completed_at": "t4", "runner_name": "r2"}]}\n' \
+        "$SC_REFERENCE_JOB_NAME" "$SC_LEDGER_JOB_NAME" |
+        st_api_put "repos/$ST_REPO/actions/runs/$2/jobs?filter=all&per_page=100"
+    printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_REFERENCE_ARTIFACT" "$2" |
+        st_api_put "repos/$ST_REPO/actions/runs/$2/artifacts?name=$SC_REFERENCE_ARTIFACT&per_page=100"
+    mkdir -p "$ST_ART/$2/$SC_REFERENCE_ARTIFACT"
+    cp "$3" "$ST_ART/$2/$SC_REFERENCE_ARTIFACT/record.tsv"
+}
+
+st_tree() {
+    git rev-parse "$1^{tree}"
+}
+
+# st_e2e_check_repo DIR [DECLARATION]  ->  B, H and the tested merge T.
+st_e2e_check_repo() {
+    mkdir -p "$1"
+    (
+        cd "$1"
+        git init -q
+        mkdir -p scripts perf/self-compile-declarations
+        printf 'harness\n' > scripts/measure-instruction-counts.sh
+        printf 'lib\n' > scripts/lib-benchmark.sh
+        printf 'self_compile/compile_cli_opt1\t+9000\tmerged\n' > perf/self-compile-declarations/pr-7.tsv
+        printf 'base\n' > README
+        st_git add -A
+        st_git commit -qm base
+        git branch -q base-branch
+        git checkout -q -b head
+        printf 'head\n' > README
+        if [ -n "${2:-}" ]; then
+            printf '%s' "$2" > perf/self-compile-declarations/pr-42.tsv
+        fi
+        st_git add -A
+        st_git commit -qm head
+        git checkout -q --detach base-branch
+        st_git merge -q --no-ff -m merge head
+    )
+}
+
+# st_e2e_check NAME HEAD_IR BASE_SOURCE [DECLARATION]  ->  `rc status own`
+# BASE_SOURCE: reference (B's verified reference), fallback (no reference;
+# the in-place measurement is replaced by a fixture record), or badstamp
+# (a fallback record stamped with another commit).
+st_e2e_check() {
+    _sec_dir=$ST_E2E/check-$1
+    st_e2e_check_repo "$_sec_dir/repo" "${4:-}"
+    (
+        cd "$_sec_dir/repo"
+        st_e2e_env
+        st_e2e_mocks "$_sec_dir/api" "$_sec_dir/art"
+        _sec_t=$(git rev-parse HEAD)
+        _sec_b=$(git rev-parse HEAD^1)
+        _sec_h=$(git rev-parse HEAD^2)
+        GITHUB_SHA=$_sec_t
+        GITHUB_EVENT_NAME=pull_request
+        GITHUB_RUN_ID=700
+        GITHUB_WORKFLOW_REF="$ST_REPO/.github/workflows/ci.yml@refs/pull/42/merge"
+        TYPELISP_SELF_COMPILE_PR_NUMBER=42
+        TYPELISP_SELF_COMPILE_PR_HEAD=$_sec_h
+        export GITHUB_SHA GITHUB_EVENT_NAME GITHUB_RUN_ID GITHUB_WORKFLOW_REF \
+            TYPELISP_SELF_COMPILE_PR_NUMBER TYPELISP_SELF_COMPILE_PR_HEAD
+        mkdir -p target/self-compile/measurement
+        st_record target/self-compile/measurement/record.tsv commit="$_sec_t" tree="$(st_tree "$_sec_t")" \
+            ir_count="$2" run.id=700 run.event=pull_request
+        st_record "$_sec_dir/base.tsv" commit="$_sec_b" tree="$(st_tree "$_sec_b")" ir_count=116113939859 run.id=850
+        case "$3" in
+            reference) st_reference_api "$_sec_b" 850 "$_sec_dir/base.tsv" ;;
+            fallback)
+                st_record "$_sec_dir/fallback.tsv" commit="$_sec_b" tree="$(st_tree "$_sec_b")" \
+                    ir_count=116113939859 role=base-fallback run.id=700 run.event=pull_request
+                ;;
+            badstamp)
+                st_record "$_sec_dir/fallback.tsv" commit="$_sec_b" tree="$(st_tree "$_sec_b")" \
+                    ir_count=116113939859 role=base-fallback compiler_commit="$_sec_h" run.id=700 run.event=pull_request
+                ;;
+        esac
+        printf '{"workflow_runs": []}\n' > "$_sec_dir/no-runs.json"
+        if [ "$3" != reference ]; then
+            st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_sec_b&per_page=50" \
+                < "$_sec_dir/no-runs.json"
+        fi
+        sc_run_fallback() {
+            cp "$_sec_dir/fallback.tsv" "$3"
+        }
+        _sec_rc=0
+        (sc_cmd_check) > "$_sec_dir/check.log" 2>&1 || _sec_rc=$?
+        printf '%s %s %s' "$_sec_rc" \
+            "$(sc_record_get target/self-compile/pr/result.tsv status 2>/dev/null || echo none)" \
+            "$(sc_record_get target/self-compile/pr/result.tsv own 2>/dev/null || echo none)"
+    )
+}
+
+# st_e2e_ledger_repo DIR  ->  p0 (no reference workflow), c0 (adds it), c1.
+st_e2e_ledger_repo() {
+    mkdir -p "$1"
+    (
+        cd "$1"
+        git init -q
+        mkdir -p scripts
+        printf 'harness\n' > scripts/measure-instruction-counts.sh
+        printf 'lib\n' > scripts/lib-benchmark.sh
+        printf 'p0\n' > README
+        st_git add -A
+        st_git commit -qm p0
+        mkdir -p .github/workflows
+        printf 'name: Self-Compile Reference\n' > .github/workflows/self-compile-reference.yml
+        st_git add -A
+        st_git commit -qm c0
+        printf 'c1\n' > README
+        st_git commit -qam c1
+    )
+}
+
+# st_e2e_pr_api C PR HEAD RUN T_IR B_IR B  ->  the merged PR of C and its CI.
+st_e2e_pr_api() {
+    printf '[{"number": %s, "merge_commit_sha": "%s", "merged_at": "2026-10-26T00:00:00Z", "base": {"ref": "main"}, "head": {"sha": "%s"}}]\n' \
+        "$2" "$1" "$3" | st_api_put "repos/$ST_REPO/commits/$1/pulls"
+    printf '{"workflow_runs": [{"id": %s, "run_number": %s, "run_attempt": 1, "event": "pull_request", "head_sha": "%s", "path": ".github/workflows/ci.yml", "status": "completed", "conclusion": "success", "repository": {"full_name": "%s"}}]}\n' \
+        "$4" "$4" "$3" "$ST_REPO" |
+        st_api_put "repos/$ST_REPO/actions/workflows/ci.yml/runs?event=pull_request&head_sha=$3&per_page=50"
+    printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}]}\n' \
+        "$SC_CI_JOB_NAME" | st_api_put "repos/$ST_REPO/actions/runs/$4/jobs?filter=all&per_page=100"
+    printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_MEASUREMENT_ARTIFACT" "$4" |
+        st_api_put "repos/$ST_REPO/actions/runs/$4/artifacts?name=$SC_MEASUREMENT_ARTIFACT&per_page=100"
+    _sepa=$ST_ART/$4/$SC_MEASUREMENT_ARTIFACT
+    mkdir -p "$_sepa"
+    # The tested merge is the landed tree (class S) on base B.
+    st_record "$_sepa/head.tsv" commit="$ST_SHA_D" tree="$(st_tree "$1")" ir_count="$5" run.id="$4" run.event=pull_request
+    st_record "$_sepa/base.tsv" commit="$7" tree="$(st_tree "$7")" ir_count="$6"
+    {
+        sc_record_line schema "$SC_RESULT_SCHEMA"
+        sc_record_line pr "$2"
+        sc_record_line head "$3"
+        sc_record_line merge "$ST_SHA_D"
+        sc_record_line base "$7"
+        sc_record_line own "$(sc_bn sub "$5" "$6")"
+        sc_record_line declared_ppm none
+        sc_record_line run.repository "$ST_REPO"
+        sc_record_line run.id "$4"
+        sc_record_line run.attempt 1
+        sc_record_line run.event pull_request
+    } > "$_sepa/result.tsv"
+}
+
+# st_e2e_ledger NAME COMMIT RUN  ->  runs sc_cmd_ledger at COMMIT of the shared
+# ledger repository clone and prints `rc outcome complete account merges`.
+st_e2e_ledger() {
+    _sel_dir=$ST_E2E/ledger-$1
+    git clone -q "$ST_E2E/ledger-repo" "$_sel_dir/repo"
+    (
+        cd "$_sel_dir/repo"
+        git checkout -q --detach "$2"
+        st_e2e_env
+        ST_API=$ST_E2E/ledger-api
+        ST_ART=$ST_E2E/ledger-art
+        st_e2e_mocks "$ST_API" "$ST_ART"
+        GITHUB_SHA=$2
+        GITHUB_EVENT_NAME=push
+        GITHUB_RUN_ID=$3
+        GITHUB_WORKFLOW_REF="$ST_REPO/.github/workflows/self-compile-reference.yml@refs/heads/main"
+        export GITHUB_SHA GITHUB_EVENT_NAME GITHUB_RUN_ID GITHUB_WORKFLOW_REF
+        # This runner's identity is the fixture identity, and the parent
+        # measured here is a fixture record.
+        sc_this_runner_record() {
+            st_record "$1"
+        }
+        sc_run_fallback() {
+            st_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role=parent-fallback \
+                run.id="$GITHUB_RUN_ID" run.attempt=1
+        }
+        _sel_rc=0
+        (sc_cmd_ledger) > "$_sel_dir/ledger.log" 2>&1 || _sel_rc=$?
+        _sel_o=target/self-compile/ledger/outcome.tsv
+        printf '%s %s %s %s %s' "$_sel_rc" \
+            "$(sc_record_get "$_sel_o" outcome 2>/dev/null || echo none)" \
+            "$(sc_record_get "$_sel_o" complete 2>/dev/null || echo none)" \
+            "$(sc_record_get "$_sel_o" account 2>/dev/null || echo none)" \
+            "$(sc_record_get target/self-compile/ledger/summary.tsv merges 2>/dev/null || echo none)"
+        # Publish this run's ledger as its artifact for the next merge.
+        mkdir -p "$ST_ART/$3"
+        cp -R target/self-compile/ledger "$ST_ART/$3/$SC_LEDGER_ARTIFACT"
+    )
+}
+
+st_e2e() {
+    case "$(uname -s)" in
+        Linux*) ;;
+        *)
+            echo "[self-compile self-test] end-to-end check and ledger fixtures run on Linux, where those commands run"
+            return 0
+            ;;
+    esac
+    command -v git >/dev/null 2>&1 || sc_fail "the self-test requires git"
+    # Earlier parts replace these with fixture readers; the e2e repositories
+    # are real, so trees come from git.
+    sc_commit_tree() {
+        git rev-parse "$1^{tree}"
+    }
+    ST_E2E=$1
+    st_eq "e2e check against a verified reference" "$(st_e2e_check ref 116113940859 reference)" "0 ok 1000"
+    st_eq "e2e check through the in-place fallback" "$(st_e2e_check fb 116113940859 fallback)" "0 ok 1000"
+    st_eq "e2e check fails a regression" "$(st_e2e_check reg 116694509559 reference)" "1 REGRESSION 580569700"
+    st_eq "e2e check honours the PR's new declaration" \
+        "$(st_e2e_check decl 116694509559 reference "$(printf 'self_compile/compile_cli_opt1\t+5000\tacknowledged\n')")" \
+        "0 declared-ok 580569700"
+    st_eq "e2e check refuses a fallback stamped with another commit" "$(st_e2e_check stamp 116113940859 badstamp)" \
+        "1 none none"
+
+    st_e2e_ledger_repo "$ST_E2E/ledger-repo"
+    _st_p0=$(git -C "$ST_E2E/ledger-repo" rev-parse HEAD~2)
+    _st_c0=$(git -C "$ST_E2E/ledger-repo" rev-parse HEAD~1)
+    _st_c1=$(git -C "$ST_E2E/ledger-repo" rev-parse HEAD)
+    ST_API=$ST_E2E/ledger-api
+    ST_ART=$ST_E2E/ledger-art
+    mkdir -p "$ST_API" "$ST_ART"
+    # c0's reference (run 900): the landed value of the anchor merge.
+    (cd "$ST_E2E/ledger-repo" &&
+        st_record "$ST_E2E/c0.tsv" commit="$_st_c0" tree="$(st_tree "$_st_c0")" ir_count=116000050000 run.id=900 &&
+        st_record "$ST_E2E/c1.tsv" commit="$_st_c1" tree="$(st_tree "$_st_c1")" ir_count=116000060000 run.id=901 &&
+        st_reference_api "$_st_c0" 900 "$ST_E2E/c0.tsv" &&
+        st_reference_api "$_st_c1" 901 "$ST_E2E/c1.tsv" &&
+        st_e2e_pr_api "$_st_c0" 50 "$ST_SHA_E" 7050 116000050100 116000000000 "$_st_p0" &&
+        st_e2e_pr_api "$_st_c1" 51 "$ST_SHA_F" 7051 116000060300 116000050000 "$_st_c0")
+    printf '{"workflow_runs": []}\n' |
+        st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_st_p0&per_page=50"
+    for _st_run in 900 901; do
+        printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_LEDGER_ARTIFACT" "$_st_run" |
+            st_api_put "repos/$ST_REPO/actions/runs/$_st_run/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
+    done
+    st_eq "e2e ledger seeds the anchor at the first merge" "$(st_e2e_ledger c0 "$_st_c0" 900)" "0 ok yes clean 1"
+    st_eq "e2e ledger anchor parent" "$(sc_record_get "$ST_E2E/ledger-c0/repo/target/self-compile/ledger/account.tsv" anchor.parent)" "$_st_p0"
+    st_eq "e2e ledger carries the account forward" "$(st_e2e_ledger c1 "$_st_c1" 901)" "0 ok yes clean 2"
+    st_eq "e2e ledger sums both merges" \
+        "$(sc_record_get "$ST_E2E/ledger-c1/repo/target/self-compile/ledger/summary.tsv" sum.step)" 60000
+    st_eq "e2e ledger uploads compact records only" \
+        "$(find "$ST_E2E/ledger-c1/repo/target/self-compile/ledger" -name '*.json' | wc -l | tr -d ' ')" 0
+    # Without c0's ledger entry, c1's account has a continuity gap.
+    printf '{"artifacts": []}\n' |
+        st_api_put "repos/$ST_REPO/actions/runs/900/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
+    st_eq "e2e ledger fails closed on a continuity gap" "$(st_e2e_ledger gap "$_st_c1" 901)" "1 continuity-failure no pending none"
+}
+
 sc_self_test() {
     [ -f "$ROOT/scripts/self-compile.sh" ] || sc_fail "self-test root is not the repository: $ROOT"
     command -v jq >/dev/null 2>&1 || sc_fail "the self-test requires jq (scripts/ci-host-tools.tsv)"
     _st_root="${ROOT:?}/target/self-compile-self-test"
     rm -rf -- "${_st_root:?}"
-    for _st_part in arithmetic records gate declarations selection resolve ledger account chain; do
+    for _st_part in arithmetic records gate declarations selection resolve ledger account chain e2e; do
         mkdir -p "$_st_root/$_st_part"
         "st_$_st_part" "$_st_root/$_st_part"
     done

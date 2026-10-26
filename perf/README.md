@@ -168,6 +168,10 @@ over values of one measurement identity:
   when the PR's identity matches the pair's, otherwise the reproduced one
   (`own_reproduced`) measured in the pair's identity.
 
+So Σstep − Σown − ΣA is the sum of the reproduction differences
+`own_reproduced − own`, which the account reports as
+`sum.reproduction_delta` (0 when nothing was reproduced).
+
 Incomparable values are never subtracted:
 
 - When p's reference is not comparable with c's, the ledger job measures p on
@@ -206,11 +210,12 @@ The ledger's `outcome.tsv` names the result for the merge-pause rules, with
 `attribution-failure`, `continuity-failure`, `measurement-failure` and
 `infrastructure-failure`.
 
-The account is the anchor plus one compact line per merge since it. Each run
-re-folds its `summary.tsv` from those lines, including every subthreshold
-value:
+The account is the anchor plus one compact line per merge since it, carrying
+step, the reported own, `own_reproduced`, A, R, the identity and the outcome.
+Each run re-folds its `summary.tsv` from those lines, including every
+subthreshold value:
 
-- Σstep, Σown and ΣA;
+- Σstep, Σown (reported), ΣA and the summed reproduction differences;
 - the class S and class M residuals;
 - warnings, failures and merges;
 - identity segments;

@@ -788,8 +788,10 @@ sc_ledger_finish() {
 # --- cumulative account ----------------------------------------------------------
 # The account carried from ledger run to ledger run is the anchor plus one
 # line per merge since it, with tab-separated fields (no value holds a tab):
-#   entry  commit class a_class outcome step own a r pair_identity failures
-# where a missing quantity is `-`, and the reviewed resolutions applied so far:
+#   entry  commit class a_class outcome step own a r pair_identity failures own_reproduced
+# where own is the PR-reported cost, own_reproduced the comparable own when the
+# comparison was reproduced (else `-`), a missing quantity is `-`, and the
+# reviewed resolutions applied so far:
 #   resolved  commit outcome reference
 # Every sum and count is re-folded from those lines (sc_account_summary), so a
 # repaired entry replaces its line and every later total follows, and nothing
@@ -806,7 +808,7 @@ sc_account_seed() {
 
 # sc_account_entry_line ENTRY  ->  the tab-separated fields of an `entry` line.
 sc_account_entry_line() {
-    for _sael_key in commit class a_class outcome step own a r pair_identity failures; do
+    for _sael_key in commit class a_class outcome step own a r pair_identity failures own_reproduced; do
         _sael_value=$(sc_record_get "$1" "$_sael_key" 2>/dev/null || printf -- -)
         [ -n "$_sael_value" ] || _sael_value=-
         printf '%s\n' "$_sael_value" | tr '\t' ' '
@@ -878,7 +880,7 @@ sc_account_resolve() {
 # step or attribution is missing (which no resolution clears).
 sc_account_summary() {
     awk -F '\t' "$SC_BN_AWK"'
-        BEGIN { OFS = "\t"; sstep = "0"; sown = "0"; sa = "0"; srs = "0"; sam = "0" }
+        BEGIN { OFS = "\t"; sstep = "0"; sown = "0"; sa = "0"; srs = "0"; sam = "0"; srep = "0" }
         $1 == "anchor.commit" { anchor = $2 }
         $1 == "last.commit" { last = $2 }
         $1 == "resolved" { resolved[$2 SUBSEP $3] = 1 }
@@ -889,6 +891,11 @@ sc_account_summary() {
                 split(order[i], e, "\t")
                 commit = e[2]; class = e[3]; aclass = e[4]; outcome = e[5]
                 step = e[6]; own = e[7]; a = e[8]; r = e[9]; pid = e[10]; failures = e[11]
+                ownrep = (12 in e) ? e[12] : "-"
+                # A subtracts the comparable own; where it was reproduced, the
+                # difference from the reported own keeps the totals adding up:
+                # sum.step - sum.own - sum.a = sum.reproduction_delta.
+                if (ownrep != "-" && own != "-") srep = bn_add(srep, bn_sub(ownrep, own))
                 merges++
                 if (step == "-") missing_steps++; else sstep = bn_add(sstep, step)
                 if (own == "-") unattributed++; else sown = bn_add(sown, own)
@@ -913,6 +920,7 @@ sc_account_summary() {
             print "sum.a", sa
             print "sum.r_s", srs
             print "sum.a_m", sam
+            print "sum.reproduction_delta", srep
             print "count.s", cs + 0
             print "count.m", cm + 0
             print "count.warnings", warnings + 0

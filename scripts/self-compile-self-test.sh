@@ -699,6 +699,28 @@ st_account() {
     st_eq "the repair re-folds the sums" "$(_st_sum "$_d/acc10.tsv" sum.step)" 25300
     st_eq "a repair does not move the last merge" "$(sc_record_get "$_d/acc10.tsv" last.commit)" "$_st_g"
     st_eq "the repaired account is clean" "$(sc_account_outcome "$_d/acc10.tsv")" clean
+    # A reproduced comparison: the account keeps the PR-reported own, A uses
+    # the reproduced own, and the reproduction delta makes the totals add up.
+    sc_account_seed "$ST_SHA_D" "$ST_SHA_F" 100000000000 > "$_d/rep0.tsv"
+    {
+        sc_record_line commit "$ST_SHA_A"
+        sc_record_line class M
+        sc_record_line a_class M
+        sc_record_line step 50000
+        sc_record_line own 50000
+        sc_record_line own_reproduced 48000
+        sc_record_line a 2000
+        sc_record_line outcome ok
+        sc_record_line failures -
+        sc_record_line pair_identity k1
+    } > "$_d/e-rep.tsv"
+    sc_account_apply "$_d/rep0.tsv" "$_d/e-rep.tsv" > "$_d/rep1.tsv"
+    st_eq "a reproduced own is carried in the account" \
+        "$(awk -F '\t' '$1 == "entry" { print $12 }' "$_d/rep1.tsv")" 48000
+    st_eq "the reproduction delta is summed" "$(_st_sum "$_d/rep1.tsv" sum.reproduction_delta)" -2000
+    st_eq "the totals add up after a reproduction" \
+        "$(sc_bn sub "$(sc_bn sub "$(_st_sum "$_d/rep1.tsv" sum.step)" "$(_st_sum "$_d/rep1.tsv" sum.own)")" "$(_st_sum "$_d/rep1.tsv" sum.a)")" \
+        "$(_st_sum "$_d/rep1.tsv" sum.reproduction_delta)"
     _st_entry_file h "$ST_SHA_D" 100 - - attribution-failure attribution k2
     sc_account_apply "$_d/acc10.tsv" "$_d/e-h.tsv" > "$_d/acc11.tsv"
     st_eq "an unattributed merge is counted" "$(_st_sum "$_d/acc11.tsv" count.unattributed)" 1

@@ -51,7 +51,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          # Measurement-only (#7767): npm cache stays disabled for both cold variants.
+          cache: npm
+          cache-dependency-path: tools/vs-code-extension/package-lock.json
 
       - name: VS Code extension smoke
         shell: bash
@@ -125,8 +126,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target/sde/*.tar.xz
-          # Measurement-only (#7767): every cold run has a distinct verified archive miss.
-          key: intel-sde-${{ runner.os }}-${{ hashFiles('scripts/fetch-sde.sh') }}-issue7767-cold-${{ github.run_id }}
+          key: intel-sde-${{ runner.os }}-${{ hashFiles('scripts/fetch-sde.sh') }}
 
       - name: Verify and unpack Intel SDE
         shell: bash

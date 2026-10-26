@@ -555,6 +555,7 @@ sc_reference_record_check() {
 #   rep-head.tsv, rep-base.tsv  optional: T and B reproduced in the landed
 #                               pair's identity when the PR's differs
 #   merges-between              optional: the B..p merges, one per line
+#   binary-problem              optional: a same-commit compiler mismatch
 # The entry is classified S (the landed tree is the tested tree) or M, with
 # exact bounds, the landed gate window, and every failure named.
 sc_ledger_entry() {
@@ -597,6 +598,12 @@ sc_ledger_entry() {
     sc_record_line m_commit "$_sle_mc"
     sc_record_line step "$_sle_step"
     sc_record_line step_ppm "$(sc_ppm_display "$_sle_step" "$_sle_mp")"
+    # Two measurements of one commit with the same as/ld that measured
+    # different compilers: the measured values are not trusted as one identity.
+    if [ -s "$_sle_dir/binary-problem" ]; then
+        sc_record_line binary_problem "$(tr '\n' ';' < "$_sle_dir/binary-problem")"
+        _sle_failures="$_sle_failures comparability"
+    fi
     sc_record_line pair_identity "$(sc_record_get "$_sle_dir/landed.tsv" key.kernel)|$(sc_record_get "$_sle_dir/landed.tsv" key.valgrind)|$(sc_record_get "$_sle_dir/landed.tsv" key.as)|$(sc_record_get "$_sle_dir/landed.tsv" procedure)"
 
     # Landed gate window, for every merge with a step: the merge as it landed
@@ -746,10 +753,10 @@ sc_ledger_finish() {
 
 # --- cumulative account ----------------------------------------------------------
 # The account carried from ledger run to ledger run is the anchor plus one
-# compact line per merge since it:
-#   entry  commit|class|a_class|outcome|step|own|a|r|pair_identity|failures
+# line per merge since it, with tab-separated fields (no value holds a tab):
+#   entry  commit class a_class outcome step own a r pair_identity failures
 # where a missing quantity is `-`, and the reviewed resolutions applied so far:
-#   resolved  commit|outcome|reference
+#   resolved  commit outcome reference
 # Every sum and count is re-folded from those lines (sc_account_summary), so a
 # repaired entry replaces its line and every later total follows, and nothing
 # is summed from a value that was never measured.
@@ -763,14 +770,13 @@ sc_account_seed() {
     sc_record_line last.commit "$2"
 }
 
-# sc_account_entry_line ENTRY  ->  the compact `entry` value of a ledger entry.
+# sc_account_entry_line ENTRY  ->  the tab-separated fields of an `entry` line.
 sc_account_entry_line() {
-    _sael() { sc_record_get "$1" "$2" 2>/dev/null || printf -- -; }
-    printf '%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n' \
-        "$(_sael "$1" commit)" "$(_sael "$1" class)" "$(_sael "$1" a_class)" \
-        "$(_sael "$1" outcome)" "$(_sael "$1" step)" "$(_sael "$1" own)" \
-        "$(_sael "$1" a)" "$(_sael "$1" r)" "$(_sael "$1" pair_identity)" \
-        "$(_sael "$1" failures)" | tr '\t' ' '
+    for _sael_key in commit class a_class outcome step own a r pair_identity failures; do
+        _sael_value=$(sc_record_get "$1" "$_sael_key" 2>/dev/null || printf -- -)
+        [ -n "$_sael_value" ] || _sael_value=-
+        printf '%s\n' "$_sael_value" | tr '\t' ' '
+    done | paste -s -d '\t' -
 }
 
 # sc_account_apply ACCOUNT ENTRY  ->  the account with ENTRY's line, replacing
@@ -779,12 +785,9 @@ sc_account_entry_line() {
 sc_account_apply() {
     _saa_line=$(sc_account_entry_line "$2")
     awk -F '\t' -v line="$_saa_line" '
-        BEGIN { split(line, f, "|"); commit = f[1] }
+        BEGIN { split(line, f, "\t"); commit = f[1] }
         {
-            if ($1 == "entry") {
-                split($2, g, "|")
-                if (g[1] == commit) { out[++n] = "entry\t" line; replaced = 1; next }
-            }
+            if ($1 == "entry" && $2 == commit) { out[++n] = "entry\t" line; replaced = 1; next }
             out[++n] = $0
         }
         END {
@@ -799,8 +802,8 @@ sc_account_apply() {
 
 # sc_account_resolve ACCOUNT RESOLUTIONS  ->  the account with each reviewed
 # resolution (`commit<TAB>outcome<TAB>reference`) that names a failing entry
-# whose actual cost (its step) is accounted. A resolution for an entry without
-# a step is refused: that needs a repaired entry first.
+# whose quantities are complete. A resolution for an entry without its step or
+# its attribution is refused: that needs a repaired entry first.
 sc_account_resolve() {
     if [ ! -f "$2" ]; then
         cat "$1"
@@ -811,41 +814,45 @@ sc_account_resolve() {
         NR == FNR {
             sub(/\r$/, "")
             if ($0 ~ /^#/ || NF < 3) next
-            want[$1 "|" $2] = $3
+            want[$1 SUBSEP $2] = $3
+            order[++n] = $1 SUBSEP $2
             next
         }
-        $1 == "resolved" { split($2, r, "|"); have[r[1] "|" r[2]] = 1 }
-        $1 == "entry" { split($2, g, "|"); outcome[g[1]] = g[4]; step[g[1]] = g[5] }
+        $1 == "resolved" { have[$2 SUBSEP $3] = 1 }
+        $1 == "entry" { outcome[$2] = $5; step[$2] = $6; own[$2] = $7 }
         { print }
         END {
-            for (key in want) {
+            for (i = 1; i <= n; i++) {
+                key = order[i]
                 if (key in have) continue
-                split(key, k, "|")
+                split(key, k, SUBSEP)
                 if (!(k[1] in outcome) || outcome[k[1]] != k[2]) continue
-                if (step[k[1]] == "-") {
-                    print "resolution_refused", key "|no accounted step; repair the entry first"
+                if (step[k[1]] == "-" || own[k[1]] == "-") {
+                    print "resolution_refused", k[1], k[2], "incomplete quantities; repair the entry first"
                     continue
                 }
-                print "resolved", key "|" want[key]
+                print "resolved", k[1], k[2], want[key]
             }
         }
     ' "$2" "$1"
 }
 
 # sc_account_summary ACCOUNT  ->  the totals, re-folded from the entry lines.
+# An entry is unresolved while it fails without a resolution, or while its
+# step or attribution is missing (which no resolution clears).
 sc_account_summary() {
     awk -F '\t' "$SC_BN_AWK"'
         BEGIN { OFS = "\t"; sstep = "0"; sown = "0"; sa = "0"; srs = "0"; sam = "0" }
         $1 == "anchor.commit" { anchor = $2 }
         $1 == "last.commit" { last = $2 }
-        $1 == "resolved" { split($2, rv, "|"); resolved[rv[1] "|" rv[2]] = 1 }
-        $1 == "entry" { order[++n] = $2 }
+        $1 == "resolved" { resolved[$2 SUBSEP $3] = 1 }
+        $1 == "entry" { order[++n] = $0 }
         END {
             prev = ""
             for (i = 1; i <= n; i++) {
-                split(order[i], e, "|")
-                commit = e[1]; class = e[2]; aclass = e[3]; outcome = e[4]
-                step = e[5]; own = e[6]; a = e[7]; r = e[8]; pid = e[9]
+                split(order[i], e, "\t")
+                commit = e[2]; class = e[3]; aclass = e[4]; outcome = e[5]
+                step = e[6]; own = e[7]; a = e[8]; r = e[9]; pid = e[10]; failures = e[11]
                 merges++
                 if (step == "-") missing_steps++; else sstep = bn_add(sstep, step)
                 if (own == "-") unattributed++; else sown = bn_add(sown, own)
@@ -854,10 +861,11 @@ sc_account_summary() {
                 if (class == "M") cm++
                 if (aclass == "M" && a != "-") sam = bn_add(sam, a)
                 if (outcome == "warning") warnings++
-                if (outcome != "ok" && outcome != "warning") {
-                    failures++
-                    if (!((commit "|" outcome) in resolved)) unresolved[++u] = commit "|" outcome "|" e[10]
-                }
+                failing = (outcome != "ok" && outcome != "warning")
+                if (failing) failures_n++
+                incomplete = (step == "-" || own == "-")
+                if (incomplete || (failing && !((commit SUBSEP outcome) in resolved)))
+                    unresolved[++u] = commit "\t" outcome "\t" failures
                 if (pid != "-" && pid != prev) segments++
                 if (pid != "-") prev = pid
             }
@@ -872,7 +880,7 @@ sc_account_summary() {
             print "count.s", cs + 0
             print "count.m", cm + 0
             print "count.warnings", warnings + 0
-            print "count.failures", failures + 0
+            print "count.failures", failures_n + 0
             print "count.missing_steps", missing_steps + 0
             print "count.unattributed", unattributed + 0
             print "segments", segments + 0

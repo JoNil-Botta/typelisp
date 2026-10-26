@@ -574,6 +574,10 @@ st_ledger() {
     st_eq "landed cost above +5000 ppm is non-routine" "$(sc_record_get "$_d/window/entry.tsv" routing)" non-routine
     st_entry "$_d/window-declared" "$_P" 100700000000 mt=100700000000 mb="$_P" declared=7000
     st_eq "declared landed cost within its window" "$(st_entry_says "$_d/window-declared")" "S ok -"
+    st_entry "$_d/binary" "$_P" 100000050000
+    echo "commit X built with the same as/ld measured two different compilers" > "$_d/binary/binary-problem"
+    st_eq "a same-commit binary mismatch fails the entry" "$(st_entry_says "$_d/binary")" \
+        "S comparability-failure comparability"
     st_entry "$_d/nopr" "$_P" 100000050000 nopr
     st_eq "missing attribution" "$(st_entry_says "$_d/nopr")" "none attribution-failure attribution"
     st_entry "$_d/nopr-window" "$_P" 101000000000 nopr
@@ -643,7 +647,7 @@ st_account() {
         "$ST_SHA_E" > "$_d/resolutions.tsv"
     sc_account_resolve "$_d/acc5.tsv" "$_d/resolutions.tsv" > "$_d/acc7.tsv"
     st_eq "reviewed resolution" "$(sc_account_outcome "$_d/acc7.tsv")" clean
-    st_eq "resolution stays on record" "$(sc_record_get "$_d/acc7.tsv" resolved | cut -d'|' -f1)" "$ST_SHA_E"
+    st_eq "resolution stays on record" "$(sc_record_get "$_d/acc7.tsv" resolved | cut -f1)" "$ST_SHA_E"
     st_eq "resolved failures stay counted" "$(_st_sum "$_d/acc7.tsv" count.failures)" 1
     # A merge whose step was never measured keeps the totals incomplete; a
     # resolution cannot clear it, only a repaired entry can.
@@ -656,7 +660,7 @@ st_account() {
     printf '%s\tcomparability-failure\thttps://example.invalid/x\n' "$_st_g" > "$_d/resolutions-nostep.tsv"
     sc_account_resolve "$_d/acc8.tsv" "$_d/resolutions-nostep.tsv" > "$_d/acc9.tsv"
     st_eq "a resolution without an accounted step is refused" "$(sc_account_outcome "$_d/acc9.tsv")" unresolved
-    st_eq "the refusal is recorded" "$(sc_record_get "$_d/acc9.tsv" resolution_refused | cut -d'|' -f1)" "$_st_g"
+    st_eq "the refusal is recorded" "$(sc_record_get "$_d/acc9.tsv" resolution_refused | cut -f1)" "$_st_g"
     _st_entry_file g2 "$_st_g" 700 600 100 ok - k2
     sc_account_apply "$_d/acc9.tsv" "$_d/e-g2.tsv" > "$_d/acc10.tsv"
     st_eq "a repaired entry replaces its line" "$(grep -c "^entry	$_st_g" "$_d/acc10.tsv" | tr -d ' ')" 1
@@ -668,6 +672,21 @@ st_account() {
     sc_account_apply "$_d/acc10.tsv" "$_d/e-h.tsv" > "$_d/acc11.tsv"
     st_eq "an unattributed merge is counted" "$(_st_sum "$_d/acc11.tsv" count.unattributed)" 1
     st_eq "an unattributed merge keeps the totals incomplete" "$(_st_sum "$_d/acc11.tsv" complete)" no
+    printf '%s\tattribution-failure\thttps://example.invalid/y\n' "$ST_SHA_D" > "$_d/resolutions-unattributed.tsv"
+    sc_account_resolve "$_d/acc11.tsv" "$_d/resolutions-unattributed.tsv" > "$_d/acc12.tsv"
+    st_eq "a resolution cannot clear a merge without attribution" "$(sc_account_outcome "$_d/acc12.tsv")" unresolved
+    st_eq "the unattributed refusal is recorded" \
+        "$(awk -F '\t' -v c="$ST_SHA_D" '$1 == "resolution_refused" && $2 == c { print $3 }' "$_d/acc12.tsv")" \
+        attribution-failure
+    st_eq "an unresolved failure keeps its reason" \
+        "$(sc_account_summary "$_d/acc12.tsv" | awk -F '\t' '$1 == "unresolved" { print $4 }')" attribution
+    # Identities that differ only in valgrind are two segments.
+    sc_account_seed "$ST_SHA_D" "$ST_SHA_F" 100000000000 > "$_d/seg0.tsv"
+    _st_entry_file s1 "$ST_SHA_A" 10 10 0 ok - "6.11|valgrind-3.22.0|as|p"
+    _st_entry_file s2 "$ST_SHA_B" 10 10 0 ok - "6.11|valgrind-3.24.0|as|p"
+    sc_account_apply "$_d/seg0.tsv" "$_d/e-s1.tsv" > "$_d/seg1.tsv"
+    sc_account_apply "$_d/seg1.tsv" "$_d/e-s2.tsv" > "$_d/seg2.tsv"
+    st_eq "identity segments use the whole pair identity" "$(_st_sum "$_d/seg2.tsv" segments)" 2
 }
 
 st_chain() {
@@ -980,6 +999,17 @@ st_e2e() {
     # Without c0's ledger entry, c1's account has a continuity gap.
     printf '{"artifacts": []}\n' |
         st_api_put "repos/$ST_REPO/actions/runs/900/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
+    mkdir -p "$ST_E2E/twice"
+    (
+        cd "$ST_E2E/ledger-repo"
+        RUNNER_TEMP=$ST_E2E/twice
+        export RUNNER_TEMP
+        _st_head=$(git rev-parse HEAD)
+        (sc_run_fallback "$_st_head" "$ST_SHA_A" "$ST_E2E/twice/one.tsv" base-fallback) > "$ST_E2E/twice/one.log" 2>&1 || true
+        (sc_run_fallback "$_st_head" "$ST_SHA_A" "$ST_E2E/twice/two.tsv" base-fallback) > "$ST_E2E/twice/two.log" 2>&1 || true
+    )
+    st_eq "a second fallback in one process gets its own tool copy" \
+        "$(grep -c 'tool copy path exists' "$ST_E2E/twice/two.log" | tr -d ' ')|$(grep -c 'checkout is not at' "$ST_E2E/twice/two.log" | tr -d ' ')" "0|1"
     st_eq "e2e ledger fails closed on a continuity gap" "$(st_e2e_ledger gap "$_st_c1" 901)" "1 continuity-failure no pending none"
 }
 

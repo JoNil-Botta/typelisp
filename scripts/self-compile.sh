@@ -406,9 +406,8 @@ sc_run_fallback() {
     _srf_head=$2
     _srf_record=$3
     _srf_role=$4
-    _srf_tool=${RUNNER_TEMP:-/tmp}/self-compile-tool-$$
-    [ ! -e "$_srf_tool" ] || sc_fail "tool copy path exists: $_srf_tool"
-    mkdir -p "$_srf_tool"
+    _srf_tool=$(mktemp -d "${RUNNER_TEMP:-/tmp}/self-compile-tool.XXXXXX") ||
+        sc_fail "cannot create a directory for the fallback tool copy"
     cp "$SC_TOOL_DIR/self-compile.sh" "$SC_TOOL_DIR/lib-self-compile.sh" \
         "$SC_TOOL_DIR/self-compile-self-test.sh" "$_srf_tool/"
     TYPELISP_SELF_COMPILE_ROOT=$ROOT sh "$_srf_tool/self-compile.sh" fallback \
@@ -432,9 +431,8 @@ sc_cmd_fallback() {
     git diff --quiet && git diff --cached --quiet ||
         sc_fail "tracked files changed during CI; refusing to switch the checkout"
     sc_fetch_commit "$_scf_base"
-    _scf_hold=${RUNNER_TEMP:-/tmp}/self-compile-hold-$$
-    [ ! -e "$_scf_hold" ] || sc_fail "hold path exists: $_scf_hold"
-    mkdir -p "$_scf_hold"
+    _scf_hold=$(mktemp -d "${RUNNER_TEMP:-/tmp}/self-compile-hold.XXXXXX") ||
+        sc_fail "cannot create a directory to hold the head's target/"
     _scf_status=0
     _scf_at_base=0
     _scf_moved=0
@@ -898,7 +896,10 @@ sc_ledger_reproduce() {
         echo "$*" > "$_slr_dest/reproduction-problem"
         return 1
     }
-    sc_this_runner_record "$_slr_work/reproduce-runner.tsv" "$_slr_dest/landed.tsv"
+    mkdir -p "$_slr_work" ||
+        { _slr_problem "cannot create the reproduction work directory"; return 1; }
+    sc_this_runner_record "$_slr_work/reproduce-runner.tsv" "$_slr_dest/landed.tsv" ||
+        { _slr_problem "cannot describe this runner's identity"; return 1; }
     if ! sc_records_comparable "$_slr_dest/landed.tsv" "$_slr_work/reproduce-runner.tsv" >/dev/null; then
         sc_ledger_measure_pair_here "$_slr_c" "$(cat "$_slr_dest/parent")" "$_slr_dest" ||
             { _slr_problem "measuring the pair on the ledger runner failed"; return 1; }
@@ -973,7 +974,7 @@ sc_ledger_walk_line() {
 #   since been re-run and produced a complete entry.
 sc_ledger_repair_entries() {
     cp "$1" "$3"
-    for _slre_c in $(awk -F '\t' '$1 == "entry" { split($2, e, "|"); if (e[5] == "-") print e[1] }' "$1"); do
+    for _slre_c in $(awk -F '\t' '$1 == "entry" && ($6 == "-" || $7 == "-") { print $2 }' "$1"); do
         _slre_dir=$2/repair-$_slre_c
         sc_fetch_run_artifact ledger "$_slre_c" "$SC_LEDGER_JOB_NAME" "$SC_LEDGER_ARTIFACT" "$_slre_dir"
         [ "$SC_RUN_STATUS" = ok ] || continue
@@ -981,6 +982,7 @@ sc_ledger_repair_entries() {
         [ "$(sc_record_get "$_slre_dir/artifact/producer.tsv" run.attempt 2>/dev/null || true)" = "$SC_RUN_ATTEMPT" ] || continue
         [ "$(sc_record_get "$_slre_dir/artifact/entry.tsv" commit 2>/dev/null || true)" = "$_slre_c" ] || continue
         sc_record_get "$_slre_dir/artifact/entry.tsv" step >/dev/null 2>&1 || continue
+        sc_record_get "$_slre_dir/artifact/entry.tsv" own >/dev/null 2>&1 || continue
         sc_account_apply "$3" "$_slre_dir/artifact/entry.tsv" > "$3.next"
         mv "$3.next" "$3"
         sc_log "repaired the ledger entry of $_slre_c from its re-run"
@@ -1022,14 +1024,6 @@ sc_cmd_ledger() {
         *) _scl_outcome=measurement-failure; _scl_detail=$(cat "$_scl_in/measurement-problem" 2>/dev/null || echo "pair measurement failed") ;;
     esac
     if [ -z "$_scl_outcome" ]; then
-        for _scl_kind in landed parent; do
-            [ -f "$_scl_in/$_scl_kind-reference.tsv" ] || continue
-            if ! _scl_msg=$(sc_same_commit_binary "$_scl_in/$_scl_kind-reference.tsv" "$_scl_in/$_scl_kind.tsv"); then
-                echo "$_scl_msg" > "$_scl_in/binary-problem"
-            fi
-        done
-    fi
-    if [ -z "$_scl_outcome" ]; then
         if sc_fetch_pr_record "$_scl_c" "$_scl_work/pr"; then
             cp "$_scl_work/pr/pr.tsv" "$_scl_work/pr/pr-head.tsv" "$_scl_work/pr/pr-base.tsv" "$_scl_in/"
             _scl_b=$(sc_record_get "$_scl_in/pr.tsv" base)
@@ -1049,14 +1043,18 @@ sc_cmd_ledger() {
         fi
     fi
     if [ -z "$_scl_outcome" ]; then
+        # After every re-measurement: one commit measured twice with the same
+        # as/ld must have measured the same compiler bytes.
+        for _scl_kind in landed parent; do
+            [ -f "$_scl_in/$_scl_kind-reference.tsv" ] || continue
+            if ! _scl_msg=$(sc_same_commit_binary "$_scl_in/$_scl_kind-reference.tsv" "$_scl_in/$_scl_kind.tsv"); then
+                echo "$_scl_msg" >> "$_scl_in/binary-problem"
+            fi
+        done
         sc_ledger_entry "$_scl_in" > "$_scl_out/entry.tsv"
         sc_record_line pair_source "$SC_PAIR_SOURCE" >> "$_scl_out/entry.tsv"
         if [ -f "$_scl_in/attribution-problem" ]; then
             sc_record_line attribution_problem "$(cat "$_scl_in/attribution-problem")" >> "$_scl_out/entry.tsv"
-        fi
-        if [ -f "$_scl_in/binary-problem" ]; then
-            sc_record_line binary_problem "$(cat "$_scl_in/binary-problem")" >> "$_scl_out/entry.tsv"
-            sc_record_line outcome comparability-failure >> "$_scl_out/entry.tsv"
         fi
         if [ -f "$_scl_in/reproduction-problem" ]; then
             sc_record_line reproduction_problem "$(cat "$_scl_in/reproduction-problem")" >> "$_scl_out/entry.tsv"

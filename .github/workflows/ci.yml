@@ -39,9 +39,6 @@ jobs:
             timeout_minutes: 120
     steps:
       - uses: actions/checkout@v4
-        with:
-          # Measurement only: freeze compiler inputs while main advances.
-          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Check implementation language allowlist
         shell: bash

@@ -67871,10 +67871,7 @@
   [elem-ty : ast.AstType]) : ResultLowerEnv
   (let
     [bound-ty : ast.AstType
-      (lower-bind-mode-ref-type
-        ctx
-        (lower-global-shared-view bind-mode)
-        elem-ty)]
+      (lower-bind-mode-ref-type ctx (clone bind-mode) elem-ty)]
     [bound : LowerExpr
       (match (& value)
         [(Var _) (Expr state value bound-ty)]
@@ -67915,9 +67912,7 @@
         [(LowerBindMode.Borrowed _) true]
         [_ false])
       (= (lower-type-size ctx elem-ty) 0)
-      (tc_core.tc-borrowed-binding-by-value?
-        ctx
-        (lower-global-shared-view elem-ty)))
+      (tc_core.tc-type-copyable? ctx (clone elem-ty)))
     (return (Expr state Unit elem-ty)))
   (match bind-mode
     [(LowerBindMode.Owned)

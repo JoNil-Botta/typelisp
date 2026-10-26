@@ -648,6 +648,18 @@ exit 42
 in stderr
 empty
 
+case empty-private-params-debug-run
+source tests/spmd/empty_private_params.tl
+do link-run
+mode scalar avx2 avx512
+opt 1 2
+args -g
+exit 42
+in stderr
+empty
+in asm
+match \.loc |\.cv_loc
+
 # --------------------------------------------------------------- reductions
 
 # A sum keeps one vector accumulator in the gang and reduces horizontally only

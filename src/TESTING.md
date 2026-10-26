@@ -269,6 +269,11 @@ the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
 
+`backend-empty-private-body-keeps-entry-stores-inside-frame` covers private
+AVX2 parameter homes with and without debug info on both ABIs, plus distinct
+instruction locations after coloring. `empty-private-params-debug-run` runs
+the empty-body regression at opt1/2 alongside the non-debug controls.
+
 `indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
 returns early, for language closures and C code pointers. Counts require one
 callee evaluation, no later argument effects and the enclosing cleanup. A

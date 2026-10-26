@@ -9,7 +9,7 @@ set -eu
 # opt2-built stage4; this gate builds one opt1 compiler from current source and
 # compares their emitted assembly over a fixed Linux corpus.
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
@@ -122,7 +122,12 @@ POOL_CHUNK_CAP_MIB=4096
 POOL_JOB_TIMEOUT_SECONDS=600
 
 WORKDIR="$ROOT/target/build-invariance"
-rm -rf "$WORKDIR"
+mkdir -p "$ROOT/target"
+if [ "$(CDPATH= cd -- "$ROOT/target" && pwd -P)" != "$ROOT/target" ]; then
+    echo "[build-invariance] target directory is outside the checkout" >&2
+    exit 1
+fi
+rm -rf -- "${ROOT:?}/target/build-invariance"
 mkdir -p "$WORKDIR"
 CHUNK_METRICS="$WORKDIR/chunk-metrics.tsv"
 : > "$CHUNK_METRICS"
@@ -138,7 +143,15 @@ if [ "${TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE+x}" = x ]; then
         /*) ;;
         *) HANDOFF_PATH_FILE="$ROOT/$HANDOFF_PATH_FILE" ;;
     esac
-    rm -f "$HANDOFF_PATH_FILE"
+    handoff_parent=$(CDPATH= cd -- "$(dirname -- "$HANDOFF_PATH_FILE")" && pwd -P)
+    case "$handoff_parent/" in
+        "$ROOT/target/"*) ;;
+        *)
+            echo "build-invariance opt1 handoff must belong to target/" >&2
+            exit 2
+            ;;
+    esac
+    rm -f -- "${HANDOFF_PATH_FILE:?}"
 fi
 
 print_log_pair() {
@@ -295,7 +308,6 @@ prepare_compile_batches() {
     batch_root="$WORKDIR/batches/$compiler_label"
     all_cases="$batch_root/cases.txt"
 
-    rm -rf "$batch_root"
     mkdir -p "$batch_root/opt1" "$batch_root/opt2"
     prepared_count=0
     while IFS='|' read -r name source opt_level; do
@@ -316,7 +328,6 @@ prepare_compile_batches() {
         compile_source=$source
         if [ "$name" = integration_sym_i64_env ]; then
             input_dir="$WORKDIR/inputs/$name/sym_i64_env"
-            rm -rf "$input_dir"
             mkdir -p "$input_dir"
             cp "$source" "$input_dir/sym_i64_env.tl"
             cp src/sym_i64_env.tl "$input_dir/sym_i64_env_core.tl"
@@ -841,7 +852,6 @@ CORPUS="$WORKDIR/corpus.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"
 RIGHT_DIR="$WORKDIR/compare/opt2-built"
 write_corpus "$CORPUS"
-rm -rf "$LEFT_DIR" "$RIGHT_DIR"
 mkdir -p "$LEFT_DIR" "$RIGHT_DIR"
 
 corpus_start=$(date +%s)

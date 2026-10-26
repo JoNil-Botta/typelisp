@@ -52,7 +52,7 @@ build_invariance_require_plan() {
         echo "[build-invariance] chunk plan differs from logical coverage" >&2
         return 1
     fi
-    rm -f "$_bib_require_entries.expected" "$_bib_require_aliases.expected"
+    # Retain the reconstructed plans as evidence beside the executed plans.
 }
 
 # Compare the multiset of executed logical records with the complete prepared
@@ -117,8 +117,12 @@ build_invariance_write_chunks() {
     _bib_chunk_records=$1
     _bib_chunk_dir=$2
     _bib_chunk_size=$3
-    rm -rf "$_bib_chunk_dir"
-    mkdir -p "$_bib_chunk_dir"
+    # A new invocation gets a fresh directory. Reject stale plans rather than
+    # deleting a caller-supplied path or accidentally reusing earlier chunks.
+    if ! mkdir "$_bib_chunk_dir"; then
+        echo "[build-invariance] chunk directory must be fresh: $_bib_chunk_dir" >&2
+        return 1
+    fi
     awk -F'|' -v chunk_dir="$_bib_chunk_dir" -v chunk_size="$_bib_chunk_size" '
         function singleton(name, source) {
             return name ~ /^selfhost_main_/ || source ~ /^src\/tests\/compiler_[^/]*\.tl$/

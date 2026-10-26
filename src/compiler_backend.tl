@@ -4647,6 +4647,8 @@
         [count : i64 (compiler_ir_types.compiler-source-spans-count (& spans))]
         [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)
           (__tl_make-array compiler_ir_types.CompilerMaybeSourceSpan count)]
+        [instructions : CompilerBackendInstrSpanIndex
+          (compiler-backend-instr-span-index-build (& spans))]
         (compiler-backend-source-span-index-fill (&mut values) 0)
         (CompilerBackendSourceSpanIndex
           (compiler-backend-source-span-index-add
@@ -4656,9 +4658,8 @@
           values
           (compiler-backend-debug-file-index-build-with-backend-state
             backend-state
-            (compiler-backend-global-shared-view spans))
-          (compiler-backend-instr-span-index-build
-            (compiler-backend-global-shared-view spans))
+            spans)
+          instructions
           backend-state))]))
 
 ;; Preserve insertion order, including duplicate keys, while selecting only the
@@ -4666,7 +4667,7 @@
 ;; pinning, remapping and instruction lookup then visit function-local entries.
 ;; Non-debug emission retains its existing span path and builds no links.
 (define (compiler-backend-instr-span-index-build
-  [spans : compiler_ir_types.CompilerSourceSpans]) : CompilerBackendInstrSpanIndex
+  [spans : (& spans compiler_ir_types.CompilerSourceSpans)]) : CompilerBackendInstrSpanIndex
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     None
     (match spans
@@ -4679,8 +4680,8 @@
           (while (> index 0)
             (-= index 1)
             (let
-              [entry : compiler_ir_types.CompilerSourceSpansInstrEntry
-                (array-ref instr-entries.slots index)]
+              [entry : (& spans compiler_ir_types.CompilerSourceSpansInstrEntry)
+                (& (array-ref instr-entries.slots index))]
               [name : i64 entry.function.value]
               (set!
                 (array-ref next index)
@@ -4794,15 +4795,17 @@
                       (set! pinned true))]
                   [_ unit])))
             (if pinned
-              (compiler_liveness.compiler-live-set-from-words-trimmed
-                (compiler-backend-global-shared-view words)
-                (array-length words))
+              (let
+                [count : i64 (array-length words)]
+                (compiler_liveness.compiler-live-set-from-words-trimmed
+                  words
+                  count))
               (compiler_liveness.compiler-live-set-empty))))])))
 
 (define (compiler-backend-remap-source-span-key
   [key : compiler_ir_types.CompilerSourceSpansInstrKey]
   [function : i64]
-  [remap : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerSourceSpansInstrKey
+  [remap : (& (__tl_dyn-array i64))]) : compiler_ir_types.CompilerSourceSpansInstrKey
   (match key
     [(Value key-function var)
       (if (=
@@ -4837,10 +4840,7 @@
             (set!
               (array-ref slots index)
               (compiler_ir_types.compiler-source-spans-instr-entry
-                (compiler-backend-remap-source-span-key
-                  key
-                  function
-                  (compiler-backend-global-shared-view remap))
+                (compiler-backend-remap-source-span-key key function (& remap))
                 path-id
                 span))))
         (Spans

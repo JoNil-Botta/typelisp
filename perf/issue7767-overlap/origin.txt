@@ -1,0 +1,6 @@
+source_run=40360856529
+source_head=51c278506af12fd51fba495079e73f69208f7b91
+compiler_base=8e523d678dc08c5c4592860bd54c889744133c20
+fixture_projection=name|logical-source|actual-input|requested-opt
+normalization=producer output path is regenerated in a fresh trial-owned directory
+source_inventory=1799 cases; selected chunks0017-0019 have64 cases each, with44/44/49 unique entries

@@ -601,7 +601,7 @@ elif [ -n "${TYPELISP_BIN:-}" ]; then
 fi
 
 case "$(realpath -m -- "$WORKDIR")" in
-    "$ROOT/target/"*) ;;
+    "$(realpath -m -- "$ROOT")/target/"*) ;;
     *) fail "--output must be inside this checkout's target/ scratch root: $WORKDIR" ;;
 esac
 rm -rf -- "${WORKDIR:?}"

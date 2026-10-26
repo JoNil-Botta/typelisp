@@ -143,12 +143,14 @@ sc_records_comparable() {
 }
 
 # sc_same_commit_binary A B  ->  two records of one commit built with the same
-# assembler and linker must have measured byte-identical compilers. Prints a
-# problem and fails; succeeds (silently) when the check does not apply.
+# assembler and linker at the same workspace must have measured byte-identical
+# compilers. Prints a problem and fails; succeeds (silently) when the check
+# does not apply.
 sc_same_commit_binary() {
     [ "$(sc_record_get "$1" commit)" = "$(sc_record_get "$2" commit)" ] || return 0
     [ "$(sc_record_get "$1" key.as)" = "$(sc_record_get "$2" key.as)" ] || return 0
     [ "$(sc_record_get "$1" key.ld)" = "$(sc_record_get "$2" key.ld)" ] || return 0
+    [ "$(sc_record_get "$1" key.workspace)" = "$(sc_record_get "$2" key.workspace)" ] || return 0
     [ "$(sc_record_get "$1" compiler_sha256)" = "$(sc_record_get "$2" compiler_sha256)" ] || {
         echo "commit $(sc_record_get "$1" commit) built with the same as/ld measured two different compilers: $(sc_record_get "$1" compiler_sha256) | $(sc_record_get "$2" compiler_sha256)"
         return 1
@@ -805,13 +807,13 @@ sc_account_apply() {
 # whose quantities are complete. A resolution for an entry without its step or
 # its attribution is refused: that needs a repaired entry first.
 sc_account_resolve() {
-    if [ ! -f "$2" ]; then
+    if [ ! -s "$2" ]; then
         cat "$1"
         return 0
     fi
-    awk -F '\t' '
+    awk -F '\t' -v resolutions="$2" '
         BEGIN { OFS = "\t" }
-        NR == FNR {
+        FILENAME == resolutions {
             sub(/\r$/, "")
             if ($0 ~ /^#/ || NF < 3) next
             want[$1 SUBSEP $2] = $3

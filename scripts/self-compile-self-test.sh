@@ -177,6 +177,8 @@ st_records() {
     st_succeeds "one commit, another linker" sc_same_commit_binary "$_d/r.tsv" "$_d/other-ld.tsv"
     st_succeeds "two commits" sc_same_commit_binary "$_d/r.tsv" "$_d/same-tree.tsv"
     st_succeeds "one commit, one binary" sc_same_commit_binary "$_d/r.tsv" "$_d/same-commit.tsv"
+    st_record "$_d/other-ws.tsv" compiler_sha256=6666666666666666666666666666666666666666666666666666666666666666 key.workspace=/elsewhere
+    st_succeeds "one commit, another workspace" sc_same_commit_binary "$_d/r.tsv" "$_d/other-ws.tsv"
 }
 
 st_gate() {
@@ -641,6 +643,13 @@ st_account() {
     st_eq "a later clean merge clears nothing" "$(sc_account_outcome "$_d/acc5.tsv")" unresolved
     st_eq "failures count" "$(_st_sum "$_d/acc5.tsv" count.failures)" 1
     printf '%s\tnumerical-failure\thttps://example.invalid/diagnosis\n' "$ST_SHA_A" > "$_d/resolutions-other.tsv"
+    : > "$_d/resolutions-empty.tsv"
+    sc_account_resolve "$_d/acc5.tsv" "$_d/resolutions-empty.tsv" > "$_d/acc5e.tsv"
+    st_eq "an empty resolutions file keeps the account" "$(_st_sum "$_d/acc5e.tsv" merges)" 5
+    st_eq "an empty resolutions file clears nothing" "$(sc_account_outcome "$_d/acc5e.tsv")" unresolved
+    printf '# only a comment\n' > "$_d/resolutions-comment.tsv"
+    sc_account_resolve "$_d/acc5.tsv" "$_d/resolutions-comment.tsv" > "$_d/acc5c.tsv"
+    st_eq "a comment-only resolutions file keeps the account" "$(_st_sum "$_d/acc5c.tsv" merges)" 5
     sc_account_resolve "$_d/acc5.tsv" "$_d/resolutions-other.tsv" > "$_d/acc6.tsv"
     st_eq "a resolution for another merge clears nothing" "$(sc_account_outcome "$_d/acc6.tsv")" unresolved
     printf '# commit\toutcome\treference\n%s\tnumerical-failure\thttps://example.invalid/diagnosis\n' \
@@ -852,7 +861,8 @@ st_e2e_check() {
     )
 }
 
-# st_e2e_ledger_repo DIR  ->  p0 (no reference workflow), c0 (adds it), c1.
+# st_e2e_ledger_repo DIR [empty-resolutions]  ->  p0 (no reference
+# workflow), c0 (adds it), c1 (optionally adding an empty resolutions file).
 st_e2e_ledger_repo() {
     mkdir -p "$1"
     (
@@ -869,11 +879,17 @@ st_e2e_ledger_repo() {
         st_git add -A
         st_git commit -qm c0
         printf 'c1\n' > README
+        if [ "${2:-}" = empty-resolutions ]; then
+            mkdir -p perf
+            : > perf/self-compile-ledger-resolutions.tsv
+            st_git add -A
+        fi
         st_git commit -qam c1
     )
 }
 
-# st_e2e_pr_api C PR HEAD RUN T_IR B_IR B  ->  the merged PR of C and its CI.
+# st_e2e_pr_api C PR HEAD RUN T_IR B_IR B [KERNEL]  ->  the merged PR of C
+# and its CI, measured on KERNEL (default: the fixture identity's).
 st_e2e_pr_api() {
     printf '[{"number": %s, "merge_commit_sha": "%s", "merged_at": "2026-10-26T00:00:00Z", "base": {"ref": "main"}, "head": {"sha": "%s"}}]\n' \
         "$2" "$1" "$3" | st_api_put "repos/$ST_REPO/commits/$1/pulls"
@@ -887,8 +903,10 @@ st_e2e_pr_api() {
     _sepa=$ST_ART/$4/$SC_MEASUREMENT_ARTIFACT
     mkdir -p "$_sepa"
     # The tested merge is the landed tree (class S) on base B.
-    st_record "$_sepa/head.tsv" commit="$ST_SHA_D" tree="$(st_tree "$1")" ir_count="$5" run.id="$4" run.event=pull_request
-    st_record "$_sepa/base.tsv" commit="$7" tree="$(st_tree "$7")" ir_count="$6"
+    _sepa_kernel=${8:-6.11.0-1018-azure}
+    st_record "$_sepa/head.tsv" commit="$ST_SHA_D" tree="$(st_tree "$1")" ir_count="$5" run.id="$4" run.event=pull_request \
+        key.kernel="$_sepa_kernel"
+    st_record "$_sepa/base.tsv" commit="$7" tree="$(st_tree "$7")" ir_count="$6" key.kernel="$_sepa_kernel"
     {
         sc_record_line schema "$SC_RESULT_SCHEMA"
         sc_record_line pr "$2"
@@ -904,17 +922,19 @@ st_e2e_pr_api() {
     } > "$_sepa/result.tsv"
 }
 
-# st_e2e_ledger NAME COMMIT RUN  ->  runs sc_cmd_ledger at COMMIT of the shared
-# ledger repository clone and prints `rc outcome complete account merges`.
+# st_e2e_ledger NAME COMMIT RUN [SET]  ->  runs sc_cmd_ledger at COMMIT of a
+# clone of SET's repository (default `ledger`) with SET's API and artifact
+# fixtures, and prints `rc outcome complete account merges`.
 st_e2e_ledger() {
-    _sel_dir=$ST_E2E/ledger-$1
-    git clone -q "$ST_E2E/ledger-repo" "$_sel_dir/repo"
+    _sel_set=${4:-ledger}
+    _sel_dir=$ST_E2E/$_sel_set-$1
+    git clone -q "$ST_E2E/$_sel_set-repo" "$_sel_dir/repo"
     (
         cd "$_sel_dir/repo"
         git checkout -q --detach "$2"
         st_e2e_env
-        ST_API=$ST_E2E/ledger-api
-        ST_ART=$ST_E2E/ledger-art
+        ST_API=$ST_E2E/$_sel_set-api
+        ST_ART=$ST_E2E/$_sel_set-art
         st_e2e_mocks "$ST_API" "$ST_ART"
         GITHUB_SHA=$2
         GITHUB_EVENT_NAME=push
@@ -927,8 +947,8 @@ st_e2e_ledger() {
             st_record "$1"
         }
         sc_run_fallback() {
-            st_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role=parent-fallback \
-                run.id="$GITHUB_RUN_ID" run.attempt=1
+            st_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role="$4" \
+                run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="${ST_FALLBACK_SHA:-7777777777777777777777777777777777777777777777777777777777777777}"
         }
         _sel_rc=0
         (sc_cmd_ledger) > "$_sel_dir/ledger.log" 2>&1 || _sel_rc=$?
@@ -942,6 +962,34 @@ st_e2e_ledger() {
         mkdir -p "$ST_ART/$3"
         cp -R target/self-compile/ledger "$ST_ART/$3/$SC_LEDGER_ARTIFACT"
     )
+}
+
+# st_e2e_ledger_set SET REPO_OPTION C0_T_IR [PR_KERNEL]  ->  a fresh
+# repository and fixtures for st_e2e_ledger: c0's PR measured its tested tree
+# at C0_T_IR (M(c0) is 116000050000), c1's PR at 116000060300.
+st_e2e_ledger_set() {
+    st_e2e_ledger_repo "$ST_E2E/$1-repo" "$2"
+    ST_API=$ST_E2E/$1-api
+    ST_ART=$ST_E2E/$1-art
+    mkdir -p "$ST_API" "$ST_ART"
+    _sels_p0=$(git -C "$ST_E2E/$1-repo" rev-parse HEAD~2)
+    _sels_c0=$(git -C "$ST_E2E/$1-repo" rev-parse HEAD~1)
+    _sels_c1=$(git -C "$ST_E2E/$1-repo" rev-parse HEAD)
+    ST_SET_C0=$_sels_c0
+    ST_SET_C1=$_sels_c1
+    (cd "$ST_E2E/$1-repo" &&
+        st_record "$ST_E2E/$1-c0.tsv" commit="$_sels_c0" tree="$(st_tree "$_sels_c0")" ir_count=116000050000 run.id=900 &&
+        st_record "$ST_E2E/$1-c1.tsv" commit="$_sels_c1" tree="$(st_tree "$_sels_c1")" ir_count=116000060000 run.id=901 &&
+        st_reference_api "$_sels_c0" 900 "$ST_E2E/$1-c0.tsv" &&
+        st_reference_api "$_sels_c1" 901 "$ST_E2E/$1-c1.tsv" &&
+        st_e2e_pr_api "$_sels_c0" 50 "$ST_SHA_E" 7050 "$3" 116000000000 "$_sels_p0" "${4:-}" &&
+        st_e2e_pr_api "$_sels_c1" 51 "$ST_SHA_F" 7051 116000060300 116000050000 "$_sels_c0")
+    printf '{"workflow_runs": []}\n' |
+        st_api_put "repos/$ST_REPO/actions/workflows/self-compile-reference.yml/runs?event=push&branch=main&head_sha=$_sels_p0&per_page=50"
+    for _sels_run in 900 901; do
+        printf '{"artifacts": [{"name": "%s", "expired": false, "workflow_run": {"id": %s}}]}\n' "$SC_LEDGER_ARTIFACT" "$_sels_run" |
+            st_api_put "repos/$ST_REPO/actions/runs/$_sels_run/artifacts?name=$SC_LEDGER_ARTIFACT&per_page=100"
+    done
 }
 
 st_e2e() {
@@ -1011,6 +1059,24 @@ st_e2e() {
     st_eq "a second fallback in one process gets its own tool copy" \
         "$(grep -c 'tool copy path exists' "$ST_E2E/twice/two.log" | tr -d ' ')|$(grep -c 'checkout is not at' "$ST_E2E/twice/two.log" | tr -d ' ')" "0|1"
     st_eq "e2e ledger fails closed on a continuity gap" "$(st_e2e_ledger gap "$_st_c1" 901)" "1 continuity-failure no pending none"
+
+    # An unresolved failure survives a later clean merge that commits an empty
+    # resolutions file.
+    st_e2e_ledger_set e2 empty-resolutions 116000070000
+    st_eq "e2e ledger failure at c0" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e2)" "1 numerical-failure yes unresolved 1"
+    st_eq "e2e ledger with an empty resolutions file" "$(st_e2e_ledger c1 "$ST_SET_C1" 901 e2)" "1 ok yes unresolved 2"
+    # A PR measured on another kernel is reproduced; a reproduced base whose
+    # compiler bytes differ from the PR's base (same commit, as/ld and
+    # workspace) fails the entry.
+    st_e2e_ledger_set e3 - 116000050100 6.8.0-1036-azure
+    st_eq "e2e ledger reproduces a PR from another kernel" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e3)" "0 ok yes clean 1"
+    st_eq "e2e ledger records the reproduction" \
+        "$(sc_record_get "$ST_E2E/e3-c0/repo/target/self-compile/ledger/entry.tsv" own_source)" \
+        "reproduced in the landed pair's identity"
+    st_e2e_ledger_set e4 - 116000050100 6.8.0-1036-azure
+    st_eq "e2e ledger fails a reproduced base with other compiler bytes" \
+        "$(ST_FALLBACK_SHA=5555555555555555555555555555555555555555555555555555555555555555 st_e2e_ledger c0 "$ST_SET_C0" 900 e4)" \
+        "1 comparability-failure yes unresolved 1"
 }
 
 sc_self_test() {

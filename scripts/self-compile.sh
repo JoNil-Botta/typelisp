@@ -1045,9 +1045,12 @@ sc_cmd_ledger() {
     if [ -z "$_scl_outcome" ]; then
         # After every re-measurement: one commit measured twice with the same
         # as/ld must have measured the same compiler bytes.
-        for _scl_kind in landed parent; do
-            [ -f "$_scl_in/$_scl_kind-reference.tsv" ] || continue
-            if ! _scl_msg=$(sc_same_commit_binary "$_scl_in/$_scl_kind-reference.tsv" "$_scl_in/$_scl_kind.tsv"); then
+        for _scl_pair in landed-reference:landed parent-reference:parent pr-base:rep-base \
+            pr-base:parent pr-head:rep-head; do
+            _scl_one=$_scl_in/${_scl_pair%%:*}.tsv
+            _scl_two=$_scl_in/${_scl_pair#*:}.tsv
+            [ -f "$_scl_one" ] && [ -f "$_scl_two" ] || continue
+            if ! _scl_msg=$(sc_same_commit_binary "$_scl_one" "$_scl_two"); then
                 echo "$_scl_msg" >> "$_scl_in/binary-problem"
             fi
         done

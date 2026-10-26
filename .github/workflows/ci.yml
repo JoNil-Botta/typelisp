@@ -185,6 +185,13 @@ jobs:
             target/build-invariance/backend-memory/*.memory
             target/build-invariance/backend-memory/*.stdout
             target/build-invariance/backend-memory/*.stderr
+            target/build-invariance/provenance.txt
+            target/build-invariance/corpus.txt
+            target/build-invariance/chunk-metrics.tsv
+            target/build-invariance/pool-*.txt
+            target/build-invariance/batches/**/cases*.txt
+            target/build-invariance/batches/**/entries.*.txt
+            target/build-invariance/batches/**/aliases.*.txt
           if-no-files-found: warn
 
       - name: Upload TLCI native route stress evidence

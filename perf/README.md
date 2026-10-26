@@ -289,6 +289,13 @@ artifact per run (`target/ci-timing/<host>.tsv`, written by `ci-verify.sh` when
 as the four build-invariance selfhost compiles
 (`opt1-built:selfhost_main_opt1`, `opt2-built:selfhost_main_opt2`, ...). They
 are evidence for performance work; CI applies no wall-clock budget to them.
+Linux also retains build-invariance's authoritative corpus, both producers'
+case/entry/alias plans, pool queue and chunk metrics in the existing
+`backend-memory-Linux` artifact. Its `provenance.txt` identifies the source,
+compiler binaries, common invocation flags and worker count. Those are the
+same plans the local gate validates and executes; there is no artifact cache
+in the comparison gate.
+
 Exact instruction counts guard performance instead. Use
 `scripts/benchmark-compile-cli.sh` for phase-level local investigation of a
 compile-time change.

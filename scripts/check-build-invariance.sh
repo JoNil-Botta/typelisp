@@ -946,6 +946,31 @@ echo "[build-invariance] batched comparison: $((batch_comparison_end - batch_com
 echo "[build-invariance] standalone sentinels: $((sentinel_end - sentinel_start))s"
 echo "[build-invariance] corpus comparison: ${corpus_seconds}s"
 print_top_chunks
+# Keep the complete plan beside timings so local and hosted coverage audits use
+# the same logical records, producer identities and invocation flags.
+opt1_producer_identity=$("$OPT1_COMPILER" --producer-identity)
+opt2_producer_identity=$("$COMPILER" --producer-identity)
+[ -n "$opt1_producer_identity" ] && [ -n "$opt2_producer_identity" ]
+cat > "$WORKDIR/provenance.txt" <<EOF
+schema_version=1
+source_commit=$(git rev-parse HEAD)
+source_digest=$SOURCE_DIGEST
+source_inputs=$SOURCE_INPUTS
+opt1_compiler=$OPT1_COMPILER
+opt1_compiler_sha256=$(sha256sum "$OPT1_COMPILER" | sed 's/[[:space:]].*//')
+opt1_producer_identity=$opt1_producer_identity
+opt2_compiler=$COMPILER
+opt2_compiler_sha256=$(sha256sum "$COMPILER" | sed 's/[[:space:]].*//')
+opt2_producer_identity=$opt2_producer_identity
+target=$NL_BOOTSTRAP_TARGET
+cfg_args=$(native_target_cfg_args | tr '\n' ' ')
+backend_mode=scalar
+stdlib_roots=stdlib src
+logical_cases=$CORPUS_CASE_COUNT
+batch_chunk_size=$BATCH_CHUNK_SIZE
+pool_workers=$POOL_WORKERS
+pool_budget_mib=$POOL_BUDGET_MIB
+EOF
 echo "build-invariance check passed for $BATCH_CASE_COUNT case(s)"
 
 if [ -n "$HANDOFF_PATH_FILE" ]; then

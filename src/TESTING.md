@@ -320,7 +320,8 @@ function on both targets.
 A lambda's by-value capture is storage of each call, so its frame-slot copy
 is only sound because the ownership graph retires the capture at every return.
 The `capture_borrow_*_reject` safety rows return or store a borrow of a
-capture (scalar, register-resident field, under `with-arena`, `in-arena` with
+capture (scalar, register-resident field, a `String` snapshotted into a
+`with-arena` region, under `with-arena`, `in-arena` with
 `arena.destroy-safe!`, auto-borrowed into a lifetime-carrying call, nested
 lambdas, a captured lambda parameter); main accepted each, and each must
 report the capture's E0205. Two controls keep the inferred-result and

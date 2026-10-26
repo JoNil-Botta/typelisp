@@ -345,6 +345,7 @@ capture_borrow_auto_call_reject|check-fail|tests/safety/capture_borrow_auto_call
 capture_borrow_nested_lambda_reject|check-fail|tests/safety/capture_borrow_nested_lambda_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
 capture_borrow_lambda_param_nested_reject|check-fail|tests/safety/capture_borrow_lambda_param_nested_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
 capture_borrow_in_arena_destroy_reject|check-fail|tests/safety/capture_borrow_in_arena_destroy_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_string_with_arena_reject|check-fail|tests/safety/capture_borrow_string_with_arena_reject.tl|-|cannot return a reference to captured `s`: a by-value capture is this lambda's own copy
 capture_borrow_inferred_return_reject|check-fail|tests/safety/capture_borrow_inferred_return_reject.tl|-|lambda return value has region-tagged type; region value would escape
 capture_borrow_lambda_param_return_reject|check-fail|tests/safety/capture_borrow_lambda_param_return_reject.tl|-|cannot return a reference to parameter `n`
 caller_lifetime_renamed_body_ok|run-exit|tests/safety/caller_lifetime_renamed_body_ok.tl|6|-

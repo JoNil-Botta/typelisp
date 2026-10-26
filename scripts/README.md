@@ -250,26 +250,49 @@ temporary file and `mv` is safe to share.
 
 Linux memory limits (`lib-linux-memory-limit.sh`, used directly by the focused
 inline profile-summary and large CRLF formatter probes) need a usable
-user-systemd manager: it provides a hard cgroup-v2 `MemoryMax` over the complete
-process tree with swap disabled. A host without one fails closed; there is no
-unbounded or RSS-polling fallback, and nothing uses `RLIMIT_AS` or treats
-virtual reservations as resident memory.
+user-systemd manager that delegates cgroup v2 memory, with systemd 254 or newer
+(`DelegateSubgroup=`, `--expand-environment=`). It provides a hard `memory.max`
+over the complete process tree with swap disabled. A host without one fails
+closed; there is no unbounded or RSS-polling fallback, and nothing uses
+`RLIMIT_AS` or treats virtual reservations as resident memory.
+
+Nested calls stay inside every enclosing cap. A top-level call is a transient
+service with memory delegated to it. Its command runs in the leaf
+`workload/tlmem-run`, and the `workload` node carries the requested
+`memory.max`, no swap and `memory.oom.group=1`. A library or wrapper call made
+from a `tlmem-run` leaf starts no unit of its own, because the user manager
+would place that unit beside the outer one, outside its cap. It creates a node
+`tlmem-<pid>-<n>` beside the caller's leaf with its own limits, runs its
+command there as an ordinary child, and kills and removes the node afterwards.
+The kernel charges every nested call, concurrent ones included, to every
+enclosing workload node. Inner limits still apply, and the outer cap bounds
+their aggregate. Each node's `memory.peak` is a measured peak of its whole
+subtree. An outer OOM, timeout or unit stop also ends the nested work. Units
+use `OOMPolicy=continue`, since systemd would count an inner node's OOM kill
+against the outer unit; `memory.oom.group` keeps an OOM at a workload node's
+own limit fatal to that whole node. Nesting is decided from the caller's own
+`/proc/self/cgroup`. The inherited `TYPELISP_LINUX_MEMORY_LIMIT_NODE` only
+detects a lost hierarchy: a caller that has it but has left its `tlmem-run`
+leaf fails closed, as does a workload node that cannot give a nested node
+memory limits. The Windows Job Object backend nests natively: a job created
+inside a bounded job stays under that job's limits.
 
 `run-memory-bounded.sh` gives gates one fail-closed interface to that Linux
-backend and the Windows Job Object wrapper. On Linux the sampled route requires
-cgroup v2 memory delegation and systemd 254 or newer (`DelegateSubgroup=`).
-The delegated unit contains separate sampler and workload leaves. The workload
-keeps the exact requested `memory.max`, with swap disabled; its entire cgroup
-is killed on OOM. The sampler has a separate 64 MiB limit, and the containing
-unit is capped at the requested bytes plus that monitor headroom. This headroom
-does not raise the workload's ceiling. Missing delegation fails before user
-code starts. The sampler measures the process group's RSS from outside its OOM
-domain, reads the workload's `oom_kill` and `memory.peak`, and terminates its
-complete cgroup with `cgroup.kill` on OOM before reporting exit 137. The unit
-uses `OOMPolicy=continue` so systemd does not kill the sampler with the workload.
-The stop-post hook and systemd summary remain additional peak evidence. Direct
-`lib-linux-memory-limit.sh` callers keep `OOMPolicy=kill`, and an
-`ExecStopPost` hook records their peak. The Windows helper tests retain a
+backend and the Windows Job Object wrapper. On Linux the sampled route's
+delegated unit, or nested node, contains a sampler leaf and the workload node.
+The workload keeps the exact requested `memory.max`, with swap disabled; its
+entire subtree is killed on OOM. The sampler has a separate 64 MiB limit, and
+the containing unit or node is capped at the requested bytes plus that monitor
+headroom. This headroom does not raise the workload's ceiling. Missing
+delegation fails before user code starts. The sampler measures the process
+group's RSS from outside its OOM domain and watches the `oom_kill` count of the
+workload's own leaf, which a nested call's OOM at its own limit leaves alone.
+On OOM it terminates the complete workload node with `cgroup.kill` and reports
+its `memory.peak` before exiting 137. Otherwise its peak is the larger of the
+RSS samples and that `memory.peak`, which also covers nested calls. The stop-post
+hook and systemd summary remain additional peak evidence. Direct
+`lib-linux-memory-limit.sh` callers start in a `launch` leaf that builds the
+same workload node, and an `ExecStopPost` hook records their peak. The Windows helper tests retain a
 one-second timeout classification case and separately check descendant cleanup
 with delayed child creation and a ten-second bounded startup/cleanup deadline.
 Its stable key/value record
@@ -292,8 +315,11 @@ workload's environment; its own sampler receives the destination explicitly.
 Nested callers can request their own metrics file or `--report` path. They do
 not inherit or remove their parent's evidence. Systemd stderr uses a unique
 temporary file per invocation, cleaned up after success or failure. The helper
-self-test covers nested library calls and explicit inner reports without
-building another compiler.
+self-test covers nested library calls, explicit inner reports and the hierarchy
+cases without building another compiler: overlapping, concurrent and inner-OOM
+allocations, outer timeout and cancellation, and fail-closed hierarchies. Run
+from inside another bounded workload, every call it makes nests, and it names
+the top-level-only cases it could not run; hosted CI runs it at top level.
 
 On Windows, `verify-integration.sh` sends independent manifest links through
 `windows-integration-linker.ps1`. The measured default is four concurrent

@@ -620,6 +620,30 @@ exercise_hierarchy() {
     grep -Fxq 'reason=memory-limit' "$_h_dir/inner-wrapper.report" ||
         hierarchy_fail "nested wrapper report lost its memory-limit result"
 
+    # A nested wrapper's own timeout ends its holder and node, and the outer
+    # workload continues.
+    hierarchy_run inner-timeout inner-timeout 128
+    hierarchy_expect 0 success
+    hierarchy_log 'wrapper 124'
+    hierarchy_log 'holder gone'
+    hierarchy_log 'leftover 0'
+    grep -Fxq 'reason=timeout' "$_h_dir/inner-wrapper.report" ||
+        hierarchy_fail "nested wrapper report lost its timeout result"
+
+    # Releasing a node refuses every path but a generated node name under a
+    # cgroup path without `.` or `..` components; none of these exist.
+    for _h_release in '/sys/fs/cgroup/a/../b tlmem-1-1' '/tmp/a tlmem-1-1' \
+        '/sys/fs/cgroup/a tlmem-1-1/..' '/sys/fs/cgroup/a tlmem-1-2-3' \
+        '/sys/fs/cgroup/a tlmem-x-1' '/sys/fs/cgroup/a run-1.service' \
+        '/sys/fs/cgroup/./a tlmem-1-1'; do
+        # shellcheck disable=SC2086 # each case is a parent and a name
+        if linux_memory_limit_release_node $_h_release 2> "$WORKDIR/release.stderr"; then
+            fail "nested node release accepted unowned cgroup: $_h_release"
+        fi
+        grep -Fq 'refused to release a cgroup it does not own' "$WORKDIR/release.stderr" ||
+            fail "nested node release lost its refusal diagnostic: $_h_release"
+    done
+
     # An outer timeout terminates nested library and wrapper work.
     hierarchy_run timeout hold-nested 128 2
     hierarchy_expect 124 timeout
@@ -764,8 +788,8 @@ exec awk -v mib="$2" -v ready="$1.ready" -v release="$3" "$4"'
 hold() {
     sh -c "$hold_program" sh "$dir/$1" "$2" "$dir/release" "$hold_awk"
 }
-# nest ROUTE NAME MIB LIMIT_MIB: a holder behind a nested library or wrapper
-# call with its own LIMIT_MIB cap.
+# nest ROUTE NAME MIB LIMIT_MIB [TIMEOUT_SECONDS]: a holder behind a nested
+# library or wrapper call with its own LIMIT_MIB cap (and wrapper timeout).
 nest() {
     case $1 in
         library)
@@ -773,7 +797,8 @@ nest() {
                 sh -c "$hold_program" sh "$dir/$2" "$3" "$dir/release" "$hold_awk"
             ;;
         wrapper)
-            scripts/run-memory-bounded.sh --limit-mib "$4" --report "$dir/$2.report" -- \
+            scripts/run-memory-bounded.sh --limit-mib "$4" --timeout-seconds "${5:-0}" \
+                --report "$dir/$2.report" -- \
                 sh -c "$hold_program" sh "$dir/$2" "$3" "$dir/release" "$hold_awk"
             ;;
     esac
@@ -839,6 +864,18 @@ case $scenario in
         status=0
         nest wrapper inner-wrapper 40 16 || status=$?
         echo "wrapper $status" >> "$dir/log"
+        echo "leftover $(nodes)" >> "$dir/log"
+        ;;
+    inner-timeout)
+        # The holder waits 30 s for a release that never comes.
+        status=0
+        nest wrapper inner-wrapper 8 32 1 || status=$?
+        echo "wrapper $status" >> "$dir/log"
+        if kill -0 "$(cat "$dir/inner-wrapper.pid")" 2>/dev/null; then
+            echo "holder alive" >> "$dir/log"
+        else
+            echo "holder gone" >> "$dir/log"
+        fi
         echo "leftover $(nodes)" >> "$dir/log"
         ;;
     hold-nested)

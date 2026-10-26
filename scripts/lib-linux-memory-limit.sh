@@ -408,16 +408,31 @@ linux_memory_limit_run_systemd() {
         "$_linux_memory_limit_hook_text"
 }
 
-# Kill everything left in nested node $1, which this invocation created, wait
-# until it is empty and remove it with every cgroup below it.
+# Kill everything left in nested node $2 of enclosing workload node $1, which
+# this invocation created, wait until it is empty and remove it with every
+# cgroup below it. Anything but a cgroup path without `.` or `..` components
+# and a node name of the generated form tlmem-<pid>-<n> is refused.
 linux_memory_limit_release_node() {
+    _linux_memory_limit_release_owned=1
     case "${1:?}" in
-        /sys/fs/cgroup/*/tlmem-[0-9]*-[0-9]*) ;;
-        *)
-            echo "Linux memory limiting refused to release a cgroup it does not own: $1" >&2
-            return 1
-            ;;
+        /sys/fs/cgroup/?*) ;;
+        *) _linux_memory_limit_release_owned=0 ;;
     esac
+    case "$1/" in
+        */./* | */../*) _linux_memory_limit_release_owned=0 ;;
+    esac
+    case "${2:?}" in
+        tlmem-[0-9]*-[0-9]*) ;;
+        *) _linux_memory_limit_release_owned=0 ;;
+    esac
+    case "${2#tlmem-}" in
+        *[!0-9-]* | *-*-*) _linux_memory_limit_release_owned=0 ;;
+    esac
+    if [ "$_linux_memory_limit_release_owned" -ne 1 ]; then
+        echo "Linux memory limiting refused to release a cgroup it does not own: $1/$2" >&2
+        return 1
+    fi
+    set -- "$1/$2"
     [ -d "$1" ] || return 0
     printf '1\n' > "$1/cgroup.kill" 2>/dev/null || true
     _linux_memory_limit_release_attempt=0
@@ -476,7 +491,8 @@ linux_memory_limit_run_nested() {
     _linux_memory_limit_attempt=0
     while :; do
         _linux_memory_limit_node_count=$((_linux_memory_limit_node_count + 1))
-        _linux_memory_limit_nested="$_linux_memory_limit_node/tlmem-$_linux_memory_limit_owner_pid-$_linux_memory_limit_node_count"
+        _linux_memory_limit_nested_name="tlmem-$_linux_memory_limit_owner_pid-$_linux_memory_limit_node_count"
+        _linux_memory_limit_nested="$_linux_memory_limit_node/$_linux_memory_limit_nested_name"
         if mkdir "$_linux_memory_limit_nested" 2>/dev/null; then
             break
         fi
@@ -491,7 +507,8 @@ linux_memory_limit_run_nested() {
         "$_linux_memory_limit_node_bytes" "$_linux_memory_limit_node_oom_group" \
         "$_linux_memory_limit_node_leaf"; then
         echo "Linux memory limiting failed to configure nested cgroup $_linux_memory_limit_nested" >&2
-        linux_memory_limit_release_node "$_linux_memory_limit_nested" || true
+        linux_memory_limit_release_node "$_linux_memory_limit_node" \
+            "$_linux_memory_limit_nested_name" || true
         return 2
     fi
 
@@ -515,7 +532,8 @@ linux_memory_limit_run_nested() {
     _linux_memory_limit_workload_peak=$_linux_memory_limit_peak_read
     linux_memory_limit_read_peak "$_linux_memory_limit_nested"
     _linux_memory_limit_nested_peak=$_linux_memory_limit_peak_read
-    linux_memory_limit_release_node "$_linux_memory_limit_nested" || true
+    linux_memory_limit_release_node "$_linux_memory_limit_node" \
+        "$_linux_memory_limit_nested_name" || true
     linux_memory_limit_finish "$_linux_memory_limit_status" 0 \
         "$_linux_memory_limit_nested_peak" "node memory.peak" \
         "$_linux_memory_limit_workload_peak" "$_linux_memory_limit_oom_kills" \

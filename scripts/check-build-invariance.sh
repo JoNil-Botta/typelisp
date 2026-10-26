@@ -9,7 +9,7 @@ set -eu
 # opt2-built stage4; this gate builds one opt1 compiler from current source and
 # compares their emitted assembly over a fixed Linux corpus.
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-ci-timing.sh"
@@ -26,8 +26,8 @@ compiler. Builds one opt1 compiler from src/main.tl, then compares emitted
 assembly for a fixed corpus. The same fresh opt1 compiler must also compile
 the complete codegen smoke and build backend-tests at opt2 within 8 GiB.
 
-The four selfhost compiles run alone. Every other
-compile and the backend-tests build run in a pool of
+After opt1 compiler construction, all corpus compiles and the backend-tests
+build run in a pool of
 TYPELISP_BUILD_INVARIANCE_WORKERS processes (1-3, default 2), each under a
 kernel-enforced memory cap, with at most 12288 MiB of caps running at once.
 EOF
@@ -79,7 +79,7 @@ configure_toolchain
 # keeping each process bounded; smaller values remain available for local
 # memory probes, but the gate never accepts an unbounded whole-corpus batch.
 # Whole-compiler selfhost and smoke sources dominate their process, so keep
-# those as singleton batches instead of carrying an already-large process
+# those as single-input batches instead of carrying an already-large process
 # high-water mark into another compile.
 BATCH_CHUNK_MAX=64
 BATCH_CHUNK_SIZE=${TYPELISP_BUILD_INVARIANCE_BATCH_SIZE:-$BATCH_CHUNK_MAX}
@@ -99,10 +99,11 @@ fi
 # every pooled job runs under a kernel-enforced cap with swap disabled, and a
 # job starts only while the caps of all running jobs fit the pool budget. The
 # budget leaves a 16 GiB runner a quarter of its memory for everything outside
-# the pool. The complete backend-tests build and both producers' complete
-# codegen smoke keep the 8 GiB cap, so no two of them overlap; every other
-# chunk gets 4 GiB, half as much again as the largest measured peak
-# (src/TESTING.md records the measurements).
+# the pool. The complete backend-tests build, both producers' complete codegen
+# smoke and the four whole-compiler selfhost compiles keep the 8 GiB cap, so no
+# two of them overlap; every other chunk keeps its 4 GiB class. The outer
+# ci-verify scheduler reserves measured gate peaks separately from these hard
+# per-process caps.
 POOL_WORKERS_MAX=3
 POOL_WORKERS=${TYPELISP_BUILD_INVARIANCE_WORKERS:-2}
 case "$POOL_WORKERS" in
@@ -118,10 +119,16 @@ fi
 POOL_BUDGET_MIB=12288
 POOL_FULL_CAP_MIB=8192
 POOL_CHUNK_CAP_MIB=4096
+# Backend tests keep their deadline; chunk deadlines use the shared policy.
 POOL_JOB_TIMEOUT_SECONDS=600
 
 WORKDIR="$ROOT/target/build-invariance"
-rm -rf "$WORKDIR"
+mkdir -p "$ROOT/target"
+if [ "$(CDPATH= cd -- "$ROOT/target" && pwd -P)" != "$ROOT/target" ]; then
+    echo "[build-invariance] target directory is outside the checkout" >&2
+    exit 1
+fi
+rm -rf -- "${ROOT:?}/target/build-invariance"
 mkdir -p "$WORKDIR"
 CHUNK_METRICS="$WORKDIR/chunk-metrics.tsv"
 : > "$CHUNK_METRICS"
@@ -137,7 +144,15 @@ if [ "${TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE+x}" = x ]; then
         /*) ;;
         *) HANDOFF_PATH_FILE="$ROOT/$HANDOFF_PATH_FILE" ;;
     esac
-    rm -f "$HANDOFF_PATH_FILE"
+    handoff_parent=$(CDPATH= cd -- "$(dirname -- "$HANDOFF_PATH_FILE")" && pwd -P)
+    case "$handoff_parent/" in
+        "$ROOT/target/"*) ;;
+        *)
+            echo "build-invariance opt1 handoff must belong to target/" >&2
+            exit 2
+            ;;
+    esac
+    rm -f -- "${HANDOFF_PATH_FILE:?}"
 fi
 
 print_log_pair() {
@@ -285,43 +300,7 @@ write_corpus() {
 }
 
 write_batch_chunks() {
-    chunk_records=$1
-    chunk_dir=$2
-
-    rm -rf "$chunk_dir"
-    mkdir -p "$chunk_dir"
-    awk -F'|' -v chunk_dir="$chunk_dir" -v chunk_size="$BATCH_CHUNK_SIZE" '
-        function singleton(name, source) {
-            return name ~ /^selfhost_main_/ || source ~ /^src\/tests\/compiler_[^/]*\.tl$/
-        }
-        function finish_chunk() {
-            if (chunk_entries > 0) {
-                close(cases_path)
-                chunk_index += 1
-                chunk_entries = 0
-            }
-        }
-        function start_chunk() {
-            suffix = sprintf("%04d", chunk_index)
-            cases_path = chunk_dir "/cases." suffix ".txt"
-        }
-        $1 != "" {
-            if (singleton($1, $2) && chunk_entries > 0) {
-                finish_chunk()
-            }
-            if (chunk_entries == 0) {
-                start_chunk()
-            }
-            print $0 >> cases_path
-            chunk_entries += 1
-            if (singleton($1, $2) || chunk_entries >= chunk_size) {
-                finish_chunk()
-            }
-        }
-        END {
-            finish_chunk()
-        }
-    ' "$chunk_records"
+    build_invariance_write_chunks "$1" "$2" "$BATCH_CHUNK_SIZE"
 }
 
 prepare_compile_batches() {
@@ -330,7 +309,6 @@ prepare_compile_batches() {
     batch_root="$WORKDIR/batches/$compiler_label"
     all_cases="$batch_root/cases.txt"
 
-    rm -rf "$batch_root"
     mkdir -p "$batch_root/opt1" "$batch_root/opt2"
     prepared_count=0
     while IFS='|' read -r name source opt_level; do
@@ -351,7 +329,6 @@ prepare_compile_batches() {
         compile_source=$source
         if [ "$name" = integration_sym_i64_env ]; then
             input_dir="$WORKDIR/inputs/$name/sym_i64_env"
-            rm -rf "$input_dir"
             mkdir -p "$input_dir"
             cp "$source" "$input_dir/sym_i64_env.tl"
             cp src/sym_i64_env.tl "$input_dir/sym_i64_env_core.tl"
@@ -414,19 +391,6 @@ verify_batch_outputs() {
     done < "$verify_case_chunk"
 }
 
-chunk_is_timed_selfhost() {
-    [ "$(wc -l < "$1" | tr -d ' ')" -eq 1 ] || return 1
-    case "$(awk -F'|' 'NR == 1 { print $1; exit }' "$1")" in
-        selfhost_main_opt1 | selfhost_main_opt2) return 0 ;;
-    esac
-    return 1
-}
-
-chunk_is_complete_codegen_smoke() {
-    [ "$(wc -l < "$1" | tr -d ' ')" -eq 1 ] &&
-        [ "$(awk -F'|' 'NR == 1 { print $3; exit }' "$1")" = src/tests/compiler_codegen_smoke_suite.tl ]
-}
-
 run_batch_chunk() {
     batch_compiler_label=$1
     batch_compiler=$2
@@ -435,9 +399,9 @@ run_batch_chunk() {
     batch_case_chunk=$5
     batch_id=$6
     batch_entries=$7
-    # Empty for the selfhost compiles that run alone; a pooled chunk passes the
-    # cap its queue record reserved.
+    # The cap the chunk's queue record reserved.
     batch_cap_mib=$8
+    batch_timeout_seconds=$(build_invariance_chunk_timeout_seconds "$batch_case_chunk")
     batch_logical_cases=$(wc -l < "$batch_case_chunk" | tr -d ' ')
     batch_label="build-invariance $batch_compiler_label opt$batch_opt_level chunk $batch_id ($batch_entries compile(s), $batch_logical_cases case(s), serial)"
 
@@ -476,27 +440,23 @@ run_batch_chunk() {
         --backend-mode scalar \
         --opt-level "$batch_opt_level" \
         --stdlib-root stdlib --stdlib-root src
-    batch_memory_report=
-    batch_peak_bytes=0
-    if [ -n "$batch_cap_mib" ]; then
-        batch_suffix=${batch_chunk_path##*/entries.}
-        batch_memory_report="$WORKDIR/backend-memory/$batch_compiler_label.opt$batch_opt_level.chunk${batch_suffix%.txt}.memory"
-        if [ "$batch_compiler_label" = opt1-built ] && chunk_is_complete_codegen_smoke "$batch_case_chunk"; then
-            # This existing singleton already compiles the complete stress
-            # corpus with the opt1-built compiler. Its report is the ownership
-            # regression's evidence; it is not compiled a second time.
-            batch_memory_report="$WORKDIR/backend-memory/codegen-smoke.memory"
-            batch_stdout="$WORKDIR/backend-memory/codegen-smoke.stdout"
-            batch_stderr="$WORKDIR/backend-memory/codegen-smoke.stderr"
-        fi
-        if [ -e "$batch_memory_report" ] || [ -L "$batch_memory_report" ]; then
-            echo "[build-invariance] memory report exists before compile: $batch_memory_report" >&2
-            exit 1
-        fi
-        set -- "$ROOT/scripts/run-memory-bounded.sh" \
-            --limit-mib "$batch_cap_mib" --report "$batch_memory_report" \
-            --timeout-seconds "$POOL_JOB_TIMEOUT_SECONDS" -- "$@"
+    batch_suffix=${batch_chunk_path##*/entries.}
+    batch_memory_report="$WORKDIR/backend-memory/$batch_compiler_label.opt$batch_opt_level.chunk${batch_suffix%.txt}.memory"
+    if [ "$batch_compiler_label" = opt1-built ] && build_invariance_chunk_is_codegen_smoke "$batch_case_chunk"; then
+        # This existing singleton already compiles the complete stress corpus
+        # with the opt1-built compiler. Its report is the ownership
+        # regression's evidence; it is not compiled a second time.
+        batch_memory_report="$WORKDIR/backend-memory/codegen-smoke.memory"
+        batch_stdout="$WORKDIR/backend-memory/codegen-smoke.stdout"
+        batch_stderr="$WORKDIR/backend-memory/codegen-smoke.stderr"
     fi
+    if [ -e "$batch_memory_report" ] || [ -L "$batch_memory_report" ]; then
+        echo "[build-invariance] memory report exists before compile: $batch_memory_report" >&2
+        exit 1
+    fi
+    set -- "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib "$batch_cap_mib" --report "$batch_memory_report" \
+        --timeout-seconds "$batch_timeout_seconds" -- "$@"
     if ! ci_timing_run "$batch_timing_label" compile \
         run_with_heartbeat_capture \
         "$batch_label" \
@@ -508,12 +468,10 @@ run_batch_chunk() {
         print_batch_cases "$batch_case_chunk"
         exit 1
     fi
-    if [ -n "$batch_memory_report" ]; then
-        check_backend_memory_report "$batch_memory_report" "$batch_cap_mib"
-        batch_peak_bytes=$(sed -n 's/^peak_memory_bytes=//p' "$batch_memory_report")
-        if [ "$batch_memory_report" = "$WORKDIR/backend-memory/codegen-smoke.memory" ]; then
-            cat "$batch_memory_report"
-        fi
+    check_backend_memory_report "$batch_memory_report" "$batch_cap_mib"
+    batch_peak_bytes=$(sed -n 's/^peak_memory_bytes=//p' "$batch_memory_report")
+    if [ "$batch_memory_report" = "$WORKDIR/backend-memory/codegen-smoke.memory" ]; then
+        cat "$batch_memory_report"
     fi
     build_invariance_copy_aliases "$batch_aliases"
     verify_batch_outputs "$batch_compiler_label" "$batch_case_chunk" "$batch_stdout" "$batch_stderr"
@@ -641,7 +599,7 @@ run_batch_sentinels() {
 }
 
 pool_job_cap_mib() {
-    if chunk_is_complete_codegen_smoke "$1"; then
+    if build_invariance_chunk_is_codegen_smoke "$1" || build_invariance_chunk_is_selfhost "$1"; then
         printf '%s\n' "$POOL_FULL_CAP_MIB"
     else
         printf '%s\n' "$POOL_CHUNK_CAP_MIB"
@@ -748,7 +706,6 @@ run_batched_comparison() {
 
     BATCH_CASE_COUNT=0
     batch_index=0
-    exclusive_selfhost_count=0
     for opt_level in 1 2; do
         left_chunk_dir="$left_batches/opt$opt_level/chunks"
         right_chunk_dir="$right_batches/opt$opt_level/chunks"
@@ -773,15 +730,6 @@ run_batched_comparison() {
             fi
 
             batch_index=$((batch_index + 1))
-            if chunk_is_timed_selfhost "$left_cases"; then
-                # CI budgets the wall time of these four compiles, so they run
-                # alone, before the pool starts.
-                run_batch_chunk "opt1-built" "$OPT1_COMPILER" "$opt_level" "$left_chunk" "$left_cases" "$batch_index/$left_chunk_count" "$left_entries" ""
-                run_batch_chunk "opt2-built" "$OPT2_STAGE4" "$opt_level" "$right_chunk" "$right_cases" "$batch_index/$left_chunk_count" "$right_entries" ""
-                compare_batch_cases "$left_cases" "$LEFT_DIR" "$RIGHT_DIR"
-                exclusive_selfhost_count=$((exclusive_selfhost_count + 1))
-                continue
-            fi
             left_job="opt1-built.opt$opt_level.$chunk_id"
             right_job="opt2-built.opt$opt_level.$chunk_id"
             printf '%s|%s\n' "$left_job" "$(pool_job_cap_mib "$left_cases")" >> "$POOL_QUEUE"
@@ -791,11 +739,6 @@ run_batched_comparison() {
             printf '%s|%s|%s\n' "$left_job" "$right_job" "$left_cases" >> "$POOL_PAIRS"
         done
     done
-    if [ "$exclusive_selfhost_count" -ne 2 ]; then
-        echo "[build-invariance] expected the opt1 and opt2 selfhost chunks to run alone, got $exclusive_selfhost_count" >&2
-        exit 1
-    fi
-
     POOL_DIR="$WORKDIR/pool"
     bounded_pool_init "$POOL_DIR" "$POOL_BUDGET_MIB" "$POOL_QUEUE"
     mkdir -p "$POOL_DIR/metrics" "$POOL_DIR/timing" "$WORKDIR/backend-memory"
@@ -817,7 +760,7 @@ run_batched_comparison() {
     pool_finished=$(date +%s%3N)
 
     pool_merge_rows required
-    pool_serial_ms=$(awk -F '\t' '$6 + 0 > 0 { total += $1 } END { print total + 0 }' "$CHUNK_METRICS")
+    pool_serial_ms=$(awk -F '\t' '{ total += $1 } END { print total + 0 }' "$CHUNK_METRICS")
     echo "[build-invariance] worker pool: $((pool_finished - pool_started))ms wall for ${pool_serial_ms}ms of chunk compiles plus the backend-tests build"
 
     for required_report in backend-tests codegen-smoke; do
@@ -903,7 +846,6 @@ CORPUS="$WORKDIR/corpus.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"
 RIGHT_DIR="$WORKDIR/compare/opt2-built"
 write_corpus "$CORPUS"
-rm -rf "$LEFT_DIR" "$RIGHT_DIR"
 mkdir -p "$LEFT_DIR" "$RIGHT_DIR"
 
 corpus_start=$(date +%s)
@@ -946,6 +888,34 @@ echo "[build-invariance] batched comparison: $((batch_comparison_end - batch_com
 echo "[build-invariance] standalone sentinels: $((sentinel_end - sentinel_start))s"
 echo "[build-invariance] corpus comparison: ${corpus_seconds}s"
 print_top_chunks
+# Keep the complete plan beside timings so local and hosted coverage audits use
+# the same logical records, producer identities and invocation flags.
+opt1_producer_identity=$("$OPT1_COMPILER" --producer-identity)
+opt2_producer_identity=$("$COMPILER" --producer-identity)
+if [ -z "$opt1_producer_identity" ] || [ -z "$opt2_producer_identity" ]; then
+    echo "[build-invariance] compiler producer identity is empty" >&2
+    exit 1
+fi
+cat > "$WORKDIR/provenance.txt" <<EOF
+schema_version=1
+source_commit=$(git rev-parse HEAD)
+source_digest=$SOURCE_DIGEST
+source_inputs=$SOURCE_INPUTS
+opt1_compiler=$OPT1_COMPILER
+opt1_compiler_sha256=$(sha256sum "$OPT1_COMPILER" | sed 's/[[:space:]].*//')
+opt1_producer_identity=$opt1_producer_identity
+opt2_compiler=$COMPILER
+opt2_compiler_sha256=$(sha256sum "$COMPILER" | sed 's/[[:space:]].*//')
+opt2_producer_identity=$opt2_producer_identity
+target=$NL_BOOTSTRAP_TARGET
+cfg_args=$(native_target_cfg_args | tr '\n' ' ')
+backend_mode=scalar
+stdlib_roots=stdlib src
+logical_cases=$CORPUS_CASE_COUNT
+batch_chunk_size=$BATCH_CHUNK_SIZE
+pool_workers=$POOL_WORKERS
+pool_budget_mib=$POOL_BUDGET_MIB
+EOF
 echo "build-invariance check passed for $BATCH_CASE_COUNT case(s)"
 
 if [ -n "$HANDOFF_PATH_FILE" ]; then

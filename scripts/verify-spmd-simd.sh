@@ -143,6 +143,7 @@ tests/spmd/private_helper_i64.tl
 tests/spmd/private_helper_f64.tl
 tests/spmd/private_helper_bool.tl
 tests/spmd/private_helper_mask_arg.tl
+tests/spmd/private_helper_entry_uniform_float.tl
 tests/spmd/private_helper_uniform_stack.tl
 tests/spmd/private_helper_uniform_stack_f64.tl
 tests/spmd/private_helper_uniform_stack_f64_wide.tl

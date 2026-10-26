@@ -61428,6 +61428,7 @@
 
 (define (compiler-backend-emit-spmd-private-param-spills-from
   [entry : (&mut entry CompilerBackendAsmBuf)]
+  [uniforms : (&mut uniforms CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -61543,10 +61544,13 @@
                           (compiler_diagnostic.compiler-diagnostic-at-start
                             ""
                             message)))]))))]
+          [_uniform : unit
+            (unless special? (compiler-backend-asm-append uniforms head))]
           [tail
             (try
               (compiler-backend-emit-spmd-private-param-spills-from
                 entry
+                uniforms
                 type-segment-bases
                 target
                 assignments
@@ -61572,7 +61576,10 @@
                   special-index)
                 vars
                 backend-state))]
-          (Ok (str_cat.str-cat head tail)))])))
+          (Ok
+            (if special?
+              (str_cat.str-cat head tail)
+              tail)))])))
 
 (define (compiler-backend-emit-spmd-private-param-spills
   [type-segment-bases : i64]
@@ -61605,10 +61612,17 @@
     ;; #9302: the walk's entry copies (compiler-backend-param-entry-xmm-stage)
     ;; run ahead of the opmask plan and every special-parameter load.
     [entry : CompilerBackendAsmBuf (compiler-backend-asm-buf-with-capacity 0)]
+    ;; #9301: home the uniforms before a varying destination can overwrite an
+    ;; unread incoming XMM alias. Uniform homes use the scalar entry constraints;
+    ;; their XMM0-XMM15 bank is disjoint from incoming AVX-512 ZMM17-ZMM24.
+    ;; AVX2 special inputs stay in the caller's block until their loads run.
+    [uniforms : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity 0)]
     [other-asm
       (try
         (compiler-backend-emit-spmd-private-param-spills-from
           (&mut entry)
+          (&mut uniforms)
           type-segment-bases
           target
           assignments
@@ -61626,6 +61640,7 @@
       (str_cat.str-cat
         (compiler-backend-asm-buf-finish (& entry))
         mask-asm
+        (compiler-backend-asm-buf-finish (& uniforms))
         other-asm))))
 
 (define (compiler-backend-emit-private-memory-param-address

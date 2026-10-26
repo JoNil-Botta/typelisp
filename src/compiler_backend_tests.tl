@@ -36756,34 +36756,44 @@ f:
 ;; staging register. Both copies run through %xmm8 before the first
 ;; special-parameter load and before any register homing.
 (define (compiler-backend-spmd-entry-copy-linux-avx2-ok?) : bool
-  (asm-ok?
-    (compiler-backend-spmd-entry-copy-spills
-      (backend.CompilerBackendTarget.Linux)
-      (Avx2)
-      "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx2_x=%9:f64, i=%10:f64, j=%11:f32"
-      "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%ymm2 %10=spill:-272 %11=spill:-280"
-      12)
-    (has
-      "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n    vmovdqu 0(%r10), %ymm14\n"
-      "    vmovdqu 32(%r10), %ymm2\n")
-    (lacks ", %xmm2\n")))
+  (match (compiler-backend-spmd-entry-copy-spills
+    (backend.CompilerBackendTarget.Linux)
+    (Avx2)
+    "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx2_x=%9:f64, i=%10:f64, j=%11:f32"
+    "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%ymm2 %10=spill:-272 %11=spill:-280"
+    12)
+    [(Ok text)
+      (and
+        (string.is-string-prefix-at
+          text
+          "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n"
+          0)
+        (asm-has? text "    vmovdqu 32(%r10), %ymm2\n")
+        (asm-lacks? text ", %xmm2\n"))]
+    [(Err _) false]))
 
 ;; Win64 AVX2: a..d take the four positional registers, so e, f and g arrive on
 ;; the stack. The frame-homed f64 e and f32 f copy through %xmm4 first; g, whose
 ;; home is a register, still loads straight into it.
 (define (compiler-backend-spmd-entry-copy-windows-avx2-ok?) : bool
-  (asm-ok?
-    (compiler-backend-spmd-entry-copy-spills
-      (backend.CompilerBackendTarget.Windows)
-      (Avx2)
-      "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, __tl_spmd_varying_arg_avx2_x=%5:f64, e=%6:f64, f=%7:f32, g=%8:f64"
-      "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=%ymm2 %6=spill:-240 %7=spill:-248 %8=%xmm5"
-      9)
-    (has
-      "    movsd 48(%rbp), %xmm4\n    movsd %xmm4, -240(%rbp)\n    movss 56(%rbp), %xmm4\n    movss %xmm4, -248(%rbp)\n    vmovdqu 0(%r10), %ymm14\n"
-      "    vmovdqu 32(%r10), %ymm2\n"
-      "    movsd 64(%rbp), %xmm5\n")
-    (lacks ", %xmm2\n")))
+  (match (compiler-backend-spmd-entry-copy-spills
+    (backend.CompilerBackendTarget.Windows)
+    (Avx2)
+    "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, __tl_spmd_varying_arg_avx2_x=%5:f64, e=%6:f64, f=%7:f32, g=%8:f64"
+    "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=%ymm2 %6=spill:-240 %7=spill:-248 %8=%xmm5"
+    9)
+    [(Ok text)
+      (and
+        (string.is-string-prefix-at
+          text
+          "    movsd 48(%rbp), %xmm4\n    movsd %xmm4, -240(%rbp)\n    movss 56(%rbp), %xmm4\n    movss %xmm4, -248(%rbp)\n"
+          0)
+        (asm-has?
+          text
+          "    vmovdqu 32(%r10), %ymm2\n"
+          "    movsd 64(%rbp), %xmm5\n")
+        (asm-lacks? text ", %xmm2\n"))]
+    [(Err _) false]))
 
 ;; System V AVX-512: the varying x arrives in %zmm17 and moves to %zmm2. The
 ;; entry copies run before the opmask entry plan and that move.
@@ -36812,6 +36822,185 @@ f:
           (> varying mask)
           (asm-lacks? text ", %xmm2\n")))]
     [(Err _) false]))
+
+;; Every incoming operand must be read before any write to it, including the
+;; XMM/YMM/ZMM aliases of a physical vector register. These fixtures contain
+;; only moves; checking the emitted operands also covers frame and block inputs.
+(define (compiler-backend-entry-preserves-inputs?
+  [text : (& text str)]
+  [sources : (& sources (__tl_dyn-array String))]) : bool
+  (for [index (iterator.range 0 (array-length sources))]
+    (let
+      [source : String (string.copy (& (array-ref sources index)))]
+      [read : i64
+        (backend.compiler-backend-string-find-from
+          text
+          (str_cat.str-cat " " (string.copy (& source)) ", ")
+          0)]
+      [family : i64
+        (cabi.compiler-abi-register-vector-family-index
+          (cabi.compiler-abi-register-id-from-spelling (string.copy (& source))))]
+      [aliases : (__tl_dyn-array String)
+        (if (< family 0)
+          (__tl_make-array source)
+          (__tl_make-array
+            (str_cat.str-cat "%xmm" (string.int->string family))
+            (str_cat.str-cat "%ymm" (string.int->string family))
+            (str_cat.str-cat "%zmm" (string.int->string family))))]
+      (when (< read 0) (return false))
+      (for [alias-index (iterator.range 0 (array-length aliases))]
+        (let
+          [write : i64
+            (backend.compiler-backend-string-find-from
+              text
+              (str_cat.str-cat
+                ", "
+                (string.copy (& (array-ref aliases alias-index)))
+                "\n")
+              0)]
+          (when (and (>= write 0) (< write read)) (return false))))))
+  true)
+
+(define (compiler-backend-entry-preservation-oracle-ok?) : bool
+  (let
+    [sources : (__tl_dyn-array String) (__tl_make-array "%xmm2" "%k1")]
+    (and
+      (compiler-backend-entry-preserves-inputs?
+        "    movss %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n    vmovdqu 32(%r10), %ymm2\n"
+        (& sources))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    vmovdqu 32(%r10), %ymm2\n    movss %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n"
+          (& sources)))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    vmovupd %zmm17, %zmm2\n    movsd %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n"
+          (& sources)))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    movss %xmm0, %xmm2\n    movss %xmm2, -8(%rbp)\n    kmovq %k1, %k2\n"
+          (& sources)))
+      (not
+        (compiler-backend-entry-preserves-inputs?
+          "    movss %xmm2, -8(%rbp)\n    kmovq %k2, %k1\n    kmovq %k1, %k3\n"
+          (& sources)))
+      (not (compiler-backend-entry-preserves-inputs? "" (& sources))))))
+
+;; #9301: special parameters precede and interleave the uniforms. Both float
+;; widths have register and frame destinations; the varying homes alias later
+;; incoming XMM2/XMM6. AVX2 also has a frame-homed varying value. AVX-512 keeps
+;; its active/bool mask swap as one graph. WIN1 remains unchanged.
+(define (compiler-backend-spmd-entry-preservation-case?
+  [windows? : bool]
+  [avx512? : bool]
+  [f64? : bool]) : bool
+  (let
+    [sources : (__tl_dyn-array String)
+      (if windows?
+        (__tl_make-array
+          "%xmm0"
+          "%xmm1"
+          "%xmm2"
+          "%r9"
+          "48(%rbp)"
+          "56(%rbp)"
+          "64(%rbp)"
+          "72(%rbp)"
+          "80(%rbp)"
+          "88(%rbp)"
+          "96(%rbp)")
+        (__tl_make-array
+          "%xmm0"
+          "%xmm1"
+          "%xmm2"
+          "%rdi"
+          "%xmm3"
+          "%xmm4"
+          "%xmm5"
+          "%xmm6"
+          "%xmm7"
+          "16(%rbp)"
+          "24(%rbp)"))]
+    [special-sources : (__tl_dyn-array String)
+      (if avx512?
+        (__tl_make-array "%k1" "%zmm17" "%k2" "%zmm18")
+        (__tl_make-array "0(%r10)" "32(%r10)" "64(%r10)" "96(%r10)"))]
+    [first-ty : String
+      (if f64?
+        "f64"
+        "f32")]
+    [second-ty : String
+      (if f64?
+        "f32"
+        "f64")]
+    [result
+      (compiler-backend-spmd-entry-copy-spills
+        (if windows?
+          (backend.CompilerBackendTarget.Windows)
+          (backend.CompilerBackendTarget.Linux))
+        (if avx512?
+          (Avx512)
+          (Avx2))
+        (str_cat.str-cat
+          "__tl_spmd_active_mask=%0:bool, __tl_spmd_varying_arg_x=%1:"
+          (string.copy (& first-ty))
+          ", a=%2:"
+          (string.copy (& first-ty))
+          ", __tl_spmd_mask_arg_b=%3:bool, b=%4:"
+          (string.copy (& second-ty))
+          ", __tl_spmd_varying_arg_y=%5:i64, c=%6:"
+          (string.copy (& first-ty))
+          ", d=%7:i64, e=%8:"
+          (string.copy (& second-ty))
+          ", f=%9:"
+          (string.copy (& first-ty))
+          ", g=%10:"
+          (string.copy (& second-ty))
+          ", h=%11:"
+          (string.copy (& first-ty))
+          ", i=%12:"
+          (string.copy (& second-ty))
+          ", j=%13:"
+          first-ty
+          ", k=%14:"
+          second-ty)
+        (str_cat.str-cat
+          (if avx512?
+            "%0=%k2 %1=%zmm2 %3=%k1 %5=%zmm6 "
+            "%0=spill:-32 %1=%ymm2 %3=%ymm6 %5=spill:-96 ")
+          "%2=spill:-104 %4=%xmm12 %6=spill:-112 %7=%r12 %8=%xmm11 %9=spill:-120 %10=%xmm10 %11=spill:-128 %12=%xmm9 %13=spill:-136 %14=spill:-144")
+        15)]
+    (match result
+      [(Ok text)
+        (and
+          (compiler-backend-entry-preserves-inputs? text (& sources))
+          (compiler-backend-entry-preserves-inputs? text (& special-sources))
+          (asm-lacks? text ", %r10\n")
+          (if avx512?
+            (asm-has?
+              text
+              "    kmovq %k1, %k7\n    kmovq %k2, %k1\n    kmovq %k7, %k2\n")
+            (asm-has? text "    vmovdqu %ymm14, -96(%rbp)\n")))]
+      [(Err _) false])))
+
+(define (compiler-backend-spmd-entry-preservation-ok?) : bool
+  (unless (compiler-backend-entry-preservation-oracle-ok?) (return false))
+  (for [abi (iterator.range 0 2)]
+    (for [mode (iterator.range 0 2)]
+      (for [width (iterator.range 0 2)]
+        (unless
+          (compiler-backend-spmd-entry-preservation-case?
+            (= abi 1)
+            (= mode 1)
+            (= width 1))
+          (return false)))))
+  true)
+
+(test
+  backend-spmd-entry-preserves-every-unread-input
+  (test.assert-true
+    (compiler-backend-spmd-entry-preservation-ok?)
+    "private entry preserves every unread argument and its physical aliases"))
 
 (define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
@@ -39076,6 +39265,7 @@ b_keep:
         (compiler-backend-spmd-entry-copy-linux-avx2-ok?)
         (compiler-backend-spmd-entry-copy-windows-avx2-ok?)
         (compiler-backend-spmd-entry-copy-linux-avx512-ok?)
+        (compiler-backend-spmd-entry-preservation-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)

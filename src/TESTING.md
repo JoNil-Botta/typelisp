@@ -335,6 +335,15 @@ and compare selected payload bits. Shape rows retain ordered packed GT/GE
 on both target ABIs; backend IR-text cases cover register and spill operands
 and unchanged AVX-512 signed/unsigned integer predicates.
 
+`backend-spmd-entry-preserves-every-unread-input` checks every incoming operand
+against earlier writes to its physical XMM/YMM/ZMM aliases on SysV and Win64.
+Mixed f32/f64 uniforms have register and frame homes alongside integer,
+varying and bool inputs; the AVX-512 mask swap retains its parallel schedule.
+Keep the stack-float entry-copy regressions beside it. The required SPMD
+`private-helper-entry-uniform-float-run` case runs the out-of-line reproducer
+in scalar/AVX2/AVX-512 at opt0/1/2, including a partial gang and every lane's
+result. Missing execution routes remain unverified.
+
 `spmd_uniform_index_write.tl` preserves unmasked uniform receiver/index/value
 writes across empty and tail domains in scalar, AVX2 and AVX-512 modes. The
 paired safety cases reject a uniform destination when the value is varying,

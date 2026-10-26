@@ -3,8 +3,8 @@
   (b i64)
   (c i64))
 
-;; lint-allow: local-name-case -- regression for the formerly hidden spelling.
 (define (raw-alias
+  ;; lint-allow: local-name-case -- regression for the formerly hidden spelling.
   [x01__sret : (MutPtr i64)]
   [other : (MutPtr i64)]
   [depth : i64]) : i64
@@ -16,8 +16,8 @@
         [_ : unit (ptr-write! other 20)]
         (+ before (ptr-read x01__sret))))))
 
-;; lint-allow: local-name-case -- regression for the formerly hidden spelling.
 (define (ref-alias
+  ;; lint-allow: local-name-case -- regression for the formerly hidden spelling.
   [x01__sret : (& x01__sret i64)]
   [other : (& other i64)]
   [depth : i64]) : i64

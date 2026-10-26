@@ -328,7 +328,8 @@ use the end-state forms:
 
 - Use dotted module imports with aliases and qualified member access:
   `(import stdlib.string)` and `(string.eq left right)`. Legacy string-path
-  imports are compatibility-only.
+  imports have been removed: replace `(import "stdlib/string.tl")` with
+  `(import stdlib.string)`.
 - Prefer qualified short stdlib names such as `string.append`; flat
   module-prefixed names such as `string-append` are transitional.
 - Use the prelude spellings `when`, `unless`, `and`, `or`, scalar `for`,

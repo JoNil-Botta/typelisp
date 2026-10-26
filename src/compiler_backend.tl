@@ -61428,6 +61428,7 @@
 
 (define (compiler-backend-emit-spmd-private-param-spills-from
   [entry : (&mut entry CompilerBackendAsmBuf)]
+  [floats : (&mut floats CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -61451,6 +61452,7 @@
           [mask? : bool (compiler-backend-spmd-mask-param? name)]
           [special? : bool (or active? varying? mask?)]
           [is-float : bool (compiler-backend-float-type? ty)]
+          [uniform-float? : bool (and is-float (not special?))]
           [on-stack : bool
             (if special?
               false
@@ -61543,10 +61545,13 @@
                           (compiler_diagnostic.compiler-diagnostic-at-start
                             ""
                             message)))]))))]
+          [_float : unit
+            (when uniform-float? (compiler-backend-asm-append floats head))]
           [tail
             (try
               (compiler-backend-emit-spmd-private-param-spills-from
                 entry
+                floats
                 type-segment-bases
                 target
                 assignments
@@ -61572,7 +61577,10 @@
                   special-index)
                 vars
                 backend-state))]
-          (Ok (str_cat.str-cat head tail)))])))
+          (Ok
+            (if uniform-float?
+              tail
+              (str_cat.str-cat head tail))))])))
 
 (define (compiler-backend-emit-spmd-private-param-spills
   [type-segment-bases : i64]
@@ -61605,10 +61613,17 @@
     ;; #9302: the walk's entry copies (compiler-backend-param-entry-xmm-stage)
     ;; run ahead of the opmask plan and every special-parameter load.
     [entry : CompilerBackendAsmBuf (compiler-backend-asm-buf-with-capacity 0)]
+    ;; #9301: home uniform floats before a varying destination can overwrite an
+    ;; unread incoming XMM alias. Uniform homes use the scalar entry constraints;
+    ;; their XMM0-XMM15 bank is disjoint from incoming AVX-512 ZMM17-ZMM24.
+    ;; AVX2 special inputs stay in the caller's block until their loads run.
+    ;; Keep integer-entry scratch scheduling with the special loads.
+    [floats : CompilerBackendAsmBuf (compiler-backend-asm-buf-with-capacity 0)]
     [other-asm
       (try
         (compiler-backend-emit-spmd-private-param-spills-from
           (&mut entry)
+          (&mut floats)
           type-segment-bases
           target
           assignments
@@ -61626,6 +61641,7 @@
       (str_cat.str-cat
         (compiler-backend-asm-buf-finish (& entry))
         mask-asm
+        (compiler-backend-asm-buf-finish (& floats))
         other-asm))))
 
 (define (compiler-backend-emit-private-memory-param-address

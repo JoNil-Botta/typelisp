@@ -554,12 +554,22 @@ exercise_hierarchy() {
         [ "$_h_count" -ge "$1" ] ||
             hierarchy_fail "expected $1 nested holder cgroups, found $_h_count"
     }
-    # The outer workload node's exact peak stayed within the outer cap.
-    hierarchy_assert_cgroup_peak_within() {
+    # hierarchy_assert_capped CAP [kernel]: the outer cap ended the workload.
+    # Either the kernel OOMed the workload node at its memory.max, whose exact
+    # peak then stays within CAP, or, for a wrapper, its sampler's RSS check of
+    # the same cap fired first: a nested library call stays in the outer
+    # process group, so the sampler counts it, and which check wins is timing.
+    # A direct library call has no sampler, so `kernel` requires the OOM.
+    hierarchy_assert_capped() {
         _h_peak=$(sed -n 's/.*OOM peak sources: cgroup memory.peak \([0-9]*\) .*/\1/p' \
             "$_h_dir/stderr" | tail -n 1)
-        [ -n "$_h_peak" ] && [ "$_h_peak" -le "$1" ] ||
-            hierarchy_fail "outer workload peak ${_h_peak:-missing} exceeds or lacks cap $1"
+        if [ -n "$_h_peak" ]; then
+            [ "$_h_peak" -le "$1" ] ||
+                hierarchy_fail "outer workload peak $_h_peak exceeds cap $1"
+        elif [ "${2:-}" = kernel ] ||
+            ! grep -Fq 'memory limit exceeded: aggregate RSS' "$_h_dir/stderr"; then
+            hierarchy_fail "outer workload ended without OOM or RSS evidence for cap $1"
+        fi
     }
 
     # Overlapping 40 MiB allocations under a 64 MiB outer cap: outer plus a
@@ -573,7 +583,7 @@ exercise_hierarchy() {
         else
             hierarchy_assert_inside 1
         fi
-        hierarchy_assert_cgroup_peak_within 67108864
+        hierarchy_assert_capped 67108864
         hierarchy_assert_dead
     done
 
@@ -588,7 +598,7 @@ exercise_hierarchy() {
         > "$_h_dir/stdout" 2> "$_h_dir/stderr" || _h_status=$?
     [ "$_h_status" -eq 137 ] || hierarchy_fail "expected exit 137, got $_h_status"
     hierarchy_assert_inside 1
-    hierarchy_assert_cgroup_peak_within 67108864
+    hierarchy_assert_capped 67108864 kernel
     hierarchy_assert_dead
 
     # Three concurrent 24 MiB holders (outer, library, wrapper) fit a

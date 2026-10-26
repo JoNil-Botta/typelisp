@@ -4691,9 +4691,8 @@
 ;; Instruction spans use the destination variable as their provenance key.
 ;; Stack-slot coloring may renumber that variable, so keep every keyed value
 ;; out of shared slots and rebuild those keys with the resulting bijection.
-;; Non-debug optimization retains only runtime-abort value spans; debug builds
-;; bypass coloring entirely below so every original variable identity remains
-;; available to the debug metadata path.
+;; Non-debug optimization retains only runtime-abort value spans. Debug private
+;; AVX2 functions use the same pin/remap path for their instruction locations.
 (define (compiler-backend-source-span-pinned-vars
   [spans : compiler_ir_types.CompilerSourceSpans]
   [function : i64]
@@ -71232,16 +71231,22 @@
             (and
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))]
-        ;; Non-debug optimization retains only source spans used by runtime
-        ;; aborts. Their value ids are provenance keys, so keep those values in
-        ;; distinct private slots and remap the keys alongside the IR below.
+        ;; Private AVX2 entry stores need full-width homes even under debug
+        ;; info. Other debug functions retain their original SSA identities.
+        [color-stack-slots? : bool
+          (or
+            (not (compiler_ir_types.compiler-debug-info-enabled?))
+            (compiler_regalloc.compiler-reg-spmd-avx2-special-params?
+              (& params)))]
+        ;; Value ids are provenance keys: keep spanned values in distinct
+        ;; private slots and remap their keys alongside the emitted IR.
         [source-span-pinned-vars : compiler_liveness.CompilerLiveI64Set
-          (if (compiler_ir_types.compiler-debug-info-enabled?)
-            (compiler_liveness.compiler-live-set-empty)
+          (if color-stack-slots?
             (compiler-backend-source-span-pinned-vars
               (compiler-backend-global-shared-view spans)
               name
-              scratch-vars))]
+              scratch-vars)
+            (compiler_liveness.compiler-live-set-empty))]
         [coloring-pinned-vars : compiler_liveness.CompilerLiveI64Set
           (compiler_liveness.compiler-live-set-union
             fusion-pinned-vars
@@ -71259,10 +71264,7 @@
           ;; slot; word1 indexes the second var-region by the same remapped id.
           ;; That keeps both words inside the `slot-vars`-sized frame rather
           ;; than at high raw ids that would grow it.
-          ;; Debug records deliberately keep the original SSA identities.
-          ;; Compacting a debug frame is less important than keeping every
-          ;; instruction and variable provenance key exact.
-          (if (compiler_ir_types.compiler-debug-info-enabled?)
+          (if (not color-stack-slots?)
             None
             (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases

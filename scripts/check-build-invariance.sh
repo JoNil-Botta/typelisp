@@ -909,7 +909,7 @@ batch_chunk_size=$BATCH_CHUNK_SIZE
 pool_workers=$POOL_WORKERS
 pool_budget_mib=$POOL_BUDGET_MIB
 EOF
-
+echo "build-invariance check passed for $BATCH_CASE_COUNT case(s)"
 
 if [ -n "$HANDOFF_PATH_FILE" ]; then
     handoff_reference="$RIGHT_DIR/selfhost_main_opt1.s"

@@ -62079,9 +62079,9 @@
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
     ;; The walk's entry copies (compiler-backend-param-entry-xmm-stage) run
-    ;; ahead of every other parameter copy.
-    [entry : CompilerBackendAsmBuf
-      (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    ;; ahead of every other parameter copy. Most functions have none, so the
+    ;; buffer starts at the minimum size and grows on demand.
+    [entry : CompilerBackendAsmBuf (compiler-backend-asm-buf-with-capacity 0)]
     [copies
       (try
         (compiler-backend-emit-param-spills-from

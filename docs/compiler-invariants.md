@@ -1450,6 +1450,8 @@ environment requires a variable. Unit equality evaluates both operands in order
 and chooses its boolean result without a machine comparison; an operand's exit
 still stops subsequent evaluation. This does not change structural tuple/array
 call-transport admission.
+Borrowed patterns bind zero-sized Copy fields to that same canonical value;
+non-Copy fields retain the reference-valued place and ownership path.
 
 Memory-class aggregate expressions carry addresses into inline storage. An
 initialized inline aggregate global keeps one static home: whole-global

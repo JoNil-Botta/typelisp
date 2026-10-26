@@ -17404,6 +17404,10 @@
         "(define (main [x : (& x Empty)]) : unit x.value)"
         "(define (main [x : (& x Two)]) : unit x.tail)"
         "(define (main [x : (&mut x Wide)]) : unit x.tail)"
+        "(define (main [x : (& x Empty)]) : unit (match x [(Empty value) value]))"
+        "(define (main [x : (& x Two)]) : unit (match x [(Two _ _ _ tail) tail]))"
+        "(define (main [x : (& x Wide)]) : unit (match x [(Wide _ _ _ tail) tail]))"
+        "(define (main [x : (& x Nested)]) : unit (match x [(Nested empty _) empty.value]))"
         "(define (main [x : (Ptr Wide)]) : unit (unsafe (__tl_struct-get (deref x) tail)))")]
     [modes
       (array
@@ -17417,7 +17421,7 @@
           (match (lower.lower-compiler-source-with-mode
             source
             (array-ref modes mode))
-            [(Ok (Program _ functions _) _ owner)
+            [(Ok (Program _ functions _ _authority) _ owner)
               (match (lower-test-function-seq-find functions "main")
                 [(Some (Function _ _ _ _ blocks _))
                   (test.assert-i64-eq

@@ -31028,10 +31028,6 @@
                     [(ResultLowerExpr.Ok left-lowered)
                       (match left-lowered
                         [(LowerExpr.Expr left-state left-value left-value-ty)
-                          (match (& left-value-ty)
-                            [(Never)
-                              (return (Ok (Expr left-state Unit (Never))))]
-                            [_ unit])
                           (let
                             [left-fresh? : bool
                               (lower-fresh-operand-value?
@@ -31069,14 +31065,8 @@
                                         right-state
                                         right-value
                                         right-value-ty)
-                                        (match (& right-value-ty)
-                                          [(Never)
-                                            (return
-                                              (Ok
-                                                (Expr right-state Unit (Never))))]
-                                          [_ unit])
                                         ;; Unit has one value and no machine-width operand.
-                                        ;; Operand effects precede this choice; exits returned above.
+                                        ;; Exits retain the ordinary dead-block lowering path.
                                         (when
                                           (and
                                             (lower-binop-group-eq? op)
@@ -67924,6 +67914,19 @@
   [offset : i64]
   [pattern : (& ast.AstPattern)]
   [elem-ty : ast.AstType]) : LowerExpr
+  ;; Copy fields in borrowed patterns have values, including canonical unit;
+  ;; no address or zero-width load is needed to bind their empty storage.
+  ;; Non-Copy borrowed fields retain their reference-valued place path.
+  (when
+    (and
+      (match (& bind-mode)
+        [(LowerBindMode.Borrowed _) true]
+        [_ false])
+      (= (lower-type-size ctx elem-ty) 0)
+      (tc_core.tc-borrowed-binding-by-value?
+        ctx
+        (lower-global-shared-view elem-ty)))
+    (return (Expr state Unit elem-ty)))
   (match bind-mode
     [(LowerBindMode.Owned)
       (lower-load-inline-value-at-offset ctx state base offset elem-ty)]

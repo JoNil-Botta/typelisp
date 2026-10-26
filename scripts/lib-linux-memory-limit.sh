@@ -740,8 +740,8 @@ linux_memory_limit_sample_process_group() {
             kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
             sleep 0.1
             kill -KILL "-$_linux_memory_limit_pid" 2>/dev/null || true
-            # Nested calls and detached descendants live outside the process
-            # group; the workload's termination covers them too.
+            # Nested wrapper calls and detached descendants run in their own
+            # process groups; the workload's termination covers them too.
             printf '1\n' > "$_linux_memory_limit_workload/cgroup.kill" 2>/dev/null || true
             wait "$_linux_memory_limit_pid" 2>/dev/null || true
             rm -f "$_linux_memory_limit_gate"
@@ -791,9 +791,10 @@ linux_memory_limit_sample_process_group() {
         linux_memory_limit_record_oom_peak "$_linux_memory_limit_workload"
         return 137
     fi
-    # The process-group samples miss nested calls, which run in their own
-    # groups; the workload node's memory.peak is the measured peak of the
-    # complete subtree.
+    # The process-group samples count nested library calls, which stay in
+    # the caller's group, but miss nested wrapper calls, whose samplers start
+    # their own groups; the workload node's memory.peak is the measured peak
+    # of the complete subtree.
     linux_memory_limit_read_peak "$_linux_memory_limit_workload"
     _linux_memory_limit_final_peak=$((_linux_memory_limit_peak_rss * 1024))
     if [ "$_linux_memory_limit_peak_read" -gt "$_linux_memory_limit_final_peak" ]; then

@@ -184,6 +184,10 @@ sc_measure_into() {
     _smi_cg="$SC_HARNESS_OUTPUT/logs/$SC_HARNESS_LOG"
     [ -s "$_smi_cg" ] || sc_fail "missing Cachegrind output $_smi_cg"
     _smi_argv=$(sed -n 's/^cmd: //p' "$_smi_cg" | sed -n 1p)
+    # Keep the Cachegrind output beside the record: the benchmark gate resets
+    # the shared harness directory after this gate.
+    mkdir -p "$(dirname -- "$_smi_record")"
+    cp "$_smi_cg" "$(dirname -- "$_smi_record")/$_smi_role.cachegrind.out"
     [ -n "$_smi_argv" ] || sc_fail "no cmd: line in $_smi_cg"
     # argv[0] is the compiler path; its length does not affect the count
     # (perf/README.md) while the fixpoint may converge at stage3 or stage4.

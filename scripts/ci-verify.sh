@@ -539,12 +539,12 @@ gate_optimization_opt2_correctness() {
 # check-instruction-counts.sh reports and skips without valgrind outside GitHub
 # Actions; required CI must not, so ci-host-tools.tsv makes valgrind a host tool
 # of the instruction-count gates, required before any gate starts, and both
-# scripts fail in Actions without it. The benchmark gate keeps its own work
-# directory: the self_compile gate measures under target/instruction-count-check,
-# which preserves the historical measured argv.
+# scripts fail in Actions without it. This gate and the self_compile gate both
+# keep their historical paths under target/instruction-count-check (measured
+# paths reach the counts, including a C benchmark's input path), so they share
+# the `instruction-count` lock.
 gate_instruction_counts() {
-    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh \
-        --output target/instruction-count-benchmarks
+    TYPELISP_IR_CHECK_COMPILER=$STAGE2_BIN scripts/check-instruction-counts.sh
 }
 
 # self_compile has no checked row: this gate records the measurement and its

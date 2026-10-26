@@ -255,8 +255,10 @@ CI, marked `local`. The `self_compile` optimizer level is selected by
 Unless `TYPELISP_IR_CHECK_COMPILER` names a prebuilt compiler (CI passes its
 bootstrap stage2), the checker builds a fresh full CLI stage1 and stage2 under
 its work directory and measures benchmarks with that fixed stage2 compiler.
-CI's benchmark gate works in `target/instruction-count-benchmarks`;
-`target/instruction-count-check` is where the `self_compile` gate measures.
+Measured paths reach the counts (a C benchmark's input path, the self-compile
+`-o` path), so CI's benchmark gate and the `self_compile` gate both keep their
+historical paths under `target/instruction-count-check` and never run at once
+(the `instruction-count` gate lock).
 Benchmark binaries are built at **opt-level 2**, so the TypeLisp-vs-C rows are
 a release-vs-release comparison (TypeLisp opt2 against `clang -O2`); override
 with `TYPELISP_IR_BENCH_OPT_LEVEL`. A selected benchmark case must contain both

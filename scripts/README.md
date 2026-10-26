@@ -231,6 +231,7 @@ never run at once:
 | `build-stamp` | `target/build-stage0/git-hash.txt`, which compiles with `compiler-build-identity` include and root package builds rewrite (the CLI smoke poisons it on purpose) |
 | `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
 | `embedded-payload` | `target/embedded-stdlib-payload-verify/`, which the payload gate and the stdlib gate (through `verify-embedded-stdlib-payload.sh`) both reset |
+| `instruction-count` | `target/instruction-count-check/`, where the benchmark instruction-count gate (which resets it) and the `self_compile` gate both measure at their historical paths, because measured paths reach the counts |
 | `root-release` | `target/release/`, the root package build's output |
 | `spmd-package` | `tests/spmd/package_callable/target/` and `tests/spmd/package_consumer/target/` |
 

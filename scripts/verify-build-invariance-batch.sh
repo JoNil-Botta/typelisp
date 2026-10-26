@@ -1,12 +1,16 @@
 #!/usr/bin/env sh
 set -eu
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 . "$ROOT/scripts/lib-build-invariance-batch.sh"
 BOUNDED_POOL_LABEL=build-invariance
 . "$ROOT/scripts/lib-bounded-pool.sh"
 mkdir -p "$ROOT/target/exp"
 WORKDIR=$(mktemp -d "$ROOT/target/exp/build-invariance-batch.XXXXXX")
-trap 'rm -rf "$WORKDIR"' EXIT HUP INT TERM
+case "$WORKDIR" in
+    "$ROOT/target/exp/build-invariance-batch."??????) ;;
+    *) echo "unexpected fixture scratch directory: $WORKDIR" >&2; exit 1 ;;
+esac
+trap 'rm -rf -- "${WORKDIR:?}"' EXIT HUP INT TERM
 mkdir -p "$WORKDIR/left" "$WORKDIR/right"
 CASES="$WORKDIR/cases"
 ENTRIES="$WORKDIR/entries"
@@ -15,6 +19,30 @@ ALIASES="$WORKDIR/aliases"
 record() {
     printf '%s|%s|%s|%s/%s.s|%s\n' "$1" "$2" "$2" "$3" "$1" "$4"
 }
+
+# Both producers' opt1/opt2 selfhost jobs retain their full cap and get a
+# separate timeout. Ordinary and complete codegen chunks keep the old timeout.
+for timeout_producer in left right; do
+    for timeout_opt in 1 2; do
+        record "selfhost_main_opt$timeout_opt" src/main.tl \
+            "$WORKDIR/$timeout_producer" "$timeout_opt" > "$WORKDIR/timeout-cases"
+        build_invariance_chunk_is_selfhost "$WORKDIR/timeout-cases"
+        test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 1200
+    done
+done
+record ordinary input.tl "$WORKDIR/left" 2 > "$WORKDIR/timeout-cases"
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+record smoke src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2 > "$WORKDIR/timeout-cases"
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+record selfhost_main_opt2 src/main.tl "$WORKDIR/left" 2 >> "$WORKDIR/timeout-cases"
+if build_invariance_chunk_is_selfhost "$WORKDIR/timeout-cases"; then
+    echo 'mixed chunk acquired selfhost timeout' >&2
+    exit 1
+fi
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+record selfhost_main_opt2_alias src/main.tl "$WORKDIR/left" 2 > "$WORKDIR/timeout-cases"
+test "$(build_invariance_chunk_timeout_seconds "$WORKDIR/timeout-cases")" -eq 600
+
 plan() {
     build_invariance_plan_chunk "$CASES" "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
 }
@@ -45,7 +73,7 @@ cp "$WORKDIR/saved-entries" "$ENTRIES"
 cp "$ALIASES" "$WORKDIR/saved-aliases"
 printf 'foreign|foreign\n' > "$ALIASES"
 reject build_invariance_require_plan "$CASES" "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
-rm "$ALIASES"
+rm -- "${ALIASES:?}"
 reject build_invariance_require_plan "$CASES" "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
 cp "$WORKDIR/saved-aliases" "$ALIASES"
 reject build_invariance_copy_aliases "$ALIASES"
@@ -55,10 +83,10 @@ printf 'assembly\n' > "$WORKDIR/left/first.s"
 build_invariance_copy_aliases "$ALIASES"
 cmp "$WORKDIR/left/first.s" "$WORKDIR/left/alias.s"
 reject build_invariance_copy_aliases "$ALIASES"
-rm "$WORKDIR/left/alias.s"
+rm -- "${WORKDIR:?}/left/alias.s"
 ln -s "$WORKDIR/nonexistent" "$WORKDIR/left/alias.s"
 reject build_invariance_copy_aliases "$ALIASES"
-rm "$WORKDIR/left/alias.s" "$WORKDIR/left/first.s"
+rm -- "${WORKDIR:?}/left/alias.s" "${WORKDIR:?}/left/first.s"
 ln -s "$WORKDIR/expected" "$WORKDIR/left/first.s"
 reject build_invariance_copy_aliases "$ALIASES"
 
@@ -101,16 +129,97 @@ build_invariance_require_coverage "$CORPUS" "$BATCHES"
 cp "$BATCHES/opt2/chunks/cases.0000.txt" "$WORKDIR/saved-chunk"
 cp "$BATCHES/opt1/chunks/cases.0000.txt" "$BATCHES/opt2/chunks/cases.0000.txt"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
-rm "$BATCHES/opt2/chunks/cases.0000.txt"
+rm -- "${BATCHES:?}/opt2/chunks/cases.0000.txt"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
 cp "$WORKDIR/saved-chunk" "$BATCHES/opt2/chunks/cases.0000.txt"
 cp "$WORKDIR/saved-chunk" "$BATCHES/opt2/chunks/cases.0001.txt"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
-rm "$BATCHES/opt2/chunks/cases.0001.txt"
+rm -- "${BATCHES:?}/opt2/chunks/cases.0001.txt"
 printf 'other|other.tl|2\n' > "$CORPUS"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
 printf 'first|input.tl|1\nfirst|other.tl|2\n' > "$CORPUS"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
+
+# Large inputs stay isolated from different inputs, while all their adjacent
+# logical aliases remain in the authoritative inventory and output comparisons.
+CHUNK_ROOT="$WORKDIR/chunk-tests"
+mkdir -p "$CHUNK_ROOT/opt2"
+{
+    record before ordinary.tl "$WORKDIR/left" 2
+    record smoke-a src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2
+    record smoke-b src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2
+    record other src/tests/compiler_other_smoke.tl "$WORKDIR/left" 2
+    record after ordinary.tl "$WORKDIR/left" 2
+    record after-alias ordinary.tl "$WORKDIR/left" 2
+} > "$CHUNK_ROOT/cases.txt"
+build_invariance_write_chunks "$CHUNK_ROOT/cases.txt" "$CHUNK_ROOT/opt2/chunks" 64
+test "$(find "$CHUNK_ROOT/opt2/chunks" -name 'cases.*.txt' | wc -l)" -eq 4
+awk -F '|' '{ print $1 "|" $2 "|" $5 }' "$CHUNK_ROOT/cases.txt" > "$CORPUS"
+build_invariance_require_coverage "$CORPUS" "$CHUNK_ROOT"
+test "$(wc -l < "$CHUNK_ROOT/opt2/chunks/cases.0001.txt")" -eq 2
+build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/opt2/chunks/cases.0001.txt"
+if build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/opt2/chunks/cases.0002.txt"; then
+    echo "unrelated smoke acquired codegen memory class" >&2
+    exit 1
+fi
+build_invariance_plan_chunk "$CHUNK_ROOT/opt2/chunks/cases.0001.txt" \
+    "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
+test "$(wc -l < "$ENTRIES")" -eq 1
+test "$(wc -l < "$ALIASES")" -eq 1
+printf 'fresh complete smoke assembly\n' > "$WORKDIR/left/smoke-a.s"
+build_invariance_copy_aliases "$ALIASES"
+cmp "$WORKDIR/left/smoke-a.s" "$WORKDIR/left/smoke-b.s"
+cat "$CHUNK_ROOT/opt2/chunks/cases.0002.txt" >> "$CHUNK_ROOT/opt2/chunks/cases.0001.txt"
+if build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/opt2/chunks/cases.0001.txt"; then
+    echo "mixed inputs acquired codegen memory class" >&2
+    exit 1
+fi
+: > "$CHUNK_ROOT/empty"
+if build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/empty"; then
+    echo "empty chunk acquired codegen memory class" >&2
+    exit 1
+fi
+
+# The ceiling counts logical aliases; crossing it starts a new fresh compile.
+: > "$CASES"
+i=0
+while [ "$i" -lt 65 ]; do
+    record "large-$i" src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2 >> "$CASES"
+    i=$((i + 1))
+done
+build_invariance_write_chunks "$CASES" "$CHUNK_ROOT/boundary" 64
+test "$(find "$CHUNK_ROOT/boundary" -name 'cases.*.txt' | wc -l)" -eq 2
+test "$(wc -l < "$CHUNK_ROOT/boundary/cases.0000.txt")" -eq 64
+test "$(wc -l < "$CHUNK_ROOT/boundary/cases.0001.txt")" -eq 1
+build_invariance_plan_chunk "$CHUNK_ROOT/boundary/cases.0000.txt" \
+    "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
+test "$(wc -l < "$ENTRIES")" -eq 1
+test "$(wc -l < "$ALIASES")" -eq 63
+
+# Staged input paths and requested optimization are part of the invocation
+# identity even when logical source names match.
+record original src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2 > "$CASES"
+sed 's/|src\/tests\/compiler_codegen_smoke_suite.tl|\([^|]*\)|2$/|staged.tl|\1|2/' \
+    "$CASES" >> "$CHUNK_ROOT/staged"
+cat "$CHUNK_ROOT/staged" >> "$CASES"
+build_invariance_write_chunks "$CASES" "$CHUNK_ROOT/identity" 64
+test "$(find "$CHUNK_ROOT/identity" -name 'cases.*.txt' | wc -l)" -eq 2
+record same src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 1 >> "$CASES"
+reject build_invariance_write_chunks "$CASES" "$CHUNK_ROOT/identity" 64
+build_invariance_write_chunks "$CASES" "$CHUNK_ROOT/identity-opt" 64
+test "$(find "$CHUNK_ROOT/identity-opt" -name 'cases.*.txt' | wc -l)" -eq 3
+build_invariance_write_chunks "$CHUNK_ROOT/empty" "$CHUNK_ROOT/identity-empty" 64
+test "$(find "$CHUNK_ROOT/identity-empty" -type f | wc -l)" -eq 0
+
+# Equal actual inputs with only requested optimization changed must also split.
+record opt-first src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 1 > "$CHUNK_ROOT/opt-cases"
+record opt-second src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2 >> "$CHUNK_ROOT/opt-cases"
+build_invariance_write_chunks "$CHUNK_ROOT/opt-cases" "$CHUNK_ROOT/opt-identity" 64
+test "$(find "$CHUNK_ROOT/opt-identity" -name 'cases.*.txt' | wc -l)" -eq 2
+build_invariance_plan_chunk "$CHUNK_ROOT/opt-identity/cases.0000.txt" \
+    "$ENTRIES" "$ALIASES" 1 "$WORKDIR/left"
+build_invariance_plan_chunk "$CHUNK_ROOT/opt-identity/cases.0001.txt" \
+    "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
 
 # Worker pool: jobs start in queue order, only inside the memory budget, exactly
 # once; a drained pool passes only with one successful result per queued job.
@@ -145,23 +254,23 @@ bounded_pool_require_complete "$POOL"
 # Failed, missing, foreign and unfinished results and an abort all fail closed.
 printf '1\n' > "$POOL/results/full-b"
 reject bounded_pool_require_complete "$POOL"
-rm "$POOL/results/full-b"
+rm -- "${POOL:?}/results/full-b"
 reject bounded_pool_require_complete "$POOL"
 cp "$POOL/results/full-a" "$POOL/results/full-b"
 bounded_pool_require_complete "$POOL"
 cp "$POOL/results/full-a" "$POOL/results/foreign"
 reject bounded_pool_require_complete "$POOL"
-rm "$POOL/results/foreign"
+rm -- "${POOL:?}/results/foreign"
 mkdir "$POOL/claims/foreign"
 reject bounded_pool_require_complete "$POOL"
-rmdir "$POOL/claims/foreign"
+rmdir -- "${POOL:?}/claims/foreign"
 printf '4096\n' > "$POOL/running/small-a"
 reject bounded_pool_require_complete "$POOL"
-rm "$POOL/running/small-a"
+rm -- "${POOL:?}/running/small-a"
 : > "$POOL/abort"
 reject bounded_pool_require_complete "$POOL"
 reject bounded_pool_claim "$POOL"
-rm "$POOL/abort"
+rm -- "${POOL:?}/abort"
 bounded_pool_require_complete "$POOL"
 # A lock that is never released is reported instead of waited on forever.
 mkdir "$POOL/lock"
@@ -170,7 +279,7 @@ BOUNDED_POOL_LOCK_TRIES=2
 reject bounded_pool_claim "$POOL"
 reject bounded_pool_finish "$POOL" full-a 0
 BOUNDED_POOL_LOCK_TRIES=600
-rmdir "$POOL/lock"
+rmdir -- "${POOL:?}/lock"
 
 # Malformed, duplicate, empty and over-budget queues never start a pool.
 for bad_queue in 'job' 'job|' 'job|0' 'job|08' 'job|4096|extra' '../job|4096' \
@@ -241,7 +350,7 @@ test "$(count_entries "$WORKDIR/ran")" -eq 24
 
 # A failing job aborts the pool: its status is kept, waiters and the join fail,
 # and the jobs queued behind it never start.
-rm -rf "$WORKDIR/ran"
+rm -rf -- "${WORKDIR:?}/ran"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 POOL_FAIL_JOB=job4
@@ -257,7 +366,7 @@ test "$(count_entries "$WORKDIR/ran")" -lt 24
 reject bounded_pool_require_complete "$POOL"
 
 # A worker that dies without reporting cannot leave the gate waiting or green.
-rm -rf "$WORKDIR/ran"
+rm -rf -- "${WORKDIR:?}/ran"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 POOL_KILL_JOB=job2
@@ -273,7 +382,7 @@ test ! -e "$POOL/results/job2"
 reject bounded_pool_require_complete "$POOL"
 
 # The caller's own failure stops the pool: running jobs finish, none starts.
-rm -rf "$WORKDIR/ran"
+rm -rf -- "${WORKDIR:?}/ran"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 bounded_pool_start "$POOL" 2 2>> "$WORKDIR/workers.log"
@@ -324,7 +433,7 @@ free|4096
 join|8192|after-slow,free
 tail|4096|join
 EOF
-rm -rf "$WORKDIR/ran" "$WORKDIR/order"
+rm -rf -- "${WORKDIR:?}/ran" "${WORKDIR:?}/order"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 bounded_pool_start "$POOL" 3
@@ -339,7 +448,7 @@ b|4096|a
 c|4096
 d|4096|b,c
 EOF
-rm -rf "$WORKDIR/ran" "$WORKDIR/order"
+rm -rf -- "${WORKDIR:?}/ran" "${WORKDIR:?}/order"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 bounded_pool_start "$POOL" 1
@@ -347,7 +456,7 @@ bounded_pool_join "$POOL"
 test "$(tr '\n' ' ' < "$WORKDIR/order")" = 'a b c d '
 
 # A failed need aborts the pool; nothing that needs it starts.
-rm -rf "$WORKDIR/ran" "$WORKDIR/order"
+rm -rf -- "${WORKDIR:?}/ran" "${WORKDIR:?}/order"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 POOL_NEEDS_FAIL_JOB=a
@@ -369,7 +478,7 @@ bounded_pool_run_job() {
     done
     sleep 0.2
     for lock_name in $(printf '%s\n' "$lock_record" | tr ',' ' '); do
-        rmdir "$WORKDIR/in-$lock_name"
+        rmdir -- "${WORKDIR:?}/in-${lock_name:?}"
     done
     [ "$1" != "$POOL_LOCK_FAIL_JOB" ] || exit 7
     mkdir "$WORKDIR/ran/$1"
@@ -382,14 +491,14 @@ free|4096
 stamp-b|4096|free|stamp
 release-b|4096|stamp-a|release
 EOF
-rm -rf "$WORKDIR/ran"
+rm -rf -- "${WORKDIR:?}/ran"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 bounded_pool_start "$POOL" 3
 bounded_pool_join "$POOL"
 test "$(count_entries "$WORKDIR/ran")" -eq 6
 test "$(count_entries "$POOL/held")" -eq 0
-rm -rf "$WORKDIR/ran"
+rm -rf -- "${WORKDIR:?}/ran"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 POOL_LOCK_FAIL_JOB=stamp-a
@@ -399,7 +508,7 @@ POOL_LOCK_FAIL_JOB=
 test "$(cat "$POOL/results/stamp-a")" -eq 7
 test "$(count_entries "$POOL/held")" -eq 0
 # A lock left held is incomplete even when every job succeeded.
-rm -rf "$WORKDIR/ran"
+rm -rf -- "${WORKDIR:?}/ran"
 mkdir "$WORKDIR/ran"
 bounded_pool_init "$POOL" 12288 "$QUEUE"
 bounded_pool_start "$POOL" 3

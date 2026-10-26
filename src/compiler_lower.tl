@@ -31066,9 +31066,9 @@
                                   [(ResultLowerExpr.Ok right-lowered)
                                     (match right-lowered
                                       [(LowerExpr.Expr
-                                          right-state
-                                          right-value
-                                          right-value-ty)
+                                        right-state
+                                        right-value
+                                        right-value-ty)
                                         (match (& right-value-ty)
                                           [(Never)
                                             (return

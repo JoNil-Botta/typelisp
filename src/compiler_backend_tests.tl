@@ -36724,6 +36724,95 @@ f:
                 ", %xmm6\n")))]
         [(Err _) false]))))
 
+;; #9302: a private SPMD helper's parameter spills for `params` and `homes`,
+;; in backend `mode`, under the stale all-free cursor.
+(define (compiler-backend-spmd-entry-copy-spills
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
+  [params : String]
+  [homes : String]
+  [vars : i64]) : backend.ResultCompilerBackend
+  (let
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    (backend.compiler-backend-set-current-mode!
+      (backend.compiler-backend-state-function-state backend-state)
+      mode)
+    (compiler-backend-param-entry-stale-free-cursor! backend-state)
+    (backend.compiler-backend-emit-spmd-private-param-spills
+      (ast.ast-node-pool-reader-type-segment-bases)
+      target
+      (reg-homes homes)
+      (irt.params params)
+      vars
+      backend-state)))
+
+;; System V AVX2: the uniforms a..h fill %xmm0-%xmm7, so the f64 i and the f32
+;; j arrive on the stack, and the varying x is loaded into %ymm2 -- the old
+;; staging register. Both copies run through %xmm8 before the first
+;; special-parameter load and before any register homing.
+(define (compiler-backend-spmd-entry-copy-linux-avx2-ok?) : bool
+  (asm-ok?
+    (compiler-backend-spmd-entry-copy-spills
+      (backend.CompilerBackendTarget.Linux)
+      (Avx2)
+      "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx2_x=%9:f64, i=%10:f64, j=%11:f32"
+      "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%ymm2 %10=spill:-272 %11=spill:-280"
+      12)
+    (has
+      "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n    vmovdqu 0(%r10), %ymm14\n"
+      "    vmovdqu 32(%r10), %ymm2\n")
+    (lacks ", %xmm2\n")))
+
+;; Win64 AVX2: a..d take the four positional registers, so e, f and g arrive on
+;; the stack. The frame-homed f64 e and f32 f copy through %xmm4 first; g, whose
+;; home is a register, still loads straight into it.
+(define (compiler-backend-spmd-entry-copy-windows-avx2-ok?) : bool
+  (asm-ok?
+    (compiler-backend-spmd-entry-copy-spills
+      (backend.CompilerBackendTarget.Windows)
+      (Avx2)
+      "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, __tl_spmd_varying_arg_avx2_x=%5:f64, e=%6:f64, f=%7:f32, g=%8:f64"
+      "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=%ymm2 %6=spill:-240 %7=spill:-248 %8=%xmm5"
+      9)
+    (has
+      "    movsd 48(%rbp), %xmm4\n    movsd %xmm4, -240(%rbp)\n    movss 56(%rbp), %xmm4\n    movss %xmm4, -248(%rbp)\n    vmovdqu 0(%r10), %ymm14\n"
+      "    vmovdqu 32(%r10), %ymm2\n"
+      "    movsd 64(%rbp), %xmm5\n")
+    (lacks ", %xmm2\n")))
+
+;; System V AVX-512: the varying x arrives in %zmm17 and moves to %zmm2. The
+;; entry copies run before the opmask entry plan and that move.
+(define (compiler-backend-spmd-entry-copy-linux-avx512-ok?) : bool
+  (match (compiler-backend-spmd-entry-copy-spills
+    (backend.CompilerBackendTarget.Linux)
+    (Avx512)
+    "__tl_spmd_active_mask_avx512=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx512_x=%9:f64, i=%10:f64, j=%11:f32"
+    "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%zmm2 %10=spill:-272 %11=spill:-280"
+    12)
+    [(Ok text)
+      (let
+        [mask : i64
+          (backend.compiler-backend-string-find-from text "    kmovq %k1, " 0)]
+        [varying : i64
+          (backend.compiler-backend-string-find-from
+            text
+            "    vmovupd %zmm17, %zmm2\n"
+            0)]
+        (and
+          (string.is-string-prefix-at
+            text
+            "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n"
+            0)
+          (> mask 0)
+          (> varying mask)
+          (asm-lacks? text ", %xmm2\n")))]
+    [(Err _) false]))
+
 (define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
@@ -38984,6 +39073,9 @@ b_keep:
         (compiler-backend-param-entry-float-copy-linux-ok?)
         (compiler-backend-param-entry-float-copy-windows-ok?)
         (compiler-backend-param-entry-group-copy-linux-ok?)
+        (compiler-backend-spmd-entry-copy-linux-avx2-ok?)
+        (compiler-backend-spmd-entry-copy-windows-avx2-ok?)
+        (compiler-backend-spmd-entry-copy-linux-avx512-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)

@@ -61427,6 +61427,7 @@
         (Ok "")])))
 
 (define (compiler-backend-emit-spmd-private-param-spills-from
+  [entry : (&mut entry CompilerBackendAsmBuf)]
   [type-segment-bases : i64]
   [target : CompilerBackendTarget]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -61480,23 +61481,44 @@
                           (compiler-backend-incoming-stack-arg-offset
                             target
                             stack-idx))]
-                      (if is-float
-                        (compiler-backend-emit-load-float-address-to-var
-                          assignments
-                          var-id
-                          addr
-                          ty
-                          backend-state)
-                        (compiler-backend-emit-load-scalar-address-to-var
-                          type-segment-bases
-                          assignments
-                          var-id
-                          addr
-                          ty
-                          (__tl_make-array String 0)
-                          0
-                          ""
-                          backend-state))))
+                      (cond
+                        ;; #9302: a frame-homed uniform float is an entry copy
+                        ;; (compiler-backend-param-entry-xmm-stage). Here the
+                        ;; old pick could land on a varying home this walk had
+                        ;; already loaded.
+                        [(compiler-backend-param-entry-float-copy?
+                            is-float
+                            assignments
+                            var-id
+                            backend-state)
+                          (begin
+                            (compiler-backend-param-entry-float-copy!
+                              entry
+                              target
+                              assignments
+                              var-id
+                              addr
+                              ty
+                              backend-state)
+                            "")]
+                        [is-float
+                          (compiler-backend-emit-load-float-address-to-var
+                            assignments
+                            var-id
+                            addr
+                            ty
+                            backend-state)]
+                        [else
+                          (compiler-backend-emit-load-scalar-address-to-var
+                            type-segment-bases
+                            assignments
+                            var-id
+                            addr
+                            ty
+                            (__tl_make-array String 0)
+                            0
+                            ""
+                            backend-state)])))
                   (match (if is-float
                     (compiler-backend-target-float-arg-reg-for-banks
                       target
@@ -61525,6 +61547,7 @@
           [tail
             (try
               (compiler-backend-emit-spmd-private-param-spills-from
+                entry
                 type-segment-bases
                 target
                 assignments
@@ -61580,9 +61603,13 @@
         (if opmask?
           (compiler-backend-emit-spmd-mask-entry-plan mask-plan)
           (ResultCompilerBackend.Ok "")))]
+    ;; #9302: the walk's entry copies (compiler-backend-param-entry-xmm-stage)
+    ;; run ahead of the opmask plan and every special-parameter load.
+    [entry : CompilerBackendAsmBuf (compiler-backend-asm-buf-with-capacity 0)]
     [other-asm
       (try
         (compiler-backend-emit-spmd-private-param-spills-from
+          (&mut entry)
           type-segment-bases
           target
           assignments
@@ -61596,7 +61623,11 @@
           0
           vars
           backend-state))]
-    (Ok (str_cat.str-cat mask-asm other-asm))))
+    (Ok
+      (str_cat.str-cat
+        (compiler-backend-asm-buf-finish (& entry))
+        mask-asm
+        other-asm))))
 
 (define (compiler-backend-emit-private-memory-param-address
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]

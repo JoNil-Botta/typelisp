@@ -13691,16 +13691,18 @@
           (let
             [program
               (try
-                (if cache-current
-                  (compiler-load-parse-embedded-source-diagnostic-session-id
-                    (string.copy path)
-                    source-path-id
-                    (& (string.copy source))
-                    parse-cfgs)
-                  (compiler-load-parse-source-diagnostic-escaping
-                    (string.copy path)
-                    (& source)
-                    parse-cfgs)))]
+                (begin
+                  (compiler-load-note-embedded-module! (& (string.copy path)))
+                  (if cache-current
+                    (compiler-load-parse-embedded-source-diagnostic-session-id
+                      (string.copy path)
+                      source-path-id
+                      (& (string.copy source))
+                      parse-cfgs)
+                    (compiler-load-parse-source-diagnostic-escaping
+                      (string.copy path)
+                      (& source)
+                      parse-cfgs))))]
             (compiler-load-package-program-with-paths-and-roots-expect-fallback
               (& (string.copy path))
               program

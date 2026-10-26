@@ -5068,7 +5068,11 @@
 ;; the current parameter's copy ahead of the tail (`head ++ tail`), and the two
 ;; arms that concatenate the other way round -- the by-memory aggregate address
 ;; and the stack-passed group words -- read the incoming STACK area, never a
-;; register, so they contribute no source another copy could destroy.
+;; register, so they contribute no source another copy could destroy. The same
+;; holds for the float entry copies the walk hoists ahead of all of them (a
+;; stack-passed float word bound for a frame slot, #8894): they read the
+;; incoming stack area and write a frame slot through a register that is
+;; never an argument register.
 ;;
 ;; That fixed schedule IS a parallel move: sequentialising a move graph in a
 ;; given order is correct exactly when, for every pair i < j, the destination of

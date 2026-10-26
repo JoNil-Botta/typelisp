@@ -144,6 +144,8 @@ tests/spmd/private_helper_f64.tl
 tests/spmd/private_helper_bool.tl
 tests/spmd/private_helper_mask_arg.tl
 tests/spmd/private_helper_uniform_stack.tl
+tests/spmd/private_helper_uniform_stack_f64.tl
+tests/spmd/private_helper_uniform_stack_f64_wide.tl
 tests/spmd/private_helper_masked_load.tl
 tests/spmd/private_helper_store.tl
 tests/spmd/private_helper_effects.tl
@@ -213,6 +215,9 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/varying_match_enum_helper_reject.tl:avx2 | tests/spmd/varying_match_enum_helper_reject.tl:avx512)
             printf '%s\n' "lower: SPMD masked if does not support a SIMD varying enum match source outside a contiguous array lane"
+            ;;
+        tests/spmd/private_helper_uniform_stack_f64_wide.tl:avx512)
+            printf '%s\n' "backend: private AVX-512 SPMD call supports at most 8 varying value arguments"
             ;;
         tests/spmd/foreach_active_simd_reject.tl:avx2)
             printf '%s\n' "lower: foreach-active is not yet lowered for AVX2"

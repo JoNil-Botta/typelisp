@@ -30399,7 +30399,9 @@ f:
           (asm-has? asm "    subq $72, %rsp\n")
           (asm-has? asm "    movq 64(%rsp), %r10\n")
           (asm-has? asm "    movq %r10, 32(%rsp)\n")
-          (asm-has? asm "    movsd 112(%rsp), %xmm2\n"))
+          ;; The stack-passed fifth argument's entry copy stages through
+          ;; %xmm4, the first register past the Win64 float argument bank.
+          (asm-has? asm "    movsd 112(%rsp), %xmm4\n"))
         (or
           (asm-has? asm "    call _tl_f")
           (asm-has? asm "    call _tl_sum5")
@@ -30566,11 +30568,12 @@ f:
         ;; per-call `subq $16`); the two spilled f64 args go to 0/8(%rsp) via GP
         ;; bit-copies. `_tl_sum10` is a call-free leaf, so T1-6 (a) leaves its
         ;; %rsp at the entry value and it reads its incoming f64 stack args at
-        ;; 8/16(%rsp) instead of positive 16/24(%rbp).
+        ;; 8/16(%rsp) instead of positive 16/24(%rbp), as entry copies
+        ;; through %xmm8, the first register past the System V float bank.
         (asm-has? asm "    movq %r10, 0(%rsp)\n")
         (asm-has? asm "    movq %r10, 8(%rsp)\n")
-        (asm-has? asm "    movsd 8(%rsp), %xmm2\n")
-        (asm-has? asm "    movsd 16(%rsp), %xmm2\n")
+        (asm-has? asm "    movsd 8(%rsp), %xmm8\n")
+        (asm-has? asm "    movsd 16(%rsp), %xmm8\n")
         (asm-lacks? asm "    movsd 8(%rsp), %xmm0\n")
         (asm-lacks? asm "    movsd 16(%rsp), %xmm0\n"))]
     [(Err _) false]))
@@ -36571,6 +36574,245 @@ f:
       (has "    movzbq 48(%rbp), ")
       (lacks "    movzbq 48(%rbp), %r9\n"))))
 
+;; #8894: the stale body cursor the float parameter copies used to consult.
+;; Its occupancy reports every register free, although the pinned parameters
+;; still hold their incoming registers.
+(define (compiler-backend-param-entry-stale-free-cursor!
+  [backend-state : backend.CompilerBackendState]) : unit
+  (set-scratch-scavenge-ctx-occupied-masks!
+    (backend.compiler-backend-state-function-state backend-state)
+    (__tl_make-array 0 0))
+  (set-state-emit-instr-post-base! backend-state 1)
+  (set-state-emit-current-count! backend-state 0))
+
+;; The issue's opt2 System V plan: c..h are pinned to their incoming %xmm2-%xmm7
+;; and the stack-passed i and j live in frame slots. Their copies run first,
+;; through %xmm8, and nothing writes a pinned parameter's register.
+(define (compiler-backend-param-entry-float-copy-linux-ok?) : bool
+  (let
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:f64, b=%1:f64, c=%2:f64, d=%3:f64, e=%4:f64, f=%5:f64, g=%6:f64, h=%7:f64, i=%8:f64, j=%9:f64")]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=spill:-8 %1=spill:-16 %2=%xmm2 %3=%xmm3 %4=%xmm4 %5=%xmm5 %6=%xmm6 %7=%xmm7 %8=spill:-24 %9=spill:-32")]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    (compiler-backend-param-entry-stale-free-cursor! backend-state)
+    (asm-ok?
+      (backend.compiler-backend-emit-param-spills
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        10
+        backend-state)
+      (has
+        "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -24(%rbp)\n    movsd 24(%rbp), %xmm8\n    movsd %xmm8, -32(%rbp)\n    movsd %xmm0, -8(%rbp)\n")
+      (lacks
+        ", %xmm2\n"
+        ", %xmm3\n"
+        ", %xmm4\n"
+        ", %xmm5\n"
+        ", %xmm6\n"
+        ", %xmm7\n"))))
+
+;; Win64 pins a..d to %xmm0-%xmm3 and passes e..h on the stack. f and h live
+;; in frame slots and copy through %xmm4 before e is loaded into its home,
+;; which is that same %xmm4.
+(define (compiler-backend-param-entry-float-copy-windows-ok?) : bool
+  (let
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:f64, b=%1:f64, c=%2:f64, d=%3:f64, e=%4:f64, f=%5:f64, g=%6:f64, h=%7:f64")]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=%xmm0 %1=%xmm1 %2=%xmm2 %3=%xmm3 %4=%xmm4 %5=spill:-8 %6=%xmm5 %7=spill:-16")]
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    (compiler-backend-param-entry-stale-free-cursor! backend-state)
+    (asm-ok?
+      (backend.compiler-backend-emit-param-spills
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Windows)
+        assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        8
+        backend-state)
+      (has
+        "    movsd 56(%rbp), %xmm4\n    movsd %xmm4, -8(%rbp)\n    movsd 72(%rbp), %xmm4\n    movsd %xmm4, -16(%rbp)\n    movsd 48(%rbp), %xmm4\n    movsd 64(%rbp), %xmm5\n")
+      (lacks ", %xmm0\n" ", %xmm1\n" ", %xmm2\n" ", %xmm3\n"))))
+
+;; A System V register group whose two SSE words do not fit the one float
+;; argument register left after g arrives on the stack. With c..g pinned to
+;; %xmm2-%xmm6 the scavenger's XMM pool had no free register and fell back to
+;; the pinned %xmm2 under an emergency save nothing restored. The words now
+;; copy first, through %xmm8, and arm no emergency save.
+(define (compiler-backend-param-entry-group-copy-linux-ok?) : bool
+  (let
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-register-group-f64-test-index)]
+    [params : ir.CompilerIrParamSeq
+      (irt.params
+        "a=%0:f64, b=%1:f64, c=%2:f64, d=%3:f64, e=%4:f64, f=%5:f64, g=%6:f64, p=%7:BackendGroupF64Test")]
+    [assignments : regalloc.CompilerRegAssignmentTable
+      (reg-homes
+        "%0=spill:-8 %1=spill:-16 %2=%xmm2 %3=%xmm3 %4=%xmm4 %5=%xmm5 %6=%xmm6")]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    [function-state : backend.CompilerBackendFunctionState
+      (backend.compiler-backend-state-function-state backend-state)]
+    [_cursor : unit
+      (compiler-backend-param-entry-stale-free-cursor! backend-state)]
+    [pending-before : i64 (scratch-emergency-pending-count function-state)]
+    [result : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-param-spills
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (backend.CompilerBackendTarget.Linux)
+        assignments
+        params
+        0
+        0
+        0
+        0
+        index
+        8
+        backend-state)]
+    [pending-after : i64 (scratch-emergency-pending-count function-state)]
+    (and
+      (= pending-before pending-after)
+      (match result
+        [(Ok text)
+          (let
+            [word1 : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movsd 24(%rbp), %xmm8\n"
+                0)]
+            [first-home : i64
+              (backend.compiler-backend-string-find-from
+                text
+                "    movsd %xmm0, -8(%rbp)\n"
+                0)]
+            (and
+              (string.is-string-prefix-at text "    movsd 16(%rbp), %xmm8\n" 0)
+              (>= word1 0)
+              (> first-home word1)
+              (asm-lacks?
+                text
+                ", %xmm2\n"
+                ", %xmm3\n"
+                ", %xmm4\n"
+                ", %xmm5\n"
+                ", %xmm6\n")))]
+        [(Err _) false]))))
+
+;; #9302: a private SPMD helper's parameter spills for `params` and `homes`,
+;; in backend `mode`, under the stale all-free cursor.
+(define (compiler-backend-spmd-entry-copy-spills
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]
+  [params : String]
+  [homes : String]
+  [vars : i64]) : backend.ResultCompilerBackend
+  (let
+    [index : backend.CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [backend-state : backend.CompilerBackendState index.backend-state]
+    (backend.compiler-backend-set-current-mode!
+      (backend.compiler-backend-state-function-state backend-state)
+      mode)
+    (compiler-backend-param-entry-stale-free-cursor! backend-state)
+    (backend.compiler-backend-emit-spmd-private-param-spills
+      (ast.ast-node-pool-reader-type-segment-bases)
+      target
+      (reg-homes homes)
+      (irt.params params)
+      vars
+      backend-state)))
+
+;; System V AVX2: the uniforms a..h fill %xmm0-%xmm7, so the f64 i and the f32
+;; j arrive on the stack, and the varying x is loaded into %ymm2 -- the old
+;; staging register. Both copies run through %xmm8 before the first
+;; special-parameter load and before any register homing.
+(define (compiler-backend-spmd-entry-copy-linux-avx2-ok?) : bool
+  (asm-ok?
+    (compiler-backend-spmd-entry-copy-spills
+      (backend.CompilerBackendTarget.Linux)
+      (Avx2)
+      "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx2_x=%9:f64, i=%10:f64, j=%11:f32"
+      "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%ymm2 %10=spill:-272 %11=spill:-280"
+      12)
+    (has
+      "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n    vmovdqu 0(%r10), %ymm14\n"
+      "    vmovdqu 32(%r10), %ymm2\n")
+    (lacks ", %xmm2\n")))
+
+;; Win64 AVX2: a..d take the four positional registers, so e, f and g arrive on
+;; the stack. The frame-homed f64 e and f32 f copy through %xmm4 first; g, whose
+;; home is a register, still loads straight into it.
+(define (compiler-backend-spmd-entry-copy-windows-avx2-ok?) : bool
+  (asm-ok?
+    (compiler-backend-spmd-entry-copy-spills
+      (backend.CompilerBackendTarget.Windows)
+      (Avx2)
+      "__tl_spmd_active_mask_avx2=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, __tl_spmd_varying_arg_avx2_x=%5:f64, e=%6:f64, f=%7:f32, g=%8:f64"
+      "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=%ymm2 %6=spill:-240 %7=spill:-248 %8=%xmm5"
+      9)
+    (has
+      "    movsd 48(%rbp), %xmm4\n    movsd %xmm4, -240(%rbp)\n    movss 56(%rbp), %xmm4\n    movss %xmm4, -248(%rbp)\n    vmovdqu 0(%r10), %ymm14\n"
+      "    vmovdqu 32(%r10), %ymm2\n"
+      "    movsd 64(%rbp), %xmm5\n")
+    (lacks ", %xmm2\n")))
+
+;; System V AVX-512: the varying x arrives in %zmm17 and moves to %zmm2. The
+;; entry copies run before the opmask entry plan and that move.
+(define (compiler-backend-spmd-entry-copy-linux-avx512-ok?) : bool
+  (match (compiler-backend-spmd-entry-copy-spills
+    (backend.CompilerBackendTarget.Linux)
+    (Avx512)
+    "__tl_spmd_active_mask_avx512=%0:bool, a=%1:f64, b=%2:f64, c=%3:f64, d=%4:f64, e=%5:f64, f=%6:f64, g=%7:f64, h=%8:f64, __tl_spmd_varying_arg_avx512_x=%9:f64, i=%10:f64, j=%11:f32"
+    "%1=spill:-208 %2=spill:-216 %3=spill:-224 %4=spill:-232 %5=spill:-240 %6=spill:-248 %7=spill:-256 %8=spill:-264 %9=%zmm2 %10=spill:-272 %11=spill:-280"
+    12)
+    [(Ok text)
+      (let
+        [mask : i64
+          (backend.compiler-backend-string-find-from text "    kmovq %k1, " 0)]
+        [varying : i64
+          (backend.compiler-backend-string-find-from
+            text
+            "    vmovupd %zmm17, %zmm2\n"
+            0)]
+        (and
+          (string.is-string-prefix-at
+            text
+            "    movsd 16(%rbp), %xmm8\n    movsd %xmm8, -272(%rbp)\n    movss 24(%rbp), %xmm8\n    movss %xmm8, -280(%rbp)\n"
+            0)
+          (> mask 0)
+          (> varying mask)
+          (asm-lacks? text ", %xmm2\n")))]
+    [(Err _) false]))
+
 (define (compiler-backend-stream-home-keeps-stable-root-ok?) : bool
   (let
     [caller : arena.Arena (arena.current)]
@@ -38828,6 +39070,12 @@ b_keep:
         (compiler-backend-phi-rotated-back-edge-ok?)
         (compiler-backend-divmod-live-dividend-src-ok?)
         (compiler-backend-param-spill-stack-scratch-preserves-home-ok?)
+        (compiler-backend-param-entry-float-copy-linux-ok?)
+        (compiler-backend-param-entry-float-copy-windows-ok?)
+        (compiler-backend-param-entry-group-copy-linux-ok?)
+        (compiler-backend-spmd-entry-copy-linux-avx2-ok?)
+        (compiler-backend-spmd-entry-copy-windows-avx2-ok?)
+        (compiler-backend-spmd-entry-copy-linux-avx512-ok?)
         (compiler-backend-low-level-instr-ok?)
         (compiler-backend-syscall-source-ok?)
         (compiler-backend-numeric-cast-shape-ok?)

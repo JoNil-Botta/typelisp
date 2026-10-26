@@ -687,12 +687,12 @@ if [ ! -f "$BASELINE" ]; then
 fi
 
 assert_scalar_fair_baseline "$BASELINE" || exit 1
-c_provenance_validate "$MEASURE_OUT/c-provenance.json" || exit 1
-if [ -f "$BASELINE.provenance.json" ]; then
-    c_provenance_validate "$BASELINE.provenance.json" || exit 1
-fi
+c_provenance_validate "$MEASURE_OUT/c-provenance.json" measured || exit 1
 
 if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
+    if [ -f "$BASELINE.provenance.json" ]; then
+        c_provenance_validate "$BASELINE.provenance.json" || exit 1
+    fi
     cat "$DIFF_OUT"
     echo "[ir-check] instruction-count baseline matches $BASELINE"
 else

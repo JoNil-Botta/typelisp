@@ -84,7 +84,7 @@ c_provenance_row() {
 c_provenance_complete() {
     jq '.complete = true' "$C_PROVENANCE" > "$C_PROVENANCE.tmp"
     mv "$C_PROVENANCE.tmp" "$C_PROVENANCE"
-    c_provenance_validate "$C_PROVENANCE"
+    c_provenance_validate "$C_PROVENANCE" measured
 }
 
 # Unknown historical producer identity is explicit, never filled from this host.
@@ -92,14 +92,14 @@ c_provenance_complete() {
 # comparable environment. Unknown fields use the literal string "unknown".
 c_provenance_validate() {
     [ -f "$1" ] || { echo "[c-provenance] missing record: $1" >&2; return 1; }
-    jq -e '
+    jq -e -s --arg role "${2:-baseline}" '
       def text: type == "string" and length > 0;
       def hash: text and (. == "unknown" or test("^[0-9a-f]{64}$"));
       def argv: type == "array" and length > 0 and all(.[]; type == "string");
       def tool: type == "object" and (.path|text) and (.sha256|hash) and (.version|text);
-      .schema == 1 and
+      length == 1 and (.[0] | .schema == 1 and
       if .status == "unknown" then
-        (keys == ["reason","schema","status"]) and (.reason|text)
+        $role != "measured" and (keys == ["reason","schema","status"]) and (.reason|text)
       else
         .status == "measured" and .complete == true and
         (.origin | type == "object" and all(.repository,.run_id,.attempt,.workflow,.job,.commit; text)) and
@@ -120,7 +120,7 @@ c_provenance_validate() {
             (.build_argv|argv) and (.run_argv|argv) and
             ((.build_argv|index("-fno-vectorize") != null) == ($row.key|startswith("benchmark/c-scalar/"))) and
             ((.build_argv|index("-fno-slp-vectorize") != null) == ($row.key|startswith("benchmark/c-scalar/"))))))
-      end' "$1" >/dev/null 2>&1 || {
+      end)' "$1" >/dev/null 2>&1 || {
         echo "[c-provenance] malformed or incomplete schema-1 record: $1" >&2
         return 1
     }
@@ -133,7 +133,7 @@ c_provenance_diagnose() {
     _cpd_current=$2
     _cpd_counts=$3
     _cpd_diff=$4
-    c_provenance_validate "$_cpd_current" || return 1
+    c_provenance_validate "$_cpd_current" measured || return 1
     if c_provenance_validate "$_cpd_baseline"; then
         _cpd_record=$(cat "$_cpd_baseline")
     else
@@ -149,20 +149,21 @@ c_provenance_diagnose() {
       select(length == 6 and (.[0]|test("^benchmark/c(-scalar)?/")) and .[5] != "ok") |
       .[0] as $metric |
       "[c-provenance] affected row: \($metric)",
+      "[c-provenance] recorded: \({status:$b.status,reason:$b.reason,environment:$b.environment,row:$b.rows[$metric]}|tojson)",
+      "[c-provenance] measured: \({environment:$n.environment,row:$n.rows[$metric]}|tojson)",
       if $b.status == "unknown" or $b.rows[$metric] == null then
-        "[c-provenance] unknown baseline environment: \($b.reason // "row has no producer record")",
-        "[c-provenance] measured environment: \($n.environment|tojson)"
+        "[c-provenance] unknown baseline environment: \($b.reason // "row has no producer record")"
       elif $b.rows[$metric].ir_count != $counts[$metric] then
         "[c-provenance] unknown baseline environment: recorded count does not bind this baseline row"
+      elif $n.rows[$metric] == null then
+        "[c-provenance] unknown measured environment: row has no producer record"
       else
         ({environment:$b.environment,row:($b.rows[$metric]|del(.ir_count))}) as $bi |
         ({environment:$n.environment,row:($n.rows[$metric]|del(.ir_count))}) as $ni |
         if ([$bi,$ni] | any(..; . == "unknown")) then
           "[c-provenance] unknown comparison environment: required identity is unavailable"
         elif $bi != $ni then
-          "[c-provenance] incompatible C comparison environment (toolchain, commands or workload differ)",
-          "[c-provenance] recorded: \($bi|tojson)",
-          "[c-provenance] measured: \($ni|tojson)"
+          "[c-provenance] incompatible C comparison environment (toolchain, commands or workload differ)"
         else
           "[c-provenance] same recorded C comparison identity; investigate the count change"
         end
@@ -225,6 +226,25 @@ c_provenance_self_test() (
             case "$_cpst_out" in *"$_cpst_want"*) ;; *) echo "provenance self-test: $_cpst_mutation: $_cpst_out" >&2; return 1 ;; esac
         fi
     done
+    # jq -e alone checks only the last output. A record must be exactly one
+    # JSON document, including when an invalid/incomplete record comes first.
+    for _cpst_first in '{}' '{"schema":2}' '{"schema":1,"complete":false}'; do
+        printf '%s\n' "$_cpst_first" > "$_cpst_dir/concatenated.json"
+        cat "$_cpst_dir/producer.json" >> "$_cpst_dir/concatenated.json"
+        if c_provenance_validate "$_cpst_dir/concatenated.json" 2>/dev/null; then
+            echo 'provenance self-test accepted invalid-first concatenated JSON' >&2; return 1
+        fi
+    done
+    cat "$_cpst_dir/producer.json" "$_cpst_dir/producer.json" > "$_cpst_dir/concatenated.json"
+    if c_provenance_validate "$_cpst_dir/concatenated.json" 2>/dev/null; then
+        echo 'provenance self-test accepted two valid JSON documents' >&2; return 1
+    fi
+    jq '.complete = false' "$_cpst_dir/producer.json" > "$_cpst_dir/concatenated.json"
+    cat "$_cpst_dir/producer.json" >> "$_cpst_dir/concatenated.json"
+    if c_provenance_diagnose "$_cpst_dir/producer.json" "$_cpst_dir/concatenated.json" \
+        "$_cpst_dir/c-counts.tsv" "$_cpst_dir/c-diff.txt" >/dev/null 2>&1; then
+        echo 'provenance self-test diagnosed an incomplete-first concatenated record' >&2; return 1
+    fi
     for _cpst_unknown in absent unknown malformed unbound; do
         _cpst_base="$_cpst_dir/$_cpst_unknown.json"
         case "$_cpst_unknown" in
@@ -237,6 +257,9 @@ c_provenance_self_test() (
             "$_cpst_dir/c-counts.tsv" "$_cpst_dir/c-diff.txt" 2>/dev/null) || return 1
         case "$_cpst_out" in *'unknown baseline environment'*) ;; *) echo "provenance self-test: $_cpst_unknown" >&2; return 1 ;; esac
     done
+    if c_provenance_validate "$_cpst_dir/unknown.json" measured 2>/dev/null; then
+        echo 'provenance self-test accepted a historical unknown as a measurement' >&2; return 1
+    fi
     printf 'benchmark/typelisp/a | 10 | 11 | +1 | +10%% | REGRESSION\n' > "$_cpst_dir/tl-diff.txt"
     _cpst_out=$(c_provenance_diagnose "$_cpst_dir/producer.json" "$_cpst_dir/producer.json" \
         "$_cpst_dir/c-counts.tsv" "$_cpst_dir/tl-diff.txt") || return 1

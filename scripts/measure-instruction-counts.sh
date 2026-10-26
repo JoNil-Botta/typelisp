@@ -226,7 +226,6 @@ fi
 GATE_FAIL_PREFIX='[ir-count] '
 . "$ROOT/scripts/lib-gate.sh"
 . "$ROOT/scripts/lib-benchmark.sh"
-. "$ROOT/scripts/lib-c-provenance.sh"
 
 case "$(uname -s)" in
     Linux*) ;;
@@ -240,7 +239,7 @@ esac
 native_link_detect_host
 configure_toolchain
 
-for tool in valgrind awk tr sed basename dirname cmp jq sha256sum realpath ldd; do
+for tool in valgrind awk tr sed basename dirname cmp realpath; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "missing tool: $tool" >&2
         exit 1
@@ -248,10 +247,12 @@ for tool in valgrind awk tr sed basename dirname cmp jq sha256sum realpath ldd; 
 done
 VALGRIND=$(command -v valgrind)
 if [ "$MEASURE_BENCHMARKS" -eq 1 ] || [ "$SELF_TEST" -eq 1 ]; then
-    command -v clang >/dev/null 2>&1 || fail "missing tool: clang (C baseline compiler)"
-fi
-
-if [ "$MEASURE_BENCHMARKS" -eq 1 ] || [ "$SELF_TEST" -eq 1 ]; then
+    # self_compile fallbacks overlay only the two SC_PROCEDURE_FILES onto an
+    # older checkout. Its measurement must not load C-only files or tools.
+    . "$ROOT/scripts/lib-c-provenance.sh"
+    for tool in clang jq sha256sum ldd; do
+        command -v "$tool" >/dev/null 2>&1 || fail "missing C baseline tool: $tool"
+    done
     [ -f "$C_REGION_WRAPPER" ] || fail "missing C measured-region wrapper: $C_REGION_WRAPPER"
 fi
 
@@ -710,6 +711,31 @@ run_observable_output_self_test() {
     echo "[ir-count] observable-output self-test passed"
 }
 
+run_self_compile_overlay_self_test() {
+    # Model the older checkout used by self-compile.sh fallback: its ordinary
+    # helpers exist, but the benchmark-only library and tools do not. Reaching
+    # the compiler check proves that the overlaid procedure can initialize.
+    _sco_root="$ROOT/$WORKDIR/self-compile-overlay"
+    case "$WORKDIR" in /*) _sco_root="$WORKDIR/self-compile-overlay" ;; esac
+    mkdir -p "$_sco_root/scripts" "$_sco_root/bin"
+    for _sco_file in measure-instruction-counts.sh lib-benchmark.sh lib-gate.sh lib-native-link.sh lib-linux-entry.sh; do
+        cp "$ROOT/scripts/$_sco_file" "$_sco_root/scripts/$_sco_file"
+    done
+    # realpath is shared scratch-path validation, independent of C provenance.
+    for _sco_tool in valgrind awk tr sed basename dirname cmp realpath uname as ld; do
+        ln -s "$(command -v "$_sco_tool")" "$_sco_root/bin/$_sco_tool"
+    done
+    if PATH="$_sco_root/bin" /bin/sh "$_sco_root/scripts/measure-instruction-counts.sh" \
+        --self-compile-only "$_sco_root/no-compiler" > "$_sco_root/probe.log" 2>&1; then
+        fail "self_compile overlay self-test unexpectedly accepted a missing compiler"
+    fi
+    if ! grep -F 'typelisp compiler is not executable:' "$_sco_root/probe.log" >/dev/null; then
+        cat "$_sco_root/probe.log" >&2
+        fail "self_compile overlay self-test did not reach the compiler check without C provenance"
+    fi
+    echo "[ir-count] self_compile overlay self-test passed without C provenance library/tools"
+}
+
 measure_self_compile() {
     asm="$WORKDIR/bin/self-compile.opt$OPT_LEVEL.s"
     measure_repeated self_compile "compile_cli_opt$OPT_LEVEL" 1 yes \
@@ -726,6 +752,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
     run_c_region_self_test
     run_observable_output_self_test
     run_ratio_self_test
+    run_self_compile_overlay_self_test
     exit 0
 fi
 

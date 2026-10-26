@@ -21,4 +21,5 @@ GNU time with -v	linux	stage2-docs-pages-build-path	ci_host_gnu_time "${DOC_SITE
 jq	all	stage0-release-publication-verifier-self-tests,self-compile-gate-self-tests,instruction-count-comparison-self-tests,c-measured-region-instruction-harness-self-tests	command -v jq	install jq (Debian/Ubuntu: apt install jq; Fedora: dnf install jq; Arch: pacman -S jq; Windows: winget install jqlang.jq)
 jq	linux	linux-instruction-count-baseline,linux-heavy-instruction-count-baseline	command -v jq	install jq (Debian/Ubuntu: apt install jq; Fedora: dnf install jq; Arch: pacman -S jq)
 C provenance utilities	linux	c-measured-region-instruction-harness-self-tests,linux-instruction-count-baseline,linux-heavy-instruction-count-baseline	command -v sha256sum && command -v realpath && command -v ldd	install coreutils and libc runtime utilities
+realpath	linux	linux-self-compile-measurement	command -v realpath	install coreutils for scratch-path validation
 PowerShell 7 (pwsh)	windows	stage2-compile-profile-verifier,tlci-native-route-sustained-stress	command -v pwsh	install PowerShell 7 (winget install Microsoft.PowerShell)

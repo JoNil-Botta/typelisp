@@ -197,7 +197,7 @@ c_provenance_self_test() (
     c_provenance_validate "$_cpst_dir/producer.json" || return 1
     _cpst_base="$_cpst_dir/producer.json"
     _cpst_current="$_cpst_dir/current.json"
-    for _cpst_mutation in same compiler flags source input wrapper libc mode scalar-mode missing-field incomplete schema unavailable; do
+    for _cpst_mutation in same compiler flags source input wrapper libc mode scalar-mode missing-field missing-row incomplete schema unavailable; do
         _cpst_want='incompatible C comparison environment'
         _cpst_valid=1
         case "$_cpst_mutation" in
@@ -211,6 +211,7 @@ c_provenance_self_test() (
             mode) _cpst_filter='.rows["benchmark/c/a"].build_argv += ["-fno-vectorize"]'; _cpst_valid=0 ;;
             scalar-mode) _cpst_filter='.rows["benchmark/c-scalar/a"].build_argv = ["clang","-O2"]'; _cpst_valid=0 ;;
             missing-field) _cpst_filter='del(.environment.compiler.sha256)'; _cpst_valid=0 ;;
+            missing-row) _cpst_filter='del(.rows["benchmark/c/a"])'; _cpst_want='unknown measured environment: row has no producer record' ;;
             incomplete) _cpst_filter='.complete = false'; _cpst_valid=0 ;;
             schema) _cpst_filter='.schema = 2'; _cpst_valid=0 ;;
             unavailable) _cpst_filter='.environment.compiler.version = "unknown"'; _cpst_want='unknown comparison environment' ;;

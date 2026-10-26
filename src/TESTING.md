@@ -8,6 +8,13 @@ candidate variables. Keep both entry points when changing SSA storage; the
 fixed-source compiler/benchmark and CFG scaling comparisons require complete
 SSA IR (including value numbering) and raw assembly equality.
 
+`mut_borrow_field_writeback` checks immediate mutable field call arguments at
+opt0/1/2 on both hosts: one/two-word locals, nested and disjoint fields, narrow
+and SSE fields, later sibling effects and repeated calls. Writeback merges only
+the borrowed field into the current local. Shared borrows, whole-local
+writebacks, memory-backed receivers and reference receivers remain controls;
+the safety corpus retains overlapping-place borrow rejection.
+
 `compiler-lower-unit-field-reads` requires canonical unit results without
 addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
 `unit_struct_fields` exercises empty, one/two-word and memory-class structs,

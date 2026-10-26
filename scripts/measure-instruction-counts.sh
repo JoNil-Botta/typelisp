@@ -226,6 +226,7 @@ fi
 GATE_FAIL_PREFIX='[ir-count] '
 . "$ROOT/scripts/lib-gate.sh"
 . "$ROOT/scripts/lib-benchmark.sh"
+. "$ROOT/scripts/lib-c-provenance.sh"
 
 case "$(uname -s)" in
     Linux*) ;;
@@ -239,7 +240,7 @@ esac
 native_link_detect_host
 configure_toolchain
 
-for tool in valgrind awk tr sed basename dirname cmp; do
+for tool in valgrind awk tr sed basename dirname cmp jq sha256sum realpath ldd; do
     command -v "$tool" >/dev/null 2>&1 || {
         echo "missing tool: $tool" >&2
         exit 1
@@ -281,7 +282,11 @@ if [ "$SELF_TEST" -eq 0 ] &&
     echo "[ir-count] the checked absolute baseline is owned by Linux CI; see perf/README.md" >&2
 fi
 
-rm -rf "$WORKDIR"
+case "$(realpath -m -- "$WORKDIR")" in
+    "$ROOT/target/"*) ;;
+    *) fail "--output must be inside this checkout's target/ scratch root: $WORKDIR" ;;
+esac
+rm -rf -- "${WORKDIR:?}"
 mkdir -p "$WORKDIR/bin" "$WORKDIR/logs"
 
 if [ "$BUILD_STAGE2_FROM_SEED" -eq 1 ]; then
@@ -406,19 +411,23 @@ measure_repeated() {
 }
 
 build_c_region_self_test() {
+    _crst_label=$2
     bin="$WORKDIR/bin/c-region-$2"
-    bench_build "$bin" "$WORKDIR/logs/c-region-$2.build.stdout" "$WORKDIR/logs/c-region-$2.build.stderr" \
-        "unsupported C measured-region toolchain: clang must find valgrind/cachegrind.h" \
-        clang "$C_OPT" \
+    set -- clang "$C_OPT" \
         "-DTYPELISP_IR_STARTUP_ITERATIONS=$1" \
         "-Dmain=$C_REGION_MAIN" \
         "$C_REGION_SELF_TEST" "$C_REGION_WRAPPER" \
         -o "$bin"
+    bench_build "$bin" "$WORKDIR/logs/c-region-$_crst_label.build.stdout" "$WORKDIR/logs/c-region-$_crst_label.build.stderr" \
+        "unsupported C measured-region toolchain: clang must find valgrind/cachegrind.h" \
+        "$@"
+    c_provenance_build "$@"
     C_REGION_SELF_TEST_BIN=$bin
 }
 
 run_c_region_self_test() {
     [ -f "$C_REGION_SELF_TEST" ] || fail "missing C measured-region self-test: $C_REGION_SELF_TEST"
+    c_provenance_init
 
     build_c_region_self_test 1 short-startup
     short_bin=$C_REGION_SELF_TEST_BIN
@@ -441,6 +450,9 @@ run_c_region_self_test() {
     [ "$long_ir" = "$repeat_ir" ] || {
         fail "C measured region is not reproducible: first=$long_ir repeat=$repeat_ir"
     }
+    first=$repeat_ir
+    c_provenance_row benchmark/c c-region-self-test "$long_bin" "$C_REGION_SELF_TEST" "$WORKDIR/no-metadata"
+    c_provenance_complete
     echo "[ir-count] C measured-region self-test passed: Ir=$short_ir"
 }
 
@@ -457,8 +469,16 @@ build_measured() {
     safe="$WORKDIR/logs/$(bench_safe_name "benchmark-$impl-$name")"
     echo "[ir-count] build benchmark/$impl $name"
     bench_build "$bin" "$safe.build.stdout" "$safe.build.stderr" "$msg" "$@"
+    case "$impl" in c | c-scalar) c_provenance_build "$@" ;; esac
     # shellcheck disable=SC2086
     measure_repeated "benchmark/$impl" "$name" 0 "$instr_at_start" "$bin" $bench_args
+    case "$impl" in
+        c | c-scalar)
+            # Match the existing argument splitting used for measurement.
+            # shellcheck disable=SC2086
+            c_provenance_row "benchmark/$impl" "$name" "$bin" "$baseline_c" "$dir/optimization.tsv" $bench_args
+            ;;
+    esac
 }
 
 build_benchmark_pair() {
@@ -681,6 +701,12 @@ run_observable_output_self_test() {
         1 "$observable_dir/right.stdout" "$observable_dir/right.stderr"; then
         fail "observable-output self-test accepted different exit status"
     fi
+    printf 'unexpected diagnostic\n' > "$observable_dir/right.stderr"
+    if observable_outputs_match \
+        0 "$observable_dir/left.stdout" "$observable_dir/left.stderr" \
+        0 "$observable_dir/right.stdout" "$observable_dir/right.stderr"; then
+        fail "observable-output self-test accepted different stderr"
+    fi
     echo "[ir-count] observable-output self-test passed"
 }
 
@@ -719,9 +745,12 @@ if [ -n "$CASES" ]; then
 fi
 
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
+    c_provenance_init
     measure_benchmarks
     generate_benchmark_ratios "$SUMMARY_TSV" "$RATIOS_TSV" "$C_SCALAR" ||
         fail "could not generate benchmark ratio report"
+    c_provenance_complete
+    echo "[ir-count] C comparison provenance: $C_PROVENANCE"
 fi
 
 if [ "$MEASURE_SELF_COMPILE" -eq 1 ]; then

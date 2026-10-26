@@ -308,6 +308,68 @@ A clang, libc, or Valgrind change that alters instructions executed from `main`
 onward is still a real, reviewable C comparison change; only pre-`main` loader
 startup is excluded.
 
+### C comparison provenance
+
+Each benchmark measurement writes `measure/c-provenance.json` under the
+checker's output directory (`c-provenance.json` for direct measurements).
+Schema 1 records the resolved compiler path, full version, executable SHA-256
+and target; Valgrind and linker identities; libc version and each executable's
+resolved libc path/hash; architecture, OS release, cwd and runner image/kernel
+information. Each `benchmark/c/…` and `benchmark/c-scalar/…` row retains its
+count, exact build/run argv, binary, C source and optimization-metadata hashes,
+and hashes of file arguments such as the compiler-derived input corpus. The
+instrumentation wrapper hash, Cachegrind options and clean runtime environment
+are recorded too. `absent` marks an optional optimization-metadata file that
+does not exist. `unknown` explicitly means unavailable; it is never a match
+proving comparability. `complete:false` records an interrupted/failed run and
+cannot be used as a producer record. Exact output/status checks still run
+before a record becomes complete.
+Disposable output directories must remain inside the checkout's `target/`;
+the scripts validate that boundary before clearing a previous output.
+
+The required Linux job uploads `c-comparison-provenance` on success or failure,
+with both suites' records, summaries, checked rows and numerical diffs. Its
+recorded repository, workflow, run ID, attempt, job and commit identify the
+producer. The artifact is retained for 90 days. No host environment variable
+is passed to the measured process: its environment remains `env -i LC_ALL=C`.
+
+`<baseline>.provenance.json` describes the producer of the checked C rows.
+The initial schema-1 sidecars explicitly mark historical provenance unknown;
+they make no claim about which tools produced the existing values. To
+establish provenance, run the complete required Linux job for an identified
+commit, retaining the `c-comparison-provenance` artifact and successful gate
+logs. Verify that **every checked C row in each suite matches exactly** and
+that output parity and required case coverage passed. Copy that suite's
+complete measured record into its sidecar in a reviewed, record-only PR;
+include the run/attempt, job and direct artifact URL in that PR. Preserve all
+baseline counts. Do not promote a subset, a failed run, or this host's metadata
+as historical identity. A later TypeLisp-only row refresh needs no C metadata
+refresh; a deliberate C count/source/tool change needs new authoritative
+evidence and review. The sidecar's per-row counts bind its claimed producer
+to the corresponding C pins; an old record never explains a different pin.
+
+On a numerical mismatch the checker still exits nonzero in either direction.
+For each affected C row it distinguishes unknown/unavailable provenance,
+different recorded toolchain/commands/workload, and the same recorded identity
+(which needs investigation). The record is evidence, not proof that it captures
+every possible host influence. A TypeLisp row keeps its own exact failure.
+Malformed records fail validation; missing historical records are diagnosed as
+unknown. Neither absence nor incompatibility skips C rows, substitutes a mode,
+changes tolerances, or authorizes a baseline update. The scalar/auto modes
+remain separate, and the TypeLisp <=1.01x C target is unchanged.
+
+To reproduce a hosted comparison locally, use a disposable VM or container
+matching the record's OS/architecture, and install its exact Clang, libc,
+linker and Valgrind versions **inside that environment**. Restore the named
+source commit and input hashes, mount the checkout at the recorded cwd, and
+use the gate's historical output paths and recorded argv. Verify executable
+hashes as well as version labels; runner image/package revisions can differ
+under the same version. Invoke `scripts/check-instruction-counts.sh` there
+(and the heavy command above). Alternatively put an isolated tool prefix first
+in PATH when libc and the other recorded inputs already match. Replacing host
+tools globally or changing shared Git configuration is unnecessary. A passing
+local reproduction does not replace required hosted CI.
+
 ### Suite membership
 
 `perf/benchmark-ci-cases.tsv` assigns positive membership to the Linux generic

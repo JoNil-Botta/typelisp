@@ -18,6 +18,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 . "$ROOT/scripts/lib-gate.sh"
 . "$ROOT/scripts/lib-benchmark.sh"
+. "$ROOT/scripts/lib-c-provenance.sh"
 
 DEFAULT_BENCHMARKS=$(benchmark_ci_case_csv "$ROOT" instruction-main)
 DEFAULT_BASELINE="$ROOT/perf/insn-exec-baseline.tsv"
@@ -394,8 +395,8 @@ self_test_case() {
 }
 
 self_test() {
-    SELF_TEST_DIR=${TMPDIR:-/tmp}/ir-check-self-test.$$
-    mkdir -p "$SELF_TEST_DIR"
+    mkdir -p "$ROOT/target/exp/ir-check-self-test"
+    SELF_TEST_DIR=$(mktemp -d "$ROOT/target/exp/ir-check-self-test/run.XXXXXX")
     BENCHMARKS=arith_loop
     printf 'name\tir_count\nbenchmark/typelisp/arith_loop\t437500077\nbenchmark/c-scalar/arith_loop\t500001469\n' \
         > "$SELF_TEST_DIR/base.tsv"
@@ -418,6 +419,10 @@ self_test() {
     # Fail-closed shapes still fail.
     self_test_case missing-row "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/missing-row.tsv" "missing-current" 1 || _st_status=1
     self_test_case extra-row "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/extra-row.tsv" "extra-current" 1 || _st_status=1
+    printf 'benchmark/typelisp/arith_loop\t437500077\nbenchmark/c-scalar/arith_loop\t500001470\n' > "$SELF_TEST_DIR/c-regressed.tsv"
+    printf 'benchmark/typelisp/arith_loop\t437500077\nbenchmark/c-scalar/arith_loop\t500001468\n' > "$SELF_TEST_DIR/c-improved.tsv"
+    self_test_case c-regressed "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/c-regressed.tsv" "REGRESSION" 1 || _st_status=1
+    self_test_case c-improved "$SELF_TEST_DIR/base.tsv" "$SELF_TEST_DIR/c-improved.tsv" "IMPROVEMENT" 1 || _st_status=1
 
     # Explicit benchmark subsets compare only their selected rows, even when
     # the baseline carries other cases. Selected mismatches still fail.
@@ -523,7 +528,7 @@ self_test() {
         fi
     done
 
-    rm -rf "$SELF_TEST_DIR"
+    c_provenance_self_test "$SELF_TEST_DIR" || _st_status=1
     if [ "$_st_status" -ne 0 ]; then
         return 1
     fi
@@ -595,7 +600,11 @@ elif [ -n "${TYPELISP_BIN:-}" ]; then
     update_command="TYPELISP_BIN=$TYPELISP_BIN $update_command"
 fi
 
-rm -rf "$WORKDIR"
+case "$(realpath -m -- "$WORKDIR")" in
+    "$ROOT/target/"*) ;;
+    *) fail "--output must be inside this checkout's target/ scratch root: $WORKDIR" ;;
+esac
+rm -rf -- "${WORKDIR:?}"
 mkdir -p "$WORKDIR"
 
 MEASURE_OUT="$WORKDIR/measure"
@@ -636,6 +645,9 @@ fi
 
 echo "[ir-check] measure instruction-count subset"
 env -i PATH="$PATH" HOME="${HOME:-}" LC_ALL=C \
+    GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-local}" GITHUB_RUN_ID="${GITHUB_RUN_ID:-local}" \
+    GITHUB_RUN_ATTEMPT="${GITHUB_RUN_ATTEMPT:-local}" GITHUB_WORKFLOW_REF="${GITHUB_WORKFLOW_REF:-local}" \
+    GITHUB_JOB="${GITHUB_JOB:-local}" ImageOS="${ImageOS:-unknown}" ImageVersion="${ImageVersion:-unknown}" \
     scripts/measure-instruction-counts.sh \
     --runs "$RUNS" \
     --cases "$BENCHMARKS" \
@@ -675,6 +687,10 @@ if [ ! -f "$BASELINE" ]; then
 fi
 
 assert_scalar_fair_baseline "$BASELINE" || exit 1
+c_provenance_validate "$MEASURE_OUT/c-provenance.json" || exit 1
+if [ -f "$BASELINE.provenance.json" ]; then
+    c_provenance_validate "$BASELINE.provenance.json" || exit 1
+fi
 
 if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
     cat "$DIFF_OUT"
@@ -682,6 +698,13 @@ if compare_counts "$BASELINE" "$CURRENT" > "$DIFF_OUT"; then
 else
     cat "$DIFF_OUT" >&2
     echo "[ir-check] instruction counts differ from $BASELINE" >&2
-    echo "[ir-check] update intentional changes with: $update_command" >&2
+    c_provenance_diagnose "$BASELINE.provenance.json" "$MEASURE_OUT/c-provenance.json" \
+        "$BASELINE" "$DIFF_OUT" >&2
+    if awk -F ' \\| ' '$1 ~ /^benchmark\/c(-scalar)?\// && $6 != "ok" {found=1} END {exit found ? 0 : 1}' "$DIFF_OUT"; then
+        echo "[ir-check] keep C rows unchanged; reproduce the recorded comparison environment (perf/README.md)" >&2
+        echo "[ir-check] --update-baseline is not a remedy for incompatible C tools" >&2
+    else
+        echo "[ir-check] update reviewed intentional TypeLisp changes with: $update_command" >&2
+    fi
     exit 1
 fi

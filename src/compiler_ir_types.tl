@@ -4960,11 +4960,9 @@
 (defenum CompilerIrParam
   (Param String ast.AstType i64))
 
-;; `$` is excluded by lex.is-symbol-char, so the lexer cannot produce this
-;; name as a source identifier. Keep hidden ABI parameters distinct even from
-;; `__sret` and `x01__sret`; SPEC 2.3 makes `\x01` spell `x01`, not a control
-;; byte. A literal invalid-symbol prefix also avoids allocating a runtime name
-;; in the optimizer's repeated identity checks.
+;; `$` is excluded by lex.is-symbol-char, so source cannot spell this name.
+;; SPEC 2.3 makes `\x01` spell `x01`, not byte 1. The invalid-symbol prefix
+;; separates hidden ABI parameters from users without runtime allocation.
 (define (compiler-ir-hidden-sret-param-name) : String
   "$__sret")
 

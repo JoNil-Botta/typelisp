@@ -109,3 +109,52 @@ build_invariance_copy_aliases() {
         fi
     done < "$_bib_alias_file"
 }
+
+# A large source remains the only unique input in its process. Consecutive
+# logical aliases of that input share the fresh output through the ordinary
+# chunk planner; they still count toward the logical-case ceiling.
+build_invariance_write_chunks() {
+    _bib_chunk_records=$1
+    _bib_chunk_dir=$2
+    _bib_chunk_size=$3
+    rm -rf "$_bib_chunk_dir"
+    mkdir -p "$_bib_chunk_dir"
+    awk -F'|' -v chunk_dir="$_bib_chunk_dir" -v chunk_size="$_bib_chunk_size" '
+        function singleton(name, source) {
+            return name ~ /^selfhost_main_/ || source ~ /^src\/tests\/compiler_[^/]*\.tl$/
+        }
+        function finish_chunk() {
+            if (chunk_entries > 0) {
+                close(cases_path)
+                chunk_index += 1
+                chunk_entries = 0
+            }
+        }
+        $1 != "" {
+            alone = singleton($1, $2)
+            if (chunk_entries > 0 && (alone || chunk_alone) &&
+                !(alone && chunk_alone && $3 == chunk_source && $5 == chunk_opt)) {
+                finish_chunk()
+            }
+            if (chunk_entries == 0) {
+                cases_path = chunk_dir "/cases." sprintf("%04d", chunk_index) ".txt"
+                chunk_source = $3
+                chunk_opt = $5
+                chunk_alone = alone
+            }
+            print $0 >> cases_path
+            chunk_entries += 1
+            if (chunk_entries >= chunk_size) finish_chunk()
+        }
+        END { finish_chunk() }
+    ' "$_bib_chunk_records"
+}
+
+# Several logical aliases still represent one complete smoke compilation.
+# Classify every row so an unrelated input cannot borrow its memory class.
+build_invariance_chunk_is_codegen_smoke() {
+    awk -F'|' '
+        NF != 5 || $3 != "src/tests/compiler_codegen_smoke_suite.tl" { exit 1 }
+        END { if (NR == 0) exit 1 }
+    ' "$1"
+}

@@ -112,6 +112,76 @@ reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
 printf 'first|input.tl|1\nfirst|other.tl|2\n' > "$CORPUS"
 reject build_invariance_require_coverage "$CORPUS" "$BATCHES"
 
+# Large inputs stay isolated from different inputs, while all their adjacent
+# logical aliases remain in the authoritative inventory and output comparisons.
+CHUNK_ROOT="$WORKDIR/chunk-tests"
+mkdir -p "$CHUNK_ROOT/opt2/chunks"
+{
+    record before ordinary.tl "$WORKDIR/left" 2
+    record smoke-a src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2
+    record smoke-b src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2
+    record other src/tests/compiler_other_smoke.tl "$WORKDIR/left" 2
+    record after ordinary.tl "$WORKDIR/left" 2
+    record after-alias ordinary.tl "$WORKDIR/left" 2
+} > "$CHUNK_ROOT/cases.txt"
+build_invariance_write_chunks "$CHUNK_ROOT/cases.txt" "$CHUNK_ROOT/opt2/chunks" 64
+test "$(find "$CHUNK_ROOT/opt2/chunks" -name 'cases.*.txt' | wc -l)" -eq 4
+awk -F '|' '{ print $1 "|" $2 "|" $5 }' "$CHUNK_ROOT/cases.txt" > "$CORPUS"
+build_invariance_require_coverage "$CORPUS" "$CHUNK_ROOT"
+test "$(wc -l < "$CHUNK_ROOT/opt2/chunks/cases.0001.txt")" -eq 2
+build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/opt2/chunks/cases.0001.txt"
+if build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/opt2/chunks/cases.0002.txt"; then
+    echo "unrelated smoke acquired codegen memory class" >&2
+    exit 1
+fi
+build_invariance_plan_chunk "$CHUNK_ROOT/opt2/chunks/cases.0001.txt" \
+    "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
+test "$(wc -l < "$ENTRIES")" -eq 1
+test "$(wc -l < "$ALIASES")" -eq 1
+printf 'fresh complete smoke assembly\n' > "$WORKDIR/left/smoke-a.s"
+build_invariance_copy_aliases "$ALIASES"
+cmp "$WORKDIR/left/smoke-a.s" "$WORKDIR/left/smoke-b.s"
+cat "$CHUNK_ROOT/opt2/chunks/cases.0002.txt" >> "$CHUNK_ROOT/opt2/chunks/cases.0001.txt"
+if build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/opt2/chunks/cases.0001.txt"; then
+    echo "mixed inputs acquired codegen memory class" >&2
+    exit 1
+fi
+: > "$CHUNK_ROOT/empty"
+if build_invariance_chunk_is_codegen_smoke "$CHUNK_ROOT/empty"; then
+    echo "empty chunk acquired codegen memory class" >&2
+    exit 1
+fi
+
+# The ceiling counts logical aliases; crossing it starts a new fresh compile.
+: > "$CASES"
+i=0
+while [ "$i" -lt 65 ]; do
+    record "large-$i" src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2 >> "$CASES"
+    i=$((i + 1))
+done
+build_invariance_write_chunks "$CASES" "$CHUNK_ROOT/boundary" 64
+test "$(find "$CHUNK_ROOT/boundary" -name 'cases.*.txt' | wc -l)" -eq 2
+test "$(wc -l < "$CHUNK_ROOT/boundary/cases.0000.txt")" -eq 64
+test "$(wc -l < "$CHUNK_ROOT/boundary/cases.0001.txt")" -eq 1
+build_invariance_plan_chunk "$CHUNK_ROOT/boundary/cases.0000.txt" \
+    "$ENTRIES" "$ALIASES" 2 "$WORKDIR/left"
+test "$(wc -l < "$ENTRIES")" -eq 1
+test "$(wc -l < "$ALIASES")" -eq 63
+
+# Staged input paths and requested optimization are part of the invocation
+# identity even when logical source names match.
+record original src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 2 > "$CASES"
+sed 's/|src\/tests\/compiler_codegen_smoke_suite.tl|\([^|]*\)|2$/|staged.tl|\1|2/' \
+    "$CASES" >> "$CHUNK_ROOT/staged"
+cat "$CHUNK_ROOT/staged" >> "$CASES"
+build_invariance_write_chunks "$CASES" "$CHUNK_ROOT/identity" 64
+test "$(find "$CHUNK_ROOT/identity" -name 'cases.*.txt' | wc -l)" -eq 2
+record same src/tests/compiler_codegen_smoke_suite.tl "$WORKDIR/left" 1 >> "$CASES"
+build_invariance_write_chunks "$CASES" "$CHUNK_ROOT/identity" 64
+test "$(find "$CHUNK_ROOT/identity" -name 'cases.*.txt' | wc -l)" -eq 3
+build_invariance_write_chunks "$CHUNK_ROOT/empty" "$CHUNK_ROOT/identity" 64
+test "$(find "$CHUNK_ROOT/identity" -type f | wc -l)" -eq 0
+
 # Worker pool: jobs start in queue order, only inside the memory budget, exactly
 # once; a drained pool passes only with one successful result per queued job.
 POOL="$WORKDIR/pool"

@@ -2647,19 +2647,33 @@ this backend before running the gates. Reports and command logs are retained in
 `target/build-invariance/backend-memory/` and uploaded by Linux CI; large
 assembly/executable outputs remain local.
 
-The four selfhost compiles run alone within the gate, before its pool starts;
-under `ci-verify.sh --jobs` other gates may run beside them, so their timing
-rows are evidence, not budgets. Every other chunk of both producers and the
-backend-tests build are jobs of one worker pool
-(`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 reproduces the serial
-order). Each pooled job runs through `scripts/run-memory-bounded.sh` with swap
-disabled and a 600 s timeout: 8192 MiB for the backend-tests build and both
-producers' complete codegen smoke, and 4096 MiB for every other chunk, about
-1.5 times the largest measured chunk peak (2.7 GiB). A job starts only while
-the caps of all running jobs fit 12288 MiB, so no two 8 GiB jobs overlap and
-the bound holds for every worker count; a job whose cap does not fit waits
-while later jobs that fit run. Chunk metrics and the chunk log lines carry each
-pooled chunk's peak.
+Every chunk of both producers, including the four selfhost compiles, and
+backend-tests are jobs of the existing bounded worker pool
+(`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 executes one job at a
+time). Large compiler smoke inputs stay isolated from other unique inputs;
+consecutive logical cases naming the same actual input at the same requested
+optimization share one fresh compile through the ordinary alias plan. All
+logical cases still count toward the 64-case ceiling, produce their named
+assembly, and receive their own byte comparison. Integration case names retain
+their manifest spelling; the build-invariance corpus requests opt2 for them,
+while its two selfhost rows request opt1 and opt2.
+
+Each job runs through `scripts/run-memory-bounded.sh` with swap disabled and a
+600 s timeout: 8192 MiB for the backend-tests build, both producers' complete
+codegen smoke and all four selfhost compiles, and 4096 MiB for every other
+chunk. A job starts only while the caps of all running jobs fit 12288 MiB,
+so no two 8 GiB jobs overlap; a job whose cap does not fit waits while later
+jobs that fit run. The existing outer CI scheduler still owns the complete
+verification graph. Chunk metrics and the chunk log lines carry every chunk's
+peak. Locally, use one worker for the shared 8 GiB test allowance; the hosted
+two-worker resource topology is separate from that local allowance.
+
+Linux CI retains the authoritative corpus, both producers' complete case,
+entry and alias plans, queue records, chunk metrics and `provenance.txt` in
+its existing `backend-memory-Linux` artifact. The provenance records source
+and compiler identities and the common target, cfgs, backend and ordered roots,
+so a coverage audit can interpret every requested optimization and comparison
+from the same records the local gate executes.
 
 The gate compares a chunk as soon as both producers have emitted it. It passes
 only with exactly one successful result per queued job: a failed, missing or

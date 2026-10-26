@@ -10,6 +10,8 @@ concurrency:
 
 permissions:
   contents: read
+  # The self_compile check reads main's reference workflow runs and artifacts.
+  actions: read
 
 jobs:
   # TypeLisp is self-hosted. The single verification flow fetches the published
@@ -221,3 +223,29 @@ jobs:
             target/embedded-stdlib-tlci-resources/*/native.s
             target/embedded-stdlib-tlci-resources/*/source.s
           if-no-files-found: warn
+
+      # self_compile has no checked row (#9307, perf/README.md). The
+      # linux-self-compile-measurement gate measured the tested merge T; this
+      # gates the PR's own cost M(T) - M(B) against main's CI-owned reference for
+      # the tested base B, after verifying its provenance and identity, or
+      # measures B in place on this runner when there is none. It runs last
+      # because that fallback switches the checkout.
+      - name: Check self_compile own cost against main
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TYPELISP_SELF_COMPILE_PR_NUMBER: ${{ github.event.pull_request.number }}
+          TYPELISP_SELF_COMPILE_PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: scripts/self-compile.sh check
+
+      # The ledger on main attributes each merge to this record.
+      - name: Upload self_compile measurement
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-compile-measurement
+          path: target/self-compile/pr/
+          if-no-files-found: warn
+          retention-days: 90
+          overwrite: true

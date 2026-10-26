@@ -9,6 +9,8 @@ The checked tables in this directory, and the gates and scripts that own them:
 | `benchmark-ci-cases.tsv` | suite membership for the benchmark, optimizer-corpus and instruction-count gates |
 | `compiler-scaling-budgets.tsv` | `linux-compiler-scaling-budgets` (`scripts/check-compiler-scaling.sh`) |
 | `spmd-mode-insn-baseline.tsv`, `spmd-mode-support.tsv` | opt-in `scripts/measure-spmd-mode-instruction-counts.sh` |
+| `self-compile-declarations/pr-<N>.tsv` | PR N's acknowledged `self_compile` cost (`scripts/self-compile.sh check`) |
+| `self-compile-ledger-resolutions.tsv`, `self-compile-ledger-checkpoint.tsv` | reviewed `self_compile` ledger resolutions and checkpoint (`scripts/self-compile.sh ledger`), when present |
 
 Measured deltas belong in the PR that changes a row, not in this file.
 
@@ -16,7 +18,7 @@ Measured deltas belong in the PR that changes a row, not in this file.
 
 `perf/insn-exec-baseline.tsv` and `perf/insn-exec-heavy-baseline.tsv` are the
 committed cachegrind `Ir` baselines for the required Linux per-PR performance
-gates. The first covers `self_compile` and the `instruction-main` cases of
+gates. The first covers the `instruction-main` cases of
 `perf/benchmark-ci-cases.tsv`: the twelve compiler-derived kernels,
 `pure_call_join` and `loop_call_literal`, and the eleven original kernels
 (`arith_loop`, `array_sum`, `borrowed_disjoint_store`, the four `hashmap_*`
@@ -25,7 +27,8 @@ That is every `benchmark/typelisp` row the file carries, so none goes stale
 unchecked. The second covers the `instruction-heavy` cases, benchmark rows
 only. Explicit `--benchmarks` subsets
 are scoped against the selected cases even when a baseline carries additional
-rows.
+rows. Neither file carries `self_compile`, whose absolute count is
+environment-specific; it is gated main-relative (see [`self_compile`](#self_compile)).
 
 Benchmark metrics are exact: `current != baseline` fails in either direction,
 and an intentional change is accepted by committing the refreshed rows in the
@@ -34,18 +37,17 @@ introduces them.
 
 ### Refreshing
 
-Absolute `self_compile` counts are owned by GitHub-hosted Linux CI. A local
-Linux or WSL refresh may update benchmark rows only:
+Benchmark rows reproduce exactly across the supported Linux, WSL and
+GitHub-hosted environments, so a local Linux or WSL run refreshes them:
 
 ```sh
-scripts/check-instruction-counts.sh --update-baseline --benchmarks-only
+scripts/check-instruction-counts.sh --update-baseline
 ```
 
-That partial refresh preserves the checked `self_compile` row. An update
-selection that includes `self_compile` is rejected outside GitHub Actions, so a
-host offset cannot silently enter the baseline. Ratchet an intentional compiler
-change from the exact `current` value printed by the Linux CI gate and commit it
-in the same PR.
+A refresh rewrites the measured rows and preserves every other row
+(`--benchmarks-only` is still accepted). A baseline that carries a
+`self_compile` row fails the gate: that row was a pin of the retired
+checked-row contract.
 
 Refresh the heavy baseline with the gate's own selection:
 
@@ -61,12 +63,187 @@ scripts/check-instruction-counts.sh \
 
 ### `self_compile`
 
-TypeLisp benchmark rows reproduce exactly across the supported WSL/Linux and
-GitHub-hosted Linux environments for a fixed compiler and command.
-`self_compile` is different: it deliberately retains full-process measurement,
-and its absolute count is environment-specific. Repeated runs on one host are
-stable, so a local reviewer can measure a compiler change as a same-host delta,
-but must not compare a local absolute value with the checked CI baseline:
+`self_compile/compile_cli_opt1` is the Cachegrind `Ir` of the bootstrap
+fixpoint compiler compiling `src/main.tl` at opt1. Unlike the benchmark rows it
+deliberately measures the full compiler process, and its absolute count depends
+on the environment. On one host and checkout path it is bit-identical from run
+to run, but the path alone changes it: a checkout path 52 characters longer
+added about 10,000 Ir to a small compile, and a longer `-o` path a few hundred.
+The compiler path (argv[0]) made no difference. So `self_compile` is not a row
+of any committed baseline. Since #9307 (council decision D-C15-9307) it is
+gated main-relative.
+
+**Measurement.** The required Linux gate `linux-self-compile-measurement` runs
+`scripts/self-compile.sh measure`. It invokes the harness with its historical
+command line, so its values compare directly with earlier hosted runs, and
+writes a record: the value and its measurement identity. The identity is:
+
+- the measured argv (from Cachegrind's `cmd:` line), cwd and environment;
+- a hash of the measurement harness (`scripts/measure-instruction-counts.sh`
+  and `scripts/lib-benchmark.sh`);
+- the SHA-256 of the measured compiler, and the source commit stamped into it,
+  which must be the measured commit;
+- the environment reuse key: ImageOS, kernel, valgrind, `as`, `ld`, workspace
+  path and architecture.
+
+The image version and CPU model are recorded but are not part of the key.
+Build-recipe scripts are not part of the harness hash: they shape the compiler
+under test, so their effect is part of a PR's own cost. Locally the record is
+`local`, and nothing local is gated or reused.
+
+**Main reference.** `.github/workflows/self-compile-reference.yml` runs the
+same gate on every push to main. It publishes the record as that commit's
+reference (artifact `self-compile-reference`, kept 90 days).
+
+**PR check.** After `ci-verify`, the Linux CI job runs
+`scripts/self-compile.sh check`. It identifies the tested merge T, its first
+parent B (the main it merges onto) and the PR head H. It then gates the PR's
+own cost, `own = M(T) − M(B)`. The check passes if and only if
+`|own × 10⁶ − d × M(B)| ≤ 5000 × M(B)`, computed in exact integers, where d is
+the PR's honoured declaration in ppm, or 0. `TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM`
+(default 5000) is unchanged.
+
+- M(B) is B's reference only when all of these hold:
+  - the GitHub API shows a push-to-main run of the reviewed workflow, in this
+    repository, for B;
+  - that run's `Self-compile reference (Linux)` job succeeded in its latest
+    executed attempt (a "re-run failed jobs" copy of a successful job counts as
+    the attempt that ran it);
+  - the record is the newest unexpired artifact of that name from the run (a
+    re-run adds an artifact without removing the earlier attempt's) and names
+    that run, attempt, commit and tree, and a compiler stamped with that commit;
+  - its comparable identity (argv, cwd, env, harness hash and the environment
+    reuse key) equals T's record. The compiler SHA-256 is recorded and bound to
+    the commit; it is compared only between measurements of one commit.
+
+  A pending reference is awaited for up to 30 minutes.
+- Otherwise the job measures B in place. It sets T's `target/` aside and checks
+  out B. It builds B's own fixpoint compiler with B's
+  `ci-verify --gates bootstrap-fixpoint` and a freshly fetched seed, measures it
+  with T's harness at the same path, then restores T, also when the job is
+  terminated. The rejected reference, if any, is kept alongside for comparison;
+  built with the same `as` and `ld`, it must have measured the same compiler
+  bytes.
+- Nothing passes without a valid, comparable M(B) of B's commit and tree. An API
+  error, a missing or rejected reference, or a pending one that does not finish
+  within the wait leads to the in-place measurement; if that also fails, the
+  job fails.
+- The job summary and the `self-compile-measurement` artifact record T, B, H,
+  both values, the source of M(B), the own cost in Ir and ppm, and the status.
+
+**Declarations.** A PR whose own cost is beyond ±5000 ppm acknowledges it in
+`perf/self-compile-declarations/pr-<N>.tsv`, where N is its PR number. The file
+is one line:
+`self_compile/compile_cli_opt1<TAB><finite signed decimal ppm><TAB><reason>`.
+
+- It is honoured only for PR N, and only while B lacks the file. The PR may edit
+  its own new declaration before merge.
+- A PR fails if it adds another PR's declaration, or modifies, deletes or
+  renames one already in B. A malformed declaration fails.
+- A declaration only records acknowledgement. It never justifies a regression
+  or waives review.
+
+#### Reporting replaces the ratchet
+
+There is no pin to commit. Every PR record cites the CI own cost from the job
+summary: Ir, ppm, and the source of M(B). Reviewers assess it.
+
+- Only `|own| ≤ 1000` Ir, with unchanged compiler, stdlib and workload inputs,
+  may be called runner variation.
+- A positive cost above +5000 ppm, declared or measured, is non-routine and
+  needs a council disposition.
+- An improvement beyond −5000 ppm needs both technical reviewers to explain its
+  source and confirm that no work was skipped.
+
+#### The ledger
+
+The `Self-compile ledger` job (`scripts/self-compile.sh ledger`) accounts for
+every merge c with parent p. It uses three quantities, each subtraction taken
+over values of one measurement identity:
+
+- `step = M(c) − M(p)`;
+- the merged PR's `own = M(T) − M(B)`, as its CI reported it (its own T and B
+  records, in its own identity). This is the `own` the account sums;
+- `A = step − own'`, where `own'` is the comparable own cost: the reported one
+  when the PR's identity matches the pair's, otherwise the reproduced one
+  (`own_reproduced`) measured in the pair's identity.
+
+So, in a complete account, Σstep − Σown − ΣA is the sum of the reproduction differences
+`own_reproduced − own`, which the account reports as
+`sum.reproduction_delta` (0 when nothing was reproduced).
+
+Incomparable values are never subtracted:
+
+- When p's reference is not comparable with c's, the ledger job measures p on
+  its own runner, and c as well when c's record is not comparable there.
+- When the merged PR's T and B were measured in another identity, the job
+  reproduces them on its runner in one identity with the pair. B is measured in
+  place. T is the landed commit when the trees are equal; otherwise it is
+  rebuilt with `git merge-tree` from B and the PR head and checked against the
+  recorded tested tree. The original report is kept alongside.
+- A mismatch that cannot be reproduced fails as a comparability failure.
+
+Each merge is then checked as follows:
+
+- **Class S** (the landed tree is the tested tree):
+  - R = M(c) − M(T) in one identity (`r_method direct`); after a reproduction,
+    R = `own_reproduced − own` (`r_method paired-delta`), two deltas of the same
+    T and B trees each taken within one identity. Warn above 1,000 Ir; fail
+    above 10,000 Ir.
+  - T (the tested merge) and c (its squash) are different commits of one tree.
+    The compiler's commit stamp also reaches content-derived assembly labels and
+    the compressed embedded stdlib image, so their compilers are never
+    byte-identical, and this residual is the reproduction check. Two
+    measurements of one commit must have byte-identical compilers.
+  - A is recorded too. When B and p have the same tree it has the same bounds;
+    otherwise it is assessed as class M.
+- **Class M** (the landed tree or base differs from the tested composition):
+  - R = A, recorded with the B..p merges.
+  - Warn above 10,000 Ir; fail when `|R| × 10⁶ > 1000 × M(p)`.
+- **Landed gate window**, on every merge: fail when
+  `|step × 10⁶ − d × M(p)| > 5000 × M(p)`.
+- **Missing PR record:** fails, whatever the numbers.
+
+The ledger's `outcome.tsv` names the result for the merge-pause rules, with
+`complete` and the account state. The outcomes are `ok`, `warning`, `pending`,
+`numerical-failure`, `comparability-failure`, `provenance-failure`,
+`attribution-failure`, `continuity-failure`, `measurement-failure` and
+`infrastructure-failure`.
+
+The account is the anchor plus one compact line per merge since it, carrying
+step, the reported own, `own_reproduced`, A, R, the identity and the outcome.
+Each run re-folds its `summary.tsv` from those lines, including every
+subthreshold value:
+
+- Σstep, Σown (reported), ΣA and the summed reproduction differences;
+- the class S and class M residuals;
+- warnings, failures and merges;
+- identity segments;
+- merges without a measured step or without attribution. Missing values are
+  never summed as zero, and either makes the totals incomplete.
+
+Each ledger run carries the account forward from its parent's run, so the
+account outlives the 90-day artifact retention as long as main merges at least
+once in that period; otherwise the checkpoint below restores it. The uploaded ledger holds only
+these compact records. Every unresolved failure stays listed.
+
+- Only a reviewed row in `perf/self-compile-ledger-resolutions.tsv`
+  (`commit<TAB>outcome<TAB>reference`) resolves a failure. It is refused for a
+  merge whose step was never measured or whose attribution is missing.
+- A missing measurement is repaired by re-running that merge's ledger job: a
+  later run replaces the entry with the repaired one and re-folds every total.
+- If the artifact chain is lost, a reviewed
+  `perf/self-compile-ledger-checkpoint.tsv` (a copy of an account) restores
+  continuity.
+- The anchor is the merge that introduced the reference workflow. Its parent is
+  measured on the ledger runner.
+- From the anchor on, a merge without a ledger entry fails as a continuity gap.
+
+#### Local same-host deltas
+
+Repeated runs on one host are stable, so a local reviewer can measure a
+compiler change as a same-host delta. A local absolute value must never be
+compared with a hosted one:
 
 ```sh
 # Run on the base tree.
@@ -80,24 +257,20 @@ scripts/measure-instruction-counts.sh \
   --output target/instruction-count-branch
 ```
 
-Compare the `self_compile/compile_cli_opt1` rows in the two `summary.tsv`
-files. `check-instruction-counts.sh` renders a local absolute self-compile row
-as `local-absolute-unverified` and does not gate it; benchmark rows remain exact.
-In GitHub Actions the checker applies a 0.5% self-compile tolerance
-(`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`) against the CI-owned baseline.
-Intentional exact changes should still be reported and ratcheted rather than
-treated as runner noise.
-
-`--self-compile-only` measures no benchmark rows, so it neither requests
-scalar-fair measurement nor checks for it, and its `--update-baseline`
-preserves every benchmark row untouched. The `self_compile` optimizer level is
-selected by `--opt-level` (default 1) and recorded in the row name.
+Compare the `self_compile/compile_cli_opt1` rows in the two `summary.tsv` files.
+`scripts/self-compile.sh measure --compiler <stage2>` writes the same record as
+CI, marked `local`. The `self_compile` optimizer level is selected by
+`--opt-level` (default 1) and recorded in the row name.
 
 ### What the checker measures
 
 Unless `TYPELISP_IR_CHECK_COMPILER` names a prebuilt compiler (CI passes its
 bootstrap stage2), the checker builds a fresh full CLI stage1 and stage2 under
-`target/instruction-count-check` and measures that fixed stage2 compiler.
+its work directory and measures benchmarks with that fixed stage2 compiler.
+Measured paths reach the counts (a C benchmark's input path, the self-compile
+`-o` path), so CI's benchmark gate and the `self_compile` gate both keep their
+historical paths under `target/instruction-count-check` and never run at once
+(the `instruction-count` gate lock).
 Benchmark binaries are built at **opt-level 2**, so the TypeLisp-vs-C rows are
 a release-vs-release comparison (TypeLisp opt2 against `clang -O2`); override
 with `TYPELISP_IR_BENCH_OPT_LEVEL`. A selected benchmark case must contain both

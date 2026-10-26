@@ -14935,7 +14935,9 @@
       (match (opt-ssa-phi-sites-ref sites site)
         [(PhiSite _ label _ _)
           (+= count (opt-label-count (opt-pred-map-lookup pred-map label)))]
-        [_ (string.tl_oob_abort)]))
+        [_
+          (abort.compiler-abort
+            "tl: compiler_optimize.opt-ssa-edge-uses-new: unexpected SSA phi site record kind\n")]))
     (for [id (iterator.range 0 block-count)]
       (match (opt-cfg-index-block index id)
         [(Some (Block _ instrs))
@@ -14979,7 +14981,9 @@
                   (opt-label-ref preds p)
                   var)
                 (+= position 1)))]
-          [_ (string.tl_oob_abort)]))
+          [_
+            (abort.compiler-abort
+              "tl: compiler_optimize.opt-ssa-edge-uses-new: unexpected SSA phi site record kind\n")]))
       (set! (array-ref uses.site-starts site-count) position)
       (for [id (iterator.range 0 block-count)]
         (set! (array-ref uses.block-phi-starts id) position)
@@ -15009,7 +15013,10 @@
                       (+= position 1)))]
                 [_ unit]))]
           [(No) unit]))
-      (unless (= position count) (string.tl_oob_abort))
+      (unless
+        (= position count)
+        (abort.compiler-abort
+          "tl: compiler_optimize.opt-ssa-edge-uses-new: inconsistent SSA phi input count\n"))
       (for [row (iterator.range 0 count)]
         (let
           [pred : i64 (array-ref pred-ids row)]
@@ -15064,7 +15071,9 @@
   [label : i64]) : i64
   (match (opt-ssa-edge-uses-block-id uses label)
     [(Some id) (array-ref uses.block-phi-starts id)]
-    [(None) (string.tl_oob_abort)]))
+    [(None)
+      (abort.compiler-abort
+        "tl: compiler_optimize.opt-ssa-edge-uses-block-start: missing SSA block label\n")]))
 
 (define (opt-ssa-env-candidate-count-from
   [facts : (& facts OptSsaFacts)]

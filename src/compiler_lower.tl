@@ -2151,13 +2151,24 @@
   (Ok LowerState ir.CompilerIrValueSeq)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-;; Work a call leaves for after it returns: copy a mutably borrowed scalar
-;; local's storage back into the local, or clean a borrowed cleanup-owning
+;; Work a call leaves for after it returns: copy a mutably borrowed local or
+;; field back into the local, or clean a borrowed cleanup-owning
 ;; temporary (the value, or the storage it was copied into, the value's type,
 ;; whether it was copied, and the cleanup function's symbol).
 (defenum LowerArgWriteback
   (Writeback i64 ir.CompilerIrValue ast.AstType ast.AstExpr)
+  (FieldWriteback LowerArgFieldPlace ir.CompilerIrValue ast.AstExpr)
   (Cleanup ir.CompilerIrValue ast.AstType bool i64 ast.AstExpr))
+
+(defstruct LowerArgFieldPlace
+  (local-id i64)
+  (root-ty ast.AstType)
+  (offset i64)
+  (ty ast.AstType))
+
+(defenum LowerMaybeArgFieldPlace
+  (No)
+  (Some LowerArgFieldPlace))
 
 (import (vector.vector LowerArgWriteback core) as lower_arg_writeback_vec)
 
@@ -25756,15 +25767,13 @@
       [(Expr arg-state arg-value arg-ty)
         (lower-clone-dispatch ctx arg-state env type-env arg-value arg-ty)])))
 
-(define (lower-call-explicit-mut-borrow-var-id
+(define (lower-call-explicit-mut-borrow-place
   [ctx : tc_core.TcContext]
-  [arg : (& ast.AstExpr)]) : tc_core.TcMaybeNameId
+  [arg : (& ast.AstExpr)]) : LowerMaybeAstExpr
   (match (ast.ast-expr-unspan arg)
     [(Borrow mutable _ place-box)
       (if mutable
-        (match (ast.ast-expr-unspan (& (lower-context-expr-get ctx place-box)))
-          [(Var name) (Some name)]
-          [_ (No)])
+        (Some (lower-context-expr-get ctx place-box))
         (No))]
     [_ (No)]))
 
@@ -27119,6 +27128,169 @@
         effective-arg
         arg-ty))))
 
+;; Resolve a pure inline field path to its local root and byte range. A
+;; register-resident root needs call-scoped copy/writeback; a scalar leaf in
+;; a memory-backed root lends its original address, even when an intermediate
+;; struct field would be read by value into a register.
+(define (lower-call-arg-field-place
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [place : ast.AstExpr]) : LowerMaybeArgFieldPlace
+  (match (ast.ast-expr-unspan (& place))
+    [(Ann inner _)
+      (lower-call-arg-field-place
+        ctx
+        env
+        type-env
+        (lower-context-expr-get ctx inner))]
+    [(Var name)
+      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+          [(Ok id)
+            (lower-call-arg-field-place
+              ctx
+              env
+              type-env
+              (lower-context-expr-get ctx id))]
+          [(Err _) (No)])
+        (let
+          [local-id : i64
+            (sym_i64_env.sym-i64-lookup-id-or
+              env
+              name
+              (csym.compiler-symbols-missing-handle))]
+          (if (csym.compiler-symbols-handle-found? local-id)
+            (match (tc_core.tc-lookup-id type-env name)
+              [(Ok ty)
+                (let
+                  [resolved : ast.AstType
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-resolve-type ctx ty))]
+                  (match (& resolved)
+                    [(or (Struct _) (StructArgs _ _))
+                      (Some
+                        (LowerArgFieldPlace
+                          local-id
+                          (clone resolved)
+                          0
+                          resolved))]
+                    [_ (No)]))]
+              [(Err _) (No)])
+            (No))))]
+    [(StructGet receiver field)
+      (match (lower-call-arg-field-place
+        ctx
+        env
+        type-env
+        (lower-context-expr-get ctx receiver))
+        [(Some parent)
+          (match (tc_core.tc-type-strip-region
+            (tc_core.tc-resolve-type ctx parent.ty))
+            [(or (Struct name) (StructArgs name _))
+              (match (lower-struct-field-info
+                ctx
+                name
+                (tc_core.tc-nominal-name-id-display name)
+                (tc_core.tc-env-key-name-text field))
+                [(Ok (Info offset ty))
+                  (Some
+                    (LowerArgFieldPlace
+                      parent.local-id
+                      parent.root-ty
+                      (+ parent.offset offset)
+                      (tc_core.tc-type-without-regions ty)))]
+                [(Err _) (No)])]
+            [_ (No)])]
+        [(No) (No)])]
+    [_ (No)]))
+
+(define (lower-call-arg-mut-borrow-place-as
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [arg : ast.AstExpr]
+  [effective-arg : ast.AstExpr]
+  [arg-ty : ast.AstType]
+  [place : ast.AstExpr]) : ResultLowerCallArg
+  (match (ast.ast-expr-unspan (& place))
+    [(Ann inner _)
+      (lower-call-arg-mut-borrow-place-as
+        ctx
+        state
+        env
+        type-env
+        arg
+        effective-arg
+        arg-ty
+        (lower-context-expr-get ctx inner))]
+    [(Var name)
+      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+          [(Ok id)
+            (lower-call-arg-mut-borrow-place-as
+              ctx
+              state
+              env
+              type-env
+              arg
+              effective-arg
+              arg-ty
+              (lower-context-expr-get ctx id))]
+          [(Err message) (Err (box (lower-diagnostic-at-expr ctx arg message)))])
+        (lower-call-arg-mut-borrow-var-as
+          ctx
+          state
+          env
+          type-env
+          arg
+          effective-arg
+          arg-ty
+          name))]
+    [(StructGet _ _)
+      (match (lower-call-arg-field-place ctx env type-env place)
+        [(Some field)
+          (cond
+            [(lower-type-register-resident? ctx (& field.root-ty))
+              (match (lower-borrow-copy-to-inline-storage
+                ctx
+                state
+                (Var field.local-id)
+                (clone field.root-ty)
+                arg-ty)
+                [(Expr copied storage _)
+                  (match (lower-gep-byte copied storage field.offset)
+                    [(Expr addressed pointer _)
+                      (Ok
+                        (Arg
+                          addressed
+                          (clone pointer)
+                          (Some (FieldWriteback field pointer arg))))])])]
+            [(lower-clone-scalar-type? (& field.ty))
+              (match (lower-gep-byte state (Var field.local-id) field.offset)
+                [(Expr addressed pointer _) (Ok (Arg addressed pointer (No)))])]
+            [else
+              (lower-call-arg-normal-as
+                ctx
+                state
+                env
+                type-env
+                arg
+                effective-arg
+                arg-ty)])]
+        [(No)
+          (lower-call-arg-normal-as
+            ctx
+            state
+            env
+            type-env
+            arg
+            effective-arg
+            arg-ty)])]
+    [_
+      (lower-call-arg-normal-as ctx state env type-env arg effective-arg arg-ty)]))
+
 (define (lower-call-arg-mut-borrow-var-as
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -27380,9 +27552,9 @@
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx (lower-global-shared-view arg-ty)))
           [(MutRef _ _)
-            (match (lower-call-explicit-mut-borrow-var-id ctx effective-arg)
-              [(Some name-id)
-                (lower-call-arg-mut-borrow-var-as
+            (match (lower-call-explicit-mut-borrow-place ctx effective-arg)
+              [(Some place)
+                (lower-call-arg-mut-borrow-place-as
                   ctx
                   state
                   env
@@ -27390,7 +27562,7 @@
                   arg
                   effective-arg
                   arg-ty
-                  name-id)]
+                  place)]
               [(No)
                 (lower-call-arg-normal-as
                   ctx
@@ -27573,8 +27745,53 @@
           (lower-state-emit-at-expr
             ctx
             load-state
-            (ir.CompilerIrInstr.Mov local-id loaded referent-ty)
+            (ir.CompilerIrInstr.Mov
+              local-id
+              loaded
+              (lower-one-word-register-storage-type ctx referent-ty))
             origin)])]
+    [(LowerArgWriteback.FieldWriteback field storage origin)
+      (if (= (lower-type-size ctx (& field.ty)) 0)
+        state
+        (match (lower-load-inline-value-at-offset
+          ctx
+          state
+          storage
+          0
+          (clone field.ty))
+          [(LowerExpr.Expr loaded value _)
+            ;; Materialize the current root after later argument evaluation
+            ;; and earlier writebacks. Copying the original whole root back
+            ;; here would lose sibling writes (#9303).
+            (match (lower-borrow-copy-to-inline-storage
+              ctx
+              loaded
+              (Var field.local-id)
+              (clone field.root-ty)
+              (clone field.root-ty))
+              [(LowerExpr.Expr copied root-storage _)
+                (match (lower-load-inline-value-at-offset
+                  ctx
+                  (lower-store-inline-value-at-offset
+                    ctx
+                    copied
+                    (& root-storage)
+                    field.offset
+                    value
+                    (clone field.ty)
+                    (lower-type-size ctx (& field.ty)))
+                  root-storage
+                  0
+                  (clone field.root-ty))
+                  [(LowerExpr.Expr merged root _)
+                    (lower-state-emit-at-expr
+                      ctx
+                      merged
+                      (ir.CompilerIrInstr.Mov
+                        field.local-id
+                        root
+                        (lower-one-word-register-storage-type ctx field.root-ty))
+                      origin)])])]))]
     [(LowerArgWriteback.Cleanup value value-ty copied cleanup-symbol origin)
       (match (if copied
         (lower-load-inline-value-at-offset

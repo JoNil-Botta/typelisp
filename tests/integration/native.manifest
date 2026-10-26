@@ -21,6 +21,7 @@
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
+mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
 git_object_smoke|all|0,1,2|tests/integration/git_object_smoke.tl|42|-|-|git_object_core.tl git_object_tests.tl|stage-stdlib
 packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
 inline_helper_composition|all|0,1,2|tests/integration/spmd_inline_helper_composition.tl|42|-|-|spmd_inline_helper_composition_provider.tl|-
@@ -748,6 +749,7 @@ stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib
 vector_alias_field|all|0,1,2|tests/integration/vector_alias_field.tl|42|-|-|vector_alias_field_provider.tl stdlib/vector.tl stdlib/option.tl stdlib/eq.tl|-
 stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-
 stdlib_json|all|-|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl|-
+json_control_escapes|all|0,1,2|tests/integration/json_control_escapes.tl|42|-|-|-|stage-stdlib
 stdlib_serialize_json|all|-|tests/integration/stdlib_serialize_json.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl serialize_enum_fixture.tl|-
 tlci_native_template_nodes|all|-|tests/integration/tlci_native_template_nodes.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/math.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl|-
 tlci_identity_owned_views|all|-|tests/integration/tlci_identity_owned_views.tl|42|-|-|stdlib/comptime.tl stdlib/msvc.tl stdlib/process.tl stdlib/process_runtime.tl|-

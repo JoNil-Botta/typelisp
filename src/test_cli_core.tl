@@ -6,6 +6,7 @@
 ;; directly. Imported files provide runtime declarations but do not contribute
 ;; their own tests to this source's harness. Normal compile paths ignore
 ;; `AstDecl.Test`.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -165,7 +166,7 @@
               (set! ok false)
               (set! value (+ (* value (cast 10 : u64)) digit))))
           (set! ok false)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if ok
       (Ok value)
       (Err "test: --seed expects an unsigned 64-bit decimal integer"))))
@@ -179,7 +180,7 @@
     (while (not done)
       (let
         [digit : u64 (% cursor (cast 10 : u64))]
-        (set! start (- start 1))
+        (-= start 1)
         (set! (array-ref digits start) (cast (+ digit (cast 48 : u64)) : u8))
         (set! cursor (/ cursor (cast 10 : u64)))
         (if (= cursor (cast 0 : u64))
@@ -559,7 +560,7 @@
       (match (ast.ast-decl-list-step cur)
         [(Nil) (set! done true)]
         [(Cons _ rest)
-          (set! count (+ count 1))
+          (+= count 1)
           (set! cur rest)]))
     count))
 
@@ -656,7 +657,7 @@
               [saved : InlineTest (clone (array-ref tests index))]
               (set! (array-ref tests index) (clone (array-ref tests other)))
               (set! (array-ref tests other) saved)))
-          (set! index (- index 1)))))
+          (-= index 1))))
     unit))
 
 (define (tltest-shuffle-string-vec! [items : (&mut items cli_svec.Vec)]) : unit
@@ -672,7 +673,7 @@
           (set! state next-state)
           (cli_svec.set-ref! items index (clone (cli_svec.get items other "")))
           (cli_svec.set-ref! items other saved)
-          (set! index (- index 1)))))
+          (-= index 1))))
     unit))
 
 (define (tltest-collect-in
@@ -792,24 +793,21 @@
           [(SlowSkipped) "[slow-skipped]\n"]
           [(Ignored reason) (str_cat.str-cat "[ignored: " reason "]\n")]))]))
 
-(define (tltest-list-tests-from
-  [tests : (__tl_dyn-array InlineTest)]
-  [index : i64]) : i64
-  (if (>= index (array-length tests))
-    (array-length tests)
-    (begin
-      (io.print-format
-        "{}"
-        (tltest-list-line
-          (owned_view.compiler-owned-array-element-shared-view tests index)))
-      (tltest-list-tests-from tests (+ index 1)))))
+(define (tltest-list-tests-from [tests : (__tl_dyn-array InlineTest)]) : i64
+  (for [index (iterator.range 0 (array-length tests))]
+    (io.print-format
+      "{}"
+      (tltest-list-line
+        (owned_view.compiler-owned-array-element-shared-view tests index)))
+    unit)
+  (array-length tests))
 
 (define (tltest-list-loaded
   [source : String]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : i64
   (match (tltest-collect source decls paths)
-    [(Collect _ _ tests) (tltest-list-tests-from tests 0)]))
+    [(Collect _ _ tests) (tltest-list-tests-from tests)]))
 
 (define (tltest-list-summary-line [count : i64]) : String
   (str_cat.str-cat
@@ -1172,10 +1170,9 @@
   [tests : (& tests (__tl_dyn-array InlineTest))]
   [wanted : i64]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
-    (while (< index (array-length tests))
-      (match (array-ref tests index)
+    (for [index (iterator.range 0 (array-length tests))]
+      (match (owned_view.compiler-owned-element-view tests index)
         [(Case _ _ _ _ _ _ _ _ selection)
           (let
             [kind : i64
@@ -1184,9 +1181,8 @@
                 [(Ignored _) 1]
                 [(SlowSkipped) 2])]
             (if (= kind wanted)
-              (set! count (+ count 1))
-              unit))])
-      (set! index (+ index 1)))
+              (+= count 1)
+              unit))]))
     count))
 
 (define (tltest-ignored-count [tests : (& tests (__tl_dyn-array InlineTest))]) : i64
@@ -1848,7 +1844,7 @@
         (set! result next)
         (if (= (tltest_name_map.len (& result)) before)
           (set! done true)
-          (set! remaining (- remaining 1)))))
+          (-= remaining 1))))
     result))
 
 (define (tltest-reachable-names
@@ -2251,7 +2247,7 @@
           unit
           (io.print-error
             (str_cat.str-cat "test: package inline preflight failed: " source)))
-        (set! cursor (+ cursor 1))))
+        (+= cursor 1)))
     (tltest-inline-clear-load-only-caches!)
     (driver.compiler-driver-reset-file-state!)
     status))
@@ -2647,17 +2643,17 @@
         [c : char (string.string-ref source i)]
         (cond
           [(and open (tltest-source-line-break? c))
-            (set! i (+ i 1))
+            (+= i 1)
             (set! open true)]
           [(and open (tltest-source-prefix-space? c))
-            (set! i (+ i 1))
+            (+= i 1)
             (set! open true)]
           [(and open (tltest-inline-marker-at? source i n)) (set! found true)]
           [(tltest-source-line-break? c)
-            (set! i (+ i 1))
+            (+= i 1)
             (set! open true)]
           [else
-            (set! i (+ i 1))
+            (+= i 1)
             (set! open false)])))
     found))
 
@@ -2890,8 +2886,7 @@
   [tests-prefix : String]) : cli_svec.Vec
   (let
     [selected : cli_svec.Vec (cli_svec.new)]
-    [index : i64 0]
-    (while (< index (cli_svec.len (& sources)))
+    (for [index (iterator.range 0 (cli_svec.len (& sources)))]
       (let
         [source : String (cli_svec.get (& sources) index "")]
         (if (and
@@ -2900,8 +2895,7 @@
             (owned_view.compiler-owned-shared-view tests-prefix))
           (tltest-package-integration-selected? source))
           (cli_svec.push-ref! (&mut selected) source)
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     (tltest-shuffle-string-vec! (&mut selected))
     selected))
 
@@ -3202,7 +3196,6 @@
 
 (define (tltest-package-run-sources-from
   [sources : cli_svec.Vec]
-  [index : i64]
   [tests-prefix : (& tests-prefix str)]
   [target : String]
   [roots : cli_svec.Vec]
@@ -3216,29 +3209,11 @@
   [file-count : i64]
   [test-count : i64]
   [failed-file-count : i64]) : ResultTestPackageTotals
-  (if (>= index (cli_svec.len (& sources)))
-    (if (= failed-file-count 0)
-      (Ok file-count test-count)
-      (Failed file-count test-count failed-file-count))
+  (for [index (iterator.range 0 (cli_svec.len (& sources)))]
     (let
       [source : String (cli_svec.get (& sources) index "")]
       (if (tltest-package-test-source? source tests-prefix)
-        (tltest-package-run-sources-from
-          sources
-          (+ index 1)
-          tests-prefix
-          target
-          roots
-          opt-level
-          backend-mode
-          test-mode
-          backend-target
-          manifest-dir
-          package-owner
-          deps
-          file-count
-          test-count
-          failed-file-count)
+        unit
         (let
           [source-tests : i64
             (tltest-package-run-source-isolated-count
@@ -3256,42 +3231,21 @@
             (let
               [failed-tests : i64
                 (- (- 0 source-tests) tltest-failed-count-offset)]
-              (tltest-package-run-sources-from
-                sources
-                (+ index 1)
-                tests-prefix
-                target
-                roots
-                opt-level
-                backend-mode
-                test-mode
-                backend-target
-                manifest-dir
-                package-owner
-                deps
-                (+ file-count 1)
-                (+ test-count failed-tests)
-                (+ failed-file-count 1)))
+              (set! file-count (+ file-count 1))
+              (set! test-count (+ test-count failed-tests))
+              (set! failed-file-count (+ failed-file-count 1)))
             (if (< source-tests 0)
-              (Err (- 0 source-tests))
-              (tltest-package-run-sources-from
-                sources
-                (+ index 1)
-                tests-prefix
-                target
-                roots
-                opt-level
-                backend-mode
-                test-mode
-                backend-target
-                manifest-dir
-                package-owner
-                deps
-                (if (= source-tests 0)
+              (return (Err (- 0 source-tests)))
+              (begin
+                (set!
                   file-count
-                  (+ file-count 1))
-                (+ test-count source-tests)
-                failed-file-count))))))))
+                  (if (= source-tests 0)
+                    file-count
+                    (+ file-count 1)))
+                (set! test-count (+ test-count source-tests)))))))))
+  (if (= failed-file-count 0)
+    (Ok file-count test-count)
+    (Failed file-count test-count failed-file-count)))
 
 (define (tltest-package-run-sources
   [sources : cli_svec.Vec]
@@ -3309,7 +3263,6 @@
   [test-count : i64]) : ResultTestPackageTotals
   (tltest-package-run-sources-from
     sources
-    0
     tests-prefix
     target
     roots
@@ -3326,7 +3279,6 @@
 
 (define (tltest-package-run-integration-sources-from
   [sources : cli_svec.Vec]
-  [index : i64]
   [tests-prefix : String]
   [target : String]
   [roots : cli_svec.Vec]
@@ -3340,10 +3292,7 @@
   [file-count : i64]
   [test-count : i64]
   [failed-file-count : i64]) : ResultTestPackageTotals
-  (if (>= index (cli_svec.len (& sources)))
-    (if (= failed-file-count 0)
-      (Ok file-count test-count)
-      (Failed file-count test-count failed-file-count))
+  (for [index (iterator.range 0 (cli_svec.len (& sources)))]
     (let
       [source : String (cli_svec.get (& sources) index "")]
       (if (tltest-package-integration-source?
@@ -3366,58 +3315,22 @@
             (let
               [failed-tests : i64
                 (- (- 0 source-tests) tltest-failed-count-offset)]
-              (tltest-package-run-integration-sources-from
-                sources
-                (+ index 1)
-                tests-prefix
-                target
-                roots
-                opt-level
-                backend-mode
-                test-mode
-                backend-target
-                manifest-dir
-                package-owner
-                deps
-                (+ file-count 1)
-                (+ test-count failed-tests)
-                (+ failed-file-count 1)))
+              (set! file-count (+ file-count 1))
+              (set! test-count (+ test-count failed-tests))
+              (set! failed-file-count (+ failed-file-count 1)))
             (if (< source-tests 0)
-              (Err (- 0 source-tests))
-              (tltest-package-run-integration-sources-from
-                sources
-                (+ index 1)
-                tests-prefix
-                target
-                roots
-                opt-level
-                backend-mode
-                test-mode
-                backend-target
-                manifest-dir
-                package-owner
-                deps
-                (if (= source-tests 0)
+              (return (Err (- 0 source-tests)))
+              (begin
+                (set!
                   file-count
-                  (+ file-count 1))
-                (+ test-count source-tests)
-                failed-file-count))))
-        (tltest-package-run-integration-sources-from
-          sources
-          (+ index 1)
-          tests-prefix
-          target
-          roots
-          opt-level
-          backend-mode
-          test-mode
-          backend-target
-          manifest-dir
-          package-owner
-          deps
-          file-count
-          test-count
-          failed-file-count)))))
+                  (if (= source-tests 0)
+                    file-count
+                    (+ file-count 1)))
+                (set! test-count (+ test-count source-tests))))))
+        unit)))
+  (if (= failed-file-count 0)
+    (Ok file-count test-count)
+    (Failed file-count test-count failed-file-count)))
 
 (define (tltest-package-run-integration-sources
   [sources : cli_svec.Vec]
@@ -3440,7 +3353,6 @@
         (owned_view.compiler-owned-shared-view tests-prefix))]
     (tltest-package-run-integration-sources-from
       selected-sources
-      0
       tests-prefix
       target
       roots
@@ -3820,9 +3732,9 @@
             (io.print-error "\n")
             (set! status (- 0 entry-result)))
           (begin
-            (set! files (+ files 1))
-            (set! tests (+ tests entry-result))
-            (set! cursor (+ cursor 1))))))
+            (+= files 1)
+            (+= tests entry-result)
+            (+= cursor 1)))))
     (if (= status 0)
       (begin
         (io.print-format "{}" (tltest-batch-summary-line files tests))
@@ -3922,12 +3834,10 @@
             backend-target)]
         (if (<= entry-result (- 0 tltest-failed-count-offset))
           (begin
-            (set! files (+ files 1))
-            (set!
-              tests
-              (+ tests (- (- 0 entry-result) tltest-failed-count-offset)))
-            (set! failed-files (+ failed-files 1))
-            (set! cursor (+ cursor 1)))
+            (+= files 1)
+            (+= tests (- (- 0 entry-result) tltest-failed-count-offset))
+            (+= failed-files 1)
+            (+= cursor 1))
           (if (< entry-result 0)
             (begin
               (io.print-error
@@ -3935,9 +3845,9 @@
               (io.print-error "\n")
               (set! fatal-status (- 0 entry-result)))
             (begin
-              (set! files (+ files 1))
-              (set! tests (+ tests entry-result))
-              (set! cursor (+ cursor 1)))))))
+              (+= files 1)
+              (+= tests entry-result)
+              (+= cursor 1))))))
     (if (= fatal-status 0)
       (begin
         (io.print-format

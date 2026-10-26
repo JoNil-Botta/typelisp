@@ -1,5 +1,8 @@
 ;; compiler_x64_executable_template_catalog.tl - Reviewed x86-64 template rows.
+(import stdlib.iterator)
 (import compiler_x64_executable_template as x64)
+(import compiler_lzss as lzss)
+(import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.io)
 (import stdlib.string)
@@ -11,21 +14,57 @@
   (expected-rendered-size i64)
   (expected-rendered-hash i64))
 
-(include-str compiler-x64-template-catalog-data "compiler_x64_executable_template_catalog.tsv")
+(include-str-lzss
+  compiler-x64-template-catalog-packed
+  "compiler_x64_executable_template_catalog.tsv")
+
+;; Far above the catalog, while a corrupt length header cannot request an
+;; unbounded allocation.
+(define compiler-x64-template-catalog-limit : i64
+  1048576)
+
+(define (compiler-x64-template-catalog-decode) : String
+  (match (lzss.compiler-lzss-decode
+    (& compiler-x64-template-catalog-packed)
+    compiler-x64-template-catalog-limit)
+    [(lzss.CompilerLzssBytes.Ok bytes)
+      (unsafe
+        (string-from-bytes
+          (ptr-cast (__tl_array-data bytes) : (Ptr u8))
+          (array-length bytes)))]
+    [(lzss.CompilerLzssBytes.Err _)
+      (io.panic "x64 executable template: invalid compressed catalog")]))
+
+;; The catalog ships compressed and is decoded on first use, into an arena of
+;; its own that lives for the process: only native emission reads it, and a
+;; job's scratch arena may be reset under a cached view.
+(define compiler-x64-template-catalog-arena : i64
+  0)
+(define compiler-x64-template-catalog-text : String
+  "")
 
 (define (compiler-x64-template-catalog-data-shared-view) : String
+  (when
+    (= compiler-x64-template-catalog-arena 0)
+    (let
+      [home : i64 (arena.tl_arena_make)]
+      [text : String
+        (in-arena
+          (unsafe
+            (arena.Arena home))
+          (compiler-x64-template-catalog-decode))]
+      (set! compiler-x64-template-catalog-text text)
+      (set! compiler-x64-template-catalog-arena home)))
   (unsafe
-    (ptr-read (ptr-addr-of compiler-x64-template-catalog-data))))
+    (ptr-read (ptr-addr-of compiler-x64-template-catalog-text))))
 
-;; SPEC 3.5.1 assigns each nullary enum its 0-based declaration-order tag.
-;; Keep the checked-in data in that order and bounds-check the representation.
 (define (compiler-x64-template-id-index
   [id : x64.CompilerX64ExecutableTemplateId]) : i64
   ;; Use the shared tag helper so every closed-enum adapter follows one layout
   ;; contract.
   (let
     [index : i64 (x64.compiler-x64-template-enum-tag id)]
-    (if (or (< index 0) (>= index 86))
+    (if (or (< index 0) (>= index 102))
       (io.panic "x64 executable template: id tag is out of range")
       index)))
 
@@ -33,17 +72,14 @@
   [data : (& data str)]
   [index : i64]) : i64
   (let
-    [line : i64 0]
     [start : i64 0]
     ;; Row zero is the checked-in schema header.
-    (while (<= line index)
+    (for [line (iterator.range 0 (+ index 1))]
       (let
         [end : i64 (string.index-of-byte data start (cast '\n' : u8))]
         (if (< end 0)
           (io.panic "x64 executable template: catalog row is missing")
-          (begin
-            (set! start (+ end 1))
-            (set! line (+ line 1))))))
+          (set! start (+ end 1)))))
     start))
 
 (define (compiler-x64-template-catalog-row-end
@@ -68,16 +104,13 @@
   [row-end : i64]
   [field-index : i64]) : String
   (let
-    [field : i64 0]
     [start : i64 row-start]
-    (while (< field field-index)
+    (for [field (iterator.range 0 field-index)]
       (let
         [end : i64 (string.index-of-byte data start (cast '\t' : u8))]
         (if (or (< end 0) (>= end row-end))
           (io.panic "x64 executable template: catalog field is missing")
-          (begin
-            (set! start (+ end 1))
-            (set! field (+ field 1))))))
+          (set! start (+ end 1)))))
     (let
       [tab : i64 (string.index-of-byte data start (cast '\t' : u8))]
       [end : i64
@@ -126,8 +159,8 @@
           (or (< byte 48) (> byte 57) (>= digits 10))
           (io.panic "x64 executable template: malformed catalog integer"))
         (set! value (+ (* value 10) (- byte 48)))
-        (set! digits (+ digits 1))
-        (set! at (+ at 1))))
+        (+= digits 1)
+        (+= at 1)))
     (if negative
       (- 0 value)
       value)))
@@ -263,3 +296,45 @@
     (if debug?
       debug
       plain)))
+
+;; A sanitizer variant has its own exact payload identity. Normal templates
+;; retain their original IDs and bytes; no runtime flag is inserted into them.
+(define (compiler-x64-template-with-sanitizer
+  [id : x64.CompilerX64ExecutableTemplateId]
+  [enabled : bool]) : x64.CompilerX64ExecutableTemplateId
+  (if enabled
+    (match id
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArena)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaDebug)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaDebugSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfile)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfileSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfileDebug)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfileDebugSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionReset)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetDebug)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetDebugSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfile)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileDebug)
+        (x64.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileDebugSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArena)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaDebug)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaDebugSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfile)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfileSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfileDebug)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeArenaProfileDebugSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionReset)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetDebug)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetDebugSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfile)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfileSanitize)]
+      [(x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfileDebug)
+        (x64.CompilerX64ExecutableTemplateId.WindowsRuntimeRegionResetProfileDebugSanitize)]
+      [_ (io.panic "x64 executable template: invalid sanitizer variant\n")])
+    id))

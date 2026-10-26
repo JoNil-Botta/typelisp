@@ -72,7 +72,7 @@
     [i : i64 0]
     (while (< i size)
       (when
-        (< (+ at i) (array-length data))
+        (< (+ at i) (array-length (& data)))
         (set! (array-ref out i) (array-ref data (+ at i))))
       (set! i (+ i 1)))
     out))
@@ -99,7 +99,7 @@
           "every independent readelf record")
         (test.assert-i64-eq
           (array-length object.bytes)
-          (array-length data)
+          (array-length (& data))
           "borrowed complete input")
         (test.assert-true
           (= object.identity.content (cast 7 : u64))
@@ -814,19 +814,19 @@
                 [(ReadDso object)
                   (test.assert-true
                     (elf.file-range?
-                      (array-length data)
+                      (array-length (& data))
                       (cast object.strings.offset : u64)
                       (cast object.strings.size : u64))
                     "accepted string span bounded")
                   (test.assert-true
                     (elf.file-range?
-                      (array-length data)
+                      (array-length (& data))
                       (cast object.symbol-span.offset : u64)
                       (cast object.symbol-span.size : u64))
                     "accepted symbol span bounded")
                   (test.assert-true
                     (elf.file-range?
-                      (array-length data)
+                      (array-length (& data))
                       (cast object.dynamic-span.offset : u64)
                       (cast object.dynamic-span.size : u64))
                     "accepted dynamic span bounded")])))

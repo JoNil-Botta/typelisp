@@ -326,14 +326,18 @@
         ;; exactly the two lines the gates match on. Refs #5596.
         (io.print-error
           (if full-blockers
-            (array-ref
-              compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
-              0)
+            (string.copy
+              (&
+                (array-ref
+                  compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-full-reasons
+                  0)))
             (if identity-manifest
               (embedded-stdlib-tlci-identity-manifest (& names) captures)
-              (array-ref
-                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
-                0))))
+              (string.copy
+                (&
+                  (array-ref
+                    compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-reasons
+                    0))))))
         (io.print-format
           "{}"
           (str_cat.str-cat

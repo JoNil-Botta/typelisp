@@ -1,4 +1,5 @@
 ;; build_run_core.tl - Shared selfhost source build/run execution helpers.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import cli_option_core as cli_option)
 (import compiler_target_cfg_core as target_cfg)
@@ -361,7 +362,7 @@
       (if (string.eq (process.args-ref items i) value)
         (set! found true)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))
 
 (define (source-tool-args-append-unique
@@ -378,11 +379,9 @@
   [right : process.ProcessStringList]) : process.ProcessStringList
   (let
     [n : i64 (process.args-count right)]
-    [i : i64 0]
     [out : process.ProcessStringList left]
-    (while (< i n)
-      (set! out (source-tool-args-append-unique out (process.args-ref right i)))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 n)]
+      (set! out (source-tool-args-append-unique out (process.args-ref right i))))
     out))
 
 ;; Libraries, search directories and archives merge first-seen with exact
@@ -524,7 +523,7 @@
       (if (source-tool-path-separator? (string.string-ref path i))
         (set! found true)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))
 
 (define (source-tool-path-entry-command [dir : String] [tool : String]) : String
@@ -573,31 +572,30 @@
 
 (define (source-tool-find-command-on-path-from
   [tool : String]
-  [paths : env.EnvStringList]
-  [index : i64]) : String
-  (if (>= index (env.string-list-count paths))
-    tool
+  [paths : env.EnvStringList]) : String
+  (for [index (iterator.range 0 (env.string-list-count paths))]
     (let
       [candidate : String
         (source-tool-path-entry-command
           (env.string-list-ref paths index)
           (owned_view.compiler-owned-shared-view tool))]
       (if (source-tool-path-command-exists? candidate)
-        candidate
+        (return candidate)
         (let
           [exe-candidate : String
             (source-tool-windows-exe-candidate
               (owned_view.compiler-owned-shared-view candidate))]
-          (if (and
-            (not (string.eq exe-candidate candidate))
-            (source-tool-path-command-exists? exe-candidate))
-            exe-candidate
-            (source-tool-find-command-on-path-from tool paths (+ index 1))))))))
+          (when
+            (and
+              (not (string.eq exe-candidate candidate))
+              (source-tool-path-command-exists? exe-candidate))
+            (return exe-candidate))))))
+  tool)
 
 (define (source-tool-find-command-on-path
   [tool : String]
   [paths : env.EnvStringList]) : String
-  (source-tool-find-command-on-path-from tool paths 0))
+  (source-tool-find-command-on-path-from tool paths))
 
 (define (source-tool-resolve-command [tool : String]) : String
   (if (source-tool-has-path-separator? tool)
@@ -635,10 +633,9 @@
   [extension : String]) : String
   (let
     [n : i64 (string.string-length input-path)]
-    [i : i64 0]
     [last-dot : i64 -1]
     [last-sep : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (string.string-ref input-path i)]
         (if (= c '.')
@@ -646,8 +643,7 @@
           (set! last-dot last-dot))
         (if (source-tool-path-separator? c)
           (set! last-sep i)
-          (set! last-sep last-sep))
-        (set! i (+ i 1))))
+          (set! last-sep last-sep))))
     (if (> last-dot last-sep)
       (str_cat.str-cat (string.substring input-path 0 last-dot) extension)
       (str_cat.str-cat input-path extension))))
@@ -931,7 +927,7 @@
           (not (= (string.string-ref line end) ':'))
           (not (= (string.string-ref line end) '\''))
           (not (= (string.string-ref line end) ' ')))
-          (set! end (+ end 1)))
+          (+= end 1))
         (let
           [name : String (string.substring line start (- end start))]
           (if (and
@@ -950,17 +946,15 @@
 (define (source-tool-quote [value : (& value str)]) : String
   (let
     [n : i64 (string.string-length value)]
-    [index : i64 0]
     [out : String "'"]
-    (while (< index n)
+    (for [index (iterator.range 0 n)]
       (let
         [c : char (string.string-ref value index)]
         (set!
           out
           (if (= c '\'')
             (str_cat.str-cat out "'\\''")
-            (str_cat.str-cat out (string.substring value index 1))))
-        (set! index (+ index 1))))
+            (str_cat.str-cat out (string.substring value index 1))))))
     (str_cat.str-cat out "'")))
 
 ;; For each library the linker reported missing, the declarations that
@@ -985,11 +979,11 @@
         [line : String
           (string.substring stderr line-start (- line-end line-start))]
         [name : String (source-tool-missing-library-in-line (& line))]
-        [origin-index : i64 0]
         [named : bool false]
         (unless
           (= (string.string-length name) 0)
-          (while (< origin-index (process.args-count origins.kinds))
+          (for [origin-index
+            (iterator.range 0 (process.args-count origins.kinds))]
             (when
               (and
                 (string.eq
@@ -1006,13 +1000,11 @@
                   (owned_view.compiler-owned-shared-view name)
                   "` is required by "
                   (process.args-ref origins.declared-by origin-index)))
-              (set! named true))
-            (set! origin-index (+ origin-index 1)))
+              (set! named true)))
           (if named
             (let
-              [dir-index : i64 0]
               [searched : String ""]
-              (while (< dir-index (process.args-count dirs))
+              (for [dir-index (iterator.range 0 (process.args-count dirs))]
                 (set!
                   searched
                   (str_cat.str-cat
@@ -1020,8 +1012,7 @@
                     " "
                     (let
                       [dir : String (process.args-ref dirs dir-index)]
-                      (source-tool-quote (& dir)))))
-                (set! dir-index (+ dir-index 1)))
+                      (source-tool-quote (& dir))))))
               (set!
                 out
                 (str_cat.str-cat
@@ -1211,7 +1202,7 @@
       (set!
         libs
         (process.args-cons (string.copy (& (array-ref providers index))) libs))
-      (set! index (- index 1)))
+      (-= index 1))
     libs))
 
 ;; Keep the historical 256 MiB PE reserve used by the native-link scripts. The
@@ -1361,7 +1352,7 @@
         (source-tool-ascii-fold-char (string.string-ref right i)))
         unit
         (set! same false))
-      (set! i (+ i 1)))
+      (+= i 1))
     same))
 
 (define (source-tool-windows-llvm-archiver-name? [command : (& command str)]) : bool
@@ -1869,15 +1860,12 @@
 (define (source-tool-remove-private-link-dir [dir : (& dir str)]) : unit
   (match (fs.try-read-dir dir)
     [(OkIoStringVector entries)
-      (let
-        [index : i64 0]
-        (while (< index (fs.string-vector-len (& entries)))
-          (let
-            [name : String (fs.string-vector-get (& entries) index "")]
-            (source-tool-try-remove-file-if-exists
-              (& (fs.path-join dir (& name))))
-            unit)
-          (set! index (+ index 1))))]
+      (for [index (iterator.range 0 (fs.string-vector-len (& entries)))]
+        (let
+          [name : String (fs.string-vector-get (& entries) index "")]
+          (source-tool-try-remove-file-if-exists
+            (& (fs.path-join dir (& name))))
+          unit))]
     [(ErrIoStringVector _) unit])
   (source-tool-try-remove-dir-if-exists dir)
   unit)

@@ -1,4 +1,5 @@
-;; Only the compiler's shallow aggregate container needs persistent storage.
+;; An inline aggregate global keeps its static home (SPEC 5.10): replacing it in
+;; a temporary arena copies into that home and allocates nothing.
 (import stdlib.arena)
 (import stdlib.profile)
 (import stdlib.test)
@@ -183,8 +184,8 @@
       (+ seed 63)
       (+ seed 64))))
 
-(define (check-values [seed : i64]) : unit
-  (test.assert-i64-eq (array-ref values 0) seed "fixed-array first element")
+(define (check-values-with-first [first : i64] [seed : i64]) : unit
+  (test.assert-i64-eq (array-ref values 0) first "fixed-array first element")
   (test.assert-i64-eq
     (array-ref values 1)
     (+ seed 1)
@@ -200,6 +201,9 @@
   (test.assert-i64-eq (array-ref large 0) seed "large first element")
   (test.assert-i64-eq (array-ref large 64) (+ seed 64) "large last element"))
 
+(define (check-values [seed : i64]) : unit
+  (check-values-with-first seed seed))
+
 (define (install-in-scope [seed : i64]) : unit
   (let
     [before : i64 (arena.tl_arena_current)]
@@ -211,14 +215,17 @@
 
 (define (replace-recursively [depth : i64] [seed : i64]) : i64
   (with-scratch (install-in-scope (+ seed depth)))
-  (when
-    (> depth 0)
-    (set!
-      (array-ref values 0)
-      (if (= (bit-and depth 1) 0)
-        (replace-recursively (- depth 1) seed)
-        (replace-transitively (- depth 1) seed))))
-  (check-values seed)
+  (if (> depth 0)
+    (begin
+      ;; The element place is the global's own home: the replacement inside
+      ;; the value writes it, and the store then lands there.
+      (set!
+        (array-ref values 0)
+        (if (= (bit-and depth 1) 0)
+          (replace-recursively (- depth 1) seed)
+          (replace-transitively (- depth 1) seed)))
+      (check-values-with-first 7 seed))
+    (check-values seed))
   7)
 
 (define (replace-transitively [depth : i64] [seed : i64]) : i64
@@ -260,12 +267,13 @@
   (let
     [before : i64 (profile.alloc-total)]
     (with-scratch (install-in-scope 44))
-    (test.assert-true
-      (> (profile.alloc-total) before)
-      "implicit copies remain profiled"))
+    (test.assert-i64-eq
+      (profile.alloc-total)
+      before
+      "aggregate global stores copy into their home"))
   (check-values 44)
   (set! (array-ref values 0) (replace-recursively 3 73))
-  (check-values 73)
+  (check-values-with-first 7 73)
   (let
     [local : (Array i64 2) (array 10 20)]
     (set! (array-ref local 0) (replace-recursively 2 83))
@@ -277,7 +285,7 @@
       (array-ref local 1)
       20
       "local sibling after global replacement")
-    (check-values 83))
+    (check-values-with-first 7 83))
   (let
     [replacement : Owner (Owner (box 42) 7 8)]
     [address : u64

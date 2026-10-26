@@ -11,11 +11,13 @@
     (Step.Err 2)))
 
 ;: Only the returning branch of the try operand stores the mutable borrow; the
-;: fallthrough reaches the backedge and the loop exit without it.
+;: fallthrough reaches the backedge and the loop exit without it. The borrowed
+;: `items` is caller storage: a borrow of a by-value parameter stored under the
+;: signature lifetime `items` would outlive the call (#8890).
 (define (borrow-on-return
   [run : bool]
   [take : bool]
-  [items : (__tl_dyn-array i64)]
+  [items : (&mut items (__tl_dyn-array i64))]
   [refs : (__tl_dyn-array (&mut items i64))]) : Step
   (begin
     (while run

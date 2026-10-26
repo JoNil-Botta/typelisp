@@ -42,7 +42,15 @@ count_matches 18 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_ru
 count_matches 27 '\.globl' src/compiler_backend_runtime_windows.tl
 count_matches 38 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
 count_matches 93 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
-count_matches 41 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+# argv decoding now has separate backslash-run and compacting-copy loops.
+count_matches 43 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_windows.tl
+
+# The optional sanitizer recipes replace fixed sites before the same runtime
+# composition gates; their sixteen target/profile/debug variants own distinct IDs.
+count_matches 2 '\.globl' src/compiler_backend_runtime_sanitize.tl
+count_matches 0 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_sanitize.tl
+count_matches 9 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_sanitize.tl
+count_matches 2 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_sanitize.tl
 
 # All target-owned executable byte helpers carry closed IDs.  Windows has two
 # additional bytes-from-hex sites: the data-only UNWIND_INFO and resource tree.
@@ -99,7 +107,7 @@ if ! awk -F '\t' '
         render["0:Assembly"] = render["1:OpaqueBytes"] = render["2:StructuredObject"] = 1
         contribution["0:RuntimeFunctions"] = contribution["1:Startup"] = contribution["2:TlciBridge"] = contribution["3:ExternalFiberCallback"] = contribution["4:ExternalExceptionCallback"] = contribution["5:ByteFragment"] = contribution["6:MixedRuntimeBundle"] = 1
         terminal["0:FallsThrough"] = terminal["1:Returns"] = terminal["2:TailTransfers"] = terminal["3:TerminatesProcess"] = terminal["4:SuspendsOrTerminates"] = terminal["5:ReturnsOrTerminates"] = terminal["6:Mixed"] = terminal["7:Unknown"] = 1
-        feature["0:Always"] = feature["1:Alloc"] = feature["2:RegionMark"] = feature["3:RegionReset"] = feature["4:Profile"] = feature["5:StartupProfile"] = feature["6:TlciMacroEntry"] = feature["7:Backtrace"] = feature["8:ArenaDebug"] = feature["9:ProfileArenaDebug"] = feature["10:AllocProfile"] = feature["11:AllocArenaDebug"] = feature["12:AllocProfileArenaDebug"] = feature["13:RegionResetProfile"] = feature["14:RegionResetArenaDebug"] = feature["15:RegionResetProfileArenaDebug"] = feature["16:NativeEntryStartupProfile"] = feature["17:NativeEntryBacktrace"] = feature["18:NativeEntry"] = feature["19:Memchr"] = feature["20:TlciImage"] = feature["21:CopyFwd"] = feature["22:Copy8Fwd"] = feature["23:MemFill8"] = feature["24:GlobalAlloc"] = 1
+        feature["0:Always"] = feature["1:Alloc"] = feature["2:RegionMark"] = feature["3:RegionReset"] = feature["4:Profile"] = feature["5:StartupProfile"] = feature["6:TlciMacroEntry"] = feature["7:Backtrace"] = feature["8:ArenaDebug"] = feature["9:ProfileArenaDebug"] = feature["10:AllocProfile"] = feature["11:AllocArenaDebug"] = feature["12:AllocProfileArenaDebug"] = feature["13:RegionResetProfile"] = feature["14:RegionResetArenaDebug"] = feature["15:RegionResetProfileArenaDebug"] = feature["16:NativeEntryStartupProfile"] = feature["17:NativeEntryBacktrace"] = feature["18:NativeEntry"] = feature["19:Memchr"] = feature["20:TlciImage"] = feature["21:CopyFwd"] = feature["22:Copy8Fwd"] = feature["23:MemFill8"] = feature["24:GlobalAlloc"] = feature["25:ArenaSanitizer"] = 1
     }
     NR == 1 { next }
     NF != 16 { exit 1 }
@@ -109,9 +117,9 @@ if ! awk -F '\t' '
     $14 !~ /^[0-9]+$/ || $15 !~ /^-?[0-9]+$/ || $16 !~ /^-?[0-9]+$/ { exit 1 }
     seen_variant[$1]++ { exit 1 }
     seen_name[$2]++ { exit 1 }
-    END { if (NR != 87) exit 1 }
+    END { if (NR != 103) exit 1 }
 ' "$CATALOG_DATA"; then
-    fail "catalog data must contain 86 unique, typed 16-field rows"
+    fail "catalog data must contain 102 unique, typed 16-field rows"
 fi
 
 # Nullary enum tags are 0-based in declaration order (SPEC 3.5.1). Keep the
@@ -127,4 +135,4 @@ ENUM_VARIANTS=$(sed -n \
 count_matches 3 '\.pdata:.*->\.L_tl_start_xdata' \
     src/compiler_x64_executable_template_evidence.tl
 
-echo "check-x64-executable-template-registry: 86 rows, 53 assembly variants, 24 opaque byte helpers, and 9 structured contributions covered"
+echo "check-x64-executable-template-registry: 102 rows, 69 assembly variants, 24 opaque byte helpers, and 9 structured contributions covered"

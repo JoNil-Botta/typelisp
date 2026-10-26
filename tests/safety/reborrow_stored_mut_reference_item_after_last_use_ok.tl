@@ -1,16 +1,17 @@
-;: A returned mutable reborrow releases its source after its final use.
+;: A returned mutable reborrow releases its source after its final use, while
+;: the iterator it lends from is still in scope (#8449).
 (defstruct MutReborrowAfterIter
   (:lifetimes source)
   (slots (&mut source (__tl_dyn-array i64)))
   (index i64))
 
 (defenum MutReborrowAfterNext
-  (:lifetimes source)
+  (:lifetimes item)
   (Done)
-  (Item (&mut source i64)))
+  (Item (&mut item i64)))
 
-(define (mut-next [iter : (&mut state (MutReborrowAfterIter source))]) : (MutReborrowAfterNext
-    source)
+(define (mut-next [iter : (&mut item (MutReborrowAfterIter source))]) : (MutReborrowAfterNext
+    item)
   (let
     [index : i64 iter.index]
     (if (>= index 1)
@@ -27,12 +28,8 @@
 (define (main) : unit
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (let
-      [first : (MutReborrowAfterNext items)
-        (let
-          [iter : (MutReborrowAfterIter items)
-            (MutReborrowAfterIter (&mut items) 0)]
-          (mut-next (&mut iter)))]
-      (begin
-        (consume first)
-        (set! (array-ref items 0) 42)))))
+    [iter : (MutReborrowAfterIter items) (MutReborrowAfterIter (&mut items) 0)]
+    [first : (MutReborrowAfterNext iter) (mut-next (&mut iter))]
+    (begin
+      (consume first)
+      (set! (array-ref items 0) 42))))

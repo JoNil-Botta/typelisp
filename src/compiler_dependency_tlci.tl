@@ -2,6 +2,7 @@
 ;;
 ;; This module sits above compiler_load and package_source_core so the loader
 ;; session can own admitted catalogs without introducing an import cycle.
+(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -380,7 +381,8 @@
       (load.compiler-load-dependency-catalog-owner-arena-ensure!
         (owned_view.compiler-owned-shared-view state))]
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (compiler-dependency-tlci-prepare-source-set-owned! state source-set))))
 
 (define (compiler-dependency-tlci-prepare-dep!
@@ -409,7 +411,8 @@
             (load.compiler-load-dependency-catalog-owner-arena-ensure!
               (owned_view.compiler-owned-shared-view state))]
           (in-arena
-            (arena.Arena owner)
+            (unsafe
+              (arena.Arena owner))
             (compiler-dependency-tlci-record-unavailable!
               state
               (compiler-dependency-tlci-key
@@ -428,20 +431,13 @@
 (define (compiler-dependency-tlci-prepare-deps-from!
   [state : load.CompilerLoadSessionState]
   [manifest-dir : String]
-  [deps : (& deps load.CompilerPkgDepList)]
-  [index : i64]) : unit
-  (if (>= index (load.compiler-pkg-dep-list-count deps))
-    unit
-    (begin
-      (compiler-dependency-tlci-prepare-dep!
-        (owned_view.compiler-owned-shared-view state)
-        (owned_view.compiler-owned-shared-view manifest-dir)
-        (load.compiler-pkg-dep-list-at deps index))
-      (compiler-dependency-tlci-prepare-deps-from!
-        state
-        manifest-dir
-        deps
-        (+ index 1)))))
+  [deps : (& deps load.CompilerPkgDepList)]) : unit
+  (for [index (iterator.range 0 (load.compiler-pkg-dep-list-count deps))]
+    (compiler-dependency-tlci-prepare-dep!
+      (owned_view.compiler-owned-shared-view state)
+      (owned_view.compiler-owned-shared-view manifest-dir)
+      (load.compiler-pkg-dep-list-at deps index))
+    unit))
 
 (define (compiler-dependency-tlci-prepare-deps!
   [state : load.CompilerLoadSessionState]
@@ -459,8 +455,7 @@
       (compiler-dependency-tlci-prepare-deps-from!
         (owned_view.compiler-owned-shared-view state)
         manifest-dir
-        items
-        0)
+        items)
       (cfg
         dependency-tlci-verification
         (compiler-dependency-tlci-verification-record!

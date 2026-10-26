@@ -11,8 +11,9 @@
 (define (replace [seed : i64]) : unit
   (with-scratch (set! values (array seed (+ seed 1)))))
 
-;; The 256th sixteen-byte container exactly fills the private static page.
-;; The next replacement grows it while a receiver still points into that page.
+;; The global keeps one static home (SPEC 5.10). Each replacement runs in a
+;; temporary arena while an element place into that home is captured; the
+;; store then lands in the home, and no replacement allocates.
 (define (main) : i64
   (cfg
     compiler-arena-debug
@@ -28,8 +29,8 @@
           (replace i)
           -1))
       (when
-        (not (and (= (array-ref values 0) i) (= (array-ref values 1) (+ i 1))))
+        (not (and (= (array-ref values 0) -1) (= (array-ref values 1) (+ i 1))))
         (return 1))
       (+= i 1))
-    (when (not (= (- (profile.alloc-total) before) (* 258 16))) (return 2)))
+    (when (not (= (profile.alloc-total) before)) (return 2)))
   42)

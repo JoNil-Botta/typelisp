@@ -10,12 +10,11 @@ consume the state returned by the preceding operand.
 Store families preserve `Never` from place formation and value evaluation,
 including through annotations and direct constructors. The actual flow type
 is independent of the expected storage type: an exit has no value to store.
-Argument collectors expose `Exit` explicitly; their callers must stop before
-later arguments, snapshots, calls or writebacks. Array-literal builders retain
+An argument collector stops at an exiting argument: no later argument,
+snapshot, call or writeback is emitted. Array-literal builders retain
 the same distinction when constructing values for a store. The lowerer test
 `compiler-lower-store-exits` checks that each emitted terminator ends its block.
-Box and tuple construction preserve the same flow; the tuple element builder
-returns `ResultLowerExpr` to retain that distinction. Expression consumers
+Box and tuple construction preserve the same flow. Expression consumers
 (bindings, scrutinees, projections, operators and conditions) check an
 operand's actual type for `Never` before using its value;
 `compiler-lower-operand-consumer-exits` covers them.

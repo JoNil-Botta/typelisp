@@ -980,6 +980,9 @@
 (define (compiler-load-session-state-new-for-package-child
   [parent : (& CompilerLoadSessionState)]) : CompilerLoadSessionState
   (let
+    ;; Read before the catalog moves out of `parent`.
+    [force-source : bool
+      (compiler-load-session-state-dependency-tlci-force-source? (& parent))]
     [state : CompilerLoadSessionState
       (compiler-load-session-state-new-with-reset-safety-and-catalog
         true
@@ -987,7 +990,7 @@
           (& parent.dependency-catalog)))]
     (compiler-load-session-state-set-dependency-tlci-force-source!
       (owned_view.compiler-owned-shared-view state)
-      (compiler-load-session-state-dependency-tlci-force-source? parent))
+      force-source)
     state))
 
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
@@ -1122,7 +1125,8 @@
         (* old-capacity 2))]
     [slots : (__tl_dyn-array CompilerLoadDependencyCatalogEntry)
       (in-arena
-        (arena.Arena owner)
+        (unsafe
+          (arena.Arena owner))
         (__tl_make-array CompilerLoadDependencyCatalogEntry capacity))]
     (for [index (iterator.range 0 items.len)]
       (set!
@@ -1664,19 +1668,24 @@
                   [pool-arena : i64 (ast.ast-node-pool-arena-make)]
                   [pools : ast.AstNodePoolContext
                     (in-arena
-                      (arena.Arena pool-arena)
+                      (unsafe
+                        (arena.Arena pool-arena))
                       (ast.ast-node-pool-context-new-with-capacities-in-arena
                         1
                         1
                         pool-arena))]
                   [spmd-callables : tlci.TlciSpmdCallables
                     (in-arena
-                      (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+                      (unsafe
+                        (arena.Arena
+                          (ast.ast-node-pool-context-base-arena pools)))
                       (compiler-load-dependency-surface-copy-spmd-callables
                         entry.spmd-callables))]
                   [hydrated : surface_hydrate.ResultCompilerSurfaceHydration
                     (in-arena
-                      (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+                      (unsafe
+                        (arena.Arena
+                          (ast.ast-node-pool-context-base-arena pools)))
                       (surface_hydrate.compiler-surface-hydrate
                         (& image.rodata)
                         (& key)
@@ -1731,7 +1740,8 @@
         false)]
     (compiler-load-dependency-surface-list-destroy-storage! (& prior))
     (in-arena
-      (arena.Arena owner)
+      (unsafe
+        (arena.Arena owner))
       (let
         [slots : (__tl_dyn-array CompilerLoadDependencySurfaceFragment)
           (__tl_make-array CompilerLoadDependencySurfaceFragment catalog.len)]
@@ -1752,7 +1762,9 @@
                   (& (array-ref catalog.slots index))
                   configuration
                   structural-session))]
-            (set! (array-ref slots index) fragment)
+            (set!
+              (array-ref slots index)
+              (owned_view.compiler-owned-shared-view fragment))
             (match fragment
               [(Unavailable) (set! ok false)]
               [(Ready hydration _)
@@ -1923,7 +1935,8 @@
     [provider : CompilerLoadSourceProvider
       (compiler-load-session-state-source-provider (& state))]
     (in-arena
-      (arena.Arena state.owner-arena)
+      (unsafe
+        (arena.Arena state.owner-arena))
       (set!
         (array-ref state.source-provider 0)
         (compiler-load-source-provider-inactive)))
@@ -1941,7 +1954,8 @@
       (compiler-load-session-state-source-provider (& state))]
     (if provider.active
       (in-arena
-        (arena.Arena provider.owner-arena)
+        (unsafe
+          (arena.Arena provider.owner-arena))
         (source_overlay.compiler-source-ledger-record!
           (&mut provider.ledger)
           class
@@ -1963,7 +1977,8 @@
       (compiler-load-session-state-source-provider (& state))]
     (if provider.active
       (in-arena
-        (arena.Arena provider.owner-arena)
+        (unsafe
+          (arena.Arena provider.owner-arena))
         (source_overlay.compiler-source-ledger-record-text!
           (&mut provider.ledger)
           class
@@ -2121,7 +2136,10 @@
   [index : i64]) : unit
   (unless
     (>= index compiler-load-program-cache-capacity)
-    (set! (array-ref state.program-cache index) (CompilerLoadProgramCacheEmpty))
+    (owned_view.compiler-owned-cell-set!
+      state.program-cache
+      index
+      (CompilerLoadProgramCacheEmpty))
     (compiler-load-session-state-program-cache-fill! state (+ index 1))))
 
 (define (compiler-load-session-state-program-cache-stats-reset!
@@ -2134,7 +2152,7 @@
   [state : CompilerLoadSessionState]) : unit
   (compiler-load-session-state-program-cache-fill! state 0)
   (set! (array-ref state.program-cache-ready 0) true)
-  (compiler-load-session-state-program-admission-clear! state)
+  (compiler-load-session-state-program-admission-clear! (&mut state))
   (compiler-load-session-state-program-cache-stats-reset! state))
 
 (define (compiler-load-program-cache-clear!) : unit
@@ -2344,18 +2362,19 @@
   [index : i64]) : unit
   (unless
     (>= index compiler-load-program-cache-capacity)
-    (set!
-      (array-ref state.program-admission index)
+    (owned_view.compiler-owned-cell-set!
+      state.program-admission
+      index
       (CompilerLoadProgramAdmissionEmpty))
     (compiler-load-session-state-program-admission-fill! state (+ index 1))))
 
 (define (compiler-load-session-state-program-admission-clear!
-  [state : (& state CompilerLoadSessionState)]) : unit
+  [state : (&mut state CompilerLoadSessionState)]) : unit
   (compiler-load-session-state-program-admission-fill! state 0)
   (set! (array-ref state.program-admission-ready 0) true))
 
 (define (compiler-load-session-state-program-admission-ensure!
-  [state : (& state CompilerLoadSessionState)]) : unit
+  [state : (&mut state CompilerLoadSessionState)]) : unit
   (if (array-ref state.program-admission-ready 0)
     unit
     (compiler-load-session-state-program-admission-clear! state)))
@@ -2379,7 +2398,8 @@
 (define (compiler-load-session-state-program-admission-contains?
   [state : (& CompilerLoadSessionState)]
   [key : (& key CompilerLoadProgramCacheKey)]) : bool
-  (compiler-load-session-state-program-admission-ensure! state)
+  (compiler-load-session-state-program-admission-ensure!
+    (&mut (compiler-load-session-state-shared-view state)))
   (compiler-load-session-state-program-admission-contains-from? state key))
 
 (define (compiler-load-program-admission-contains?
@@ -2389,7 +2409,7 @@
     key))
 
 (define (compiler-load-session-state-program-admission-record-at
-  [state : (& state CompilerLoadSessionState)]
+  [state : (&mut state CompilerLoadSessionState)]
   [key : CompilerLoadProgramCacheKey]) : bool
   (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
     (match (clone (array-ref state.program-admission index))
@@ -2405,7 +2425,7 @@
   false)
 
 (define (compiler-load-session-state-program-admission-record
-  [state : (& state CompilerLoadSessionState)]
+  [state : (&mut state CompilerLoadSessionState)]
   [key : CompilerLoadProgramCacheKey]) : bool
   (compiler-load-session-state-program-admission-ensure! state)
   (compiler-load-session-state-program-admission-record-at state key))
@@ -2418,10 +2438,11 @@
     (let
       [persistent-key : CompilerLoadProgramCacheKey
         (in-arena
-          (arena.Arena ast.node-pool-base-arena)
+          (unsafe
+            (arena.Arena ast.node-pool-base-arena))
           (compiler-load-program-cache-key-copy key))]
       (compiler-load-session-state-program-admission-record
-        state
+        (&mut (compiler-load-session-state-shared-view state))
         persistent-key))))
 
 (define (compiler-load-program-admission-record-persistent
@@ -2740,8 +2761,9 @@
       (array-ref state.intern-state 0))
     (begin
       (if (= (array-ref state.embedded-provenance-owner-arena 0) 0)
-        (set!
-          (array-ref state.embedded-provenance-owner-arena 0)
+        (owned_view.compiler-owned-cell-set!
+          state.embedded-provenance-owner-arena
+          0
           (arena.tl_arena_make_small))
         unit)
       (array-ref state.embedded-provenance-owner-arena 0))))
@@ -2760,22 +2782,32 @@
 
 (define (compiler-load-session-state-embedded-provenance-reset!
   [state : (& state CompilerLoadSessionState)]) : unit
-  (set!
-    (array-ref state.embedded-stdlib-provenance.module-ids 0)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.module-ids
+    0
     (sym_i64_env.sym-i64-empty))
-  (set!
-    (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.equivalence-cache
+    0
     (sym_i64_env.sym-i64-empty))
-  (set!
-    (array-ref state.embedded-stdlib-provenance.canonical-paths 0)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.canonical-paths
+    0
     (sym_i64_env.sym-i64-empty))
-  (set!
-    (array-ref state.embedded-stdlib-provenance.suffix-claims 0)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.suffix-claims
+    0
     (sym_i64_env.sym-i64-empty))
-  (set! (array-ref state.embedded-stdlib-provenance.noted 0) false)
+  (owned_view.compiler-owned-cell-set!
+    state.embedded-stdlib-provenance.noted
+    0
+    false)
   (let
     [owner : i64 (array-ref state.embedded-provenance-owner-arena 0)]
-    (set! (array-ref state.embedded-provenance-owner-arena 0) 0)
+    (owned_view.compiler-owned-cell-set!
+      state.embedded-provenance-owner-arena
+      0
+      0)
     (if (> owner 0)
       (unsafe
         (arena.tl_arena_destroy owner))
@@ -2798,12 +2830,14 @@
     ;; The map head belongs to this session. Its nodes outlive load-scoped
     ;; scratch arenas and remain valid until the next session intern reset.
     (in-arena
-      (arena.Arena
-        (compiler-load-session-state-embedded-provenance-arena state))
+      (unsafe
+        (arena.Arena
+          (compiler-load-session-state-embedded-provenance-arena state)))
       (set!
         (array-ref state.embedded-stdlib-provenance.module-ids 0)
         (sym_i64_env.sym-i64-bind-id
-          (compiler-load-session-state-embedded-module-ids-shared-view state)
+          (compiler-load-session-state-embedded-module-ids-shared-view
+            (owned_view.compiler-owned-shared-view state))
           id
           1)))))
 
@@ -2851,8 +2885,9 @@
             (& (string.copy suffix))
             (& (string.copy disk-path)))]
         (in-arena
-          (arena.Arena
-            (compiler-load-session-state-embedded-provenance-arena state))
+          (unsafe
+            (arena.Arena
+              (compiler-load-session-state-embedded-provenance-arena state)))
           (set!
             (array-ref state.embedded-stdlib-provenance.equivalence-cache 0)
             (sym_i64_env.sym-i64-bind-id
@@ -2878,8 +2913,9 @@
   [state : (& state CompilerLoadSessionState)]) : unit
   (when
     (= (compiler-load-session-state-stdlib-proofs state).arena 0)
-    (set!
-      (array-ref state.embedded-stdlib-provenance.retained-proofs 0)
+    (owned_view.compiler-owned-cell-set!
+      state.embedded-stdlib-provenance.retained-proofs
+      0
       (CompilerLoadStdlibProofs
         (__tl_make-array CompilerLoadStdlibProof 0)
         0
@@ -2890,8 +2926,9 @@
   [state : (& state CompilerLoadSessionState)]) : unit
   (let
     [owner : i64 (compiler-load-session-state-stdlib-proofs state).arena]
-    (set!
-      (array-ref state.embedded-stdlib-provenance.retained-proofs 0)
+    (owned_view.compiler-owned-cell-set!
+      state.embedded-stdlib-provenance.retained-proofs
+      0
       (CompilerLoadStdlibProofs (__tl_make-array CompilerLoadStdlibProof 0) 0 0))
     (when
       (> owner 0)
@@ -2923,7 +2960,8 @@
     (when
       (> proofs.arena 0)
       (in-arena
-        (arena.Arena proofs.arena)
+        (unsafe
+          (arena.Arena proofs.arena))
         (match (ces.compiler-embedded-stdlib-dropped-spans disk-text)
           [(NoDropped) unit]
           [(SomeDropped dropped)
@@ -2953,10 +2991,9 @@
                               index)))
                         grown))]
                   (set! (array-ref slots proofs.len) proof)
-                  (set!
-                    (array-ref
-                      state.embedded-stdlib-provenance.retained-proofs
-                      0)
+                  (owned_view.compiler-owned-cell-set!
+                    state.embedded-stdlib-provenance.retained-proofs
+                    0
                     (CompilerLoadStdlibProofs
                       slots
                       (+ proofs.len 1)
@@ -3034,8 +3071,9 @@
       (array-ref state.embedded-stdlib-provenance.canonical-paths 0)]
     [claimant : i64 (sym_i64_env.sym-i64-lookup-id-or (& claims) suffix-id -1)]
     (in-arena
-      (arena.Arena
-        (compiler-load-session-state-embedded-provenance-arena state))
+      (unsafe
+        (arena.Arena
+          (compiler-load-session-state-embedded-provenance-arena state)))
       (if (< claimant 0)
         (begin
           (set!
@@ -3130,7 +3168,7 @@
   [pools : ast.AstNodePoolContext]) : unit
   (parser.compiler-parse-decl-origin-cache-reset!)
   (compiler-load-session-state-surface-summaries-reset! (& state))
-  (compiler-load-session-state-lazy-qualified-observer-reset! state)
+  (compiler-load-session-state-lazy-qualified-observer-reset! (&mut state))
   (set! (array-ref state.surface-summary-load-depth 0) 0)
   (if (compiler-load-session-state-cache-enabled? state)
     (begin
@@ -3168,7 +3206,7 @@
   [intern-state : (&mut intern-state ci.InternCompatState)]) : unit
   (compiler-load-session-state-embedded-provenance-reset! (& load-state))
   (compiler-load-session-state-surface-summaries-reset! (& load-state))
-  (compiler-load-session-state-lazy-qualified-observer-reset! load-state)
+  (compiler-load-session-state-lazy-qualified-observer-reset! (&mut load-state))
   (set! (array-ref load-state.surface-summary-load-depth 0) 0)
   (if (compiler-load-session-state-cache-enabled? load-state)
     (begin
@@ -3183,8 +3221,9 @@
   [index : i64]) : unit
   (unless
     (>= index compiler-load-runtime-prelude-cache-capacity)
-    (set!
-      (array-ref state.runtime-prelude-cache index)
+    (owned_view.compiler-owned-cell-set!
+      state.runtime-prelude-cache
+      index
       (CompilerLoadPreludeCacheEmpty))
     (compiler-load-session-state-runtime-prelude-cache-fill! state (+ index 1))))
 
@@ -3272,15 +3311,17 @@
     (match (clone (array-ref state.runtime-prelude-cache index))
       [(CompilerLoadPreludeCacheEmpty)
         (return
-          (set!
-            (array-ref state.runtime-prelude-cache index)
+          (owned_view.compiler-owned-cell-set!
+            state.runtime-prelude-cache
+            index
             (CompilerLoadPreludeCacheFull key decls paths modules seen)))]
       [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
         (when
           (compiler-load-prelude-cache-key-equal? slot-key key)
           (return
-            (set!
-              (array-ref state.runtime-prelude-cache index)
+            (owned_view.compiler-owned-cell-set!
+              state.runtime-prelude-cache
+              index
               (CompilerLoadPreludeCacheFull key decls paths modules seen))))])))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store
@@ -3746,7 +3787,7 @@
       (Ok (compiler-load-normalize-path resolved)))))
 
 (define (compiler-load-session-state-dotted-path-cache-clear-ready!
-  [state : (& state CompilerLoadSessionState)]
+  [state : (&mut state CompilerLoadSessionState)]
   [index : i64]) : unit
   (unless
     (>= index compiler-load-dotted-path-cache-capacity)
@@ -3759,15 +3800,16 @@
 (define (compiler-load-session-state-dotted-path-arena-ensure!
   [state : (& state CompilerLoadSessionState)]) : i64
   (if (= (array-ref state.dotted-path-cache-owner-arena 0) 0)
-    (set!
-      (array-ref state.dotted-path-cache-owner-arena 0)
+    (owned_view.compiler-owned-cell-set!
+      state.dotted-path-cache-owner-arena
+      0
       (arena.tl_arena_make_small))
     unit)
   (array-ref state.dotted-path-cache-owner-arena 0))
 
 (define (compiler-load-session-state-dotted-path-cache-reset!
   [state : CompilerLoadSessionState]) : unit
-  (compiler-load-session-state-dotted-path-cache-clear-ready! state 0)
+  (compiler-load-session-state-dotted-path-cache-clear-ready! (&mut state) 0)
   (let
     [owner : i64 (array-ref state.dotted-path-cache-owner-arena 0)]
     (set! (array-ref state.dotted-path-cache-owner-arena 0) 0)
@@ -3805,7 +3847,7 @@
       (CompilerLoadNoString))))
 
 (define (compiler-load-session-state-dotted-path-cache-store!
-  [state : (& state CompilerLoadSessionState)]
+  [state : (&mut state CompilerLoadSessionState)]
   [module-id : i64]
   [path : String]) : unit
   (let
@@ -3839,13 +3881,14 @@
       (let
         [retained : String
           (in-arena
-            (arena.Arena
-              (compiler-load-session-state-dotted-path-arena-ensure! state))
+            (unsafe
+              (arena.Arena
+                (compiler-load-session-state-dotted-path-arena-ensure! state)))
             (let
               [path : String
                 (compiler-load-dotted-module-path-uncached module-name)]
               (compiler-load-session-state-dotted-path-cache-store!
-                state
+                (&mut state)
                 module-id
                 (string.copy path))
               path))]
@@ -4573,7 +4616,7 @@
   (compiler-load-include-bin-def-with-pools
     pools
     name
-    (ctfe.ctfe-embedded-stdlib-binary-data-bytes contents)))
+    (ctfe.ctfe-embedded-stdlib-binary-data-bytes-v2 contents)))
 
 (define (compiler-load-include-def-with-pools
   [kind : CompilerLoadIncludeKind]
@@ -4880,7 +4923,8 @@
     [right-len : i64 (ast.ast-decl-path-list-len (& right))]
     [right-slots : (__tl_dyn-array String)
       (ast.ast-place-shared-view right.slots)]
-    [right-owner-ids : (__tl_dyn-array i64) right.owner-ids]
+    [right-owner-ids : (__tl_dyn-array i64)
+      (ast.ast-place-shared-view right.owner-ids)]
     [left-capacity : i64 (array-length left.slots)]
     [right-capacity : i64 (array-length right.slots)]
     (if (and
@@ -6138,7 +6182,10 @@
       owner
       (let
         [fresh : i64 (arena.tl_arena_make_small)]
-        (set! (array-ref state.surface-summary-owner-arena 0) fresh)
+        (owned_view.compiler-owned-cell-set!
+          state.surface-summary-owner-arena
+          0
+          fresh)
         fresh))))
 
 ;; Moves whenever a surface-summary list loses or reorders entries: a reset or
@@ -6172,12 +6219,17 @@
     ;; empty descriptor in the stable session owner so the state never keeps
     ;; a handle into the destroyed generation between batch entries.
     (in-arena
-      (arena.Arena state.owner-arena)
-      (set!
-        (array-ref state.surface-summaries 0)
+      (unsafe
+        (arena.Arena state.owner-arena))
+      (owned_view.compiler-owned-cell-set!
+        state.surface-summaries
+        0
         (compiler-load-surface-summary-list-empty))
-      (set! (array-ref state.lazy-import-skip-record-count 0) 0))
-    (set! (array-ref state.surface-summary-owner-arena 0) 0)
+      (owned_view.compiler-owned-cell-set!
+        state.lazy-import-skip-record-count
+        0
+        0))
+    (owned_view.compiler-owned-cell-set! state.surface-summary-owner-arena 0 0)
     (when
       (> payload-owner 0)
       (if (= (arena.tl_arena_current) payload-owner)
@@ -6268,7 +6320,9 @@
         [bigger : (__tl_dyn-array CompilerLoadSurfaceSummary)
           (__tl_make-array CompilerLoadSurfaceSummary capacity)]
         (for [index (iterator.range 0 len)]
-          (set! (array-ref bigger index) (array-ref slots index)))
+          (set!
+            (array-ref bigger index)
+            (owned_view.compiler-owned-element-view slots index)))
         (set! slots bigger)))
     (set! (array-ref slots len) summary)
     (CompilerLoadSurfaceSummaryList slots (+ len 1))))
@@ -6294,14 +6348,16 @@
         (compiler-load-session-state-surface-summary-owner-arena-ensure! state)]
       [copy-into-owner? : bool (not (= (arena.tl_arena_current) payload-owner))]
       (in-arena
-        (arena.Arena payload-owner)
+        (unsafe
+          (arena.Arena payload-owner))
         (let
           [owned : CompilerLoadSurfaceSummary
             (if copy-into-owner?
               (clone (owned_view.compiler-owned-reference-shared-view summary))
               (owned_view.compiler-owned-reference-shared-view summary))]
-          (set!
-            (array-ref state.surface-summaries 0)
+          (owned_view.compiler-owned-cell-set!
+            state.surface-summaries
+            0
             (compiler-load-surface-summary-list-record
               (compiler-load-session-state-surface-summaries state)
               owned)))))))
@@ -6511,7 +6567,8 @@
       (compiler-load-session-state-surface-summary-owner-arena-ensure!
         (& state))]
     (in-arena
-      (arena.Arena payload-owner)
+      (unsafe
+        (arena.Arena payload-owner))
       (set!
         (array-ref state.surface-summaries 0)
         (compiler-load-surface-summary-remove-source-in
@@ -6798,7 +6855,7 @@
   (array-ref observer.flags index))
 
 (define (compiler-load-lazy-qualified-observer-flag-set!
-  [observer : (& observer CompilerLoadLazyQualifiedObserverState)]
+  [observer : (&mut observer CompilerLoadLazyQualifiedObserverState)]
   [index : i64]
   [value : bool]) : unit
   (set! (array-ref observer.flags index) value))
@@ -6809,7 +6866,7 @@
   (array-ref observer.root-ids index))
 
 (define (compiler-load-lazy-qualified-observer-root-id-set!
-  [observer : (& observer CompilerLoadLazyQualifiedObserverState)]
+  [observer : (&mut observer CompilerLoadLazyQualifiedObserverState)]
   [index : i64]
   [value : i64]) : unit
   (set! (array-ref observer.root-ids index) value))
@@ -6820,7 +6877,7 @@
   (sym_i64_env.sym-i64-shared-view (& (array-ref observer.member-sets index))))
 
 (define (compiler-load-lazy-qualified-observer-members-set!
-  [observer : (& observer CompilerLoadLazyQualifiedObserverState)]
+  [observer : (&mut observer CompilerLoadLazyQualifiedObserverState)]
   [index : i64]
   [value : sym_i64_env.SymI64Env]) : unit
   (set! (array-ref observer.member-sets index) value))
@@ -6859,10 +6916,10 @@
       locals)))
 
 (define (compiler-load-session-state-lazy-qualified-observer-reset!
-  [state : (& state CompilerLoadSessionState)]) : unit
+  [state : (&mut state CompilerLoadSessionState)]) : unit
   (let
-    [observer : (& state CompilerLoadLazyQualifiedObserverState)
-      (compiler-load-session-state-lazy-qualified-observer state)]
+    [observer : (&mut state CompilerLoadLazyQualifiedObserverState)
+      (&mut state.lazy-qualified-observer)]
     (compiler-load-lazy-qualified-observer-flag-set! observer 0 false)
     (compiler-load-lazy-qualified-observer-flag-set! observer 1 false)
     (compiler-load-lazy-qualified-observer-root-id-set! observer 0 0)
@@ -6885,7 +6942,7 @@
   (let
     [state : CompilerLoadSessionState
       (compiler-load-active-session-state-shared-view)]
-    (compiler-load-session-state-lazy-qualified-observer-reset! state)))
+    (compiler-load-session-state-lazy-qualified-observer-reset! (&mut state))))
 
 (define (compiler-load-lazy-qualified-observer-members-with-note
   [state : (& CompilerLoadSessionState)]
@@ -6900,49 +6957,64 @@
       (compiler-load-structural-member-set-add-id members member-id))))
 
 (define (compiler-load-session-state-lazy-qualified-observer-note!
-  [state : (& state CompilerLoadSessionState)]
+  [state : (&mut state CompilerLoadSessionState)]
   [name : i64]) : unit
   (let
-    [observer : (& state CompilerLoadLazyQualifiedObserverState)
-      (compiler-load-session-state-lazy-qualified-observer state)]
-    (compiler-load-lazy-qualified-observer-members-set!
-      observer
-      0
+    ;; The new member set is computed from shared reads before the observer
+    ;; is borrowed mutably to store it.
+    [members : sym_i64_env.SymI64Env
       (compiler-load-lazy-qualified-observer-members-with-note
         (& (compiler-load-session-state-shared-view (& state)))
         name
-        (compiler-load-lazy-qualified-observer-root-id observer 0)
-        (compiler-load-lazy-qualified-observer-members observer 0)))))
+        (compiler-load-lazy-qualified-observer-root-id
+          (& state.lazy-qualified-observer)
+          0)
+        (compiler-load-lazy-qualified-observer-members
+          (& state.lazy-qualified-observer)
+          0))]
+    (compiler-load-lazy-qualified-observer-members-set!
+      (&mut state.lazy-qualified-observer)
+      0
+      members)))
 
 (define (compiler-load-session-state-lazy-qualified-observer-note-secondary!
-  [state : (& state CompilerLoadSessionState)]
+  [state : (&mut state CompilerLoadSessionState)]
   [name : i64]
   [locals : sym_i64_env.SymI64Env]) : unit
   (let
-    [observer : (& state CompilerLoadLazyQualifiedObserverState)
-      (compiler-load-session-state-lazy-qualified-observer state)]
     [secondary-root-id : i64
-      (compiler-load-lazy-qualified-observer-root-id observer 1)]
+      (compiler-load-lazy-qualified-observer-root-id
+        (& state.lazy-qualified-observer)
+        1)]
     (if (compiler-load-session-state-lazy-name-qualified-by-id?
       (& (compiler-load-session-state-shared-view (& state)))
       name
       secondary-root-id)
-      (begin
-        (compiler-load-lazy-qualified-observer-flag-set! observer 2 true)
-        (compiler-load-lazy-qualified-observer-members-set!
-          observer
-          1
+      (let
+        [members : sym_i64_env.SymI64Env
           (compiler-load-lazy-qualified-observer-members-with-note
             (& (compiler-load-session-state-shared-view (& state)))
             name
             secondary-root-id
-            (compiler-load-lazy-qualified-observer-members observer 1))))
+            (compiler-load-lazy-qualified-observer-members
+              (& state.lazy-qualified-observer)
+              1))]
+        (compiler-load-lazy-qualified-observer-flag-set!
+          (&mut state.lazy-qualified-observer)
+          2
+          true)
+        (compiler-load-lazy-qualified-observer-members-set!
+          (&mut state.lazy-qualified-observer)
+          1
+          members))
       (if (and
         (not (sym_i64_env.sym-i64-contains-id locals name))
         (= name secondary-root-id))
-        (compiler-load-lazy-qualified-observer-flag-set! observer 3 true)
-        unit))
-    unit))
+        (compiler-load-lazy-qualified-observer-flag-set!
+          (&mut state.lazy-qualified-observer)
+          3
+          true)
+        unit))))
 
 (define (compiler-load-session-state-lazy-name-qualified-by-id?
   [state : (& CompilerLoadSessionState)]
@@ -7013,7 +7085,7 @@
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (if (compiler-load-session-state-lazy-qualified-observer-active? state)
     (compiler-load-session-state-lazy-qualified-observer-note-secondary!
-      state
+      (&mut (compiler-load-session-state-shared-view state))
       name
       locals)
     unit)
@@ -7031,7 +7103,7 @@
             (if (compiler-load-session-state-lazy-qualified-observer-active?
               state)
               (compiler-load-session-state-lazy-qualified-observer-note!
-                state
+                (&mut (compiler-load-session-state-shared-view state))
                 name)
               unit)
             (compiler-load-lazy-alias-demand-qualified member-id))))]
@@ -10645,9 +10717,13 @@
       (owned_view.compiler-owned-reference-shared-view (& dest.slots))]
     [dest-offset : i64 dest.offset]
     (for [index (iterator.range 0 count)]
-      (match (array-ref source-slots (+ source-offset index))
+      (match (owned_view.compiler-owned-element-view
+        source-slots
+        (+ source-offset index))
         [(ModuleBody _ source-body-box)
-          (match (array-ref dest-slots (+ dest-offset index))
+          (match (owned_view.compiler-owned-element-view
+            dest-slots
+            (+ dest-offset index))
             [(ModuleBody _ dest-body-box)
               (compiler-load-propagate-compacted-decl-origins!
                 origin-storage
@@ -10808,7 +10884,8 @@
     (let
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
-          (arena.Arena ast.node-pool-base-arena)
+          (unsafe
+            (arena.Arena ast.node-pool-base-arena))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-file-diagnostic-escaping path cfgs)))]
@@ -10829,7 +10906,8 @@
     (let
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
-          (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+          (unsafe
+            (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-file-diagnostic-escaping-with-pools
@@ -11057,7 +11135,8 @@
     (let
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
-          (arena.Arena ast.node-pool-base-arena)
+          (unsafe
+            (arena.Arena ast.node-pool-base-arena))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-source-diagnostic-escaping path source cfgs)))]
@@ -11079,7 +11158,8 @@
     (let
       [persistent : CompilerLoadPersistentProgramResult
         (in-arena
-          (arena.Arena (ast.ast-node-pool-context-base-arena pools))
+          (unsafe
+            (arena.Arena (ast.ast-node-pool-context-base-arena pools)))
           (CompilerLoadPersistentProgramResult
             (compiler-load-program-cache-key-copy key)
             (compiler-load-parse-source-diagnostic-escaping-with-pools

@@ -10,4 +10,4 @@
     [pair : Pair (Pair left right)]
     [first : (&mut pair (__tl_dyn-array i64)) (&mut pair.left)]
     [second : (&mut pair (__tl_dyn-array i64)) (&mut pair.left)]
-    unit))
+    (__tl_array-push! first 1)))

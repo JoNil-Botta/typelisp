@@ -1,4 +1,5 @@
-;: Moving a non-Copy field out through `(deref box)` stays rejected.
+;: Moving a non-Copy field out through `(deref box)` consumes the whole box
+;: (the ownership graph tracks it, #8449); the box is unusable afterwards.
 (import stdlib.string)
 
 (defstruct Leaf

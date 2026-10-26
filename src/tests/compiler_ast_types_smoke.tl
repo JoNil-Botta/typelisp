@@ -1,4 +1,5 @@
 ;; compiler_ast_types_smoke.tl - Runnable AST data-shape smoke.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
@@ -8,7 +9,6 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.io)
-(import stdlib.iterator)
 (import stdlib.string)
 (cfg test (import stdlib.test as tl_test))
 (cfg test (import compiler_allocation_profile as allocation_profile))
@@ -241,12 +241,9 @@
     [collision-a : i64 (ast.ast-node-pool-context-type-push pools (Var 0))]
     [collision-b : i64 (ast.ast-node-pool-context-type-push pools (Var 131072))]
     [decoy-first : i64 (ast.ast-node-pool-context-type-push decoy (Bool))]
-    [index : i64 0]
-    (while (< index 65533)
-      (begin
-        (ast.ast-node-pool-context-type-push pools (Array first index))
-        unit)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 65533)]
+      (ast.ast-node-pool-context-type-push pools (Array first index))
+      unit)
     (ast.ast-node-pool-context-install! decoy)
     (let
       [home : arena.Arena (arena.current)]
@@ -338,7 +335,7 @@
       (if (= (array-ref slots i) 0)
         unit
         (set! empty false))
-      (set! i (+ i 1)))
+      (+= i 1))
     empty))
 
 ;; Push COUNT distinct type variables starting at name START.
@@ -346,13 +343,9 @@
   [pools : ast.AstNodePoolContext]
   [start : i64]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (begin
-        (ast.ast-node-pool-context-type-push pools (Var (+ start index)))
-        unit)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (ast.ast-node-pool-context-type-push pools (Var (+ start index)))
+    unit))
 
 ;; A dedup clear empties exactly the slots filled since the last one, whichever
 ;; alias filled them: clears at the current count and at an interior mark,
@@ -381,13 +374,9 @@
         (compiler-ast-type-dedup-table-empty? pools)
         (= (ast.ast-node-pool-context-type-len pools) 150)))
     (ast.ast-node-pool-context-install! pools)
-    (let
-      [index : i64 0]
-      (while (< index 300)
-        (begin
-          (ast.ty-node-push (& (Var (+ 5000 index))))
-          unit)
-        (set! index (+ index 1))))
+    (for [index (iterator.range 0 300)]
+      (ast.ty-node-push (& (Var (+ 5000 index))))
+      unit)
     (ast.ast-node-pool-context-install! active-before)
     (ast.ast-node-pool-context-reset-to!
       pools
@@ -439,7 +428,7 @@
       (if (= (array-ref source i) (array-ref copy i))
         unit
         (set! same false))
-      (set! i (+ i 1)))
+      (+= i 1))
     same))
 
 ;; Cloning a context's types copies its dedup array exactly, from the log when
@@ -488,11 +477,14 @@
         state.base-arena
         state.exhausted
         (in-arena
-          (arena.Arena state.base-arena)
+          (unsafe
+            (arena.Arena state.base-arena))
           (ast.ty-node-dedup-slots-new 8))
         state.dedup-count
         state.storage-arena
-        state.segment-count)]
+        state.segment-count
+        state.revision
+        state.revision-cell)]
     (ast.ast-type-pool-cell-write! pools.type-pool small)
     (ast.ast-node-pool-context-type-push pools (I64))
     (ast.ast-node-pool-context-type-push pools (Var 0))
@@ -1662,7 +1654,7 @@
         (set!
           modules
           (ast.ast-decl-module-list-prepend-builder-id module-id modules))
-        (set! i (- i 1))))
+        (-= i 1)))
     (let
       [tail : ast.AstDeclList (ast_tests.ast-decl-list-tail decls)]
       (and
@@ -1985,14 +1977,12 @@
   (let
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 1 1)]
-    [canonical-index : i64 0]
     [base-literal : i64 -1]
     [canonical-63 : i64 -1]
     [canonical-64 : i64 -1]
-    [respan-index : i64 0]
     [respan-63 : i64 -1]
     [respan-64 : i64 -1]
-    (while (< canonical-index 65)
+    (for [canonical-index (iterator.range 0 65)]
       (let
         [literal : i64
           (ast.ast-node-pool-context-expr-push
@@ -2012,9 +2002,8 @@
           unit)
         (if (= canonical-index 64)
           (set! canonical-64 view)
-          unit)
-        (set! canonical-index (+ canonical-index 1))))
-    (while (< respan-index 65)
+          unit)))
+    (for [respan-index (iterator.range 0 65)]
       (let
         [line : i64 (+ respan-index 100)]
         [view : i64
@@ -2027,8 +2016,7 @@
           unit)
         (if (= respan-index 64)
           (set! respan-64 view)
-          unit)
-        (set! respan-index (+ respan-index 1))))
+          unit)))
     (and
       (= (ast.ast-node-pool-context-expr-len pools) 195)
       (= (ast.ast-node-pool-context-expr-canonical-span-count pools) 65)
@@ -2139,7 +2127,11 @@
               (& early)
               (& views)
               (- early-total 1))
-            (ast.ast-node-pool-context-expr-span-oracle-ok? early))]
+            ;; Every copy of a pool state shares the live node count (one
+            ;; cursor, so a stale copy appends instead of overwriting), so
+            ;; the early snapshot's oracle would read nodes past its own span
+            ;; records; the live pool's oracle is checked here instead.
+            (ast.ast-node-pool-context-expr-span-oracle-ok? pools))]
         [snapshot : ast.AstNodePoolContext
           (ast.ast-node-pool-context-snapshot pools)]
         [mark : i64 (ast.ast-node-pool-context-expr-len pools)]
@@ -2339,13 +2331,11 @@
     [b-expr-bases-before : i64
       (ast.ast-node-pool-context-expr-segment-bases (& b))]
     [seg : i64 ast.ast-expr-node-pool-segment-size]
-    [expr-index : i64 0]
-    [type-index : i64 0]
     [a-last-expr : i64 -1]
     [b-last-expr : i64 -1]
     [a-last-type : i64 -1]
     [b-last-type : i64 -1]
-    (while (<= expr-index (* 2 seg))
+    (for [expr-index (iterator.range 0 (+ (* 2 seg) 1))]
       (set!
         a-last-expr
         (ast.ast-node-pool-context-expr-push
@@ -2357,9 +2347,8 @@
           (ast.ast-node-pool-context-expr-push
             b
             (Literal (ast.ast-lit-int (- 0 expr-index)))))
-        unit)
-      (set! expr-index (+ expr-index 1)))
-    (while (<= type-index 2048)
+        unit))
+    (for [type-index (iterator.range 0 (+ 2048 1))]
       (set!
         a-last-type
         (ast.ast-node-pool-context-type-push a (Var type-index)))
@@ -2367,8 +2356,7 @@
         (set!
           b-last-type
           (ast.ast-node-pool-context-type-push b (Var (+ type-index 10000))))
-        unit)
-      (set! type-index (+ type-index 1)))
+        unit))
     (let
       [a-growth-view : i64
         (ast.ast-expr-spanned-with-pools
@@ -2582,8 +2570,7 @@
     [zero-params : ast.AstParamList (ast.ast-param-list-with-capacity -1)]
     [minimum-field-defs : ast.AstFieldDefList
       (ast.ast-field-def-list-with-capacity -1)]
-    [index : i64 0]
-    (while (< index 17)
+    (for [index (iterator.range 0 17)]
       (ast.ast-variant-payload-cleanup-list-push
         (&mut cleanups)
         (if (= (bit-and index 1) 0)
@@ -2596,8 +2583,7 @@
         (&mut links)
         (if (= (bit-and index 1) 0)
           (ast.AstExternLinkInput.Lib "m")
-          (ast.AstExternLinkInput.Search "native")))
-      (set! index (+ index 1)))
+          (ast.AstExternLinkInput.Search "native"))))
     (ast.ast-variant-payload-cleanup-list-append-from
       (&mut cleanup-copy)
       (& cleanups)
@@ -2662,8 +2648,7 @@
   [first-line : i64]) : ast.AstExprList
   (let
     [views : ast.AstExprList (ast.ast-expr-list-new)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [literal : i64
           (ast.ast-node-pool-context-expr-push
@@ -2675,8 +2660,7 @@
           (ast.ast-expr-spanned-with-pools
             (& pools)
             literal
-            (ast.ast-source-span line 1 line 2)))
-        (set! index (+ index 1))))
+            (ast.ast-source-span line 1 line 2)))))
     views))
 
 (define (compiler-ast-reserve-program
@@ -2685,12 +2669,10 @@
   [reach : i64]) : ast.AstProgram
   (let
     [body : ast.AstExprList (ast.ast-expr-list-new)]
-    [index : i64 0]
-    (while (< index reach)
+    (for [index (iterator.range 0 reach)]
       (ast.ast-expr-list-push
         (&mut body)
-        (ast.ast-expr-list-get views index -1))
-      (set! index (+ index 1)))
+        (ast.ast-expr-list-get views index -1)))
     (ast.ast-program
       (ast.ast-decl-cons
         (&
@@ -2746,7 +2728,7 @@
       (set!
         ok
         (compiler-ast-reserve-view-line? pools views index (+ first-line index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 ;; `extra` more spanned literals pushed into the destination after compaction
@@ -3176,6 +3158,404 @@
             (string.int->string count)
             " views")))
       (set! index (+ index 1)))))
+
+(define (compiler-ast-type-pool-stamp
+  [pools : (& pools ast.AstNodePoolContext)]) : ast.AstTypePoolStamp
+  (match (ast.ast-node-pool-context-type-stamp pools)
+    [(ast.AstMaybeTypePoolStamp.Some stamp) stamp]
+    [(ast.AstMaybeTypePoolStamp.No)
+      (ci.intern-runtime-abort-string
+        "tl: test expected a live type pool stamp\n")]))
+
+(define (compiler-ast-type-pool-stamp-smoke?) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [a : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [b : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [a-id : i64 (ast.ast-node-pool-context-type-push a (ast.AstType.I64))]
+    [b-id : i64 (ast.ast-node-pool-context-type-push b (ast.AstType.Char))]
+    [a-stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& a))]
+    [b-stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& b))]
+    [ok : bool
+      (and
+        (= a-id 0)
+        (= b-id 0)
+        (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp))
+        (ast.ast-node-pool-context-type-stamp-valid? (& b) (& b-stamp))
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& a) (& b-stamp)))
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& b) (& a-stamp))))]
+    [i : i64 0]
+    ;; Distinct appended types force segment growth and preserve old ids.
+    (while (< i 1030)
+      (begin
+        (ast.ast-node-pool-context-type-push a (ast.AstType.Var i))
+        (set! i (+ i 1))))
+    (set!
+      ok
+      (and ok (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp))))
+    (ast.ast-node-pool-context-install! b)
+    (ast.ty-node-push (& (ast.AstType.Bool)))
+    (ast.ast-node-pool-context-install! a)
+    (set!
+      ok
+      (and
+        ok
+        (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp))
+        (ast.ast-node-pool-context-type-stamp-valid? (& b) (& b-stamp))))
+    (ast.ty-node-pool-truncate! 1)
+    (set!
+      ok
+      (and
+        ok
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& a) (& a-stamp)))
+        (ast.ast-node-pool-context-type-stamp-valid? (& b) (& b-stamp))))
+    (let
+      [current : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& a))]
+      [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone a)]
+      [alias-stamp : ast.AstTypePoolStamp
+        (compiler-ast-type-pool-stamp (& alias))]
+      ;; An alias of the same storage shares its cursor, so evidence taken
+      ;; through either context is valid through both until truncation.
+      (set!
+        ok
+        (and
+          ok
+          (ast.ast-node-pool-context-type-stamp-valid? (& alias) (& current))
+          (ast.ast-node-pool-context-type-stamp-valid? (& a) (& alias-stamp))))
+      (ast.ast-node-pool-context-reset-to! a 0 0)
+      (ast.ast-node-pool-context-type-push a (ast.AstType.String))
+      (set!
+        ok
+        (and
+          ok
+          (not (ast.ast-node-pool-context-type-stamp-valid? (& a) (& current)))
+          (not
+            (ast.ast-node-pool-context-type-stamp-valid?
+              (& alias)
+              (& alias-stamp))))))
+    ;; An old alias's cached length is stale once another alias appends.
+    ;; The shared cursor still issues it a fresh id: the newer node survives
+    ;; and append-only evidence through both aliases remains valid.
+    (let
+      [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone b)]
+      [appended : i64
+        (ast.ast-node-pool-context-type-push b (ast.AstType.String))]
+      [after-append : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& b))]
+      [aliased : i64
+        (ast.ast-node-pool-context-type-push alias (ast.AstType.U8))]
+      [alias-stamp : ast.AstTypePoolStamp
+        (compiler-ast-type-pool-stamp (& alias))]
+      (set!
+        ok
+        (and
+          ok
+          (= aliased (+ appended 1))
+          (= (ast.ast-node-pool-context-type-len b) (+ aliased 1))
+          (match (ast.ast-node-pool-context-type-get (& b) appended)
+            [(ast.AstType.String) true]
+            [_ false])
+          (match (ast.ast-node-pool-context-type-get (& b) aliased)
+            [(ast.AstType.U8) true]
+            [_ false])
+          (ast.ast-node-pool-context-type-stamp-valid? (& b) (& after-append))
+          (ast.ast-node-pool-context-type-stamp-valid?
+            (& alias)
+            (& alias-stamp))))
+      (ast.ast-node-pool-context-adopt-newer! b alias))
+    (let
+      [clone : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-clone-types-only a)]
+      [source-stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& a))]
+      [clone-stamp : ast.AstTypePoolStamp
+        (compiler-ast-type-pool-stamp (& clone))]
+      (ast.ast-node-pool-context-install! saved)
+      (ast.ast-node-pool-context-destroy-storage! a)
+      (set!
+        ok
+        (and
+          ok
+          (not
+            (ast.ast-node-pool-context-type-stamp-valid? (& a) (& source-stamp)))
+          (not
+            (ast.ast-node-pool-context-type-stamp-valid?
+              (& clone)
+              (& source-stamp)))
+          (ast.ast-node-pool-context-type-stamp-valid?
+            (& clone)
+            (& clone-stamp))
+          (match (ast.ast-node-pool-context-type-get (& clone) 0)
+            [(ast.AstType.String) true]
+            [_ false])))
+      (ast.ast-node-pool-context-destroy-storage! clone))
+    (ast.ast-node-pool-context-destroy-storage! b)
+    ok))
+
+(test
+  compiler-ast-type-pool-stamp
+  (tl_test.assert-true
+    (compiler-ast-type-pool-stamp-smoke?)
+    "type pool stamps name storage by its cursor, preserve appends through aliases, and reject other storage, truncation and retirement"))
+
+(define (compiler-ast-type-writer-sync-case? [compat? : bool] [cells? : bool]) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [other : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& pools))]
+    [ok : bool true]
+    [i : i64 0]
+    (if compat?
+      (ast.ast-node-pool-compat-context-use! pools)
+      (ast.ast-node-pool-context-install! pools))
+    (let
+      [generation : i64 (ast.ty-node-pool-generation-value)]
+      ;; Alternate the explicit and legacy append routes across segment
+      ;; growth. Each cursor and dedup count must be published before the
+      ;; other writer runs; retaining only shared segment pointers is not
+      ;; enough to prevent a later append overwriting the previous id.
+      (while (and ok (< i 1040))
+        (let
+          [explicit-id : i64
+            (if cells?
+              (ast.ast-node-pool-context-type-push-cells
+                (ast.ast-pool-cell-data pools.expr-pool)
+                (ast.ast-pool-cell-data pools.type-pool)
+                (& (ast.AstType.Var i)))
+              (ast.ast-node-pool-context-type-push pools (ast.AstType.Var i)))]
+          [global-id : i64 (ast.ty-node-push (& (ast.AstType.Var (+ i 1))))]
+          [state : ast.AstTypeNodePoolState
+            (ast.ast-type-pool-cell-read pools.type-pool)]
+          (set!
+            ok
+            (and
+              (= explicit-id i)
+              (= global-id (+ i 1))
+              (= state.count (+ i 2))
+              (= state.dedup-count state.count)
+              (ast.ast-node-pool-context-type-stamp-valid? (& pools) (& stamp))
+              (match (ast.ast-node-pool-context-type-get (& pools) explicit-id)
+                [(ast.AstType.Var name) (= name i)]
+                [_ false])
+              (match (ast.ast-node-pool-context-type-get (& pools) global-id)
+                [(ast.AstType.Var name) (= name (+ i 1))]
+                [_ false])
+              (= (ast.ty-node-push (& (ast.AstType.Var i))) explicit-id)
+              (=
+                (ast.ast-node-pool-context-type-push
+                  pools
+                  (ast.AstType.Var (+ i 1)))
+                global-id)))
+          (set! i (+ i 2))))
+      ;; Replacing the dedup backing table must publish its complete state
+      ;; too; duplicate lookups cannot repair a stale cursor by appending.
+      (unless compat? (ast.ty-node-dedup-grow!))
+      (set! ok (and ok (= (ast.ty-node-push (& (ast.AstType.Var 0))) 0)))
+      ;; A write to another owner's cells must not publish into this job.
+      (ast.ast-node-pool-context-type-push-cells
+        (ast.ast-pool-cell-data other.expr-pool)
+        (ast.ast-pool-cell-data other.type-pool)
+        (& (ast.AstType.String)))
+      (set!
+        ok
+        (and
+          ok
+          (= (ast.ty-node-push (& (ast.AstType.Bool))) 1040)
+          (= (ast.ast-node-pool-context-type-len other) 1)
+          (match (ast.ast-node-pool-context-type-get (& other) 0)
+            [(ast.AstType.String) true]
+            [_ false])
+          (= generation (ast.ty-node-pool-generation-value))
+          (ast.ast-node-pool-context-type-stamp-valid? (& pools) (& stamp)))))
+    (if compat?
+      (ast.ast-node-pool-compat-context-clear!)
+      (ast.ast-node-pool-context-install! saved))
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    (ast.ast-node-pool-context-destroy-storage! other)
+    ok))
+
+(define (compiler-ast-type-writer-sync-smoke?) : bool
+  (and
+    (compiler-ast-type-writer-sync-case? false false)
+    (compiler-ast-type-writer-sync-case? false true)
+    (compiler-ast-type-writer-sync-case? true false)
+    (compiler-ast-type-writer-sync-case? true true)))
+
+(define (compiler-ast-type-adopt-active-smoke?) : bool
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [active : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [_first : i64
+      (ast.ast-node-pool-context-type-push active (ast.AstType.I64))]
+    [caller : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-snapshot active)]
+    [other : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [stamp : ast.AstTypePoolStamp (compiler-ast-type-pool-stamp (& caller))]
+    [ok : bool true]
+    (ast.ast-node-pool-context-install! active)
+    (ast.ty-node-push (& (ast.AstType.Char)))
+    ;; Model macro operand checking through an installed snapshot, followed
+    ;; by caller-origin wrapping through a distinct expression state cell
+    ;; over the same storage.
+    (ast.ast-node-pool-context-expr-push
+      caller
+      (ast.AstExpr.Literal (ast.ast-lit-int 42)))
+    (ast.ast-node-pool-context-type-adopt-active! (& caller))
+    (ast.ast-node-pool-context-type-adopt-active! (& other))
+    ;; Both contexts address one expression storage and its single cursor,
+    ;; so the caller's append is visible through the active alias too.
+    (set!
+      ok
+      (and
+        (= (ast.ast-node-pool-context-type-len caller) 2)
+        (= (ast.ast-node-pool-context-expr-len caller) 1)
+        (= (ast.ast-node-pool-context-expr-len active) 1)
+        (= (ast.ast-node-pool-context-type-len other) 0)))
+    (ast.ast-node-pool-context-install! caller)
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ty-node-push (& (ast.AstType.Bool))) 2)
+        (match (ast.ast-node-pool-context-type-get (& caller) 1)
+          [(ast.AstType.Char) true]
+          [_ false])
+        (ast.ast-node-pool-context-type-stamp-valid? (& caller) (& stamp))))
+    ;; An intentional type rewind has a different shared revision; it must
+    ;; neither be undone by adoption nor revive the old prefix certificate.
+    (ast.ast-node-pool-context-reset-to! active 0 1)
+    (ast.ast-node-pool-context-type-adopt-active! (& active))
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ast-node-pool-context-type-len active) 1)
+        (not (ast.ast-node-pool-context-type-stamp-valid? (& caller) (& stamp)))))
+    (ast.ast-node-pool-context-install! saved)
+    (ast.ast-node-pool-context-destroy-storage! active)
+    (ast.ast-node-pool-context-destroy-storage! other)
+    ok))
+
+(define (compiler-ast-type-stale-dedup-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [x : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.I64))]
+    [y : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.Char))]
+    ;; The alias keeps a private copy of the dedup table that still maps Char
+    ;; to `y` after the owner truncates below it. The slot physically retains
+    ;; Char, so only the live-length check keeps the alias from reusing `y`.
+    [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-clone pools)]
+    [_truncate : unit (ast.ast-node-pool-context-reset-to! pools 0 1)]
+    [aliased : i64
+      (ast.ast-node-pool-context-type-push alias (ast.AstType.Char))]
+    [later : i64 (ast.ast-node-pool-context-type-push pools (ast.AstType.Bool))]
+    [ok : bool
+      (and
+        (= x 0)
+        (= y 1)
+        (= aliased 1)
+        (= later 2)
+        (= (ast.ast-node-pool-context-type-len pools) 3)
+        (match (ast.ast-node-pool-context-type-get (& alias) aliased)
+          [(ast.AstType.Char) true]
+          [_ false])
+        (match (ast.ast-node-pool-context-type-get (& pools) later)
+          [(ast.AstType.Bool) true]
+          [_ false]))]
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    ok))
+
+(define (compiler-ast-expr-stale-alias-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    ;; A snapshot has its own state cell (and cached length) over the same
+    ;; expression storage.
+    [alias : ast.AstNodePoolContext (ast.ast-node-pool-context-snapshot pools)]
+    [first : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 1)))]
+    [second : i64
+      (ast.ast-node-pool-context-expr-push
+        alias
+        (ast.AstExpr.Literal (ast.ast-lit-int 2)))]
+    [i : i64 0]
+    [ok : bool
+      (and
+        (= first 0)
+        (= second 1)
+        (= (ast.ast-node-pool-context-expr-len pools) 2)
+        (= (ast.ast-node-pool-context-expr-len alias) 2)
+        (match (ast.ast-node-pool-context-expr-get (& pools) first)
+          [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 1)]
+          [_ false])
+        (match (ast.ast-node-pool-context-expr-get (& pools) second)
+          [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value 2)]
+          [_ false]))]
+    ;; Alternating writers across segment growth never reuse an id.
+    (while (and ok (< i 70000))
+      (let
+        [a : i64
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Literal (ast.ast-lit-int i)))]
+        [b : i64
+          (ast.ast-node-pool-context-expr-push
+            alias
+            (ast.AstExpr.Literal (ast.ast-lit-int (+ i 1))))]
+        (set!
+          ok
+          (and
+            (= b (+ a 1))
+            (match (ast.ast-node-pool-context-expr-get (& pools) a)
+              [(ast.AstExpr.Literal (ast.AstLiteral.Int value _)) (= value i)]
+              [_ false])))
+        (set! i (+ i 2))))
+    ;; Truncation is explicit and cannot extend the live length.
+    (ast.ast-node-pool-context-expr-truncate! alias 1)
+    (set!
+      ok
+      (and
+        ok
+        (= (ast.ast-node-pool-context-expr-len pools) 1)
+        (=
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (ast.AstExpr.Literal (ast.ast-lit-int 3)))
+          1)))
+    (ast.ast-node-pool-context-destroy-storage! pools)
+    ok))
+
+(test
+  compiler-ast-expr-stale-alias
+  (tl_test.assert-true
+    (compiler-ast-expr-stale-alias-smoke?)
+    "expression aliases share one cursor: appends never overwrite, truncation is explicit"))
+
+(test
+  compiler-ast-type-stale-dedup
+  (tl_test.assert-true
+    (compiler-ast-type-stale-dedup-smoke?)
+    "a dedup entry at or beyond the live length is never reissued"))
+
+(test
+  compiler-ast-type-writer-sync
+  (tl_test.assert-true
+    (compiler-ast-type-writer-sync-smoke?)
+    "explicit and legacy type writers publish cursor, dedup state, and owner identity without invalidating append stamps"))
+
+(test
+  compiler-ast-type-adopt-active
+  (tl_test.assert-true
+    (compiler-ast-type-adopt-active-smoke?)
+    "caller publication preserves newer appends through shared cursors while isolating unrelated owners and retired revisions"))
 
 (define (compiler-ast-captured-span-state? [pools : ast.AstNodePoolContext]) : bool
   (let
@@ -3850,8 +4230,206 @@
     (compiler-ast-type-clone?)
     "ty-node-persist copies every shape and owns fresh payload storage"))
 
+;; A MacroExpansion wrapper is transparent for source views: wrapping an
+;; explicit alternate view keeps that view's span, while the semantic node's
+;; canonical span is unchanged (#8832). The push paths dispatch span
+;; registration on the row's inline tag, so the test first checks the tags
+;; against constructed rows instead of repeating a variant number.
+(define (compiler-ast-macro-expansion-view-pools-ok?
+  [pools : ast.AstNodePoolContext]
+  [first-line : i64]) : bool
+  (let
+    [literal : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 7)))]
+    [canonical : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span first-line 1 first-line 2))]
+    [alternate : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span (+ first-line 1) 1 (+ first-line 1) 2))]
+    ;; Both creation orders: a wrapper over the alternate, and over the
+    ;; canonical view; then a wrapper over a wrapper.
+    [wrapped : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion alternate 0 0))]
+    [wrapped-canonical : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion canonical 1 1))]
+    [nested : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion wrapped 2 2))]
+    ;; A view created after a wrapper over the canonical one.
+    [late : i64
+      (ast.ast-expr-spanned-with-pools
+        pools
+        literal
+        (ast.ast-source-span (+ first-line 2) 1 (+ first-line 2) 2))]
+    [late-wrapped : i64
+      (ast.ast-node-pool-context-expr-push pools (MacroExpansion late 3 3))]
+    (and
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools alternate)
+        (+ first-line 1))
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools wrapped)
+        (+ first-line 1))
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools nested)
+        (+ first-line 1))
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools wrapped-canonical)
+        first-line)
+      (compiler-ast-maybe-span-start-line?
+        (ast.ast-node-pool-context-expr-view-span pools late-wrapped)
+        (+ first-line 2))
+      (compiler-ast-maybe-span-start-line?
+        (ast_tests.ast-node-pool-context-expr-canonical-span pools literal)
+        first-line)
+      (ast.ast-node-pool-context-expr-span-oracle-ok? pools))))
+
+(define (compiler-ast-macro-expansion-alternate-view-smoke?) : bool
+  (let
+    [tags-ok : bool
+      (and
+        (=
+          (ast.ast-expr-storage-tag (& (MacroExpansion 0 0 0)))
+          ast.ast-expr-macro-expansion-storage-tag)
+        (=
+          (ast.ast-expr-storage-tag
+            (& (Spanned 0 (ast.ast-source-span 0 0 0 0))))
+          ast.ast-expr-spanned-storage-tag)
+        ;; The neighbouring variant no longer takes the wrapper path.
+        (let
+          [step-tag : i64
+            (ast.ast-expr-storage-tag
+              (& (ForOwnedStep (ast.ast-expr-list-new))))]
+          (and
+            (!= step-tag ast.ast-expr-macro-expansion-storage-tag)
+            (!= step-tag ast.ast-expr-spanned-storage-tag))))]
+    ;; An independent pool, the issue's reproducer and its variants.
+    [independent : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [independent-ok : bool
+      (compiler-ast-macro-expansion-view-pools-ok? independent 1)]
+    ;; Re-span growth: enough alternates to grow the ReSpan table past its
+    ;; first segment, the last one wrapped.
+    [growth : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [growth-literal : i64
+      (ast.ast-node-pool-context-expr-push growth (Literal (ast.ast-lit-int 3)))]
+    [_growth-canonical : i64
+      (ast.ast-expr-spanned-with-pools
+        growth
+        growth-literal
+        (ast.ast-source-span 1 1 1 2))]
+    [last-view : i64 -1]
+    [_growth : unit
+      (for [index (iterator.range 0 100)]
+        (set!
+          last-view
+          (ast.ast-expr-spanned-with-pools
+            growth
+            growth-literal
+            (ast.ast-source-span (+ index 2) 1 (+ index 2) 2))))]
+    [growth-wrapped : i64
+      (ast.ast-node-pool-context-expr-push
+        growth
+        (MacroExpansion last-view 0 0))]
+    [growth-ok : bool
+      (and
+        (>= (ast.ast-node-pool-context-expr-respan-count growth) 100)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span growth growth-wrapped)
+          101)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? growth))]
+    ;; Reset/reuse: truncating to the wrapper's id and pushing a wrapper over
+    ;; another view there reports the new view, not the old one.
+    [reuse-mark : i64 (- (ast.ast-node-pool-context-expr-len growth) 1)]
+    [_reset : unit (ast.ast-node-pool-context-expr-truncate! growth reuse-mark)]
+    [reused : i64
+      (ast.ast-node-pool-context-expr-push
+        growth
+        (MacroExpansion _growth-canonical 0 0))]
+    [reuse-ok : bool
+      (and
+        (= reused growth-wrapped)
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span growth reused)
+          1)
+        (ast.ast-node-pool-context-expr-span-oracle-ok? growth))]
+    ;; The installed pool: the same through the active-pool push path.
+    [previous : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [_install : unit (ast.ast-node-pool-context-install! installed)]
+    [active-literal : i64
+      (ast.ast-node-push-active (Literal (ast.ast-lit-int 5)))]
+    [_active-canonical : i64
+      (ast.ast-node-push-active
+        (Spanned active-literal (ast.ast-source-span 40 1 40 2)))]
+    [active-alternate : i64
+      (ast.ast-node-push-active
+        (Spanned active-literal (ast.ast-source-span 41 1 41 2)))]
+    [active-wrapped : i64
+      (ast.ast-node-push-active (MacroExpansion active-alternate 0 0))]
+    [captured : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [_restore : unit (ast.ast-node-pool-context-install! previous)]
+    [installed-ok : bool
+      (and
+        (compiler-ast-maybe-span-start-line?
+          (ast.ast-node-pool-context-expr-view-span captured active-wrapped)
+          41)
+        (compiler-ast-maybe-span-start-line?
+          (ast_tests.ast-node-pool-context-expr-canonical-span
+            captured
+            active-literal)
+          40))]
+    ;; Whole-program compaction rebuilds provenance from the wrapper rows, and
+    ;; the remapped wrapper keeps the alternate view.
+    [source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [source-literal : i64
+      (ast.ast-node-pool-context-expr-push source (Literal (ast.ast-lit-int 9)))]
+    [_source-canonical : i64
+      (ast.ast-expr-spanned-with-pools
+        source
+        source-literal
+        (ast.ast-source-span 60 1 60 2))]
+    [source-alternate : i64
+      (ast.ast-expr-spanned-with-pools
+        source
+        source-literal
+        (ast.ast-source-span 61 1 61 2))]
+    [source-wrapped : i64
+      (ast.ast-node-pool-context-expr-push
+        source
+        (MacroExpansion source-alternate 0 0))]
+    [views : ast.AstExprList (ast.ast-expr-list-new)]
+    [_views : unit (ast.ast-expr-list-push (&mut views) source-wrapped)]
+    [program : ast.AstProgram (compiler-ast-reserve-program source (& views) 1)]
+    [dest : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [compacted-ok : bool
+      (match (ast.ast-program-compact-with-pools source dest (& program) false)
+        [(AstProgramCompaction out-program out-pools)
+          (let
+            [out-views : ast.AstExprList
+              (compiler-ast-reserve-compacted-views (& out-pools) out-program)]
+            (and
+              (compiler-ast-reserve-view-line? (& out-pools) (& out-views) 0 61)
+              (ast.ast-node-pool-context-expr-span-oracle-ok? out-pools)))])]
+    (and tags-ok independent-ok growth-ok reuse-ok installed-ok compacted-ok)))
+
 (define (main) : i64
-  (unless (compiler-ast-spmd-presence-segments?) (return 32))
+  (unless (compiler-ast-spmd-presence-segments?) (return 33))
+  (unless (compiler-ast-expr-stale-alias-smoke?) (return 32))
+  (unless (compiler-ast-type-stale-dedup-smoke?) (return 31))
+  (unless (compiler-ast-type-adopt-active-smoke?) (return 30))
+  (unless (compiler-ast-type-writer-sync-smoke?) (return 29))
+  (unless (compiler-ast-type-pool-stamp-smoke?) (return 28))
   (unless
     (compiler-ast-packed-span-records?)
     (io.panic "compiler-ast-packed-span-records failed"))
@@ -3893,4 +4471,5 @@
   (unless (compiler-ast-generated-dense-list-operations-smoke?) (return 25))
   (unless (compiler-ast-canonical-reserve-smoke?) (return 27))
   (unless (compiler-ast-span-forwarding-smoke?) (return 32))
+  (unless (compiler-ast-macro-expansion-alternate-view-smoke?) (return 33))
   42)

@@ -23,29 +23,27 @@ esac
 
 GATE_FAIL_PREFIX='FAIL: '
 . "$ROOT/scripts/lib-gate.sh"
-gate_compiler
-gate_compiler_absolute
-gate_require_compiler
 
-if [ "$HOST_OS" = linux ]; then
-    command -v as >/dev/null 2>&1 || {
-        echo "missing assembler: as" >&2
-        exit 1
-    }
-    command -v ld >/dev/null 2>&1 || {
-        echo "missing linker: ld" >&2
-        exit 1
-    }
-else
-    command -v clang >/dev/null 2>&1 || {
-        echo "missing assembler: clang" >&2
-        exit 1
-    }
-    command -v lld-link >/dev/null 2>&1 || {
-        echo "missing linker: lld-link" >&2
-        exit 1
-    }
-fi
+SELF_TEST_ONLY=false
+case "${1:-}" in
+    --self-test) SELF_TEST_ONLY=true; shift ;;
+    "") ;;
+    *) fail "usage: scripts/verify-safety-corpus.sh [--self-test]" ;;
+esac
+[ "$#" -eq 0 ] || fail "unexpected arguments"
+
+prepare_tools() {
+    gate_compiler
+    gate_compiler_absolute
+    gate_require_compiler
+    if [ "$HOST_OS" = linux ]; then
+        command -v as >/dev/null 2>&1 || fail "missing assembler: as"
+        command -v ld >/dev/null 2>&1 || fail "missing linker: ld"
+    else
+        command -v clang >/dev/null 2>&1 || fail "missing assembler: clang"
+        command -v lld-link >/dev/null 2>&1 || fail "missing linker: lld-link"
+    fi
+}
 
 MANIFEST=${TYPELISP_SAFETY_MANIFEST:-tests/safety/manifest.txt}
 if [ ! -f "$MANIFEST" ]; then
@@ -53,14 +51,15 @@ if [ ! -f "$MANIFEST" ]; then
     exit 1
 fi
 
-WORKDIR=${TYPELISP_SAFETY_WORKDIR:-target/safety-corpus-verify}
+default_workdir=target/safety-corpus-verify
+if [ "$SELF_TEST_ONLY" = true ]; then
+    default_workdir=target/exp/safety-oracle-self-test
+fi
+WORKDIR=${TYPELISP_SAFETY_WORKDIR:-$default_workdir}
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
-# wide_struct_literal_reject imports the generated wide-struct declarations.
-awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
-mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
 
 BUILD_TARGET=linux-x86_64
 CHECK_BIN="$WORKDIR/selfhost-check"
@@ -132,6 +131,109 @@ assert_empty() {
         sed 's/^/  /' "$file" >&2 || true
         return 1
     fi
+}
+
+# An expected rejection is a normal checker exit with a structured diagnostic
+# for the intended operation. In particular, a diagnostic followed by a signal
+# is a compiler failure, not evidence that the checker rejected safely.
+# The fourth manifest field may pin another source, or source:line:column;
+# '-' requires a primary location in the fixture itself.
+classify_check_status() {
+    case "$1" in
+        0|1) echo normal ;;
+        124|125|126|127|130|137|143) echo infrastructure-resource-failure ;;
+        *)
+            if [ "$1" -gt 128 ]; then
+                echo compiler-crash
+            else
+                echo infrastructure-resource-failure
+            fi ;;
+    esac
+}
+
+classify_check_rejection() {
+    rejection_code=$1
+    rejection_out=$2
+    rejection_err=$3
+    rejection_source=$4
+    rejection_needle=$5
+    rejection_status=$(classify_check_status "$rejection_code")
+    if [ "$rejection_status" != normal ]; then
+        echo "$rejection_status"
+        return
+    fi
+    if [ "$rejection_code" -eq 0 ]; then
+        echo accepted-invalid
+        return
+    fi
+    if [ -s "$rejection_out" ]; then
+        echo malformed-output
+        return
+    fi
+    # Match messages and diagnostic metadata, never the echoed source snippet.
+    # Keep the location and message in the same diagnostic, and require its
+    # primary span: a related label in the desired file is insufficient.
+    SAFETY_DIAGNOSTIC_SOURCE=$rejection_source SAFETY_DIAGNOSTIC_NEEDLE=$rejection_needle \
+    awk '
+        function finish() {
+            if (is_error && !primary) malformed = 1
+            if (is_error && intended && located) matched = 1
+        }
+        function same_path(actual, expected) {
+            return actual == expected ||
+                (length(actual) > length(expected) &&
+                 substr(actual, length(actual) - length(expected)) == "/" expected)
+        }
+        BEGIN {
+            source = ENVIRON["SAFETY_DIAGNOSTIC_SOURCE"]
+            needle = ENVIRON["SAFETY_DIAGNOSTIC_NEEDLE"]
+            gsub(/\\/, "/", source)
+        }
+        { sub(/\r$/, ""); if (/__tl_tc_/) wrong = 1 }
+        /^(error|warning|note)(\[[A-Z][0-9]+\])?: / {
+            finish()
+            header = 1
+            is_error = /^error(\[E[0-9][0-9][0-9][0-9]\])?: /
+            if (/^error/ && !is_error) malformed = 1
+            primary = located = 0
+            intended = index($0, needle) > 0
+            if (/^error\[E0200\]: /) wrong = 1
+            next
+        }
+        /^  --> / {
+            if (!header) malformed = 1
+            location = substr($0, 7)
+            gsub(/\\/, "/", location)
+            if (location !~ /:[1-9][0-9]*:[1-9][0-9]*$/) malformed = 1
+            # A needle that is a whole path:line:column may name a RELATED
+            # span of this diagnostic, such as a declared-here label; it
+            # never matches the primary span, which must still be located.
+            if (primary && needle ~ /:[1-9][0-9]*:[1-9][0-9]*$/ && same_path(location, needle))
+                intended = 1
+            if (!primary) {
+                primary = 1
+                path = location
+                if (source !~ /:[1-9][0-9]*:[1-9][0-9]*$/)
+                    sub(/:[0-9]+:[0-9]+$/, "", path)
+                located = same_path(path, source)
+            }
+            next
+        }
+        /^   = (help|note|label): / {
+            if (!header) malformed = 1
+            if (index($0, needle)) intended = 1
+            next
+        }
+        /^ *([0-9]+ )?\|/ { if (!header) malformed = 1; next }
+        /^$/ { next }
+        { malformed = 1 }
+        END {
+            finish()
+            if (malformed) print "malformed-output"
+            else if (wrong || !matched) print "wrong-diagnostic"
+            else print "rejected-invalid"
+        }
+    ' "$rejection_err"
 }
 
 run_case() {
@@ -336,7 +438,6 @@ run_manifest_case() {
     [ -n "$source" ] || fail "$case_id missing source"
     [ -f "$source" ] || fail "$case_id source does not exist: $source"
 
-    checked=$((checked + 1))
     safe_name "$case_id"
     out="$WORKDIR/$case_name.out"
     err="$WORKDIR/$case_name.err"
@@ -349,8 +450,11 @@ run_manifest_case() {
                 --stdlib-root "$ROOT/stdlib" \
                 --stdlib-root "$ROOT/src" \
                 --stdlib-root "$ROOT/tests/integration"
-            [ "$code" -eq 0 ] || fail "$case_id expected check success, got $code"
+            observation=$(classify_check_status "$code")
+            [ "$observation" = normal ] || fail "$case_id $observation (exit $code)"
+            [ "$code" -eq 0 ] || fail "$case_id rejected-valid (exit $code)"
             assert_empty "$err" || fail "$case_id expected empty check stderr"
+            [ "$(cat "$out")" = 'Type checking passed!' ] || fail "$case_id malformed-output: missing check success record"
             ;;
         check-fail)
             echo "[safety-corpus] check-fail $case_id"
@@ -359,9 +463,19 @@ run_manifest_case() {
                 --stdlib-root "$ROOT/stdlib" \
                 --stdlib-root "$ROOT/src" \
                 --stdlib-root "$ROOT/tests/integration"
-            [ "$code" -ne 0 ] || fail "$case_id expected check failure"
-            [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
-            assert_contains "$err" "$stderr_contains" || fail "$case_id stderr did not match expectation"
+            [ -n "$stderr_contains" ] && [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
+            diagnostic_source=$source
+            if [ "$expected_code" != "-" ]; then
+                diagnostic_source=$expected_code
+            fi
+            observation=$(classify_check_rejection "$code" "$out" "$err" \
+                "$diagnostic_source" "$stderr_contains")
+            printf '%s\t%s\t%s\n' "$case_id" "$code" "$observation" >> "$WORKDIR/rejections.tsv"
+            if [ "$observation" != rejected-invalid ]; then
+                show_stream_if_nonempty stdout "$out"
+                show_stream_if_nonempty stderr "$err"
+                fail "$case_id $observation (exit $code; expected located diagnostic: $stderr_contains)"
+            fi
             assert_check_failure_decoded "$case_id" "$err"
             ;;
         check-ok-windows)
@@ -399,6 +513,7 @@ run_manifest_case() {
             fail "$case_id has unknown safety corpus mode: $mode"
             ;;
     esac
+    checked=$((checked + 1))
 }
 
 # Invoke the callback in this shell so its counters/state remain visible, but
@@ -408,7 +523,7 @@ run_manifest_case() {
 for_each_manifest_case() {
     manifest=$1
     callback=$2
-    while IFS='|' read -r field1 field2 field3 field4 field5; do
+    while IFS='|' read -r field1 field2 field3 field4 field5 || [ -n "$field1" ]; do
         "$callback" "$field1" "$field2" "$field3" "$field4" "$field5" \
             < /dev/null
     done < "$manifest"
@@ -418,7 +533,7 @@ for_each_manifest_case() {
 # the callback redirection, it consumes the second manifest row and count is 1.
 manifest_runner_self_test() {
     self_test_manifest="$WORKDIR/manifest-stdin-self-test.txt"
-    printf '%s\n' 'first||||' 'second||||' > "$self_test_manifest"
+    printf 'first||||\nsecond||||' > "$self_test_manifest"
     self_test_count=0
     manifest_runner_stdin_consumer() {
         cat > /dev/null
@@ -437,8 +552,107 @@ manifest_runner_self_test() {
     [ -z "$case_name" ] || fail "empty safety case name changed"
 }
 
+rejection_oracle_self_test() {
+    oracle_out="$WORKDIR/oracle.out"
+    oracle_err="$WORKDIR/oracle.err"
+    : > "$oracle_out"
+    oracle_count=0
+    oracle_expect() {
+        oracle_actual=$(classify_check_rejection "$2" "$oracle_out" "$oracle_err" \
+            "${4:-fixture.tl}" 'intended move')
+        [ "$oracle_actual" = "$3" ] || fail "oracle $1: expected $3, got $oracle_actual"
+        oracle_count=$((oracle_count + 1))
+    }
+    oracle_expect_needle() {
+        oracle_actual=$(classify_check_rejection "$2" "$oracle_out" "$oracle_err" \
+            fixture.tl "$4")
+        [ "$oracle_actual" = "$3" ] || fail "oracle $1: expected $3, got $oracle_actual"
+        oracle_count=$((oracle_count + 1))
+    }
+    oracle_diagnostic() {
+        printf 'error[E0214]: intended move\n  --> %s\n   |\n 3 | (consume value)\n   | ^\n' "$1" > "$oracle_err"
+    }
+    oracle_diagnostic fixture.tl:3:1
+    oracle_expect located 1 rejected-invalid
+    printf '  --> provider.tl:8:9\n   |\n   = label: expanded here\n' >> "$oracle_err"
+    oracle_expect expansion-label 1 rejected-invalid
+    printf 'error: intended move\n  --> fixture.tl:3:1\n' > "$oracle_err"
+    oracle_expect macro-diagnostic-without-code 1 rejected-invalid
+    oracle_diagnostic fixture.tl:3:1
+    oracle_expect exact-location 1 rejected-invalid fixture.tl:3:1
+    oracle_expect wrong-operation-location 1 wrong-diagnostic fixture.tl:4:1
+    oracle_expect accepted 0 accepted-invalid
+    oracle_expect diagnostic-then-segv 139 compiler-crash
+    oracle_expect diagnostic-then-abort 134 compiler-crash
+    oracle_expect timed-out 124 infrastructure-resource-failure
+    oracle_expect killed 137 infrastructure-resource-failure
+    oracle_expect not-executed 127 infrastructure-resource-failure
+    oracle_expect unsupported-exit 2 infrastructure-resource-failure
+    printf 'Segmentation fault\n' >> "$oracle_err"
+    oracle_expect crash-text-with-exit-one 1 malformed-output
+    oracle_diagnostic fixture.tl:3:1
+    printf 'Type checking passed!\n' > "$oracle_out"
+    oracle_expect contradictory-success 1 malformed-output
+    : > "$oracle_out"
+    oracle_diagnostic unrelated.tl:3:1
+    oracle_expect wrong-source 1 wrong-diagnostic
+    printf '  --> fixture.tl:3:1\n' >> "$oracle_err"
+    oracle_expect secondary-is-not-primary 1 wrong-diagnostic
+    oracle_diagnostic fixture.tl:0:0
+    oracle_expect unlocated 1 malformed-output
+    printf 'error[E0214]: intended move\n' > "$oracle_err"
+    oracle_expect truncated 1 malformed-output
+    printf 'error[E0100]: parse error\n  --> fixture.tl:3:1\n 3 | intended move\n' > "$oracle_err"
+    oracle_expect source-echo-is-not-diagnostic 1 wrong-diagnostic
+    printf 'error[E0100]: unrelated error\n  --> intended move.tl:3:1\n' > "$oracle_err"
+    oracle_expect location-is-not-diagnostic 1 wrong-diagnostic 'intended move.tl'
+    printf 'error[E0100]: unrelated error\n  --> fixture.tl:3:1\n  --> fixture.tl:9:2\n   |\n   = label: declared here\n' > "$oracle_err"
+    oracle_expect_needle related-location 1 rejected-invalid fixture.tl:9:2
+    oracle_expect_needle primary-location-is-not-diagnostic 1 wrong-diagnostic fixture.tl:3:1
+    printf 'error[E0100]: one\n  --> fixture.tl:3:1\nerror[E0100]: two\n  --> other.tl:1:1\n  --> fixture.tl:9:2\n' > "$oracle_err"
+    oracle_expect_needle related-location-other-diagnostic 1 wrong-diagnostic fixture.tl:9:2
+    printf 'error[E0100]: parse error\n  --> fixture.tl:3:1\nerror[E0214]: intended move\n  --> other.tl:1:1\n' > "$oracle_err"
+    oracle_expect mismatched-diagnostic-blocks 1 wrong-diagnostic
+    printf 'error[E0200]: intended move\n  --> fixture.tl:3:1\n' > "$oracle_err"
+    oracle_expect generic-taxonomy 1 wrong-diagnostic
+    printf 'error[E0214]: intended move __tl_tc_transport\n  --> fixture.tl:3:1\n' > "$oracle_err"
+    oracle_expect undecoded-transport 1 wrong-diagnostic
+    : > "$oracle_err"
+    oracle_expect empty 1 wrong-diagnostic
+    oracle_diagnostic /absolute/root/fixture.tl:3:1
+    oracle_expect absolute-path 1 rejected-invalid
+    oracle_diagnostic 'C:\root\fixture.tl:3:1'
+    oracle_expect windows-path 1 rejected-invalid
+    # Exercise the actual subprocess status/stream capture as well as planted
+    # observations. Disable core dumps for the deliberately aborted child.
+    run_case "$oracle_out" "$oracle_err" - sh -c '
+        ulimit -c 0
+        printf "error[E0214]: intended move\n  --> fixture.tl:3:1\n" >&2
+        kill -ABRT $$
+    ' 2> "$WORKDIR/oracle-subprocess-driver.err"
+    oracle_expect subprocess-diagnostic-then-abort "$code" compiler-crash
+    echo "safety rejection oracle passed $oracle_count mutation/control cases"
+}
+
 manifest_runner_self_test
+rejection_oracle_self_test
+if [ "$SELF_TEST_ONLY" = true ]; then
+    exit 0
+fi
+prepare_tools
+# wide_struct_literal_reject imports the generated wide-struct declarations.
+awk -f tests/integration/wide_struct_literal_decls.awk > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" tests/integration/wide_struct_literal_decls.tl
+expected_cases=$(awk -F '|' '
+    !/^#/ && NF {
+        if (NF != 5 || $1 == "" || seen[$1]++) invalid = 1
+        count++
+    }
+    END { if (invalid) exit 1; print count + 0 }
+' "$NORMALIZED_MANIFEST") || fail "infrastructure-resource-failure: malformed or duplicate manifest row"
+[ "$expected_cases" -gt 0 ] || fail "infrastructure-resource-failure: manifest contains no cases"
 build_selfhost_checker
 for_each_manifest_case "$NORMALIZED_MANIFEST" run_manifest_case
+[ "$checked" -eq "$expected_cases" ] || fail "infrastructure-resource-failure: executed $checked of $expected_cases cases"
 
 echo "safety corpus verification passed for $checked case(s)"

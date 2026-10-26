@@ -37,6 +37,9 @@ jobs:
             timeout_minutes: 120
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Measurement only: freeze compiler inputs while main advances.
+          ref: ${{ github.event.pull_request.head.sha }}
 
       - name: Check implementation language allowlist
         shell: bash
@@ -49,8 +52,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: npm
-          cache-dependency-path: tools/vs-code-extension/package-lock.json
+          # Measurement-only (#7767): npm cache stays disabled for both cold variants.
 
       - name: VS Code extension smoke
         shell: bash
@@ -124,7 +126,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: target/sde/*.tar.xz
-          key: intel-sde-${{ runner.os }}-${{ hashFiles('scripts/fetch-sde.sh') }}
+          # Measurement-only (#7767): every cold run has a distinct verified archive miss.
+          key: intel-sde-${{ runner.os }}-${{ hashFiles('scripts/fetch-sde.sh') }}-issue7767-cold-${{ github.run_id }}
 
       - name: Verify and unpack Intel SDE
         shell: bash

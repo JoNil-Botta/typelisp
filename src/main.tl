@@ -444,6 +444,13 @@ Options:
     (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
   0)
 
+;; Throwaway negative test for #9307, never merged: a synthetic compile cost
+;; of about 0.7% of self_compile that must fail the main-relative check.
+(define (cli-synthetic-cost-loop [remaining : i64] [acc : i64]) : i64
+  (if (<= remaining 0)
+    acc
+    (cli-synthetic-cost-loop (- remaining 1) (+ (* acc 31) remaining))))
+
 (define (cli-dispatch [command : String] [count : i64]) : i64
   (cond
     [(or
@@ -494,7 +501,11 @@ Options:
     [(cli-eq? command "compile")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-compile-help-text) 0)
-        (compile_cli_core.compile-cli-run count))]
+        (begin
+          (if (= (cli-synthetic-cost-loop (+ 150000000 count) 0) 42)
+            (cli-err "synthetic\n")
+            unit)
+          (compile_cli_core.compile-cli-run count)))]
     [(cli-eq? command "expand")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-expand-help-text) 0)

@@ -1,0 +1,155 @@
+name: Self-compile same-commit fallback check (diagnostic)
+
+# Throwaway diagnostic for #9307, council decision D-C17-9307 (option 3).
+# It is never merged. One hosted job runs the unchanged in-place fallback
+# (`scripts/self-compile.sh fallback`) on PR #9321's tested merge 842bff458
+# and compares the record with dry run 40355277702's record for that commit.
+# Required: verified producer provenance and attempts, the same commit, tree
+# and bound identities, an identical raw compiler_sha256 and exactly the same
+# Ir (delta 0).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  check:
+    name: Same-commit fallback check (Linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SAMECOMMIT: 842bff4589e55cf68369acd379e4b3644e3c8ed8
+      DRY_RUN_ID: '40355277702'
+      DRY_RUN_HEAD: 8158959bd4c98bc50fc104508f307086336a7d1c
+      WANT_SHA256: af542300e3cc41660eb5500461379c05e45de6caa5924922b7be38ac18b0fe93
+      WANT_IR: '116115488639'
+      OUT: target/self-compile/samecommit
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux instruction-count tools
+        shell: bash
+        run: |
+          # The same install as ci.yml and self-compile-reference.yml.
+          sudo apt-get install -y --no-install-recommends valgrind \
+            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
+
+      - name: Enable Linux kernel memory limits
+        shell: bash
+        run: |
+          bounded_uid=$(id -u)
+          sudo systemctl start "user@${bounded_uid}.service"
+          export XDG_RUNTIME_DIR="/run/user/${bounded_uid}"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          printf 'XDG_RUNTIME_DIR=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' \
+            "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          . scripts/lib-linux-memory-limit.sh
+          linux_memory_limit_systemd_available || {
+            echo 'Kernel-enforced, swap-disabled backend memory limits are unavailable' >&2
+            exit 1
+          }
+
+      - name: Run the unchanged fallback on the same commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT"
+          # As the gate does (sc_run_fallback): run a copy of the tool, since
+          # the checkout under it changes.
+          tool=$(mktemp -d "$RUNNER_TEMP/self-compile-tool.XXXXXX")
+          cp scripts/self-compile.sh scripts/lib-self-compile.sh scripts/self-compile-self-test.sh "$tool/"
+          git rev-parse HEAD > "$OUT/diagnostic-head"
+          TYPELISP_SELF_COMPILE_ROOT="$GITHUB_WORKSPACE" sh "$tool/self-compile.sh" fallback \
+            "$SAMECOMMIT" "$(git rev-parse HEAD)" "$GITHUB_WORKSPACE/$OUT/record.tsv" base-fallback
+          cat "$OUT/record.tsv"
+
+      - name: Compare with the dry run's record of the same commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eo pipefail
+          . scripts/lib-self-compile.sh
+          api() { gh api -H 'Accept: application/vnd.github+json' "$1"; }
+          fail=0
+          check() { # check LABEL GOT WANT
+            if [ "$2" = "$3" ]; then
+              printf 'ok        %s: %s\n' "$1" "$2"
+            else
+              printf 'MISMATCH  %s: %s, expected %s\n' "$1" "$2" "$3"
+              fail=1
+            fi
+          }
+          # Producer provenance of the dry run: run, attempt, event, workflow,
+          # head, and the measuring job of that attempt.
+          api "repos/$GITHUB_REPOSITORY/actions/runs/$DRY_RUN_ID" > "$OUT/dry-run.json"
+          api "repos/$GITHUB_REPOSITORY/actions/runs/$DRY_RUN_ID/attempts/1/jobs" > "$OUT/dry-run-jobs.json"
+          api "repos/$GITHUB_REPOSITORY/actions/runs/$DRY_RUN_ID/artifacts?name=$SC_REFERENCE_ARTIFACT&per_page=100" > "$OUT/dry-run-artifacts.json"
+          check 'dry run: run attempts' "$(jq -r .run_attempt "$OUT/dry-run.json")" 1
+          check 'dry run: event' "$(jq -r .event "$OUT/dry-run.json")" pull_request
+          check 'dry run: workflow' "$(jq -r .path "$OUT/dry-run.json")" "$SC_REFERENCE_WORKFLOW"
+          check 'dry run: head' "$(jq -r .head_sha "$OUT/dry-run.json")" "$DRY_RUN_HEAD"
+          check 'dry run: conclusion' "$(jq -r .conclusion "$OUT/dry-run.json")" success
+          check 'dry run: measuring job (attempt 1)' \
+            "$(jq -r --arg n "$SC_REFERENCE_JOB_NAME" '[.jobs[] | select(.name == $n and .run_attempt == 1 and .conclusion == "success")] | length' "$OUT/dry-run-jobs.json")" 1
+          art=$(jq -r --arg name "$SC_REFERENCE_ARTIFACT" --argjson run "$DRY_RUN_ID" '
+            [.artifacts[] | select(.name == $name and .expired == false and .workflow_run.id == $run)]
+            | sort_by(.id) | last // empty | .id | tostring' "$OUT/dry-run-artifacts.json")
+          [ -n "$art" ] || { echo "dry run $DRY_RUN_ID has no $SC_REFERENCE_ARTIFACT artifact"; exit 1; }
+          api "repos/$GITHUB_REPOSITORY/actions/artifacts/$art/zip" > "$OUT/dry-run.zip"
+          mkdir -p "$OUT/dry-run"
+          unzip -q -o "$OUT/dry-run.zip" -d "$OUT/dry-run"
+          ref=$OUT/dry-run/record.tsv
+          fb=$OUT/record.tsv
+          # Both records are well formed and bound to their producers.
+          if msg=$(sc_record_validate "$ref" gate); then check 'dry run record: valid, role gate' ok ok; else check 'dry run record' "$msg" valid; fi
+          if msg=$(sc_record_validate "$fb" base-fallback); then check 'fallback record: valid, role base-fallback' ok ok; else check 'fallback record' "$msg" valid; fi
+          check 'dry run record: run.id' "$(sc_record_get "$ref" run.id)" "$DRY_RUN_ID"
+          check 'dry run record: run.attempt' "$(sc_record_get "$ref" run.attempt)" 1
+          check 'dry run record: run.event' "$(sc_record_get "$ref" run.event)" pull_request
+          check 'dry run record: run.sha' "$(sc_record_get "$ref" run.sha)" "$SAMECOMMIT"
+          check 'fallback record: run.id' "$(sc_record_get "$fb" run.id)" "$GITHUB_RUN_ID"
+          check 'fallback record: run.attempt' "$(sc_record_get "$fb" run.attempt)" "$GITHUB_RUN_ATTEMPT"
+          check 'fallback record: authority' "$(sc_record_get "$fb" authority)" hosted
+          check 'dry run record: authority' "$(sc_record_get "$ref" authority)" hosted
+          # The same commit and tree, stamped into both compilers.
+          check 'commit (dry run)' "$(sc_record_get "$ref" commit)" "$SAMECOMMIT"
+          check 'commit (fallback)' "$(sc_record_get "$fb" commit)" "$SAMECOMMIT"
+          check 'tree' "$(sc_record_get "$fb" tree)" "$(sc_record_get "$ref" tree)"
+          check 'compiler_commit (fallback)' "$(sc_record_get "$fb" compiler_commit)" "$SAMECOMMIT"
+          # Every bound measurement identity.
+          if diff_out=$(sc_records_comparable "$ref" "$fb"); then
+            check 'identity keys and authority' equal equal
+          else
+            printf '%s\n' "$diff_out"
+            check 'identity keys and authority' differ equal
+          fi
+          for key in $SC_COMPARABLE_KEYS; do
+            printf '          %s: %s\n' "$key" "$(sc_record_get "$fb" "$key")"
+          done
+          printf '          info.image_version: %s | %s\n' "$(sc_record_get "$ref" info.image_version)" "$(sc_record_get "$fb" info.image_version)"
+          printf '          info.cpu: %s | %s\n' "$(sc_record_get "$ref" info.cpu)" "$(sc_record_get "$fb" info.cpu)"
+          # The same compiler, byte for byte, and the same count.
+          if msg=$(sc_same_commit_binary "$ref" "$fb"); then check 'same-commit binary rule' ok ok; else check 'same-commit binary rule' "$msg" ok; fi
+          check 'compiler_sha256 (dry run)' "$(sc_record_get "$ref" compiler_sha256)" "$WANT_SHA256"
+          check 'compiler_sha256 (fallback)' "$(sc_record_get "$fb" compiler_sha256)" "$WANT_SHA256"
+          check 'ir_count (dry run)' "$(sc_record_get "$ref" ir_count)" "$WANT_IR"
+          check 'ir_count (fallback)' "$(sc_record_get "$fb" ir_count)" "$WANT_IR"
+          printf 'delta: %s Ir\n' "$(sc_bn sub "$(sc_record_get "$fb" ir_count)" "$(sc_record_get "$ref" ir_count)")"
+          if [ "$fail" -eq 0 ]; then
+            echo 'SAME-COMMIT FALLBACK CHECK: PASS'
+          else
+            echo 'SAME-COMMIT FALLBACK CHECK: FAIL'
+            exit 1
+          fi
+
+      - name: Upload the diagnostic records
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-compile-samecommit-check
+          path: target/self-compile/samecommit/
+          if-no-files-found: warn
+          retention-days: 90

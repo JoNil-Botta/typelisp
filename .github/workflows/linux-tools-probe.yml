@@ -1,0 +1,95 @@
+name: Linux tools cache probe
+on:
+  pull_request:
+    branches: [t3/issue-9305-ci-tool-package-reuse]
+permissions:
+  contents: read
+jobs:
+  cold-a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-instruction-count-tools
+  cold-b:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-instruction-count-tools
+  hit-a:
+    needs: [cold-a, cold-b]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-instruction-count-tools
+      - name: Assert verified hit and zero package downloads
+        shell: bash
+        run: |
+          grep -Fx $'cache-state\tverified-hit' target/ci-linux-tools/result.tsv
+  hit-b:
+    needs: [cold-a, cold-b]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/linux-instruction-count-tools
+      - name: Assert verified hit
+        shell: bash
+        run: grep -Fx $'cache-state\tverified-hit' target/ci-linux-tools/result.tsv
+  invalid:
+    needs: [hit-a, hit-b]
+    strategy:
+      matrix:
+        kind: [corrupt, missing, install-failure]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: resolve
+        shell: bash
+        run: bash scripts/ci-linux-tools.sh prepare
+      - uses: actions/cache/restore@v4
+        with:
+          path: target/ci-linux-tools/packages
+          key: ${{ steps.resolve.outputs.key }}
+          fail-on-cache-miss: true
+      - name: Exercise invalid archive or install failure
+        shell: bash
+        env:
+          PROBE_KIND: ${{ matrix.kind }}
+        run: |
+          read -r hash filename < target/ci-linux-tools/SHA256SUMS
+          case "$PROBE_KIND" in
+            corrupt)
+              printf '\0' | dd of="target/ci-linux-tools/packages/$filename" bs=1 count=1 conv=notrunc
+              ;;
+            missing)
+              mv -- "target/ci-linux-tools/packages/$filename" "$RUNNER_TEMP/held-archive.deb"
+              ;;
+            install-failure)
+              mkdir "$RUNNER_TEMP/mock-bin"
+              cat > "$RUNNER_TEMP/mock-bin/sudo" <<'SH'
+          #!/usr/bin/env bash
+          for argument in "$@"; do
+            if [[ $argument == --no-download ]]; then exit 42; fi
+          done
+          exec /usr/bin/sudo "$@"
+          SH
+              chmod +x "$RUNNER_TEMP/mock-bin/sudo"
+              export PATH="$RUNNER_TEMP/mock-bin:$PATH"
+              ;;
+          esac
+          status=0
+          bash scripts/ci-linux-tools.sh install || status=$?
+          if [[ $PROBE_KIND == install-failure ]]; then
+            test "$status" = 42
+            grep -P '^installation\t[0-9]+\t42$' target/ci-linux-tools/timing.tsv
+          else
+            test "$status" = 0
+            grep -Fx $'cache-state\tmiss-or-invalid' target/ci-linux-tools/result.tsv
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-tools-invalid-${{ matrix.kind }}
+          path: |
+            target/ci-linux-tools/*.txt
+            target/ci-linux-tools/*.tsv
+            target/ci-linux-tools/SHA256SUMS

@@ -78,6 +78,31 @@ license, so local users should review that license before running the fetcher.
 
 ## Core development loop
 
+`analyze-stage0-size.sh BINARY` decodes v1 and fixed-Huffman v2 LZSS frames
+directly from the linked binary. It requires exact equality with the source
+declarations: the embedded-stdlib manifests plus all top-level
+`include-str-lzss` declarations in the production `src/*.tl` modules. The
+inventory is conservative: a declaration in an unlinked module fails the
+count rather than being silently excluded. A token walk recognizes whitespace,
+comments, strings and character delimiters; escaped or multiline input paths
+fail explicitly. `--compiler-sources "file ..."`
+can specify a known source set for a different compiler, together with
+`--embedded-stdlib "file ..."`. The report lists declaration categories and
+input paths; its aggregate LZSS byte totals include every counted stream,
+including the executable-template catalog. TLCH/TLCI accounting and the
+existing stdlib file buckets remain separate.
+
+Use the source checkout that built the binary. An older binary with a
+different declaration set (such as the 8d29 seed, whose catalog was not
+compressed) fails with an explicit expected/found count diagnostic against
+current sources. V1 framing remains supported when its declaration inventory
+matches. `verify-stage0-lzss-scanner.sh` covers both formats, malformed and
+truncated frames, and declaration/count/path failures. The required size gate
+runs these fixtures and the analyzer on the already bootstrapped compiler on
+Linux and Windows, without building another compiler. Payload/publication
+changes also trigger the Bootstrap Stage0 build, smoke and fixpoint jobs on
+the exact PR head; only a push to main can publish releases.
+
 | Purpose | Entry point |
 | --- | --- |
 | Fetch the published seed | `fetch-stage0.sh` / `fetch-stage0.ps1` |
@@ -278,7 +303,7 @@ Some gate-owned helpers deliberately retain measurement-oriented names:
 | `measure-spmd-mode-instruction-counts.sh` | gate `spmd-mode-instruction-count-harness-self-tests` and SPMD baseline checks |
 | `measure-compile-batch-memory.ps1` | `verify-compile-profile.sh` |
 | `measure-heavy-closure-profile.sh` | `verify-compile-profile.sh` |
-| `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report |
+| `analyze-stage0-size.sh` | `verify-stage0-smoke.sh` report and required PR `stage0-size-ratchet` gate on both hosts |
 | `analyze-selfhost-build-asm-size.sh` | gate `selfhost-linked-size-attribution-parser-self-tests`; optional linked-size report |
 
 Keep these at the top level while their owning gate references them.

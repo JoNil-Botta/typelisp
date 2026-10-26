@@ -1,0 +1,59 @@
+name: Issue 7767 overlap diagnostic
+
+# Throwaway draft targeting #9304's branch. Never merge this workflow.
+on:
+  pull_request:
+    branches: [t3/issue-7767-build-invariance-critical-path]
+
+permissions:
+  contents: read
+
+jobs:
+  overlap:
+    name: Same-runner serial and overlap ABBA
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+
+      - name: Check diagnostic implementation languages
+        shell: bash
+        run: env -u BASH_ENV scripts/check-implementation-languages.sh
+
+      - name: Match production Linux memory setup
+        shell: bash
+        run: |
+          sudo fallocate -l 8G /typelisp-swap
+          sudo chmod 600 /typelisp-swap
+          sudo mkswap /typelisp-swap
+          sudo swapon /typelisp-swap
+          bounded_uid=$(id -u)
+          sudo systemctl start "user@${bounded_uid}.service"
+          export XDG_RUNTIME_DIR="/run/user/${bounded_uid}"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          printf 'XDG_RUNTIME_DIR=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' \
+            "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          . scripts/lib-linux-memory-limit.sh
+          linux_memory_limit_systemd_available
+
+      - name: Run the four trials once
+        shell: bash
+        env:
+          PROBE_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          TYPELISP_INLINE_TEST_WORKERS: '1'
+          TYPELISP_BUILD_INVARIANCE_WORKERS: '1'
+        run: |
+          env -u BASH_ENV bash scripts/probe-build-invariance-overlap.sh \
+            --run "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/perf/issue7767-overlap"
+
+      - name: Preserve every trial, anchor and failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue7767-overlap-diagnostic
+          path: target/issue7767-overlap.*/**
+          if-no-files-found: error
+          retention-days: 90

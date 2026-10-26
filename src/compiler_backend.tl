@@ -61487,20 +61487,19 @@
                         ;; old pick could land on a varying home this walk had
                         ;; already loaded.
                         [(compiler-backend-param-entry-float-copy?
-                            is-float
+                          is-float
+                          assignments
+                          var-id
+                          backend-state)
+                          (compiler-backend-param-entry-float-copy!
+                            entry
+                            target
                             assignments
                             var-id
+                            addr
+                            ty
                             backend-state)
-                          (begin
-                            (compiler-backend-param-entry-float-copy!
-                              entry
-                              target
-                              assignments
-                              var-id
-                              addr
-                              ty
-                              backend-state)
-                            "")]
+                          ""]
                         [is-float
                           (compiler-backend-emit-load-float-address-to-var
                             assignments

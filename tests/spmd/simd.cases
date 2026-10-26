@@ -637,6 +637,17 @@ source tests/spmd/private_helper_effects.tl
 mode avx2
 not-match %zmm[0-9]+|%k[0-7]
 
+# Dead helper bodies still have private ABI prologue writes. Opt0 unit literal
+# lowering is covered independently by #7958.
+case empty-private-params-run
+source tests/spmd/empty_private_params.tl
+do link-run
+mode scalar avx2 avx512
+opt 1 2
+exit 42
+in stderr
+empty
+
 # --------------------------------------------------------------- reductions
 
 # A sum keeps one vector accumulator in the gang and reduces horizontally only

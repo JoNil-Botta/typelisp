@@ -12716,6 +12716,66 @@
           true)]
       [(None) false])))
 
+(define (compiler-reg-empty-body-coloring [text : String] [stack-only? : bool]) : reg.CompilerRegColoring
+  (match (irt.func text)
+    [(Function _ params _ vars blocks _)
+      (reg.compiler-reg-color-stack-slots-with-stack-only
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (&
+          (Plan
+            (reg.compiler-reg-assignment-table-empty)
+            (live.compiler-live-set-empty)
+            (reg.compiler-reg-interval-seq-empty)
+            (reg.compiler-reg-var-types-empty)
+            (reg.compiler-reg-call-split-empty)))
+        (& (live.compiler-live-set-empty))
+        (& params)
+        (& blocks)
+        vars
+        vars
+        (& (live.compiler-live-set-empty))
+        stack-only?)]))
+
+(define (compiler-reg-empty-private-param-homes-ok?) : bool
+  (for [index (iterator.range 0 2)]
+    (match (compiler-reg-empty-body-coloring
+      "function @empty_private(__tl_spmd_active_mask_avx2=%0:bool, __tl_spmd_varying_arg_avx2_0=%1:i64, __tl_spmd_mask_arg_avx2_1=%2:bool) -> unit vars 3 {
+         entry:
+           return
+         }"
+      (= index 0))
+      [(Remap remap slots)
+        (unless (= slots 12) (return false))
+        (for [a (iterator.range 0 3)]
+          ;; The remapped id names the high word of a four-word home.
+          (unless
+            (and (>= (array-ref remap a) 3) (< (array-ref remap a) slots))
+            (return false))
+          (for [b (iterator.range (+ a 1) 3)]
+            (unless
+              (or
+                (>= (- (array-ref remap a) (array-ref remap b)) 4)
+                (>= (- (array-ref remap b) (array-ref remap a)) 4))
+              (return false))))]
+      [(None) (return false)])
+    (for [control (iterator.range 0 2)]
+      (unless
+        (match (compiler-reg-empty-body-coloring
+          (if (= control 0)
+            "function @empty() -> unit vars 0 {\nentry:\nreturn\n}"
+            "function @unused_scalar(x=%0:i64) -> unit vars 1 {\nentry:\nreturn\n}")
+          (= index 0))
+          [(None) true]
+          [(Remap _ _) false])
+        (return false))))
+  true)
+
+(test
+  regalloc-empty-private-body-keeps-wide-parameter-homes
+  (test.assert-true
+    (compiler-reg-empty-private-param-homes-ok?)
+    "empty stack-only and ordinary plans keep disjoint full-width private parameter homes"))
+
 (define (compiler-reg-color-spill-hole-demand-ok?) : bool
   (match (compiler-reg-color-stack-slots
     (ast.ast-node-pool-reader-type-segment-bases)
@@ -14592,6 +14652,7 @@
     (cfg test (compiler-reg-color-witness-chain-ok?) true)
     (compiler-reg-color-spill-param-pins-ok?)
     (compiler-reg-color-avx2-param-ranges-ok?)
+    (compiler-reg-empty-private-param-homes-ok?)
     (compiler-reg-color-spill-hole-demand-ok?)
     (compiler-reg-color-spill-scratch-demand-ok?)
     (compiler-reg-color-vector-stack-slots-ok?)

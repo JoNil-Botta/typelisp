@@ -894,7 +894,7 @@ sc_account_summary() {
                 ownrep = (12 in e) ? e[12] : "-"
                 # A subtracts the comparable own; where it was reproduced, the
                 # difference from the reported own keeps the totals adding up:
-                # sum.step - sum.own - sum.a = sum.reproduction_delta.
+                # sum.step - sum.own - sum.a = sum.reproduction_delta (complete account).
                 if (ownrep != "-" && own != "-") srep = bn_add(srep, bn_sub(ownrep, own))
                 merges++
                 if (step == "-") missing_steps++; else sstep = bn_add(sstep, step)

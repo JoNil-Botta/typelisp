@@ -168,7 +168,7 @@ over values of one measurement identity:
   when the PR's identity matches the pair's, otherwise the reproduced one
   (`own_reproduced`) measured in the pair's identity.
 
-So Σstep − Σown − ΣA is the sum of the reproduction differences
+So, in a complete account, Σstep − Σown − ΣA is the sum of the reproduction differences
 `own_reproduced − own`, which the account reports as
 `sum.reproduction_delta` (0 when nothing was reproduced).
 

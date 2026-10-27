@@ -472,7 +472,7 @@ cica_publish() {
     cica_jq -nS --arg role "$_role" --arg host "$CICA_HOST" --arg source "$(cica_sha "$_dir/source-set.sha256")" \
       --arg env "$(cat "$CICA_SCRATCH/environment.json")" --slurpfile r "$_rec" '
       ($r[0].argv) as $a |
-      {producer_sha256:$r[0].producer_sha256,producer_identity:$r[0].producer_identity,host:$host,target:$host+"-x86_64",cwd:"{root}",
+      {producer_sha256:$r[0].producer_sha256,producer_identity:$r[0].producer_identity,host:$host,target:($host+"-x86_64"),cwd:"{root}",
        source_roots:"src,stdlib,tests",stdlib_roots:(if $role=="bootstrap-converged" then "{root}/src" else "stdlib,src" end),
        cfg:([range(0;$a|length) as $i | select($a[$i]=="--cfg")|$a[$i+1]]|join(",")),opt_level:(if $role=="bootstrap-converged" then "2" else "1" end),
        profile:"none",environment:$env,argv:($a|tojson),source_set_sha256:$source,output_kind:(if $role=="bootstrap-converged" then "compiler-binary" else "compiler-assembly" end)}' > "$CICA_SCRATCH/fields.json"

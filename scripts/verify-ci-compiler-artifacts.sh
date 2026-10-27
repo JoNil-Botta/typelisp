@@ -145,7 +145,7 @@ for host in linux windows; do
             cica_corpus > "$base/inventory/corpus.txt"
             parent=$dir/draft/roles/bootstrap-converged/manifest.json
             cica_jq -nS --arg c "$commit" --arg t "$tree" --argjson cfg "$cfg" --arg p "$(cica_sha "$dir/draft/roles/bootstrap-converged/payload/compiler")" '
-              {argv:(["{root}/target/bootstrap-fixpoint/stage3","compile","--batch","{root}/target/build-invariance/batches/opt2-built/opt1/chunks/entries.0000.txt","--target","linux-x86_64"]+[$cfg[]|"--cfg",.]+["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src"]),producer_version:"typelisp "+$c+" built unknown",producer_sha256:$p,producer_identity:$t}' > "$work/record.json"
+              {argv:(["{root}/target/bootstrap-fixpoint/stage3","compile","--batch","{root}/target/build-invariance/batches/opt2-built/opt1/chunks/entries.0000.txt","--target","linux-x86_64"]+[$cfg[]|"--cfg",.]+["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src"]),producer_version:("typelisp "+$c+" built unknown"),producer_sha256:$p,producer_identity:$t}' > "$work/record.json"
             cica_jq -nS --slurpfile b "$parent" --slurpfile r "$work/record.json" --arg h "$(cica_sha "$base/payload/reference.s")" '
               {compared_output_sha256:$h,input_producer_sha256:$r[0].producer_sha256,seed:$b[0].proof.seed,parent_provenance_key:$b[0].provenance_key,batch_manifest:"src/main.tl|{root}/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s\n"}' > "$work/proof.json"
         fi
@@ -156,7 +156,7 @@ for host in linux windows; do
         cica_jq -cnS --arg c "$commit" --slurpfile r "$work/record.json" --slurpfile tools "$dir/draft/toolchain.json" --slurpfile p "$work/proof.json" --slurpfile f "$work/files.json" --slurpfile recipes "$work/recipe-hashes.json" '
           {producer_commit:$c,producer_version:$r[0].producer_version,toolchain:$tools[0],seed:$p[0].seed,recipes:$recipes[0],variables_sha256:("6"*64),resource_wrapper:[],generated_inputs:($f[0]|with_entries(select(.key|startswith("generated/"))))}' > "$work/environment.json"
         cica_jq -nS --arg role "$role" --arg host "$host" --arg s "$(cica_sha "$work/sources")" --arg e "$(cat "$work/environment.json")" --slurpfile r "$work/record.json" '
-          $r[0].argv as $a | {producer_sha256:$r[0].producer_sha256,producer_identity:$r[0].producer_identity,host:$host,target:$host+"-x86_64",cwd:"{root}",source_roots:"src,stdlib,tests",stdlib_roots:(if $role=="bootstrap-converged" then "{root}/src" else "stdlib,src" end),cfg:([range(0;$a|length) as $i|select($a[$i]=="--cfg")|$a[$i+1]]|join(",")),opt_level:(if $role=="bootstrap-converged" then "2" else "1" end),profile:"none",environment:$e,argv:($a|tojson),source_set_sha256:$s,output_kind:(if $role=="bootstrap-converged" then "compiler-binary" else "compiler-assembly" end)}' > "$work/fields.json"
+          $r[0].argv as $a | {producer_sha256:$r[0].producer_sha256,producer_identity:$r[0].producer_identity,host:$host,target:($host+"-x86_64"),cwd:"{root}",source_roots:"src,stdlib,tests",stdlib_roots:(if $role=="bootstrap-converged" then "{root}/src" else "stdlib,src" end),cfg:([range(0;$a|length) as $i|select($a[$i]=="--cfg")|$a[$i+1]]|join(",")),opt_level:(if $role=="bootstrap-converged" then "2" else "1" end),profile:"none",environment:$e,argv:($a|tojson),source_set_sha256:$s,output_kind:(if $role=="bootstrap-converged" then "compiler-binary" else "compiler-assembly" end)}' > "$work/fields.json"
         cica_jq -nS --arg role "$role" --arg key "$(cica_key_json "$work/fields.json")" --slurpfile c "$dir/draft/context.json" --slurpfile f "$work/fields.json" --slurpfile files "$work/files.json" --slurpfile p "$work/proof.json" --slurpfile i "$work/inventory.json" \
           '{schema:3,contract:"ci-compiler-artifact",role:$role,context:$c[0],fields:$f[0],provenance_key:$key,files:$files[0],proof:$p[0],inventory:$i[0],packaging_ms:0}' > "$base/manifest.json"
     done < "$work/host-roles"
@@ -164,7 +164,7 @@ for host in linux windows; do
     digest=$(cica_sha "$dir/complete/bundle.json")
     case $host in linux) name='Test + Integration'; host_name=Linux ;; windows) name='Test + Integration (windows-latest)'; host_name=Windows ;; esac
     cica_jq -nS --arg n "$name" --arg h "$commit" '{jobs:[{name:$n,run_id:1234,run_attempt:2,head_sha:$h,status:"completed",conclusion:"success",started_at:"2026-10-27T00:00:00Z",completed_at:"2026-10-27T00:00:10Z"}]}' > "$work/$host.jobs.json"
-    cica_jq -nS --arg h "$commit" --arg n "ci-stage-envelope-$host_name-r1234-a2" '{artifacts:[{name:$n,expired:false,workflow_run:{id:1234,head_sha:$h},digest:"sha256:"+("9"*64),created_at:"2026-10-27T00:00:05Z"}]}' > "$work/$host.artifacts.json"
+    cica_jq -nS --arg h "$commit" --arg n "ci-stage-envelope-$host_name-r1234-a2" '{artifacts:[{name:$n,expired:false,workflow_run:{id:1234,head_sha:$h},digest:("sha256:"+("9"*64)),created_at:"2026-10-27T00:00:05Z"}]}' > "$work/$host.artifacts.json"
     fixture_cli verify "$source" "$dir/complete" "$host" "$digest" "$work/$host.jobs.json" "$work/$host.artifacts.json" > "$work/$host.result.json"
     record_result "complete-$host-real-version-record-seal-readback" pass
 done

@@ -64,19 +64,26 @@ source_files() {
 
 count_uses() {
     source_files | awk -v name="$NAME_RE" '
-        function occurrences(text, pattern,    n) {
-            n = 0
-            while (match(text, pattern)) {
-                n++
-                text = substr(text, RSTART + RLENGTH)
-            }
-            return n
+        BEGIN {
+            heads_pattern = "\\(" name
+            definitions_pattern = "\\((define|defmacro) \\(" name
         }
         {
             file = $0
             while ((getline text < file) > 0) {
-                heads += occurrences(text, "\\(" name)
-                definitions += occurrences(text, "\\((define|defmacro) \\(" name)
+                # Every match contains this literal. Keep the two stable
+                # patterns at separate match sites rather than alternating
+                # them through a per-line regex helper.
+                if (index(text, "-shared-view") == 0) continue
+                rest = text
+                while (match(rest, heads_pattern)) {
+                    heads++
+                    rest = substr(rest, RSTART + RLENGTH)
+                }
+                while (match(text, definitions_pattern)) {
+                    definitions++
+                    text = substr(text, RSTART + RLENGTH)
+                }
             }
             close(file)
         }

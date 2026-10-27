@@ -44451,13 +44451,13 @@ user_fn:
       "the C entry and its address alias resolve in direct COFF"))
   (test.assert-true
     (match (backend.compiler-backend-emit-source-for-target
-      "(extern address (:symbol \"tl_private_address$typelisp\") : u8)
-(define (entry) (:export-symbol \"tl_private_address\") : i64 42)
+      "(extern address (:symbol \"_tl_storage\") : u8)
+(define storage : i64 42)
 (define (main) : i64 (cast (unsafe (ptr->int (ptr-addr-of address))) : i64))"
       (Windows))
       [(Err _) true]
       [(Ok _) false])
-    "data aliases cannot bypass the private Internal-body collision guard")
+    "data aliases cannot bypass ordinary global collision guards")
   (let
     [source : String
       (str_cat.str-cat

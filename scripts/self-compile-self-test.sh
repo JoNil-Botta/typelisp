@@ -1308,6 +1308,13 @@ sc_self_test() {
     command -v jq >/dev/null 2>&1 || sc_fail "the self-test requires jq (scripts/ci-host-tools.tsv)"
     mkdir -p "$ROOT/target/exp"
     _st_root=$(mktemp -d "$ROOT/target/exp/self-compile-self-test.XXXXXX")
+    case "$_st_root" in
+        "$ROOT/target/exp/self-compile-self-test."??????) ;;
+        *) sc_fail "unexpected self-test scratch directory: $_st_root" ;;
+    esac
+    # Git fixture repositories must not block clean --experiments after success.
+    # Failed runs retain their evidence.
+    trap 'if [ "$?" -eq 0 ]; then rm -rf -- "${_st_root:?}"; fi' EXIT
     for _st_part in arithmetic records gate declarations selection resolve ledger account chain fallback e2e; do
         mkdir -p "$_st_root/$_st_part"
         "st_$_st_part" "$_st_root/$_st_part"

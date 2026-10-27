@@ -5,6 +5,13 @@ set -euo pipefail
 script=$PWD/scripts/ci-linux-tools.sh
 mkdir -p target/exp
 scratch=$(mktemp -d "$PWD/target/exp/linux-tools-test.XXXXXX")
+case "$scratch" in
+    "$PWD/target/exp/linux-tools-test."??????) ;;
+    *) echo "unexpected package fixture scratch directory: $scratch" >&2; exit 1 ;;
+esac
+# Successful fixtures contain symlinks; remove them before clean --experiments
+# inspects target/exp. Retain failed fixtures for diagnosis.
+trap 'if [ "$?" -eq 0 ]; then rm -rf -- "${scratch:?}"; fi' EXIT
 mkdir "$scratch/bin" "$scratch/trusted"
 printf 'trusted valgrind\n' > "$scratch/trusted/valgrind.deb"
 printf 'trusted debug symbols\n' > "$scratch/trusted/libc6-dbg.deb"

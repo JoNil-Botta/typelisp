@@ -5879,9 +5879,8 @@
       tlci.tlci-host-callback-status-bad-request
       (compiler-comptime-host-run-batch session arg-a arg-b))))
 
-;; Extract the raw code pointer from a top-level TypeLisp function value.
-;; Generated image calls provide the host context in the hidden-environment
-;; register, so no per-callback trampoline is needed.
+;; SysV's Platform and Internal contracts coincide. Its image calls provide the
+;; host context in the hidden-environment register of the closure entry.
 (define (compiler-comptime-host-function-address
   [callback : (-> i64 i64 i64 i64 i64)]) : i64
   (let
@@ -5904,6 +5903,67 @@
     (unsafe
       (ptr-read (int->ptr descriptor : (Ptr i64))))))
 
+;; Windows C callers enter explicit exports rather than an Internal closure
+;; adapter. The ordinary C-export lowering owns register forwarding and unwind
+;; metadata; these wrappers only state each callback's source signature.
+(defmacro (compiler-comptime-host-platform-entries [rows : Expr ...]) : Decls
+  (let
+    [index : i64 (expr-list-length rows)]
+    [out : ExprList (expr-list-empty)]
+    (while (> index 0)
+      (set! index (- index 1))
+      (let
+        [suffix : String (comptime.int->string index)]
+        [symbol : String
+          (comptime.string-append "__tlci_host_callback_" suffix)]
+        [entry : Expr
+          (comptime.expr-var
+            (comptime.string-append
+              "compiler-comptime-host-platform-entry-"
+              suffix))]
+        [pointer : Expr
+          (comptime.expr-var
+            (comptime.string-append
+              "compiler-comptime-host-platform-pointer-"
+              suffix))]
+        [callback : Expr (expr-list-nth rows index)]
+        (set!
+          out
+          (expr-list-cons
+            `(begin
+              (define (,entry
+                [_host : i64]
+                [session : i64]
+                [arg-a : i64]
+                [arg-b : i64]
+                [arg-c : i64])
+                (:export-symbol ,(comptime.expr-string symbol)) : i64
+                (,callback session arg-a arg-b arg-c))
+              (extern ,pointer (:symbol ,(comptime.expr-string symbol)) : u8))
+            out))))
+    `(begin
+      ,@out)))
+
+(cfg
+  windows
+  (tlci.tlci-host-callback-table compiler-comptime-host-platform-entries))
+
+(cfg
+  windows
+  (define (compiler-comptime-host-platform-abort-entry
+    [_host : i64]
+    [session : i64]
+    [reason : i64]
+    [message : i64]
+    [length : i64]
+    [symbol : i64])
+    (:export-symbol "__tlci_host_abort") : i64
+    (compiler-comptime-host-callback-abort session reason message length symbol)))
+
+(cfg
+  windows
+  (extern compiler-comptime-host-platform-abort-pointer (:symbol "__tlci_host_abort") : u8))
+
 ;; Registry rows append in source order; their storage index is an
 ;; implementation detail and never enters the image ABI. Spare capacity keeps
 ;; ordinary callback additions numeric-free; array bounds fail closed if this
@@ -5922,13 +5982,11 @@
 (define (compiler-comptime-host-registry-add!
   [registry : (&mut registry CompilerComptimeHostRegistryBuilder)]
   [name : String]
-  [callback : (-> i64 i64 i64 i64 i64)]) : unit
+  [address : i64]) : unit
   (let
     [index : i64 registry.len]
     (set! (array-ref registry.names index) name)
-    (set!
-      (array-ref registry.callbacks index)
-      (compiler-comptime-host-function-address callback))
+    (set! (array-ref registry.callbacks index) address)
     (set! registry.len (+ index 1))))
 
 ;; One `compiler-comptime-host-registry-add!` per host callback table row,
@@ -5956,7 +6014,20 @@
                     row
                     prefix-length
                     (- (string.string-length row) prefix-length)))
-                ,(comptime.expr-var row))
+                (cfg
+                  windows
+                  (cast
+                    (unsafe
+                      (cast
+                        (ptr-addr-of
+                          ,(comptime.expr-var
+                            (comptime.string-append
+                              "compiler-comptime-host-platform-pointer-"
+                              (comptime.int->string index))))
+                        : u64))
+                    : i64)
+                  (compiler-comptime-host-function-address
+                    ,(comptime.expr-var row))))
               adds))]
         [_
           (comptime-error
@@ -5982,8 +6053,16 @@
       0
       0
       0
-      (compiler-comptime-host-abort-function-address
-        compiler-comptime-host-callback-abort)
+      (cfg
+        windows
+        (cast
+          (unsafe
+            (cast
+              (ptr-addr-of compiler-comptime-host-platform-abort-pointer)
+              : u64))
+          : i64)
+        (compiler-comptime-host-abort-function-address
+          compiler-comptime-host-callback-abort))
       registry.names
       registry.callbacks
       registry.len)))

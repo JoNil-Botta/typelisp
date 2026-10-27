@@ -681,7 +681,7 @@
                   (__tl_make-array String 0)
                   (__tl_make-array i64 0)
                   0)))
-            "tlci host ABI: unsupported callback ABI version 3")))]))
+            "tlci host ABI: unsupported callback ABI version 4")))]))
 
 (define (tlci-loader-test-platform-admission-ok?) : bool
   (let
@@ -1123,6 +1123,40 @@
     unit
     (io.panic "tlci loader: native table rollback lost release failure")))
 
+(define (tlci-loader-test-old-callback-abi-rejected?) : bool
+  (let
+    [image : tlci.TlciImage
+      (tlci_core_tests.tlci-test-platform-image
+        (tlci.tlci-build-host-platform)
+        true)]
+    (set! image.callback-abi-version 2)
+    (match (tlci.tlci-emit-image (& image))
+      [(Err _) false]
+      [(Ok bytes)
+        ;; A mapping would hit the injected copy fault and attempt release.
+        ;; The ABI refusal must precede both operations.
+        (cfg test (pages.tlci-pages-test-inject! true false false false) unit)
+        (let
+          [result : tlci_loader.ResultTlciLoadedImage
+            (tlci_loader.tlci-loader-load-from-bytes (& bytes))]
+          [attempts : i64 (cfg test pages.tlci-pages-test-release-attempts 0)]
+          [_reset : unit
+            (cfg
+              test
+              (pages.tlci-pages-test-inject! false false false false)
+              unit)]
+          (and
+            (= attempts 0)
+            (tlci-loader-test-rejects?
+              result
+              "tlci: package `demo` code-bearing image uses unsupported callback ABI version 2")))])))
+
+(test
+  tlci-loader-old-callback-abi-rejected
+  (if (tlci-loader-test-old-callback-abi-rejected?)
+    unit
+    (io.panic "tlci loader: old callback ABI reached native allocation")))
+
 (define (tlci-loader-self-test-status) : i64
   (let
     [load-status : i64 (tlci-loader-test-loads-and-fixes-up-status)]
@@ -1136,6 +1170,7 @@
       [(not (tlci-loader-test-macro-entry-validation-ok?)) 4]
       [(not (tlci-loader-test-macro-entry-index-state-ok?)) 5]
       [(not (tlci-loader-test-platform-admission-ok?)) 6]
+      [(not (tlci-loader-test-old-callback-abi-rejected?)) 7]
       [(not (= (tlci-loader-test-named-imports-status) 0))
         (+ 50 (tlci-loader-test-named-imports-status))]
       [else 0])))

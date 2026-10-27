@@ -5223,8 +5223,8 @@
 ;; WIN1 (fail-closed target gate). The schedule constraint above is ABI-neutral
 ;; on paper -- it reads the argument registers out of the target ABI -- but the
 ;; INVARIANT it removes is not. Dropping `is-param -> csr-only` also drops
-;; "no parameter is ever homed in a volatile register", and the Win64 volatile
-;; prefix is exactly the four argument registers plus %rax/%r10/%r11, so on
+;; "no parameter is ever homed in a volatile register", and the Internal Windows
+;; volatile prefix is the six argument registers plus %rax/%r10/%r11, so on
 ;; Windows the change is far more aggressive than on SysV:
 ;;   * %r8 is Win64 ARGUMENT 2 (SysV argument 4) and sits at pool index 3
 ;;     (SysV: index 8, last of the volatile prefix). It is also the backend's
@@ -5233,14 +5233,9 @@
 ;;     (compiler-backend-shrinkwrap-compare-value-ready?) records a Win64
 ;;     miscompile of the shape "a large literal staged into %r8 before returning
 ;;     the third argument from %r8".
-;;   * %rsi/%rdi are Win64 NONVOLATILE but SysV volatile; whether scratch use
-;;     of them must be preserved is decided by a separate plan bit
-;;     (compiler-backend-scavenge-plan-win64-bit).
-;; A Windows-only bootstrap fixpoint failure was bisected to this constraint,
-;; and no Windows-side narrowing can be validated without a host that runs
-;; Windows binaries. So answer the empty array for every non-Linux ABI: Windows
-;; keeps the callee-saved-only parameter rule. Re-enabling Windows needs a host
-;; that can run the fixpoint, and should start from the two items above.
+;; RSI/RDI's Internal volatility does not remove that fixed-scratch hazard.
+;; Windows retains its callee-saved-only entry rule; relaxing it requires a
+;; separate incoming-move scheduling proof and native bootstrap convergence.
 (define (compiler-reg-param-entry-forbidden
   [type-segment-bases : i64]
   [representations : (& ir.CompilerIrRepresentationIndex)]
@@ -5791,8 +5786,8 @@
 ;; result bases also stay memory-sourced; the backend loads them after user arg
 ;; setup. The SIMD path blocks every call arg via
 ;; compiler-reg-call-arg-vars-blocks.
-;; Per-ABI GP integer arg-register count: SysV has 6 (%rdi/%rsi/%rdx/%rcx/%r8/%r9),
-;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Mirrored in the backend at
+;; Internal GP windows have six registers on both targets; Platform has six on
+;; SysV and four on Win64. Mirrored in the backend at
 ;; compiler-backend-call-args-gp-parallel-from? -- keep the two in sync.
 (define (compiler-reg-arg-reg-limit-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -12058,8 +12053,7 @@
 ;;             boundary movs execute exactly as often as its uses);
 ;;   cap     = best 4 regions per root (net * loop-depth-weight score,
 ;;             preferring regions in loop bodies), 64 regions per function;
-;;   reg     = first of %r8/%r9/%rsi/%rdi (SysV; %r8/%r9 on Win64 where
-;;             rsi/rdi are callee-saved) whose segment-precise occupancy is
+;;   reg     = first of %r8/%r9/%rsi/%rdi whose segment-precise occupancy is
 ;;             free over ALL of the root's selected regions -- the
 ;;             caller-saved subset that is safe in clobber-free regions
 ;;             (rax/rcx/rdx are fixed-use, r10/r11 are the emergency
@@ -12138,21 +12132,14 @@
 ;; inside a kind-0-free region. Call-region shadows keep the stable
 ;; r8/r9/rsi/rdi subset: rax/rcx/rdx carry
 ;; div/shift/return fixed uses, r10/r11 are the emergency scavenger's default
-;; picks. %rsi/%rdi are callee-saved homes on Win64, so shadows there stay on
-;; the two common caller-saved registers.
-(define (compiler-reg-call-region-pool [target-abi : cabi.CompilerRegTargetAbi]) : (__tl_dyn-array
-    i64)
-  (match target-abi
-    [(Linux)
-      (__tl_make-array
-        (cast cabi.compiler-reg-id-r8 : i64)
-        cabi.compiler-reg-id-r9
-        cabi.compiler-reg-id-rsi
-        cabi.compiler-reg-id-rdi)]
-    [(Windows)
-      (__tl_make-array
-        (cast cabi.compiler-reg-id-r8 : i64)
-        cabi.compiler-reg-id-r9)]))
+;; picks. Both Internal conventions make this subset caller-saved.
+(define (compiler-reg-call-region-pool
+  [_target-abi : cabi.CompilerRegTargetAbi]) : (__tl_dyn-array i64)
+  (__tl_make-array
+    (cast cabi.compiler-reg-id-r8 : i64)
+    cabi.compiler-reg-id-r9
+    cabi.compiler-reg-id-rsi
+    cabi.compiler-reg-id-rdi))
 
 ;; Loop-scoped shadow pool: CALLEE-saved registers only, and only the ones the
 ;; plan already homes a value in.
@@ -12170,9 +12157,9 @@
 ;;     Pack/BoundsCheck scavenge picks, none of which the region-splitting
 ;;     boundary predicate treats as a boundary. Every one of those touches only
 ;;     caller-saved registers, so a callee-saved home needs no extra proof
-;;     beyond the occupancy scan. rsi/rdi/rbp are filtered out because rsi/rdi
-;;     ARE callee-saved on Win64 yet are exactly the registers `rep movs`
-;;     clobbers, and rbp can be a frame pointer.
+;;     beyond the occupancy scan. RSI/RDI stay excluded from this persistent
+;;     shadow pool because Internal calls and `rep movs` clobber them; RBP can
+;;     still be a frame pointer.
 (define (compiler-reg-call-region-loop-pool-reg-ok? [reg : i64]) : bool
   (not
     (or
@@ -23213,14 +23200,9 @@
     (compiler-reg-id-seq-count (compiler-reg-greedy-integer-pool))
     (compiler-reg-id-seq-count (compiler-reg-sysv-integer-registers))))
 
-;; ABI-aware GP greedy pool. SysV is the default pool above. Win64
-;; differs ONLY in the caller/callee SPLIT: %rsi/%rdi are NONVOLATILE (callee-
-;; saved) on Win64, so they must live in the callee-saved suffix (saved/restored
-;; by the prologue, kept across calls) rather than the caller-saved prefix --
-;; otherwise a Win64 function homes a value in %rsi/%rdi, treats it as clobbered
-;; across calls, and clobbers the caller's nonvolatile register. All 14 registers
-;; are in the pool for both ABIs; only the order (and thus caller-saved-count)
-;; changes. The SysV self-host fixpoint cannot exercise this (SysV-only).
+;; Every IR function uses Internal. Its volatile pool prefix must match the
+;; Internal clobber count: Windows RSI/RDI are arguments and volatile homes,
+;; while Platform entry bridges preserve their incoming Win64 values.
 (define (compiler-reg-greedy-integer-pool-for-abi
   [target-abi : cabi.CompilerRegTargetAbi]) : CompilerRegIdSeq
   (match target-abi
@@ -23252,13 +23234,8 @@
                           (compiler-reg-sysv-integer-registers-with-rbp))))))))))
         (compiler-reg-greedy-integer-pool))]
     [(Windows)
-      ;; Win64: %rsi/%rdi are nonvolatile (callee-saved). The backend prologue/
-      ;; epilogue saves them with the Win64 callee-save suffix. The r12-r15,rbx
-      ;; order comes first, so the two extra Win64 nonvolatile registers only
-      ;; take a value once pressure reaches them. An FPO-eligible function
-      ;; appends %rbp after both.
-      ;; caller-saved (volatile) first: rax,rcx,rdx,r8,r9,r10,r11 (7), then the
-      ;; backend-saved callee suffix r12-r15,rbx,rsi,rdi[,rbp].
+      ;; Keep all nine volatile registers before the unchanged nonvolatile
+      ;; r12-r15,rbx suffix. FPO appends rbp after that suffix.
       (let
         [base : CompilerRegIdSeq
           (compiler-reg-id-seq-prepend
@@ -23275,13 +23252,11 @@
                       cabi.compiler-reg-id-r10
                       (compiler-reg-id-seq-prepend
                         cabi.compiler-reg-id-r11
-                        (compiler-reg-id-seq-append
-                          (compiler-reg-sysv-integer-registers)
+                        (compiler-reg-id-seq-prepend
+                          cabi.compiler-reg-id-rsi
                           (compiler-reg-id-seq-prepend
-                            cabi.compiler-reg-id-rsi
-                            (compiler-reg-id-seq-prepend
-                              cabi.compiler-reg-id-rdi
-                              (compiler-reg-id-seq-empty)))))))))))]
+                            cabi.compiler-reg-id-rdi
+                            (compiler-reg-sysv-integer-registers))))))))))]
         (if compiler-reg-rbp-pool-enabled
           (compiler-reg-id-seq-append
             base
@@ -31453,11 +31428,10 @@
     0))
 
 ;; The scavenger's volatile candidates (compiler-backend-scavenge-candidates,
-;; minus its callee-saved members). %rsi/%rdi are volatile only on SysV; the
-;; backend treats them as Win64 nonvolatiles and admits them only when the plan
-;; already saves them, so the estimator must make the same distinction.
+;; minus its callee-saved members). Both Internal conventions make RSI/RDI
+;; volatile; the estimator and emitter must use the same eligible set.
 (define (compiler-reg-scratch-borrow-volatile-mask
-  [target-abi : cabi.CompilerRegTargetAbi]) : i64
+  [_target-abi : cabi.CompilerRegTargetAbi]) : i64
   (let
     [base : i64
       (bit-or
@@ -31473,19 +31447,15 @@
                 (bit-or
                   (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r8)
                   (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rax)))))))]
-    (match target-abi
-      [(Linux)
-        (bit-or
-          base
-          (bit-or
-            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
-            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)))]
-      [(Windows) base])))
+    (bit-or
+      base
+      (bit-or
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
+        (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)))))
 
-;; ...and its callee-saved ones, usable only when the plan saves them. Win64
-;; adds %rsi/%rdi to the common nonvolatile set.
+;; ...and its common Internal callee-saved ones, usable only when the plan saves them.
 (define (compiler-reg-scratch-borrow-csr-mask
-  [target-abi : cabi.CompilerRegTargetAbi]) : i64
+  [_target-abi : cabi.CompilerRegTargetAbi]) : i64
   (let
     [base : i64
       (bit-or
@@ -31497,14 +31467,7 @@
             (bit-or
               (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-r15)
               (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rbx)))))]
-    (match target-abi
-      [(Linux) base]
-      [(Windows)
-        (bit-or
-          base
-          (bit-or
-            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi)
-            (compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rdi)))])))
+    base))
 
 (define (compiler-reg-scratch-location-mask
   [location : (& CompilerRegLocation)]) : i64

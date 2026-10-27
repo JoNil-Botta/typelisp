@@ -83,6 +83,10 @@
 (define (compiler-x64-template-related-data
   [id : x64.CompilerX64ExecutableTemplateId]) : String
   (match id
+    [(WindowsObjectTlciImageContribution)
+      ".pdata:tl_tlci_call_image_entry..tl_tlci_call_image_entry$end->tl_tlci_call_image_entry$unwind|xdata-size=8|xdata-hash=1528956653"]
+    [(WindowsObjectTlciMacroContribution)
+      ".pdata:tl_tlci_call_macro_entry..tl_tlci_call_macro_entry$end->tl_tlci_call_macro_entry$unwind|xdata-size=12|xdata-hash=963812087"]
     [(WindowsObjectStartContribution)
       ".pdata:_tl_start..L_tl_start_end->.L_tl_start_xdata|xdata-size=8|xdata-hash=2141552412"]
     [(WindowsObjectMainFiberContribution)

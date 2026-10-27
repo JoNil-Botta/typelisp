@@ -419,6 +419,13 @@
         [(MetadataOnly) MetadataOnly]
         [(CodeBearing)
           (cond
+            [(not (= image.callback-abi-version tlci-callback-abi-version))
+              (Rejected
+                (str_cat.str-cat
+                  "tlci: package `"
+                  image.metadata.package-name
+                  "` code-bearing image uses unsupported callback ABI version "
+                  (string.int->string image.callback-abi-version)))]
             [(= image.host-platform tlci-host-platform-x86-64-legacy)
               (Rejected
                 (str_cat.str-cat
@@ -437,9 +444,9 @@
             [else CodeBearing])])]))
 
 (define tlci-callback-abi-version : i64
-  2)
+  3)
 (define tlci-host-abi-version : i64
-  2)
+  3)
 (define tlci-image-entry-symbol : String
   "tlci_image_entry")
 
@@ -3161,7 +3168,12 @@
                   (string.int->string version)))]
             [(not (tlci-host-platform-supported? host-platform))
               (Err "tlci: unsupported host platform")]
-            [(not (= callback-abi tlci-callback-abi-version))
+            ;; The format reader retains v2 inspection. Execution admission
+            ;; independently requires the current ABI before allocating pages.
+            [(not
+                (or
+                  (= callback-abi 2)
+                  (= callback-abi tlci-callback-abi-version)))
               (Err "tlci: unsupported callback ABI version")]
             [(not (= declared-size actual-size))
               (Err "tlci: file size field does not match input length")]

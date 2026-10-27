@@ -4250,12 +4250,17 @@
         (and
           (not (live.compiler-live-set-contains? ineligible 0))
           (not (live.compiler-live-set-contains? ineligible 6))
-          (reg.compiler-reg-assignments-use-register?
-            assignments
-            cabi.compiler-reg-id-rsi)
-          (reg.compiler-reg-assignments-use-register?
-            assignments
-            cabi.compiler-reg-id-rdi))])))
+          ;; All seven parameters live across an Internal call. Its volatile
+          ;; RSI/RDI cannot hold any of them; only five nonvolatile homes remain.
+          (not
+            (reg.compiler-reg-assignments-use-register?
+              assignments
+              cabi.compiler-reg-id-rsi))
+          (not
+            (reg.compiler-reg-assignments-use-register?
+              assignments
+              cabi.compiler-reg-id-rdi))
+          (= (compiler-reg-spill-count assignments) 2))])))
 
 (cfg
   test
@@ -4317,7 +4322,12 @@
             (reg.compiler-reg-global-shared-view pool)
             cabi.compiler-reg-id-r9
             0))
-        (= (array-ref prefs 4) -1)
+        (=
+          (array-ref prefs 4)
+          (reg.compiler-reg-id-seq-index-of
+            (clone pool)
+            cabi.compiler-reg-id-rsi
+            0))
         (=
           (array-ref prefs 5)
           (reg.compiler-reg-id-seq-index-of pool cabi.compiler-reg-id-rax 0))))))
@@ -8543,32 +8553,43 @@
       (and resident-0-ok? emptied-ok? multi-ok? coarse-resident-ok?))))
 
 (define (compiler-reg-scratch-borrow-masks-ok?) : bool
-  (and
-    ;; The scratch-borrow estimator follows the same ABI split as the backend:
-    ;; %rsi is an unconditional candidate on SysV, but on Win64 it is available
-    ;; only through the plan-saved nonvolatile mask.
-    (not
-      (=
-        (bit-and
-          (reg.compiler-reg-scratch-borrow-volatile-mask (Linux))
-          (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
-        0))
-    (=
-      (bit-and
-        (reg.compiler-reg-scratch-borrow-csr-mask (Linux))
-        (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
-      0)
-    (=
-      (bit-and
-        (reg.compiler-reg-scratch-borrow-volatile-mask (Windows))
-        (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
-      0)
-    (not
-      (=
-        (bit-and
-          (reg.compiler-reg-scratch-borrow-csr-mask (Windows))
-          (reg.compiler-reg-scratch-reg-bit cabi.compiler-reg-id-rsi))
-        0))))
+  (let
+    [ok : bool true]
+    (for [target (iterator.range 0 2)]
+      (let
+        [abi : cabi.CompilerRegTargetAbi
+          (if (= target 0)
+            (Linux)
+            (Windows))]
+        (for [reg-index (iterator.range 0 3)]
+          (let
+            [id : i64
+              (cond
+                [(= reg-index 0) cabi.compiler-reg-id-rsi]
+                [(= reg-index 1) cabi.compiler-reg-id-rdi]
+                [else cabi.compiler-reg-id-rbx])]
+            [bit : i64 (reg.compiler-reg-scratch-reg-bit id)]
+            (set!
+              ok
+              (and
+                ok
+                (=
+                  (not
+                    (=
+                      (bit-and
+                        (reg.compiler-reg-scratch-borrow-volatile-mask abi)
+                        bit)
+                      0))
+                  (< reg-index 2))
+                (=
+                  (not
+                    (=
+                      (bit-and
+                        (reg.compiler-reg-scratch-borrow-csr-mask abi)
+                        bit)
+                      0))
+                  (= reg-index 2))))))))
+    ok))
 
 (define (compiler-reg-early-scratch-never-spills-ok?) : bool
   (let
@@ -8864,22 +8885,6 @@
           (& (ast.ast-type-list-new)))))
     (& (compiler-reg-i64-ty))))
 
-(define (compiler-reg-func4-ty) : ast.AstType
-  (ast.ast-ty-func
-    (ast.ast-type-cons
-      (& (compiler-reg-i64-ty))
-      (&
-        (ast.ast-type-cons
-          (& (compiler-reg-i64-ty))
-          (&
-            (ast.ast-type-cons
-              (& (compiler-reg-i64-ty))
-              (&
-                (ast.ast-type-cons
-                  (& (compiler-reg-i64-ty))
-                  (& (ast.ast-type-list-new)))))))))
-    (& (compiler-reg-i64-ty))))
-
 (define (compiler-reg-indirect-call-arg-function) : ir.CompilerIrFunction
   (Function
     (ir.compiler-ir-test-symbol "indirect_call_arg")
@@ -8894,27 +8899,33 @@
          return %3")
     Ordinary))
 
-(define (compiler-reg-indirect-call-arg4-function) : ir.CompilerIrFunction
+(define (compiler-reg-indirect-call-args-function [count : i64]) : ir.CompilerIrFunction
   (let
     [args : (__tl_dyn-array ir.CompilerIrValue)
-      (__tl_make-array ir.CompilerIrValue 4)]
-    (set! (array-ref args 0) (ir.CompilerIrValue.Var 1))
-    (set! (array-ref args 1) (ir.CompilerIrValue.Var 2))
-    (set! (array-ref args 2) (ir.CompilerIrValue.Var 3))
-    (set! (array-ref args 3) (ir.CompilerIrValue.Var 4))
+      (__tl_make-array ir.CompilerIrValue count)]
+    [params : ir.CompilerIrParamSeq (ir.compiler-ir-param-seq-empty)]
+    [types : ast.AstTypeList (ast.ast-type-list-new)]
+    (for [i (iterator.range 0 count)]
+      (set! (array-ref args i) (Var (+ i 1)))
+      (set!
+        params
+        (ir.compiler-ir-param-seq-prepend
+          (Param "arg" (I64) (- count i))
+          params))
+      (set! types (ast.ast-type-cons (& (I64)) (& types))))
     (Function
-      (ir.compiler-ir-test-symbol "indirect_call_arg4")
+      (ir.compiler-ir-test-symbol "indirect_call_args")
       (ir.compiler-ir-param-seq-prepend
-        (Param "callee" (compiler-reg-func4-ty) 0)
-        (irt.params "a=%1:i64, b=%2:i64, c=%3:i64, d=%4:i64"))
-      (compiler-reg-i64-ty)
-      6
+        (Param "callee" (ast.ast-ty-func types (& (I64))) 0)
+        params)
+      (I64)
+      (+ count 2)
       (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-reg-test-instr-seq-prepend
-            (CallIndirect 5 (Var 0) (Array args) (compiler-reg-i64-ty))
-            (irt.instrs "return %5"))))
+            (CallIndirect (+ count 1) (Var 0) (Array args) (I64))
+            (ir.compiler-ir-instr-seq1 (Return (Some (Var (+ count 1))))))))
       Ordinary)))
 
 (define (compiler-reg-c-abi-store-result-arg-function) : ir.CompilerIrFunction
@@ -9868,16 +9879,22 @@
           cabi.compiler-reg-id-rdx))]))
 
 (define (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?) : bool
-  (match (reg.compiler-reg-plan-function-scalar-for-abi
-    Windows
-    (& (compiler-reg-indirect-call-arg4-function)))
-    [(Plan _ ineligible _ _ _)
-      (and
-        (live.compiler-live-set-contains? ineligible 0)
-        (live.compiler-live-set-contains? ineligible 1)
-        (live.compiler-live-set-contains? ineligible 2)
-        (live.compiler-live-set-contains? ineligible 3)
-        (live.compiler-live-set-contains? ineligible 4))]))
+  (let
+    [ok : bool true]
+    ;; The hidden closure environment consumes one of six Internal positions.
+    (for [count (iterator.range 4 7)]
+      (match (reg.compiler-reg-plan-function-scalar-for-abi
+        Windows
+        (& (compiler-reg-indirect-call-args-function count)))
+        [(Plan _ ineligible _ _ _)
+          (set! ok (and ok (live.compiler-live-set-contains? ineligible 0)))
+          (for [i (iterator.range 1 (+ count 1))]
+            (set!
+              ok
+              (and
+                ok
+                (= (live.compiler-live-set-contains? ineligible i) (= count 6)))))]))
+    ok))
 
 (define (compiler-reg-scalar-function-intervals-ok?) : bool
   (match (reg.compiler-reg-plan-function-scalar
@@ -11764,18 +11781,17 @@
         (reg.compiler-reg-id-seq-contains?
           (clone sysv-callees)
           cabi.compiler-reg-id-rdi))
-      (reg.compiler-reg-id-seq-contains?
-        (clone win-callees)
-        cabi.compiler-reg-id-rdi)
       (not
         (reg.compiler-reg-id-seq-contains?
-          (clone win-callers)
+          (clone win-callees)
           cabi.compiler-reg-id-rdi))
-      (not
-        (=
-          (reg.compiler-reg-id-seq-count
-            (reg.compiler-reg-sysv-integer-registers))
-          (reg.compiler-reg-id-seq-count win-callees)))
+      (reg.compiler-reg-id-seq-contains?
+        (clone win-callers)
+        cabi.compiler-reg-id-rdi)
+      (=
+        (reg.compiler-reg-id-seq-count
+          (reg.compiler-reg-sysv-integer-registers))
+        (reg.compiler-reg-id-seq-count win-callees))
       ;; The callee-saved subpool admits only registers that survive an
       ;; intervening call.
       (reg.compiler-reg-id-seq-contains?
@@ -11793,10 +11809,10 @@
       (reg.compiler-reg-id-seq-contains?
         (clone greedy-pool)
         cabi.compiler-reg-id-r11)
-      ;; ABI-aware split: SysV caller-saved-count=9; Win64=7 (%rsi/%rdi are
-      ;; nonvolatile on Win64 -> in the callee-saved suffix, not the prefix).
+      ;; Both Internal conventions put RSI/RDI in the nine-register volatile
+      ;; prefix; Platform C calls retain their own argument locations.
       (= (reg.compiler-reg-greedy-caller-saved-count-for-abi Linux) 9)
-      (= (reg.compiler-reg-greedy-caller-saved-count-for-abi Windows) 7)
+      (= (reg.compiler-reg-greedy-caller-saved-count-for-abi Windows) 9)
       (=
         (reg.compiler-reg-id-seq-count
           (reg.compiler-reg-greedy-integer-pool-for-abi Windows))
@@ -11808,7 +11824,7 @@
         (reg.compiler-reg-greedy-integer-pool-for-abi Windows)
         cabi.compiler-reg-id-rdi)
       ;; The scalar zero-call extension is the older three-register subset.
-      ;; Keep ABI/result registers and Win64 callee-saved %rsi/%rdi out of it.
+      ;; Keep ABI/result registers out of this legacy subset.
       (= (reg.compiler-reg-id-seq-count zero-call-callers) 3)
       (reg.compiler-reg-id-seq-contains?
         (clone zero-call-callers)
@@ -11856,7 +11872,7 @@
           (clone zero-call-callers)
           cabi.compiler-reg-id-rax))
       ;; Win64 FPO appends %rbp to the nonvolatile suffix without moving the
-      ;; seven-register volatile boundary or any existing pool member.
+      ;; nine-register volatile boundary or any existing pool member.
       (let
         [_rbp-on : unit (reg.compiler-reg-set-rbp-pool-enabled! true)]
         [fpo-pool : reg.CompilerRegIdSeq
@@ -11867,7 +11883,7 @@
             (reg.compiler-reg-id-seq-contains?
               fpo-pool
               cabi.compiler-reg-id-rbp)
-            (= (reg.compiler-reg-greedy-caller-saved-count-for-abi Windows) 7))]
+            (= (reg.compiler-reg-greedy-caller-saved-count-for-abi Windows) 9))]
         [_rbp-restore : unit (reg.compiler-reg-set-rbp-pool-enabled! false)]
         ok)
       (not

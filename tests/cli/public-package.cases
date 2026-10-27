@@ -748,3 +748,55 @@ run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --stdlib-ro
 exit nonzero
 stderr contains error[E0206]
 stderr contains return type mismatch: expected i64, found bool
+# A C export resolves package calls to the target's Internal entry.
+case package-c-export-internal-body
+hosts all
+opt 0 1 2
+file typelisp.pkg
+(package
+  (name "abi_export_consumer")
+  (version "0.1.0")
+  (kind "bin")
+  (dependencies (dep "vendor/dep")))
+end-file
+file vendor/dep/typelisp.pkg
+(package
+  (name "abi_export_dep")
+  (version "0.1.0")
+  (kind "lib"))
+end-file
+file vendor/dep/src/lib.tl
+(define (six [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64])
+  (:export-symbol "tl_abi_package_six") : i64
+  (+ a b c d e f))
+end-file
+file src/main.tl
+(import stdlib.io)
+(import dep.src.lib as dep)
+(extern (raw-six [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64])
+  : i64 (:symbol "tl_abi_package_six"))
+(define (main) : i64
+  (let [x : i64 (io.arg-count)]
+    (if (and
+      (= (dep.six x 2 3 4 5 6) (+ x 20))
+      (= (raw-six x 2 3 4 5 6) (+ x 20)))
+      42 1)))
+end-file
+step package-build
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}}
+stderr empty
+stdout match Built[ ]
+in file {{dir}}/target/release/abi_export_consumer.s
+contains tl_abi_package_six
+not-contains tl_abi_package_six_u24typelisp
+if-host windows
+contains tl_abi_package_six$typelisp
+end-if
+if-host linux
+not-contains tl_abi_package_six$typelisp
+end-if
+step package-execute
+exec "{{dir}}/target/release/abi_export_consumer{{exe}}"
+exit 42
+stdout empty
+stderr empty

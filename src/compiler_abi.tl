@@ -284,54 +284,59 @@
     [(Linux) false]
     [(Windows) true]))
 
-;; Inline tests can give Windows Internal calls RSI and RDI as their fifth and
-;; sixth integer argument registers, as #8437 plans. Emitted argument placement
-;; then shows which convention each call site selected. The hook exists only
-;; under `cfg test`; every other build shares all facts between conventions.
-(cfg
-  test
-  (define compiler-abi-test-windows-internal-six-gp-args? : bool
-    false))
+(define (compiler-abi-internal? [convention : CompilerCallConvention]) : bool
+  (match convention
+    [(Internal) true]
+    [(Platform) false]))
 
-(cfg
-  test
-  (define (compiler-abi-test-windows-internal-six-gp-args! [on? : bool]) : unit
-    (set! compiler-abi-test-windows-internal-six-gp-args? on?)))
+;; C export identifiers exclude '$'; the private body cannot collide with its
+;; public C entry. Package consumers resolve the same Internal identity.
+(define (compiler-abi-c-export-body-symbol [symbol : String]) : String
+  (str_cat.str-cat symbol "$typelisp"))
 
-(cfg
-  test
-  (define (compiler-abi-windows-six-gp-args?
-    [convention : CompilerCallConvention]) : bool
-    (and
-      compiler-abi-test-windows-internal-six-gp-args?
-      (match convention
-        [(Internal) true]
-        [(Platform) false]))))
+(define (compiler-abi-internal-link-symbol
+  [abi : CompilerRegTargetAbi]
+  [symbol : String]) : String
+  ;; Package metadata keeps the target-independent body identity. SysV shares
+  ;; its C/Internal convention and resolves that reserved identity to the C
+  ;; symbol; Win64 needs the distinct Internal body and Platform bridge.
+  (let
+    [len : i64 (string.string-length symbol)]
+    [suffix : String "$typelisp"]
+    [suffix-len : i64 (string.string-length suffix)]
+    (if (and
+      (not (compiler-abi-platform-entry-bridge? abi))
+      (> len suffix-len)
+      (string.eq (string.substring symbol (- len suffix-len) suffix-len) suffix))
+      (string.substring symbol 0 (- len suffix-len))
+      symbol)))
 
-(cfg
-  (not test)
-  (define (compiler-abi-windows-six-gp-args?
-    [_convention : CompilerCallConvention]) : bool
-    false))
+(define (compiler-abi-platform-entry-bridge? [abi : CompilerRegTargetAbi]) : bool
+  (match abi
+    [(Linux) false]
+    [(Windows) true]))
 
-;; Terminal queries share facts until the conventions diverge. Forwarding
-;; queries retain the caller's convention.
+;; Windows Internal arguments use six positional slots. Platform boundaries
+;; retain Win64's four slots and its nonvolatile RSI/RDI contract.
 (define (compiler-abi-gp-arg-register-count
   [abi : CompilerRegTargetAbi]
   [convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 6]
     [(Windows)
-      (if (compiler-abi-windows-six-gp-args? convention)
+      (if (compiler-abi-internal? convention)
         6
         4)]))
 
 (define (compiler-abi-float-arg-register-count
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]) : i64
+  [convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 8]
-    [(Windows) 4]))
+    [(Windows)
+      (if (compiler-abi-internal? convention)
+        6
+        4)]))
 
 (define (compiler-abi-arg-banks-independent?
   [abi : CompilerRegTargetAbi]
@@ -360,8 +365,7 @@
         [(= idx 1) compiler-reg-id-rdx]
         [(= idx 2) compiler-reg-id-r8]
         [(= idx 3) compiler-reg-id-r9]
-        [(not (compiler-abi-windows-six-gp-args? convention))
-          compiler-reg-id-invalid]
+        [(not (compiler-abi-internal? convention)) compiler-reg-id-invalid]
         [(= idx 4) compiler-reg-id-rsi]
         [(= idx 5) compiler-reg-id-rdi]
         [else compiler-reg-id-invalid])]))
@@ -375,7 +379,7 @@
 
 (define (compiler-abi-float-arg-register-id
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]
+  [convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux)
@@ -383,7 +387,9 @@
         (compiler-abi-xmm-register-id idx)
         compiler-reg-id-invalid)]
     [(Windows)
-      (if (and (>= idx 0) (< idx 4))
+      (if (and
+        (>= idx 0)
+        (< idx (compiler-abi-float-arg-register-count abi convention)))
         (compiler-abi-xmm-register-id idx)
         compiler-reg-id-invalid)]))
 
@@ -425,19 +431,17 @@
   [abi : CompilerRegTargetAbi]
   [convention : CompilerCallConvention]
   [reg-id : i64]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (while (and
-      (not found)
-      (< index (compiler-abi-caller-saved-gp-register-count abi convention)))
-      (set!
-        found
-        (=
-          (compiler-abi-caller-saved-gp-register-id abi convention index)
-          reg-id))
-      (+= index 1))
-    found))
+  (or
+    (= reg-id compiler-reg-id-rax)
+    (= reg-id compiler-reg-id-rcx)
+    (= reg-id compiler-reg-id-rdx)
+    (= reg-id compiler-reg-id-r8)
+    (= reg-id compiler-reg-id-r9)
+    (= reg-id compiler-reg-id-r10)
+    (= reg-id compiler-reg-id-r11)
+    (and
+      (or (= reg-id compiler-reg-id-rsi) (= reg-id compiler-reg-id-rdi))
+      (or (not (compiler-abi-windows? abi)) (compiler-abi-internal? convention)))))
 
 (define (compiler-abi-stack-call-arg-for-banks?
   [abi : CompilerRegTargetAbi]
@@ -454,14 +458,17 @@
 
 (define (compiler-abi-caller-saved-gp-register-count
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]) : i64
+  [convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 9]
-    [(Windows) 7]))
+    [(Windows)
+      (if (compiler-abi-internal? convention)
+        9
+        7)]))
 
 (define (compiler-abi-caller-saved-gp-register-id
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]
+  [convention : CompilerCallConvention]
   [idx : i64]) : i64
   (match abi
     [(Linux)
@@ -485,38 +492,44 @@
         [(= idx 4) compiler-reg-id-r8]
         [(= idx 5) compiler-reg-id-r10]
         [(= idx 6) compiler-reg-id-r11]
+        [(not (compiler-abi-internal? convention)) compiler-reg-id-invalid]
+        [(= idx 7) compiler-reg-id-rsi]
+        [(= idx 8) compiler-reg-id-rdi]
         [else compiler-reg-id-invalid])]))
 
 (define (compiler-abi-callee-saved-gp-register-count
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]) : i64
+  [convention : CompilerCallConvention]) : i64
   (match abi
     [(Linux) 5]
-    [(Windows) 7]))
+    [(Windows)
+      (if (compiler-abi-internal? convention)
+        5
+        7)]))
 
 (define (compiler-abi-callee-saved-gp-register-id
   [abi : CompilerRegTargetAbi]
-  [_convention : CompilerCallConvention]
+  [convention : CompilerCallConvention]
   [idx : i64]) : i64
-  (match abi
-    [(Linux)
-      (cond
-        [(= idx 0) compiler-reg-id-rbx]
-        [(= idx 1) compiler-reg-id-r12]
-        [(= idx 2) compiler-reg-id-r13]
-        [(= idx 3) compiler-reg-id-r14]
-        [(= idx 4) compiler-reg-id-r15]
-        [else compiler-reg-id-invalid])]
-    [(Windows)
-      (cond
-        [(= idx 0) compiler-reg-id-rbx]
-        [(= idx 1) compiler-reg-id-rsi]
-        [(= idx 2) compiler-reg-id-rdi]
-        [(= idx 3) compiler-reg-id-r12]
-        [(= idx 4) compiler-reg-id-r13]
-        [(= idx 5) compiler-reg-id-r14]
-        [(= idx 6) compiler-reg-id-r15]
-        [else compiler-reg-id-invalid])]))
+  (if (and
+    (compiler-abi-windows? abi)
+    (not (compiler-abi-internal? convention)))
+    (cond
+      [(= idx 0) compiler-reg-id-rbx]
+      [(= idx 1) compiler-reg-id-rsi]
+      [(= idx 2) compiler-reg-id-rdi]
+      [(= idx 3) compiler-reg-id-r12]
+      [(= idx 4) compiler-reg-id-r13]
+      [(= idx 5) compiler-reg-id-r14]
+      [(= idx 6) compiler-reg-id-r15]
+      [else compiler-reg-id-invalid])
+    (cond
+      [(= idx 0) compiler-reg-id-rbx]
+      [(= idx 1) compiler-reg-id-r12]
+      [(= idx 2) compiler-reg-id-r13]
+      [(= idx 3) compiler-reg-id-r14]
+      [(= idx 4) compiler-reg-id-r15]
+      [else compiler-reg-id-invalid])))
 
 (define (compiler-abi-caller-saved-xmm-register-count
   [abi : CompilerRegTargetAbi]

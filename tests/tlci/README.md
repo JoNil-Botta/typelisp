@@ -28,6 +28,12 @@ host-platform witnesses (`valid-platform-*`, `malformed-platform-unknown`). A
 synchronized emitter/parser change therefore cannot silently redefine the
 format.
 
+The four `valid-abi3-*` images add the current callback ABI for both platforms,
+with metadata-only and inert code-bearing pairs. `platform_corpus_emit.tl`
+reproduces them with `--current-abi`. The original seven valid and nine malformed
+witnesses remain unchanged. Callback ABI 2 remains inspectable; the executable
+loader rejects its code-bearing images before allocating executable pages.
+
 `package_dependency_transition.tl` is separate: a dependency-catalog lifecycle
 witness that `scripts/verify-package-native-tlci.sh` runs.
 

@@ -9,6 +9,8 @@
 ;; reaches the driver's return address. The recovered nonvolatile registers,
 ;; %rsp and %rip must then equal what the driver held at the call. That only
 ;; holds if every victim save is described by its unwind program.
+;; The driver enters a Platform export, so unwinding also crosses the bridge
+;; that restores RSI/RDI after the Internal frames that may clobber them.
 ;;
 ;; `seh-victim-framed` keeps the rbp frame (a Win64 XMM save with an even
 ;; number of GP saves is not frame-pointer omitted), so its GP saves are the
@@ -197,7 +199,8 @@
 
 (cfg
   windows
-  (define (seh-victim-framed [x : i64]) : i64
+  (define (seh-victim-framed [x : i64])
+    (:export-symbol "tl_seh_victim_framed") : i64
     (let
       [f : f64 (cast x : f64)]
       [a : i64 (seh-probe (* x 3))]
@@ -206,7 +209,8 @@
 
 (cfg
   windows
-  (define (seh-victim-fpo [x : i64]) : i64
+  (define (seh-victim-fpo [x : i64])
+    (:export-symbol "tl_seh_victim_fpo") : i64
     (let
       [a : i64 (seh-probe x)]
       [b : i64 (seh-probe (+ a x))]

@@ -134,5 +134,7 @@ ENUM_VARIANTS=$(sed -n \
     fail "nullary enum declaration order differs from catalog data"
 count_matches 3 '\.pdata:.*->\.L_tl_start_xdata' \
     src/compiler_x64_executable_template_evidence.tl
+count_matches 2 '\.pdata:tl_tlci_call_.*->tl_tlci_call_.*\$unwind' \
+    src/compiler_x64_executable_template_evidence.tl
 
 echo "check-x64-executable-template-registry: 102 rows, 69 assembly variants, 24 opaque byte helpers, and 9 structured contributions covered"

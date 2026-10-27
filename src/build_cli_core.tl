@@ -4049,7 +4049,7 @@
   (let
     [base : String
       (str_cat.str-cat
-        "typelisp-package-runtime-inputs-v1\n"
+        "typelisp-package-runtime-inputs-v2\n"
         (build-package-transcript-field "producer" producer-identity)
         (build-package-transcript-field
           "target"

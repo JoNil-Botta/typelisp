@@ -34,8 +34,8 @@ awk -F '\t' '
     }
 ' "$ROOT/scripts/ci-gates.tsv" > "$work/owning-scripts.tsv"
 awk -F '\t' '
-    FILENAME == ARGV[1] { if ($8 ~ /^gate_[a-z_]+$/) gate[$8] = $1; next }
-    /^gate_[a-z_]+\(\)/ { name = $1; sub(/\(\).*/, "", name) }
+    FILENAME == ARGV[1] { if ($8 ~ /^gate_[a-z0-9_]+$/) gate[$8] = $1; next }
+    /^gate_[a-z0-9_]+\(\)/ { name = $1; sub(/\(\).*/, "", name) }
     /^}/ { name = "" }
     name in gate {
         line = $0

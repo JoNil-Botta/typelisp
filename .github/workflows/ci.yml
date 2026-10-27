@@ -143,6 +143,16 @@ jobs:
             sh scripts/verify-ci-compiler-artifacts.sh "$fixture_root"
           cp "$fixture_root/self-test.json" target/ci-compiler-artifact-fixtures.json
 
+      - name: Upload compiler envelope fixture evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-stage-envelope-fixtures-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            target/ci-compiler-artifact-fixtures.memory
+            target/ci-compiler-artifact-fixtures.json
+          if-no-files-found: warn
+
       - name: CI verification
         id: verification
         shell: bash
@@ -217,8 +227,6 @@ jobs:
         with:
           name: backend-memory-${{ runner.os }}
           path: |
-            target/ci-compiler-artifact-fixtures.memory
-            target/ci-compiler-artifact-fixtures.json
             target/build-invariance/backend-memory/*.memory
             target/build-invariance/backend-memory/*.stdout
             target/build-invariance/backend-memory/*.stderr

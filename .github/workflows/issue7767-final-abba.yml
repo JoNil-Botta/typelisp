@@ -39,22 +39,22 @@ jobs:
         run: |
           env -u BASH_ENV bash scripts/probe-build-invariance-final-abba.sh --run \
             "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/target/issue7767-final-abba"
+      - name: Select complete archive or full raw fallback
+        id: upload-inputs
+        if: always()
+        shell: bash
+        run: |
+          echo 'paths<<TYPELISP_ABBA_EVIDENCE' >> "$GITHUB_OUTPUT"
+          env -u BASH_ENV bash scripts/probe-build-invariance-final-abba.sh --upload-paths \
+            "$GITHUB_WORKSPACE/target/issue7767-final-abba" >> "$GITHUB_OUTPUT"
+          echo 'TYPELISP_ABBA_EVIDENCE' >> "$GITHUB_OUTPUT"
       - name: Preserve complete or censored evidence
         if: always()
         timeout-minutes: 6
         uses: actions/upload-artifact@v4
         with:
           name: issue7767-final-abba
-          path: |
-            target/issue7767-final-abba/evidence.tar.gz
-            target/issue7767-final-abba/evidence/*.json
-            target/issue7767-final-abba/evidence/trials/*/*.json
-            target/issue7767-final-abba/evidence/trials/*/*.tsv
-            target/issue7767-final-abba/evidence/trials/*/*.memory
-            target/issue7767-final-abba/evidence/trials/*/gate.log
-            target/issue7767-final-abba/evidence/bootstrap/*.json
-            target/issue7767-final-abba/evidence/bootstrap/gate.log
-            target/issue7767-final-abba/evidence/pack/*.json
-            target/issue7767-final-abba/evidence/pack/gate.log
+          path: ${{ steps.upload-inputs.outputs.paths }}
+          compression-level: 1
           if-no-files-found: error
           retention-days: 90

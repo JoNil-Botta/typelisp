@@ -13,7 +13,13 @@ SEED_TAG='stage0-20261026-232414-r40416526969';SEED_SHA='97f3341e65bdf36a24d0126
 class Failure(Exception):pass
 def need(ok,msg):
  if not ok:raise Failure(msg)
-def dump(p,v):p.parent.mkdir(parents=True,exist_ok=True);p.write_text(json.dumps(v,indent=2)+'\n')
+def atomic_text(p,text):
+ p.parent.mkdir(parents=True,exist_ok=True)
+ with tempfile.NamedTemporaryFile(mode='w',prefix=p.name+'.publishing.',dir=p.parent,delete=False)as f:
+  f.write(text);f.flush();os.fsync(f.fileno());temp=Path(f.name)
+ # Publishing a metadata update is atomic; failed temporary files are retained.
+ os.replace(temp,p)
+def dump(p,v):atomic_text(p,json.dumps(v,indent=2)+'\n')
 def sha(p):
  h=hashlib.sha256()
  with p.open('rb')as f:
@@ -120,22 +126,48 @@ def audit(trial,source,variant,reference=None,mock=False):
  result={'variant':variant,'coverage':plans,'comparisons':len(corpus),'producer_sides':len(corpus)*2,'enforced_reports':reports,'pool_results':len(queue),'selfhost_jobs':sorted(selfhost_jobs),'chunks':chunks,'output_inventory':inventory,'cross_trial_exact_comparisons':compared,'opt1_sha256':sha(raw/'opt1/opt1'),'compiler_construction_ms':construction_ms,'selfhost_timings':selftiming,'provenance':prov}
  dump(trial/'audit.json',result);return result
 
-def cas_add(p,work,index_key,index):
+def cas_add(p,work,index_key,index,freeze=False):
  need(p.is_file()and not p.is_symlink(),'invalid CAS input');digest=sha(p);cas=work/'evidence/cas';cas.mkdir(exist_ok=True);dest=owned(cas/digest,work)
  if dest.exists():need(same(p,dest),'CAS collision')
- else:os.link(p,dest)
+ else:
+  if freeze:
+   with p.open('rb')as src,dest.open('xb')as out:shutil.copyfileobj(src,out,1048576)
+  else:os.link(p,dest)
  index[index_key]={'sha256':digest,'bytes':p.stat().st_size}
-def pack(work):
- work=work.resolve(strict=True);e=work/'evidence';need(e.is_dir(),'missing evidence');index={}
+def auxiliary_files(work):
+ result=[]
+ for p in(work/'toolchain').glob('*'):
+  if p.is_file()and not p.is_symlink():result.append(p)
+ source=work/'source'
+ for directory in('target/build-stage0','target/embedded-stdlib-tlci'):
+  for p in(source/directory).rglob('*'):
+   if p.is_file()and not p.is_symlink():result.append(p)
+ for p in(source/'target/bootstrap-fixpoint').rglob('*.s'):
+  if p.is_file()and not p.is_symlink():result.append(p)
+ for name in('ci-verify-stage1.path','ci-verify-stage2.path'):
+  p=source/'target'/name
+  if p.is_file()and not p.is_symlink():result.append(p)
+ return sorted(set(result))
+def capture_auxiliary(work):
+ index={}
+ for p in auxiliary_files(work):cas_add(p,work,str(p.relative_to(work)),index,freeze=True)
+ dump(work/'evidence/bootstrap-content-index.json',index)
+ return index
+
+def pack(work,inject_failure=False):
+ work=work.resolve(strict=True);e=work/'evidence';need(e.is_dir(),'missing evidence');initial=e/'bootstrap-content-index.json';index=json.loads(initial.read_text())if initial.exists()else{}
+ if inject_failure=='before-index':raise Failure('injected index failure')
  for trial in sorted((e/'trials').glob('*')):
   raw=trial/'raw'
   if not raw.exists():continue
   for p in raw.rglob('*'):
    if p.is_file()and not p.is_symlink()and(p.suffix=='.s'or p.relative_to(raw).as_posix()in('opt1/opt1','backend-memory/backend-tests')):
     cas_add(p,work,str(p.relative_to(e)),index)
- for p in(work/'toolchain').glob('*'):
-  if p.is_file()and p.name in('opt2','seed'):cas_add(p,work,'toolchain/'+p.name,index)
- dump(e/'content-index.json',index);archive=owned(work/'evidence.tar.gz',work);need(not archive.exists(),'stale archive')
+ for p in auxiliary_files(work):
+  key=str(p.relative_to(work))
+  if key in index and index[key]['sha256']!=sha(p):key='final/'+key
+  cas_add(p,work,key,index,freeze=True)
+ dump(e/'content-index.json',index);archive=owned(work/'evidence.partial.tar.gz',work);complete=owned(work/'evidence.complete.tar.gz',work);need(not archive.exists()and not complete.exists(),'stale archive')
  with archive.open('xb')as f,gzip.GzipFile(fileobj=f,mode='wb',compresslevel=1)as gz,tarfile.open(fileobj=gz,mode='w|')as tar:
   for p in sorted(e.rglob('*')):
    if not p.is_file()or p.is_symlink():continue
@@ -143,7 +175,19 @@ def pack(work):
    # All raw assemblies and native outputs are retained in CAS; never unlink them.
    if 'raw'in parts and(p.suffix in('.s','.o')or p.name in('opt1','backend-tests')):continue
    tar.add(p,arcname=str(rel),recursive=False)
- dump(e/'archive.json',{'sha256':sha(archive),'bytes':archive.stat().st_size,'logical_content_files':len(index),'unique_blobs':len(list((e/'cas').iterdir()))})
+   if inject_failure:raise Failure('injected archive failure')
+ dump(e/'archive.json',{'complete':True,'sha256':sha(archive),'bytes':archive.stat().st_size,'logical_content_files':len(index),'unique_blobs':len(list((e/'cas').iterdir()))})
+ archive.rename(complete)
+
+def upload_paths(work):
+ complete=work/'evidence.complete.tar.gz';manifest=work/'evidence/archive.json'
+ if complete.is_file()and manifest.is_file()and json.loads(manifest.read_text()).get('complete'):
+  paths=[str(complete),str(work/'evidence/*.json'),str(work/'evidence/pack/**')];kind='complete_archive'
+ else:
+  # Complete raw/CAS fallback also works if CAS/index construction itself failed.
+  paths=[str(work/'evidence/**'),str(work/'toolchain/**'),str(work/'source/target/**')];kind='raw_reconstructible_fallback'
+ dump(work/'evidence/upload-selection.json',{'kind':kind,'paths':paths,'partial_archive_is_not_complete':True})
+ return paths
 
 def fingerprint(source):
  paths=set(git(source,'ls-files','-z','--cached','--others','--exclude-standard','--','src','stdlib','tests').split('\0'));paths.discard('')
@@ -152,6 +196,9 @@ def fingerprint(source):
  for d in('src','stdlib'):
   paths.update(str(p.relative_to(source))for p in(source/d).rglob('*.tl')if 'target'not in p.relative_to(source/d).parts)
  paths.add('tests/integration/wide_struct_literal_decls.tl')
+ for directory in('target/build-stage0','target/embedded-stdlib-tlci'):
+  for p in(source/directory).rglob('*'):
+   if p.is_file():paths.add(str(p.relative_to(source)))
  h=hashlib.sha256()
  for p in sorted(paths):
   f=source/p
@@ -163,6 +210,7 @@ def payload(args):
  out=Path(args[0]);cwd=Path(args[1]);cpus=[int(x)for x in args[2].split(',')];useperf=args[3]=='1';cmd=args[4:];need(cmd and out.is_dir(),'payload args');os.sched_setaffinity(0,set(cpus))
  cg=Path('/proc/self/cgroup').read_text().strip();node=os.getenv('TYPELISP_LINUX_MEMORY_LIMIT_NODE');need(cg.startswith('0::')and node,'missing bounded hierarchy')
  units=re.findall(r'(?:^|/)(run-[^/]+\.service)(?:/|$)',cg[3:]);need(len(units)==1,'no exact enclosing run service')
+ atomic_text(out/'service.unit',units[0]+'\n')
  dump(out/'payload.json',{'pid':os.getpid(),'cgroup':cg[3:],'node':node,'service':units[0],'identity':identity()})
  cpu=[os.getenv('PROBE_TIME_BIN','/usr/bin/time'),'-f','wall_seconds=%e\nuser_seconds=%U\nsystem_seconds=%S','-o',str(out/'cpu.tsv')]
  if useperf:cpu+=['perf','stat','-x','\t','--no-big-num','-e','cycles:u,instructions:u','-o',str(out/'perf.tsv'),'--']
@@ -170,22 +218,31 @@ def payload(args):
 
 class Runner:
  def __init__(self,root,work,job):
-  self.root=root;self.work=work;self.job=job;self.active=None;self.identity=identity();self.deadline=time.monotonic()+max(0,dt(job['started_at'])+140*60-time.time());self.final_deadline=self.deadline+8*60
+  self.root=root;self.work=work;self.job=job;self.active=None;self.proc=None;self.identity=identity();self.deadline=time.monotonic()+max(0,dt(job['started_at'])+140*60-time.time());self.final_deadline=self.deadline+8*60
  def stop(self):
   if self.active is None:return
-  p=self.active/'payload.json'
-  if p.exists():
-   unit=json.loads(p.read_text())['service'];need(re.fullmatch(r'run-[A-Za-z0-9_.-]+\.service',unit)is not None,'invalid unit')
-   subprocess.run(['systemctl','--user','stop',unit],stdout=(self.work/'evidence/stop.log').open('a'),stderr=subprocess.STDOUT,timeout=25)
+  proc=self.proc
+  if proc is None:self.active=None;return
+  # A payload publishes service.unit before any native work. Wait for startup
+  # publication or wrapper exit; do not lose ownership if neither is known.
+  until=time.monotonic()+5
+  receipt=self.active/'service.unit'
+  while proc.poll()is None and not receipt.is_file()and time.monotonic()<until:time.sleep(.05)
+  if proc.poll()is None:
+   need(receipt.is_file(),'cannot stop: exact unit receipt not yet published;ownership retained')
+   unit=receipt.read_text().strip();need(re.fullmatch(r'run-[A-Za-z0-9_.-]+\.service',unit)is not None,'invalid unit')
+   with(self.work/'evidence/stop.log').open('a')as log:subprocess.run(['systemctl','--user','stop',unit],stdout=log,stderr=subprocess.STDOUT,timeout=25,check=True)
+  proc.wait(timeout=30)
+  self.proc=None;self.active=None
  def bounded(self,out,cwd,cmd,limit=6080,ceiling=2700,perf=False,final=False,env_extra=None):
   out.mkdir(parents=True,exist_ok=True);need(not(out/'phase.json').exists(),'repeated phase')
   remaining=(self.final_deadline if final else self.deadline)-time.monotonic();seconds=min(ceiling,int(remaining));need(seconds>0,'budget exhausted before phase')
   env=os.environ.copy();env.pop('BASH_ENV',None);env.update(env_extra or{});env['PROBE_TIME_BIN']='/usr/bin/time';env['LC_ALL']='C';cpus=','.join(str(x)for x in self.identity['affinity'])
   args=['env','-u','BASH_ENV',str(self.root/'scripts/run-memory-bounded.sh'),'--limit-mib',str(limit),'--timeout-seconds',str(seconds),'--report',str(out/'phase.memory'),'--','env','-u','BASH_ENV','bash',str(SCRIPT),'--payload',str(out),str(cwd),cpus,str(int(perf)),*map(str,cmd)]
-  self.active=out;t=time.monotonic();status=None;dump(out/'command.json',{'argv':args,'limit_mib':limit,'timeout_s':seconds})
+  self.active=out;t=time.monotonic();status=None;proc=None;dump(out/'command.json',{'argv':args,'limit_mib':limit,'timeout_s':seconds})
   try:
    with(out/'gate.log').open('w')as log,(out/'telemetry.jsonl').open('w')as trace:
-    proc=subprocess.Popen(args,cwd=cwd,env=env,stdout=log,stderr=subprocess.STDOUT)
+    proc=subprocess.Popen(args,cwd=cwd,env=env,stdout=log,stderr=subprocess.STDOUT);self.proc=proc
     while proc.poll()is None:
      sample={'monotonic_s':time.monotonic(),'load':Path('/proc/loadavg').read_text().strip(),'cpu':Path('/proc/stat').read_text().splitlines()[0],'meminfo':[l for l in Path('/proc/meminfo').read_text().splitlines()if l.startswith(('MemAvailable:','SwapFree:'))]}
      pp=out/'payload.json'
@@ -197,10 +254,15 @@ class Runner:
      trace.write(json.dumps(sample)+'\n');trace.flush()
      if time.monotonic()>t+seconds+20:self.stop()
      time.sleep(.5)
-    status=proc.wait()
+    status=proc.wait();self.proc=None;self.active=None
+  except BaseException:
+   # Monitoring/logging/receipt errors must stop and reap before any archival.
+   try:self.stop()
+   finally:
+    if proc is not None and proc.poll()is not None:status=proc.returncode
+   raise
   finally:
    dump(out/'phase.json',{'exit':status,'wall_s':time.monotonic()-t,'budget_timeout_s':seconds,'limit_mib':limit,'status':'success'if status==0 else'failed_or_interrupted'})
-   self.active=None
   need(status==0,'bounded phase failed '+str(out)+': '+str(status));need(identity()==self.identity,'runner identity/affinity changed')
   report=kv(out/'phase.memory');need(report['reason']=='success'and report['exit_code']=='0'and report['backend']=='systemd-user-cgroup'and 0<int(report['peak_memory_bytes'])<int(report['limit_bytes'])==limit*1048576,'outer resource report invalid')
   pp=json.loads((out/'payload.json').read_text());need(pp['identity']==self.identity,'payload affinity/runner differs')
@@ -208,7 +270,7 @@ class Runner:
 def run_job(root,work):
  need(os.getenv('GITHUB_ACTIONS')=='true'and os.getenv('RUNNER_OS')=='Linux','hosted only');need(os.getenv('GITHUB_BASE_REF')=='t3/issue-7767-build-invariance-critical-path','wrong PR base');need(os.getenv('GITHUB_RUN_ATTEMPT')=='1','no reruns allowed')
  need(work==root/'target/issue7767-final-abba','unexpected scratch path');(root/'target').mkdir(exist_ok=True);need((root/'target').resolve()==root/'target','outer target escapes checkout');need(not work.exists(),'scratch not fresh');work.mkdir();e=work/'evidence';(e/'trials').mkdir(parents=True);(work/'toolchain').mkdir();dump(e/'status.json',{'status':'setup','trials':{n:'not_started'for n,_ in ORDER}})
- need(git(root,'rev-parse','HEAD')==os.environ['PROBE_EXPECTED_HEAD'],'diagnostic head mismatch');need(git(root,'rev-parse','HEAD^')=='0216b73b00e440c74663af1c1017127f4cf8db13','wrong diagnostic parent');need(len(os.sched_getaffinity(0))==4,'expected4CPU allocation')
+ need(git(root,'rev-parse','HEAD')==os.environ['PROBE_EXPECTED_HEAD'],'diagnostic head mismatch');need(git(root,'merge-base','HEAD','0216b73b00e440c74663af1c1017127f4cf8db13')=='0216b73b00e440c74663af1c1017127f4cf8db13','wrong diagnostic base');need(git(root,'diff','--name-only','0216b73b00e440c74663af1c1017127f4cf8db13','HEAD').splitlines()==['.github/workflows/issue7767-final-abba.yml','scripts/probe-build-invariance-final-abba.sh'],'unexpected diagnostic diff');need(len(os.sched_getaffinity(0))==4,'expected4CPU allocation')
  need(Path('/usr/bin/time').is_file(),'GNU Time missing');need(command(['/usr/bin/time','--version']).startswith('time (GNU Time)'),'unsupported time tool')
  need(git(root,'diff','--name-only',A,B).splitlines()==DIFF,'unexpected experiment diff')
  for ref in(A,B):need(git(root,'rev-parse',ref+'^{tree}')==TREES[ref],'tree mismatch')
@@ -217,7 +279,11 @@ def run_job(root,work):
  dump(e/'environment.json',{'identity':identity(),'uname':command(['uname','-a']),'lscpu':command(['lscpu']),'as':command(['as','--version']),'ld':command(['ld','--version']),'time':command(['/usr/bin/time','--version']),'disk':shutil.disk_usage(work)._asdict(),'meminfo':Path('/proc/meminfo').read_text(),'perf_paranoid':Path('/proc/sys/kernel/perf_event_paranoid').read_text(),'scope':'complete Linux build-invariance only;not outergraph/Windows/SDEexecution or terminal milestone'})
  runner=Runner(root,work,job);state={'status':'setup','trials':{n:'not_started'for n,_ in ORDER}};source=work/'source';current=None;packed=False
  def interrupted(sig,frame):
-  runner.stop();raise Failure('signal '+str(sig))
+  for value in(signal.SIGTERM,signal.SIGINT,signal.SIGHUP):signal.signal(value,signal.SIG_IGN)
+  try:runner.stop()
+  finally:
+   for value in(signal.SIGTERM,signal.SIGINT,signal.SIGHUP):signal.signal(value,interrupted)
+  raise Failure('signal '+str(sig))
  for sig in(signal.SIGTERM,signal.SIGINT,signal.SIGHUP):signal.signal(sig,interrupted)
  try:
   git(root,'worktree','add','--detach',str(source),A);need(source.resolve()==source,'source symlink');(source/'target').mkdir(exist_ok=True);need((source/'target').resolve()==source/'target','target symlink')
@@ -229,13 +295,13 @@ def run_job(root,work):
   dump(e/'compiler.json',{'source_commit':A,'sha256':commonsha,'identity':command([common,'--producer-identity']),'path':str(common),'seed_sha256':SEED_SHA});need(command([common,'--producer-identity'])==A,'common compiler stamp')
   # Generate the ignored input before establishing the common input fingerprint.
   with(source/'tests/integration/wide_struct_literal_decls.tl').open('w')as f:subprocess.run(['awk','-f','tests/integration/wide_struct_literal_decls.awk'],cwd=source,stdout=f,check=True)
-  initial=fingerprint(source);dump(e/'inputs.json',{'common_digest':initial,'manifest_sha256':sha(source/'tests/integration/native.manifest')})
+  auxiliary=capture_auxiliary(work);initial=fingerprint(source);dump(e/'inputs.json',{'common_digest':initial,'manifest_sha256':sha(source/'tests/integration/native.manifest'),'generated_and_bootstrap_inputs':auxiliary})
   perf=False;counter=e/'counter-check';counter.mkdir()
   if shutil.which('perf'):
    runner.bounded(counter,source,['bash',str(SCRIPT),'--counter-check',str(counter)],limit=256,ceiling=15)
    events=list(csv.reader((counter/'events.tsv').open(),delimiter='\t'));valid=[x for x in events if len(x)>=5 and x[2]in('cycles:u','instructions:u')and re.fullmatch(r'[0-9]+(?:\.[0-9]+)?',x[0]or'')and float(x[0])>0 and float(x[4]or 0)>=90];perf=len(valid)==2 and (counter/'counter-exit.txt').read_text().strip()=='0'
   else:(counter/'unavailable.txt').write_text('perf executable unavailable\n')
-  dump(e/'counters.json',{'available':perf,'scope':'user-only whole gate descendants inside aggregate bounded node,including wrapper/samplers;unavailable is missing not zero'})
+  dump(e/'counters.json',{'available':perf,'scope':'user-only native gate payload and descendants,including nested wrappers/samplers;excludes outer aggregate sampler/coordinator;unavailable is missing not zero'})
   for name,ref in ORDER:
    current=e/'trials'/name;current.mkdir();state['status']='running';state['trials'][name]='running';dump(e/'status.json',state)
    git(source,'switch','--detach',ref);need(git(source,'rev-parse','HEAD')==ref and git(source,'rev-parse','HEAD^{tree}')==TREES[ref],'phase checkout mismatch');need(not git(source,'status','--porcelain','--untracked-files=no'),'dirty tracked inputs')
@@ -255,6 +321,7 @@ def run_job(root,work):
   dump(e/'status.json',state);print('[D-C21] FAILED/INCOMPLETE',repr(ex),flush=True)
   runner.stop()
  finally:
+  need(runner.active is None and runner.proc is None,'ownership unresolved;do not rename or archive a live payload')
   # Preserve even incomplete outputs before packaging; no cleanup/deletion.
   if current is not None:
    for src,dst in[(source/'target/build-invariance',current/'raw'),(source/'target/opt1-reference.path',current/'handoff.path')]:
@@ -311,6 +378,51 @@ def mock_trial(trial,source,variant):
  with(trial/'timing.tsv').open('w')as f:w=csv.writer(f,delimiter='\t',lineterminator='\n');w.writerow(['gate','case_or_chunk','phase','elapsed_ms','exit','host']);w.writerows(timing)
  (trial/'gate.log').write_text('\n'.join('[build-invariance] '+p+' standalone sentinel integration_'+n+' opt2'for p in('opt1-built','opt2-built')for n in('aggregate_globals','sym_i64_env'))+'\n');(trial/'handoff.path').write_text(str(original/'compare/opt2-built/selfhost_main_opt1.s')+'\n')
  if variant=='B':(raw/'provenance.txt').write_text('logical_cases=5\npool_workers=2\n')
+def test_monitor_ownership(work,source):
+ import unittest.mock as mock
+ out=work/'monitor-receipt-failure';stops=[];instances=[]
+ class MockProcess:
+  def __init__(self,*args,**kwargs):
+   self.alive=True;self.returncode=None;self.waited=False;instances.append(self)
+   atomic_text(out/'service.unit','run-fixture.service\n')
+   (out/'payload.json').write_text('{partial publication')
+  def poll(self):return None if self.alive else self.returncode
+  def wait(self,timeout=None):
+   need(not self.alive,'wrapper reaped before exact service stop');self.waited=True;return self.returncode
+ def stop_command(argv,**kwargs):
+  need(argv==['systemctl','--user','stop','run-fixture.service'],'wrong unit stopped');stops.append(argv);instances[0].alive=False;instances[0].returncode=-15
+  return subprocess.CompletedProcess(argv,0)
+ runner=Runner(SCRIPT.parent.parent,work,{'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+ with mock.patch.object(subprocess,'Popen',MockProcess),mock.patch.object(subprocess,'run',stop_command):
+  try:runner.bounded(out,source,['unused-fixture-command'],limit=32,ceiling=10)
+  except json.JSONDecodeError:pass
+  else:raise Failure('partial receipt did not exercise monitor exception')
+ need(len(stops)==1 and instances[0].waited and not instances[0].alive and runner.active is None and runner.proc is None,'monitor lost service ownership')
+
+def test_input_and_fallback(work,source,parent):
+ import unittest.mock as mock
+ (source/'src').mkdir(exist_ok=True);(source/'stdlib').mkdir(exist_ok=True);(source/'src/main.tl').write_text('source fixture')
+ image=source/'target/embedded-stdlib-tlci/stdlib.tlci';image.parent.mkdir(parents=True);image.write_bytes(b'image-original')
+ (image.parent/'stdlib.tlci.tlch').write_bytes(b'envelope');stamp=source/'target/build-stage0/git-hash.txt';stamp.parent.mkdir();stamp.write_text(A)
+ asm=source/'target/bootstrap-fixpoint/stage2.s';asm.parent.mkdir();asm.write_bytes(b'bootstrap-assembly')
+ (work/'toolchain/typelisp-stage0-linux').write_bytes(b'seed-fixture');(work/'toolchain/SHA256SUMS').write_text('fixture-manifest')
+ frozen=capture_auxiliary(work)
+ with mock.patch.dict(globals(),{'git':lambda *args:'src/main.tl\0tests/integration/native.manifest'}):
+  before=fingerprint(source);image.write_bytes(b'image-mutated');need(fingerprint(source)!=before,'generated image mutation not fingerprinted')
+ old=frozen['source/target/embedded-stdlib-tlci/stdlib.tlci'];need((work/'evidence/cas'/old['sha256']).read_bytes()==b'image-original','frozen image bytes changed through source mutation')
+ for failure in('before-index','during-archive'):
+  fresh=Path(tempfile.mkdtemp(prefix='archive-failure.',dir=parent)).resolve();shutil.copytree(work/'evidence/trials',fresh/'evidence/trials');shutil.copytree(work/'source',fresh/'source');shutil.copytree(work/'toolchain',fresh/'toolchain')
+  try:pack(fresh,inject_failure=failure)
+  except Failure:pass
+  else:raise Failure('archive fault injection failed')
+  need(not(fresh/'evidence.complete.tar.gz').exists(),'partial archive labelled complete')
+  paths=upload_paths(fresh);need(paths==[str(fresh/'evidence/**'),str(fresh/'toolchain/**'),str(fresh/'source/target/**')],'incomplete fallback selection')
+  for trial in(fresh/'evidence/trials').iterdir():
+   inv=json.loads((trial/'audit.json').read_text())['output_inventory']
+   for rel,v in inv.items():need(sha(trial/'raw'/rel)==v['sha256'],'raw fallback failed reconstruction')
+  need((fresh/'toolchain/SHA256SUMS').is_file()and(fresh/'source/target/embedded-stdlib-tlci/stdlib.tlci').is_file()and(fresh/'source/target/bootstrap-fixpoint/stage2.s').is_file(),'auxiliary fallback incomplete')
+ return frozen
+
 def selftest(parent):
  parent.mkdir(parents=True,exist_ok=True);w=Path(tempfile.mkdtemp(prefix='mock-final-abba.',dir=parent)).resolve();source=w/'source';(source/'tests/integration').mkdir(parents=True);(source/'tests/integration/native.manifest').write_text('aggregate_globals|all|-|tests/integration/agg.tl|0|-|-|-|-\nsym_i64_env|all|-|tests/integration/sym_i64_env.tl|0|-|-|-|-\naggregate_alias|all|-|tests/integration/agg.tl|0|-|-|-|-\n');(w/'evidence/trials').mkdir(parents=True);(w/'toolchain').mkdir()
  for name,ref in ORDER:
@@ -326,22 +438,27 @@ def selftest(parent):
   try:audit(t,source,'B',w/'evidence/trials/A1',True)
   except Failure:pass
   else:raise Failure('negative fixture accepted '+defect)
+ test_monitor_ownership(w,source)
+ test_input_and_fallback(w,source,parent)
  pack(w)
- with tarfile.open(w/'evidence.tar.gz','r:gz')as tar:
+ need(upload_paths(w)[0]==str(w/'evidence.complete.tar.gz'),'completed archive selection')
+ with tarfile.open(w/'evidence.complete.tar.gz','r:gz')as tar:
   idx=json.load(tar.extractfile('content-index.json'))
+  need({'toolchain/typelisp-stage0-linux','toolchain/SHA256SUMS','source/target/bootstrap-fixpoint/stage2.s','source/target/embedded-stdlib-tlci/stdlib.tlci','source/target/build-stage0/git-hash.txt'}<=set(idx),'archive auxiliary identities missing')
   for v in idx.values():need(hashlib.sha256(tar.extractfile('cas/'+v['sha256']).read()).hexdigest()==v['sha256'],'CAS reconstruction')
  expired=Runner(SCRIPT.parent.parent,w,{'started_at':'2000-01-01T00:00:00Z'})
  try:expired.bounded(w/'expired-budget',source,['false'])
  except Failure as ex:need('budget exhausted' in str(ex),'wrong budget failure')
  else:raise Failure('expired budget launched a command')
  need(not(w/'expired-budget/phase.memory').exists(),'expired budget entered wrapper')
- print('SELFTEST PASS all4 mock trials,5 negative fixtures,complete CAS,expired-budget rejection;no timing evidence',w)
+ print('SELFTEST PASS all4 mock trials,5 negative fixtures,complete CAS,ownership/error-stop,generated-input mutation,archive-failure fallback,expired-budget rejection;no timing evidence',w)
 
 try:
  mode=ARGS[0]if ARGS else''
  if mode=='--payload':payload(ARGS[1:])
  elif mode=='--pack':pack(Path(ARGS[1]))
  elif mode=='--counter-check':counter_check(Path(ARGS[1]))
+ elif mode=='--upload-paths':print('\n'.join(upload_paths(Path(ARGS[1]))))
  elif mode=='--audit':audit(Path(ARGS[1]),Path(ARGS[2]),ARGS[3],None if ARGS[4]=='-'else Path(ARGS[4]))
  elif mode=='--self-test':selftest(Path(ARGS[1]).resolve())
  elif mode=='--run':run_job(Path(ARGS[1]).resolve(strict=True),Path(ARGS[2]).absolute())

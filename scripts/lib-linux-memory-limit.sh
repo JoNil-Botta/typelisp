@@ -55,7 +55,7 @@ _linux_memory_limit_node_program='echo "$2" > "$1/memory.max" &&
     echo +memory > "$1/cgroup.subtree_control" &&
     mkdir "$1/$4"'
 
-# The main process of a top-level direct unit, started in its
+# The workload launcher of a top-level direct unit, started in its
 # DelegateSubgroup=launch leaf: build the workload node, move into its
 # tlmem-run leaf and exec the command. Arguments: the node program, the limit
 # in bytes, then the command. Nothing has run if it exits 2 with a diagnostic.
@@ -108,7 +108,9 @@ _tlmem_status=0
 # POSIX asynchronous lists may replace fd 0 with /dev/null before applying
 # their redirections (dash does). Save stdin before starting that list.
 exec 3<&0
-"$@" <&3 3<&- &
+# An asynchronous list also ignores INT/QUIT. Reset those in the subshell
+# before exec, while it can still change dispositions inherited by the shell.
+(trap - INT QUIT; exec "$@") <&3 3<&- &
 _tlmem_child=$!
 wait "$_tlmem_child" || _tlmem_status=$?
 printf "tlmem-terminal-v1 %s %s\n" "$_tlmem_owner" "$_tlmem_status" > "$_tlmem_terminal" || exit 2

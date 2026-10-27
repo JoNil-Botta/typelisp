@@ -353,6 +353,9 @@ OOM evidence (137) and timeouts (124) keep their established precedence. Nested
 calls use ordinary child waits inside their enclosing cap. Terminal records are
 fresh per invocation, passed to the waiter through arguments rather than the
 workload's environment, and removed with that invocation's stderr/peak scratch.
+Direct calls without metrics now also retain stop-post OOM evidence and replay
+their captured stderr after the launcher returns. A known OOM returns 137;
+systemd's generic failure status alone does not identify an OOM.
 
 `verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
 including the root opt0 build, at 8192 MiB and writes

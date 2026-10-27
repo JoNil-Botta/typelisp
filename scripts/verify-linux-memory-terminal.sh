@@ -181,11 +181,13 @@ linux_memory_limit_systemd_available || {
 # Real bounded invocations: forward normal statuses/signals, then stop only the
 # service published by this invocation's own workload and confirmed live PID.
 for route in library-none library-metrics wrapper-none wrapper-metrics; do
-    for operation in valid stdin exit-2 exit-7 term kill timeout oom stop; do
-        # The new waiter must preserve direct callers' stdin. The sampled
-        # wrapper has separate pre-existing dash stdin behavior (#9359); its sampler
-        # is covered here for terminal/status ownership, not that stdin bug.
-        if [ "$operation" = stdin ] && [ "${route%%-*}" = wrapper ]; then continue; fi
+    for operation in valid stdin int quit exit-2 exit-7 term kill timeout oom stop; do
+        # The new waiter must preserve direct callers' stdin and INT/QUIT.
+        # The sampled wrapper has pre-existing behavior at its own background
+        # launch (#9359); its terminal/status coverage here stays independent.
+        case $operation in
+            stdin | int | quit) [ "${route%%-*}" != wrapper ] || continue ;;
+        esac
         TERMINAL_CASE="$WORKDIR/real-$route-$operation"
         mkdir -p "$TERMINAL_CASE/tmp"
         (
@@ -215,6 +217,8 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
                 case $1 in
                     valid) exit 0 ;;
                     stdin) read -r input; [ "$input" = stdin-marker ] ;;
+                    int) trap "exit 7" INT; kill -INT "$$"; exit 93 ;;
+                    quit) trap "exit 7" QUIT; kill -QUIT "$$"; exit 93 ;;
                     exit-2) exit 2 ;;
                     exit-7) exit 7 ;;
                     term) kill -TERM "$$" ;;
@@ -234,7 +238,7 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
         expected=0
         case $operation in
             exit-2) expected=2 ;;
-            exit-7) expected=7 ;;
+            exit-7 | int | quit) expected=7 ;;
             term) expected=143 ;;
             kill | oom) expected=137 ;;
             timeout) expected=124 ;;
@@ -263,4 +267,4 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
         assert_case
     done
 done
-echo '[linux-memory-limit] 34 real status/stdin/signal/OOM/timeout/owned-unit-stop fixtures passed'
+echo '[linux-memory-limit] 38 real status/stdin/signal/OOM/timeout/owned-unit-stop fixtures passed'

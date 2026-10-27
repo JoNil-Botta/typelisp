@@ -17,6 +17,37 @@ for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/f
     cmp "$work/checkout.actual" "$work/checkout.expected" || fail "Windows checkout changed line endings: $path"
 done
 
+# Audit tracked literal inputs inside owning scripts, independently of the
+# reviewed map. Synthetic self-test modes do not consume the real corpus.
+git ls-files tests stdlib docs src/tests > "$work/tracked-inputs"
+awk '{path=$0; while (sub(/\/[^/]*$/, "", path)) print path}' "$work/tracked-inputs" | sort -u > "$work/tracked-directories"
+awk -F '\t' '
+    !/^#/ && $1 != "id" {
+        command = $8
+        while (match(command, /scripts\/[A-Za-z0-9_.-]+\.sh/)) {
+            script = substr(command, RSTART, RLENGTH)
+            command = substr(command, RSTART + RLENGTH)
+            if (script == "scripts/verify-integration.sh" && $1 != "stage2-native-integration-corpus") continue
+            if (script == "scripts/verify-cross-mode-differential.sh" && $1 != "stage2-cross-mode-semantic-abi-differential") continue
+            print $1 "\t" script
+        }
+    }
+    END {
+        print "stage2-compile-profile-verifier\tscripts/verify-compile-profile.sh"
+        print "stage2-opt1-opt2-build-invariance\tscripts/check-build-invariance.sh"
+    }
+' "$ROOT/scripts/ci-gates.tsv" > "$work/owning-scripts.tsv"
+awk -F '\t' '{
+    while ((getline line < $2) > 0) {
+        while (match(line, /(src\/tests|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]+/)) {
+            print substr(line, RSTART, RLENGTH) "\t" $1
+            line = substr(line, RSTART + RLENGTH)
+        }
+    }
+    close($2)
+}' "$work/owning-scripts.tsv" | sort -u > "$work/script-inputs.tsv"
+awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$ROOT/src/compile_manifest.txt" >> "$work/script-inputs.tsv"
+
 for host in linux windows; do
     "$ROOT/scripts/ci-verify.sh" --list-gates "$host" > "$work/$host.table"
     sed '1d' "$work/$host.table" | cut -f 1 > "$work/$host.full"
@@ -74,7 +105,25 @@ for host in linux windows; do
         "$selector" --host "$host" --paths "$work/paths" > "$work/literal.ids"
         has_gate "$work/literal.ids" "$gate"
     done < "$work/literal-inputs.tsv"
-    for row in 'tests/codegen/native-link.cases stage2-native-link-generated-programs' 'tests/codegen/integration-fixtures.cases stage2-native-integration-corpus' 'tests/cli/host-action.cases stage2-cli-host-action-smoke' 'tests/golden/optimizer_fold.after-fold.ir ir-observability-golden' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+    while IFS=$TAB read -r path gate; do
+        if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
+        path=${path%/}
+        if ! grep -Fx "$path" "$work/tracked-inputs" >/dev/null; then
+            if ! grep -Fx "$path" "$work/tracked-directories" >/dev/null; then continue; fi
+            case "$path:$gate" in
+                stdlib/tests:stage0-size-ratchet | stdlib/tests:stage2-arena-sanitizer-selfhost | stdlib/tests:stage2-stdlib-documentation) continue ;; # Excluded fixture trees.
+                tests/integration:ir-observability-golden | tests/integration:stage2-compile-profile-verifier | tests/integration:compiler-arena-debug-native-matrix | tests/integration:stage2-safety-corpus) continue ;; # Search roots/constructed lists: exact fixtures checked below.
+                tests/integration:stage2-inline-typelisp-tests) continue ;; # Broad source-suite discovery is advisory; focused tests remain owner-selected.
+                tests/safety:stage2-native-integration-corpus) continue ;; # Existence-only catalog for manifest dependency validation, not a content consumer.
+            esac
+            path="$path/__ci_affected_directory_probe__.tl"
+        fi
+        printf '%s\n' "$path" > "$work/paths"
+        "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
+        has_gate "$work/direct-reader.ids" "$gate"
+    done < "$work/script-inputs.tsv"
+    # Constructed script inputs and the reported independent source guards.
+    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi

@@ -1496,6 +1496,9 @@ not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
 in fn _tl_tail_call_frame_provenance_local_lst_reborrow
 match ^[[:space:]]+call _tl_tail_call_frame_provenance_lst_len$
 not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_lst_len$
+in fn _tl_tail_call_frame_provenance_scalar_copy
+match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 in fn _tl_tail_call_frame_provenance_shadowed_ref
 match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
 not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
@@ -1529,9 +1532,12 @@ not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
 in fn _tl_tail_call_frame_provenance_heap_slice
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_slice$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_slice$
-in fn _tl_tail_call_frame_provenance_scalar_copy
-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
-not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
+in fn _tl_tail_call_frame_provenance_handle_borrow
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_handle$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_handle$
+in fn _tl_tail_call_frame_provenance_string_borrow
+match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_str$
+not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_str$
 in fn _tl_tail_call_frame_provenance_heap_projected_field
 match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 not-match ^[[:space:]]+call _tl_tail_call_frame_provenance_scrub_ref$
@@ -1544,6 +1550,15 @@ not-match ^[[:space:]]+jmp _tl_tail_call_frame_provenance_scrub_ref$
 in fn _tl_tail_call_frame_provenance_local_indirect_field
 match ^[[:space:]]+call \*
 not-match ^[[:space:]]+jmp \*
+
+# A shared borrow of a scalar or register-resident local copies it into a
+# frame slot of the borrowing function, never into the current arena (#9297).
+case borrow-local-no-alloc
+source tests/integration/borrow_local_frame_storage.tl
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+in fn _tl_borrow_local_frame_storage_case_no_alloc
+not-match call[[:space:]]+.*tl_alloc
 
 # A self tail call in an arm of a match on a borrowed enum place jumps (#9044):
 # an element through a reference parameter, a field through one, and a two-word

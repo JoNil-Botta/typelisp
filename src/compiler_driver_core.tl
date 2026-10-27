@@ -2562,88 +2562,82 @@
         representations
         (CompilerDriverOutputRoute.ObjectImage))
         [(Program optimized optimized-spans)
-          (begin
-            (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (begin
-                (compiler-driver-release-lowered-ir! opt-level lower-state)
-                (Err
-                  (box
-                    (compiler-driver-ty-node-pool-exhausted-diagnostic
-                      input-path))
-                  (compiler-driver-advisories-for-job typecheck-state)))
-              (begin
-                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
-                  backend-state
-                  (>= opt-level 2))
-                (match (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
-                  backend-state
-                  pools
-                  (owned_view.compiler-owned-shared-view optimized)
-                  (if has-target
-                    target
-                    (Linux))
-                  profile-state)
-                  [(Unsupported category)
-                    ;; Preserve the original lowered program for the caller's
-                    ;; assembly fallback. At optimized levels the release must
-                    ;; happen only after object eligibility is established.
-                    (Unavailable
-                      category
-                      (compiler-driver-advisories-for-job typecheck-state))]
-                  [(Eligible)
-                    (begin
-                      (compiler-driver-release-lowered-ir!
-                        opt-level
-                        lower-state)
-                      (cfg
-                        compile-profile
-                        (compiler-driver-profile-start-phase profile-state))
-                      (match (if has-target
-                        (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                          backend-state
-                          pools
-                          optimized
-                          target
-                          mode
-                          optimized-spans
-                          emit-entry
-                          crt-entry
-                          profile-state)
-                        (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                          backend-state
-                          pools
-                          optimized
-                          (Linux)
-                          mode
-                          optimized-spans
-                          emit-entry
-                          crt-entry
-                          profile-state))
-                        [(Ok image)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-driver-profile-finish-phase
-                                profile-state
-                                "backend"))
-                            (Ok
-                              image
-                              (compiler-driver-advisories-for-job
-                                typecheck-state)))]
-                        [(Err diag)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-driver-profile-finish-phase
-                                profile-state
-                                "backend"))
-                            (Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                  (deref diag)
-                                  input-path))
-                              (compiler-driver-advisories-for-job
-                                typecheck-state)))]))]))))]))))
+          (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
+            (begin
+              (compiler-driver-release-lowered-ir! opt-level lower-state)
+              (Err
+                (box
+                  (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+                (compiler-driver-advisories-for-job typecheck-state)))
+            (begin
+              (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                backend-state
+                (>= opt-level 2))
+              (match (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+                backend-state
+                pools
+                (owned_view.compiler-owned-shared-view optimized)
+                (if has-target
+                  target
+                  (Linux))
+                profile-state)
+                [(Unsupported category)
+                  ;; Preserve the original lowered program for the caller's
+                  ;; assembly fallback. At optimized levels the release must
+                  ;; happen only after object eligibility is established.
+                  (Unavailable
+                    category
+                    (compiler-driver-advisories-for-job typecheck-state))]
+                [(Eligible)
+                  (begin
+                    (compiler-driver-release-lowered-ir! opt-level lower-state)
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-start-phase profile-state))
+                    (match (if has-target
+                      (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                        backend-state
+                        pools
+                        optimized
+                        target
+                        mode
+                        optimized-spans
+                        emit-entry
+                        crt-entry
+                        profile-state)
+                      (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                        backend-state
+                        pools
+                        optimized
+                        (Linux)
+                        mode
+                        optimized-spans
+                        emit-entry
+                        crt-entry
+                        profile-state))
+                      [(Ok image)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase
+                              profile-state
+                              "backend"))
+                          (Ok
+                            image
+                            (compiler-driver-advisories-for-job typecheck-state)))]
+                      [(Err diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase
+                              profile-state
+                              "backend"))
+                          (Err
+                            (box
+                              (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                (deref diag)
+                                input-path))
+                            (compiler-driver-advisories-for-job typecheck-state)))]))])))]))))
 
 (define (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt-and-profile-state
   [pools : compiler_ast_types.AstNodePoolContext]
@@ -2720,168 +2714,159 @@
         representations
         (CompilerDriverOutputRoute.PackageRuntime))
         [(Program optimized optimized-spans)
-          (begin
-            (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (begin
-                (compiler-driver-release-lowered-ir! opt-level lower-state)
-                (Err
-                  (box
-                    (compiler-driver-ty-node-pool-exhausted-diagnostic
-                      input-path))
-                  (compiler-driver-advisories-for-job typecheck-state)))
-              (begin
-                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
-                  backend-state
-                  (>= opt-level 2))
-                (match (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
-                  backend-state
-                  pools
-                  (owned_view.compiler-owned-shared-view optimized)
-                  target
-                  profile-state)
-                  [(Unsupported category)
-                    (begin
-                      (compiler-driver-release-lowered-ir!
-                        opt-level
-                        lower-state)
-                      (cfg
-                        compile-profile
-                        (compiler-driver-profile-start-phase profile-state))
-                      (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                        backend-state
-                        pools
-                        optimized
-                        target
-                        mode
-                        optimized-spans
-                        emit-entry
-                        crt-entry
-                        profile-state)
-                        [(Ok asm)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-driver-profile-finish-phase
-                                profile-state
-                                "backend"))
-                            (Assembly
-                              asm
-                              category
-                              (compiler-driver-advisories-for-job
-                                typecheck-state)))]
-                        [(Err diag)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-driver-profile-finish-phase
-                                profile-state
-                                "backend"))
-                            (Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                  (deref diag)
-                                  input-path))
-                              (compiler-driver-advisories-for-job
-                                typecheck-state)))]))]
-                  [(Eligible)
-                    (begin
-                      (compiler-driver-release-lowered-ir!
-                        opt-level
-                        lower-state)
-                      (cfg
-                        compile-profile
-                        (compiler-driver-profile-start-phase profile-state))
-                      (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                        backend-state
-                        pools
-                        (owned_view.compiler-owned-shared-view optimized)
-                        target
-                        mode
-                        (owned_view.compiler-owned-shared-view optimized-spans)
-                        emit-entry
-                        crt-entry
-                        profile-state)
-                        [(Ok image)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-driver-profile-finish-phase
-                                profile-state
-                                "backend.object-image"))
-                            (let
-                              [side-backend-state : compiler_backend.CompilerBackendState
-                                (compiler_backend.compiler-backend-state-new-with-metrics
-                                  (ci.intern-compat-state-capture-active)
-                                  (profile_state.compiler-profile-state-metrics
-                                    profile-state))]
-                              (begin
-                                (compiler_backend.compiler-backend-state-set-advisory-sink!
-                                  side-backend-state
-                                  (compiler_typecheck_core.tc-job-state-advisory-sink
-                                    typecheck-state))
-                                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
-                                  side-backend-state
-                                  (>= opt-level 2))
-                                (cfg
-                                  compile-profile
-                                  (compiler-driver-profile-start-phase
-                                    profile-state))
-                                (let
-                                  [side-result : compiler_backend.ResultCompilerBackend
-                                    (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
-                                      side-backend-state
-                                      pools
-                                      optimized
-                                      target
-                                      mode
-                                      optimized-spans
-                                      emit-entry
-                                      crt-entry
-                                      profile-state)]
-                                  [_release-side-state : unit
-                                    (compiler_backend.compiler-backend-state-release-final-arenas!
-                                      side-backend-state)]
-                                  (match side-result
-                                    [(Ok asm)
-                                      (begin
-                                        (cfg
-                                          compile-profile
-                                          (compiler-driver-profile-finish-phase
-                                            profile-state
-                                            "backend.side-assembly"))
-                                        (Object
-                                          image
-                                          asm
-                                          (compiler-driver-advisories-for-job
-                                            typecheck-state)))]
-                                    [(Err diag)
-                                      (begin
-                                        (cfg
-                                          compile-profile
-                                          (compiler-driver-profile-finish-phase
-                                            profile-state
-                                            "backend.side-assembly"))
-                                        (Err
-                                          (box
-                                            (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                              (deref diag)
-                                              input-path))
-                                          (compiler-driver-advisories-for-job
-                                            typecheck-state)))])))))]
-                        [(Err diag)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-driver-profile-finish-phase
-                                profile-state
-                                "backend"))
-                            (Err
-                              (box
-                                (compiler_diagnostic.compiler-diagnostic-with-fallback-path
-                                  (deref diag)
-                                  input-path))
-                              (compiler-driver-advisories-for-job
-                                typecheck-state)))]))]))))]))))
+          (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
+            (begin
+              (compiler-driver-release-lowered-ir! opt-level lower-state)
+              (Err
+                (box
+                  (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
+                (compiler-driver-advisories-for-job typecheck-state)))
+            (begin
+              (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                backend-state
+                (>= opt-level 2))
+              (match (compiler_backend.compiler-backend-object-program-eligibility-with-pools-and-profile-state
+                backend-state
+                pools
+                (owned_view.compiler-owned-shared-view optimized)
+                target
+                profile-state)
+                [(Unsupported category)
+                  (begin
+                    (compiler-driver-release-lowered-ir! opt-level lower-state)
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-start-phase profile-state))
+                    (match (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                      backend-state
+                      pools
+                      optimized
+                      target
+                      mode
+                      optimized-spans
+                      emit-entry
+                      crt-entry
+                      profile-state)
+                      [(Ok asm)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase
+                              profile-state
+                              "backend"))
+                          (Assembly
+                            asm
+                            category
+                            (compiler-driver-advisories-for-job typecheck-state)))]
+                      [(Err diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase
+                              profile-state
+                              "backend"))
+                          (Err
+                            (box
+                              (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                (deref diag)
+                                input-path))
+                            (compiler-driver-advisories-for-job typecheck-state)))]))]
+                [(Eligible)
+                  (begin
+                    (compiler-driver-release-lowered-ir! opt-level lower-state)
+                    (cfg
+                      compile-profile
+                      (compiler-driver-profile-start-phase profile-state))
+                    (match (compiler_backend.compiler-backend-emit-program-object-image-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                      backend-state
+                      pools
+                      (owned_view.compiler-owned-shared-view optimized)
+                      target
+                      mode
+                      (owned_view.compiler-owned-shared-view optimized-spans)
+                      emit-entry
+                      crt-entry
+                      profile-state)
+                      [(Ok image)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase
+                              profile-state
+                              "backend.object-image"))
+                          (let
+                            [side-backend-state : compiler_backend.CompilerBackendState
+                              (compiler_backend.compiler-backend-state-new-with-metrics
+                                (ci.intern-compat-state-capture-active)
+                                (profile_state.compiler-profile-state-metrics
+                                  profile-state))]
+                            (begin
+                              (compiler_backend.compiler-backend-state-set-advisory-sink!
+                                side-backend-state
+                                (compiler_typecheck_core.tc-job-state-advisory-sink
+                                  typecheck-state))
+                              (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
+                                side-backend-state
+                                (>= opt-level 2))
+                              (cfg
+                                compile-profile
+                                (compiler-driver-profile-start-phase
+                                  profile-state))
+                              (let
+                                [side-result : compiler_backend.ResultCompilerBackend
+                                  (compiler_backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+                                    side-backend-state
+                                    pools
+                                    optimized
+                                    target
+                                    mode
+                                    optimized-spans
+                                    emit-entry
+                                    crt-entry
+                                    profile-state)]
+                                [_release-side-state : unit
+                                  (compiler_backend.compiler-backend-state-release-final-arenas!
+                                    side-backend-state)]
+                                (match side-result
+                                  [(Ok asm)
+                                    (begin
+                                      (cfg
+                                        compile-profile
+                                        (compiler-driver-profile-finish-phase
+                                          profile-state
+                                          "backend.side-assembly"))
+                                      (Object
+                                        image
+                                        asm
+                                        (compiler-driver-advisories-for-job
+                                          typecheck-state)))]
+                                  [(Err diag)
+                                    (begin
+                                      (cfg
+                                        compile-profile
+                                        (compiler-driver-profile-finish-phase
+                                          profile-state
+                                          "backend.side-assembly"))
+                                      (Err
+                                        (box
+                                          (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                            (deref diag)
+                                            input-path))
+                                        (compiler-driver-advisories-for-job
+                                          typecheck-state)))])))))]
+                      [(Err diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-driver-profile-finish-phase
+                              profile-state
+                              "backend"))
+                          (Err
+                            (box
+                              (compiler_diagnostic.compiler-diagnostic-with-fallback-path
+                                (deref diag)
+                                input-path))
+                            (compiler-driver-advisories-for-job typecheck-state)))]))])))]))))
 
 ;; Serial/test compatibility adapters. Driver-owned compile paths carry the
 ;; state from ResultCompilerDriverLowered into the explicit variants above.

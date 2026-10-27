@@ -69,7 +69,7 @@
 (define (compiler-backend-object-tlci-macro-entry-bytes) : String
   (compiler-backend-object-registered-bytes
     (x64_template.CompilerX64ExecutableTemplateId.WindowsObjectTlciMacroBytes)
-    "56574883ec284889c84889d14c89c24d89c84c8b4c2460488b742468488b7c2470ffd04883c4285f5ec3"))
+    "4883ec384889c84889d14c89c24d89c84c8b4c24604c8b5424684c8b5c24704c895424204c895c2428ffd04883c438c3"))
 
 (define (compiler-backend-object-entry-gs-clear-bytes) : String
   (compiler-backend-object-registered-bytes
@@ -1152,7 +1152,7 @@
           with-image-unwind
           "tl_tlci_call_macro_entry"
           "tl_tlci_call_macro_entry$end"
-          (compiler-backend-object-entry-range-unwind-bytes 40 6 true))
+          (compiler-backend-object-entry-range-unwind-bytes 56 4 false))
         with-image-unwind)]
     [emit-native-entry : bool (and emit-entry (not crt-entry))]
     [with-entry : object_target.CompilerBackendObjectTargetParts

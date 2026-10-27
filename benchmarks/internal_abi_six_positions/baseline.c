@@ -5,6 +5,7 @@ extern int64_t tl_abi_four(int64_t, double, int64_t, double);
 extern int64_t tl_abi_five(int64_t, int64_t, int64_t, int64_t, int64_t);
 extern int64_t tl_abi_six(int64_t, int64_t, int64_t, int64_t, double, float);
 extern int64_t tl_abi_eight(int64_t, double, int64_t, float, double, int64_t, int64_t, double);
+extern int64_t tl_abi_macro(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
 extern void *tl_string_concat5(const void *, int64_t, const void *, int64_t, const void *, int64_t, const void *, int64_t, const void *, int64_t);
 extern int64_t tl_tlci_call_macro_entry(int64_t, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
 extern int64_t tl_atomic_i64_load_ptr(int64_t *);
@@ -52,13 +53,8 @@ extern int64_t (*tl_thread_entry_ptr)(void *);
 __attribute__((naked)) static int64_t call_thread(void *request U) {
     __asm__(PROBE(40, "", "callq *tl_thread_entry_ptr(%rip)\n"));
 }
-/* Independent Internal leaves force RSI/RDI clobbers regardless of the
-   TypeLisp allocator's choices in the corresponding source functions. */
-__attribute__((naked)) static int64_t internal_macro(void) {
-    __asm__("movq %rcx, %rax\naddq %rdx, %rax\naddq %r8, %rax\n"
-            "addq %r9, %rax\naddq %rsi, %rax\naddq %rdi, %rax\n"
-            "xorq %rsi, %rsi\nxorq %rdi, %rdi\nretq");
-}
+/* The thread boundary invokes an Internal closure; force its clobbers
+   independently of the TypeLisp allocator. Macro entries instead use C. */
 __attribute__((naked)) static int64_t internal_thread(void) {
     __asm__("leaq 7(%rdx), %rax\nxorq %rsi, %rsi\nxorq %rdi, %rdi\nretq");
 }
@@ -88,14 +84,10 @@ void *tl_abi_c_concat5(const void *a, int64_t al, const void *b, int64_t bl, con
 }
 int64_t tl_abi_c_preserved(void) { return preserved; }
 int64_t tl_abi_c_touch(int64_t value) { return value + 1; }
-int64_t tl_abi_c_entry(Closure *callback) { return (int64_t)(uintptr_t)callback->entry; }
-int64_t tl_abi_c_macro(Closure *callback) {
-    int64_t result = call_macro((int64_t)(uintptr_t)callback->entry, 11, 12, 13, 14, 15, 16);
+int64_t tl_abi_c_entry(void) { return (int64_t)(uintptr_t)tl_abi_macro; }
+int64_t tl_abi_c_macro(void) {
+    int64_t result = call_macro((int64_t)(uintptr_t)tl_abi_macro, 11, 12, 13, 14, 15, 16);
     if (result != 70 || !preserved) return 0;
-#ifdef _WIN32
-    result = call_macro((int64_t)(uintptr_t)internal_macro, 11, 12, 13, 14, 15, 16);
-    if (result != 81 || !preserved) return 0;
-#endif
     return 1;
 }
 int64_t tl_abi_c_thread(Closure *callback) {

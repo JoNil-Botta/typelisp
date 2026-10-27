@@ -28,8 +28,8 @@
   [e-len : i64]) : String (:symbol "tl_string_concat5"))
 (extern (c-preserved) : i64 (:symbol "tl_abi_c_preserved"))
 (extern (c-touch [value : i64]) : i64 (:symbol "tl_abi_c_touch"))
-(extern (c-entry [callback : (-> i64 i64 i64 i64 i64 i64)]) : i64 (:symbol "tl_abi_c_entry"))
-(extern (c-macro [callback : (-> i64 i64 i64 i64 i64 i64)]) : i64 (:symbol "tl_abi_c_macro"))
+(extern (c-entry) : i64 (:symbol "tl_abi_c_entry"))
+(extern (c-macro) : i64 (:symbol "tl_abi_c_macro"))
 (extern (c-thread [callback : (-> i64 i64)]) : i64 (:symbol "tl_abi_c_thread"))
 (extern (call-macro
   [entry : i64]
@@ -91,11 +91,13 @@
   (+ a b c d (array-ref items 0) (array-ref items 1) (array-length items)))
 
 (define (macro-target
+  [_image-context : i64]
   [host : i64]
   [session : i64]
   [operands : i64]
   [count : i64]
-  [result : i64]) : i64
+  [result : i64])
+  (:export-symbol "tl_abi_macro") : i64
   (+ host session operands count result))
 
 ;; The Slice straddles the final Internal register and first stack word.
@@ -194,8 +196,9 @@
             1))
         "abcde")
       (string.eq (str_cat.str-cat "a" "b" "c" "d" "e") "abcde")
-      (= (call-macro (c-entry macro-target) 11 12 13 14 15 16) 70)
-      (= (c-macro macro-target) 1)
+      (= (call-macro (c-entry) 11 12 13 14 15 16) 70)
+      (= (macro-target 11 12 13 14 15 16) 70)
+      (= (c-macro) 1)
       (= (c-thread thread-target) 1)
       (= (c-preserved) 1))
       42

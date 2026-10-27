@@ -5,6 +5,8 @@
 ;; macro through both routes cover the end-to-end expansions. Refs #8274.
 (import stdlib.iterator)
 (import compiler_tlci_native_producer as producer)
+(import compiler_tlci_native_image as native_image)
+(import compiler_backend as backend)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
@@ -100,6 +102,12 @@
                 "the failure sentinel must not reach generated source")
               (test.assert-i64-eq
                 (occurrences
+                  (& generated)
+                  "(:export-symbol \"tlci_macro_entry_0\")")
+                1
+                "native bodies and fallback shells expose a Platform C entry")
+              (test.assert-i64-eq
+                (occurrences
                   (&
                     (array-ref
                       producer.embedded-stdlib-tlci-native-report-reasons
@@ -123,6 +131,32 @@
   (producer-pattern-source! "(comptime.Expr.Call _ _)" 1))
 
 (test native-source-call-pattern-fallback (producer-pattern-fallback!))
+
+(test
+  native-registration-selects-platform-entry
+  (match (backend.compiler-backend-emit-source-object-image-for-target
+    "(define (macro-entry-0 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) (:export-symbol \"tlci_macro_entry_0\") : i64 (+ a b c d e f))\n(define (main) : i64 0)"
+    (Windows))
+    [(Err _) (test.assert-true false "macro C entry object compiles")]
+    [(Ok image)
+      (let
+        [offsets : (__tl_dyn-array i64)
+          (producer.embedded-native-entry-offsets (clone image) 1)]
+        (test.assert-i64-eq (array-length offsets) 1 "one registered entry")
+        (test.assert-i64-eq
+          (array-ref offsets 0)
+          (native_image.compiler-tlci-native-entry-offset
+            (clone image)
+            "tlci_macro_entry_0")
+          "registration selects the C export")
+        (test.assert-true
+          (not
+            (=
+              (array-ref offsets 0)
+              (native_image.compiler-tlci-native-entry-offset
+                image
+                "tlci_macro_entry_0$typelisp")))
+          "the C entry differs from its six-position Internal body"))]))
 
 ;; Run by the TLCI image gate's separately built, short-timeout driver: the
 ;; unfixed diagnostic revisits a computed splice forever. Refs #9356.

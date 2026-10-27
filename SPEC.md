@@ -7271,8 +7271,9 @@ the image. Callback ABI v2 remains readable for inspection and portable
 metadata; code-bearing v2 images are rejected before native page allocation.
 There is no execution compatibility path. The container
 format and metadata schema remain independently versioned. Version 3 gives
-Windows macro entries the six-position Internal convention; named host
-callbacks and the image registration entry retain their C convention.
+Windows native bodies the six-position Internal convention. Named host
+callbacks, the image registration entry and registered macro entries retain
+their C convention; provided C entries bridge to Internal bodies.
 
 A code-bearing image exports one native entry point named `tlci_image_entry`.
 The host calls it with the host platform's ordinary C integer calling
@@ -7396,9 +7397,9 @@ of the mapping:
 | 16 | 8 | Macro entry function pointer |
 | 24 | 8 | Reserved, must be `0` |
 
-A macro entry function uses the host's TypeLisp Internal convention (§11.1–11.2).
-The C-entered loader trampoline preserves the platform's nonvolatile registers
-and forwards these six arguments to that convention:
+A macro entry function uses the host C ABI. The loader trampoline forwards
+these six arguments to the registered Platform entry, whose C export bridge
+preserves the platform's nonvolatile registers when calling an Internal body:
 
 | Position | Type | Meaning |
 | ---: | --- | --- |

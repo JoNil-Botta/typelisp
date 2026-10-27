@@ -2060,24 +2060,20 @@ tl_tlci_call_image_entry:
   "    .globl tl_tlci_call_macro_entry
     .seh_proc tl_tlci_call_macro_entry
 tl_tlci_call_macro_entry:
-    pushq %rsi
-    .seh_pushreg %rsi
-    pushq %rdi
-    .seh_pushreg %rdi
-    subq $40, %rsp
-    .seh_stackalloc 40
+    subq $56, %rsp
+    .seh_stackalloc 56
     .seh_endprologue
     movq %rcx, %rax
     movq %rdx, %rcx
     movq %r8, %rdx
     movq %r9, %r8
     movq 96(%rsp), %r9
-    movq 104(%rsp), %rsi
-    movq 112(%rsp), %rdi
+    movq 104(%rsp), %r10
+    movq 112(%rsp), %r11
+    movq %r10, 32(%rsp)
+    movq %r11, 40(%rsp)
     call *%rax
-    addq $40, %rsp
-    popq %rdi
-    popq %rsi
+    addq $56, %rsp
     ret
     .seh_endproc
 

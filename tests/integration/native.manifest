@@ -202,6 +202,7 @@ macro_dotted_root_wide_borrow|all|0,1,2|tests/integration/macro_dotted_root_wide
 macro_dotted_root_write_borrow|all|0,1,2|tests/integration/macro_dotted_root_write_borrow.tl|42|-|-|-|-
 macro_dotted_root_scalar_borrow|all|0,1,2|tests/integration/macro_dotted_root_scalar_borrow.tl|42|-|-|-|-
 macro_dotted_root_noncall_borrow|all|0,1,2|tests/integration/macro_dotted_root_noncall_borrow.tl|42|-|-|-|-
+macro_dotted_root_replace|all|0,1,2|tests/integration/macro_dotted_root_replace.tl|42|-|-|-|-
 macro_try_operand|all|0,1,2|tests/integration/macro_try_operand.tl|42|-|-|stdlib/comptime.tl|-
 macro_value_same_spelling|all|-|tests/integration/macro_value_same_spelling.tl|42|-|-|-|-
 macro_module_local_shadow_provider|all|-|tests/integration/macro_module_local_shadow_provider.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-

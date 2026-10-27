@@ -84220,7 +84220,25 @@
                 virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcType.Err message)])
         (let
-          [ty : ast.AstType (try (tc-lookup-visible-id ctx env name))]
+          [ty : ast.AstType
+            (try
+              (if (and
+                (macro-hygiene-global-id?
+                  (tc-context-structural-session ctx)
+                  name)
+                (not
+                  (macro-hygiene-global-legacy-id?
+                    (tc-context-structural-session ctx)
+                    name)))
+                (tc-var-expr-after-local-field-check-mode
+                  ctx
+                  env
+                  name
+                  (tc-hygiene-name-text-id-for-session
+                    (tc-context-structural-session ctx)
+                    name)
+                  false)
+                (tc-lookup-visible-id ctx env name)))]
           (match (tc-type-strip-region
             (tc-resolve-type ctx (tc-global-shared-view ty)))
             [(ast.AstType.MutRef _ referent-id)

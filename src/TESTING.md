@@ -23,6 +23,9 @@ bool caller locals keep nested shared borrows accepted. Each fixture retains a
 control without shadowing.
 The imported matrix also borrows an opaque global without reading it by value;
 borrow-place lookup must preserve the opaque reference boundary.
+The header-less replace fixture retains both width directions and a scalar
+caller, with controls without shadowing. Its returned old value and field-only
+update must use the same definition-site type in checking and lowering.
 
 `ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
 phi links, capacity growth, missing labels and renamed-block logical positions.

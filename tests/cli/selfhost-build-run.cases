@@ -160,6 +160,16 @@ exit 42
 stdout empty
 stderr empty
 
+case selfhost-cli-build-macro-dotted-root-replace
+opt 0 1 2
+run build "{{root}}/tests/integration/macro_dotted_root_replace.tl" --opt-level {{opt}} -o "{{dir}}/replace{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/replace{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
 case selfhost-cli-build
 file main.tl
 (define (main) : i64 19)

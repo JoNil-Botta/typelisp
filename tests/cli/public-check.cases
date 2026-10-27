@@ -119,6 +119,12 @@ run check tests/integration/macro_dotted_root_noncall_borrow.tl --target {{targe
 stdout contains Type checking passed!
 stderr empty
 
+case check-macro-dotted-root-replace
+target linux-x86_64 windows-x86_64
+run check tests/integration/macro_dotted_root_replace.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+
 case check-hello
 run check examples/hello.tl
 stderr empty

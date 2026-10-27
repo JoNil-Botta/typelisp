@@ -57389,7 +57389,8 @@
       (match (tc-mut-borrow-non-call-place-ok
         ctx
         env
-        (& (tc-context-expr-get ctx place-id)))
+        (& (tc-context-expr-get ctx place-id))
+        TcMaybeAstSourceSpan.No)
         [(ResultTcUnit.Ok) false]
         [(ResultTcUnit.Err _) true])]
     [(ast.AstExpr.MacroExpansion expanded _ _)
@@ -62241,7 +62242,11 @@
       [(Direct _)
         (when
           (tc-slice-call-mutable? kind)
-          (match (tc-mut-borrow-non-call-place-ok ctx env source)
+          (match (tc-mut-borrow-non-call-place-ok
+            ctx
+            env
+            source
+            TcMaybeAstSourceSpan.No)
             [(Ok) unit]
             [(Err message)
               (return
@@ -62300,7 +62305,11 @@
             (begin
               (when
                 (tc-slice-call-mutable? kind)
-                (match (tc-mut-borrow-non-call-place-ok ctx env source)
+                (match (tc-mut-borrow-non-call-place-ok
+                  ctx
+                  env
+                  source
+                  TcMaybeAstSourceSpan.No)
                   [(Ok) unit]
                   [(Err message)
                     (return
@@ -76293,7 +76302,8 @@
 (define (tc-mut-borrow-non-call-place-ok
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [expr : (& ast.AstExpr)]) : ResultTcUnit
+  [expr : (& ast.AstExpr)]
+  [source : TcMaybeAstSourceSpan]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
     expr)
@@ -76302,19 +76312,26 @@
         [ty (try (tc-lookup-visible-id ctx env name))]
         (if (tc-mut-borrow-storage-backed-type? ctx ty)
           Ok
-          (Err (tc-mut-borrow-by-value-place-message))))]
+          (let
+            [message : String (tc-mut-borrow-by-value-place-message)]
+            ;; Only this producer rejects by-value storage. Errors forwarded
+            ;; from reference and box checks retain their established spans.
+            (Err
+              (match source
+                [(Some span) (tc-located-error span message)]
+                [(No) message])))))]
     [(StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        (tc-mut-borrow-non-call-place-ok ctx env receiver))]
+        (tc-mut-borrow-non-call-place-ok ctx env receiver source))]
     [(TupleRef tuple-box _)
       (let
         [tuple : ast.AstExpr (tc-context-expr-get ctx tuple-box)]
-        (tc-mut-borrow-non-call-place-ok ctx env tuple))]
+        (tc-mut-borrow-non-call-place-ok ctx env tuple source))]
     [(ArrayRef array-box _)
       (let
         [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
-        (tc-mut-borrow-non-call-place-ok ctx env array))]
+        (tc-mut-borrow-non-call-place-ok ctx env array source))]
     [(BoxGet box-box)
       (let
         [box-expr : ast.AstExpr (tc-context-expr-get ctx box-box)]
@@ -76586,18 +76603,9 @@
     (tc-global-shared-view place-expr))
     [(Ok place)
       (if (and mutable (not allow-mut-by-value-borrow))
-        (match (tc-mut-borrow-non-call-place-ok ctx env place-expr)
-          [(Ok) (tc-borrow-place-result-type mutable lifetime place)]
-          [(Err message)
-            ;; This policy checks the root's storage, but the rejected operation
-            ;; is the borrow. Transport its source before leaving that boundary.
-            (Err
-              (match source
-                [(Some span)
-                  (if (tc-encoded-error? message)
-                    message
-                    (tc-located-error span message))]
-                [(No) message]))])
+        (let
+          [_ (try (tc-mut-borrow-non-call-place-ok ctx env place-expr source))]
+          (tc-borrow-place-result-type mutable lifetime place))
         (tc-borrow-place-result-type mutable lifetime place))]
     [(Err message)
       ;; A successfully typed place cannot be a temporary. Direct call

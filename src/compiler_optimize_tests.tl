@@ -55826,7 +55826,7 @@
       [else 42])))
 
 ;; --- identical function merging self-test ----------------------------------
-(define (opt-merge-test-seq [texts : (__tl_dyn-array String)]) : ir.CompilerIrFunctionSeq
+(define (opt-merge-test-seq [texts : (& texts (__tl_dyn-array String))]) : ir.CompilerIrFunctionSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrFunction)
       (__tl_make-array ir.CompilerIrFunction (array-length texts))]
@@ -55910,22 +55910,62 @@
           (set! i (+ i 1)))
         out)]))
 
-(define (opt-merge-test-run [texts : (__tl_dyn-array String)] [init : String]) : String
+(define (opt-merge-test-run-value
+  [texts : (& texts (__tl_dyn-array String))]
+  [init : ir.CompilerIrValue]) : String
   (let
     [globals : (__tl_dyn-array ir.CompilerIrGlobal)
       (__tl_make-array ir.CompilerIrGlobal 1)]
     (set!
       (array-ref globals 0)
-      (ir.CompilerIrGlobal.Global
-        (opt-test-symbol "cell")
-        (I64)
-        (ir.CompilerIrValue.RuntimeGlobal (opt-test-symbol init))))
+      (ir.CompilerIrGlobal.Global (opt-test-symbol "cell") (I64) init))
     (opt-merge-test-render
       (opt.opt-merge-identical-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrGlobalSeq globals 1)
         (opt-merge-test-seq texts)
         (& (ir.compiler-ir-extern-seq-empty))))))
+
+(define (opt-merge-test-run
+  [texts : (& texts (__tl_dyn-array String))]
+  [init : String]) : String
+  (opt-merge-test-run-value
+    texts
+    (ir.CompilerIrValue.RuntimeGlobal (opt-test-symbol init))))
+
+;; Refuse either twin as a representative as well as a dropped candidate.
+;; Closure code addresses occur in stores, while global code addresses must
+;; obey the same rule without going through the instruction operand walker.
+(define (opt-merge-code-addresses-ok? [body : (& body str)]) : bool
+  (let
+    [texts : (__tl_dyn-array String) (__tl_make-array String 3)]
+    [names : (Array String 2) (array "a" "b")]
+    (set! (array-ref texts 0) (opt-merge-test-twin "a" (string.copy body)))
+    (set! (array-ref texts 1) (opt-merge-test-twin "b" (string.copy body)))
+    (for [i (iterator.range 0 2)]
+      (let
+        [name : String (string.copy (& (array-ref names i)))]
+        (set!
+          (array-ref texts 2)
+          (opt-merge-test-main
+            (str_cat.str-cat
+              "%3 = alloc u64\nstore_ptr %3, &@"
+              (string.copy (& name))
+              " : u64\n")))
+        (unless
+          (string.eq
+            (opt-merge-test-run (& texts) "b")
+            "a b main call:a call:b init:b ")
+          (return false))
+        (set! (array-ref texts 2) (opt-merge-test-main ""))
+        (unless
+          (string.eq
+            (opt-merge-test-run-value
+              (& texts)
+              (ir.CompilerIrValue.GlobalAddr (opt-test-symbol name)))
+            "a b main call:a call:b ")
+          (return false))))
+    true))
 
 (define (compiler-optimize-merge-functions-self-test) : i64
   (cbi.compiler-builtin-initialize-for-parse!)
@@ -55965,27 +56005,28 @@
       ;; The twin `b` folds into `a`: main's call and the initializer follow it.
       [(not
           (string.eq
-            (opt-merge-test-run plain "b")
+            (opt-merge-test-run (& plain) "b")
             "a main call:a call:a init:a "))
         1]
       ;; `fn@b` observes b's identity: nothing merges.
       [(not
           (string.eq
-            (opt-merge-test-run taken "b")
+            (opt-merge-test-run (& taken) "b")
             "a b main call:a call:b init:b "))
         2]
       ;; A located abort site names its own function: nothing merges.
       [(not
           (string.eq
-            (opt-merge-test-run checked "b")
+            (opt-merge-test-run (& checked) "b")
             "a b main call:a call:b init:b "))
         3]
       ;; Different bodies stay apart.
       [(not
           (string.eq
-            (opt-merge-test-run differ "b")
+            (opt-merge-test-run (& differ) "b")
             "a b main call:a call:b init:b "))
         4]
+      [(not (opt-merge-code-addresses-ok? (& body))) 5]
       [else 42])))
 
 ;; --- noalias fact model self-test -------------------------------------------

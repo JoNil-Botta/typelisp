@@ -159,10 +159,9 @@ sc_same_commit_binary() {
 
 # sc_records_same_compiler A B
 #   Two measurements of one tree. The fixpoint compiler is stamped with its
-#   source commit, and the stamp also reaches content-derived assembly labels
-#   and the compressed embedded stdlib image, so builds of one tree from two
-#   commits (a tested merge and its squash) never match byte for byte. Two
-#   measurements of one commit must have measured byte-identical compilers.
+#   source commit in a separate static field, so builds of one tree from two
+#   commits (a tested merge and its squash) differ there. Two measurements of
+#   one commit must have measured byte-identical compilers.
 #   Prints `identical` or `commit-stamped`; prints a problem and fails otherwise.
 sc_records_same_compiler() {
     [ "$(sc_record_get "$1" tree)" = "$(sc_record_get "$2" tree)" ] || {

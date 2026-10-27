@@ -2772,7 +2772,7 @@
 (defenum OptUseNote
   (Var)
   (GlobalCount)
-  ;; The function whose address a `Function` value takes.
+  ;; Function descriptors and raw code addresses (including closure code slots).
   (FunctionValue))
 
 (define (opt-note-use!
@@ -2795,7 +2795,7 @@
         [_ unit])]
     [(FunctionValue)
       (match value
-        [(ir.CompilerIrValue.Function name)
+        [(or (ir.CompilerIrValue.Function name) (GlobalAddr name))
           (opt_i64_i64_map.insert-ref! set (ir.compiler-ir-symbol-id name) 1)]
         [_ unit])]))
 
@@ -128469,8 +128469,8 @@
 ;;   (`opt-prune-unreachable-program`). In a library every function is reached
 ;;   by name from another compilation unit, so none is dropped;
 ;; - it is reached only through `Call`/`TailCall` and runtime-global
-;;   initializers: no `Function` value takes its address (so no comparison or
-;;   table observes its identity), no named C-ABI or SPMD call names it, no
+;;   initializers: no `Function` or `GlobalAddr` value takes its address (so no
+;;   comparison or table observes its identity), no named C-ABI or SPMD call names it, no
 ;;   extern declares it, and it is not a root activated by name
 ;;   (`opt-arg-global-root-leaf?`: the entry and the backend's string helpers);
 ;; - its ABI is Ordinary;
@@ -128522,7 +128522,7 @@
     (set! at 0)
     (while (< at globals.len)
       (match (compiler-opt-global-array-element-shared-view globals.slots at)
-        [(Global _ _ (ir.CompilerIrValue.Function name))
+        [(Global _ _ (or (ir.CompilerIrValue.Function name) (GlobalAddr name)))
           (opt-merge-note-symbol! (&mut observed) name)]
         [_ unit])
       (set! at (+ at 1)))

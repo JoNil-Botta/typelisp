@@ -383,9 +383,11 @@ report the capture's E0205. Two controls keep the inferred-result and
 lambda-parameter diagnostics. `capture_borrow_storage.tl` runs the accepted
 side at opt0/1/2 on both hosts: captured references returned or reborrowed,
 non-escaping borrows (lent, annotated with the capture's lifetime, in a loop),
-shadowing, nested lambdas and field borrows. Its lambdas differ in signature
-or body, because opt2 still fails to link two identical capturing lambdas
-(#9317).
+shadowing, nested lambdas and field borrows. The `lambda_identical_capture`,
+`lambda_identical_capture_ref` and `lambda_identical_capture_nested` rows keep
+identical capturing bodies linkable at opt0/1/2 on both hosts, alongside the
+`lambda_identical_noncapturing` control. The merge self-test excludes either
+twin's stored or global code address and still counts the direct-call merge.
 
 `tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
 in one frame, including register-resident enum spills. Their tail jumps and
@@ -2242,6 +2244,15 @@ for downstream binary and static-library package builds. The stage0 workflow
 keeps using the direct `compile src/main.tl` path plus native linking so a seed
 compiler can build its successor without depending on its own `build` command.
 
+Compiler builds record the commit in a fixed static byte array for `--version`
+and use the Git tree object name for `--producer-identity` and exact TLCI/surface
+admission. The `compiler-commit-stamp-field` CLI case exercises the production
+module at opt0/1/2: two stamps with one tree, assembly equality outside the
+named field, CRLF trimming, malformed stamps and unstamped source tools.
+The reference workflow's PR dry run additionally requires full identical-tree
+compiler/image byte equality and exact self-compile Ir via
+`scripts/verify-self-compile-stamp-invariance.sh`.
+
 `scripts/ci-verify.sh` is the complete local verification gate. With
 `TYPELISP_BIN` unset it fetches `stage0-latest` as the seed, which performs the
 single compiler build of the flow: the stage1->stage2->stage3 bootstrap
@@ -2354,6 +2365,9 @@ mapped catalog entry. Small required probes retain `__tl-box-place`, `and`,
 compile-profile detail rows per batch entry and requires exact
 identity/arity/call counts; built-in controls prove missing, duplicate,
 wrong-arity, and wrong-count rows fail closed.
+Before running, it requires the repository tree, compiler producer identity and
+embedded image producer identity to match exactly; commit provenance remains
+available separately through `--version`.
 `target/tlci-native-route-stress/<host>/evidence.tsv` records native and source
 compile time, assembly comparison and diagnostic-control time, generated-source
 and native/source assembly bytes, and native/source main-backend time for all

@@ -2244,6 +2244,15 @@ for downstream binary and static-library package builds. The stage0 workflow
 keeps using the direct `compile src/main.tl` path plus native linking so a seed
 compiler can build its successor without depending on its own `build` command.
 
+Compiler builds record the commit in a fixed static byte array for `--version`
+and use the Git tree object name for `--producer-identity` and exact TLCI/surface
+admission. The `compiler-commit-stamp-field` CLI case exercises the production
+module at opt0/1/2: two stamps with one tree, assembly equality outside the
+named field, CRLF trimming, malformed stamps and unstamped source tools.
+The reference workflow's PR dry run additionally requires full identical-tree
+compiler/image byte equality and exact self-compile Ir via
+`scripts/verify-self-compile-stamp-invariance.sh`.
+
 `scripts/ci-verify.sh` is the complete local verification gate. With
 `TYPELISP_BIN` unset it fetches `stage0-latest` as the seed, which performs the
 single compiler build of the flow: the stage1->stage2->stage3 bootstrap
@@ -2356,6 +2365,9 @@ mapped catalog entry. Small required probes retain `__tl-box-place`, `and`,
 compile-profile detail rows per batch entry and requires exact
 identity/arity/call counts; built-in controls prove missing, duplicate,
 wrong-arity, and wrong-count rows fail closed.
+Before running, it requires the repository tree, compiler producer identity and
+embedded image producer identity to match exactly; commit provenance remains
+available separately through `--version`.
 `target/tlci-native-route-stress/<host>/evidence.tsv` records native and source
 compile time, assembly comparison and diagnostic-control time, generated-source
 and native/source assembly bytes, and native/source main-backend time for all

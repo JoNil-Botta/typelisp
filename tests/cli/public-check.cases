@@ -54,6 +54,29 @@ stderr contains macro_dotted_global_dep.tl:15:10
 stderr contains macro_dotted_global_write_reject.tl:6:5
 stderr contains in expansion of macro `macro_dotted_global_dep/write-y!` invoked here
 
+case check-macro-dotted-root
+target linux-x86_64 windows-x86_64
+step nested
+run check tests/integration/macro_dotted_root_nested.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step scalar
+run check tests/integration/macro_dotted_root_scalar.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step small
+run check tests/integration/macro_dotted_root_small.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step layout
+run check tests/integration/macro_dotted_root_layout.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step same
+run check tests/integration/macro_dotted_root_same.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+
 case check-hello
 run check examples/hello.tl
 stderr empty

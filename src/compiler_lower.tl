@@ -29576,10 +29576,21 @@
           name-id
           true)
           [(Ok lookup-name lookup-name-id)
+            ;; Definition-site globals stay global even when the root module's
+            ;; canonical key is a bare name also bound by a caller local.
             (lower-nullary-variant-or-function-value
               ctx
               state
-              env
+              (if (and
+                (tc_core.macro-hygiene-global-id?
+                  (tc_core.tc-context-structural-session ctx)
+                  name-id)
+                (not
+                  (tc_core.macro-hygiene-global-legacy-id?
+                    (tc_core.tc-context-structural-session ctx)
+                    name-id)))
+                (sym_i64_env.sym-i64-empty)
+                env)
               type-env
               lookup-name
               name-id

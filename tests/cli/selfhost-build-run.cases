@@ -39,6 +39,49 @@ stdout match Wrote[ ]
 in file {{dir}}/main.s
 contains main:
 
+case selfhost-cli-build-macro-dotted-root
+opt 0 1 2
+step nested
+run build "{{root}}/tests/integration/macro_dotted_root_nested.tl" --opt-level {{opt}} -o "{{dir}}/nested{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/nested{{exe}}"
+exit 6
+stdout empty
+stderr empty
+step scalar
+run build "{{root}}/tests/integration/macro_dotted_root_scalar.tl" --opt-level {{opt}} -o "{{dir}}/scalar{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/scalar{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step small
+run build "{{root}}/tests/integration/macro_dotted_root_small.tl" --opt-level {{opt}} -o "{{dir}}/small{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/small{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step layout
+run build "{{root}}/tests/integration/macro_dotted_root_layout.tl" --opt-level {{opt}} -o "{{dir}}/layout{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/layout{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step same
+run build "{{root}}/tests/integration/macro_dotted_root_same.tl" --opt-level {{opt}} -o "{{dir}}/same{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/same{{exe}}"
+exit 2
+stdout empty
+stderr empty
+
 case selfhost-cli-build
 file main.tl
 (define (main) : i64 19)

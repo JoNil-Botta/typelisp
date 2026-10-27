@@ -8,6 +8,11 @@ mutable borrowing. Importer writes and mutable borrows remain rejected even
 with a same-named caller local; their safety rows retain template locations
 and macro invocation provenance. Keep target IR parity for these fixtures.
 
+The header-less `macro_dotted_root_*` entries retain the definition-site global
+when a caller local has the same name, including scalar, smaller, different and
+identical struct layouts and nested projection roots. Public check, CLI build
+and native execution must agree at opt0/1/2 on both hosts.
+
 `ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
 phi links, capacity growth, missing labels and renamed-block logical positions.
 The optimizer smoke's `dense-storage` test also checks edge captures before

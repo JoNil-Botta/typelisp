@@ -1,12 +1,41 @@
-# Reviewed local preflight map. Shell globs match the whole repo-relative path;
-# * also spans /. All matching rows contribute; * in gates means the full table.
-# An unmapped path also selects the full table. Do not add catch-all path rows:
-# narrowing a class requires reviewing every gate that consumes those inputs.
-# @always names the shared local hygiene floor, independent of changed paths.
-path	gates	reason
-@always	shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint	Required local source hygiene; ci-verify adds producer dependencies.
-src/*	*	Compiler and test sources can affect every compiler consumer, including target references and parity.
-stdlib/*	*	Embedded sources affect compiler builds and all consumers, including pinned safety diagnostics.
-scripts/codegen-target-dispatch-inventory.tsv	stage2-codegen-target-parity	The target-parity gate validates target-dispatch inventory counts and roles.
-tests/safety/manifest.txt	stage2-safety-corpus	Only the safety runner consumes this case/expectation table.
-tests/safety/*.tl	*	Safety source fixtures are also reused by bootstrap, integration, profile and COFF gates.
+# Reviewed path map. Globs match whole repo-relative paths; * spans /.
+# Required is the local minimum. Advisory adds its column to the required set.
+# Groups resolve through ci-affected-inputs.tsv. Unknown/unreviewed inputs fail to full.
+path	required	advisory	reason
+@always	bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint	-	Shared local hygiene, with canonical producer dependencies.
+src/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@compiler	Any compiler source can carry target references; source guards read source content and module paths directly.
+src/compiler_*	stage2-codegen-target-parity	@compiler	Compiler data and target references retain the target boundary check.
+src/compiler_backend*	x64-executable-template-registry-coverage	@compiler	Backend source families include the executable-template registry's direct inputs.
+src/compiler_x64*	x64-executable-template-registry-coverage	@compiler	Executable-template code and catalog data are read by the registry guard.
+src/compile_manifest.txt	stage2-selfhost-compile-manifest	@compiler	Exact compiler-manifest input, expectations and standalone coverage.
+stdlib/*	stage2-safety-corpus	@stdlib	Every stdlib edit can change located safety diagnostics and pins.
+stdlib/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@stdlib	Stdlib sources can carry target references and are read by source-content and module-path guards.
+tests/*	-	@corpus	Compiler-consumed test data and corpus metadata; retain direct corpus validators in the advisory plan.
+tests/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Source fixtures can carry target references and are read by source-invariant checks.
+tests/integration/*	stage2-native-integration-corpus	@corpus	Native integration sources, manifest, dependencies and expected outputs.
+tests/safety/*	stage2-safety-corpus	@corpus	Safety sources, manifest and every pinned expectation.
+tests/spmd/*	stage2-spmd-simd-comparison	@corpus	SPMD executable fixtures and comparison case metadata.
+tests/spmd/package_*	stage2-spmd-package-calls	@corpus	Package-call fixtures have their own executable consumer.
+tests/codegen/math.cases	stage2-math-exp-codegen-verifier,stage2-math-log-codegen-verifier,stage2-math-pow-codegen-verifier,stage2-math-trig-codegen-verifier	@corpus	Exact case file named by the four math gate commands.
+tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-mandelbrot-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Exact case file named by the ISPC contract gates.
+tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpus	Exact case file named by the must-use gate.
+tests/codegen/asm-shape.cases	stage2-regalloc-backend-asm-shape-gates	@corpus	Exact case file named by the backend shape gate.
+tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
+tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@corpus	Exact case file named by the secret-wipe gate.
+tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.
+tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast	@corpus	Exact case file named by the lane and broadcast gates.
+tests/cli/public-*.cases	stage2-public-tool-surface	@corpus	Public command transcripts discovered by the public-tool runner.
+tests/cli/selfhost-surface.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact command-surface corpus named by the CLI smoke runner.
+tests/cli/selfhost-build-run.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact build/run corpus named by the CLI smoke runner.
+tests/*.sh	*	-	Executable corpus harness changes can alter every gate contract.
+tests/*.ps1	*	-	Executable corpus harness changes can alter every gate contract.
+tests/*.awk	*	-	Corpus validation harness changes require the full table.
+tests/fixtures/ci-affected/*	*	-	Selector regression data changes the preflight contract itself.
+scripts/codegen-target-dispatch-inventory.tsv	stage2-codegen-target-parity	-	Only target parity consumes the target-dispatch inventory.
+docs/*	stage2-docs-pages-build-path	@docs	Rendered documentation and its links.
+docs/*.tl	stage2-repository-doctests,stage2-codegen-target-parity	@corpus	Runnable documentation and target-bearing source examples.
+README.md	stage2-docs-pages-build-path	@docs	Published landing page and documentation links.
+SPEC.md	stage2-docs-pages-build-path,stage2-public-tool-surface	@docs	Metadata-bearing public-tool examples and the published language reference.
+CONTRIBUTING.md	stage2-docs-pages-build-path	@docs	Published contributor documentation links.
+src/TESTING.md	stage2-docs-pages-build-path	@docs	Published testing documentation and links.
+.github/*	*	-	Workflow and action changes can alter every gate contract.

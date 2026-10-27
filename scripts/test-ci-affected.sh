@@ -2,8 +2,8 @@
 set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
-mkdir -p "$ROOT/target/exp"
-work=$(mktemp -d "$ROOT/target/exp/ci-affected-test.XXXXXX")
+mkdir -p "$ROOT/target/exp/ci-affected-test"
+work=$(mktemp -d "$ROOT/target/exp/ci-affected-test/run.XXXXXX")
 selector="$ROOT/scripts/ci-affected.sh"
 TAB=$(printf '\t')
 fail() { echo "ci-affected self-test: $* (evidence: $work)" >&2; exit 1; }
@@ -11,9 +11,9 @@ has_gate() { grep -Fx "$2" "$1" >/dev/null || fail "missing $2 in $1"; }
 
 # Exercise Git's actual Windows checkout filter, including the provenance
 # table and byte-compared historical paths. Their LF attributes must win.
-for path in scripts/ci-affected-paths.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv; do
-    git cat-file blob "HEAD:$path" > "$work/checkout.expected"
-    git -c core.autocrlf=true cat-file --filters --path="$path" "HEAD:$path" > "$work/checkout.actual"
+for path in scripts/ci-affected-paths.tsv scripts/ci-affected-inputs.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv; do
+    git cat-file blob ":$path" > "$work/checkout.expected"
+    git -c core.autocrlf=true cat-file --filters --path="$path" ":$path" > "$work/checkout.actual"
     cmp "$work/checkout.actual" "$work/checkout.expected" || fail "Windows checkout changed line endings: $path"
 done
 
@@ -36,10 +36,45 @@ for host in linux windows; do
     # historical change cannot mask a missing compiler/stdlib map row.
     for path in src/compiler_backend_tests.tl src/compiler_backend.tl src/compiler_target_cfg.tl stdlib/json.tl tests/safety/division_by_zero_trap.tl; do
         printf '%s\n' "$path" > "$work/paths"
-        "$selector" --host "$host" --paths "$work/paths" > "$work/trigger.ids"
-        cmp "$work/trigger.ids" "$work/$host.full" || fail "source trigger must select all: $path"
+        "$selector" --host "$host" --paths "$work/paths" --tier advisory > "$work/trigger.ids"
+        has_gate "$work/trigger.ids" stage2-codegen-target-parity
+        has_gate "$work/trigger.ids" stage2-safety-corpus
+        has_gate "$work/trigger.ids" tlci-mutation-bootstrap-fixpoint
+        case "$path" in
+            src/*)
+                has_gate "$work/trigger.ids" x64-executable-template-registry-coverage
+                has_gate "$work/trigger.ids" compiler-state-schema-boundary ;;
+            tests/*)
+                has_gate "$work/trigger.ids" cross-mode-differential-oracle-self-tests
+                has_gate "$work/trigger.ids" integration-manifest-validator-self-tests ;;
+        esac
+        has_gate "$work/trigger.ids" zero-cons-fixture-and-embedded-source-invariant
+        awk -F '\t' '!/^#/ && $1 != "id" && $5 != "-" {print $1}' "$ROOT/scripts/ci-gates.tsv" |
+        while IFS= read -r gate; do
+            if grep -Fx "$gate" "$work/$host.full" >/dev/null; then has_gate "$work/trigger.ids" "$gate"; fi
+        done
+        [ "$(wc -l < "$work/trigger.ids")" -lt "$(wc -l < "$work/$host.full")" ] || fail "source class selected the full table: $path"
+        if grep -Fx linux-resident-memory-limit-helper-self-tests "$work/trigger.ids" >/dev/null; then
+            fail 'source class includes unrelated memory-helper fixtures'
+        fi
+        "$selector" --host "$host" --paths "$work/paths" > "$work/required.ids"
+        has_gate "$work/required.ids" stage2-codegen-target-parity
+        case "$path" in stdlib/* | tests/safety/*) has_gate "$work/required.ids" stage2-safety-corpus ;; esac
+        sort "$work/required.ids" > "$work/required.sorted"
+        sort "$work/trigger.ids" > "$work/advisory.sorted"
+        comm -23 "$work/required.sorted" "$work/advisory.sorted" > "$work/missing-advisory.ids"
+        [ ! -s "$work/missing-advisory.ids" ] || fail 'required tier is not included in advisory'
     done
-    for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity' 'tests/safety/manifest.txt stage2-safety-corpus'; do
+    # Every literal corpus input in a canonical gate command has an owning
+    # required trigger, independently of the advisory input classifications.
+    awk -F '\t' '!/^#/ && $1 != "id" {n = split($8, words, " "); for (i = 1; i <= n; i++) if (words[i] ~ /^tests\/[A-Za-z0-9._\/-]+$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" > "$work/literal-inputs.tsv"
+    while IFS=$TAB read -r path gate; do
+        if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
+        printf '%s\n' "$path" > "$work/paths"
+        "$selector" --host "$host" --paths "$work/paths" > "$work/literal.ids"
+        has_gate "$work/literal.ids" "$gate"
+    done < "$work/literal-inputs.tsv"
+    for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
         path=${row% *}
         gate=${row##* }
         printf '%s\n' "$path" > "$work/paths"
@@ -56,6 +91,21 @@ for host in linux windows; do
     printf '%s\n' 'unmapped/new file.tl' > "$work/paths"
     "$selector" --host "$host" --paths "$work/paths" > "$work/unknown.ids" 2> "$work/unknown.log"
     cmp "$work/unknown.ids" "$work/$host.full" || fail 'unmapped path did not select full table'
+    for path in scripts/ci-verify.sh .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
+        printf '%s\n' "$path" > "$work/paths"
+        "$selector" --host "$host" --paths "$work/paths" > "$work/harness.ids"
+        cmp "$work/harness.ids" "$work/$host.full" || fail "harness path did not select full table: $path"
+    done
+    printf '%s\n' docs/testing-guide.md > "$work/paths"
+    "$selector" --host "$host" --paths "$work/paths" --tier advisory > "$work/docs.ids"
+    has_gate "$work/docs.ids" stage2-docs-pages-build-path
+    has_gate "$work/docs.ids" stage2-repository-doctests
+    if grep -Fx stage2-opt1-opt2-build-invariance "$work/docs.ids" >/dev/null; then fail 'prose selected build invariance'; fi
+    printf '%s\n' src/compiler_backend.tl > "$work/paths"
+    "$selector" --host "$host" --paths "$work/paths" --tier advisory > "$work/one-source.ids"
+    awk 'BEGIN {for (i = 1; i <= 128; i++) print "src/compiler_large_" i ".tl"}' > "$work/paths"
+    "$selector" --host "$host" --paths "$work/paths" --tier advisory > "$work/many-source.ids"
+    cmp "$work/one-source.ids" "$work/many-source.ids" || fail 'large source changes expanded duplicate requests'
 done
 
 # Exercise real Git diff discovery and the execution boundary in an isolated
@@ -64,17 +114,20 @@ done
 repo="$work/repo"
 mkdir -p "$repo/scripts" "$repo/tests/safety"
 printf '/target/\n' > "$repo/.gitignore"
-cp "$selector" "$ROOT/scripts/ci-affected-paths.tsv" "$ROOT/scripts/ci-gates.tsv" "$repo/scripts/"
+cp "$selector" "$ROOT/scripts/ci-affected-paths.tsv" "$ROOT/scripts/ci-affected-inputs.tsv" "$ROOT/scripts/ci-gates.tsv" "$repo/scripts/"
 cat > "$repo/scripts/ci-verify.sh" <<'STUB'
 #!/usr/bin/env sh
 set -eu
 if [ "${1:-}" = --list-gates ]; then exec "$CI_AFFECTED_TEST_VERIFY" "$@"; fi
-printf '%s\n' "$TYPELISP_INLINE_TEST_WORKERS" "$TYPELISP_BUILD_INVARIANCE_WORKERS" "$@" > "$CI_AFFECTED_TEST_CALL"
+printf '%s\n' "$TYPELISP_INLINE_TEST_WORKERS" "$TYPELISP_BUILD_INVARIANCE_WORKERS" "$TYPELISP_INTEGRATION_WORKERS" "$TYPELISP_COMPILE_MANIFEST_WORKERS" "$@" > "$CI_AFFECTED_TEST_CALL"
+printf 'run\n' >> "$CI_AFFECTED_TEST_EXECUTIONS"
 exit "${CI_AFFECTED_TEST_EXIT:-0}"
 STUB
 chmod +x "$repo/scripts/ci-verify.sh"
 export CI_AFFECTED_TEST_VERIFY="$ROOT/scripts/ci-verify.sh"
 export CI_AFFECTED_TEST_CALL="$work/run.call"
+export CI_AFFECTED_TEST_EXECUTIONS="$work/run.executions"
+: > "$CI_AFFECTED_TEST_EXECUTIONS"
 printf 'initial\n' > "$repo/tests/safety/manifest.txt"
 git -C "$repo" init -q
 git -C "$repo" add .
@@ -97,27 +150,35 @@ git -C "$repo" -c user.name=Test -c user.email=test@example.invalid commit -qm e
 cmp "$work/staged.ids" "$work/committed.ids" || fail 'committed edit missed'
 
 case "$(uname -s)" in Linux*) native_host=linux ;; *) native_host=windows ;; esac
-env -u TYPELISP_INLINE_TEST_WORKERS -u TYPELISP_BUILD_INVARIANCE_WORKERS "$fixture_selector" --base "$base" --run > "$work/run.ids" 2> "$work/run.log"
-sed -n '1,2p' "$work/run.call" > "$work/workers.actual"
-printf '1\n1\n' > "$work/workers.expected"
+env -u TYPELISP_INLINE_TEST_WORKERS -u TYPELISP_BUILD_INVARIANCE_WORKERS -u TYPELISP_INTEGRATION_WORKERS -u TYPELISP_COMPILE_MANIFEST_WORKERS "$fixture_selector" --base "$base" --run > "$work/run.ids" 2> "$work/run.log"
+sed -n '1,4p' "$work/run.call" > "$work/workers.actual"
+printf '1\n1\n1\n1\n' > "$work/workers.expected"
 cmp "$work/workers.actual" "$work/workers.expected" || fail 'worker defaults were not exported as 1'
-sed -n '3p' "$work/run.call" | grep -Fx -- --gates >/dev/null || fail 'subset was not passed to ci-verify'
+sed -n '5p' "$work/run.call" | grep -Fx -- --gates >/dev/null || fail 'subset was not passed to ci-verify'
 tr '\n' ',' < "$work/committed.ids" | sed 's/,$//' > "$work/run.expected-csv"
-sed -n '4p' "$work/run.call" | tr -d '\n' > "$work/run.actual-csv"
+sed -n '6p' "$work/run.call" | tr -d '\n' > "$work/run.actual-csv"
 cmp "$work/run.actual-csv" "$work/run.expected-csv" || fail 'executed selection differs from printed selection'
 
 expect_rejected() {
     label=$1
     shift
+    cp "$CI_AFFECTED_TEST_EXECUTIONS" "$work/rejected.before"
     status=0
     "$@" > "$work/$label.out" 2> "$work/$label.err" || status=$?
     [ "$status" -ne 0 ] || fail "$label was accepted"
     [ ! -s "$work/$label.out" ] || fail "$label emitted a successful plan before failing"
+    cmp "$CI_AFFECTED_TEST_EXECUTIONS" "$work/rejected.before" || fail "$label executed a gate"
 }
 expect_rejected inline-workers env TYPELISP_INLINE_TEST_WORKERS=2 "$fixture_selector" --base "$base" --run
 expect_rejected invariance-workers env TYPELISP_BUILD_INVARIANCE_WORKERS=2 "$fixture_selector" --base "$base" --run
-expect_rejected empty-workers env TYPELISP_INLINE_TEST_WORKERS= "$fixture_selector" --base "$base" --run
+expect_rejected integration-workers env TYPELISP_INTEGRATION_WORKERS=2 "$fixture_selector" --base "$base" --run
+expect_rejected manifest-workers env TYPELISP_COMPILE_MANIFEST_WORKERS=2 "$fixture_selector" --base "$base" --run
+for name in TYPELISP_INLINE_TEST_WORKERS TYPELISP_BUILD_INVARIANCE_WORKERS TYPELISP_INTEGRATION_WORKERS TYPELISP_COMPILE_MANIFEST_WORKERS; do
+    expect_rejected "empty-$name" env "$name=" "$fixture_selector" --base "$base" --run
+    expect_rejected "three-$name" env "$name=3" "$fixture_selector" --base "$base" --run
+done
 expect_rejected invalid-base "$fixture_selector" --base no-such-ref --run
+expect_rejected invalid-tier "$fixture_selector" --base "$base" --tier invalid --run
 expect_rejected paths-cannot-run "$fixture_selector" --paths "$work/empty.paths" --run
 other_host=windows
 [ "$native_host" != windows ] || other_host=linux
@@ -138,7 +199,7 @@ has_gate "$work/deleted.ids" stage2-safety-corpus
 printf 'unknown\n' > "$repo/untracked file.txt"
 "$fixture_selector" --base "$base" --run > "$work/untracked.ids" 2> "$work/untracked.log"
 cmp "$work/untracked.ids" "$work/$native_host.full" || fail 'untracked path did not select full table'
-[ "$(wc -l < "$work/run.call")" -eq 2 ] || fail 'full run added a subset flag'
+[ "$(wc -l < "$work/run.call")" -eq 4 ] || fail 'full run added a subset flag'
 mv "$repo/untracked file.txt" "$work/untracked-file.txt"
 printf 'unknown\n' > "$repo/line
 break.txt"
@@ -159,14 +220,22 @@ mv "$repo/line
 break.txt" "$work/newline-file.txt"
 "$fixture_selector" --base "$drift" > "$work/drift.ids" 2> "$work/drift.log"
 cmp "$work/drift.ids" "$work/empty.ids" || fail 'base-only drift entered selection'
-printf 'unknown/path\tnot-a-real-gate\tinvalid test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
+printf 'unknown/path\tnot-a-real-gate\t-\tinvalid test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
 expect_rejected invalid-map "$fixture_selector" --base "$base" --run
 cp "$ROOT/scripts/ci-affected-paths.tsv" "$repo/scripts/ci-affected-paths.tsv"
-printf 'tests/safety/manifest.txt\tstage2-safety-corpus\tduplicate test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
+printf 'tests/*\tstage2-safety-corpus\t-\tduplicate test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
 expect_rejected duplicate-map "$fixture_selector" --base "$base"
-awk -F '\t' -v OFS='\t' '$1 == "tests/safety/manifest.txt" {$2 = ""} {print}' "$ROOT/scripts/ci-affected-paths.tsv" > "$repo/scripts/ci-affected-paths.tsv"
+awk -F '\t' -v OFS='\t' '$1 == "tests/*" {$2 = ""} {print}' "$ROOT/scripts/ci-affected-paths.tsv" > "$repo/scripts/ci-affected-paths.tsv"
 cp "$work/run.call" "$work/empty-map-before.call"
 expect_rejected empty-gates "$fixture_selector" --base "$base" --run
 cmp "$work/run.call" "$work/empty-map-before.call" || fail 'invalid map executed a gate'
+cp "$ROOT/scripts/ci-affected-paths.tsv" "$repo/scripts/ci-affected-paths.tsv"
+sed '$d' "$ROOT/scripts/ci-affected-inputs.tsv" > "$repo/scripts/ci-affected-inputs.tsv"
+printf '%s\n' src/compiler_backend.tl > "$work/paths"
+"$fixture_selector" --paths "$work/paths" > "$work/unreviewed-gate.ids" 2> "$work/unreviewed-gate.log"
+cmp "$work/unreviewed-gate.ids" "$work/$native_host.full" || fail 'unreviewed gate inventory did not fail to full'
+cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
+printf 'bad-gate\tinvalid-class\tinvalid fixture\n' >> "$repo/scripts/ci-affected-inputs.tsv"
+expect_rejected invalid-input-class "$fixture_selector" --base "$base"
 
 echo "ci-affected self-tests passed (Linux/Windows plans and checkout filters, three historical failed-run diffs, Git discovery, worker guards and execution); evidence: $work"

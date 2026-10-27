@@ -2653,20 +2653,40 @@ publishes.
 
 ### CI expectations
 
-For an affected local preflight, use the reviewed path map in
+To select the required local minimum and inspect the advisory superset, use
+the reviewed path map in
 [`ci-affected-paths.tsv`](../scripts/ci-affected-paths.tsv):
 
 ```sh
 scripts/ci-affected.sh --base origin/main
 scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
 scripts/ci-affected.sh --self-test
 ```
 
-The first command prints one gate ID per line, in the canonical table order,
-including producer dependencies computed by `ci-verify.sh`. The second runs
-that exact selection through the same runner, one gate at a time. It defaults
-`TYPELISP_INLINE_TEST_WORKERS` and `TYPELISP_BUILD_INVARIANCE_WORKERS` to `1`
-and rejects any explicit value other than `1`, including an empty value.
+The default `required` tier prints the deterministic local minimum, one ID per
+line in canonical order with producer dependencies from `ci-verify.sh`. Owners
+run that minimum (the second command) plus focused regressions for their change,
+recording applicable input-scoped reuse or host-qualified evidence. Backend and
+target-bearing sources require target parity; stdlib, safety inputs and pins
+require the safety corpus. Shared bootstrap, formatting, lint and shared-view
+checks are always included. Direct native, codegen and documentation inputs add
+their owning gates through the reviewed map.
+
+`--tier advisory` prints a broader conservative superset for reviewing other
+affected checks. It includes the required tier, but it is not a requirement to
+run that entire superset locally. `--run` executes whichever tier is selected,
+one gate at a time through the canonical runner. Ordinary compiler PRs do not
+require the full local table. Full hosted coverage still applies. Unknown,
+workflow and executable-harness changes fail safe to the full table in both
+tiers. In every selector mode, these compiler worker
+counts default to `1`; any other explicit value, including empty, fails:
+
+- `TYPELISP_INLINE_TEST_WORKERS`
+- `TYPELISP_BUILD_INVARIANCE_WORKERS`
+- `TYPELISP_INTEGRATION_WORKERS`
+- `TYPELISP_COMPILE_MANIFEST_WORKERS`
+
 Use the ordinary memory-bounded invocation around the `--run` command on a
 shared development host. A partial local preflight still requires full hosted
 CI on the delivered head.
@@ -2678,16 +2698,22 @@ unusually quoted Git paths select the full host table. Invalid refs, invalid
 maps and unreadable path inventories fail before any gate runs. The shared
 source hygiene gates are always selected, even for an empty diff.
 
-Compiler sources (including backend tests and target references) and stdlib
-sources conservatively select the full table: their effects cross many gate
-boundaries, including target parity and located safety diagnostics. The target
-dispatch inventory and safety manifest have narrower reviewed mappings.
-Review every consuming gate before narrowing a path class; changing the map
-or selector itself currently selects the full table. `--host linux|windows`
+The advisory compiler, stdlib and corpus groups select consumers recorded in
+[`ci-affected-inputs.tsv`](../scripts/ci-affected-inputs.tsv): all produced-compiler
+gates and their bootstrap dependencies, plus direct source/corpus guards.
+Compiler/backend target references therefore include target parity, and stdlib
+changes include the safety corpus. Independent memory-helper, benchmark-harness
+and publication fixtures are excluded from these source recommendations.
+Prose selects documentation consumers plus the shared hygiene floor. Executable
+harnesses, workflow paths, selector fixtures and unknown paths select the full
+table. A new or missing gate classification also makes input groups select the
+full table until their consumers have been reviewed. Review input roles when
+changing gate contracts. `--host linux|windows`
 can inspect either host plan; execution requires the native host.
 
 `--paths FILE` replays a newline-delimited repository-relative path inventory
-without executing gates. The self-test uses the original changed paths at the
+in either tier without executing gates. The self-test uses the required tier
+for the original changed paths at the
 failed heads of PRs #9310, #9326 and #9327, with run/base/head provenance in
 `tests/fixtures/ci-affected/history.tsv`; it also checks isolated triggers,
 fallback, dependency closure, Git discovery and the single-worker boundary.

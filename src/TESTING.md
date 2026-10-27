@@ -12,6 +12,9 @@ The header-less `macro_dotted_root_*` entries retain the definition-site global
 when a caller local has the same name, including scalar, smaller, different and
 identical struct layouts and nested projection roots. Public check, CLI build
 and native execution must agree at opt0/1/2 on both hosts.
+The borrow entries retain the global root's type as well as its storage for
+shared/mutable field borrows, a reference-typed caller and nested projections.
+The mutable case also borrows the whole root to cover call-argument dispatch.
 
 `ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
 phi links, capacity growth, missing labels and renamed-block logical positions.

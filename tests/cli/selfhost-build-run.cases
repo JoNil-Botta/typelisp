@@ -82,6 +82,41 @@ exit 2
 stdout empty
 stderr empty
 
+case selfhost-cli-build-macro-dotted-root-borrow
+opt 0 1 2
+step shared
+run build "{{root}}/tests/integration/macro_dotted_root_borrow.tl" --opt-level {{opt}} -o "{{dir}}/shared{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/shared{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step mutable
+run build "{{root}}/tests/integration/macro_dotted_root_mut_borrow.tl" --opt-level {{opt}} -o "{{dir}}/mutable{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/mutable{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step reference
+run build "{{root}}/tests/integration/macro_dotted_root_ref_borrow.tl" --opt-level {{opt}} -o "{{dir}}/reference{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/reference{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step nested
+run build "{{root}}/tests/integration/macro_dotted_root_nested_borrow.tl" --opt-level {{opt}} -o "{{dir}}/nested{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/nested{{exe}}"
+exit 6
+stdout empty
+stderr empty
+
 case selfhost-cli-build
 file main.tl
 (define (main) : i64 19)

@@ -19111,7 +19111,12 @@
   [name : i64]
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (tc_core.tc-lookup-id type-env name)
+  (match (lower-lookup-type-id
+    ctx
+    (lower-state-type-cache state)
+    env
+    type-env
+    name)
     [(Ok place-ty)
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx (lower-global-shared-view place-ty)))
@@ -27336,7 +27341,12 @@
   [effective-arg : ast.AstExpr]
   [arg-ty : ast.AstType]
   [name-id : i64]) : ResultLowerCallArg
-  (match (tc_core.tc-lookup-id type-env name-id)
+  (match (lower-lookup-type-id
+    ctx
+    (lower-state-type-cache state)
+    env
+    type-env
+    name-id)
     [(Ok place-ty)
       (let
         [referent-ty : ast.AstType
@@ -66126,7 +66136,12 @@
   [write : bool]) : ResultLowerSpmdArrayViews
   (match views
     [(Views state env type-env)
-      (match (tc_core.tc-lookup-id type-env name)
+      (match (lower-lookup-type-id
+        ctx
+        (lower-state-type-cache state)
+        env
+        type-env
+        name)
         [(Err _) (Ok (Views state env type-env))]
         [(Ok ty)
           (match (lower-spmd-array-view-array-type ctx ty write)

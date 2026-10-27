@@ -188,8 +188,12 @@ macro_replace_hygiene|all|0,1,2|tests/integration/macro_replace_hygiene.tl|42|-|
 macro_dotted_global|all|0,1,2|tests/integration/macro_dotted_global.tl|2|-|-|global_field_macro_dep.tl|-
 macro_dotted_global_inside|all|0,1,2|tests/integration/macro_dotted_global_inside.tl|2|-|-|global_field_macro_dep.tl|-
 macro_dotted_global_matrix|all|0,1,2|tests/integration/macro_dotted_global_matrix.tl|42|-|-|global_field_macro_dep.tl|-
+macro_dotted_root_borrow|all|0,1,2|tests/integration/macro_dotted_root_borrow.tl|2|-|-|-|-
 macro_dotted_root_layout|all|0,1,2|tests/integration/macro_dotted_root_layout.tl|2|-|-|-|-
+macro_dotted_root_mut_borrow|all|0,1,2|tests/integration/macro_dotted_root_mut_borrow.tl|2|-|-|-|-
 macro_dotted_root_nested|all|0,1,2|tests/integration/macro_dotted_root_nested.tl|6|-|-|-|-
+macro_dotted_root_nested_borrow|all|0,1,2|tests/integration/macro_dotted_root_nested_borrow.tl|6|-|-|-|-
+macro_dotted_root_ref_borrow|all|0,1,2|tests/integration/macro_dotted_root_ref_borrow.tl|2|-|-|-|-
 macro_dotted_root_same|all|0,1,2|tests/integration/macro_dotted_root_same.tl|2|-|-|-|-
 macro_dotted_root_scalar|all|0,1,2|tests/integration/macro_dotted_root_scalar.tl|2|-|-|-|-
 macro_dotted_root_small|all|0,1,2|tests/integration/macro_dotted_root_small.tl|2|-|-|-|-

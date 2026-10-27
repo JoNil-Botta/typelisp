@@ -1,0 +1,127 @@
+# Ordinary defdispatch variants in mainless libraries use the build backend mode.
+# Cross-package direct calls, unsupported scalar-only bodies, and main-rooted
+# pruning run at every optimization/backend pair (stage2-public-tool-surface).
+do none
+target -
+opt 0 1 2
+mode scalar avx2 avx512
+
+case dispatch-library-direct-variants
+file math/typelisp.pkg
+(package
+  (name "math")
+  (version "0.1.0")
+  (kind "staticlib"))
+end-file
+file math/src/lib.tl
+(define (twice-a [n : i64]) : i64 (* n 2))
+(define (twice-b [n : i64]) : i64 (+ n n))
+(defdispatch twice (scalar twice-a) (avx2 twice-b) (avx512 twice-b))
+end-file
+file app/typelisp.pkg
+(package
+  (name "dispatch_app")
+  (version "0.1.0")
+  (kind "bin")
+  (dependencies (math "../math")))
+end-file
+file app/src/main.tl
+(import math.src.lib as math)
+(define (main) : i64 (+ (math.twice-a 10) (math.twice-b 11)))
+end-file
+run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+exit 0
+stderr empty
+exec "{{dir}}/app/target/release/dispatch_app{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
+case dispatch-library-scalar-only-no-entry
+file lib.tl
+(define (odd-scalar [n : i64]) : i64
+  (let
+    [odd : i64 0]
+    (foreach
+      ([i : i64 0 n])
+      (if (= (% i 2) 1)
+        (foreach-active [lane : i64] (set! odd (+ odd 1)))
+        unit))
+    odd))
+
+(define (odd-simd [n : i64]) : i64 (/ n 2))
+
+(defdispatch odd-count (scalar odd-scalar) (avx2 odd-simd) (avx512 odd-simd))
+
+(define (use-odd [n : i64]) : i64 (odd-count n))
+end-file
+run compile "{{dir}}/lib.tl" --no-entry --opt-level {{opt}} --backend-mode {{mode}} -o "{{dir}}/lib.s"
+exit scalar=0 avx2=1 avx512=1
+if-mode scalar
+stderr empty
+end-if
+if-mode avx2
+stderr contains foreach-active is not yet lowered for AVX2
+end-if
+if-mode avx512
+stderr contains foreach-active is not yet lowered for AVX-512
+end-if
+
+case dispatch-library-scalar-only-staticlib
+file typelisp.pkg
+(package
+  (name "scalar_dispatch")
+  (version "0.1.0")
+  (kind "staticlib"))
+end-file
+file src/lib.tl
+(define (odd-scalar [n : i64]) : i64
+  (let
+    [odd : i64 0]
+    (foreach
+      ([i : i64 0 n])
+      (if (= (% i 2) 1)
+        (foreach-active [lane : i64] (set! odd (+ odd 1)))
+        unit))
+    odd))
+
+(define (odd-simd [n : i64]) : i64 (/ n 2))
+
+(defdispatch odd-count (scalar odd-scalar) (avx2 odd-simd) (avx512 odd-simd))
+
+(define (use-odd [n : i64]) : i64 (odd-count n))
+end-file
+run build --manifest-path "{{dir}}/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
+exit scalar=0 avx2=1 avx512=1
+if-mode scalar
+stderr empty
+end-if
+if-mode avx2
+stderr contains foreach-active is not yet lowered for AVX2
+end-if
+if-mode avx512
+stderr contains foreach-active is not yet lowered for AVX-512
+end-if
+
+case dispatch-library-scalar-only-with-main
+file prog.tl
+(define (odd-scalar [n : i64]) : i64
+  (let
+    [odd : i64 0]
+    (foreach
+      ([i : i64 0 n])
+      (if (= (% i 2) 1)
+        (foreach-active [lane : i64] (set! odd (+ odd 1)))
+        unit))
+    odd))
+
+(define (odd-simd [n : i64]) : i64 (/ n 2))
+
+(defdispatch odd-count (scalar odd-scalar) (avx2 odd-simd) (avx512 odd-simd))
+
+(define (use-odd [n : i64]) : i64 (odd-count n))
+(define (main) : i64 (use-odd 8))
+end-file
+run run "{{dir}}/prog.tl" --opt-level {{opt}} --backend-mode {{mode}}
+exit 4
+stderr empty

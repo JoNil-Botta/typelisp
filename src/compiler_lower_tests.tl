@@ -1119,6 +1119,13 @@
 (defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
 (define (main) : i64 (tuple-ref (dot (tuple 1 2)) 1))")
 
+(define (compiler-lower-defdispatch-direct-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(define (dot-avx2 [x : i64]) : i64 (+ x 2))
+(define (dot-avx512 [x : i64]) : i64 (+ x 5))
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
+(define (main) : i64 (+ (dot 40) (dot-avx2 40)))")
+
 (define (compiler-lower-defdispatch-shared-helper-source) : String
   "(define (dispatch-helper [x : i64]) : i64 (+ x 1))
 (define (dot-scalar [x : i64]) : i64 (dispatch-helper x))
@@ -5492,23 +5499,33 @@
   [name : (& name str)]) : bool
   (lower-test-dispatch-cache-word-at? globals name))
 
+(define (lower-test-defdispatch-program [source : String]) : lower.ResultCompilerLower
+  (match (parser.parse-ast-source (& source))
+    [(Ok program)
+      (lower-compiler-program-with-decl-paths
+        "<source>"
+        program
+        (ast.ast-decl-path-list-new))]
+    [(Err message) (Err (box (lower.lower-diagnostic message)))]))
+
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
-  (match (lower.lower-compiler-source (compiler-lower-defdispatch-source))
+  (match (lower-test-defdispatch-program (compiler-lower-defdispatch-source))
     [(Ok program _ lower-owner)
       (let
         [ok : bool
           (match program
             [(Program globals functions _ _authority)
               (let
-                [cache-name : String "__tl_dispatch_cache_dot"]
+                [cache-name : String "__tl_dispatch_cache_<source>::dot"]
                 [scalar-name : String
-                  "__tl_dispatch_variant_scalar_dot__dot-scalar"]
-                [avx2-name : String "__tl_dispatch_variant_avx2_dot__dot-avx2"]
+                  "__tl_dispatch_variant_scalar_<source>::dot__<source>::dot-scalar"]
+                [avx2-name : String
+                  "__tl_dispatch_variant_avx2_<source>::dot__<source>::dot-avx2"]
                 [avx512-name : String
-                  "__tl_dispatch_variant_avx512_dot__dot-avx512"]
+                  "__tl_dispatch_variant_avx512_<source>::dot__<source>::dot-avx512"]
                 (and
                   (lower-test-dispatch-cache-word? globals cache-name)
-                  (lower-test-function-defined? functions "dot")
+                  (lower-test-function-defined? functions "<source>::dot")
                   (lower-test-function-defined?
                     functions
                     (owned_view.compiler-owned-shared-view scalar-name))
@@ -5518,51 +5535,67 @@
                   (lower-test-function-defined?
                     functions
                     (owned_view.compiler-owned-shared-view avx512-name))
-                  (not (lower-test-function-defined? functions "dot-scalar"))
-                  (not (lower-test-function-defined? functions "dot-avx2"))
-                  (not (lower-test-function-defined? functions "dot-avx512"))
-                  (= (lower-test-function-call-count functions "main" "dot") 1)
-                  (>= (lower-test-count functions "dot" (IndirectCall)) 4)
+                  (not
+                    (lower-test-function-defined?
+                      functions
+                      "<source>::dot-scalar"))
+                  (not
+                    (lower-test-function-defined?
+                      functions
+                      "<source>::dot-avx2"))
+                  (not
+                    (lower-test-function-defined?
+                      functions
+                      "<source>::dot-avx512"))
+                  (=
+                    (lower-test-function-call-count
+                      functions
+                      "main"
+                      "<source>::dot")
+                    1)
+                  (>=
+                    (lower-test-count functions "<source>::dot" (IndirectCall))
+                    4)
                   (=
                     (lower-test-function-store-global-count
                       functions
-                      "dot"
+                      "<source>::dot"
                       cache-name)
                     0)
                   (=
                     (lower-test-function-call-count
                       functions
-                      "dot"
+                      "<source>::dot"
                       "tl_atomic_i64_load_ptr")
                     1)
                   (=
                     (lower-test-function-call-count
                       functions
-                      "dot"
+                      "<source>::dot"
                       "tl_atomic_i64_cas_ptr")
                     3)
-                  (= (lower-test-count functions "dot" (Select)) 3)
-                  (= (lower-test-count functions "dot" (Cast)) 4)
+                  (= (lower-test-count functions "<source>::dot" (Select)) 3)
+                  (= (lower-test-count functions "<source>::dot" (Cast)) 4)
                   (>= (lower-test-functions-cpuid-count functions) 6)
                   (= (lower-test-functions-xgetbv-count functions) 2)
                   (=
                     (lower-test-function-call-arg-function-count
                       functions
-                      "dot"
+                      "<source>::dot"
                       "tl_atomic_i64_cas_ptr"
                       scalar-name)
                     1)
                   (=
                     (lower-test-function-call-arg-function-count
                       functions
-                      "dot"
+                      "<source>::dot"
                       "tl_atomic_i64_cas_ptr"
                       avx2-name)
                     1)
                   (=
                     (lower-test-function-call-arg-function-count
                       functions
-                      "dot"
+                      "<source>::dot"
                       "tl_atomic_i64_cas_ptr"
                       avx512-name)
                     1)))])]
@@ -5583,37 +5616,55 @@
         (>= (lower-test-count functions "dot" (IndirectCall)) 1))]
     [_ false]))
 
+(define (compiler-lower-defdispatch-direct-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower-test-defdispatch-program (compiler-lower-defdispatch-direct-source)))
+    [(Some functions)
+      (and
+        (lower-test-function-defined? functions "<source>::dot")
+        (lower-test-function-defined? functions "<source>::dot-avx2")
+        (not (lower-test-function-defined? functions "<source>::dot-scalar"))
+        (not (lower-test-function-defined? functions "<source>::dot-avx512"))
+        (= (lower-test-function-call-count functions "main" "<source>::dot") 1)
+        (=
+          (lower-test-function-call-count functions "main" "<source>::dot-avx2")
+          1))]
+    [_ false]))
+
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
   (match (lower-test-functions
-    (lower.lower-compiler-source
+    (lower-test-defdispatch-program
       (compiler-lower-defdispatch-shared-helper-source)))
     [(Some functions)
       (let
-        [scalar-name : String "__tl_dispatch_variant_scalar_dot__dot-scalar"]
-        [avx2-name : String "__tl_dispatch_variant_avx2_dot__dot-avx2"]
-        [avx512-name : String "__tl_dispatch_variant_avx512_dot__dot-avx512"]
+        [scalar-name : String
+          "__tl_dispatch_variant_scalar_<source>::dot__<source>::dot-scalar"]
+        [avx2-name : String
+          "__tl_dispatch_variant_avx2_<source>::dot__<source>::dot-avx2"]
+        [avx512-name : String
+          "__tl_dispatch_variant_avx512_<source>::dot__<source>::dot-avx512"]
         (and
-          (lower-test-function-defined? functions "dispatch-helper")
-          (not (lower-test-function-defined? functions "dot-scalar"))
-          (not (lower-test-function-defined? functions "dot-avx2"))
-          (not (lower-test-function-defined? functions "dot-avx512"))
+          (lower-test-function-defined? functions "<source>::dispatch-helper")
+          (not (lower-test-function-defined? functions "<source>::dot-scalar"))
+          (not (lower-test-function-defined? functions "<source>::dot-avx2"))
+          (not (lower-test-function-defined? functions "<source>::dot-avx512"))
           (=
             (lower-test-function-direct-call-count
               functions
               scalar-name
-              "dispatch-helper")
+              "<source>::dispatch-helper")
             1)
           (=
             (lower-test-function-direct-call-count
               functions
               avx2-name
-              "dispatch-helper")
+              "<source>::dispatch-helper")
             1)
           (=
             (lower-test-function-direct-call-count
               functions
               avx512-name
-              "dispatch-helper")
+              "<source>::dispatch-helper")
             1)))]
     [_ false]))
 
@@ -15301,6 +15352,37 @@
   (test.assert-true
     (compiler-lower-defdispatch-structural-shape-ok?)
     "defdispatch structural thunk transport"))
+
+(test
+  compiler-lower-defdispatch-thunk-shape
+  (test.assert-true
+    (compiler-lower-defdispatch-thunk-shape-ok?)
+    "defdispatch pruned thunk and ISA copies"))
+
+(test
+  compiler-lower-defdispatch-shared-helper
+  (test.assert-true
+    (compiler-lower-defdispatch-shared-helper-ok?)
+    "defdispatch pruned variants retain their shared helper"))
+
+(test
+  compiler-lower-defdispatch-direct-shape
+  (test.assert-true
+    (compiler-lower-defdispatch-direct-shape-ok?)
+    "defdispatch ordinary references retain only the referenced variant"))
+
+(test
+  compiler-lower-defdispatch-keep-all
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-defdispatch-direct-source)))
+    [(Some functions)
+      (test.assert-true
+        (and
+          (lower-test-function-defined? functions "dot-scalar")
+          (lower-test-function-defined? functions "dot-avx2")
+          (lower-test-function-defined? functions "dot-avx512"))
+        "the keep-all API retains variants as ordinary declarations")]
+    [(No) (test.assert-true false "keep-all dispatch source lowers")]))
 
 (test
   compiler-lower-masked-load-cache

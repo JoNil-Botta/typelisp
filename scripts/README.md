@@ -45,8 +45,14 @@ should use a `benchmark-`, `measure-`, or `analyze-` name.
 ## Linux instruction-count packages
 
 The shared `.github/actions/linux-instruction-count-tools` action installs
-valgrind and libc6-dbg in required Linux CI and in both self-compile reference
-jobs. On Ubuntu noble, libc6-dbg is a hard dependency of valgrind;
+valgrind and libc6-dbg in required Linux CI and the self-compile reference
+measurement. The ledger first runs `self-compile.sh ledger --prepare` to
+validate its reference and PR records. Only a required fallback or reproduction
+runs the shared action, before `self-compile.sh ledger` probes the installed
+runner identity or measures anything. The prepared inputs stay in this job's
+workspace, bound to its commit, run and attempt; they are never a package cache.
+Record-only ledgers skip package resolution, restore, transfer and installation.
+On Ubuntu noble, libc6-dbg is a hard dependency of valgrind;
 `--no-install-recommends` excludes gdb, not libc6-dbg. Windows is unchanged.
 
 `ci-linux-tools.sh` resolves exact versions against the runner's apt indexes.

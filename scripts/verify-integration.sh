@@ -2014,8 +2014,11 @@ EOF
     chmod +x "$_completion_root/runner/scripts/run-memory-bounded.sh"
     COMPLETION_FIXTURES="$ROOT/scripts/lib-bounded-completion-fixtures.sh"
     export COMPLETION_FIXTURES
-    for _completion_host in linux windows; do
+    bounded_completion_fixture_matrix "$HOST_OS"
+    _completion_count=0
+    for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
+            _completion_count=$((_completion_count + 1))
             _completion_dir="$_completion_root/$_completion_host-$_completion_case"
             mkdir -p "$_completion_dir/case"
             (
@@ -2088,14 +2091,28 @@ EOF
                     fi
                     ;;
             esac
+            if [ "$_completion_case" = missing-report ]; then
+                # Reach the parent's independent guard even though the real
+                # worker correctly refused this completion before settlement.
+                if (
+                    WORKDIR=$_completion_dir
+                    HOST_OS=$_completion_host
+                    integration_batch_settle_chunk "$WORKDIR/batch-embedded-1.list" embedded-1 64
+                ) > "$_completion_dir/parent.log" 2>&1; then
+                    echo "FAIL: integration parent accepted $_completion_host/missing-report" >&2
+                    exit 1
+                fi
+                grep -Fq 'reason=invalid-completion' "$_completion_dir/parent.log" || exit 1
+            fi
         done
     done
 
     # The actual standalone function must invoke the bounded runner with the
     # same cap and deadline. Model only that runner's result, including a
     # candidate emitted before cancellation. A direct compiler call is fatal.
-    for COMPLETION_HOST in linux windows; do
+    for COMPLETION_HOST in $BOUNDED_COMPLETION_HOSTS; do
         for COMPLETION_CASE in $BOUNDED_COMPLETION_CASES; do
+            _completion_count=$((_completion_count + 1))
             export COMPLETION_HOST COMPLETION_CASE
             _completion_report="$_completion_root/standalone-$COMPLETION_HOST-$COMPLETION_CASE"
             _completion_rc=0
@@ -2127,7 +2144,7 @@ EOF
             [ "$(cat "$_completion_report.argv")" = 'uncallable-compiler compile fixture.tl' ] || exit 1
         done
     done
-    echo '[integration] bounded completion and standalone retry fixtures passed (132 host/path cases)'
+    echo "[integration] bounded completion and standalone retry fixtures passed ($_completion_count host/path cases)"
 )
 
 run_batch_observability_self_test() {

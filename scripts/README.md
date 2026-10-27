@@ -378,6 +378,17 @@ results. Refusal reasons reach the gate console even when
 compile streams are redirected. Interrupted chunks cannot supply passing
 evidence through replay.
 
+Linux pool self-tests exhaust both report encodings and all completion faults.
+Windows runs representative native reports through each real worker, reader and
+diagnostic path, retaining cancellation, invalid/missing completion, ordinary
+failure, panic, native exception and success cases. Native Ctrl-C and nonzero
+exits truncated to shell zero are included. Both hosts keep admission-stop,
+output-rejection, bounded-replay and console-reason assertions. Report parsing
+and fixture verdicts use the same host-independent shell/AWK code; the full
+Linux matrix includes Windows CRLF and native status mappings. Hosted Windows
+workloads additionally exercise actual MSYS launches and Job Object reports.
+Native exception replay remains conditional on the observed shell mapping.
+
 The existing pool self-tests print same-run cost attribution for the new
 completion matrices beside the unchanged fixture portion. With CI timing
 enabled these are sub-phase rows, preserving the canonical gate inventory;

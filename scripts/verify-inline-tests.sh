@@ -343,11 +343,11 @@ inline_test_self_test_chunks() {
     inline_test_self_test_expect_failure "a source whose tests did not all pass" "$_self_dir"
 
     # Plausible passing stdout must not survive a cancelled or invalid attempt.
-    # Exercise both report encodings on both hosts, with ordinary failures
-    # retaining their diagnostics rather than becoming successful summaries.
+    # Ordinary failures retain diagnostics rather than successful summaries.
     ci_timing_set_now_ms
     _inline_matrix_started=$CI_TIMING_NOW_MS
-    for _completion_host in linux windows; do
+    bounded_completion_fixture_matrix "$HOST_OS"
+    for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _worker_dir="$INLINE_TEST_SELF_TEST_ROOT/worker-$_completion_host-$_completion_case"
             if ! bounded_completion_worker_fixture inline "$_worker_dir" "$_completion_host" \

@@ -938,7 +938,8 @@ FAKE
     # cancelled nor invalid completion may authorize its expectations.
     ci_timing_set_now_ms
     _manifest_matrix_started=$CI_TIMING_NOW_MS
-    for _completion_host in linux windows; do
+    bounded_completion_fixture_matrix "$HOST_OS"
+    for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _completion_dir="$MANIFEST_POOL_SELF_TEST_ROOT/$_completion_host-$_completion_case"
             mkdir -p "$_completion_dir"

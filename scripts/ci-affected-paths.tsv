@@ -502,3 +502,9 @@ tests/spmd/lane_identity_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	
 tests/spmd/lane_identity_reduce_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 src/build_cli_core.tl	stage2-public-tool-surface	@compiler	The public-tool runner invokes a structural guard that directly reads this source.
 src/lsp_frame_core.tl	stage2-public-tool-surface	@compiler	The public-tool runner invokes a structural guard that directly reads this source.
+tests/safety/global_mut_borrow_deref_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/safety/global_mut_borrow_field_overlap_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/safety/global_mut_borrow_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/safety/global_mut_borrow_noncall_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/safety/global_mut_borrow_store_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.

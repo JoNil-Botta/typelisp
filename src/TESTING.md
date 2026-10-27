@@ -2710,7 +2710,7 @@ recording applicable input-scoped reuse or host-qualified evidence. Backend and
 target-bearing sources require target parity; stdlib, safety inputs and pins
 require the safety corpus. Shared bootstrap, formatting, lint and shared-view
 checks and the cheap documented-source doctest guard are always included.
-Stdlib edits also require documentation, rendered-site links and anchors, and
+Stdlib source edits also require documentation, rendered-site links and anchors, and
 module/fixture guards.
 Direct native, codegen and documentation inputs add
 their owning gates through the reviewed map.

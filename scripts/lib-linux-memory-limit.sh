@@ -55,7 +55,7 @@ _linux_memory_limit_node_program='echo "$2" > "$1/memory.max" &&
     echo +memory > "$1/cgroup.subtree_control" &&
     mkdir "$1/$4"'
 
-# The main process of a top-level direct unit, started in its
+# The workload launcher of a top-level direct unit, started in its
 # DelegateSubgroup=launch leaf: build the workload node, move into its
 # tlmem-run leaf and exec the command. Arguments: the node program, the limit
 # in bytes, then the command. Nothing has run if it exits 2 with a diagnostic.
@@ -95,6 +95,26 @@ if [ -n "$2" ]; then
 fi
 shift 2
 exec "$@"'
+
+# The unit's main process waits outside the workload's OOM domain. Its private
+# terminal destination and identity are arguments, never workload environment.
+# A unit stop can kill this waiter while systemd-run --wait still returns 0;
+# only a completed wait may publish the record that permits outer success.
+_linux_memory_limit_wait_program='unset _tlmem_terminal _tlmem_owner _tlmem_status _tlmem_child
+_tlmem_terminal=$1
+_tlmem_owner=$2
+shift 2
+_tlmem_status=0
+# POSIX asynchronous lists may replace fd 0 with /dev/null before applying
+# their redirections (dash does). Save stdin before starting that list.
+exec 3<&0
+# An asynchronous list also ignores INT/QUIT. Reset those in the subshell
+# before exec, while it can still change dispositions inherited by the shell.
+(trap - INT QUIT; exec "$@") <&3 3<&- &
+_tlmem_child=$!
+wait "$_tlmem_child" || _tlmem_status=$?
+printf "tlmem-terminal-v1 %s %s\n" "$_tlmem_owner" "$_tlmem_status" > "$_tlmem_terminal" || exit 2
+exit "$_tlmem_status"'
 
 linux_memory_limit_validate_bytes() {
     case "$1" in
@@ -261,6 +281,41 @@ linux_memory_limit_finish() {
     return "$_linux_memory_limit_finish_status"
 }
 
+# Remove only fixed records below the fresh scratch root this invocation made.
+linux_memory_limit_release_evidence() {
+    case ${_linux_memory_limit_scratch:?} in
+        "${_linux_memory_limit_scratch_parent:?}"/typelisp-memory-limit.??????) ;;
+        *) echo "Linux memory limiting refused unowned evidence cleanup" >&2; return 2 ;;
+    esac
+    [ ! -L "$_linux_memory_limit_scratch" ] || return 2
+    rm -f -- "${_linux_memory_limit_scratch:?}/terminal" \
+        "${_linux_memory_limit_scratch:?}/systemd-stderr" \
+        "${_linux_memory_limit_scratch:?}/cgroup-peak"
+    rmdir -- "${_linux_memory_limit_scratch:?}"
+}
+
+# A zero launcher status needs one exact, invocation-owned terminal record.
+# Known launcher failures retain their status even if its waiter was killed.
+linux_memory_limit_verify_terminal() {
+    [ "$_linux_memory_limit_status" -eq 0 ] || return 0
+    _linux_memory_limit_terminal_status=
+    read -r _linux_memory_limit_terminal_magic _linux_memory_limit_terminal_owner \
+        _linux_memory_limit_terminal_status _linux_memory_limit_terminal_extra \
+        < "$_linux_memory_limit_scratch/terminal" || true
+    case $_linux_memory_limit_terminal_status in
+        0 | [1-9] | [1-9][0-9] | 1[0-9][0-9] | 2[0-4][0-9] | 25[0-5])
+            if printf 'tlmem-terminal-v1 %s %s\n' \
+                "${_linux_memory_limit_scratch##*/}" "$_linux_memory_limit_terminal_status" |
+                cmp -s - "$_linux_memory_limit_scratch/terminal"; then
+                _linux_memory_limit_status=$_linux_memory_limit_terminal_status
+                return 0
+            fi
+            ;;
+    esac
+    echo "Linux memory limiting missing, malformed or mismatched invocation terminal evidence; launcher success does not prove workload completion" >&2
+    _linux_memory_limit_status=2
+}
+
 linux_memory_limit_run_systemd() {
     _linux_memory_limit_bytes=$1
     shift
@@ -286,6 +341,39 @@ linux_memory_limit_run_systemd() {
         _linux_memory_limit_subgroup=launch
     fi
 
+    if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ] &&
+        ! printf '' 2>/dev/null > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"; then
+        echo "Linux memory limiting failed to create invocation peak evidence: $TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE" >&2
+        return 2
+    fi
+    # Workload stderr can be large. Keep its capture on the caller's metrics
+    # filesystem, as before: a tmpfs capture would consume the workload cap.
+    # Without metrics stderr streams directly; only tiny private records use
+    # TMPDIR on that route.
+    if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+        _linux_memory_limit_scratch_parent=$(CDPATH= cd -- \
+            "$(dirname -- "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE")" && pwd -P) || return 2
+    else
+        _linux_memory_limit_scratch_parent=$(CDPATH= cd -- "${TMPDIR:-/tmp}" && pwd -P) || return 2
+    fi
+    _linux_memory_limit_scratch=$(mktemp -d \
+        "$_linux_memory_limit_scratch_parent/typelisp-memory-limit.XXXXXX") || {
+        echo "Linux memory limiting failed to create invocation terminal evidence" >&2
+        return 2
+    }
+    _linux_memory_limit_systemd_stderr="$_linux_memory_limit_scratch/systemd-stderr"
+    _linux_memory_limit_cgroup_peak="$_linux_memory_limit_scratch/cgroup-peak"
+    # Empty records exist before launch; neither old metrics nor another call's
+    # record can stand in for this invocation's completed wait.
+    if ! { printf '' > "$_linux_memory_limit_scratch/terminal" &&
+        printf '' > "$_linux_memory_limit_systemd_stderr" &&
+        printf '' > "$_linux_memory_limit_cgroup_peak"; }; then
+        linux_memory_limit_release_evidence
+        return 2
+    fi
+    set -- sh -c "$_linux_memory_limit_wait_program" sh \
+        "$_linux_memory_limit_scratch/terminal" "${_linux_memory_limit_scratch##*/}" "$@"
+
     # Transient user services inherit the user manager's environment, not the
     # invoking gate's exports. Prepend one --setenv=name option per valid
     # environment name; omitting `=value` asks systemd-run to copy the exact
@@ -300,33 +388,13 @@ linux_memory_limit_run_systemd() {
         set -- "--setenv=$_linux_memory_limit_env_name" "$@"
     done
 
-    if [ -z "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
-        systemd-run \
-            --user \
-            --quiet \
-            --wait \
-            --pipe \
-            --collect \
-            --same-dir \
-            --service-type=exec \
-            --property=MemoryAccounting=yes \
-            --property="MemoryMax=$_linux_memory_limit_service_bytes" \
-            --property=MemorySwapMax=0 \
-            --property=OOMPolicy=continue \
-            "$@"
-        return $?
-    fi
+    [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ] || set -- --quiet "$@"
 
     # With --wait, systemd reports a post-run MemoryPeak. Some managers account
     # only the service launcher in that summary, while the service is not a
     # descendant that an outer wait4(2) measurement can cover. Preserve the
     # larger in-cgroup process-group sample when the bounded runner supplies
     # one; direct callers still get the systemd evidence.
-    _linux_memory_limit_systemd_stderr=$(mktemp \
-        "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE.systemd-stderr.XXXXXX") || {
-        echo "Linux memory limiting failed to create invocation stderr evidence" >&2
-        return 2
-    }
     # An OOM kill at the workload node's limit takes the whole node, and with
     # it the sampler's view, and systemd's summary can lack the final peak
     # once the cgroup is gone. ExecStopPost runs in the unit's `.control`
@@ -337,17 +405,11 @@ linux_memory_limit_run_systemd() {
     # nested node's own OOM, which the hierarchical count of `workload`
     # includes. The ':' prefix keeps systemd from expanding the script's
     # variables.
-    _linux_memory_limit_cgroup_peak=$(mktemp \
-        "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE.cgroup-peak.XXXXXX") || {
-        rm -f "$_linux_memory_limit_systemd_stderr"
-        echo "Linux memory limiting failed to create cgroup peak evidence" >&2
-        return 2
-    }
     # The hook writes labelled lines, and its own errors, so an OOM report can
     # show what it saw: `ran`, `cgroup PATH`, `kills N` and `peak N`.
     _linux_memory_limit_record_peak='{ echo ran; while read -r line; do case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}"; cgroup="${cgroup%/.control}/workload"; echo "cgroup $cgroup"; kills=0; while read -r key value; do if [ "$key" = oom_kill ]; then kills=$value; fi; done < "$cgroup/tlmem-run/memory.events"; echo "kills $kills"; read -r peak < "$cgroup/memory.peak" && echo "peak $peak" ;; esac; done < /proc/self/cgroup; } > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" 2>&1 || true'
     _linux_memory_limit_status=0
-    TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak \
+    set -- env "TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak" \
         LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
         --user \
         --wait \
@@ -361,8 +423,12 @@ linux_memory_limit_run_systemd() {
         --property=OOMPolicy=continue \
         --setenv=TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE \
         "--property=ExecStopPost=:/bin/sh -c '$_linux_memory_limit_record_peak'" \
-        "$@" 2> "$_linux_memory_limit_systemd_stderr" ||
-        _linux_memory_limit_status=$?
+        "$@"
+    if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+        "$@" 2> "$_linux_memory_limit_systemd_stderr" || _linux_memory_limit_status=$?
+    else
+        "$@" || _linux_memory_limit_status=$?
+    fi
     cat "$_linux_memory_limit_systemd_stderr" >&2
     _linux_memory_limit_hook_bytes=0
     _linux_memory_limit_hook_kills=0
@@ -400,7 +466,10 @@ linux_memory_limit_run_systemd() {
         }
     ' "$_linux_memory_limit_systemd_stderr" 2>/dev/null || true)
     _linux_memory_limit_hook_text="stop-post hook: $(tr '\n' ' ' < "$_linux_memory_limit_cgroup_peak")"
-    rm -f "$_linux_memory_limit_systemd_stderr" "$_linux_memory_limit_cgroup_peak"
+    linux_memory_limit_verify_terminal
+    if ! linux_memory_limit_release_evidence && [ "$_linux_memory_limit_status" -eq 0 ]; then
+        _linux_memory_limit_status=2
+    fi
     linux_memory_limit_finish "$_linux_memory_limit_status" \
         "$_linux_memory_limit_systemd_oom" \
         "$_linux_memory_limit_summary" "systemd summary" \
@@ -574,6 +643,16 @@ linux_memory_limit_process_group_rss_kib() {
         '
 }
 
+linux_memory_limit_release_gate() {
+    case ${_linux_memory_limit_gate_dir:?} in
+        "${_linux_memory_limit_gate_parent:?}"/typelisp-memory-sampler.??????) ;;
+        *) echo "process-group sampler refused unowned launch gate cleanup" >&2; return 2 ;;
+    esac
+    [ ! -L "$_linux_memory_limit_gate_dir" ] || return 2
+    rm -f -- "${_linux_memory_limit_gate_dir:?}/start"
+    rmdir -- "${_linux_memory_limit_gate_dir:?}"
+}
+
 linux_memory_limit_sample_process_group() {
     _linux_memory_limit_bytes=$1
     shift
@@ -623,8 +702,9 @@ linux_memory_limit_sample_process_group() {
     # gives the parent time to verify the new process group and take a positive
     # RSS sample before any user code can execute, including commands which
     # would otherwise finish between fork and the first sample.
+    _linux_memory_limit_gate_parent=$(CDPATH= cd -- "${TMPDIR:-/tmp}" && pwd -P) || return 2
     _linux_memory_limit_gate_dir=$(mktemp -d \
-        "${TMPDIR:-/tmp}/typelisp-memory-sampler.XXXXXX") || {
+        "$_linux_memory_limit_gate_parent/typelisp-memory-sampler.XXXXXX") || {
         echo "process-group sampler failed to create launch gate" >&2
         return 1
     }
@@ -670,15 +750,13 @@ linux_memory_limit_sample_process_group() {
         if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
             printf '0\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
         fi
-        rm -f "$_linux_memory_limit_gate"
-        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+        linux_memory_limit_release_gate || true
         return "$_linux_memory_limit_status"
     fi
     if [ "$_linux_memory_limit_pgid" -ne "$_linux_memory_limit_pid" ]; then
         kill "$_linux_memory_limit_pid" 2>/dev/null || true
         wait "$_linux_memory_limit_pid" 2>/dev/null || true
-        rm -f "$_linux_memory_limit_gate"
-        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+        linux_memory_limit_release_gate || true
         echo "process-group sampler failed to isolate command process group" >&2
         return 1
     fi
@@ -691,8 +769,7 @@ linux_memory_limit_sample_process_group() {
             "$_linux_memory_limit_pid") || {
                 kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
                 wait "$_linux_memory_limit_pid" 2>/dev/null || true
-                rm -f "$_linux_memory_limit_gate"
-                rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+                linux_memory_limit_release_gate || true
                 echo "process-group sampler failed to read initial process memory" >&2
                 return 1
             }
@@ -704,8 +781,7 @@ linux_memory_limit_sample_process_group() {
     if [ "$_linux_memory_limit_rss" -eq 0 ]; then
         kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
         wait "$_linux_memory_limit_pid" 2>/dev/null || true
-        rm -f "$_linux_memory_limit_gate"
-        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+        linux_memory_limit_release_gate || true
         echo "process-group sampler failed to establish initial memory measurement" >&2
         return 1
     fi
@@ -714,8 +790,7 @@ linux_memory_limit_sample_process_group() {
         echo "memory limit exceeded before command launch: aggregate RSS ${_linux_memory_limit_rss} KiB > ${_linux_memory_limit_kib} KiB (process-group sampler)" >&2
         kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
         wait "$_linux_memory_limit_pid" 2>/dev/null || true
-        rm -f "$_linux_memory_limit_gate"
-        rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+        linux_memory_limit_release_gate || true
         if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
             printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
                 > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
@@ -730,8 +805,7 @@ linux_memory_limit_sample_process_group() {
             [ "$_linux_memory_limit_oom_kills" -gt "$_linux_memory_limit_oom_kills_before" ]; then
             printf '1\n' > "$_linux_memory_limit_workload/cgroup.kill"
             wait "$_linux_memory_limit_pid" 2>/dev/null || true
-            rm -f "$_linux_memory_limit_gate"
-            rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+            linux_memory_limit_release_gate || true
             linux_memory_limit_record_oom_peak "$_linux_memory_limit_workload"
             return 137
         fi
@@ -744,8 +818,7 @@ linux_memory_limit_sample_process_group() {
             # process groups; the workload's termination covers them too.
             printf '1\n' > "$_linux_memory_limit_workload/cgroup.kill" 2>/dev/null || true
             wait "$_linux_memory_limit_pid" 2>/dev/null || true
-            rm -f "$_linux_memory_limit_gate"
-            rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+            linux_memory_limit_release_gate || true
             if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
                 printf '%s\n' "$((_linux_memory_limit_peak_rss * 1024))" \
                     > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
@@ -756,8 +829,7 @@ linux_memory_limit_sample_process_group() {
             "$_linux_memory_limit_pid") || {
                 kill -TERM "-$_linux_memory_limit_pid" 2>/dev/null || true
                 wait "$_linux_memory_limit_pid" 2>/dev/null || true
-                rm -f "$_linux_memory_limit_gate"
-                rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+                linux_memory_limit_release_gate || true
                 echo "process-group sampler failed to read process memory" >&2
                 return 1
             }
@@ -782,8 +854,7 @@ linux_memory_limit_sample_process_group() {
     else
         _linux_memory_limit_status=$?
     fi
-    rm -f "$_linux_memory_limit_gate"
-    rmdir "$_linux_memory_limit_gate_dir" 2>/dev/null || true
+    linux_memory_limit_release_gate || true
     # The group can empty between two polls because of an OOM kill.
     if linux_memory_limit_read_oom_kills "$_linux_memory_limit_leaf" &&
         [ "$_linux_memory_limit_oom_kills" -gt "$_linux_memory_limit_oom_kills_before" ]; then

@@ -1368,8 +1368,10 @@ sc_self_test() {
     FIXTURE_METRICS_TOOLS=$SC_TOOL_DIR
     . "$SC_TOOL_DIR/lib-fixture-metrics.sh"
     fixture_metrics_init "$_st_root"
-    mkdir -p "$_st_root/metrics"
+    mkdir -p "$_st_root/metrics" "$_st_root/metrics-disabled"
     st_succeeds "pipeline/substitution tool-start counter" fixture_metrics_self_test "$_st_root/metrics"
+    st_succeeds "disabled instrumentation installs no counter" fixture_metrics_disabled_self_test "$_st_root/metrics-disabled"
+    fixture_metrics_overhead_sample
     for _st_part in arithmetic records gate declarations selection resolve ledger account chain fallback e2e; do
         mkdir -p "$_st_root/$_st_part"
         fixture_metrics_run "$_st_part" "st_$_st_part" "$_st_root/$_st_part"

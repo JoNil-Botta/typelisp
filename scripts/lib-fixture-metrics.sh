@@ -1,7 +1,8 @@
 # Opt-in diagnostics for process-heavy shell gates. Clocks use the ordinary
 # ci-timing artifact. Tool starts count direct external dispatches from this
 # instrumented shell (including pipelines/substitutions), not shell subshells
-# or descendants internal to git/jq/etc. No extra process wraps a tool.
+# or descendants internal to git/jq/etc. No extra wrapper executable is launched,
+# but a shell may fork for a function in a pipeline or command substitution.
 . "${FIXTURE_METRICS_TOOLS:?}/lib-ci-timing.sh"
 
 fixture_metrics_init() {
@@ -68,3 +69,32 @@ fixture_metrics_self_test() (
     [ "$_fm_text" = fixture ] || exit 1
     [ "$((_fm_after - _fm_before))" -eq 1 ] || exit 1
 )
+
+fixture_metrics_disabled_self_test() (
+    TYPELISP_CI_TIMING=0
+    _fm_definition=$(command -V awk)
+    fixture_metrics_init "$1"
+    [ "$(command -V awk)" = "$_fm_definition" ] || exit 1
+    [ ! -e "$1/tool-starts" ] || exit 1
+)
+
+# A bounded matched launch sample measures the counter's incremental overhead
+# on each CI host. Both paths launch the same tools; command bypasses the
+# function wrappers. These rows are a sample, not a full-gate overhead estimate.
+fixture_metrics_launch_sample() {
+    for _fm_iteration in 1 2 3 4 5 6 7 8; do
+        case "$1" in
+            direct) _fm_text=$(command awk 'BEGIN { print "fixture" }' | command cat) ;;
+            counted) _fm_text=$(awk 'BEGIN { print "fixture" }' | cat) ;;
+        esac
+        [ "$_fm_text" = fixture ] || return 1
+    done
+}
+
+fixture_metrics_overhead_sample() {
+    ci_timing_enabled || return 0
+    for _fm_repeat in 1 2 3; do
+        fixture_metrics_run "counter-bypassed-$_fm_repeat" fixture_metrics_launch_sample direct
+        fixture_metrics_run "counter-wrapped-$_fm_repeat" fixture_metrics_launch_sample counted
+    done
+}

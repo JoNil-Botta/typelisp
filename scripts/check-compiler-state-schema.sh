@@ -48,7 +48,7 @@ check_roots() {
 mkdir -p "$ROOT/target/exp"
 WORKDIR=$(mktemp -d "$ROOT/target/exp/compiler-state-schema.XXXXXX")
 case "$WORKDIR" in "$ROOT/target/exp/compiler-state-schema."??????) ;; *) exit 1 ;; esac
-trap 'rm -rf -- "${WORKDIR:?}"' EXIT
+trap 'if [ "$?" -eq 0 ]; then rm -rf -- "${WORKDIR:?}"; fi' EXIT
 FIXTURE_METRICS_TOOLS=$ROOT/scripts
 . "$ROOT/scripts/lib-fixture-metrics.sh"
 fixture_metrics_init "$WORKDIR"
@@ -89,7 +89,14 @@ case "${1:-}" in
             "$dirty/nested/a file.tl:1:(compiler-lower-state-write! state value)" \
             "$dirty/z.tl:2:(compiler-lower-state-cell state)" > "$WORKDIR/expected"
         find_retired "$dirty" "$clean" > "$WORKDIR/actual"
-        [ "$(cat "$WORKDIR/expected")" = "$(cat "$WORKDIR/actual")" ] || exit 1
+        if [ "$(cat "$WORKDIR/expected")" != "$(cat "$WORKDIR/actual")" ]; then
+            echo "compiler-state-schema self-test: sorted file/line report differs; evidence in $WORKDIR" >&2
+            echo "expected:" >&2
+            cat "$WORKDIR/expected" >&2
+            echo "actual:" >&2
+            cat "$WORKDIR/actual" >&2
+            exit 1
+        fi
         for spelling in read 'write!' cell; do
             printf '(compiler-lower-state-%s state)\n' "$spelling" > "$WORKDIR/planted.tl"
             if check_roots "$WORKDIR/planted.tl" 2> "$WORKDIR/planted.err"; then

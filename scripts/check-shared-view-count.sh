@@ -270,7 +270,9 @@ EOF
 (define (k [x : i64]) : i64 (compiler-owned-place-shared-view x))
 EOF
     printf 'max_uses\t6\n' > "$_work/scripts/shared-view-baseline.tsv"
-    _counted=$(SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" 2>&1) || {
+    # Nested fixture trees are covered by the enclosing self-test clock; only
+    # the later production scan should append a scan row for this gate.
+    _counted=$(TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" 2>&1) || {
         echo "self-test: an at-baseline tree failed: $_counted" >&2
         exit 1
     }
@@ -292,12 +294,12 @@ EOF
             ;;
     esac
     printf 'max_uses\t5\n' > "$_work/scripts/shared-view-baseline.tsv"
-    if SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" > "$_work/over.out" 2>&1; then
+    if TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" > "$_work/over.out" 2>&1; then
         echo "self-test: a count above the baseline was not rejected" >&2
         exit 1
     fi
     printf 'max_uses\t9\n' > "$_work/scripts/shared-view-baseline.tsv"
-    _lower=$(SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" 2>&1) || {
+    _lower=$(TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" 2>&1) || {
         echo "self-test: a count below the baseline failed: $_lower" >&2
         exit 1
     }
@@ -309,7 +311,7 @@ EOF
             ;;
     esac
     printf 'max_uses\tmany\n' > "$_work/scripts/shared-view-baseline.tsv"
-    if SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" > "$_work/bad.out" 2>&1; then
+    if TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT=$_work sh "$SCRIPT" > "$_work/bad.out" 2>&1; then
         echo "self-test: a malformed baseline was not rejected" >&2
         exit 1
     fi
@@ -322,24 +324,31 @@ EOF
         '(define (user) : i64 (+ (acc 0) (pkg.acc 1)))' > "$_edge/src/b.tl"
     printf '%s' '(define (strings) : String "(quoted-shared-view 0)")' > "$_edge/stdlib/c.tl"
     printf 'max_uses\t3\n' > "$_edge/scripts/shared-view-baseline.tsv"
-    _edge_result=$(SHARED_VIEW_COUNT_ROOT=$_edge sh "$SCRIPT" 2>&1) || exit 1
+    _edge_result=$(TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT=$_edge sh "$SCRIPT" 2>&1) || {
+        echo "self-test: edge tree failed: $_edge_result; evidence in $_edge" >&2
+        exit 1
+    }
     case "$_edge_result" in
         *"thin wrappers transparent: 2 (report only)"*"3 shared-view uses (baseline 3)"*) ;;
         *) echo "self-test: file-boundary/raw/weighted parity failed: $_edge_result" >&2; exit 1 ;;
     esac
     printf 'max_uses\t2\n' > "$_edge/scripts/shared-view-baseline.tsv"
-    if SHARED_VIEW_COUNT_ROOT=$_edge sh "$SCRIPT" > "$_edge/over.out" 2>&1; then
+    if TYPELISP_CI_TIMING=0 SHARED_VIEW_COUNT_ROOT=$_edge sh "$SCRIPT" > "$_edge/over.out" 2>&1; then
         echo "self-test: planted edge use was not rejected" >&2
         exit 1
     fi
-    grep -q '3 shared-view uses exceed the baseline of 2' "$_edge/over.out" || exit 1
+    grep -q '3 shared-view uses exceed the baseline of 2' "$_edge/over.out" || {
+        echo "self-test: planted edge failure lacks the count diagnostic; evidence in $_edge" >&2
+        cat "$_edge/over.out" >&2
+        exit 1
+    }
     echo "check-shared-view-count: self-test passed"
 }
 
 mkdir -p "$ROOT/target/exp"
 METRICS_WORK=$(mktemp -d "$ROOT/target/exp/shared-view-count.XXXXXX")
 case "$METRICS_WORK" in "$ROOT/target/exp/shared-view-count."??????) ;; *) exit 1 ;; esac
-trap 'rm -rf -- "${METRICS_WORK:?}"' EXIT
+trap 'if [ "$?" -eq 0 ]; then rm -rf -- "${METRICS_WORK:?}"; fi' EXIT
 . "$FIXTURE_METRICS_TOOLS/lib-fixture-metrics.sh"
 fixture_metrics_init "$METRICS_WORK"
 if [ "$SELF_TEST" -eq 1 ]; then

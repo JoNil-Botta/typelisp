@@ -1045,7 +1045,10 @@ validate_manifest() {
 }
 
 write_expected_stream() {
-    _spec=$(resolve_source_locations "$1") || exit 1
+    _spec=$1
+    case "$_spec" in
+        *'@loc{'*) _spec=$(resolve_source_locations "$_spec") || exit 1 ;;
+    esac
     _out=$2
     case "$_spec" in
         "" | -)

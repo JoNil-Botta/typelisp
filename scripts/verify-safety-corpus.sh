@@ -467,7 +467,10 @@ run_manifest_case() {
             [ -n "$stderr_contains" ] && [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
             diagnostic_source=$source
             if [ "$expected_code" != "-" ]; then
-                diagnostic_source=$(resolve_source_locations "$expected_code") || fail "$case_id invalid diagnostic location"
+                diagnostic_source=$expected_code
+                case "$diagnostic_source" in
+                    *'@loc{'*) diagnostic_source=$(resolve_source_locations "$diagnostic_source") || fail "$case_id invalid diagnostic location" ;;
+                esac
             fi
             observation=$(classify_check_rejection "$code" "$out" "$err" \
                 "$diagnostic_source" "$stderr_contains")

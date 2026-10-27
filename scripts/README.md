@@ -344,6 +344,19 @@ failure, and success. `verify-embedded-stdlib-tlci-resources.sh` runs its
 builds under that interface; `src/TESTING.md` (Embedded stdlib and TLCI gates)
 describes its caps and reports.
 
+Linux success also requires an invocation-owned terminal status: the unit's
+private waiter publishes it only after its command's wait completes. A zero
+`systemd-run --wait` status or a positive memory peak alone proves no workload
+completion. Missing, malformed or foreign terminal evidence fails with exit 2,
+including direct library calls without metrics. Known nonzero launcher statuses,
+OOM evidence (137) and timeouts (124) keep their established precedence. Nested
+calls use ordinary child waits inside their enclosing cap. Terminal records are
+fresh per invocation, passed to the waiter through arguments rather than the
+workload's environment, and removed with that invocation's stderr/peak scratch.
+Direct calls without metrics now also retain stop-post OOM evidence while
+streaming stderr directly. A known OOM returns 137;
+systemd's generic failure status alone does not identify an OOM.
+
 `verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
 including the root opt0 build, at 8192 MiB and writes
 `target/selfhost-build-run.memory`. The root release build in
@@ -356,8 +369,11 @@ On Linux, `TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE` is an invocation-local
 output destination for the limiting helper. The helper removes it from the
 workload's environment; its own sampler receives the destination explicitly.
 Nested callers can request their own metrics file or `--report` path. They do
-not inherit or remove their parent's evidence. Systemd stderr uses a unique
-temporary file per invocation, cleaned up after success or failure. The helper
+not inherit or remove their parent's evidence. Systemd stderr uses a private
+temporary directory beside the metrics destination, cleaned up after success or
+failure. This preserves its filesystem: moving a large capture to tmpfs would
+charge it against the workload's memory cap. Without metrics only the tiny
+terminal/stop-post records use `TMPDIR`. The helper
 self-test covers nested library calls, explicit inner reports and the hierarchy
 cases without building another compiler: overlapping, concurrent and inner-OOM
 allocations, outer timeout and cancellation, and fail-closed hierarchies. Run

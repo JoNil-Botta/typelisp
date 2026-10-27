@@ -1,0 +1,3 @@
+stdlib/json.tl
+tests/integration/json_control_escapes.tl
+tests/integration/native.manifest

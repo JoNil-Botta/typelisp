@@ -97,15 +97,15 @@ short_windows_path() {
 
 configure_windows_linker() {
     if [ -n "${TYPELISP_WINDOWS_LINK:-}" ]; then
-        TYPELISP_WINDOWS_LINK_POSIX=$(to_unix_path "$TYPELISP_WINDOWS_LINK")
-        echo "[native-link] windows linker=$TYPELISP_WINDOWS_LINK"
+        TYPELISP_WINDOWS_LINK_POSIX=$(to_unix_path "$TYPELISP_WINDOWS_LINK") || return $?
+        echo "[native-link] windows linker=$TYPELISP_WINDOWS_LINK" || return $?
         return 0
     fi
 
     if command -v lld-link >/dev/null 2>&1; then
-        TYPELISP_WINDOWS_LINK_POSIX=$(command -v lld-link)
+        TYPELISP_WINDOWS_LINK_POSIX=$(command -v lld-link) || return $?
     elif command -v lld-link.exe >/dev/null 2>&1; then
-        TYPELISP_WINDOWS_LINK_POSIX=$(command -v lld-link.exe)
+        TYPELISP_WINDOWS_LINK_POSIX=$(command -v lld-link.exe) || return $?
     else
         fail "missing linker: lld-link (or set TYPELISP_WINDOWS_LINK)"
     fi
@@ -115,11 +115,11 @@ configure_windows_linker() {
 
 find_clang() {
     if command -v clang.exe >/dev/null 2>&1; then
-        command -v clang.exe
+        command -v clang.exe || return $?
         return 0
     fi
     if command -v clang >/dev/null 2>&1; then
-        command -v clang
+        command -v clang || return $?
         return 0
     fi
 
@@ -130,17 +130,18 @@ find_clang() {
         "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin" \
         "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"; do
         if [ -x "$candidate_dir/clang.exe" ]; then
-            printf '%s\n' "$candidate_dir/clang.exe"
+            printf '%s\n' "$candidate_dir/clang.exe" || return $?
             return 0
         fi
     done
 
     if command -v powershell.exe >/dev/null 2>&1; then
-        ps_clang=$(powershell.exe -NoProfile -Command '$cmd = Get-Command clang.exe -ErrorAction SilentlyContinue; if ($cmd) { $cmd.Source }' |
+        ps_clang=$(powershell.exe -NoProfile -Command '$cmd = Get-Command clang.exe -ErrorAction SilentlyContinue; if ($cmd) { $cmd.Source }') || return $?
+        ps_clang=$(printf '%s\n' "$ps_clang" |
             tr -d '\r' |
-            sed -n '1p')
+            sed -n '1p') || return $?
         if [ -n "$ps_clang" ]; then
-            to_unix_path "$ps_clang"
+            to_unix_path "$ps_clang" || return $?
             return 0
         fi
     fi
@@ -150,18 +151,22 @@ find_clang() {
 
 configure_windows_clang_env() {
     if [ -n "${TYPELISP_WINDOWS_CLANG:-}" ]; then
-        TYPELISP_WINDOWS_CLANG_POSIX=$(to_unix_path "$TYPELISP_WINDOWS_CLANG")
+        TYPELISP_WINDOWS_CLANG_POSIX=$(to_unix_path "$TYPELISP_WINDOWS_CLANG") || return $?
         export TYPELISP_WINDOWS_CLANG_POSIX
         return 0
     fi
 
-    clang_path=$(find_clang || true)
+    clang_path=$(find_clang) || {
+        _clang_status=$?
+        echo "missing assembler: clang" >&2
+        return "$_clang_status"
+    }
     if [ -z "$clang_path" ]; then
         fail "missing assembler: clang"
     fi
 
     TYPELISP_WINDOWS_CLANG_POSIX=$clang_path
-    TYPELISP_WINDOWS_CLANG=$(short_windows_path "$clang_path")
+    TYPELISP_WINDOWS_CLANG=$(short_windows_path "$clang_path") || return $?
     case "$TYPELISP_WINDOWS_CLANG" in
         *" "*) fail "assembler path contains spaces after short-path conversion: $TYPELISP_WINDOWS_CLANG" ;;
     esac
@@ -175,7 +180,7 @@ configure_toolchain() {
         command -v as >/dev/null 2>&1 || fail "native link requires 'as'"
         command -v ld >/dev/null 2>&1 || fail "native link requires 'ld'"
     else
-        configure_windows_clang_env
+        configure_windows_clang_env || return $?
         configure_windows_linker
     fi
 }
@@ -234,13 +239,13 @@ link_native_object() {
     bin=$3
     _entry=${4:-_tl_start}
     if [ "$NL_HOST_OS" = windows ]; then
-        obj_win=$(to_windows_path "$obj")
-        bin_win=$(to_windows_path "$bin")
+        obj_win=$(to_windows_path "$obj") || return $?
+        bin_win=$(to_windows_path "$bin") || return $?
         repro_arg=
         if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
             repro_arg=/Brepro
         fi
-        echo "[native-link] link $label with Windows COFF linker (freestanding: no CRT)"
+        echo "[native-link] link $label with Windows COFF linker (freestanding: no CRT)" || return $?
         # Freestanding Win32: the backend emits its own entry (_tl_start) plus
         # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use plus
         # the audited ntdll rooted-filesystem boundary, so the binary links against
@@ -259,7 +264,7 @@ link_native_object() {
             kernel32.lib \
             ntdll.lib
     else
-        echo "[native-link] link $label with ld (freestanding: no libc, no loader)"
+        echo "[native-link] link $label with ld (freestanding: no libc, no loader)" || return $?
         # Runtime syscalls and libc-ABI shims are emitted in the object; this
         # link requires neither a C library nor a dynamic loader.
         ld -static -e "$_entry" "$obj" -o "$bin"
@@ -272,8 +277,10 @@ assemble_and_link_windows() {
     obj=$3
     bin=$4
 
-    echo "[native-link] assemble $label with clang"
-    "$TYPELISP_WINDOWS_CLANG_POSIX" --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj"
+    # ci_timing_run disables errexit; each prerequisite must forward its own
+    # failure before a stale object or a later successful step can hide it.
+    echo "[native-link] assemble $label with clang" || return $?
+    "$TYPELISP_WINDOWS_CLANG_POSIX" --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" || return $?
 
     link_native_object "$label" "$obj" "$bin"
 }
@@ -287,8 +294,9 @@ assemble_and_link() {
     if [ "$NL_HOST_OS" = windows ]; then
         assemble_and_link_windows "$label" "$asm" "$obj" "$bin"
     else
-        echo "[native-link] assemble $label with as"
-        as "$asm" -o "$obj"
-        link_native_object "$label" "$obj" "$bin" "$(linux_entry_symbol_for_asm "$asm")"
+        echo "[native-link] assemble $label with as" || return $?
+        as "$asm" -o "$obj" || return $?
+        _entry=$(linux_entry_symbol_for_asm "$asm") || return $?
+        link_native_object "$label" "$obj" "$bin" "$_entry"
     fi
 }

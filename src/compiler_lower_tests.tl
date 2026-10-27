@@ -1119,6 +1119,13 @@
 (defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
 (define (main) : i64 (tuple-ref (dot (tuple 1 2)) 1))")
 
+(define (compiler-lower-defdispatch-direct-source) : String
+  "(define (dot-scalar [x : i64]) : i64 x)
+(define (dot-avx2 [x : i64]) : i64 (+ x 2))
+(define (dot-avx512 [x : i64]) : i64 (+ x 5))
+(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))
+(define (main) : i64 (+ (dot 40) (dot-avx2 40)))")
+
 (define (compiler-lower-defdispatch-shared-helper-source) : String
   "(define (dispatch-helper [x : i64]) : i64 (+ x 1))
 (define (dot-scalar [x : i64]) : i64 (dispatch-helper x))
@@ -5581,6 +5588,19 @@
         (lower-test-function-defined? functions "dot")
         (= (lower-test-function-call-count functions "main" "dot") 1)
         (>= (lower-test-count functions "dot" (IndirectCall)) 1))]
+    [_ false]))
+
+(define (compiler-lower-defdispatch-direct-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-defdispatch-direct-source)))
+    [(Some functions)
+      (and
+        (lower-test-function-defined? functions "dot")
+        (lower-test-function-defined? functions "dot-avx2")
+        (not (lower-test-function-defined? functions "dot-scalar"))
+        (not (lower-test-function-defined? functions "dot-avx512"))
+        (= (lower-test-function-call-count functions "main" "dot") 1)
+        (= (lower-test-function-call-count functions "main" "dot-avx2") 1))]
     [_ false]))
 
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
@@ -15301,6 +15321,12 @@
   (test.assert-true
     (compiler-lower-defdispatch-structural-shape-ok?)
     "defdispatch structural thunk transport"))
+
+(test
+  compiler-lower-defdispatch-direct-shape
+  (test.assert-true
+    (compiler-lower-defdispatch-direct-shape-ok?)
+    "defdispatch ordinary references retain only the referenced variant"))
 
 (test
   compiler-lower-masked-load-cache

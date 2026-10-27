@@ -1577,3 +1577,45 @@ mode scalar avx2 avx512
 exit 134
 in stderr
 contains array index out of bounds
+
+# Ordinary variant references use the ambient mode; dispatch keeps its own ISA.
+case dispatch-distinct-direct
+source tests/spmd/dispatch_distinct_direct.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit scalar=43 avx2=46 avx512=50
+stdout empty
+stderr empty
+
+case dispatch-shared-direct
+source tests/spmd/dispatch_shared_direct.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit scalar=43 avx2=46 avx512=50
+stdout empty
+stderr empty
+
+case dispatch-shared-only
+source tests/spmd/dispatch_shared_only.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+stdout empty
+stderr empty
+in asm
+not-match ^_tl_dispatch_shared_only_fill_bang:$
+contains __tl_dispatch_variant_scalar_
+contains __tl_dispatch_variant_avx2_
+contains __tl_dispatch_variant_avx512_
+
+case dispatch-imported-values
+source tests/spmd/dispatch_imported_values.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+stdout empty
+stderr empty

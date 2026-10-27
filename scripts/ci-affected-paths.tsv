@@ -509,3 +509,9 @@ tests/safety/global_mut_borrow_initializer_location_reject.tl	stage2-public-tool
 tests/safety/global_mut_borrow_noncall_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
 tests/safety/global_mut_borrow_store_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
 tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/spmd/dispatch_distinct_direct.tl	stage2-spmd-simd-comparison	@corpus	Distinct ordinary dispatch variants run at every optimization and backend mode in simd.cases.
+tests/spmd/dispatch_shared_direct.tl	stage2-spmd-simd-comparison	@corpus	Shared ordinary dispatch variant calls and values run through simd.cases.
+tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison	@corpus	Dispatch-only control pins ISA selection and absence of an unreferenced ordinary body.
+tests/spmd/dispatch_variant_support.tl	stage2-spmd-simd-comparison	@corpus	Dispatch regression support independently checks CPU selection and every output lane.
+tests/spmd/dispatch_imported_values.tl	stage2-spmd-simd-comparison	@corpus	Qualified and selected variant calls and values run through simd.cases.
+tests/spmd/dispatch_value_provider.tl	stage2-spmd-simd-comparison	@corpus	Imported dispatch variant provider is consumed by the simd.cases value regression.

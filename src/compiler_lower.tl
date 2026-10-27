@@ -10138,7 +10138,7 @@
   [decl-path : String]
   [module : String]
   [module-id : i64]
-  [decl : ast.AstDecl]) : LowerNameCacheMaybeId
+  [decl : (& decl ast.AstDecl)]) : LowerNameCacheMaybeId
   (match decl
     [(DefFn decl-meta name _ _ _ _)
       (Some
@@ -12642,11 +12642,32 @@
       name-cache
       (lower-function-body-index-empty count))))
 
+(define (lower-reach-function-body
+  [pools : (& pools ast.AstNodePoolContext)]
+  [all-functions : (& all-functions lower_i64_i64_map.Map)]
+  [body-index : (& body-index LowerFunctionBodyIndex)]
+  [name : i64]
+  [state : LowerReachState]) : LowerReachState
+  (match (lower-function-body-index-find body-index name)
+    [(Some body body-names body-path-owner-id)
+      (let
+        [lower-state : CompilerLowerState (lower-reach-state-owner state)]
+        [runtime-paths : lower_i64_i64_map.Map
+          (compiler-lower-state-reach-active-runtime-paths lower-state)]
+        (lower_i64_i64_map.insert-ref!
+          (&mut runtime-paths)
+          body-path-owner-id
+          1)
+        (compiler-lower-state-set-reach-active-runtime-paths!
+          lower-state
+          runtime-paths))
+      (lower-reach-expr pools all-functions body-names state body)]
+    [(No) state]))
+
 (define (lower-reach-process
   [pools : (& pools ast.AstNodePoolContext)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
-  [names : LowerNameCache]
-  [body-index : LowerFunctionBodyIndex]
+  [body-index : (& body-index LowerFunctionBodyIndex)]
   [state : LowerReachState]) : LowerReachState
   (match (lower-global-shared-view state)
     [(State reachable worklist lower-state)
@@ -12658,32 +12679,16 @@
             [name : i64 (array-ref worklist.slots top)]
             [popped : LowerReachState
               (State reachable (LowerIdSet worklist.slots top) lower-state)]
-            (match (lower-function-body-index-find body-index name)
-              [(Some body body-names body-path-owner-id)
-                (let
-                  [runtime-paths : lower_i64_i64_map.Map
-                    (compiler-lower-state-reach-active-runtime-paths
-                      lower-state)]
-                  (lower_i64_i64_map.insert-ref!
-                    (&mut runtime-paths)
-                    body-path-owner-id
-                    1)
-                  (compiler-lower-state-set-reach-active-runtime-paths!
-                    lower-state
-                    runtime-paths))
-                (lower-reach-process
-                  pools
-                  all-functions
-                  names
-                  body-index
-                  (lower-reach-expr pools all-functions body-names popped body))]
-              [(No)
-                (lower-reach-process
-                  pools
-                  all-functions
-                  names
-                  body-index
-                  popped)]))))]))
+            (lower-reach-process
+              pools
+              all-functions
+              body-index
+              (lower-reach-function-body
+                pools
+                all-functions
+                body-index
+                name
+                popped)))))]))
 
 (define (lower-dispatch-variant-logical-name
   [module-id : i64]
@@ -12822,6 +12827,8 @@
     (lower_i64_i64_map.with-capacity 1024)))
 
 (define (lower-reach-add-dispatch-variant-list-from
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body-index : (& body-index LowerFunctionBodyIndex)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [module-id : i64]
   [names : (& names LowerNameCache)]
@@ -12836,23 +12843,33 @@
       (ast.ast-dispatch-variant-fallback))
       [(Variant _ variant-name)
         (lower-reach-add-dispatch-variant-list-from
+          pools
+          body-index
           all-functions
           module-id
           names
           variants
           (+ index 1)
-          (lower-reach-add-logical
+          ;; ISA copies need the body's dependencies, not its ordinary entry.
+          ;; A call or value reference encountered in a body still roots it.
+          (lower-reach-function-body
+            pools
             all-functions
-            state
-            (lower-dispatch-variant-logical-id module-id names variant-name)))])))
+            body-index
+            (lower-dispatch-variant-logical-id module-id names variant-name)
+            state))])))
 
 (define (lower-reach-add-dispatch-variant-list
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body-index : (& body-index LowerFunctionBodyIndex)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [module-id : i64]
   [names : (& names LowerNameCache)]
   [variants : ast.AstDispatchVariantList]
   [state : LowerReachState]) : LowerReachState
   (lower-reach-add-dispatch-variant-list-from
+    pools
+    body-index
     all-functions
     module-id
     names
@@ -12861,6 +12878,8 @@
     state))
 
 (define (lower-reach-add-dispatch-variant-decl
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body-index : (& body-index LowerFunctionBodyIndex)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [module-id : i64]
   [names : (& names LowerNameCache)]
@@ -12869,6 +12888,8 @@
   (match decl
     [(DefDispatch decl-meta _ variants)
       (lower-reach-add-dispatch-variant-list
+        pools
+        body-index
         all-functions
         module-id
         names
@@ -12878,6 +12899,8 @@
       (let
         [inner : ast.AstDecl (deref inner-box)]
         (lower-reach-add-dispatch-variant-decl
+          pools
+          body-index
           all-functions
           module-id
           names
@@ -12886,6 +12909,8 @@
     [_ state]))
 
 (define (lower-reach-add-dispatch-variant-roots-in-module
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body-index : (& body-index LowerFunctionBodyIndex)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [decls : (& ast.AstDeclList)]
   [module-id : i64]
@@ -12899,6 +12924,8 @@
         (match (& decl)
           [(Module next-module)
             (lower-reach-add-dispatch-variant-roots-in-module
+              pools
+              body-index
               all-functions
               rest
               next-module
@@ -12906,11 +12933,15 @@
               state)]
           [_
             (lower-reach-add-dispatch-variant-roots-in-module
+              pools
+              body-index
               all-functions
               rest
               module-id
               names
               (lower-reach-add-dispatch-variant-decl
+                pools
+                body-index
                 all-functions
                 module-id
                 names
@@ -12918,11 +12949,15 @@
                 state))]))]))
 
 (define (lower-reach-add-dispatch-variant-roots
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body-index : (& body-index LowerFunctionBodyIndex)]
   [all-functions : (& all-functions lower_i64_i64_map.Map)]
   [decls : (& ast.AstDeclList)]
   [names : (& names LowerNameCache)]
   [state : LowerReachState]) : LowerReachState
   (lower-reach-add-dispatch-variant-roots-in-module
+    pools
+    body-index
     all-functions
     decls
     cbi.compiler-builtin-id-fix-empty
@@ -14146,7 +14181,36 @@
                 (lower-global-shared-view decl))])]
         (when
           kept
-          (set! (array-ref keep index) 1)
+          ;; Keep variant declarations in the clone-root discovery program,
+          ;; but emit their ordinary bodies only when source references root
+          ;; them. Typechecking retains all declarations for ISA-copy lookup.
+          (set!
+            (array-ref keep index)
+            (if (= (lower_i64_i64_map.len (& dispatch-variants)) 0)
+              1
+              (match (lower-function-logical-id-from-decl
+                lower-state
+                (clone entry-path)
+                (clone decl-path)
+                (lower-decl-owner-module-name
+                  lower-state
+                  source-module-id
+                  logical-module-id)
+                logical-module-id
+                (& decl))
+                [(Some logical-id)
+                  (if (and
+                    (lower_i64_i64_map.contains?
+                      (& dispatch-variants)
+                      logical-id)
+                    (not
+                      (lower-reach-slot-set-contains-id?
+                        all-functions
+                        reachable
+                        logical-id)))
+                    0
+                    1)]
+                [(No) 1])))
           (ast.ast-decl-list-push (&mut out) (lower-global-shared-view decl))
           (ast.ast-decl-path-list-push-with-owner-and-provenance-id
             (&mut out-paths)
@@ -14521,6 +14585,8 @@
                       cleanup-state)]
                   [dispatch-state : LowerReachState
                     (lower-reach-add-dispatch-variant-roots
+                      pools
+                      body-index
                       all-functions
                       decls
                       name-cache
@@ -14539,7 +14605,6 @@
                     (lower-reach-process
                       pools
                       all-functions
-                      name-cache
                       body-index
                       global-state)]
                   (match reached-state
@@ -76635,12 +76700,6 @@
       (lower-name-cache-with-clone-roots
         (lower-name-cache-from-env lower-state (lower-global-shared-view names))
         clone-roots)]
-    [dispatch-variants : lower_i64_i64_map.Map
-      (lower-dispatch-variant-set-from-decls
-        decls
-        paths
-        (lower-global-shared-view entry-path)
-        dispatch-name-cache)]
     ;; Build the shared global name/type caches once; per-module caches
     ;; are small overlays that fall through to them. The initial cur caches are
     ;; empty overlays (everything resolves via the global caches) for decls in
@@ -76678,7 +76737,6 @@
         (Nil)
         cbi.compiler-builtin-id-fix-empty)
       (lower-type-cache-overlay lower-state (tc_core.tc-empty-env))
-      dispatch-variants
       mode
       ""
       cbi.compiler-builtin-id-fix-empty)))
@@ -76738,7 +76796,6 @@
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [type-cache : LowerTypeCache]
-  [dispatch-variants : lower_i64_i64_map.Map]
   [mode : CompilerLowerMode]
   [module : String]
   [module-id : i64]) : ResultLowerDecls
@@ -77046,57 +77103,88 @@
                       logical-id
                       name
                       (lower-global-shared-view logical-name))]
-                  (if (lower_i64_i64_map.contains?
-                    (& dispatch-variants)
-                    logical-id)
-                    (set! cur-decls rest)
-                    (begin
-                      (cfg
-                        compile-profile
-                        (compiler-lower-profile-detail-start lower-state))
-                      (match (lower-checked-named-function
-                        decl-ctx
-                        name
-                        body-box
-                        cur-local-top-env
-                        (lower-global-shared-view cur-type-cache)
-                        function-symbol
-                        (lower-global-shared-view params)
-                        (lower-global-shared-view ret)
-                        (lower-global-shared-view body)
-                        (tc_core.tc-body-param-write-fact
-                          (tc_core.tc-context-body-state decl-ctx)
-                          body-box)
-                        (lower-global-shared-view cur-spans)
-                        decl-name-cache
-                        mode)
-                        [(Ok lowered-functions function-spans)
-                          (match (lower-spmd-package-callable-functions
-                            decl-ctx
-                            cur-local-top-env
-                            (lower-global-shared-view cur-type-cache)
-                            (csym.compiler-symbol-module-key
-                              (if (= (string.string-length cur-module) 0)
-                                (compiler-lower-state-spmd-package-name
-                                  lower-state)
-                                (owned_view.compiler-owned-shared-view
-                                  cur-module))
-                              (lower-name-id-text lower-state name))
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-detail-start lower-state))
+                    (match (lower-checked-named-function
+                      decl-ctx
+                      name
+                      body-box
+                      cur-local-top-env
+                      (lower-global-shared-view cur-type-cache)
+                      function-symbol
+                      (lower-global-shared-view params)
+                      (lower-global-shared-view ret)
+                      (lower-global-shared-view body)
+                      (tc_core.tc-body-param-write-fact
+                        (tc_core.tc-context-body-state decl-ctx)
+                        body-box)
+                      (lower-global-shared-view cur-spans)
+                      decl-name-cache
+                      mode)
+                      [(Ok lowered-functions function-spans)
+                        (match (lower-spmd-package-callable-functions
+                          decl-ctx
+                          cur-local-top-env
+                          (lower-global-shared-view cur-type-cache)
+                          (csym.compiler-symbol-module-key
+                            (if (= (string.string-length cur-module) 0)
+                              (compiler-lower-state-spmd-package-name
+                                lower-state)
+                              (owned_view.compiler-owned-shared-view cur-module))
+                            (lower-name-id-text lower-state name))
+                          (csym.compiler-symbols-lookup-value-id-or
+                            (tc_core.tc-context-symbols decl-ctx)
+                            logical-id
                             (csym.compiler-symbols-lookup-value-id-or
                               (tc_core.tc-context-symbols decl-ctx)
-                              logical-id
-                              (csym.compiler-symbols-lookup-value-id-or
-                                (tc_core.tc-context-symbols decl-ctx)
-                                name
-                                (csym.compiler-symbols-missing-handle)))
-                            (lower-global-shared-view params)
-                            (lower-global-shared-view ret)
-                            body
-                            (ast.ast-fn-metadata-spmd-callable (& metadata))
-                            function-spans
-                            (lower-global-shared-view cur-name-cache)
-                            mode)
-                            [(Err message)
+                              name
+                              (csym.compiler-symbols-missing-handle)))
+                          (lower-global-shared-view params)
+                          (lower-global-shared-view ret)
+                          body
+                          (ast.ast-fn-metadata-spmd-callable (& metadata))
+                          function-spans
+                          (lower-global-shared-view cur-name-cache)
+                          mode)
+                          [(Err message)
+                            (begin
+                              (cfg
+                                compile-profile
+                                (compiler-lower-profile-detail-finish
+                                  lower-state
+                                  "function"
+                                  logical-name))
+                              (set! result (Err message))
+                              (set! done true))]
+                          [(Ok callable-functions next-spans)
+                            (let
+                              [_export : unit
+                                (match (ast.ast-fn-metadata-export (& metadata))
+                                  [(No) unit]
+                                  [(Export symbol)
+                                    (ir.compiler-ir-extern-builder-push!
+                                      (&mut cur-externs)
+                                      (ir.CompilerIrExtern.Extern
+                                        function-symbol
+                                        function-symbol
+                                        (lower-global-shared-view logical-name)
+                                        (ast.ast-ty-func
+                                          (tc_core.tc-type-list-without-regions
+                                            (tc_core.tc-param-type-list
+                                              decl-ctx
+                                              params))
+                                          (&
+                                            (tc_core.tc-type-without-regions
+                                              (tc_core.tc-resolve-type
+                                                decl-ctx
+                                                ret))))
+                                        (C)
+                                        (ci.intern-id-value symbol)
+                                        (ast.ast-extern-link-input-list-new)
+                                        true
+                                        (ir.CompilerIrReturnStorage.None)))])]
                               (begin
                                 (cfg
                                   compile-profile
@@ -77104,62 +77192,24 @@
                                     lower-state
                                     "function"
                                     logical-name))
-                                (set! result (Err message))
-                                (set! done true))]
-                            [(Ok callable-functions next-spans)
-                              (let
-                                [_export : unit
-                                  (match (ast.ast-fn-metadata-export
-                                    (& metadata))
-                                    [(No) unit]
-                                    [(Export symbol)
-                                      (ir.compiler-ir-extern-builder-push!
-                                        (&mut cur-externs)
-                                        (ir.CompilerIrExtern.Extern
-                                          function-symbol
-                                          function-symbol
-                                          (lower-global-shared-view
-                                            logical-name)
-                                          (ast.ast-ty-func
-                                            (tc_core.tc-type-list-without-regions
-                                              (tc_core.tc-param-type-list
-                                                decl-ctx
-                                                params))
-                                            (&
-                                              (tc_core.tc-type-without-regions
-                                                (tc_core.tc-resolve-type
-                                                  decl-ctx
-                                                  ret))))
-                                          (C)
-                                          (ci.intern-id-value symbol)
-                                          (ast.ast-extern-link-input-list-new)
-                                          true
-                                          (ir.CompilerIrReturnStorage.None)))])]
-                                (begin
-                                  (cfg
-                                    compile-profile
-                                    (compiler-lower-profile-detail-finish
-                                      lower-state
-                                      "function"
-                                      logical-name))
-                                  (ir.compiler-ir-function-builder-append-seq!
-                                    (&mut cur-functions)
-                                    (& lowered-functions))
-                                  (ir.compiler-ir-function-builder-append-seq!
-                                    (&mut cur-functions)
-                                    (& callable-functions))
-                                  (set! cur-spans next-spans)
-                                  (set! cur-decls rest)))])]
-                        [(Err message)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-lower-profile-detail-finish
-                                lower-state
-                                "function"
-                                logical-name))
-                            (set! result (Err message))
-                            (set! done true))]))))]
+                                (ir.compiler-ir-function-builder-append-seq!
+                                  (&mut cur-functions)
+                                  (& lowered-functions))
+                                (ir.compiler-ir-function-builder-append-seq!
+                                  (&mut cur-functions)
+                                  (& callable-functions))
+                                (set! cur-spans next-spans)
+                                (set! cur-decls rest)))])]
+                      [(Err message)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-detail-finish
+                              lower-state
+                              "function"
+                              logical-name))
+                          (set! result (Err message))
+                          (set! done true))])))]
               [(DefDispatch decl-meta name variants)
                 (match (lower-dispatch-decl
                   ctx

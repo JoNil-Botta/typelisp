@@ -3666,6 +3666,7 @@ run_preparation_failure_self_test() (
 )
 
 if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
+    sh "$ROOT/scripts/verify-native-link-failures.sh" "$WORKDIR/native-link-failure-self-test"
     run_preparation_failure_self_test
     run_batch_observability_self_test
     exit 0

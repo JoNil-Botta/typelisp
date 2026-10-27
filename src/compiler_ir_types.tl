@@ -4960,11 +4960,11 @@
 (defenum CompilerIrParam
   (Param String ast.AstType i64))
 
-;; The control-byte prefix cannot occur in a source identifier. Keep hidden
-;; ABI parameters distinct from user parameters even when users name one
-;; `__sret`; optimizer ownership proofs must not rely on a spellable name.
+;; `$` is excluded by lex.is-symbol-char, so source cannot spell this name.
+;; SPEC 2.3 makes `\x01` spell `x01`, not byte 1. The invalid-symbol prefix
+;; separates hidden ABI parameters from users without runtime allocation.
 (define (compiler-ir-hidden-sret-param-name) : String
-  "\x01__sret")
+  "$__sret")
 
 (defstruct CompilerIrParamSeq
   (slots (__tl_dyn-array CompilerIrParam))

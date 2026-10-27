@@ -32,6 +32,7 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import lex)
 
 ;; Whole-program entries arm the checked tier; a fixture must restore the
 ;; caller's mode so later band-only and explicitly armed probes stay distinct.
@@ -34289,6 +34290,57 @@
     (not (opt.opt-licm-store-summary-clean? (opt-licm-summary-for-instr instr)))))
 
 ;; --- CALLMEM-ROOTS: the sret slot and the callee's own allocas ---------------
+(test
+  compiler-hidden-sret-name-identity
+  (let
+    [hidden : String (ir.compiler-ir-hidden-sret-param-name)]
+    [names : (Array String 2) (array "__sret" "x01__sret")]
+    [types : (Array ast.AstType 3)
+      (array (ast.ast-ty-ref 0 (& (I64))) (ast.ast-ty-mut-ptr (& (I64))) (U64))]
+    (test.assert-true
+      (not (lex.is-symbol-char (string.string-ref hidden 0)))
+      "hidden name has a prefix the source lexer cannot produce as a symbol")
+    (for [n (iterator.range 0 2)]
+      (for [t (iterator.range 0 3)]
+        (let
+          [params : ir.CompilerIrParamSeq
+            (ir.compiler-ir-param-seq-prepend
+              (Param (clone (array-ref names n)) (clone (array-ref types t)) 0)
+              (ir.compiler-ir-param-seq-empty))]
+          (test.assert-true
+            (not (opt.opt-inline-param-is-sret? (& params) 0))
+            "ordinary parameter must be staged")
+          (test.assert-true
+            (not (opt.opt-inline-params-have-sret? (& params)))
+            "ordinary parameter cannot admit an aggregate return")
+          (test.assert-i64-eq
+            (opt.opt-inline-checked-sret-var (& params))
+            -1
+            "ordinary parameter is not checked-inline result storage")
+          (test.assert-i64-eq
+            (opt.opt-slot-fwd-sret-param params)
+            -1
+            "ordinary parameter is not slot-forwarding result storage"))))
+    (let
+      [params : ir.CompilerIrParamSeq
+        (ir.compiler-ir-param-seq-prepend
+          (Param hidden (U64) 7)
+          (ir.compiler-ir-param-seq-empty))]
+      (test.assert-true
+        (opt.opt-inline-param-is-sret? (& params) 0)
+        "hidden stage control")
+      (test.assert-true
+        (opt.opt-inline-params-have-sret? (& params))
+        "hidden return control")
+      (test.assert-i64-eq
+        (opt.opt-inline-checked-sret-var (& params))
+        7
+        "hidden checked-inline control")
+      (test.assert-i64-eq
+        (opt.opt-slot-fwd-sret-param params)
+        7
+        "hidden slot-forwarding control"))))
+
 ;;
 ;; `sret_callee` stores its result through the hidden `__sret` parameter and
 ;; fills a temporary it allocated itself. Its call-memory row names a write
@@ -34347,6 +34399,7 @@
       (opt-callmem-roots-row (ir.compiler-ir-hidden-sret-param-name) 1)]
     [raw : i64 (opt-callmem-roots-row "raw" 1)]
     [source-name : i64 (opt-callmem-roots-row "__sret" 1)]
+    [escaped-source-name : i64 (opt-callmem-roots-row "x01__sret" 1)]
     [scalar : i64
       (opt-callmem-roots-row (ir.compiler-ir-hidden-sret-param-name) 2)]
     (cond
@@ -34364,6 +34417,8 @@
       ;; A source-spellable `__sret` is still just an ordinary raw u64 param.
       [(< source-name 0) 11]
       [(not (opt.opt-call-memory-summary-unknown? source-name)) 12]
+      [(< escaped-source-name 0) 13]
+      [(not (opt.opt-call-memory-summary-unknown? escaped-source-name)) 14]
       ;; a store through a non-pointer parameter is unknown whatever the slot
       [(< scalar 0) 9]
       [(not (opt.opt-call-memory-summary-unknown? scalar)) 10]

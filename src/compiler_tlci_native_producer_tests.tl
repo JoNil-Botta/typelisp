@@ -14,6 +14,40 @@
 (import stdlib.string)
 (import stdlib.test)
 (import tlci_core)
+(import lex)
+
+(define (producer-source-failure-sentinel!) : unit
+  (let
+    [context : producer.TlciNativeSourceContext
+      (producer.tlci-native-source-context-new
+        (ast.ast-node-pool-context-new-with-capacities 1 1)
+        (ci.intern-compat-state-new))]
+    [patterns : ast.AstPatternList (ast.ast-pattern-list-new)]
+    (ast.ast-pattern-list-push (&mut patterns) (Wildcard))
+    (ast.ast-pattern-list-push
+      (&mut patterns)
+      (Tuple (box (ast.ast-pattern-list-new))))
+    (let
+      [failure : String
+        (producer.embedded-native-value-match-bind (& context) (& patterns) 1 0)]
+      (test.assert-true
+        (> (string.string-length failure) 0)
+        "failure is not empty success")
+      (test.assert-true
+        (not (lex.is-symbol-char (string.string-ref failure 0)))
+        "failure sentinel cannot be a source symbol")
+      (test.assert-owned-string-eq
+        (producer.embedded-native-value-match-bind (& context) (& patterns) 0 0)
+        failure
+        "unsupported tail propagates the sentinel")
+      (test.assert-owned-string-eq
+        (producer.embedded-native-value-match-bind (& context) (& patterns) 2 0)
+        ""
+        "completed binding chain is empty success"))))
+
+(test
+  native-source-unspellable-failure-sentinel
+  (producer-source-failure-sentinel!))
 
 ;; The batch tokens of `line`, or "none" when it is not batchable.
 (define (batch-tokens [line : String]) : String

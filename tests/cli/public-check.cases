@@ -1037,6 +1037,48 @@ stdout empty
 stderr contains error[E0207]: typecheck: mutable borrow of by-value place is only supported as an immediate call argument
 stderr contains global_mut_borrow_noncall_location_reject.tl:10:23
 
+case check-global-deref-mut-borrow-location
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/global_mut_borrow_deref_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: mutable borrow of by-value place is only supported as an immediate call argument
+stderr contains global_mut_borrow_deref_location_reject.tl:9:10
+run compile tests/safety/global_mut_borrow_deref_location_reject.tl --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: mutable borrow of by-value place is only supported as an immediate call argument
+stderr contains global_mut_borrow_deref_location_reject.tl:9:10
+
+case check-global-initializer-mut-borrow-location
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/global_mut_borrow_initializer_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: mutable borrow of by-value place is only supported as an immediate call argument
+stderr contains global_mut_borrow_initializer_location_reject.tl:8:10
+run compile tests/safety/global_mut_borrow_initializer_location_reject.tl --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: mutable borrow of by-value place is only supported as an immediate call argument
+stderr contains global_mut_borrow_initializer_location_reject.tl:8:10
+
+case check-global-store-mut-borrow-location
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/global_mut_borrow_store_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: mutable borrow of by-value place is only supported as an immediate call argument
+stderr contains global_mut_borrow_store_location_reject.tl:9:16
+run compile tests/safety/global_mut_borrow_store_location_reject.tl --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: mutable borrow of by-value place is only supported as an immediate call argument
+stderr contains global_mut_borrow_store_location_reject.tl:9:16
+
 case check-global-call-mut-borrow-location-control
 target linux-x86_64 windows-x86_64
 opt 0 1 2

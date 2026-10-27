@@ -53428,6 +53428,56 @@
                 (Some expected)
                 (No))
               (Some span))]
+          [(Borrow mutable lifetime-id place-id)
+            ;; A source view must reach the policy check even when a legacy
+            ;; consumer (deref or a store target) types the borrow. Keep the ID
+            ;; entrypoint's observation and intrinsic-result bookkeeping.
+            (let
+              [observed? : bool
+                (and
+                  (not (tc-type-env-scoped-identity-exhausted? env))
+                  (> tc-semantic-observed-jobs 0)
+                  (!= (tc-context-semantic-observer ctx).address 0))]
+              [_enter : unit
+                (when observed? (tc-semantic-observe-enter! ctx env expr-id))]
+              [checked : ResultTcType
+                (if (tc-type-env-scoped-identity-exhausted? env)
+                  (Err (tc-selected-error typed.TypedError.Exhausted))
+                  (let
+                    [_
+                      (try
+                        (tc-normalize-dotted-local-field-node! ctx env place-id))]
+                    (tc-borrow-expr-with-policy
+                      ctx
+                      (tc-context-expr-bases ctx)
+                      env
+                      mutable
+                      (ast.ast-borrow-lifetime-from-id lifetime-id)
+                      (tc-context-expr-get ctx place-id)
+                      (and expected? allow-mut-by-value-borrow)
+                      (Some span))))]
+              (when
+                (not expected?)
+                (match (clone checked)
+                  [(Ok ty)
+                    (let
+                      [body-state : TcBodyState (tc-context-body-state ctx)]
+                      (tc-body-type-fact-record! body-state expr-id (clone ty))
+                      (when
+                        body-state.inlay-hint-enabled
+                        (tc-inlay-hint-maybe-record-expr-for-state
+                          body-state.inlay-hint-state
+                          (clone inner)
+                          ty)))]
+                  [(Err _) unit]))
+              (when
+                observed?
+                (tc-semantic-observe-expression!
+                  ctx
+                  env
+                  expr-id
+                  (clone checked)))
+              checked)]
           [_
             (if expected?
               (tc-expr-with-expected-or-actual-core-id

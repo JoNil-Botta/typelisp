@@ -80,7 +80,9 @@ jobs:
       - name: Prove identical-tree commit stamp invariance
         if: github.event_name == 'pull_request'
         shell: bash
-        run: scripts/verify-self-compile-stamp-invariance.sh
+        run: |
+          scripts/verify-self-compile-stamp-invariance.sh --self-test
+          scripts/verify-self-compile-stamp-invariance.sh
 
       - name: Upload stamp invariance evidence
         if: always() && github.event_name == 'pull_request'

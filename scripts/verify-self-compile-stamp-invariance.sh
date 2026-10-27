@@ -8,7 +8,106 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 . "$ROOT/scripts/lib-self-compile.sh"
 [ "$(uname -s)" = Linux ] || { echo 'stamp invariance requires Linux' >&2; exit 2; }
-[ "$#" -eq 0 ] || { echo "usage: $0" >&2; exit 2; }
+
+# These are the shared inputs/handoffs rewritten or removed by the nested
+# bootstrap and measurement. Preserve entire input directories, not just the
+# files a successful run happens to produce. Absence is part of the snapshot.
+STAMP_INPUTS='target/embedded-stdlib-tlci
+target/build-stage0/git-hash.txt
+target/build-stage0/tree-hash.txt
+target/ci-verify-stage1.path
+target/ci-verify-stage2.path
+target/ci-verify-opt2-reference.path
+target/ci-verify-compile-profile-cli.path
+target/self-compile/measurement'
+
+stamp_state() {
+    _ss_action=$1
+    _ss_root=$2
+    _ss_backup=$3
+    case "$_ss_root" in
+        "$ROOT" | "$ROOT"/target/exp/*) ;;
+        *) echo 'stamp state root is outside its owned workspace' >&2; return 1 ;;
+    esac
+    case "$_ss_backup" in
+        "$ROOT"/target/exp/*) ;;
+        *) echo 'stamp state backup is outside target/exp' >&2; return 1 ;;
+    esac
+    for _ss_path in $STAMP_INPUTS; do
+        _ss_live="${_ss_root:?}/${_ss_path:?}"
+        _ss_saved="${_ss_backup:?}/original/${_ss_path:?}"
+        if [ "$_ss_action" = restore ]; then
+            # Move experiment outputs aside even when the original was absent.
+            # Retain failed/partial artifacts without deleting any variable path.
+            if [ -e "$_ss_live" ] || [ -L "$_ss_live" ]; then
+                _ss_displaced="${_ss_backup:?}/displaced/${_ss_path:?}"
+                mkdir -p "$(dirname -- "$_ss_displaced")"
+                mv "$_ss_live" "$_ss_displaced"
+            fi
+            if [ -e "$_ss_saved" ] || [ -L "$_ss_saved" ]; then
+                mkdir -p "$(dirname -- "$_ss_live")"
+                cp -pR "$_ss_saved" "$_ss_live"
+            fi
+        elif [ "$_ss_action" = save ]; then
+            if [ -e "$_ss_live" ] || [ -L "$_ss_live" ]; then
+                mkdir -p "$(dirname -- "$_ss_saved")"
+                cp -pR "$_ss_live" "$_ss_saved"
+            fi
+        else
+            echo "unknown stamp state action: $_ss_action" >&2
+            return 1
+        fi
+    done
+}
+
+stamp_restore_self_test() {
+    mkdir -p "$ROOT/target/exp"
+    _st_dir=$(mktemp -d "$ROOT/target/exp/stamp-restore-test.XXXXXX")
+    for _st_optional in ci-verify-opt2-reference.path ci-verify-compile-profile-cli.path; do
+        _st_case="$_st_dir/$_st_optional"
+        _st_root="$_st_case/root"
+        mkdir -p "$_st_root/target/embedded-stdlib-tlci" \
+            "$_st_root/target/build-stage0" "$_st_root/target/self-compile/measurement"
+        for _st_path in embedded-stdlib-tlci/stdlib.tlci.tlch \
+            embedded-stdlib-tlci/source-hash.txt build-stage0/git-hash.txt \
+            build-stage0/tree-hash.txt self-compile/measurement/record.tsv \
+            ci-verify-stage1.path ci-verify-stage2.path "$_st_optional"; do
+            printf 'original %s\n' "$_st_path" > "$_st_root/target/$_st_path"
+        done
+        cp -pR "$_st_root/target" "$_st_case/expected"
+        stamp_state save "$_st_root" "$_st_case/snapshot"
+        set +e
+        (
+            set -e
+            trap 'stamp_state restore "$_st_root" "$_st_case/snapshot"' EXIT
+            printf 'partial image' > "$_st_root/target/embedded-stdlib-tlci/stdlib.tlci.tlch"
+            printf 'partial hash' > "$_st_root/target/embedded-stdlib-tlci/source-hash.txt"
+            printf 'new artifact' > "$_st_root/target/embedded-stdlib-tlci/extra"
+            printf 'synthetic' > "$_st_root/target/build-stage0/git-hash.txt"
+            printf 'synthetic' > "$_st_root/target/build-stage0/tree-hash.txt"
+            printf 'partial record' > "$_st_root/target/self-compile/measurement/record.tsv"
+            for _st_path in ci-verify-stage1.path ci-verify-stage2.path \
+                ci-verify-opt2-reference.path ci-verify-compile-profile-cli.path; do
+                if [ -f "$_st_root/target/$_st_path" ]; then
+                    mv "$_st_root/target/$_st_path" "$_st_case/removed-$_st_path"
+                fi
+                printf 'synthetic' > "$_st_root/target/$_st_path"
+            done
+            exit 17
+        )
+        _st_status=$?
+        set -e
+        [ "$_st_status" -eq 17 ]
+        diff -r "$_st_case/expected" "$_st_root/target"
+    done
+    echo 'stamp restoration failure-injection self-test passed'
+}
+
+case "${1:-}" in
+    --self-test) [ "$#" -eq 1 ]; stamp_restore_self_test; exit ;;
+    '') [ "$#" -eq 0 ] ;;
+    *) echo "usage: $0 [--self-test]" >&2; exit 2 ;;
+esac
 git diff --quiet && git diff --cached --quiet || {
     echo 'stamp invariance requires a committed, clean source tree' >&2
     exit 1
@@ -37,24 +136,16 @@ cmp "$COMPILER_A" target/bootstrap-fixpoint/stage2
 cp "$GATE" "$OUT/a.tsv"
 cp "$COMPILER_A" "$OUT/a-stage2"
 cp target/bootstrap-fixpoint/stage2.s "$OUT/a-stage2.s"
-cp target/ci-verify-stage1.path "$OUT/stage1.path"
-cp target/ci-verify-stage2.path "$OUT/stage2.path"
 cp target/embedded-stdlib-tlci/stdlib.tlci "$OUT/a.tlci"
 cp target/embedded-stdlib-tlci/stdlib.tlci.tlch "$OUT/a.tlch"
 cp target/self-compile/measurement/gate.cachegrind.out "$OUT/a.cachegrind.out"
-cp target/build-stage0/git-hash.txt "$OUT/commit-input"
-cp target/build-stage0/tree-hash.txt "$OUT/tree-input"
 SEED="$ROOT/target/stage0/typelisp"
 [ -x "$SEED" ]
+stamp_state save "$ROOT" "$OUT/state"
 
 restore() {
     git -c advice.detachedHead=false checkout --quiet "$ORIGINAL_REF"
-    cp "$OUT/commit-input" target/build-stage0/git-hash.txt
-    cp "$OUT/tree-input" target/build-stage0/tree-hash.txt
-    cp "$OUT/stage1.path" target/ci-verify-stage1.path
-    cp "$OUT/stage2.path" target/ci-verify-stage2.path
-    cp "$OUT/a.tsv" "$GATE"
-    cp "$OUT/a.cachegrind.out" target/self-compile/measurement/gate.cachegrind.out
+    stamp_state restore "$ROOT" "$OUT/state"
 }
 trap 'exit 1' INT TERM HUP
 trap restore EXIT
@@ -86,6 +177,7 @@ env -u BASH_ENV scripts/run-memory-bounded.sh --limit-mib 6144 \
 cp "$GATE" "$OUT/b.tsv"
 cp target/self-compile/measurement/gate.cachegrind.out "$OUT/b.cachegrind.out"
 sc_record_validate "$OUT/b.tsv" gate
+[ "$(sha256sum "$OUT/b-stage2" | cut -c1-64)" = "$(sc_record_get "$OUT/b.tsv" compiler_sha256)" ]
 [ "$(sc_record_get "$OUT/b.tsv" commit)" = "$COMMIT_B" ]
 [ "$(sc_record_get "$OUT/b.tsv" tree)" = "$TREE" ]
 sc_records_comparable "$OUT/a.tsv" "$OUT/b.tsv"

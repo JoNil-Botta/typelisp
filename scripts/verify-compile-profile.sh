@@ -599,7 +599,7 @@ if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
     fail "compiler reported malformed producer identity: $PRODUCER_IDENTITY"
 fi
 mkdir -p target/build-stage0
-COMPILER_COMMIT=$($COMPILER --version | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+COMPILER_COMMIT=$("$COMPILER" --version | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
 printf '%s\n' "$COMPILER_COMMIT" | grep -Eq '^[0-9a-f]{40}$' ||
     fail "compiler reported malformed commit: $COMPILER_COMMIT"
 printf '%s' "$COMPILER_COMMIT" > target/build-stage0/git-hash.txt

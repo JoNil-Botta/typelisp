@@ -95,6 +95,9 @@ equal Ir, byte-identical ordinary/TLCH images, both bootstrap/provenance
 fixpoints, and native compiler equality after replacing only the unique
 40-byte commit field. Both commit objects, records and compilers are retained;
 the synthetic record is experimental and never published as a main reference.
+The probe restores shared image inputs and compiler/profile handoffs on every
+exit, preserving original absence; its failure-injection self-test checks that
+restoration without rebuilding a compiler.
 
 Build-recipe scripts are not part of the harness hash: they shape the compiler
 under test, so their effect is part of a PR's own cost. Locally the record is

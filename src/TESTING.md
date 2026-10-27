@@ -2653,6 +2653,47 @@ publishes.
 
 ### CI expectations
 
+For an affected local preflight, use the reviewed path map in
+[`ci-affected-paths.tsv`](../scripts/ci-affected-paths.tsv):
+
+```sh
+scripts/ci-affected.sh --base origin/main
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --self-test
+```
+
+The first command prints one gate ID per line, in the canonical table order,
+including producer dependencies computed by `ci-verify.sh`. The second runs
+that exact selection through the same runner, one gate at a time. It defaults
+`TYPELISP_INLINE_TEST_WORKERS` and `TYPELISP_BUILD_INVARIANCE_WORKERS` to `1`
+and rejects any explicit value other than `1`, including an empty value.
+Use the ordinary memory-bounded invocation around the `--run` command on a
+shared development host. A partial local preflight still requires full hosted
+CI on the delivered head.
+
+Selection compares the merge base of the named ref and HEAD with the working
+tree, including committed, staged, unstaged, deleted, both sides of renamed,
+and nonignored untracked paths. All matching map rows contribute. Unmapped or
+unusually quoted Git paths select the full host table. Invalid refs, invalid
+maps and unreadable path inventories fail before any gate runs. The shared
+source hygiene gates are always selected, even for an empty diff.
+
+Compiler sources (including backend tests and target references) and stdlib
+sources conservatively select the full table: their effects cross many gate
+boundaries, including target parity and located safety diagnostics. The target
+dispatch inventory and safety manifest have narrower reviewed mappings.
+Review every consuming gate before narrowing a path class; changing the map
+or selector itself currently selects the full table. `--host linux|windows`
+can inspect either host plan; execution requires the native host.
+
+`--paths FILE` replays a newline-delimited repository-relative path inventory
+without executing gates. The self-test uses the original changed paths at the
+failed heads of PRs #9310, #9326 and #9327, with run/base/head provenance in
+`tests/fixtures/ci-affected/history.tsv`; it also checks isolated triggers,
+fallback, dependency closure, Git discovery and the single-worker boundary.
+The fixtures work offline in shallow checkouts; when their Git objects are
+available the test also verifies them against the recorded historical diffs.
+
 Pull requests get Linux and Windows coverage from `scripts/ci-verify.sh`
 (wired in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each
 host bootstraps the full `src/main.tl` CLI as described under

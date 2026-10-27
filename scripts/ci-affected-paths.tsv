@@ -1,0 +1,12 @@
+# Reviewed local preflight map. Shell globs match the whole repo-relative path;
+# * also spans /. All matching rows contribute; * in gates means the full table.
+# An unmapped path also selects the full table. Do not add catch-all path rows:
+# narrowing a class requires reviewing every gate that consumes those inputs.
+# @always names the shared local hygiene floor, independent of changed paths.
+path	gates	reason
+@always	shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint	Required local source hygiene; ci-verify adds producer dependencies.
+src/*	*	Compiler and test sources can affect every compiler consumer, including target references and parity.
+stdlib/*	*	Embedded sources affect compiler builds and all consumers, including pinned safety diagnostics.
+scripts/codegen-target-dispatch-inventory.tsv	stage2-codegen-target-parity	The target-parity gate validates target-dispatch inventory counts and roles.
+tests/safety/manifest.txt	stage2-safety-corpus	Only the safety runner consumes this case/expectation table.
+tests/safety/*.tl	*	Safety source fixtures are also reused by bootstrap, integration, profile and COFF gates.

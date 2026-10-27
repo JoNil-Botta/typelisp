@@ -2211,3 +2211,10 @@ macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.t
 decls_same_scope_incompatible|check-fail|tests/safety/decls_same_scope_incompatible.tl|-|has incompatible payload
 decls_explicit_module_tail_conflict|check-fail|tests/safety/decls_explicit_module_tail_conflict.tl|-|duplicate value declaration generated.decls_explicit_global/value
 decls_explicit_target_incompatible|check-fail|tests/safety/decls_explicit_target_incompatible.tl|-|duplicate generated key for answer has incompatible payload
+
+# A non-call global field borrow keeps the borrow expression's source location.
+global_mut_borrow_noncall_location_reject|check-fail|tests/safety/global_mut_borrow_noncall_location_reject.tl|tests/safety/global_mut_borrow_noncall_location_reject.tl:10:23|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_deref_location_reject|check-fail|tests/safety/global_mut_borrow_deref_location_reject.tl|tests/safety/global_mut_borrow_deref_location_reject.tl:9:10|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_store_location_reject|check-fail|tests/safety/global_mut_borrow_store_location_reject.tl|tests/safety/global_mut_borrow_store_location_reject.tl:9:16|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_initializer_location_reject|check-fail|tests/safety/global_mut_borrow_initializer_location_reject.tl|tests/safety/global_mut_borrow_initializer_location_reject.tl:8:10|mutable borrow of by-value place is only supported as an immediate call argument
+mut_borrow_forwarded_diagnostic_location_reject|check-fail|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl:2:3|set! deref requires mutable access

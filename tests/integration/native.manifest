@@ -27,6 +27,8 @@ nested_mut_borrow_receiver|all|0,1,2|tests/integration/nested_mut_borrow_receive
 nested_mut_borrow_storage|all|0,1,2|tests/integration/nested_mut_borrow_storage.tl|42|-|-|-|-
 git_object_smoke|all|0,1,2|tests/integration/git_object_smoke.tl|42|-|-|git_object_core.tl git_object_tests.tl|stage-stdlib
 hidden_sret_source_name|all|0,1,2|tests/integration/hidden_sret_source_name.tl|42|-|-|-|-
+recursive_aggregate_return|all|0,1,2|tests/integration/recursive_aggregate_return.tl|42|-|-|-|-
+recursive_aggregate_return_variants|all|0,1,2|tests/integration/recursive_aggregate_return_variants.tl|42|-|-|-|-
 packed_storage_lifetime|all|0,1,2|tests/integration/packed_storage_lifetime.tl|42|-|-|-|stage-stdlib
 inline_helper_composition|all|0,1,2|tests/integration/spmd_inline_helper_composition.tl|42|-|-|spmd_inline_helper_composition_provider.tl|-
 packed_narrow_bitwise_fold|all|0,1,2|tests/integration/packed_narrow_bitwise_fold.tl|42|-|-|-|-

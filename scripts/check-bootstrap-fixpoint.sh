@@ -198,13 +198,16 @@ fi
 BOOTSTRAP_EMBEDDED_WORKDIR="$BOOTSTRAP_SOURCE_ROOT/target/embedded-stdlib-tlci"
 BOOTSTRAP_EMBEDDED_IMAGE="$BOOTSTRAP_EMBEDDED_WORKDIR/stdlib.tlci"
 
-# Every converged compiler and the frontend surfaces it produces must name the
-# exact checked-in compiler revision. Keep this input beside the selected src/
+# Every converged compiler records its commit separately from the exact source
+# tree used for frontend/image admission. Keep these beside the selected src/
 # tree because compiler_build_identity includes it through src/../target.
 BUILD_IDENTITY=$(build_provenance_hash "$0")
+BUILD_PRODUCER_IDENTITY=$(build_provenance_hash "$0" 'HEAD^{tree}')
 mkdir -p "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0"
 printf '%s' "$BUILD_IDENTITY" \
     > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/git-hash.txt"
+printf '%s' "$BUILD_PRODUCER_IDENTITY" \
+    > "$BOOTSTRAP_SOURCE_ROOT/target/build-stage0/tree-hash.txt"
 
 STAGE1_ASM="$WORKDIR/stage1.s"
 STAGE1_OBJ="$WORKDIR/stage1.$OBJ_EXT"
@@ -258,15 +261,15 @@ bootstrap_tlci_mutation_snapshot() {
     _btms_compiler=$2
     _btms_identity=$("$_btms_compiler" --producer-identity | tr -d '\r\n')
     bootstrap_tlci_require_identity \
-        "$_btms_identity" "$BUILD_IDENTITY" "$_btms_label producer"
+        "$_btms_identity" "$BUILD_PRODUCER_IDENTITY" "$_btms_label producer"
     _btms_inspect="$WORKDIR/tlci-mutation-$_btms_label.inspect"
     "$_btms_compiler" inspect "$BOOTSTRAP_EMBEDDED_IMAGE" > "$_btms_inspect"
     assert_contains \
         "$_btms_inspect" \
-        "surface-trust-producer-identity: $BUILD_IDENTITY"
+        "surface-trust-producer-identity: $BUILD_PRODUCER_IDENTITY"
     assert_contains \
         "$_btms_inspect" \
-        "producer-compiler-identity: $BUILD_IDENTITY"
+        "producer-compiler-identity: $BUILD_PRODUCER_IDENTITY"
     if ! grep -aFq "$BOOTSTRAP_MUTATION_SENTINEL" \
         "$BOOTSTRAP_EMBEDDED_IMAGE"; then
         echo "bootstrap tlci image does not contain the changed transformer body" >&2

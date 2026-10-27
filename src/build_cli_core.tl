@@ -1154,7 +1154,7 @@
   (build_run_core.source-tool-git-checkout-command root checkout-ref))
 
 (define (build-git-rev-parse-command [root : String]) : process.ProcessCommand
-  (build_run_core.source-tool-git-rev-parse-command root))
+  (build_run_core.source-tool-git-rev-parse-command root "HEAD"))
 
 (define (build-trim-command-output [output : String]) : String
   (string.trim (& output)))
@@ -2126,10 +2126,23 @@
       (try
         (build-run-captured
           "build: cannot resolve root compiler source identity"
-          (build_run_core.source-tool-git-rev-parse-command repo-root)))]
+          (build_run_core.source-tool-git-rev-parse-command
+            (string.copy repo-root)
+            "HEAD")))]
     [identity : String (build-trim-command-output output)]
+    [tree-output
+      (try
+        (build-run-captured
+          "build: cannot resolve root compiler source tree"
+          (build_run_core.source-tool-git-rev-parse-command
+            repo-root
+            "HEAD^{tree}")))]
+    [tree : String (build-trim-command-output tree-output)]
     (cond
-      [(not (tlci.tlci-producer-identity-valid? identity))
+      [(not
+          (and
+            (tlci.tlci-producer-identity-valid? identity)
+            (tlci.tlci-producer-identity-valid? tree)))
         (Err
           "build: root compiler source identity is not a full Git object name")]
       [(not (build-mkdir-ok-owned? (string.copy target-dir)))
@@ -2148,8 +2161,14 @@
             (try
               (build_run_core.source-tool-write-file
                 identity-path
-                identity
+                (string.copy identity)
                 "build: failed to write root compiler identity"))]
+          [_
+            (try
+              (build_run_core.source-tool-write-file
+                (load.compiler-load-join-root-path identity-dir "tree-hash.txt")
+                tree
+                "build: failed to write root compiler tree identity"))]
           (Ok identity))])))
 
 (define (build-package-compile-context

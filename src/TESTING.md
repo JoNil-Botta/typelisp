@@ -2170,6 +2170,15 @@ for downstream binary and static-library package builds. The stage0 workflow
 keeps using the direct `compile src/main.tl` path plus native linking so a seed
 compiler can build its successor without depending on its own `build` command.
 
+Compiler builds record the commit in a fixed static byte array for `--version`
+and use the Git tree object name for `--producer-identity` and exact TLCI/surface
+admission. The `compiler-commit-stamp-field` CLI case exercises the production
+module at opt0/1/2: two stamps with one tree, assembly equality outside the
+named field, CRLF trimming, malformed stamps and unstamped source tools.
+The reference workflow's PR dry run additionally requires full identical-tree
+compiler/image byte equality and exact self-compile Ir via
+`scripts/verify-self-compile-stamp-invariance.sh`.
+
 `scripts/ci-verify.sh` is the complete local verification gate. With
 `TYPELISP_BIN` unset it fetches `stage0-latest` as the seed, which performs the
 single compiler build of the flow: the stage1->stage2->stage3 bootstrap

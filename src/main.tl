@@ -441,7 +441,7 @@ Options:
 (define (cli-print-producer-identity) : i64
   (io.print-format
     "{}"
-    (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
+    (cli-cat (build_identity.compiler-build-producer-identity) "\n"))
   0)
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
@@ -459,7 +459,7 @@ Options:
         (build_cli_core.build-run-from
           2
           count
-          (build_identity.compiler-build-git-hash-shared-view)))]
+          (build_identity.compiler-build-producer-identity)))]
     [(cli-eq? command "clean")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-clean-help-text) 0)
@@ -470,7 +470,7 @@ Options:
         (run_cli_core.run-run-from
           2
           count
-          (build_identity.compiler-build-git-hash-shared-view)))]
+          (build_identity.compiler-build-producer-identity)))]
     [(cli-eq? command "check")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-check-help-text) 0)

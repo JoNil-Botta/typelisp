@@ -48,7 +48,11 @@ PRODUCER_IDENTITY=$("$COMPILER" --producer-identity 2>/dev/null) ||
 printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$' ||
     fail "compiler reported malformed producer identity: $PRODUCER_IDENTITY"
 mkdir -p target/build-stage0
-printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
+COMPILER_COMMIT=$("$COMPILER" --version | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+printf '%s\n' "$COMPILER_COMMIT" | grep -Eq '^[0-9a-f]{40}$' ||
+    fail "compiler reported malformed commit: $COMPILER_COMMIT"
+printf '%s' "$COMPILER_COMMIT" > target/build-stage0/git-hash.txt
+printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/tree-hash.txt
 
 # bounded PHASE COMMAND...: run under the workload cap; stdout and stderr go
 # to PHASE files. A cap, timeout or crash (a sanitizer fault is SIGSEGV, exit

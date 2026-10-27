@@ -1597,7 +1597,7 @@
     (string.eq surface-key.configuration configuration)
     (match (tlci.tlci-producer-identity-admit
       catalog-key.compiler-identity
-      (build_identity.compiler-build-git-hash-shared-view))
+      (build_identity.compiler-build-producer-identity))
       [(ExactMatch) true]
       [_ false])))
 

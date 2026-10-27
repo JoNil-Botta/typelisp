@@ -862,6 +862,8 @@ dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_bo
 dotted_field_shared_borrow_write_reject|check-fail|tests/safety/dotted_field_shared_borrow_write_reject.tl|-|cannot assign to borrowed place `pair.left.x`
 dotted_field_cleanup_move_reject|check-fail|tests/safety/dotted_field_cleanup_move_reject.tl|-|cleanup owner `h` moved before with scope exit
 dotted_field_disjoint_mut_borrow_ok|check-ok|tests/safety/dotted_field_disjoint_mut_borrow_ok.tl|-|-
+global_mut_borrow_field_overlap_reject|check-fail|tests/safety/global_mut_borrow_field_overlap_reject.tl|-|cannot mutably borrow borrowed place `state.x`
+global_shared_borrow_field_write_reject|check-fail|tests/safety/global_shared_borrow_field_write_reject.tl|-|cannot assign to borrowed place `state.x`
 struct_field_set_immutable_ref_reject|check-fail|tests/safety/struct_field_set_immutable_ref_reject.tl|-|set! struct field requires mutable struct access
 struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_temporary_reject.tl|-|expression is not a storage place
 box_take_use_after_move_reject|check-fail|tests/safety/box_take_use_after_move_reject.tl|-|use of moved value `cell`

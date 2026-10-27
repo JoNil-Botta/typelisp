@@ -10,6 +10,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-source-location.sh"
 
 HOST_OS=linux
 case "$(uname -s)" in
@@ -467,6 +468,9 @@ run_manifest_case() {
             diagnostic_source=$source
             if [ "$expected_code" != "-" ]; then
                 diagnostic_source=$expected_code
+                case "$diagnostic_source" in
+                    *'@loc{'*) diagnostic_source=$(resolve_source_locations "$diagnostic_source") || fail "$case_id invalid diagnostic location" ;;
+                esac
             fi
             observation=$(classify_check_rejection "$code" "$out" "$err" \
                 "$diagnostic_source" "$stderr_contains")
@@ -631,10 +635,34 @@ rejection_oracle_self_test() {
         kill -ABRT $$
     ' 2> "$WORKDIR/oracle-subprocess-driver.err"
     oracle_expect subprocess-diagnostic-then-abort "$code" compiler-crash
+    # Every converted production-source row retains its exact primary span.
+    # Plant the expected diagnostic, then alter only its line or column.
+    while IFS='|' read -r anchor_id anchor_mode anchor_source anchor_location anchor_needle; do
+        case "$anchor_location" in @loc\{*) ;; *) continue ;; esac
+        anchor_expected=$(resolve_source_locations "$anchor_location") || fail "$anchor_id invalid source anchor"
+        anchor_column=${anchor_expected##*:}
+        anchor_prefix=${anchor_expected%:*}
+        anchor_line=${anchor_prefix##*:}
+        anchor_path=${anchor_prefix%:*}
+        for anchor_mutation in correct wrong-line wrong-column; do
+            anchor_actual=$anchor_expected
+            case "$anchor_mutation" in
+                wrong-line) anchor_actual=$anchor_path:$((anchor_line + 1)):$anchor_column ;;
+                wrong-column) anchor_actual=$anchor_path:$anchor_line:$((anchor_column + 1)) ;;
+            esac
+            printf 'error[E0206]: %s\n  --> %s\n' "$anchor_needle" "$anchor_actual" > "$oracle_err"
+            anchor_observation=$(classify_check_rejection 1 "$oracle_out" "$oracle_err" "$anchor_expected" "$anchor_needle")
+            anchor_want=wrong-diagnostic
+            [ "$anchor_mutation" != correct ] || anchor_want=rejected-invalid
+            [ "$anchor_observation" = "$anchor_want" ] || fail "$anchor_id $anchor_mutation: $anchor_observation"
+            oracle_count=$((oracle_count + 1))
+        done
+    done < "$NORMALIZED_MANIFEST"
     echo "safety rejection oracle passed $oracle_count mutation/control cases"
 }
 
 manifest_runner_self_test
+source_location_self_test "$WORKDIR/source-location-self-test"
 rejection_oracle_self_test
 if [ "$SELF_TEST_ONLY" = true ]; then
     exit 0

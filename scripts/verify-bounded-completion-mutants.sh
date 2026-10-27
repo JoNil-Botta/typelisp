@@ -39,8 +39,9 @@ trap 'proof_export "$?"' EXIT
 PROOF_ROOT=$ROOT
 PROOF_SCRATCH=$proof_root
 PROOF_REPORT_HOSTS='linux windows'
-case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) PROOF_REPORT_HOSTS=windows ;; esac
-export PROOF_ROOT PROOF_SCRATCH PROOF_REPORT_HOSTS
+PROOF_PHYSICAL_HOST=linux
+case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) PROOF_REPORT_HOSTS=windows; PROOF_PHYSICAL_HOST=windows ;; esac
+export PROOF_ROOT PROOF_SCRATCH PROOF_REPORT_HOSTS PROOF_PHYSICAL_HOST
 printf 'route\tguard\tfault\texit\texpect\n' > "$proof_root/results.tsv"
 
 proof_variant() {
@@ -118,6 +119,10 @@ proof_variant() {
     proof_flag=--self-test-batch-observability
     case $PROOF_ROUTE in inline-tests) proof_flag=--self-test-chunks ;; selfhost-compile-manifest) proof_flag=--self-test-pool ;; esac
     TYPELISP_CI_TIMING=0 "$proof_shell" "$proof_script" "$proof_flag" > "$proof_script.log" 2>&1 || proof_rc=$?
+    if [ "$PROOF_ROUTE" = integration ]; then
+        cp -a "$ROOT/target/integration-verify/$PROOF_PHYSICAL_HOST-self-test-completion-mutant-$PROOF_GUARD-$PROOF_CASE" \
+            "$proof_script.artifacts"
+    fi
     proof_want=1
     [ "$PROOF_GUARD" != control ] || proof_want=0
     printf '%s\t%s\t%s\t%s\t%s\n' "$PROOF_ROUTE" "$PROOF_GUARD" "$PROOF_CASE" "$proof_rc" "$proof_want" >> "$proof_root/results.tsv"
@@ -156,9 +161,6 @@ ci_timing_record_elapsed completion-mutants guard-removal-proof "$proof_elapsed"
 printf '[completion-mutant] passed: 9 guard removals, 4 controls; elapsed_ms=%s; evidence=%s\n' "$proof_elapsed" "$proof_root"
 
 [ "${TYPELISP_FIXTURE_MUTANTS:-completion}" = all ] || exit 0
-PROOF_PHYSICAL_HOST=linux
-case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) PROOF_PHYSICAL_HOST=windows ;; esac
-export PROOF_PHYSICAL_HOST
 ci_timing_set_now_ms
 forwarding_started=$CI_TIMING_NOW_MS
 
@@ -220,6 +222,10 @@ proof_forwarding() {
         "$proof_shell" -n "$proof_prefix.sh"
         proof_rc=0
         TYPELISP_CI_TIMING=0 "$proof_shell" "$proof_prefix.sh" "$proof_arg" > "$proof_prefix.log" 2>&1 || proof_rc=$?
+        if [ "$proof_kind" = preparation ]; then
+            cp -a "$ROOT/target/integration-verify/$PROOF_PHYSICAL_HOST-self-test-preparation-mutant-$PROOF_GUARD-$proof_action" \
+                "$proof_prefix.artifacts"
+        fi
         proof_want=0
         [ "$proof_action" != mutant ] || proof_want=1
         if [ "$proof_rc" -ne "$proof_want" ]; then

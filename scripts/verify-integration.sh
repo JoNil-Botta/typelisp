@@ -3804,8 +3804,8 @@ run_preparation_failure_self_test() (
                     INTEGRATION_BATCH_FAILED_CHUNKS=0
                     INTEGRATION_POOL_PEAK_BYTES=0
                     preparation_fixture_step() {
-                        printf '%s\n' "$1" >> "$WORKDIR/trace"
-                        printf '%s\t%s\n' "${WORKDIR##*/}" "$1" >> "$prep_root/actual-traces"
+                        printf '%s\n' "$1" >> "$WORKDIR/trace" || exit 2
+                        printf '%s\t%s\n' "${WORKDIR##*/}" "$1" >> "$prep_root/actual-traces" || exit 2
                         [ "$prep_failure" != "$1" ]
                     }
                     run_build() {
@@ -3842,8 +3842,8 @@ run_preparation_failure_self_test() (
                     }
                     integration_batch_run_pool() { preparation_fixture_step pool; }
                     ci_timing_run manifest batch-compile integration_prepare
-                    printf 'continued\n' >> "$WORKDIR/trace"
-                    printf '%s\tcontinued\n' "${WORKDIR##*/}" >> "$prep_root/actual-traces"
+                    printf 'continued\n' >> "$WORKDIR/trace" || exit 2
+                    printf '%s\tcontinued\n' "${WORKDIR##*/}" >> "$prep_root/actual-traces" || exit 2
                 ) > "$prep_dir/stdout" 2> "$prep_dir/stderr" &
                 prep_pid=$!
                 prep_rc=0

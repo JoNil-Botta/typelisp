@@ -373,7 +373,8 @@ exits (including `os-exit 134` and native Windows exceptions) for per-entry
 diagnostics. Replay is labelled diagnostic-only: every failed batch remains a
 gate failure even if all standalone entries succeed. Standalone compiles retain
 the chunk memory cap, swap policy and timeout, and their completion is checked
-before output is accepted. Refusal reasons reach the gate console even when
+before diagnostics are used. Replay assembly cannot supply passing native
+results. Refusal reasons reach the gate console even when
 compile streams are redirected. Interrupted chunks cannot supply passing
 evidence through replay.
 

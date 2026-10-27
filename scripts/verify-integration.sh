@@ -447,6 +447,14 @@ integration_batch_require_success() {
     }
 }
 
+# A successful diagnostic replay can explain a batch failure, but its output
+# must not supply passing native evidence for that failed attempt.
+integration_diagnostic_only() {
+    [ -f "$1/batch-diagnostic-only" ] || return 1
+    echo "[integration] $2: diagnostic-only compile completed; no passing native result is published" >&9 || exit 1
+    return 0
+}
+
 integration_remove_batch_artifact() {
     case $1 in
         /*) _batch_owned_artifact=$1 ;;
@@ -2050,6 +2058,7 @@ EOF
                     export COMPLETION_HOST COMPLETION_CASE
                     integration_standalone_compile "$WORKDIR/case/replay.memory" \
                         uncallable-compiler compile fixture.tl
+                    integration_diagnostic_only "$WORKDIR/case" fixture || exit 1
                     : > "$WORKDIR/replayed"
                 fi
                 integration_batch_require_success || exit 1
@@ -4040,6 +4049,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             ran=$((ran + 1))
             continue
         fi
+        if integration_diagnostic_only "$case_dir" "$name"; then
+            ran=$((ran + 1))
+            continue
+        fi
         if [ "$windows_needs_assemble" -eq 1 ]; then
             WINDOWS_CURRENT_ASSEMBLY_CLASS=$windows_assembly_class
             if ! windows_timed_assemble --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
@@ -4113,6 +4126,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
                 "$asm" \
                 "compile $work_src_rel --stdlib-root $ROOT/src -o $asm $opt_level_args (stage-stdlib=$stage_stdlib)"
             failed=$((failed + 1))
+            ran=$((ran + 1))
+            continue
+        fi
+        if integration_diagnostic_only "$case_dir" "$name"; then
             ran=$((ran + 1))
             continue
         fi

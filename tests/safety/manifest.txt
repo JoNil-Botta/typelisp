@@ -330,6 +330,24 @@ caller_lifetime_global_and_lambda_names_ok|check-ok|tests/safety/caller_lifetime
 caller_lifetime_owned_for_item_store_same_name_reject|check-fail|tests/safety/caller_lifetime_owned_for_item_store_same_name_reject.tl|-|`t` does not live long enough
 caller_lifetime_nested_resource_store_same_name_reject|check-fail|tests/safety/caller_lifetime_nested_resource_store_same_name_reject.tl|-|`h` does not live long enough
 caller_lifetime_lambda_param_return_same_name_reject|check-fail|tests/safety/caller_lifetime_lambda_param_return_same_name_reject.tl|-|cannot return a reference to parameter `a`
+
+# A lambda's by-value capture is its own copy, storage of each call: a borrow
+# of it cannot outlive the call, whatever lifetime name it spells (#9297).
+# Main accepted each of these rejects. The last two are unchanged controls.
+capture_borrow_return_reject|check-fail|tests/safety/capture_borrow_return_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_return_call_reject|check-fail|tests/safety/capture_borrow_return_call_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_field_return_reject|check-fail|tests/safety/capture_borrow_field_return_reject.tl|-|cannot return a reference to captured `p`: a by-value capture is this lambda's own copy
+capture_borrow_with_arena_return_reject|check-fail|tests/safety/capture_borrow_with_arena_return_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_call_in_arena_reject|check-fail|tests/safety/capture_borrow_call_in_arena_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_store_reject|check-fail|tests/safety/capture_borrow_store_reject.tl|-|captured `x` does not live long enough: a by-value capture is this lambda's own copy
+capture_borrow_store_with_arena_reject|check-fail|tests/safety/capture_borrow_store_with_arena_reject.tl|-|captured `x` does not live long enough: a by-value capture is this lambda's own copy
+capture_borrow_auto_call_reject|check-fail|tests/safety/capture_borrow_auto_call_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_nested_lambda_reject|check-fail|tests/safety/capture_borrow_nested_lambda_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_lambda_param_nested_reject|check-fail|tests/safety/capture_borrow_lambda_param_nested_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_in_arena_destroy_reject|check-fail|tests/safety/capture_borrow_in_arena_destroy_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_string_with_arena_reject|check-fail|tests/safety/capture_borrow_string_with_arena_reject.tl|-|cannot return a reference to captured `s`: a by-value capture is this lambda's own copy
+capture_borrow_inferred_return_reject|check-fail|tests/safety/capture_borrow_inferred_return_reject.tl|-|lambda return value has region-tagged type; region value would escape
+capture_borrow_lambda_param_return_reject|check-fail|tests/safety/capture_borrow_lambda_param_return_reject.tl|-|cannot return a reference to parameter `n`
 caller_lifetime_renamed_body_ok|run-exit|tests/safety/caller_lifetime_renamed_body_ok.tl|6|-
 caller_lifetime_pointer_store_same_name_ok|check-ok|tests/safety/caller_lifetime_pointer_store_same_name_ok.tl|-|-
 caller_lifetime_written_types_ok|check-ok|tests/safety/caller_lifetime_written_types_ok.tl|-|-

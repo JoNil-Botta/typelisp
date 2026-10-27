@@ -7153,12 +7153,13 @@
     [(Some functions)
       (and
         ;; `score`'s match is in tail position, so its arms return directly
-        ;; and the arm call stays a tail call (#9044). The borrowed `i64`
-        ;; binding is copied to its own storage, so the call may reuse the
-        ;; frame.
+        ;; (#9044). `(take v)` lends a copy of the `i64` binding in a frame
+        ;; slot, not in the current arena (#9297), so the arm call keeps the
+        ;; frame: an ordinary call that allocates nothing.
         (= (lower-test-function-phi-count functions "score") 0)
-        (= (lower-test-function-tail-call-count functions "score" "take") 1)
-        (= (lower-test-function-call-count functions "score" "take") 0)
+        (= (lower-test-function-tail-call-count functions "score" "take") 0)
+        (= (lower-test-function-call-count functions "score" "take") 1)
+        (= (lower-test-function-call-count functions "score" "tl_alloc") 0)
         (> (lower-test-count functions "score" (GepOffset 8)) 0)
         (> (lower-test-count functions "slot-score" (Branch)) 0))]
     [_ false]))
@@ -7543,12 +7544,15 @@
         [_ false])]
     [(Err _) false]))
 
+;; A borrow of a scalar parameter points at a copy in a frame slot of the
+;; borrowing function, never at `tl_alloc` storage in the current arena (#9297).
 (define (compiler-lower-reference-values-shape-ok?) : bool
   (match (lower-test-functions
     (lower.lower-compiler-source (compiler-lower-reference-return-source)))
     [(Some functions)
       (and
-        (> (lower-test-function-call-count functions "ref-return" "tl_alloc") 0)
+        (= (lower-test-function-call-count functions "ref-return" "tl_alloc") 0)
+        (> (lower-test-count functions "ref-return" (AddrOf)) 0)
         (= (lower-test-function-call-count functions "ref-id" "tl_alloc") 0)
         (> (lower-test-count functions "main" (StorePtr)) 1)
         (= (lower-test-count functions "ref-return" (Return)) 1)

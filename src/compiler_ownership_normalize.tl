@@ -125,6 +125,9 @@
 (defstruct OwnershipEscapeDiagnostic
   (name i64)
   (parameter? bool)
+  ;; A lambda's capture (`normalize-parameters!`): its own copy, not the
+  ;; enclosing binding of the same name.
+  (capture? bool)
   (kind i64)
   (borrow own.OwnershipSource)
   (use own.OwnershipSource))
@@ -1601,7 +1604,7 @@
   (name i64)
   ;; 1 a `let` cleanup owner, 2 a `with` owner, 3 an affine handle (an arena
   ;; owner or phase token held as a Copy value), 6 a move-aware `with` owner,
-  ;; 7 a temporary, 0 none of these.
+  ;; 7 a temporary, 8 a lambda's capture, 0 none of these.
   (owner i64)
   ;; An `:invalidate` parameter's lifetime, or -1.
   (lifetime i64))
@@ -1627,7 +1630,10 @@
   ;; The source expressions reading or copying a view a write went through
   ;; (its loan is exclusive): such a view shares the viewed storage, so
   ;; lowering binds it there instead of copying it.
-  (mutable-views (__tl_dyn-array i64)))
+  (mutable-views (__tl_dyn-array i64))
+  ;; The `Invalidate`s that end a binder's storage (`normalize-retire!`), as
+  ;; `block * 4294967296 + instruction`, unlike an invalidation the body makes.
+  (storage-ends (__tl_dyn-array i64)))
 
 (defstruct NormalizeState
   (body own.OwnershipBody)
@@ -2470,6 +2476,8 @@
               [(typed.TypedBinderKind.MoveAwareOwner _) 6]
               ;; Its storage ends with the function (`normalize-scope-bind!`).
               [(typed.TypedBinderKind.Temporary) 7]
+              ;; Its storage ends with each call (`normalize-parameters!`).
+              [(typed.TypedBinderKind.Capture) 8]
               [_ 0])
             (match (& binder.kind)
               [(typed.TypedBinderKind.InvalidateParameter lifetime) lifetime]
@@ -2612,6 +2620,10 @@
 ;; Parameters are bound in canonical declaration order before body inference.
 ;; Visit all published binders through leased accessors so unused aggregate,
 ;; region, or cleanup-bearing parameters cannot silently certify as scalars.
+;; A lambda's capture is storage of the call too: each call reads it out of
+;; the closure into storage of its own, which ends at every return, as a
+;; by-value parameter's does. It gets no entry loan: a captured reference is a
+;; copy, whose referent stays the enclosing storage it borrows (#9297).
 (define (normalize-parameters!
   [state : (&mut state NormalizeState)]
   [store : (&mut store typed.TypedStore)]
@@ -2631,17 +2643,24 @@
             [(typed.TypedBinderResult.Ok value) value]
             [(typed.TypedBinderResult.Err error)
               (return (normalize-unit-typed error))])]
-        [parameter? : bool
+        ;; 1 a parameter, 2 a lambda's capture, 0 neither.
+        [class : i64
           (match (typed.typed-binder-get! store lease id)
             [(typed.TypedBinderView.Ok binder)
               (match (& binder.kind)
-                [(typed.TypedBinderKind.Parameter) true]
-                [(typed.TypedBinderKind.InvalidateParameter _) true]
-                [_ false])]
+                [(typed.TypedBinderKind.Parameter) 1]
+                [(typed.TypedBinderKind.InvalidateParameter _) 1]
+                [(typed.TypedBinderKind.Capture) 2]
+                [_ 0])]
             [(typed.TypedBinderView.Err error)
               (return (normalize-unit-typed error))])]
         (when
-          parameter?
+          (= class 2)
+          (normalize-push!
+            state.function-places
+            (try (normalize-binder! state store lease id))))
+        (when
+          (= class 1)
           (let
             [place : i64 (try (normalize-binder! state store lease id))]
             [kind : i64 (normalize-reference-kind (& state) place)]
@@ -12582,6 +12601,7 @@
             -1
             (normalize-binder-name state place))
           (normalize-i64-member? (& state.function-places) place)
+          (= (normalize-binder-owner state place) 8)
           kind
           (own.ownership-source-copy (& (array-ref body.loans loan).source))
           (cond
@@ -13388,6 +13408,16 @@
               (normalize-borrowed-globals (& state))]
             [mutable-views : (__tl_dyn-array i64)
               (normalize-mutable-views (& state))]
+            [storage-ends : (__tl_dyn-array i64)
+              (__tl_make-array i64 state.retired-blocks.len)]
+            [ended : i64 0]
+            (while (< ended state.retired-blocks.len)
+              (set!
+                (array-ref storage-ends ended)
+                (+
+                  (* (array-ref state.retired-blocks.items ended) 4294967296)
+                  (array-ref state.retired-indices.items ended)))
+              (set! ended (+ ended 1)))
             (OwnershipNormalizeResult.Ok
               (OwnershipNormalizedBody
                 state.body
@@ -13400,7 +13430,8 @@
                 state.bytes
                 deferred
                 borrowed-globals
-                mutable-views)))]
+                mutable-views
+                storage-ends)))]
         ;; The core's own bounds and unsupported shapes are this route's
         ;; limits, not the program's: such a body is unsupported here.
         [(own.OwnershipResult.Err failure)

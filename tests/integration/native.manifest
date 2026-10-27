@@ -1157,3 +1157,7 @@ backend_source_import_payload|all|0,1,2|tests/fixtures/backend_source_import_pay
 backend_source_import_aliases|all|0,1,2|tests/fixtures/backend_source_import_aliases.tl|42|-|-|-|stage-stdlib
 backend_source_import_wildcard|all|0,1,2|tests/fixtures/backend_source_import_wildcard.tl|42|-|-|-|stage-stdlib
 backend_source_import_str_cat|all|0,1,2|tests/fixtures/backend_source_import_str_cat.tl|42|-|-|-|stage-stdlib
+lambda_identical_capture|all|0,1,2|tests/integration/lambda_identical_capture.tl|42|-|-|-|-
+lambda_identical_capture_ref|all|0,1,2|tests/integration/lambda_identical_capture_ref.tl|42|-|-|-|-
+lambda_identical_capture_nested|all|0,1,2|tests/integration/lambda_identical_capture_nested.tl|42|-|-|-|-
+lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_noncapturing.tl|42|-|-|-|-

@@ -3858,6 +3858,7 @@ if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
     _integration_cost_host=${TYPELISP_CI_TIMING_HOST:-$HOST_OS}
     ci_timing_set_now_ms
     _integration_fixture_started=$CI_TIMING_NOW_MS
+    sh "$ROOT/scripts/verify-native-link-failures.sh" "$WORKDIR/native-link-failure-self-test"
     run_preparation_failure_self_test
     ci_timing_set_now_ms
     _integration_matrix_started=$CI_TIMING_NOW_MS

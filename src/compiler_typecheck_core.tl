@@ -6509,7 +6509,10 @@
           mutable
           (ast.ast-borrow-lifetime-from-id lifetime-id)
           (tc-global-shared-view place)
-          allow-mut-by-value-borrow)
+          allow-mut-by-value-borrow
+          (if (and (> source.line 0) (> source.column 0))
+            (TcMaybeAstSourceSpan.Some (tc-selected-source-span (& source)))
+            TcMaybeAstSourceSpan.No))
           [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
           [(ResultTcType.Ok ty)
             ;; A mutable borrow of a view binder borrows through the view.
@@ -53616,7 +53619,8 @@
             mutable
             lifetime
             place
-            true)
+            true
+            TcMaybeAstSourceSpan.No)
           (tc-expr ctx env expr)))]
     [(Box inner-box)
       (let
@@ -76520,7 +76524,8 @@
   [mutable : bool]
   [lifetime : ast.AstBorrowLifetime]
   [place-expr : ast.AstExpr]
-  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  [allow-mut-by-value-borrow : bool]
+  [source : TcMaybeAstSourceSpan]) : ResultTcType
   (match (tc-borrow-place-with-access
     ctx
     expr-bases
@@ -76529,9 +76534,18 @@
     (tc-global-shared-view place-expr))
     [(Ok place)
       (if (and mutable (not allow-mut-by-value-borrow))
-        (let
-          [_ (try (tc-mut-borrow-non-call-place-ok ctx env place-expr))]
-          (tc-borrow-place-result-type mutable lifetime place))
+        (match (tc-mut-borrow-non-call-place-ok ctx env place-expr)
+          [(Ok) (tc-borrow-place-result-type mutable lifetime place)]
+          [(Err message)
+            ;; This policy checks the root's storage, but the rejected operation
+            ;; is the borrow. Transport its source before leaving that boundary.
+            (Err
+              (match source
+                [(Some span)
+                  (if (tc-encoded-error? message)
+                    message
+                    (tc-located-error span message))]
+                [(No) message]))])
         (tc-borrow-place-result-type mutable lifetime place))]
     [(Err message)
       ;; A successfully typed place cannot be a temporary. Direct call
@@ -76937,7 +76951,8 @@
     mutable
     lifetime
     place-expr
-    false))
+    false
+    TcMaybeAstSourceSpan.No))
 
 (define (tc-literal-pattern-compatible?
   [lit : ast.AstLiteral]

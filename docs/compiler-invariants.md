@@ -1979,6 +1979,13 @@ storage-origin check does not establish the callee's return convention or the
 output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
 those proofs and their enforcement before stack coloring, including mutable IR.
 
+Return-storage provenance ignores full-width `%v = mov %v : u64` definitions
+of the incoming hidden pointer in mutable final IR: that parameter has an
+initial value at every use and the copy preserves all address bits. Other
+variables retain their definition checks. This does not allow a narrowing
+write or relax the required root, extent, output type or callee contract;
+ordinary-function facts used for storage coloring are unchanged.
+
 Inline-storage coloring tracks addresses through its known alias forms. A
 `Pack` can retain such an address in a register group after the original pointer
 dies; its operands therefore participate in the shared escape visitor. Without

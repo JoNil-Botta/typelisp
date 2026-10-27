@@ -182,6 +182,15 @@ results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
 i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
 with smaller memory-storage layouts and zero/positive field values as controls.
 
+`return-storage-identity-moves` checks that full-width U64 self copies preserve
+the incoming hidden result address. Real overwrites, narrowing moves, undefined
+pointers, local aliases and local ranges retain their definition checks.
+`recursive_aggregate_return.tl` retains #9337's exact recursive three-word
+reproducer; its variants cover a deeper chain, a result live across a second
+call, register and memory-class results, both hidden-argument positions and
+mutual recursion. Both fixtures run natively and with `--verify-ir` at opt0/1/2
+on both hosts; the IR observability gate also verifies both target modes.
+
 `regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
 compare stack tail fallbacks with ordinary calls on both ABIs. The overflow
 boundary test checks twice each GP window and one argument beyond it; the

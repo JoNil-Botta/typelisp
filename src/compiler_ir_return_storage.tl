@@ -74,8 +74,26 @@
                   [instr : ir.CompilerIrInstr
                     (ir.compiler-ir-instr-seq-ref instrs p)]
                   [dst : i64 (ir.compiler-ir-instr-dst instr)]
+                  ;; Final IR may be mutable. Tail-recursion conversion can
+                  ;; leave a full-width self copy of the hidden output pointer;
+                  ;; it preserves its bits, rather than defining a new address.
+                  ;; Only the incoming output has a guaranteed initial value
+                  ;; at every use. Other variables retain the single-definition
+                  ;; rule, including aliases and local allocation addresses.
+                  [identity? : bool
+                    (match (& instr)
+                      [(ir.CompilerIrInstr.Mov
+                          target
+                          (ir.CompilerIrValue.Var source)
+                          (ast.AstType.U64))
+                        (and
+                          (= target source)
+                          (match (incoming-range out target)
+                            [(StorageRange.Range _ _) true]
+                            [_ false]))]
+                      [_ false])]
                   (when
-                    (and (>= dst 0) (< dst vars))
+                    (and (>= dst 0) (< dst vars) (not identity?))
                     (set!
                       (array-ref out.definition-count dst)
                       (+ 1 (array-ref out.definition-count dst)))

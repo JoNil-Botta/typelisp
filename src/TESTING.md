@@ -214,6 +214,13 @@ and post-call result reads retain recursive calls. Authored optimizer IR also
 rejects direct/derived result aliases, result escapes, partial/incompatible
 copies and additional temporary observers. Forwarding reuses result-slot
 confinement, and the ordinary frame-capture guard must still admit the loop.
+The complete private allocation run is retired before scratch-loop analysis.
+The optimizer's owner regression verifies legal array IR before and after a
+full `OptimizeRequest(A, 2)` run with empty and colliding B pools installed;
+B stays installed and unchanged. A scalar frame-refusal control preserves the
+existing inliner policy. The target-parity corpus uses the exact golden array
+witness; by-value array controls retain their legitimate ABI differences in
+the native and IR-verification matrices.
 
 `regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
 compare stack tail fallbacks with ordinary calls on both ABIs. The overflow

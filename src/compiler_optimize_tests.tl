@@ -27274,11 +27274,16 @@
     [allocation : ir.CompilerIrFunction (opt-tailrec-frame-test-function 1)]
     [contained : ir.CompilerIrFunction (opt-tailrec-frame-test-function 2)]
     [contained-out : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt-tailrec-frame-test-function 2))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-tailrec-frame-test-function 2))]
     [address-out : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view address))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.compiler-opt-global-shared-view address))]
     [allocation-out : ir.CompilerIrFunction
       (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
         (opt.compiler-opt-global-shared-view allocation))]
     (cond
       [(not
@@ -27308,35 +27313,62 @@
   (irt.func
     (str_cat.str-cat
       "function @array_tail(output=%0:u64, depth=%1:i64, seed=%2:u64) -> u64 vars 12 abi return-storage internal-leading arg 0 bytes 24 align 8 output (Array i64 3) result u64 params (u64 i64 u64) source (-> i64 u64 (Array i64 3)) {\nentry:\n"
-      (if (= mode 10)
-        "%3 = alloc (Array i64 4)\n"
-        "%3 = alloc (Array i64 3)\n")
       (cond
         [(= mode 2) "%10 = addr_of %2\n"]
-        [(= mode 6) "%10 = addr_of %3 storage 3\n"]
         [(= mode 8) "%10 = gep %0, 0 : u8\n"]
         [(= mode 9) "store_ptr %2, %0 : u64\n"]
         [else ""])
-      "%4 = addr_of %3 storage 3\n%5 = cast %4 : "
+      "%3 = alloc (Array i64 3)\n%4 = alloc (Array i64 3)\n"
+      (if (= mode 10)
+        "%5 = alloc (Array i64 4)\n"
+        "%5 = alloc (Array i64 3)\n")
+      "%6 = addr_of %5 storage 3\n"
+      (if (= mode 6)
+        "%10 = mov %6 : u64\n"
+        "")
+      "%7 = cast %6 : "
       (if (= mode 5)
         "(Array i64 4)"
         "(Array i64 3)")
-      " to u64\n%6 = call "
+      " to u64\n%8 = call "
       (if (= mode 11)
         "other_array"
         "array_tail")
-      "([sret arg 0] %5, %1, "
+      "([sret arg 0] %7, %1, "
       (cond [(= mode 1) "%0"] [(or (= mode 2) (= mode 8)) "%10"] [else "%2"])
       ") : u64\n"
       (cond
-        [(= mode 3) "%7 = call observe() : i64\n"]
-        [(= mode 7) "%7 = load %6 : i64\n"]
+        [(= mode 3) "%11 = call observe() : i64\n"]
+        [(= mode 7) "%11 = load %8 : i64\n"]
         [else ""])
-      "copy_bytes %0, %4, "
+      "copy_bytes %0, %6, "
       (if (= mode 4)
         "16"
         "24")
       "\nreturn %0\n}")))
+
+(define (opt-tailrec-array-authorize
+  [pools : ast.AstNodePoolContext]
+  [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
+  (match program
+    [(Program globals functions externs _)
+      (let
+        [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+        [claims : ir.CompilerIrReturnStorageIndex
+          (ir.compiler-ir-return-storage-index-claims
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            (ir.compiler-ir-type-pool-count pools)
+            (& functions)
+            (& externs))]
+        (Program
+          globals
+          functions
+          externs
+          (ir.compiler-ir-return-storage-authority-capture
+            pools
+            (& interns)
+            -1
+            (& claims))))]))
 
 (test
   tailrec-fixed-array-result
@@ -27344,8 +27376,28 @@
     (let
       [input : ir.CompilerIrFunction (opt-tailrec-array-result-fixture mode)]
       [output : ir.CompilerIrFunction
-        (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view input))]
+        (opt.opt-tailrec-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (opt.compiler-opt-global-shared-view input))]
       [output-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks output)]
+      ;; Layout/nonself controls intentionally lack the self-call's exact
+      ;; declaration. Legal guard controls must first pass storage verification.
+      (unless
+        (or (= mode 5) (= mode 10) (= mode 11))
+        (let
+          [pools : ast.AstNodePoolContext
+            (ast.ast-node-pool-reader-context-current)]
+          [program : ir.CompilerIrProgram
+            (opt-tailrec-array-authorize
+              pools
+              (Program
+                (ir.compiler-ir-global-seq-empty)
+                (ir.compiler-ir-function-seq1 (& input))
+                (ir.compiler-ir-extern-seq-empty)
+                ir.CompilerIrReturnStorageAuthority.None))]
+          (match (opt.opt-verify-program (& program))
+            [(Err message) (test.assert-true false message)]
+            [(Ok) unit])))
       (if (= mode 0)
         (begin
           (test.assert-i64-eq
@@ -27372,17 +27424,169 @@
             output)
           "alias/frame/post-call/layout/observer controls retain the original function")))))
 
+(test
+  tailrec-frame-refusal-preserves-inline-policy
+  (let
+    [input : ir.CompilerIrFunction (opt-tailrec-frame-test-function 0)]
+    [functions : ir.CompilerIrFunctionSeq
+      (opt.opt-tailrec-function-seq!
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq1 (& input)))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
+    (test.assert-true
+      (opt.opt-inline-tailrec-converted-slot?
+        (& index)
+        (opt.opt-function-name (& input)))
+      "the original frame-refused self tail call retains its inliner refusal")))
+
+(define (opt-tailrec-array-owner-program) : ir.CompilerIrProgram
+  (irt.program
+    "function @array_tail(output=%0:u64, depth=%1:i64, seed=%2:u64) -> u64 vars 14 abi return-storage internal-leading arg 0 bytes 24 align 8 output (Array i64 3) result u64 params (u64 i64 u64) source (-> i64 u64 (Array i64 3)) {
+     entry:
+       %9 = gt %1, 0 : i64
+       branch %9, recur, base
+     recur:
+       %11 = sub %1, 1 : i64
+       %3 = alloc (Array i64 3)
+       %4 = alloc (Array i64 3)
+       %5 = alloc (Array i64 3)
+       %6 = addr_of %5 storage 3
+       %7 = cast %6 : (Array i64 3) to u64
+       %8 = call array_tail([sret arg 0] %7, %11, %2) : u64
+       copy_bytes %0, %6, 24
+       return %0
+     base:
+       store_ptr %0, 10 : i64
+       %12 = gep %0, 8 : u8
+       store_ptr %12, 11 : i64
+       %13 = gep %0, 16 : u8
+       store_ptr %13, 21 : i64
+       return %0
+     }
+     function @main() -> i64 vars 7 {
+     entry:
+       %0 = alloc (Array i64 3)
+       %1 = alloc (Array i64 3)
+       %2 = alloc (Array i64 3)
+       %3 = addr_of %2 storage 3
+       %4 = cast %3 : (Array i64 3) to u64
+       %5 = call array_tail([sret arg 0] %4, 2, 0) : u64
+       %6 = load %3 : i64
+       return %6
+     }"))
+
+(test
+  tailrec-array-result-explicit-owner
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    (for [colliding? (array false true)]
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 4 16))
+      (let
+        [raw : ir.CompilerIrProgram (opt-tailrec-array-owner-program)]
+        [owner : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        [program : ir.CompilerIrProgram (opt-tailrec-array-authorize owner raw)]
+        [_verify-input : unit
+          (match (opt.opt-verify-program (& program))
+            [(Err message) (test.assert-true false message)]
+            [(Ok) unit])]
+        [request : opt.OptimizeRequest (opt.optimize-request owner 2)]
+        [decoy : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 4 16)]
+        [_fill : unit
+          (when
+            colliding?
+            (let
+              [filler : i64 (ast.ast-node-pool-context-type-push decoy (F64))]
+              (for [i (iterator.range 0 32)]
+                (set!
+                  filler
+                  (ast.ast-node-pool-context-type-push
+                    decoy
+                    (Array filler (+ i 1)))))))]
+        [_install : unit (ast.ast-node-pool-context-install! decoy)]
+        [before : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        [optimized : opt.CompilerOptimizedProgram
+          (with-test-inline-mode
+            (opt.optimize-program
+              program
+              (ir.compiler-source-spans-empty)
+              request))]
+        [after : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        (test.assert-i64-eq
+          (ast.ast-node-pool-context-type-segment-bases before)
+          (ast.ast-node-pool-context-type-segment-bases after)
+          "optimization preserves the installed peer")
+        (test.assert-i64-eq
+          (ir.compiler-ir-type-pool-count before)
+          (ir.compiler-ir-type-pool-count after)
+          "optimization does not add types to the peer")
+        (ast.ast-node-pool-context-install! owner)
+        (match optimized
+          [(Program result _)
+            (match (opt.opt-verify-program (& result))
+              [(Err message) (test.assert-true false message)]
+              [(Ok) unit])
+            (match result
+              [(Program _ functions _ _)
+                (match (opt-function-seq-find (& functions) "array_tail")
+                  [(Some func)
+                    (let
+                      [blocks : ir.CompilerIrBlockList
+                        (opt.opt-function-blocks (& func))]
+                      (test.assert-i64-eq
+                        (opt-count-direct-call-name-blocks
+                          (ir.compiler-ir-block-list-view blocks)
+                          "array_tail")
+                        0
+                        "the owner's array self call becomes a loop")
+                      (test.assert-i64-eq
+                        (opt-scratch-reset-call-count (& func) "tl_region_mark")
+                        0
+                        "retired result slots do not open an arena scope")
+                      (test.assert-i64-eq
+                        (opt-scratch-reset-call-count
+                          (& func)
+                          "tl_region_reset")
+                        0
+                        "retired result slots do not reset an arena each iteration")
+                      (match func
+                        [(Function
+                            _
+                            _
+                            _
+                            _
+                            _
+                            (ir.CompilerIrFunctionAbi.ReturnStorage _))
+                          unit]
+                        [_
+                          (test.assert-true
+                            false
+                            "the hidden result ABI survives")]))]
+                  [(No)
+                    (test.assert-true
+                      false
+                      "the recursive array function remains")])])])))
+    (ast.ast-node-pool-context-install! saved)))
+
 (define (compiler-optimize-tailrec-self-test) : i64
   (let
     [rewritten : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt-tailrec-test-function))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-tailrec-test-function))]
     [rewritten-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks rewritten)]
     [rewritten-instrs : ir.CompilerIrInstrSeq
       (opt-tailrec-entry-instrs rewritten-blocks)]
     [collision : ir.CompilerIrFunction (opt-tailrec-entry-collision-function)]
     [collision-out : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view collision))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.compiler-opt-global-shared-view collision))]
     (cond
       [(not (= (opt.opt-function-frame rewritten) 4)) 1]
       [(not
@@ -48145,7 +48349,9 @@
       (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-tailrec-function (opt-merged-loop-test-function)))]
+        (opt.opt-tailrec-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (opt-merged-loop-test-function)))]
     [merged-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks merged)]
     (cond
       [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& optimized))))) 1]

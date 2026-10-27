@@ -2709,7 +2709,9 @@ run that minimum (the second command) plus focused regressions for their change,
 recording applicable input-scoped reuse or host-qualified evidence. Backend and
 target-bearing sources require target parity; stdlib, safety inputs and pins
 require the safety corpus. Shared bootstrap, formatting, lint and shared-view
-checks are always included. Direct native, codegen and documentation inputs add
+checks and the cheap documented-source doctest guard are always included.
+Stdlib edits also require the documentation and module/fixture guards.
+Direct native, codegen and documentation inputs add
 their owning gates through the reviewed map.
 
 Required fixture owners follow declared primary inputs: native-manifest source
@@ -2718,8 +2720,12 @@ fixture commands, plus safety and compile-manifest source entries. Imported or
 staged compiler/stdlib dependency closures stay in the advisory source classes.
 Generic compiler comparisons and produced-CLI build workloads are advisory;
 an exact primary fixture contract adds its comparison gate to the minimum.
+Broad inline discovery is advisory; named inline fixture contracts remain
+required. Diagnostic anchor references into imported or staged dependencies
+also remain advisory, rather than becoming new primary source declarations.
 When changing gate commands or primary inventories, update the reviewed path
-map and run `--self-test`. Its ownership audit uses the canonical case translator
+map and run `--self-test`. Its ownership audit follows invoked owning scripts
+and whole-directory content guards, uses the canonical case translator
 in list mode, expands manifest primaries, and checks Windows checkout bytes.
 
 `--tier advisory` prints a broader conservative superset for reviewing other

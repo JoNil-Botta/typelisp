@@ -47,16 +47,76 @@ awk -F '\t' '
         }
     }
 ' "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" >> "$work/owning-scripts.tsv"
-awk -F '\t' '{
-    while ((getline line < $2) > 0) {
-        if (line ~ /^[[:space:]]*#/) continue
-        while (match(line, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]+/)) {
-            print substr(line, RSTART, RLENGTH) "\t" $1
-            line = substr(line, RSTART + RLENGTH)
+# Traverse literal shell invocations, retaining the original gate owner across
+# nested guards. A seen set bounds cycles; reading a missing script is an error.
+awk -F '\t' '
+    {gate[++count]=$1; script[count]=$2}
+    END {
+        for(i=1;i<=count;i++) {
+            key=gate[i] SUBSEP script[i]
+            if(seen[key]++) continue
+            status=0
+            while((status=getline line < script[i]) > 0) {
+                if(line ~ /^[[:space:]]*#/) continue
+                rest=line
+                while(match(rest, /scripts\/[A-Za-z0-9_.-]+\.sh/)) {
+                    child=substr(rest,RSTART,RLENGTH)
+                    prefix=substr(rest,1,RSTART-1)
+                    sub(/["]?\$\{?ROOT\}?\/$/, "", prefix)
+                    # Direct command, sh/bash/exec, or assignment-prefixed call.
+                    if(prefix ~ /(^|[;&|()][[:space:]]*)[[:space:]]*(sh|bash|exec)[[:space:]]+$/ || prefix ~ /^[[:space:]]*(([^[:space:]]+=[^[:space:]]+)[[:space:]]+)*["$A-Za-z_{}\/]*$/) {
+                        gate[++count]=gate[i]; script[count]=child
+                    }
+                    rest=substr(rest,RSTART+RLENGTH)
+                }
+            }
+            if(status < 0) {print "cannot read owning script: " script[i] > "/dev/stderr"; exit 1}
+            close(script[i])
+            print gate[i] "\t" script[i]
         }
     }
-    close($2)
-}' "$work/owning-scripts.tsv" | sort -u > "$work/script-inputs.tsv"
+' "$work/owning-scripts.tsv" > "$work/recursive-scripts.tsv" || fail 'owning script traversal failed'
+awk -F '\t' '
+    {
+        status=0; contents=""
+        while ((status=getline line < $2) > 0) {
+            if (line ~ /^[[:space:]]*#/) continue
+            contents=contents line "\n"
+            rest=line
+            while (match(rest, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]+/)) {
+                print substr(rest, RSTART, RLENGTH) "\t" $1
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+            # Content sweeps also use bare directory roots rather than paths.
+            if(line ~ /(^|[;&|()][[:space:]]*)[[:space:]]*find[[:space:]]/ || line ~ /git[[:space:]]+ls-files/) {
+                n=split(line, words, /[[:space:]]+/)
+                for(j=1;j<=n;j++) {
+                    root=words[j]; gsub(/["\047]/,"",root)
+                    sub(/\/\*\.tl$/,"",root)
+                    sub(/\/$/,"",root)
+                    if(root ~ /^(src|tests|stdlib|docs|examples)$/) print root "\t" $1
+                }
+            }
+        }
+        if(status < 0) {print "cannot read owning inputs: " $2 > "/dev/stderr"; exit 1}
+        close($2)
+        # The doctest discovery loop passes each literal root to find "$root".
+        if(contents ~ /find[[:space:]]+"?\$root/ && match(contents,/for root in [^;]+;/)) {
+            roots=substr(contents,RSTART,RLENGTH); sub(/^for root in /,"",roots); sub(/;$/,"",roots)
+            n=split(roots,words," ")
+            for(j=1;j<=n;j++) if(words[j] ~ /^(src|tests|stdlib|docs|examples)$/) print words[j] "\t" $1
+        }
+    }
+' "$work/recursive-scripts.tsv" > "$work/script-inputs.raw" || fail 'owning input extraction failed'
+sort -u "$work/script-inputs.raw" > "$work/script-inputs.tsv"
+# Isolate both audit mechanisms from later fallback and inventory checks.
+for script in verify-package-artifact-freshness.sh verify-lsp-transcript-batch.sh; do
+    grep -Fx "stage2-public-tool-surface$TAB""scripts/$script" "$work/recursive-scripts.tsv" >/dev/null || fail "nested guard not discovered: $script"
+done
+grep -Fx "stage2-stdlib-modules-and-fixtures$TAB"'scripts/check-stdlib-concat-lint.sh' "$work/recursive-scripts.tsv" >/dev/null || fail 'nested stdlib lint not discovered'
+for gate in stage2-stdlib-documentation stage2-stdlib-modules-and-fixtures stage2-repository-doctests; do
+    grep -Fx "stdlib$TAB$gate" "$work/script-inputs.tsv" >/dev/null || fail "whole-directory input not discovered: $gate"
+done
 awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$ROOT/src/compile_manifest.txt" >> "$work/script-inputs.tsv"
 
 # Primary declarations add exact fixture owners. Imported/staged dependency
@@ -68,9 +128,11 @@ for affected_inventory in tests/apps/*.cases; do printf '%s\tstage2-app-workflow
 inventory_inputs() {
     # Reuse the canonical DSL translator for defaults and {{each}} expansion.
     # --list builds no compiler and writes only under our fresh scratch root.
-    cut -f 1 "$work/inventory-owners.tsv" | sort -u |
+    mkdir -p "$2" || return
+    cut -f 1 "$work/inventory-owners.tsv" > "$2/inventories.raw" || return
+    sort -u "$2/inventories.raw" > "$2/inventories" || return
     while IFS= read -r affected_inventory; do
-        CODEGEN_CASES_WORKDIR="$2" "$ROOT/scripts/verify-codegen-cases.sh" --list "$1/$affected_inventory" >/dev/null
+        CODEGEN_CASES_WORKDIR="$2" "$ROOT/scripts/verify-codegen-cases.sh" --list "$1/$affected_inventory" >/dev/null || return
         affected_name=$(basename "$affected_inventory" .cases)
         awk -F '\t' -v inventory="$affected_inventory" -v tracked_file="$work/tracked-inputs" -v directory_file="$work/tracked-directories" '
             BEGIN {
@@ -137,19 +199,32 @@ inventory_inputs() {
                     }
                 }
             }
-        ' "$work/inventory-owners.tsv" "$1/$affected_inventory" "$2/$affected_name/plan.sh"
-    done
+        ' "$work/inventory-owners.tsv" "$1/$affected_inventory" "$2/$affected_name/plan.sh" || return
+    done < "$2/inventories"
     awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 4 {
         print $4 "\tstage2-native-integration-corpus"
         for(i=10;i<=NF;i++) if($i ~ /^suite-members:/) {
             members=substr($i,15); n=split(members,names," ")
             for(j=1;j<=n;j++) if(names[j] != "") print "src/tests/" names[j] "\tstage2-native-integration-corpus"
         }
-    }' "$1/tests/integration/native.manifest"
-    awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 3 {print $3 "\tstage2-safety-corpus"}' "$1/tests/safety/manifest.txt"
-    awk -F '|' '{sub(/\r$/, "")} $1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$1/src/compile_manifest.txt"
+    }' "$1/tests/integration/native.manifest" || return
+    awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 3 {print $3 "\tstage2-safety-corpus"}' "$1/tests/safety/manifest.txt" || return
+    awk -F '|' '{sub(/\r$/, "")} $1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$1/src/compile_manifest.txt" || return
 }
-inventory_inputs "$ROOT" "$work/inventory-plans" | sort -u > "$work/primary-inputs.tsv"
+inventory_inputs "$ROOT" "$work/inventory-plans" > "$work/primary.raw" || fail 'primary input extraction failed'
+sort -u "$work/primary.raw" > "$work/primary-inputs.tsv"
+# Functions invoked as conditions cannot rely on errexit. Check early and late
+# translator failures explicitly, including failure after useful partial output.
+if inventory_inputs "$work/missing-root" "$work/missing-plans" > "$work/missing.raw" 2> "$work/missing.err"; then
+    fail 'missing inventories passed extraction'
+fi
+IFS= read -r first_inventory < "$work/inventory-plans/inventories"
+mkdir -p "$work/partial-root/$(dirname "$first_inventory")"
+printf 'case extraction-failure-probe\nsource tests/integration/tail_call_stack_forward.tl\n' > "$work/partial-root/$first_inventory"
+if inventory_inputs "$work/partial-root" "$work/partial-plans" > "$work/partial.raw" 2> "$work/partial.err"; then
+    fail 'partial inventory extraction hid a later failure'
+fi
+[ -s "$work/partial.raw" ] || fail 'late extraction failure probe emitted no initial ownership'
 # Exercise the same inventory reader against Git actual Windows checkout bytes.
 mkdir -p "$work/crlf-inputs"
 { cut -f 1 "$work/inventory-owners.tsv"; printf '%s\n' tests/integration/native.manifest tests/safety/manifest.txt src/compile_manifest.txt; } | sort -u > "$work/inventory-files"
@@ -157,7 +232,8 @@ while IFS= read -r affected_inventory; do
     mkdir -p "$work/crlf-inputs/$(dirname "$affected_inventory")"
     git -c core.autocrlf=true cat-file --filters --path="$affected_inventory" ":$affected_inventory" > "$work/crlf-inputs/$affected_inventory"
 done < "$work/inventory-files"
-inventory_inputs "$work/crlf-inputs" "$work/crlf-plans" | sort -u > "$work/primary-crlf.tsv"
+inventory_inputs "$work/crlf-inputs" "$work/crlf-plans" > "$work/primary-crlf.raw" || fail 'Windows primary input extraction failed'
+sort -u "$work/primary-crlf.raw" > "$work/primary-crlf.tsv"
 cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkout changed primary input ownership'
 # Check every declared edge without thousands of recursive planner calls.
 # Allowed map globs contain only literal characters, dots and stars, so this
@@ -248,10 +324,18 @@ for host in linux windows; do
         case "$path:$gate" in
             src/main.tl:*) continue ;; # Produced CLI workload: bootstrap plus advisory compiler consumers.
             src/sym_i64_env.tl:stage2-opt1-opt2-build-invariance) continue ;; # Staged supporting module, not a primary comparison fixture.
+            src/compiler_embedded_stdlib_payload.tl:embedded-stdlib-tlci-bounded-resource-report | src/compiler_embedded_stdlib_payload.tl:embedded-stdlib-tlci-resource-verifier-self-tests | src/compiler_embedded_stdlib_payload.tl:embedded-stdlib-tlci-image | src/compiler_embedded_stdlib_payload.tl:stage2-compile-profile-verifier | src/compiler_embedded_stdlib_payload.tl:stage2-stdlib-modules-and-fixtures | src/compiler_embedded_stdlib_payload.tl:tlci-mutation-bootstrap-fixpoint) continue ;; # Nested image builder reads staged compiler support; payload's standalone guard remains required.
+            stdlib/cpu.tl:stage2-spmd-runtime-dispatch) continue ;; # Imported ISA-detector support; timestamp invalidates its artifact, no direct fixture contract.
+            src/tests/compiler_codegen_smoke_suite.tl:stage2-opt1-opt2-build-invariance) continue ;; # Nested pool self-test uses this name as synthetic job data, not as compiled source.
         esac
         if ! grep -Fx "$path" "$work/tracked-inputs" >/dev/null; then
             if ! grep -Fx "$path" "$work/tracked-directories" >/dev/null; then continue; fi
             case "$path:$gate" in
+                src:cli-tools-benchmark-repetition-self-test | src:zero-cons-structural-classifier-self-tests | stdlib:zero-cons-structural-classifier-self-tests | tests:zero-cons-structural-classifier-self-tests | examples:zero-cons-structural-classifier-self-tests | stdlib:docs-site-search-manifest-validator-self-tests) continue ;; # Self-test modes consume synthetic trees instead of repository content.
+                src:stage2-inline-typelisp-tests | stdlib:stage2-inline-typelisp-tests | examples:stage2-inline-typelisp-tests) continue ;; # Broad inline discovery remains advisory; named units retain explicit owners.
+                src:stage2-native-integration-corpus | stdlib:stage2-native-integration-corpus) continue ;; # Native manifest validator catalogs compiler/import dependencies by name only.
+                stdlib:stage2-docs-pages-build-path) continue ;; # Page-name completeness lists module names; no source-content assertion.
+                stdlib:stage2-arena-sanitizer-selfhost) continue ;; # Generic instrumented compiler comparison, not a declared primary fixture contract.
                 stdlib/tests:stage0-size-ratchet | stdlib/tests:stage2-arena-sanitizer-selfhost | stdlib/tests:stage2-stdlib-documentation) continue ;; # Excluded fixture trees.
                 tests/integration:ir-observability-golden | tests/integration:stage2-compile-profile-verifier | tests/integration:compiler-arena-debug-native-matrix | tests/integration:stage2-safety-corpus) continue ;; # Search roots/constructed lists: exact fixtures checked below.
                 tests/integration:stage2-inline-typelisp-tests) continue ;; # Broad source-suite discovery is advisory; focused tests remain owner-selected.
@@ -264,7 +348,7 @@ for host in linux windows; do
         has_gate "$work/direct-reader.ids" "$gate"
     done < "$work/script-inputs.tsv"
     # Constructed script inputs and the reported independent source guards.
-    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
@@ -277,7 +361,7 @@ for host in linux windows; do
         gate=${row##* }
         printf '%s\n' "$path" > "$work/paths"
         "$selector" --host "$host" --paths "$work/paths" > "$work/subset.ids"
-        "$ROOT/scripts/ci-verify.sh" --list-gates "$host" --gates "shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,$gate" > "$work/subset.table"
+        "$ROOT/scripts/ci-verify.sh" --list-gates "$host" --gates "shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests,$gate" > "$work/subset.table"
         sed '1d' "$work/subset.table" | cut -f 1 > "$work/subset.expected"
         cmp "$work/subset.ids" "$work/subset.expected" || fail "wrong dependency closure: $path"
     done

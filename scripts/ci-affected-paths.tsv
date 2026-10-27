@@ -2,7 +2,7 @@
 # Required is the local minimum. Advisory adds its column to the required set.
 # Groups resolve through ci-affected-inputs.tsv. Unknown/unreviewed inputs fail to full.
 path	required	advisory	reason
-@always	bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint	-	Shared local hygiene, with canonical producer dependencies.
+@always	bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests	-	Shared local hygiene and documented-source content guard, with canonical producer dependencies.
 src/tests/compiler_optimize_smoke.tl	stage2-opt2-built-cli-compile-cross-fixpoint-regression	@compiler	The numbered opt2 gate wrapper directly executes this optimizer smoke unit.
 src/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@compiler	Any compiler source can carry target references; source guards read source content and module paths directly.
 src/compiler_*	stage2-codegen-target-parity	@compiler	Compiler data and target references retain the target boundary check.
@@ -12,7 +12,7 @@ src/main.tl	cli-help-surface,stage2-selfhost-compile-manifest	@compiler	The help
 src/*_cli_core.tl	cli-help-surface	@compiler	CLI parser modules are compared with their help text by the direct source guard.
 src/compile_manifest.txt	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Exact compiler-manifest input, expectations and standalone coverage.
 stdlib/*	stage2-safety-corpus	@stdlib	Every stdlib edit can change located safety diagnostics and pins.
-stdlib/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@stdlib	Stdlib sources can carry target references and are read by source-content and module-path guards.
+stdlib/*.tl	stage2-stdlib-documentation,stage2-stdlib-modules-and-fixtures,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@stdlib	Stdlib sources carry target references and feed documentation, concat-lint, source-content and module-path guards.
 stdlib/tests/*	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier,stage2-prelude-macro-mutation-guard	@stdlib	Stdlib witnesses are executed by both fixture verifiers and copied by the macro-mutation runner.
 stdlib/README.md	stage2-stdlib-modules-and-fixtures	@stdlib	The stdlib runner checks the documented module inventory.
 tests/*	-	@corpus	Advisory corpus class; a path also needs a required trigger or both tiers fall back to full.
@@ -183,7 +183,7 @@ src/compiler_check_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tra
 src/compiler_ctfe.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_dependency_trace.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_diagnostic.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_driver_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_driver_core.tl	stage2-selfhost-compile-manifest,stage2-public-tool-surface	@compiler	Direct tracked input named by its owning verifier or compile manifest. The public-tool runner invokes a structural guard that directly reads this source.
 src/compiler_embedded_stdlib_payload.tl	stage2-selfhost-compile-manifest,embedded-stdlib-build-payload,stage0-size-ratchet	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_embedded_stdlib.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_float.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -194,7 +194,7 @@ src/compiler_ir_return_storage.tl	stage2-selfhost-compile-manifest	@compiler	Dir
 src/compiler_ir_types.tl	stage2-selfhost-compile-manifest,stage2-core-ir-dependency-boundary	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_liveness.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_load.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_lower.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_lower.tl	stage2-selfhost-compile-manifest,stage2-public-tool-surface	@compiler	Direct tracked input named by its owning verifier or compile manifest. The public-tool runner invokes a structural guard that directly reads this source.
 src/compiler_lzss.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_module_name.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_optimize.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -500,3 +500,5 @@ tests/spmd/broadcast_lane1_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identit
 tests/spmd/lane_identity_2d.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/spmd/lane_identity_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/spmd/lane_identity_reduce_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+src/build_cli_core.tl	stage2-public-tool-surface	@compiler	The public-tool runner invokes a structural guard that directly reads this source.
+src/lsp_frame_core.tl	stage2-public-tool-surface	@compiler	The public-tool runner invokes a structural guard that directly reads this source.

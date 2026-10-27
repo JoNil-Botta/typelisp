@@ -466,6 +466,9 @@ Readback is a small two-host matrix: each host verifies its own exact checkout
 bytes, including text paths that Git can materialize as CRLF on Windows. This
 avoids a separate normalized-source identity. The workflow has four jobs total;
 both readback jobs and their setup cost count toward the runner-minute budget.
+The complete fixture suite runs on Linux, including static Windows envelopes,
+both coreutils digest markers and planted LF/CRLF checkouts. Real Windows
+publication and readback validate that host's bytes and native tool behavior.
 
 No compiler or gate consumes a transported envelope yet. All existing path-file
 handoffs, compiler choices, gate dependencies, comparisons, limits and required

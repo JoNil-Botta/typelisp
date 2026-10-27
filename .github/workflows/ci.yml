@@ -131,11 +131,17 @@ jobs:
           printf 'TYPELISP_SDE_BIN=%s\n' "$sde_bin" >> "$GITHUB_ENV"
 
       - name: Compiler artifact envelope fail-closed fixtures
+        # The full suite is host-independent (both binary headers, planted
+        # MSYS binary markers and LF/CRLF checkouts). Windows verifies actual
+        # producer bytes in its own readback job, without thousands of forks.
+        if: runner.os == 'Linux'
         shell: bash
         run: |
+          fixture_root="$PWD/target/exp/ci-compiler-artifact-fixtures"
           scripts/run-memory-bounded.sh --limit-mib 512 --timeout-seconds 120 \
             --report target/ci-compiler-artifact-fixtures.memory -- \
-            sh scripts/verify-ci-compiler-artifacts.sh
+            sh scripts/verify-ci-compiler-artifacts.sh "$fixture_root"
+          cp "$fixture_root/self-test.json" target/ci-compiler-artifact-fixtures.json
 
       - name: CI verification
         id: verification
@@ -211,6 +217,8 @@ jobs:
         with:
           name: backend-memory-${{ runner.os }}
           path: |
+            target/ci-compiler-artifact-fixtures.memory
+            target/ci-compiler-artifact-fixtures.json
             target/build-invariance/backend-memory/*.memory
             target/build-invariance/backend-memory/*.stdout
             target/build-invariance/backend-memory/*.stderr

@@ -113,19 +113,31 @@ cica_rel() {
     ci_compiler_artifact_field_safe path "$1" || return 1
     case "$1" in '' | /* | *\\* | *:* | . | .. | ./* | ../* | */./* | */../* | */. | */.. | *//*) return 1 ;; esac
 }
-cica_file() (
-    _base=$1 _rel=$2
-    cica_rel "$_rel" || cica_fail 'unsafe relative path'
-    _path=$_base
+cica_file() {
+    # Keep these names separate from callers. This check is deliberately
+    # fork-free: source closures contain thousands of paths on Git Bash.
+    _cf_base=$1 _cf_rel=$2
+    cica_rel "$_cf_rel" || cica_fail 'unsafe relative path'
+    _cf_path=$_cf_base
     while :; do
-        _part=${_rel%%/*}
-        _path=$_path/$_part
-        [ ! -L "$_path" ] || cica_fail "symlink path: $_path"
-        case "$_rel" in */*) _rel=${_rel#*/} ;; *) break ;; esac
+        _cf_part=${_cf_rel%%/*}
+        _cf_path=$_cf_path/$_cf_part
+        [ ! -L "$_cf_path" ] || cica_fail "symlink path: $_cf_path"
+        case "$_cf_rel" in */*) _cf_rel=${_cf_rel#*/} ;; *) break ;; esac
     done
-    [ "${3:-}" != regular ] || [ -f "$_path" ] || cica_fail "not a regular file: $_path"
-    printf '%s\n' "$_path"
-)
+    [ "${3:-}" != regular ] || [ -f "$_cf_path" ] || cica_fail "not a regular file: $_cf_path"
+    printf '%s\n' "$_cf_path"
+}
+cica_hash_line() {
+    CICA_PARSED_HASH=${1%% *}
+    [ "${#CICA_PARSED_HASH}" -eq 64 ] || cica_fail 'unsafe digest line'
+    case "$CICA_PARSED_HASH" in *[!0-9a-f]*) cica_fail 'unsafe digest' ;; esac
+    _hl_tail=${1#"$CICA_PARSED_HASH"}
+    # GNU coreutils use either text (two spaces) or binary (space + star).
+    # MSYS/Cygwin default to binary mode; both hash the exact file bytes.
+    case "$_hl_tail" in '  '* | ' *'*) CICA_PARSED_PATH=${_hl_tail#??} ;; *) cica_fail 'unsafe digest marker' ;; esac
+}
+
 cica_owned() {
     case "$2" in "$1"/target/*) cica_file "$1" "${2#"$1"/}" >/dev/null ;; *) cica_fail 'envelope path must be inside owned target/' ;; esac
 }
@@ -176,24 +188,53 @@ cica_sources() (
     xargs -0 sha256sum -- < "$CICA_SCRATCH/source-paths.z" > "$CICA_SCRATCH/source-hashes"
     [ -s "$CICA_SCRATCH/source-hashes" ] || cica_fail 'empty source closure'
     while IFS= read -r _line; do
-        _hash=${_line%% *} _path=${_line#*  }
-        [ "${#_hash}" -eq 64 ] || cica_fail 'unsafe source manifest'
-        case "$_hash" in *[!0-9a-f]*) cica_fail 'unsafe source digest' ;; esac
-        cica_file "$CICA_ROOT" "$_path" regular >/dev/null
-        printf '%s  {root}/%s\n' "$_hash" "$_path"
+        cica_hash_line "$_line"
+        cica_file "$CICA_ROOT" "$CICA_PARSED_PATH" regular >/dev/null || exit 1
+        printf '%s  {root}/%s\n' "$CICA_PARSED_HASH" "$CICA_PARSED_PATH"
     done < "$CICA_SCRATCH/source-hashes" > "$CICA_SCRATCH/source-manifest"
     LC_ALL=C sort -k2 "$CICA_SCRATCH/source-manifest"
 )
-cica_inventory() (
-    for _p in scripts/ci-gates.tsv scripts/ci-compiler-artifacts.tsv scripts/expand-integration-manifest.awk tests/integration/native.manifest; do
-        cica_jq -cn --arg p "$_p" --arg h "$(cica_sha "$CICA_ROOT/$_p")" '{key:$p,value:$h}'
-    done | cica_jq -sS from_entries
+cica_hash_map() (
+    cd "$CICA_ROOT"
+    while IFS= read -r _hm_path; do
+        cica_file "$CICA_ROOT" "$_hm_path" regular >/dev/null || exit 1
+        printf '%s\0' "$_hm_path"
+    done > "$CICA_SCRATCH/hash-map-paths.z"
+    [ -s "$CICA_SCRATCH/hash-map-paths.z" ] || cica_fail 'empty hash inventory'
+    xargs -0 sha256sum -- < "$CICA_SCRATCH/hash-map-paths.z" > "$CICA_SCRATCH/hash-map-raw" || cica_fail 'inventory hashing failed'
+    while IFS= read -r _hm_line; do
+        cica_hash_line "$_hm_line"
+        cica_rel "$CICA_PARSED_PATH" || cica_fail 'unsafe inventory path'
+        printf '%s\t%s\n' "$CICA_PARSED_PATH" "$CICA_PARSED_HASH"
+    done < "$CICA_SCRATCH/hash-map-raw" > "$CICA_SCRATCH/hash-map-entries"
+    cica_jq -RsS 'split("\n")[:-1]|map(split("\t")|{key:.[0],value:.[1]})|from_entries' "$CICA_SCRATCH/hash-map-entries"
 )
-cica_recipes() (
-    for _p in scripts/ci-verify.sh scripts/check-bootstrap-fixpoint.sh scripts/lib-native-link.sh scripts/lib-linux-entry.sh scripts/lib-build-provenance.sh scripts/check-build-invariance.sh scripts/lib-build-invariance-batch.sh scripts/lib-bounded-pool.sh scripts/run-memory-bounded.sh scripts/lib-linux-memory-limit.sh scripts/run-bounded-process.ps1 scripts/ci-compiler-artifact.sh scripts/lib-ci-compiler-artifact.sh; do
-        cica_jq -cn --arg p "$_p" --arg h "$(cica_sha "$CICA_ROOT/$_p")" '{key:$p,value:$h}'
-    done | cica_jq -sS from_entries
-)
+cica_inventory() {
+    cica_hash_map <<'PATHS'
+scripts/ci-gates.tsv
+scripts/ci-compiler-artifacts.tsv
+scripts/expand-integration-manifest.awk
+tests/integration/native.manifest
+PATHS
+}
+cica_recipes() {
+    cica_hash_map <<'PATHS'
+scripts/ci-verify.sh
+scripts/check-bootstrap-fixpoint.sh
+scripts/lib-native-link.sh
+scripts/lib-linux-entry.sh
+scripts/lib-build-provenance.sh
+scripts/check-build-invariance.sh
+scripts/lib-build-invariance-batch.sh
+scripts/lib-bounded-pool.sh
+scripts/run-memory-bounded.sh
+scripts/lib-linux-memory-limit.sh
+scripts/run-bounded-process.ps1
+scripts/ci-compiler-artifact.sh
+scripts/lib-ci-compiler-artifact.sh
+PATHS
+}
+
 cica_generated() {
     printf '%s\n' target/build-stage0/git-hash.txt target/build-stage0/tree-hash.txt \
       target/embedded-stdlib-tlci/stdlib.tlci target/embedded-stdlib-tlci/stdlib.tlci.tlch \
@@ -207,20 +248,36 @@ cica_corpus() {
 }
 cica_roles() { printf '%s\n' bootstrap-converged; [ "$CICA_HOST" != linux ] || printf '%s\n' build-invariance-opt1-reference; }
 cica_files() (
-    _base=$1
-    find "$_base" -type l -print > "$CICA_SCRATCH/symlinks"
+    _fi_base=$1
+    cd "$_fi_base"
+    find . -type l -print > "$CICA_SCRATCH/symlinks" || cica_fail 'symlink enumeration failed'
     [ ! -s "$CICA_SCRATCH/symlinks" ] || cica_fail 'symlink in envelope'
-    find "$_base" ! -type d ! -type f -print > "$CICA_SCRATCH/special"
+    find . ! -type d ! -type f -print > "$CICA_SCRATCH/special" || cica_fail 'special-file enumeration failed'
     [ ! -s "$CICA_SCRATCH/special" ] || cica_fail 'special file in envelope'
-    find "$_base" -type f -print | LC_ALL=C sort > "$CICA_SCRATCH/files"
-    [ "$(wc -l < "$CICA_SCRATCH/files")" -le 10000 ] || cica_fail 'too many envelope files'
-    while IFS= read -r _file; do
-        _rel=${_file#"$_base"/}
-        [ "$_rel" != bundle.json ] || continue
-        cica_file "$_base" "$_rel" regular >/dev/null
-        cica_jq -cn --arg p "$_rel" --arg h "$(cica_sha "$_file")" --argjson n "$(wc -c < "$_file")" '{key:$p,value:{sha256:$h,bytes:$n}}'
-    done < "$CICA_SCRATCH/files" | cica_jq -sS from_entries
+    find . -type f -print0 > "$CICA_SCRATCH/files.z" || cica_fail 'file enumeration failed'
+    if [ -s "$CICA_SCRATCH/files.z" ]; then
+        xargs -0 sha256sum -- < "$CICA_SCRATCH/files.z" > "$CICA_SCRATCH/file-hashes" || cica_fail 'file hashing failed'
+    else : > "$CICA_SCRATCH/file-hashes"; fi
+    _fi_count=0
+    while IFS= read -r _fi_line; do
+        _fi_count=$((_fi_count+1))
+        [ "$_fi_count" -le 10000 ] || cica_fail 'too many envelope files'
+        cica_hash_line "$_fi_line"
+        case "$CICA_PARSED_PATH" in ./*) _fi_rel=${CICA_PARSED_PATH#./} ;; *) cica_fail 'nonrelative file enumeration' ;; esac
+        cica_file "$_fi_base" "$_fi_rel" regular >/dev/null || exit 1
+        [ "$_fi_rel" != bundle.json ] || continue
+        printf '%s\t%s\n' "$CICA_PARSED_HASH" "$_fi_rel"
+    done < "$CICA_SCRATCH/file-hashes" > "$CICA_SCRATCH/file-entries"
+    # GNU wc can stat the same NUL-delimited inventory in one process. No
+    # per-file shell, hash, size or jq process is needed on Windows.
+    wc -c --files0-from="$CICA_SCRATCH/files.z" > "$CICA_SCRATCH/file-sizes" || cica_fail 'file sizing failed'
+    cica_jq -nS --rawfile hashes "$CICA_SCRATCH/file-entries" --rawfile sizes "$CICA_SCRATCH/file-sizes" '
+      ($sizes|split("\n")|map(select(length>0)|capture("^ *(?<n>[0-9]+) (?<p>.*)$"))|
+        map(select(.p|startswith("./"))|{key:.p[2:],value:(.n|tonumber)})|from_entries) as $size |
+      ($hashes|split("\n")[:-1]|map(split("\t")|{key:.[1],value:{sha256:.[0],bytes:$size[.[1]]}})|from_entries) |
+      if all(.[]; .bytes|type=="number" and .>=0) then . else error("file size missing") end'
 )
+
 cica_copy() (
     _src=$1 _dest=$2
     case "$_src" in "$CICA_ROOT"/*) cica_file "$CICA_ROOT" "${_src#"$CICA_ROOT"/}" regular >/dev/null ;; *) cica_fail 'external payload path' ;; esac
@@ -534,10 +591,13 @@ cica_verify() {
         if [ "$_role" = bootstrap-converged ]; then
             cica_binary "$_base/payload/compiler"; cica_binary "$_base/payload/previous-stage"
             cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" '
+              def assembly_proof: type=="object" and (.sha256|type=="string" and test("^[0-9a-f]{64}$")) and (.bytes|type=="number" and .>0 and floor==.);
               .proof as $p |
               ($p.selected_stage=="stage3" or $p.selected_stage=="stage4") and $p.output_identity==$c[0].tree and
               ($p.seed.sha256|test("^[0-9a-f]{64}$")) and ($p.seed.identity|test("^[0-9a-f]{40}$")) and
               $p.fixpoint_pair==(if $p.selected_stage=="stage3" then ["stage2.s","stage3.s"] else ["stage3.s","stage4.s"] end) and
+              ([$p.fixpoint_pair[],"stage3.s","stage3-embedded.s"]|all(.[]; $p[.]|assembly_proof)) and
+              ($p.compile_receipt|assembly_proof) and $p.compile_receipt==$p.invocation_record.compiled_output and
               $p[$p.fixpoint_pair[0]].sha256==$p[$p.fixpoint_pair[1]].sha256 and $p["stage3.s"].sha256==$p["stage3-embedded.s"].sha256 and
               $p.compile_receipt.sha256==$p[$p.selected_stage+".s"].sha256 and $p.compile_receipt.bytes==$p[$p.selected_stage+".s"].bytes and
               $p.compile_receipt.path==("{root}/target/bootstrap-fixpoint/"+$p.selected_stage+".s")' "$_m" >/dev/null || cica_fail 'fixpoint/parity proof incomplete'

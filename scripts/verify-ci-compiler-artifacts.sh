@@ -58,6 +58,25 @@ if cmp -s "$work/lf.sources" "$work/crlf.sources"; then cica_fail 'cross-checkou
 record_result cross-checkout-exact-bytes pass
 CICA_ROOT=$source
 cica_sources > "$work/sources"
+# Exercise both coreutils output markers on every host. Fixture source files
+# are LF bytes, so text and binary mode must give identical provenance.
+real_sha=$(command -v sha256sum)
+for mode in b t; do
+    mkdir "$work/sha-$mode"
+    cat > "$work/sha-$mode/sha256sum" <<EOF
+#!/usr/bin/env sh
+exec "$real_sha" -$mode "\$@"
+EOF
+    chmod +x "$work/sha-$mode/sha256sum"
+    (PATH="$work/sha-$mode:$PATH"; export PATH; cica_sources) > "$work/source-mode-$mode"
+    cmp -s "$work/sources" "$work/source-mode-$mode" || cica_fail 'coreutils digest marker changed source identity'
+    record_result "source-sha256-marker-$mode" pass
+done
+mkdir "$work/missing-authorities"
+if (CICA_ROOT=$work/missing-authorities; cica_inventory) > "$work/missing-inventory.stdout" 2> "$work/missing-inventory.stderr"; then cica_fail 'missing inventory accepted'; fi
+record_result missing-inventory rejected
+if (CICA_ROOT=$work/missing-authorities; cica_recipes) > "$work/missing-recipes.stdout" 2> "$work/missing-recipes.stderr"; then cica_fail 'missing recipes accepted'; fi
+record_result missing-recipes rejected
 cica_inventory > "$work/inventory.json"
 cica_recipes > "$work/recipe-hashes.json"
 # Stand-in producer executes only the --version/--producer-identity protocol.
@@ -115,7 +134,7 @@ for host in linux windows; do
         cp "$work/sources" "$base/source-set.sha256"
         if [ "$role" = bootstrap-converged ]; then
             cica_jq -nS --arg c "$commit" --arg t "$tree" --argjson cfg "$cfg" --arg ext "$ext" --slurpfile r "$dir/draft/records/stage3.json" '
-              {argv:(["{root}/target/bootstrap-fixpoint/stage2"+$ext,"compile","src/main.tl","-o","{root}/target/bootstrap-fixpoint/stage3.s","--target",(if $ext=="" then "linux" else "windows" end)+"-x86_64"] + [$cfg[]|"--cfg",.] + ["--cfg","compiler-build-identity","--cfg","embedded-stdlib-tlci","--stdlib-root","{root}/src","--opt-level","2"]),producer_version:$r[0].producer_version,producer_sha256:$r[0].producer_sha256,producer_identity:$t}' > "$work/record.json"
+              {argv:(["{root}/target/bootstrap-fixpoint/stage2"+$ext,"compile","src/main.tl","-o","{root}/target/bootstrap-fixpoint/stage3.s","--target",(if $ext=="" then "linux" else "windows" end)+"-x86_64"] + [$cfg[]|"--cfg",.] + ["--cfg","compiler-build-identity","--cfg","embedded-stdlib-tlci","--stdlib-root","{root}/src","--opt-level","2"]),producer_version:$r[0].producer_version,producer_sha256:$r[0].producer_sha256,producer_identity:$t,compiled_output:$r[0].compiled_output}' > "$work/record.json"
             assembly_sha=$(cica_sha "$source/target/bootstrap-fixpoint/stage3.s")
             cica_jq -nS --arg h "$assembly_sha" --arg t "$tree" --arg p "$(cica_jq -r .producer_sha256 "$work/record.json")" --argjson n "$(wc -c < "$source/target/bootstrap-fixpoint/stage3.s")" '
               {selected_stage:"stage3",fixpoint_pair:["stage2.s","stage3.s"],output_identity:$t,seed:{sha256:("4"*64),identity:("5"*40)},input_producer_sha256:$p,
@@ -150,6 +169,24 @@ for host in linux windows; do
     record_result "complete-$host-real-version-record-seal-readback" pass
 done
 
+# The rare fallback must remain admissible too: stage3 produces stage4,
+# stage3.s equals stage4.s, and the complete invocation receipt agrees.
+CICA_HOST=windows
+fallback=$source/target/windows-fallback
+cp -R "$source/target/windows/complete" "$fallback"
+m=$fallback/roles/bootstrap-converged/manifest.json
+cica_jq -S '
+  .fields.argv|=(fromjson|.[0]="{root}/target/bootstrap-fixpoint/stage3.exe"|.[4]="{root}/target/bootstrap-fixpoint/stage4.s"|tojson) |
+  .proof.selected_stage="stage4" | .proof.fixpoint_pair=["stage3.s","stage4.s"] |
+  .proof["stage4.s"]=.proof["stage3.s"] | .proof.compile_receipt.path="{root}/target/bootstrap-fixpoint/stage4.s" |
+  .proof.invocation_record.argv=(.fields.argv|fromjson) | .proof.invocation_record.compiled_output=.proof.compile_receipt' "$m" > "$work/fallback-manifest.json"
+cica_jq -S .fields "$work/fallback-manifest.json" > "$work/fallback-fields.json"
+cica_jq -S --arg key "$(cica_key_json "$work/fallback-fields.json")" '.provenance_key=$key' "$work/fallback-manifest.json" > "$m"
+cica_files "$fallback" > "$work/fallback-files.json"
+cica_jq -S --arg h "$(cica_sha "$m")" --slurpfile f "$work/fallback-files.json" '.roles["bootstrap-converged"]=$h|.files=$f[0]' "$fallback/bundle.json" > "$work/fallback-bundle.json"
+mv "$work/fallback-bundle.json" "$fallback/bundle.json"
+fixture_cli verify "$source" "$fallback" windows "$(cica_sha "$fallback/bundle.json")" "$work/windows.jobs.json" "$work/windows.artifacts.json" > "$work/windows-fallback.result.json"
+record_result complete-stage4-fallback pass
 # Rebinding simulates a semantically substituted but internally hash-consistent
 # bundle. The expected digest is supplied independently, exactly as a job output.
 rebind() {
@@ -165,7 +202,7 @@ rebind() {
     mv "$work/bundle-rebound.json" "$case_dir/bundle.json"
 }
 CICA_HOST=linux
-for name in identity producer-digest version-commit target cfg opt profile source-set inventory seed partial-fixpoint path-escape absolute-path corrupt-payload untrusted-root attempt-N-minus-1 producer-N-minus-1 producer-head failed-producer artifact-run old-artifact duplicate-artifact expired-artifact extra-payload missing-role partial-publication missing-payload symlink-escape; do
+for name in identity producer-digest version-commit target cfg opt profile source-set inventory seed partial-fixpoint path-escape absolute-path corrupt-payload untrusted-root attempt-N-minus-1 producer-N-minus-1 producer-head failed-producer artifact-run old-artifact duplicate-artifact expired-artifact extra-payload missing-role partial-publication missing-payload symlink-escape unsafe-extra-file unsafe-extra-tab absent-fixpoint-proof invocation-receipt-substitution; do
     case_dir=$source/target/negative-$name
     cp -R "$source/target/linux/complete" "$case_dir"
     cp "$work/linux.jobs.json" "$work/jobs-$name.json"
@@ -195,6 +232,10 @@ for name in identity producer-digest version-commit target cfg opt profile sourc
       old-artifact) cica_jq -S '.artifacts[0].created_at="2026-10-26T23:59:59Z"' "$work/artifacts-$name.json" > "$work/changed.json"; mv "$work/changed.json" "$work/artifacts-$name.json" ;;
       duplicate-artifact) cica_jq -S '.artifacts += .artifacts' "$work/artifacts-$name.json" > "$work/changed.json"; mv "$work/changed.json" "$work/artifacts-$name.json" ;;
       expired-artifact) cica_jq -S '.artifacts[0].expired=true' "$work/artifacts-$name.json" > "$work/changed.json"; mv "$work/changed.json" "$work/artifacts-$name.json" ;;
+      unsafe-extra-tab) tab=$(printf '\t'); printf extra > "$case_dir/zz${tab}unexpected" ;;
+      unsafe-extra-file) printf extra > "$case_dir/zz:unexpected" ;;
+      absent-fixpoint-proof) filter='del(.proof["stage2.s"],.proof["stage3.s"],.proof["stage3-embedded.s"],.proof.compile_receipt.sha256,.proof.compile_receipt.bytes)' ;;
+      invocation-receipt-substitution) filter='.proof.invocation_record.compiled_output.sha256=("f"*64)' ;;
       extra-payload) printf extra > "$case_dir/roles/bootstrap-converged/payload/extra" ;;
       missing-role) cica_jq -S '.roles={}' "$case_dir/bundle.json" > "$work/changed.json"; mv "$work/changed.json" "$case_dir/bundle.json" ;;
       partial-publication) mkdir "$case_dir/uncommitted.publishing"; printf partial > "$case_dir/uncommitted.publishing/payload" ;;

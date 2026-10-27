@@ -23,9 +23,8 @@ case "$(uname -s)" in
         ;;
 esac
 
-WORKDIR="$ROOT/target/linux-memory-limit-verify"
-rm -rf "$WORKDIR"
-mkdir -p "$WORKDIR"
+mkdir -p "$ROOT/target/exp/linux-memory-limit-verify"
+WORKDIR=$(mktemp -d "$ROOT/target/exp/linux-memory-limit-verify/run.XXXXXX")
 
 . "$ROOT/scripts/lib-gate.sh"
 
@@ -63,7 +62,6 @@ exercise_backend() {
 
     TYPELISP_MEMORY_LIMIT_SELF_TEST=present
     export TYPELISP_MEMORY_LIMIT_SELF_TEST
-    rm -f "$_memory_metrics"
     if ! linux_memory_limit_run "$LIMIT_BYTES" sh -c \
         '[ "$TYPELISP_MEMORY_LIMIT_SELF_TEST" = present ] \
             && [ "$PWD" = "$1" ] \
@@ -74,7 +72,8 @@ exercise_backend() {
         fail "Linux memory-limit backend rejected an under-limit command: $_memory_backend"
     fi
     assert_peak_evidence under-limit
-    rm -f "$_memory_metrics"
+    _memory_metrics="$WORKDIR/$_memory_backend-exit-23.peak-bytes"
+    TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE=$_memory_metrics
     _memory_status=0
     linux_memory_limit_run "$LIMIT_BYTES" sh -c 'sleep "$1"; exit 23' \
         sh "$ACCOUNTING_FIXTURE_SECONDS" \
@@ -119,7 +118,8 @@ exercise_backend() {
     done
 
     _memory_pid_file="$WORKDIR/$_memory_backend-child.pid"
-    rm -f "$_memory_pid_file" "$_memory_metrics"
+    _memory_metrics="$WORKDIR/$_memory_backend-oom.peak-bytes"
+    TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE=$_memory_metrics
     _memory_status=0
     linux_memory_limit_run "$LIMIT_BYTES" sh -c '
         awk "$1" &
@@ -686,9 +686,11 @@ exercise_hierarchy() {
         */tlmem-[0-9]*-[0-9]*) printf '1\n' > "$_h_invocation/cgroup.kill" ;;
         *) hierarchy_fail "unexpected outer invocation cgroup $_h_invocation" ;;
     esac
-    # systemd counts a SIGTERM that stops the unit as a clean exit, so only
-    # the termination of the nested work is asserted here.
-    wait "$_h_outer_pid" || true
+    _h_status=0
+    wait "$_h_outer_pid" || _h_status=$?
+    [ "$_h_status" -ne 0 ] || hierarchy_fail 'cancelled outer invocation reported success'
+    ! grep -Fxq reason=success "$_h_dir/outer.report" ||
+        hierarchy_fail 'cancelled outer report claimed success'
     hierarchy_assert_dead
 
     # Fail closed: a process that left its tlmem-run leaf, and a workload node
@@ -926,6 +928,8 @@ case $scenario in
         ;;
 esac
 EOF
+
+sh "$ROOT/scripts/verify-linux-memory-terminal.sh"
 
 LINUX_MEMORY_LIMIT_BACKEND=
 linux_memory_limit_select_backend

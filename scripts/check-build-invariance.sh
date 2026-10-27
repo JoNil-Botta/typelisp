@@ -422,6 +422,9 @@ run_batch_chunk() {
     batch_stdout="${batch_chunk_path%.txt}.stdout"
     batch_stderr="${batch_chunk_path%.txt}.stderr"
     batch_timing_label="$batch_compiler_label:opt$batch_opt_level:chunk$batch_id"
+    # A pool worker handles multiple chunks in one shell. Do not carry a
+    # previous singleton's identity into an ordinary multi-entry chunk.
+    batch_single_name=
     if [ "$batch_entries" -eq 1 ]; then
         batch_single_name=$(awk -F'|' 'NR == 1 { print $1; exit }' "$batch_case_chunk")
         case "$batch_single_name" in

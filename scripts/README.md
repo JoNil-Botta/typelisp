@@ -353,8 +353,10 @@ describes its caps and reports.
 Linux success also requires an invocation-owned terminal status: the unit's
 private waiter publishes it only after its command's wait completes. A zero
 `systemd-run --wait` status or a positive memory peak alone proves no workload
-completion. Missing, malformed or foreign terminal evidence fails with exit 2,
-including direct library calls without metrics. Known nonzero launcher statuses,
+completion. Missing, malformed or foreign terminal evidence reports
+`wrapper-failure` regardless of peak measurement, including direct library calls
+without metrics (`LINUX_MEMORY_LIMIT_REASON`). A zero launcher status becomes
+exit 2; an actual workload exit 2 remains `command-failure`. Known nonzero launcher statuses,
 OOM evidence (137) and timeouts (124) keep their established precedence. Nested
 calls use ordinary child waits inside their enclosing cap. Terminal records are
 fresh per invocation, passed to the waiter through arguments rather than the
@@ -362,6 +364,14 @@ workload's environment, and removed with that invocation's stderr/peak scratch.
 Direct calls without metrics now also retain stop-post OOM evidence while
 streaming stderr directly. A known OOM returns 137;
 systemd's generic failure status alone does not identify an OOM.
+
+Integration, inline-test and selfhost-manifest pools validate the complete
+bounded report against the waited status, host and admitted cap before using
+outputs. Cancellation, signal exits and invalid completion stop further pool
+admission and fail the gate. Integration may replay ordinary compile failures
+for per-entry diagnostics; standalone compiles retain the chunk memory cap,
+swap policy and timeout, and their completion is checked before any output is
+accepted. Interrupted chunks cannot supply passing evidence through replay.
 
 `verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
 including the root opt0 build, at 8192 MiB and writes

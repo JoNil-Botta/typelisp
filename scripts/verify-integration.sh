@@ -259,7 +259,13 @@ fi
 
 MANIFEST="$ROOT/tests/integration/native.manifest"
 WORKDIR="$ROOT/target/integration-verify/$HOST_OS$WORK_SUFFIX"
-rm -rf "$WORKDIR"
+case "$WORKDIR" in
+    "$ROOT/target/integration-verify/"linux | "$ROOT/target/integration-verify/"windows | \
+        "$ROOT/target/integration-verify/"linux-self-test-* | "$ROOT/target/integration-verify/"windows-self-test-*) ;;
+    *) echo "FAIL: unowned integration scratch root: $WORKDIR" >&2; exit 1 ;;
+esac
+[ ! -L "$WORKDIR" ] || exit 1
+rm -rf -- "${WORKDIR:?}"
 mkdir -p "$WORKDIR"
 source_location_self_test "$WORKDIR/source-location-self-test"
 # This host's rows of the shared manifest, one per name and opt level.
@@ -336,10 +342,12 @@ integration_batch_compile_chunk() {
     _chunk_status="$WORKDIR/batch-$_chunk_label.status"
     _chunk_elapsed="$WORKDIR/batch-$_chunk_label.elapsed-ms"
     _chunk_report="$WORKDIR/batch-$_chunk_label.memory"
-    rm -f "$_chunk_status" "$_chunk_elapsed" "$_chunk_report"
+    : > "$_chunk_status"
+    : > "$_chunk_elapsed"
+    : > "$_chunk_report"
     if [ "$HOST_OS" = windows ]; then
         _chunk_plan="$WORKDIR/batch-$_chunk_label.plan"
-        rm -f "$_chunk_plan"
+        : > "$_chunk_plan"
         set -- "$COMPILER" compile --batch "$_chunk_list" \
             --windows-coff-plan "$_chunk_plan" "$@"
     else
@@ -363,10 +371,9 @@ integration_batch_compile_chunk() {
 }
 
 # Account for one compiled chunk in the parent, in chunk order: counters,
-# Windows plan registration, and the standalone fallback of a failed chunk. A
-# chunk stopped by its memory cap or timeout, or one that left no status, fails
-# the gate instead of falling back: that is a resource regression, not a
-# compile diagnostic to replay.
+# Windows plan registration, and the standalone fallback of a failed chunk.
+# Cancellation, invalid completion, memory cap, timeout or missing status fails
+# the gate before any standalone diagnostic fallback.
 integration_batch_settle_chunk() {
     _chunk_list=$1
     _chunk_label=$2
@@ -384,24 +391,14 @@ integration_batch_settle_chunk() {
     fi
     _chunk_rc=$(cat "$_chunk_status") || return 1
     if [ -n "$_chunk_cap" ]; then
-        _chunk_reason=$(sed -n 's/^reason=//p' "$_chunk_report" 2>/dev/null || true)
-        case "$_chunk_reason" in
-            success | command-failure) ;;
-            *)
-                echo "FAIL: batch chunk $_chunk_label was stopped by its bound" \
-                    "(reason=${_chunk_reason:-missing-report}, cap $_chunk_cap MiB," \
-                    "timeout $INTEGRATION_POOL_JOB_TIMEOUT_SECONDS s)" >&2
-                sed 's/^/  /' "$_chunk_stderr" >&2 || true
-                exit 1
-                ;;
-        esac
-        _chunk_peak=$(sed -n 's/^peak_memory_bytes=//p' "$_chunk_report")
-        case "$_chunk_peak" in
-            '' | *[!0-9]*)
-                echo "FAIL: batch chunk $_chunk_label memory report has no peak" >&2
-                exit 1
-                ;;
-        esac
+        if ! bounded_pool_read_report "$_chunk_report" "$_chunk_rc" "$_chunk_cap" "$HOST_OS"; then
+            echo "FAIL: batch chunk $_chunk_label was stopped by its bound" \
+                "(reason=$BOUNDED_POOL_REPORT_REASON, cap $_chunk_cap MiB," \
+                "timeout $INTEGRATION_POOL_JOB_TIMEOUT_SECONDS s)" >&2
+            sed 's/^/  /' "$_chunk_stderr" >&2 || true
+            exit 1
+        fi
+        _chunk_peak=$BOUNDED_POOL_REPORT_PEAK
         if [ "$_chunk_peak" -gt "$INTEGRATION_POOL_PEAK_BYTES" ]; then
             INTEGRATION_POOL_PEAK_BYTES=$_chunk_peak
             INTEGRATION_POOL_PEAK_LABEL=$_chunk_label
@@ -426,16 +423,46 @@ integration_batch_settle_chunk() {
     sed 's/^/  /' "$_chunk_stderr" >&2 || true
     while IFS='|' read -r _batch_src _batch_artifact1 _batch_artifact2 _batch_mode; do
         [ -n "$_batch_artifact1" ] || continue
-        rm -f "$_batch_artifact1"
+        integration_remove_batch_artifact "$_batch_artifact1" || return 1
         if [ -n "$_batch_artifact2" ]; then
-            rm -f "$_batch_artifact2"
+            integration_remove_batch_artifact "$_batch_artifact2" || return 1
             _batch_case_path=${_batch_src%/*}
             _batch_case=${_batch_case_path##*/}
-            rm -f "$WORKDIR/$_batch_case/windows-coff.artifact"
+            integration_remove_batch_artifact "$WORKDIR/$_batch_case/windows-coff.artifact" || return 1
         fi
     done < "$_chunk_list"
-    [ -z "$_chunk_plan" ] || rm -f "$_chunk_plan"
+    [ -z "$_chunk_plan" ] || integration_remove_batch_artifact "$_chunk_plan" || return 1
     return 0
+}
+
+integration_remove_batch_artifact() {
+    case $1 in
+        /*) _batch_owned_artifact=$1 ;;
+        *) _batch_owned_artifact="$ROOT/$1" ;;
+    esac
+    case $_batch_owned_artifact in
+        */../* | */./*) return 1 ;;
+        "${WORKDIR:?}"/*) rm -f -- "${_batch_owned_artifact:?}" ;;
+        *) echo "FAIL: unowned batch artifact: $_batch_owned_artifact" >&2; return 1 ;;
+    esac
+}
+
+# Standalone diagnostics (including failed batch entries) retain the chunk's
+# process-tree cap, swap policy and deadline. Refuse invalid completion before
+# an emitted assembly file or a user-facing compile diagnostic can be used.
+integration_standalone_compile() {
+    _standalone_report=$1
+    shift
+    _standalone_rc=0
+    "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib "$INTEGRATION_POOL_CHUNK_CAP_MIB" --report "$_standalone_report" \
+        --timeout-seconds "$INTEGRATION_POOL_JOB_TIMEOUT_SECONDS" -- "$@" || _standalone_rc=$?
+    if ! bounded_pool_read_report "$_standalone_report" "$_standalone_rc" \
+        "$INTEGRATION_POOL_CHUNK_CAP_MIB" "$HOST_OS"; then
+        echo "FAIL: standalone compile has invalid bounded completion (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        exit 1
+    fi
+    return "$_standalone_rc"
 }
 
 # Compile and account for one chunk in this process, without a cap: the serial
@@ -462,7 +489,13 @@ bounded_pool_run_job() {
     fi
     integration_batch_group_run "${_pool_label%-*}" \
         integration_batch_compile_chunk "$WORKDIR/$_pool_job.list" \
-        "$_pool_label" "$_pool_cap"
+        "$_pool_label" "$_pool_cap" || return 1
+    if [ -n "$_pool_cap" ] && ! bounded_pool_read_report "$WORKDIR/$_pool_job.memory" \
+        "$(cat "$WORKDIR/$_pool_job.status")" "$_pool_cap" "$HOST_OS"; then
+        echo "FAIL: batch chunk $_pool_label was stopped by its bound (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        sed 's/^/  /' "$WORKDIR/$_pool_job.stderr" >&2 || true
+        return 1
+    fi
 }
 
 # Publish the jobs' private timing rows in queue order. A passing pool requires
@@ -1934,9 +1967,117 @@ integration_batch_queue() {
 }
 
 
+run_bounded_completion_self_test() (
+    . "$ROOT/scripts/lib-bounded-completion-fixtures.sh"
+    _completion_root=$(mktemp -d "$WORKDIR/completion.XXXXXX")
+    for _completion_host in linux windows; do
+        for _completion_case in $BOUNDED_COMPLETION_CASES; do
+            _completion_dir="$_completion_root/$_completion_host-$_completion_case"
+            mkdir -p "$_completion_dir/case"
+            (
+                WORKDIR=$_completion_dir
+                HOST_OS=$_completion_host
+                INTEGRATION_POOL_WORKERS=1
+                INTEGRATION_POOL_BUDGET_MIB=64
+                INTEGRATION_POOL_ENFORCE_CAPS=1
+                INTEGRATION_BATCH_CHUNKS=0
+                INTEGRATION_BATCH_FAILED_CHUNKS=0
+                TYPELISP_CI_TIMING=0
+                printf '%s\n' 'batch-embedded-1|64' 'batch-embedded-2|64' > "$WORKDIR/queue"
+                printf '%s|%s|%s\n' "$WORKDIR/case/source.tl" \
+                    "$WORKDIR/case/candidate.s" "$WORKDIR/case/candidate.obj" \
+                    > "$WORKDIR/batch-embedded-1.list"
+                cp "$WORKDIR/batch-embedded-1.list" "$WORKDIR/batch-embedded-2.list"
+                printf 'partial candidate\n' > "$WORKDIR/case/candidate.s"
+                printf 'partial candidate\n' > "$WORKDIR/case/candidate.obj"
+                # Plant only the compile leaf: the actual worker, join,
+                # timing-disabled preparation and settlement remain in use.
+                integration_batch_compile_chunk() {
+                    _completion_job="batch-$2"
+                    _completion_mode=success
+                    [ "$2" != embedded-1 ] || _completion_mode=$_completion_case
+                    bounded_completion_fixture "$WORKDIR/$_completion_job.memory" \
+                        "$WORKDIR/$_completion_job.status" "$HOST_OS" 64 "$_completion_mode"
+                    printf '1\n' > "$WORKDIR/$_completion_job.elapsed-ms"
+                    printf 'compiler diagnostic\n' > "$WORKDIR/$_completion_job.stderr"
+                }
+                integration_windows_register_plan() { : > "$WORKDIR/registered"; }
+                integration_batch_run_pool "$WORKDIR/queue"
+                printf '%s\n' "$INTEGRATION_BATCH_FAILED_CHUNKS" > "$WORKDIR/accepted"
+            ) > "$_completion_dir/reader.log" 2>&1 &
+            _completion_pid=$!
+            _completion_rc=0
+            wait "$_completion_pid" || _completion_rc=$?
+            case $_completion_case in
+                success)
+                    [ "$_completion_rc" -eq 0 ] && [ "$(cat "$_completion_dir/accepted")" = 0 ] || exit 1
+                    ;;
+                command-*)
+                    [ "$_completion_rc" -eq 0 ] && [ "$(cat "$_completion_dir/accepted")" = 1 ] &&
+                        [ ! -e "$_completion_dir/case/candidate.s" ] || exit 1
+                    grep -Fq "exited ${_completion_case#command-};" "$_completion_dir/reader.log" || exit 1
+                    ;;
+                *)
+                    if [ "$_completion_rc" -eq 0 ] || [ -e "$_completion_dir/accepted" ] ||
+                        [ -e "$_completion_dir/registered" ] ||
+                        [ -e "$_completion_dir/batch-pool/claims/batch-embedded-2" ] ||
+                        grep -Fq 'replaying its entries' "$_completion_dir/reader.log"; then
+                        echo "FAIL: integration accepted/replayed $_completion_host/$_completion_case" >&2
+                        exit 1
+                    fi
+                    ;;
+            esac
+        done
+    done
+
+    # The actual standalone function must invoke the bounded runner with the
+    # same cap and deadline. Model only that runner's result, including a
+    # candidate emitted before cancellation. A direct compiler call is fatal.
+    mkdir -p "$_completion_root/runner/scripts"
+    cat > "$_completion_root/runner/scripts/run-memory-bounded.sh" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$1:$2:$3:$5:$6:$7" = --limit-mib:64:--report:--timeout-seconds:9:-- ] || exit 93
+report=$4
+shift 7
+. "$COMPLETION_FIXTURES"
+bounded_completion_fixture "$report" "$report.status" "$COMPLETION_HOST" 64 "$COMPLETION_CASE"
+printf 'partial candidate\n' > "$report.candidate.s"
+printf '%s\n' "$*" > "$report.argv"
+case $COMPLETION_CASE in missing-status | bad-status) exit 2 ;; esac
+exit "$(cat "$report.status")"
+EOF
+    chmod +x "$_completion_root/runner/scripts/run-memory-bounded.sh"
+    COMPLETION_FIXTURES="$ROOT/scripts/lib-bounded-completion-fixtures.sh"
+    export COMPLETION_FIXTURES
+    for COMPLETION_HOST in linux windows; do
+        for COMPLETION_CASE in $BOUNDED_COMPLETION_CASES; do
+            export COMPLETION_HOST COMPLETION_CASE
+            _completion_report="$_completion_root/standalone-$COMPLETION_HOST-$COMPLETION_CASE"
+            _completion_rc=0
+            (
+                ROOT="$_completion_root/runner"
+                HOST_OS=$COMPLETION_HOST
+                INTEGRATION_POOL_CHUNK_CAP_MIB=64
+                INTEGRATION_POOL_JOB_TIMEOUT_SECONDS=9
+                integration_standalone_compile "$_completion_report" uncallable-compiler compile fixture.tl
+                : > "$_completion_report.accepted"
+            ) > "$_completion_report.log" 2>&1 &
+            _completion_pid=$!
+            wait "$_completion_pid" || _completion_rc=$?
+            case $COMPLETION_CASE in
+                success) [ "$_completion_rc" -eq 0 ] && [ -e "$_completion_report.accepted" ] || exit 1 ;;
+                command-*) [ "$_completion_rc" -eq "${COMPLETION_CASE#command-}" ] || exit 1 ;;
+                *) [ "$_completion_rc" -ne 0 ] && [ ! -e "$_completion_report.accepted" ] || exit 1 ;;
+            esac
+            [ "$(cat "$_completion_report.argv")" = 'uncallable-compiler compile fixture.tl' ] || exit 1
+        done
+    done
+    echo '[integration] bounded completion and standalone retry fixtures passed (92 host/path cases)'
+)
+
 run_batch_observability_self_test() {
     _dir="$WORKDIR/batch-observability-self-test"
-    rm -rf "$_dir"
     mkdir -p "$_dir"
     _chunk="$_dir/chunk.list"
     _fake_compiler="$_dir/fake-typelisp"
@@ -3667,6 +3808,7 @@ run_preparation_failure_self_test() (
 
 if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
     run_preparation_failure_self_test
+    run_bounded_completion_self_test
     run_batch_observability_self_test
     exit 0
 fi
@@ -3803,14 +3945,16 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         elif [ "$stage_stdlib" -eq 1 ]; then
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
-            windows_timed_compile "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
+            windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
+                "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
         else
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
-            windows_timed_compile "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
+            windows_timed_compile integration_standalone_compile "$case_dir/standalone.memory" \
+                "$COMPILER" compile "$work_src_rel" --target windows-x86_64 --cfg windows \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
@@ -3875,14 +4019,16 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         elif [ "$stage_stdlib" -eq 1 ]; then
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
-            ci_timing_run "$name" compile "$COMPILER" compile "$work_src_rel" \
+            ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
+                "$COMPILER" compile "$work_src_rel" \
                 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"
         else
             INTEGRATION_STANDALONE_COMPILES=$((INTEGRATION_STANDALONE_COMPILES + 1))
             # shellcheck disable=SC2086
-            ci_timing_run "$name" compile "$COMPILER" compile "$work_src_rel" \
+            ci_timing_run "$name" compile integration_standalone_compile "$case_dir/standalone.memory" \
+                "$COMPILER" compile "$work_src_rel" \
                 --stdlib-root "$ROOT/src" -o "$asm" \
                 $opt_level_args \
                 > "$build_stdout" 2> "$build_stderr"

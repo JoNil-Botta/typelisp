@@ -513,7 +513,8 @@ manifest_compile_chunk() {
     _chunk_count=$3
     _chunk_cap=$4
     _chunk_label="batch compile manifest chunk $_chunk_index/$_chunk_count"
-    rm -f "$_chunk.status" "$_chunk.memory"
+    : > "$_chunk.status"
+    : > "$_chunk.memory"
     echo "[selfhost-compile] $_chunk_label"
     set -- "$COMPILER" compile --batch "$_chunk" --target linux-x86_64 \
         --cfg selfhost-compile-manifest \
@@ -550,21 +551,14 @@ manifest_settle_chunk() {
     fi
     _chunk_rc=$(cat "$_chunk.status")
     if [ -n "$_chunk_cap" ]; then
-        _chunk_reason=$(sed -n 's/^reason=//p' "$_chunk.memory" 2>/dev/null || true)
-        case "$_chunk_reason" in
-            success | command-failure) ;;
-            *)
-                echo "stderr:" >&2
-                sed 's/^/  /' "$_chunk.err" >&2 || true
-                fail "$_chunk_label was stopped by its bound" \
-                    "(reason=${_chunk_reason:-missing-report}, cap $_chunk_cap MiB," \
-                    "timeout $MANIFEST_POOL_JOB_TIMEOUT_SECONDS s)"
-                ;;
-        esac
-        _chunk_peak=$(sed -n 's/^peak_memory_bytes=//p' "$_chunk.memory")
-        case "$_chunk_peak" in
-            '' | *[!0-9]*) fail "$_chunk_label memory report has no peak" ;;
-        esac
+        if ! bounded_pool_read_report "$_chunk.memory" "$_chunk_rc" "$_chunk_cap" "$HOST_OS"; then
+            echo "stderr:" >&2
+            sed 's/^/  /' "$_chunk.err" >&2 || true
+            fail "$_chunk_label was stopped by its bound" \
+                "(reason=$BOUNDED_POOL_REPORT_REASON, cap $_chunk_cap MiB," \
+                "timeout $MANIFEST_POOL_JOB_TIMEOUT_SECONDS s)"
+        fi
+        _chunk_peak=$BOUNDED_POOL_REPORT_PEAK
         if [ "$_chunk_peak" -gt "$MANIFEST_POOL_PEAK_BYTES" ]; then
             MANIFEST_POOL_PEAK_BYTES=$_chunk_peak
             MANIFEST_POOL_PEAK_LABEL="chunk-$_chunk_index"
@@ -603,7 +597,14 @@ bounded_pool_run_job() {
         TYPELISP_CI_TIMING_FILE="$MANIFEST_POOL_DIR/timing/$_pool_job.tsv"
     fi
     manifest_compile_chunk "$(manifest_chunk_path "$_pool_index")" \
-        "$_pool_index" "$batch_chunk_count" "$_pool_cap"
+        "$_pool_index" "$batch_chunk_count" "$_pool_cap" || return 1
+    if [ -n "$_pool_cap" ] && ! bounded_pool_read_report \
+        "$(manifest_chunk_path "$_pool_index").memory" \
+        "$(cat "$(manifest_chunk_path "$_pool_index").status")" "$_pool_cap" "$HOST_OS"; then
+        echo "[selfhost-compile] batch compile manifest chunk $_pool_index/$batch_chunk_count was stopped by its bound (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        sed 's/^/  /' "$(manifest_chunk_path "$_pool_index").err" >&2 || true
+        return 1
+    fi
 }
 
 # Publish the jobs' private timing rows in queue order. A passing pool requires
@@ -823,9 +824,9 @@ manifest_pool_self_test_stderr_has() {
 }
 
 manifest_pool_self_test() {
-    MANIFEST_POOL_SELF_TEST_ROOT="$ROOT/target/selfhost-compile-manifest-pool-self-test"
-    rm -rf "$MANIFEST_POOL_SELF_TEST_ROOT"
-    mkdir -p "$MANIFEST_POOL_SELF_TEST_ROOT"
+    . "$ROOT/scripts/lib-bounded-completion-fixtures.sh"
+    mkdir -p "$ROOT/target/exp/selfhost-compile-manifest-pool-self-test"
+    MANIFEST_POOL_SELF_TEST_ROOT=$(mktemp -d "$ROOT/target/exp/selfhost-compile-manifest-pool-self-test/run.XXXXXX")
     # The fake compiler writes each entry's output (`library:` under
     # --no-entry, `main:` otherwise), sleeps 3 s for a source named `pause*`,
     # 30 s for `stall*`, fails `broken*`, and logs its chunk list once it
@@ -925,6 +926,44 @@ FAKE
             --self-test-pool > /dev/null 2>&1 || _st_status=$?
         [ "$_st_status" -eq 2 ] ||
             manifest_pool_self_test_fail "TYPELISP_COMPILE_MANIFEST_WORKERS=$_st_workers exited $_st_status, expected 2"
+    done
+    # Reader checks run with valid-looking assembly already present. Neither
+    # cancelled nor invalid completion may authorize its expectations.
+    for _completion_host in linux windows; do
+        for _completion_case in $BOUNDED_COMPLETION_CASES; do
+            _completion_dir="$MANIFEST_POOL_SELF_TEST_ROOT/$_completion_host-$_completion_case"
+            mkdir -p "$_completion_dir"
+            if ! bounded_completion_worker_fixture manifest "$_completion_dir/worker" "$_completion_host" \
+                "$MANIFEST_POOL_CHUNK_CAP_MIB" "$_completion_case" > "$_completion_dir/worker.log" 2>&1; then
+                cat "$_completion_dir/worker.log" >&2
+                manifest_pool_self_test_fail "$_completion_host/$_completion_case worker admission"
+            fi
+            bounded_completion_fixture "$_completion_dir/chunk.memory" "$_completion_dir/chunk.status" \
+                "$_completion_host" "$MANIFEST_POOL_CHUNK_CAP_MIB" "$_completion_case"
+            printf 'main:\n' > "$_completion_dir/candidate.s"
+            printf 'compiler stdout\n' > "$_completion_dir/chunk.out"
+            printf 'compiler diagnostic\n' > "$_completion_dir/chunk.err"
+            _completion_rc=0
+            (
+                HOST_OS=$_completion_host
+                manifest_settle_chunk "$_completion_dir/chunk" 1 1 "$MANIFEST_POOL_CHUNK_CAP_MIB"
+                : > "$_completion_dir/accepted"
+            ) > "$_completion_dir/reader.log" 2>&1 || _completion_rc=$?
+            if [ "$_completion_case" = success ]; then
+                [ "$_completion_rc" -eq 0 ] && [ -e "$_completion_dir/accepted" ] ||
+                    manifest_pool_self_test_fail "$_completion_host/$_completion_case rejected"
+            else
+                [ "$_completion_rc" -ne 0 ] && [ ! -e "$_completion_dir/accepted" ] ||
+                    manifest_pool_self_test_fail "$_completion_host/$_completion_case accepted"
+                case $_completion_case in
+                    command-*)
+                        grep -Fq "exited ${_completion_case#command-} in stage1 mode" "$_completion_dir/reader.log" &&
+                            grep -Fq 'compiler diagnostic' "$_completion_dir/reader.log" ||
+                            manifest_pool_self_test_fail "$_completion_host/$_completion_case lost diagnostics"
+                        ;;
+                esac
+            fi
+        done
     done
     echo "[selfhost-compile] pool self-test passed"
 }

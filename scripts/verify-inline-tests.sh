@@ -136,30 +136,21 @@ inline_test_settle_chunk() {
         echo "inline test $_settle_job left no status" >&2
         exit 1
     fi
-    _settle_reason=$(sed -n 's/^reason=//p' "$_settle_report" 2>/dev/null || true)
-    case "$_settle_reason" in
-        success | command-failure) ;;
-        *)
-            echo "inline test $_settle_job was stopped by its bound" \
-                "(reason=${_settle_reason:-missing-report}," \
-                "cap $INLINE_TEST_CHUNK_CAP_MIB MiB," \
-                "timeout $INLINE_TEST_JOB_TIMEOUT_SECONDS s)" >&2
-            show_streams "$_settle_stdout" "$_settle_stderr"
-            exit 1
-            ;;
-    esac
-    _settle_peak=$(sed -n 's/^peak_memory_bytes=//p' "$_settle_report")
-    case "$_settle_peak" in
-        '' | *[!0-9]*)
-            echo "inline test $_settle_job memory report has no peak" >&2
-            exit 1
-            ;;
-    esac
+    _settle_rc=$(cat "$_settle_status")
+    if ! bounded_pool_read_report "$_settle_report" "$_settle_rc" "$INLINE_TEST_CHUNK_CAP_MIB" "$HOST_OS"; then
+        echo "inline test $_settle_job was stopped by its bound" \
+            "(reason=$BOUNDED_POOL_REPORT_REASON," \
+            "cap $INLINE_TEST_CHUNK_CAP_MIB MiB," \
+            "timeout $INLINE_TEST_JOB_TIMEOUT_SECONDS s)" >&2
+        show_streams "$_settle_stdout" "$_settle_stderr"
+        exit 1
+    fi
+    _settle_peak=$BOUNDED_POOL_REPORT_PEAK
     if [ "$_settle_peak" -gt "$INLINE_TEST_PEAK_BYTES" ]; then
         INLINE_TEST_PEAK_BYTES=$_settle_peak
         INLINE_TEST_PEAK_JOB=$_settle_job
     fi
-    if [ "$(cat "$_settle_status")" != 0 ]; then
+    if [ "$_settle_rc" != 0 ]; then
         echo "inline test batch execution failed in $_settle_job" >&2
         show_streams "$_settle_stdout" "$_settle_stderr"
         exit 1
@@ -221,9 +212,8 @@ inline_test_check_combined() {
 # Fabricated chunk results for the accounting above: a well-formed set must
 # pass, and each single mutation of it must fail.
 inline_test_self_test_fixture() {
-    _fixture_dir=$1
-    rm -rf "$_fixture_dir"
-    mkdir -p "$_fixture_dir"
+    _fixture_dir=$(mktemp -d "$INLINE_TEST_SELF_TEST_ROOT/case.XXXXXX")
+    _self_dir=$_fixture_dir
     printf '%s\n' a.tl b.tl c.tl > "$_fixture_dir/discovered.txt"
     _fixture_saved_size=$INLINE_TEST_CHUNK_FILES
     INLINE_TEST_CHUNK_FILES=2
@@ -244,8 +234,8 @@ inline_test_self_test_fixture() {
         done < "$_fixture_dir/$_fixture_job.list"
         printf 'TypeLisp test batch passed: %s test(s) in %s file(s)\n' \
             "$_fixture_tests" "$_fixture_files" >> "$_fixture_dir/$_fixture_job.stdout"
-        printf '0\n' > "$_fixture_dir/$_fixture_job.status"
-        printf 'reason=success\npeak_memory_bytes=1048576\n' > "$_fixture_dir/$_fixture_job.memory"
+        bounded_completion_fixture "$_fixture_dir/$_fixture_job.memory" \
+            "$_fixture_dir/$_fixture_job.status" "$HOST_OS" "$INLINE_TEST_CHUNK_CAP_MIB" success
     done
 }
 
@@ -271,8 +261,36 @@ inline_test_self_test_expect_failure() {
     fi
 }
 
+# Record ordinary failures for ordered diagnostics; invalid bounded completion
+# aborts admission immediately. Timing and all outputs belong to this job.
+bounded_pool_run_job() {
+    _pool_job=$1
+    _pool_cap=$2
+    if ci_timing_enabled; then
+        TYPELISP_CI_TIMING_FILE="$INLINE_TEST_POOL_DIR/timing/$_pool_job.tsv"
+    fi
+    _pool_rc=0
+    ci_timing_run "$_pool_job" batch-run \
+        "$ROOT/scripts/run-memory-bounded.sh" \
+        --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
+        --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
+        "$COMPILER" test --batch "$WORKDIR/$_pool_job.list" --target "$HOST_TARGET" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
+        _pool_rc=$?
+    printf '%s\n' "$_pool_rc" > "$WORKDIR/$_pool_job.status"
+    if ! bounded_pool_read_report "$WORKDIR/$_pool_job.memory" "$_pool_rc" "$_pool_cap" "$HOST_OS"; then
+        echo "inline test $_pool_job has invalid bounded completion (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        show_streams "$WORKDIR/$_pool_job.stdout" "$WORKDIR/$_pool_job.stderr"
+        return 1
+    fi
+}
+
 inline_test_self_test_chunks() {
-    _self_dir="$ROOT/target/inline-test-verify-self-test"
+    . "$ROOT/scripts/lib-bounded-completion-fixtures.sh"
+    mkdir -p "$ROOT/target/exp/inline-test-verify-self-test"
+    INLINE_TEST_SELF_TEST_ROOT=$(mktemp -d "$ROOT/target/exp/inline-test-verify-self-test/run.XXXXXX")
+    _self_dir=$INLINE_TEST_SELF_TEST_ROOT
     inline_test_self_test_fixture "$_self_dir"
     printf 'chunk-001|%s\nchunk-002|%s\n' "$INLINE_TEST_CHUNK_CAP_MIB" \
         "$INLINE_TEST_CHUNK_CAP_MIB" > "$_self_dir/expected-queue"
@@ -288,7 +306,7 @@ inline_test_self_test_chunks() {
     fi
 
     inline_test_self_test_fixture "$_self_dir"
-    rm "$_self_dir/chunk-002.status"
+    mv "$_self_dir/chunk-002.status" "$_self_dir/chunk-002.status.saved"
     inline_test_self_test_expect_failure "a chunk without a status" "$_self_dir"
 
     inline_test_self_test_fixture "$_self_dir"
@@ -300,7 +318,7 @@ inline_test_self_test_chunks() {
     inline_test_self_test_expect_failure "a chunk stopped by its cap" "$_self_dir"
 
     inline_test_self_test_fixture "$_self_dir"
-    rm "$_self_dir/chunk-001.memory"
+    mv "$_self_dir/chunk-001.memory" "$_self_dir/chunk-001.memory.saved"
     inline_test_self_test_expect_failure "a chunk without a memory report" "$_self_dir"
 
     inline_test_self_test_fixture "$_self_dir"
@@ -321,7 +339,40 @@ inline_test_self_test_chunks() {
     sed -i.bak 's/ 0 failed;/ 1 failed;/' "$_self_dir/chunk-002.stderr"
     inline_test_self_test_expect_failure "a source whose tests did not all pass" "$_self_dir"
 
-    rm -rf "$_self_dir"
+    # Plausible passing stdout must not survive a cancelled or invalid attempt.
+    # Exercise both report encodings on both hosts, with ordinary failures
+    # retaining their diagnostics rather than becoming successful summaries.
+    for _completion_host in linux windows; do
+        for _completion_case in $BOUNDED_COMPLETION_CASES; do
+            _worker_dir="$INLINE_TEST_SELF_TEST_ROOT/worker-$_completion_host-$_completion_case"
+            if ! bounded_completion_worker_fixture inline "$_worker_dir" "$_completion_host" \
+                "$INLINE_TEST_CHUNK_CAP_MIB" "$_completion_case" > "$_worker_dir.log" 2>&1; then
+                echo "inline worker fixture failed: $_completion_host/$_completion_case" >&2
+                cat "$_worker_dir.log" >&2
+                exit 1
+            fi
+            (
+                HOST_OS=$_completion_host
+                inline_test_self_test_fixture "$INLINE_TEST_SELF_TEST_ROOT"
+                bounded_completion_fixture "$_self_dir/chunk-001.memory" \
+                    "$_self_dir/chunk-001.status" "$HOST_OS" "$INLINE_TEST_CHUNK_CAP_MIB" "$_completion_case"
+                : > "$_self_dir/combined.stdout"
+                : > "$_self_dir/combined.stderr"
+                _completion_rc=0
+                ( inline_test_settle_chunk chunk-001 "$_self_dir" \
+                    "$_self_dir/combined.stdout" "$_self_dir/combined.stderr" ) \
+                    > "$_self_dir/reader.log" 2>&1 || _completion_rc=$?
+                if [ "$_completion_case" = success ]; then
+                    [ "$_completion_rc" -eq 0 ] && [ -s "$_self_dir/combined.stdout" ] || exit 1
+                else
+                    [ "$_completion_rc" -ne 0 ] && [ ! -s "$_self_dir/combined.stdout" ] || exit 1
+                    case $_completion_case in
+                        command-*) grep -Fq 'batch execution failed' "$_self_dir/reader.log" || exit 1 ;;
+                    esac
+                fi
+            ) || { echo "inline completion fixture failed: $_completion_host/$_completion_case" >&2; exit 1; }
+        done
+    done
     echo "[inline-tests] chunk accounting self-test passed"
 }
 
@@ -404,28 +455,6 @@ run_counts="$WORKDIR/run.counts.txt"
 run_paths="$WORKDIR/run.paths.txt"
 INLINE_TEST_QUEUE="$WORKDIR/queue"
 INLINE_TEST_POOL_DIR="$WORKDIR/pool"
-
-# The pool's job callback (see lib-bounded-pool.sh). A job is one chunk; its
-# list is `$WORKDIR/<job>.list`. The job records the batch's status rather than
-# failing, so the parent reports the first failing chunk, in queue order, with
-# its streams. Its timing rows go to a private file merged in queue order below.
-bounded_pool_run_job() {
-    _pool_job=$1
-    _pool_cap=$2
-    if ci_timing_enabled; then
-        TYPELISP_CI_TIMING_FILE="$INLINE_TEST_POOL_DIR/timing/$_pool_job.tsv"
-    fi
-    _pool_rc=0
-    ci_timing_run "$_pool_job" batch-run \
-        "$ROOT/scripts/run-memory-bounded.sh" \
-        --limit-mib "$_pool_cap" --report "$WORKDIR/$_pool_job.memory" \
-        --timeout-seconds "$INLINE_TEST_JOB_TIMEOUT_SECONDS" -- \
-        "$COMPILER" test --batch "$WORKDIR/$_pool_job.list" --target "$HOST_TARGET" \
-        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-        > "$WORKDIR/$_pool_job.stdout" 2> "$WORKDIR/$_pool_job.stderr" ||
-        _pool_rc=$?
-    printf '%s\n' "$_pool_rc" > "$WORKDIR/$_pool_job.status"
-}
 
 # Publish the jobs' private timing rows in queue order. A passing pool requires
 # a row from every job; a failing one still publishes what ran.

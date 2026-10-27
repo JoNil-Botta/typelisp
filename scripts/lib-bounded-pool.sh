@@ -10,6 +10,44 @@
 # bound runs each job under the cap it was admitted with.
 BOUNDED_POOL_LABEL=${BOUNDED_POOL_LABEL:-pool}
 
+# Read a bounded invocation's complete report, tied to the status its caller
+# waited for, host and admitted cap. A report reason alone is not completion
+# evidence. Only normal exits below timeout/signal statuses may be replayed for
+# compile diagnostics; cancellation, wrapper failure and inconsistent records
+# fail before a caller publishes output. Windows reports CRLF.
+bounded_pool_read_report() {
+    BOUNDED_POOL_REPORT_REASON=invalid-completion
+    BOUNDED_POOL_REPORT_PEAK=0
+    _bp_report=$(awk -F '=' -v status="$2" -v cap="$3" -v host="$4" '
+        { sub(/\r$/, "") }
+        NF != 2 || seen[$1]++ { bad = 1 }
+        { value[$1] = $2 }
+        END {
+            if (bad || NR != 8 || value["schema_version"] != "1" ||
+                value["host"] != host ||
+                value["backend"] != (host == "linux" ? "systemd-user-cgroup" : "job-object") ||
+                status !~ /^(0|[1-9][0-9]*)$/ || "x" value["exit_code"] != "x" status ||
+                value["limit_bytes"] !~ /^[1-9][0-9]*$/ ||
+                value["limit_bytes"] + 0 != cap * 1024 * 1024 ||
+                value["peak_memory_bytes"] !~ /^(0|[1-9][0-9]*)$/ ||
+                value["wall_ms"] !~ /^(0|[1-9][0-9]*)$/ ||
+                value["reason"] !~ /^(success|command-failure|wrapper-failure|timeout|memory-limit)$/)
+                exit 1
+            print value["reason"] "|" value["peak_memory_bytes"]
+        }
+    ' "$1" 2>/dev/null) || return 1
+    BOUNDED_POOL_REPORT_REASON=${_bp_report%%|*}
+    BOUNDED_POOL_REPORT_PEAK=${_bp_report#*|}
+    case "$BOUNDED_POOL_REPORT_REASON:$2" in
+        success:0) ;;
+        command-failure:*)
+            [ "$2" -gt 0 ] && [ "$2" -lt 124 ] || return 1
+            ;;
+        *) return 1 ;;
+    esac
+    [ "$BOUNDED_POOL_REPORT_PEAK" -gt 0 ]
+}
+
 # Worker pool. A queue lists every job once as `job|cap_mib`, optionally
 # followed by `|need,...` (earlier jobs that must succeed before it starts, or
 # `-`) and `|lock,...` (shared resources no two running jobs may hold at once).

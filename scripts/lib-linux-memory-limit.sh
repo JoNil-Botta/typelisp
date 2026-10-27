@@ -43,6 +43,8 @@
 # its helpers, which record the workload node's exact peak before exiting.
 
 LINUX_MEMORY_LIMIT_BACKEND=${LINUX_MEMORY_LIMIT_BACKEND:-}
+# Result of the most recent call, independent of its numeric workload status.
+LINUX_MEMORY_LIMIT_REASON=wrapper-failure
 _linux_memory_limit_sampled=0
 _linux_memory_limit_node_count=0
 
@@ -276,8 +278,21 @@ linux_memory_limit_finish() {
             > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
     fi
     if [ "$_linux_memory_limit_oom" -eq 1 ]; then
+        LINUX_MEMORY_LIMIT_REASON=memory-limit
         return 137
     fi
+    case $_linux_memory_limit_finish_status in
+        124) LINUX_MEMORY_LIMIT_REASON=timeout ;;
+        137) LINUX_MEMORY_LIMIT_REASON=memory-limit ;;
+        *)
+            LINUX_MEMORY_LIMIT_REASON=command-failure
+            if [ "$_linux_memory_limit_terminal_invalid" -eq 1 ]; then
+                LINUX_MEMORY_LIMIT_REASON=wrapper-failure
+            elif [ "$_linux_memory_limit_finish_status" -eq 0 ]; then
+                LINUX_MEMORY_LIMIT_REASON=success
+            fi
+            ;;
+    esac
     return "$_linux_memory_limit_finish_status"
 }
 
@@ -294,10 +309,10 @@ linux_memory_limit_release_evidence() {
     rmdir -- "${_linux_memory_limit_scratch:?}"
 }
 
-# A zero launcher status needs one exact, invocation-owned terminal record.
-# Known launcher failures retain their status even if its waiter was killed.
+# Completion needs one exact, invocation-owned terminal record. Known launcher
+# failures retain their numeric status even if the waiter was killed, but an
+# invalid record cannot classify as an ordinary workload failure.
 linux_memory_limit_verify_terminal() {
-    [ "$_linux_memory_limit_status" -eq 0 ] || return 0
     _linux_memory_limit_terminal_status=
     read -r _linux_memory_limit_terminal_magic _linux_memory_limit_terminal_owner \
         _linux_memory_limit_terminal_status _linux_memory_limit_terminal_extra \
@@ -307,13 +322,17 @@ linux_memory_limit_verify_terminal() {
             if printf 'tlmem-terminal-v1 %s %s\n' \
                 "${_linux_memory_limit_scratch##*/}" "$_linux_memory_limit_terminal_status" |
                 cmp -s - "$_linux_memory_limit_scratch/terminal"; then
-                _linux_memory_limit_status=$_linux_memory_limit_terminal_status
-                return 0
+                if [ "$_linux_memory_limit_status" -eq 0 ] ||
+                    [ "$_linux_memory_limit_status" -eq "$_linux_memory_limit_terminal_status" ]; then
+                    _linux_memory_limit_status=$_linux_memory_limit_terminal_status
+                    return 0
+                fi
             fi
             ;;
     esac
     echo "Linux memory limiting missing, malformed or mismatched invocation terminal evidence; launcher success does not prove workload completion" >&2
-    _linux_memory_limit_status=2
+    _linux_memory_limit_terminal_invalid=1
+    [ "$_linux_memory_limit_status" -ne 0 ] || _linux_memory_limit_status=2
 }
 
 linux_memory_limit_run_systemd() {
@@ -467,8 +486,9 @@ linux_memory_limit_run_systemd() {
     ' "$_linux_memory_limit_systemd_stderr" 2>/dev/null || true)
     _linux_memory_limit_hook_text="stop-post hook: $(tr '\n' ' ' < "$_linux_memory_limit_cgroup_peak")"
     linux_memory_limit_verify_terminal
-    if ! linux_memory_limit_release_evidence && [ "$_linux_memory_limit_status" -eq 0 ]; then
-        _linux_memory_limit_status=2
+    if ! linux_memory_limit_release_evidence; then
+        _linux_memory_limit_terminal_invalid=1
+        [ "$_linux_memory_limit_status" -ne 0 ] || _linux_memory_limit_status=2
     fi
     linux_memory_limit_finish "$_linux_memory_limit_status" \
         "$_linux_memory_limit_systemd_oom" \
@@ -879,6 +899,8 @@ linux_memory_limit_sample_process_group() {
 }
 
 linux_memory_limit_run() {
+    LINUX_MEMORY_LIMIT_REASON=wrapper-failure
+    _linux_memory_limit_terminal_invalid=0
     if [ "$#" -lt 2 ]; then
         echo "usage: linux_memory_limit_run <bytes> <command> [arg ...]" >&2
         return 2

@@ -122,7 +122,7 @@
   ;; its wire representation remains the portable AstBorrowLifetime encoding:
   ;; named lifetimes must not serialize producer-generation intern ids.
   ;;
-  ;; The payload is git-hash keyed and fail-closed (`compiler_driver_core.tl`
+  ;; The payload is source-tree keyed and fail-closed (`compiler_driver_core.tl`
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.

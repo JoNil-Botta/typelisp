@@ -20,8 +20,12 @@
 # extra: "-", stage-stdlib, expected-stderr:<printf escapes> or
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
+# Expected text may use @loc{path;column;exact source line}; the unique line
+#   is resolved from that compiled input, then the complete stream is compared.
 # suite-members: space-separated smoke drivers the row's source runs.
 mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
+global_mut_borrow_field|all|0,1,2|tests/integration/global_mut_borrow_field.tl|5|-|-|-|-
+global_mut_borrow_storage|all|0,1,2|tests/integration/global_mut_borrow_storage.tl|42|-|-|-|-
 nested_mut_borrow_pointer|all|0,1,2|tests/integration/nested_mut_borrow_pointer.tl|5|-|-|-|-
 nested_mut_borrow_receiver|all|0,1,2|tests/integration/nested_mut_borrow_receiver.tl|5|-|-|-|-
 nested_mut_borrow_storage|all|0,1,2|tests/integration/nested_mut_borrow_storage.tl|42|-|-|-|-
@@ -653,14 +657,14 @@ if_literal_tail_branch_join|all|-,0,2|tests/integration/if_literal_tail_branch_j
 inline_alloc_scavenge_live_through|all|-,2|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl|-
 parser|all|-|tests/integration/parser.tl|14|-|-|-|-
 process_runtime|all|-|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
-read_file_missing_trap|all|-|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1547:8: panic: tl: read-file failed\n
+read_file_missing_trap|all|-|tests/integration/read_file_missing_trap.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;8;      (panic "tl: read-file failed\n")}: panic: tl: read-file failed\n
 write_file_invalid_trap|all|-|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
-selfhost_argv_oob|all|-|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1464:8: panic: tl: argv index out of bounds\n
+selfhost_argv_oob|all|-|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;8;      (panic "tl: argv index out of bounds\n")}: panic: tl: argv index out of bounds\n
 tl_alloc_huge_trap|all|-|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 tl_alloc_aligned_invalid|all|-|tests/integration/tl_alloc_aligned_invalid.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 tl_alloc_aligned_overflow|all|-|tests/integration/tl_alloc_aligned_overflow.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
 windows_allocation_abort|windows|-|tests/integration/windows_allocation_abort.tl|134|-|-|-|expected-stderr:tl: allocation failed: arena=atomic operation=growth-commit requested=18446744073709551615 reserved=18446744073709551614 committed=9223372036854775808 windows-error=4294967295\n
-stdin_bytes_negative_trap|all|-|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdlib/io.tl:1821:6: panic: tl: stdin failed\n
+stdin_bytes_negative_trap|all|-|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: @loc{stdlib/io.tl;6;    (panic "tl: stdin failed\n")}: panic: tl: stdin failed\n
 region_mark_zero|all|-|tests/integration/region_mark_zero.tl|42|-|-|-|-
 region_reset_zero|all|-|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl|-
 region_reset_discard|all|-|tests/integration/region_reset_discard.tl|3|-|-|stdlib/string.tl|-
@@ -899,18 +903,18 @@ ir_sequence_borrow_instr_valid|all|0,1,2|tests/integration/ir_sequence_borrow_bo
 ir_sequence_borrow_instr_negative|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 -1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=-1 length=1\n
 ir_sequence_borrow_instr_end|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|0 1|-|expected-stderr:tl: $SRC:14:55: array index out of bounds: index=1 length=1\n
 ir_sequence_borrow_phi_offset_valid|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|42|-|1 0|-|-
-ir_sequence_borrow_phi_negative_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt0/compiler_ir_types.tl:5197:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt1/compiler_ir_types.tl:5197:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt2/compiler_ir_types.tl:5197:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt0/compiler_ir_types.tl:5197:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt1/compiler_ir_types.tl:5197:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_negative_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt2/compiler_ir_types.tl:5197:6: array index out of bounds: index=-1 length=2\n
-ir_sequence_borrow_phi_end_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt0/compiler_ir_types.tl:5197:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt1/compiler_ir_types.tl:5197:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt2/compiler_ir_types.tl:5197:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt0/compiler_ir_types.tl:5197:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt1/compiler_ir_types.tl:5197:6: array index out of bounds: index=2 length=2\n
-ir_sequence_borrow_phi_end_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt2/compiler_ir_types.tl:5197:6: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_negative_linux_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_negative_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 -2|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_negative_windows_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=-1 length=2\n
+ir_sequence_borrow_phi_end_linux_opt0|linux|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_linux_opt1|linux|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_linux_opt2|linux|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/linux/ir_sequence_borrow_phi_end_linux_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt0|windows|0|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt0/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt1|windows|1|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt1/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
+ir_sequence_borrow_phi_end_windows_opt2|windows|2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|1 1|compiler_ir_types.tl|expected-stderr:tl: @loc{target/integration-verify/windows/ir_sequence_borrow_phi_end_windows_opt2/compiler_ir_types.tl;6;  (& (array-ref inputs.slots (+ inputs.start index))))}: array index out of bounds: index=2 length=2\n
 ir_sequence_borrow_block_empty|all|0,1,2|tests/integration/ir_sequence_borrow_bounds.tl|134|-|2 0|-|expected-stderr:tl: $SRC:32:55: array index out of bounds: index=0 length=0\n
 compiler_liveness_smoke|all|-|src/tests/compiler_liveness_smoke.tl|42|-|-|compiler_liveness_tests.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl|-
 compiler_stack_traffic_smoke|all|0,1,2|src/tests/compiler_stack_traffic_smoke.tl|42|-|-|compiler_stack_traffic_tests.tl compiler_stack_traffic.tl compiler_ir_text.tl compiler_liveness.tl compiler_ir_types.tl compiler_ast_types.tl stdlib/dense_list.tl compiler_intern.tl stdlib/hash.tl stdlib/hashmap.tl stdlib/string.tl stdlib/str_cat.tl stdlib/arena.tl|-
@@ -1157,3 +1161,7 @@ backend_source_import_payload|all|0,1,2|tests/fixtures/backend_source_import_pay
 backend_source_import_aliases|all|0,1,2|tests/fixtures/backend_source_import_aliases.tl|42|-|-|-|stage-stdlib
 backend_source_import_wildcard|all|0,1,2|tests/fixtures/backend_source_import_wildcard.tl|42|-|-|-|stage-stdlib
 backend_source_import_str_cat|all|0,1,2|tests/fixtures/backend_source_import_str_cat.tl|42|-|-|-|stage-stdlib
+lambda_identical_capture|all|0,1,2|tests/integration/lambda_identical_capture.tl|42|-|-|-|-
+lambda_identical_capture_ref|all|0,1,2|tests/integration/lambda_identical_capture_ref.tl|42|-|-|-|-
+lambda_identical_capture_nested|all|0,1,2|tests/integration/lambda_identical_capture_nested.tl|42|-|-|-|-
+lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_noncapturing.tl|42|-|-|-|-

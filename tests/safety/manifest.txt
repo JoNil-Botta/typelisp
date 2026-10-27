@@ -5,6 +5,8 @@
 # For check-fail, field 4 is the primary diagnostic source, optionally followed
 # by :line:column; '-' means the fixture source. The diagnostic must exit 1 and
 # match field 5 in its message/metadata, not merely in echoed source text.
+# @loc{path;column;exact source line} resolves a unique source line at run time;
+# the resulting path:line:column is still compared exactly.
 #
 # This corpus consolidates the SPEC.md "Safe code: no undefined behavior"
 # contract into TypeLisp fixtures. Comments name the safety area each fixture
@@ -862,6 +864,8 @@ dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_bo
 dotted_field_shared_borrow_write_reject|check-fail|tests/safety/dotted_field_shared_borrow_write_reject.tl|-|cannot assign to borrowed place `pair.left.x`
 dotted_field_cleanup_move_reject|check-fail|tests/safety/dotted_field_cleanup_move_reject.tl|-|cleanup owner `h` moved before with scope exit
 dotted_field_disjoint_mut_borrow_ok|check-ok|tests/safety/dotted_field_disjoint_mut_borrow_ok.tl|-|-
+global_mut_borrow_field_overlap_reject|check-fail|tests/safety/global_mut_borrow_field_overlap_reject.tl|-|cannot mutably borrow borrowed place `state.x`
+global_shared_borrow_field_write_reject|check-fail|tests/safety/global_shared_borrow_field_write_reject.tl|-|cannot assign to borrowed place `state.x`
 struct_field_set_immutable_ref_reject|check-fail|tests/safety/struct_field_set_immutable_ref_reject.tl|-|set! struct field requires mutable struct access
 struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_temporary_reject.tl|-|expression is not a storage place
 box_take_use_after_move_reject|check-fail|tests/safety/box_take_use_after_move_reject.tl|-|use of moved value `cell`
@@ -1042,12 +1046,12 @@ serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_ob
 
 # Serialize view macros add no `unsafe` of their own, and generator helpers
 # check a caller's value expression in the caller's context.
-serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
-serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
-serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
-serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
-serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
-serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
+serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
 serialize_helper_caller_index_reject|check-fail|tests/safety/serialize_helper_caller_index_reject.tl|-|typecheck: ptr-read requires unsafe context
 serialize_views_explicit_unsafe_ok|run-exit|tests/safety/serialize_views_explicit_unsafe_ok.tl|42|-
 module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch: expected i64, found bool
@@ -1663,15 +1667,15 @@ json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|
 
 # JSON view macros add no `unsafe` of their own: safe callers reject at the raw
 # read however they reach the macro, and explicit caller `unsafe` compiles.
-json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|stdlib/json.tl:47:4|typecheck: ptr-read requires unsafe context
-json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|stdlib/json.tl:47:4|typecheck: ptr-read requires unsafe context
-json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|stdlib/json.tl:47:4|typecheck: ptr-read requires unsafe context
-json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|stdlib/json.tl:52:4|typecheck: ptr-read requires unsafe context
-json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|stdlib/json.tl:52:4|typecheck: ptr-read requires unsafe context
-json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|stdlib/json.tl:52:4|typecheck: ptr-read requires unsafe context
-json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|stdlib/json.tl:61:6|typecheck: ptr-read requires unsafe context
-json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|stdlib/json.tl:61:6|typecheck: ptr-read requires unsafe context
-json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|stdlib/json.tl:61:6|typecheck: ptr-read requires unsafe context
+json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
+json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
+json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
 json_views_explicit_unsafe_ok|run-exit|tests/safety/json_views_explicit_unsafe_ok.tl|42|-
 
 # A typecheck code follows the raise site's kind, not words in the message.

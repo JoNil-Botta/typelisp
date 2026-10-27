@@ -2201,6 +2201,10 @@
   (Slots LowerCAbiEightbyteClass LowerCAbiEightbyteClass)
   (Unsupported))
 
+(defenum LowerSysvAbi
+  (C)
+  (Internal))
+
 (defenum LowerCAbiSlot
   (Slot ast.AstType i64))
 
@@ -35207,14 +35211,16 @@
             (Unsupported)))]
       [(Unsupported) (Unsupported)])))
 
-(define (lower-c-abi-sysv-classify-fields
+(define (lower-sysv-classify-fields
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [fields : tc_core.TcInlineFieldLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-c-abi-sysv-classify-fields-at ctx fields base-offset slots 0))
+  (lower-sysv-classify-fields-at abi ctx fields base-offset slots 0))
 
-(define (lower-c-abi-sysv-classify-fields-at
+(define (lower-sysv-classify-fields-at
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [fields : tc_core.TcInlineFieldLayoutList]
   [base-offset : i64]
@@ -35225,25 +35231,29 @@
     (let
       [field : tc_core.TcInlineFieldLayout
         (tc_core.tc-inline-field-layout-list-ref fields index)]
-      (lower-c-abi-sysv-classify-fields-at
+      (lower-sysv-classify-fields-at
+        abi
         ctx
         fields
         base-offset
-        (lower-c-abi-sysv-classify-type
+        (lower-sysv-classify-type
+          abi
           ctx
           (tc_core.tc-inline-field-layout-type (lower-global-shared-view field))
           (+ base-offset (tc_core.tc-inline-field-layout-offset field))
           slots)
         (+ index 1)))))
 
-(define (lower-c-abi-sysv-classify-payloads
+(define (lower-sysv-classify-payloads
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [payloads : tc_core.TcInlinePayloadLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-c-abi-sysv-classify-payloads-at ctx payloads base-offset slots 0))
+  (lower-sysv-classify-payloads-at abi ctx payloads base-offset slots 0))
 
-(define (lower-c-abi-sysv-classify-payloads-at
+(define (lower-sysv-classify-payloads-at
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [payloads : tc_core.TcInlinePayloadLayoutList]
   [base-offset : i64]
@@ -35254,11 +35264,13 @@
     (let
       [payload : tc_core.TcInlinePayloadLayout
         (tc_core.tc-inline-payload-layout-list-ref payloads index)]
-      (lower-c-abi-sysv-classify-payloads-at
+      (lower-sysv-classify-payloads-at
+        abi
         ctx
         payloads
         base-offset
-        (lower-c-abi-sysv-classify-type
+        (lower-sysv-classify-type
+          abi
           ctx
           (tc_core.tc-inline-payload-layout-type
             (lower-global-shared-view payload))
@@ -35266,14 +35278,16 @@
           slots)
         (+ index 1)))))
 
-(define (lower-c-abi-sysv-classify-variants
+(define (lower-sysv-classify-variants
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [variants : tc_core.TcInlineVariantLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-c-abi-sysv-classify-variants-at ctx variants base-offset slots 0))
+  (lower-sysv-classify-variants-at abi ctx variants base-offset slots 0))
 
-(define (lower-c-abi-sysv-classify-variants-at
+(define (lower-sysv-classify-variants-at
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [variants : tc_core.TcInlineVariantLayoutList]
   [base-offset : i64]
@@ -35283,39 +35297,53 @@
     slots
     (match (tc_core.tc-inline-variant-layout-list-ref variants index)
       [(Variant _ _ _ payloads)
-        (lower-c-abi-sysv-classify-variants-at
+        (lower-sysv-classify-variants-at
+          abi
           ctx
           variants
           base-offset
-          (lower-c-abi-sysv-classify-payloads ctx payloads base-offset slots)
+          (lower-sysv-classify-payloads abi ctx payloads base-offset slots)
           (+ index 1))])))
 
-(define (lower-c-abi-sysv-classify-layout
+(define (lower-sysv-classify-layout
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [layout : tc_core.TcInlineAggregateLayout]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match layout
     [(Struct _ _ fields)
-      (lower-c-abi-sysv-classify-fields ctx fields base-offset slots)]
+      (lower-sysv-classify-fields abi ctx fields base-offset slots)]
     [(Enum _ _ variants)
       ;; Synthetic tagged-union view: int64 tag at offset 0 plus every variant
       ;; payload overlaid in the union region starting at offset 8.
-      (lower-c-abi-sysv-classify-variants
+      (lower-sysv-classify-variants
+        abi
         ctx
         variants
         base-offset
         (lower-c-abi-sysv-mark-integer-range slots base-offset 8))]))
 
-(define (lower-c-abi-sysv-classify-struct-id
+(define (lower-sysv-classify-nominal-id
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [name-id : i64]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
     [(Ok layout)
-      (lower-c-abi-sysv-classify-layout ctx layout base-offset slots)]
+      (lower-sysv-classify-layout abi ctx layout base-offset slots)]
     [(Err _) (Unsupported)]))
+
+(define (lower-sysv-classify-type
+  [abi : LowerSysvAbi]
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match abi
+    [(C) (lower-c-abi-sysv-classify-type ctx ty offset slots)]
+    [(Internal) (lower-internal-sysv-classify-type ctx ty offset slots)]))
 
 (define (lower-c-abi-sysv-classify-type
   [ctx : tc_core.TcContext]
@@ -35327,7 +35355,7 @@
       (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
     (match (& resolved)
       [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
-        (lower-c-abi-sysv-classify-struct-id ctx name offset slots)]
+        (lower-sysv-classify-nominal-id (LowerSysvAbi.C) ctx name offset slots)]
       [(F64) (lower-c-abi-sysv-mark-sse-slot slots (F64) offset)]
       [(F32) (lower-c-abi-sysv-mark-sse-slot slots (F32) offset)]
       [_
@@ -35455,7 +35483,12 @@
         mode
         resolved
         size
-        (lower-c-abi-sysv-classify-fields ctx fields 0 (Slots (Empty) (Empty)))
+        (lower-sysv-classify-fields
+          (LowerSysvAbi.C)
+          ctx
+          fields
+          0
+          (Slots (Empty) (Empty)))
         allow-return?)]))
 
 (define (lower-c-abi-sysv-register-enum-aggregate
@@ -35474,7 +35507,8 @@
       mode
       resolved
       size
-      (lower-c-abi-sysv-classify-layout
+      (lower-sysv-classify-layout
+        (LowerSysvAbi.C)
         ctx
         (Enum size align variants)
         0
@@ -35699,11 +35733,9 @@
         [_ (ir.CompilerIrReturnStorage.None)])]
     [_ (ir.CompilerIrReturnStorage.None)]))
 
-;; Internal aggregate ABI classification is deliberately separate from the C
-;; extern classifier above.  The latter is selected only for nominal
-;; Struct/Enum declarations and is part of the existing extern contract;
-;; these helpers select only structural Tuple/Array values for future internal
-;; parameter/return lowering.
+;; The internal type leaf also traverses structural Tuple/Array values and
+;; admits TypeLisp handles. Nominal layouts share the SysV walk above, while
+;; the C type leaf preserves the narrower extern field contract.
 (define (lower-internal-sysv-classify-tuple-at
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
@@ -35791,7 +35823,12 @@
             offset
             slots))]
       [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
-        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
+        (lower-sysv-classify-nominal-id
+          (LowerSysvAbi.Internal)
+          ctx
+          name
+          offset
+          slots)]
       [(F64) (lower-c-abi-sysv-mark-sse-slot slots (F64) offset)]
       [(F32) (lower-c-abi-sysv-mark-sse-slot slots (F32) offset)]
       [_
@@ -35807,116 +35844,6 @@
                 slots
                 (lower-c-abi-sysv-mark-integer-range slots offset size)))]
           [(Err _) (Unsupported)])])))
-
-(define (lower-internal-sysv-classify-fields
-  [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-internal-sysv-classify-fields-at ctx fields base-offset slots 0))
-
-(define (lower-internal-sysv-classify-fields-at
-  [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]
-  [index : i64]) : LowerCAbiSysvSlots
-  (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
-    slots
-    (let
-      [field : tc_core.TcInlineFieldLayout
-        (tc_core.tc-inline-field-layout-list-ref fields index)]
-      (lower-internal-sysv-classify-fields-at
-        ctx
-        fields
-        base-offset
-        (lower-internal-sysv-classify-type
-          ctx
-          (tc_core.tc-inline-field-layout-type (lower-global-shared-view field))
-          (+ base-offset (tc_core.tc-inline-field-layout-offset field))
-          slots)
-        (+ index 1)))))
-
-(define (lower-internal-sysv-classify-payloads
-  [ctx : tc_core.TcContext]
-  [payloads : tc_core.TcInlinePayloadLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-internal-sysv-classify-payloads-at ctx payloads base-offset slots 0))
-
-(define (lower-internal-sysv-classify-payloads-at
-  [ctx : tc_core.TcContext]
-  [payloads : tc_core.TcInlinePayloadLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]
-  [index : i64]) : LowerCAbiSysvSlots
-  (if (>= index (tc_core.tc-inline-payload-layout-list-count payloads))
-    slots
-    (let
-      [payload : tc_core.TcInlinePayloadLayout
-        (tc_core.tc-inline-payload-layout-list-ref payloads index)]
-      (lower-internal-sysv-classify-payloads-at
-        ctx
-        payloads
-        base-offset
-        (lower-internal-sysv-classify-type
-          ctx
-          (tc_core.tc-inline-payload-layout-type
-            (lower-global-shared-view payload))
-          (+ base-offset (tc_core.tc-inline-payload-layout-offset payload))
-          slots)
-        (+ index 1)))))
-
-(define (lower-internal-sysv-classify-variants
-  [ctx : tc_core.TcContext]
-  [variants : tc_core.TcInlineVariantLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-internal-sysv-classify-variants-at ctx variants base-offset slots 0))
-
-(define (lower-internal-sysv-classify-variants-at
-  [ctx : tc_core.TcContext]
-  [variants : tc_core.TcInlineVariantLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]
-  [index : i64]) : LowerCAbiSysvSlots
-  (if (>= index (tc_core.tc-inline-variant-layout-list-count variants))
-    slots
-    (match (tc_core.tc-inline-variant-layout-list-ref variants index)
-      [(Variant _ _ _ payloads)
-        (lower-internal-sysv-classify-variants-at
-          ctx
-          variants
-          base-offset
-          (lower-internal-sysv-classify-payloads ctx payloads base-offset slots)
-          (+ index 1))])))
-
-(define (lower-internal-sysv-classify-layout
-  [ctx : tc_core.TcContext]
-  [layout : tc_core.TcInlineAggregateLayout]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match layout
-    [(Struct _ _ fields)
-      (lower-internal-sysv-classify-fields ctx fields base-offset slots)]
-    [(Enum _ _ variants)
-      ;; Synthetic tagged-union view: int64 tag at offset 0 plus every variant
-      ;; payload overlaid in the union region starting at offset 8.
-      (lower-internal-sysv-classify-variants
-        ctx
-        variants
-        base-offset
-        (lower-c-abi-sysv-mark-integer-range slots base-offset 8))]))
-
-(define (lower-internal-sysv-classify-nominal-id
-  [ctx : tc_core.TcContext]
-  [name-id : i64]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
-    [(Ok layout)
-      (lower-internal-sysv-classify-layout ctx layout base-offset slots)]
-    [(Err _) (Unsupported)]))
 
 (define (lower-internal-sysv-register-aggregate
   [ctx : tc_core.TcContext]

@@ -3966,6 +3966,12 @@ if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
     bounded_completion_fixture_cost integration \
         "$((_integration_matrix_started - _integration_fixture_started + CI_TIMING_NOW_MS - _integration_matrix_finished))" \
         "$((_integration_matrix_finished - _integration_matrix_started))" || exit 1
+    case ${TYPELISP_FIXTURE_MUTANTS:-0} in
+        0) ;;
+        completion | all)
+            sh "$ROOT/scripts/verify-bounded-completion-mutants.sh" "$WORKDIR/guard-proof" ;;
+        *) echo 'FAIL: invalid TYPELISP_FIXTURE_MUTANTS mode' >&2; exit 2 ;;
+    esac
     exit 0
 fi
 

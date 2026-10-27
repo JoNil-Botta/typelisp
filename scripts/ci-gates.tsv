@@ -93,7 +93,7 @@ stage2-ownership-model	all	ownership core model and production comparison	bootst
 integration-manifest-validator-self-tests	all	integration manifest validator self-tests	-	-	256	-	scripts/verify-integration-manifest-validator.sh
 windows-coff-plan-validator-self-tests	all	Windows COFF plan validator self-tests	-	-	256	-	scripts/verify-windows-coff-plan-validator.sh
 docs-site-search-manifest-validator-self-tests	all	docs-site search manifest validator self-tests	-	-	256	-	scripts/verify-doc-site.sh --self-test-search-manifests
-integration-batch-observability	all	integration batch observability	-	-	256	-	scripts/verify-integration.sh --self-test-batch-observability
+integration-batch-observability	all	integration batch observability	-	-	256	-	env TYPELISP_FIXTURE_MUTANTS=all scripts/verify-integration.sh --self-test-batch-observability
 integration-windows-path-normalization	all	integration Windows path normalization	-	-	256	-	scripts/verify-integration.sh --self-test-path-normalization
 integration-compile-failure-diagnostics	all	integration compile-failure diagnostics	bootstrap-fixpoint	stage2	256	-	scripts/verify-integration.sh --self-test-empty-compile-diagnostic
 integration-signal-notice-capture	linux	integration signal notice capture	-	-	256	-	scripts/verify-integration.sh --self-test-signal-notice-capture

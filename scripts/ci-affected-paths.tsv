@@ -2,6 +2,8 @@
 # Required is the local minimum. Advisory adds its column to the required set.
 # Groups resolve through ci-affected-inputs.tsv. Unknown/unreviewed inputs fail to full.
 path	required	advisory	reason
+scripts/verify-bounded-completion-mutants.sh	integration-batch-observability	-	Opt-in guard-removal fixtures invoked by the integration observation self-test.
+scripts/measure-fixture-launches.ps1	integration-batch-observability	-	Opt-in Windows process-start observation for the integration fixture proof.
 @always	bootstrap-fixpoint,shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint,stage2-repository-doctests	-	Shared local hygiene and documented-source content guard, with canonical producer dependencies.
 src/tests/compiler_optimize_smoke.tl	stage2-opt2-built-cli-compile-cross-fixpoint-regression	@compiler	The numbered opt2 gate wrapper directly executes this optimizer smoke unit.
 src/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@compiler	Any compiler source can carry target references; source guards read source content and module paths directly.

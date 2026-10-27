@@ -2320,6 +2320,9 @@ mapped catalog entry. Small required probes retain `__tl-box-place`, `and`,
 compile-profile detail rows per batch entry and requires exact
 identity/arity/call counts; built-in controls prove missing, duplicate,
 wrong-arity, and wrong-count rows fail closed.
+Before running, it requires the repository tree, compiler producer identity and
+embedded image producer identity to match exactly; commit provenance remains
+available separately through `--version`.
 `target/tlci-native-route-stress/<host>/evidence.tsv` records native and source
 compile time, assembly comparison and diagnostic-control time, generated-source
 and native/source assembly bytes, and native/source main-backend time for all

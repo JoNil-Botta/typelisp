@@ -113,6 +113,7 @@ tests/integration/enum_string_payload.tl	stage2-deterministic-assembly	@corpus	D
 tests/integration/factored_addresses.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/factorial.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/fibonacci.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
+tests/integration/fixed_array_result_tailrec.tl	ir-observability-golden,stage2-regalloc-backend-asm-shape-gates	@corpus	Direct fixture input in verify-ir-observability.sh and asm-shape.cases.
 tests/integration/for_macro.tl	stage2-compile-profile-verifier,stage2-prelude-macro-mutation-guard	@corpus	Direct fixture input in verify-compile-profile.sh, verify-prelude-mutation.sh.
 tests/integration/fs_rooted_linux_direct.tl	stage2-rooted-linux-filesystem-boundary	@corpus	Direct fixture input in verify-fs-rooted-linux.sh.
 tests/integration/fs_rooted_linux_guard.tl	stage2-rooted-linux-filesystem-boundary	@corpus	Direct fixture input in verify-fs-rooted-linux.sh.

@@ -82,6 +82,9 @@ try {
     $launches = $owned.Count - 3 # observer child wrapper and two known sentinels
     @(
         'schema_version=1', 'host=windows', 'observer=Win32_ProcessStartTrace',
+        "shell_path=$Shell", "shell_sha256=$((Get-FileHash -Algorithm SHA256 -LiteralPath $Shell).Hash)",
+        "powershell_version=$($PSVersionTable.PSVersion)", "os_version=$([Environment]::OSVersion.VersionString)",
+        "processor_identifier=$env:PROCESSOR_IDENTIFIER", "runner_name=$env:RUNNER_NAME",
         "root_pid=$rootId", "observed_owned_process_starts=$($owned.Count)",
         "root_start_seen=$rootSeen", "expected_fixture_launches=$ExpectedFixtureLaunches",
         "fixture_launches=$launches", "sentinels=$sentinels",

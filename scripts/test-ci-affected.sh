@@ -19,9 +19,10 @@ done
 
 # Audit tracked literal inputs inside owning scripts, independently of the
 # reviewed map. Synthetic self-test modes do not consume the real corpus.
-git ls-files tests stdlib docs src/tests > "$work/tracked-inputs"
+git ls-files > "$work/tracked-inputs"
 awk '{path=$0; while (sub(/\/[^/]*$/, "", path)) print path}' "$work/tracked-inputs" | sort -u > "$work/tracked-directories"
 awk -F '\t' '
+    {sub(/\r$/, "")}
     !/^#/ && $1 != "id" {
         command = $8
         while (match(command, /scripts\/[A-Za-z0-9_.-]+\.sh/)) {
@@ -34,6 +35,7 @@ awk -F '\t' '
     }
 ' "$ROOT/scripts/ci-gates.tsv" > "$work/owning-scripts.tsv"
 awk -F '\t' '
+    {sub(/\r$/, "")}
     FILENAME == ARGV[1] { if ($8 ~ /^gate_[a-z0-9_]+$/) gate[$8] = $1; next }
     /^gate_[a-z0-9_]+\(\)/ { name = $1; sub(/\(\).*/, "", name) }
     /^}/ { name = "" }
@@ -47,7 +49,8 @@ awk -F '\t' '
 ' "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" >> "$work/owning-scripts.tsv"
 awk -F '\t' '{
     while ((getline line < $2) > 0) {
-        while (match(line, /(src\/tests|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]+/)) {
+        if (line ~ /^[[:space:]]*#/) continue
+        while (match(line, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]+/)) {
             print substr(line, RSTART, RLENGTH) "\t" $1
             line = substr(line, RSTART + RLENGTH)
         }
@@ -55,6 +58,132 @@ awk -F '\t' '{
     close($2)
 }' "$work/owning-scripts.tsv" | sort -u > "$work/script-inputs.tsv"
 awk -F '|' '$1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$ROOT/src/compile_manifest.txt" >> "$work/script-inputs.tsv"
+
+# Primary declarations add exact fixture owners. Imported/staged dependency
+# lists and generic compiler-comparison suites remain advisory source classes.
+awk -F '\t' '$1 ~ /\.cases$/ {print}' "$work/script-inputs.tsv" > "$work/inventory-owners.tsv"
+awk -F '\t' '{sub(/\r$/, "")} !/^#/ && $1 != "id" {n=split($8, words, " "); for(i=1;i<=n;i++) if(words[i] ~ /^tests\/.*\.cases$/) print words[i] "\t" $1}' "$ROOT/scripts/ci-gates.tsv" >> "$work/inventory-owners.tsv"
+for affected_inventory in tests/cli/public-*.cases; do printf '%s\tstage2-public-tool-surface\n' "$affected_inventory"; done >> "$work/inventory-owners.tsv"
+for affected_inventory in tests/apps/*.cases; do printf '%s\tstage2-app-workflow-corpus\n' "$affected_inventory"; done >> "$work/inventory-owners.tsv"
+inventory_inputs() {
+    # Reuse the canonical DSL translator for defaults and {{each}} expansion.
+    # --list builds no compiler and writes only under our fresh scratch root.
+    cut -f 1 "$work/inventory-owners.tsv" | sort -u |
+    while IFS= read -r affected_inventory; do
+        CODEGEN_CASES_WORKDIR="$2" "$ROOT/scripts/verify-codegen-cases.sh" --list "$1/$affected_inventory" >/dev/null
+        affected_name=$(basename "$affected_inventory" .cases)
+        awk -F '\t' -v inventory="$affected_inventory" -v tracked_file="$work/tracked-inputs" -v directory_file="$work/tracked-directories" '
+            BEGIN {
+                while ((getline path < tracked_file) > 0) tracked[path]=1
+                while ((getline path < directory_file) > 0) tracked[path]=1
+            }
+            function each_value(text, value, at) {
+                while ((at=index(text, "{{each}}"))) text=substr(text,1,at-1) value substr(text,at+8)
+                return text
+            }
+            function paths(text, bare, artifact, fixtures_only, token, gate, absolute) {
+                # Search roots and outputs are supporting paths, not primaries.
+                gsub(/--stdlib-root[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/,"",text)
+                gsub(/(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/,"",text)
+                gsub(/\{\{(root|native-root)\}\}\//, " @ROOT/", text)
+                while (match(text, /(^|[[:space:]"\047])(@ROOT\/)?(src|tests|stdlib|tools|benchmarks|examples|docs)\/[A-Za-z0-9_.\/-]+/)) {
+                    token=substr(text,RSTART,RLENGTH)
+                    text=substr(text,RSTART+RLENGTH)
+                    if (token ~ /\/$/ && text ~ /^\{\{/) continue
+                    sub(/^[[:space:]"\047]+/, "", token)
+                    absolute=(token ~ /^@ROOT\//)
+                    if (absolute) sub(/^@ROOT\//, "", token)
+                    sub(/\/$/, "", token)
+                    if (!absolute && (!bare || !(token in tracked))) continue
+                    if (artifact && token == "src/main.tl") continue
+                    if (fixtures_only && token !~ /^(tests|src\/tests|stdlib\/tests)\//) continue
+                    for (gate in owners) print token "\t" gate
+                }
+            }
+            FILENAME == ARGV[1] {if($1 == inventory) owners[$2]=1; next}
+            FILENAME == ARGV[2] {
+                sub(/\r$/, ""); original[FNR]=$0
+                # Fixed root-qualified fixture references include copied and batch inputs.
+                if ($0 !~ /^[[:space:]]*#/) paths($0,0,0,1)
+                next
+            }
+            /^cc_file / {embedded=1; next}
+            /^CC_EOF_FILE_[0-9]+$/ {embedded=0; next}
+            embedded {next}
+            /^cc_case_[0-9]+\(\)/ {function_name=$1; next}
+            /^cc_(run|cwd) / {
+                split($0, words, " "); events[function_name,++count[function_name]]=words[2]
+                next
+            }
+            /^}; then cc_fail / {
+                split($0, words, " "); events[function_name,++count[function_name]]=words[4]
+                next
+            }
+            /^cc_case / {split($0, quoted, /\047/); source=quoted[6]; next}
+            /^cc_variant / {
+                split($0, quoted, /\047/); value=quoted[8]
+                paths(each_value(source,value),1,0,0)
+                bare=1
+                for(i=1;i<=count[function_name];i++) {
+                    line=each_value(original[events[function_name,i]],value)
+                    sub(/^[[:space:]]+/, "", line)
+                    if(line ~ /^cwd /) {
+                        directory=substr(line,5); gsub(/["\047]/,"",directory)
+                        bare=(directory == "-" || directory == "{{root}}")
+                    } else if(line ~ /^(run|exec|sh) /) {
+                        artifact=(line ~ /^run (compile|build)[[:space:]]/ || (line ~ /^exec / && line ~ /\{\{compiler\}\}["\047]?[[:space:]]+(compile|build)[[:space:]]/))
+                        fixtures_only=(line !~ /^run / && line !~ /\{\{compiler\}\}/)
+                        paths(line,bare,artifact,fixtures_only)
+                    }
+                }
+            }
+        ' "$work/inventory-owners.tsv" "$1/$affected_inventory" "$2/$affected_name/plan.sh"
+    done
+    awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 4 {
+        print $4 "\tstage2-native-integration-corpus"
+        for(i=10;i<=NF;i++) if($i ~ /^suite-members:/) {
+            members=substr($i,15); n=split(members,names," ")
+            for(j=1;j<=n;j++) if(names[j] != "") print "src/tests/" names[j] "\tstage2-native-integration-corpus"
+        }
+    }' "$1/tests/integration/native.manifest"
+    awk -F '|' '{sub(/\r$/, "")} !/^#/ && NF >= 3 {print $3 "\tstage2-safety-corpus"}' "$1/tests/safety/manifest.txt"
+    awk -F '|' '{sub(/\r$/, "")} $1 == "case" {print $3 "\tstage2-selfhost-compile-manifest"}' "$1/src/compile_manifest.txt"
+}
+inventory_inputs "$ROOT" "$work/inventory-plans" | sort -u > "$work/primary-inputs.tsv"
+# Exercise the same inventory reader against Git actual Windows checkout bytes.
+mkdir -p "$work/crlf-inputs"
+{ cut -f 1 "$work/inventory-owners.tsv"; printf '%s\n' tests/integration/native.manifest tests/safety/manifest.txt src/compile_manifest.txt; } | sort -u > "$work/inventory-files"
+while IFS= read -r affected_inventory; do
+    mkdir -p "$work/crlf-inputs/$(dirname "$affected_inventory")"
+    git -c core.autocrlf=true cat-file --filters --path="$affected_inventory" ":$affected_inventory" > "$work/crlf-inputs/$affected_inventory"
+done < "$work/inventory-files"
+inventory_inputs "$work/crlf-inputs" "$work/crlf-plans" | sort -u > "$work/primary-crlf.tsv"
+cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkout changed primary input ownership'
+# Check every declared edge without thousands of recursive planner calls.
+# Allowed map globs contain only literal characters, dots and stars, so this
+# matches the selector case patterns. The witnesses below also replay plans.
+awk -F '\t' '
+    FILENAME == ARGV[1] {
+        if (/^#/ || $1 == "path" || $2 == "-") next
+        pattern=$1; gsub(/\./, "\\.", pattern); gsub(/\*/, ".*", pattern)
+        patterns[++rows]="^" pattern "$"; gates[rows]="," $2 ","
+        next
+    }
+    FILENAME == ARGV[2] {directories[$0]=1; next}
+    {
+        path=($1 in directories ? $1 "/__ci_affected_directory_probe__.tl" : $1)
+        known=0; covered=0
+        for(i=1;i<=rows;i++) if(path ~ patterns[i] || patterns[i] == "^@always$") {
+            if(patterns[i] != "^@always$") known=1
+            if(gates[i] == ",*," || index(gates[i], "," $2 ",")) covered=1
+        }
+        if(known && !covered) {
+            print "missing required primary owner: " $1 " -> " $2 > "/dev/stderr"
+            failed=1
+        }
+    }
+    END {exit failed}
+' "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" || fail 'primary inventory ownership is incomplete'
 
 for host in linux windows; do
     "$ROOT/scripts/ci-verify.sh" --list-gates "$host" > "$work/$host.table"
@@ -116,6 +245,10 @@ for host in linux windows; do
     while IFS=$TAB read -r path gate; do
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
         path=${path%/}
+        case "$path:$gate" in
+            src/main.tl:*) continue ;; # Produced CLI workload: bootstrap plus advisory compiler consumers.
+            src/sym_i64_env.tl:stage2-opt1-opt2-build-invariance) continue ;; # Staged supporting module, not a primary comparison fixture.
+        esac
         if ! grep -Fx "$path" "$work/tracked-inputs" >/dev/null; then
             if ! grep -Fx "$path" "$work/tracked-directories" >/dev/null; then continue; fi
             case "$path:$gate" in
@@ -131,7 +264,7 @@ for host in linux windows; do
         has_gate "$work/direct-reader.ids" "$gate"
     done < "$work/script-inputs.tsv"
     # Constructed script inputs and the reported independent source guards.
-    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi

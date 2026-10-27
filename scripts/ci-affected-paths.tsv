@@ -10,7 +10,7 @@ src/compiler_backend*	x64-executable-template-registry-coverage	@compiler	Backen
 src/compiler_x64*	x64-executable-template-registry-coverage	@compiler	Executable-template code and catalog data are read by the registry guard.
 src/main.tl	cli-help-surface,stage2-selfhost-compile-manifest	@compiler	The help-surface guard reads the dispatcher help text directly.
 src/*_cli_core.tl	cli-help-surface	@compiler	CLI parser modules are compared with their help text by the direct source guard.
-src/compile_manifest.txt	stage2-selfhost-compile-manifest	@compiler	Exact compiler-manifest input, expectations and standalone coverage.
+src/compile_manifest.txt	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Exact compiler-manifest input, expectations and standalone coverage.
 stdlib/*	stage2-safety-corpus	@stdlib	Every stdlib edit can change located safety diagnostics and pins.
 stdlib/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@stdlib	Stdlib sources can carry target references and are read by source-content and module-path guards.
 stdlib/tests/*	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier,stage2-prelude-macro-mutation-guard	@stdlib	Stdlib witnesses are executed by both fixture verifiers and copied by the macro-mutation runner.
@@ -60,22 +60,22 @@ src/tests/compile_cli_verify_ir_advisories_smoke.tl	ir-observability-golden	@com
 src/tests/compiler_backend_cmp_mem_fold_smoke.tl	stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration.sh.
 src/tests/compiler_backend_runtime_fixture.tl	stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration.sh.
 src/tests/compiler_backend_seh_savereg_fixture.tl	win64-seh-unwind-verifier	@compiler	Direct fixture input in verify-win64-seh-unwind.sh.
-src/tests/compiler_backend_smoke.tl	stage2-compile-profile-verifier,stage2-opt1-opt2-build-invariance	@compiler	Direct fixture input in verify-compile-profile.sh, check-build-invariance.sh.
-src/tests/compiler_codegen_smoke_suite.tl	build-invariance-batch-reuse-self-tests,integration-manifest-validator-self-tests	@compiler	Direct fixture input in verify-build-invariance-batch.sh, verify-integration-manifest-validator.sh.
-src/tests/compiler_driver_pic_smoke.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
-src/tests/compiler_frontend_smoke_suite.tl	integration-manifest-validator-self-tests	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
-src/tests/compiler_lower_smoke.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/compiler_backend_smoke.tl	stage2-compile-profile-verifier,stage2-opt1-opt2-build-invariance,stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@compiler	Direct fixture input in verify-compile-profile.sh, check-build-invariance.sh.
+src/tests/compiler_codegen_smoke_suite.tl	build-invariance-batch-reuse-self-tests,integration-manifest-validator-self-tests,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-build-invariance-batch.sh, verify-integration-manifest-validator.sh.
+src/tests/compiler_driver_pic_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/compiler_frontend_smoke_suite.tl	integration-manifest-validator-self-tests,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
+src/tests/compiler_lower_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/compiler_object_coff_overflow_fixture.tl	stage2-coff-relocation-overflow-verifier	@compiler	Direct fixture input in verify-coff-relocation-overflow.sh.
-src/tests/compiler_symbols_smoke.tl	integration-manifest-validator-self-tests	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
+src/tests/compiler_symbols_smoke.tl	integration-manifest-validator-self-tests,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
 src/tests/compiler_typecheck_reverse_mixed_smoke.tl	integration-manifest-validator-self-tests	@compiler	Direct fixture input in verify-integration-manifest-validator.sh.
-src/tests/compiler_typecheck_smoke.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/compiler_typecheck_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/comptime_host_smoke.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
-src/tests/doc_test_smoke.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
+src/tests/doc_test_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/scan_storage_growth.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
 tests/cross-mode/corpus.tsv	stage2-cross-mode-semantic-abi-differential	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
-tests/fixtures/backend_source_import_str_cat.tl	stage2-backend-source-import-context,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct fixture input in verify-backend-source-import-context.sh.
+tests/fixtures/backend_source_import_str_cat.tl	stage2-backend-source-import-context,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-native-integration-corpus	@corpus	Direct fixture input in verify-backend-source-import-context.sh.
 tests/fixtures/win64-seh/savereg-oracle.expected	win64-seh-unwind-verifier	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
-tests/fixtures/win64-seh/win64_seh_unwind.tl	win64-seh-unwind-verifier,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
+tests/fixtures/win64-seh/win64_seh_unwind.tl	win64-seh-unwind-verifier,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-regalloc-backend-asm-shape-gates	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
 tests/integration/aggregate_globals.tl	stage2-windows-coff-batch-plan	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
 tests/integration/aggregate_return_no_alloc.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/argv.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
@@ -162,13 +162,13 @@ tests/integration/spmd_scan_scalar.tl	stage2-spmd-simd-comparison	@corpus	Direct
 tests/integration/spmd_shuffle_reduce.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
 tests/integration/spmd_shuffle_simd.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
 tests/integration/spmd_shuffle_types.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_uniform_index_write.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_uniform_index_write.tl	stage2-spmd-simd-comparison,stage2-safety-corpus	@corpus	Direct fixture input in verify-spmd-simd.sh.
 tests/integration/stdlib_hash_generated.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/winsock_capability_measure.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/integration/winsock_capability.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/integration/winsock_shadow_identity.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/no-libc/probe.tl	no-libc-dependency-guard,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct fixture input in verify-no-libc.sh.
-tests/safety/division_by_zero_trap.tl	stage2-windows-coff-batch-plan	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
+tests/safety/division_by_zero_trap.tl	stage2-windows-coff-batch-plan,stage2-native-integration-corpus	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
 tests/safety/vector_invalid_capability_reject.tl	stage2-compile-profile-verifier	@corpus	Direct fixture input in verify-compile-profile.sh.
 tests/shared-object/worker.tl	stage2-linux-shared-object-code-model,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh.
 tests/spmd/package_callable/*	package-native-tlci-dependency-macros	@corpus	Direct fixture input in verify-package-native-tlci.sh.
@@ -178,20 +178,20 @@ tests/tlci/package_dependency_transition.tl	package-native-tlci-dependency-macro
 docs/compiler-x64-executable-templates.md	docs-site-search-manifest-validator-self-tests	@docs	Direct tracked input named by its owning verifier or compile manifest.
 src/build_run_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ast_types.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_backend.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_backend.tl	stage2-selfhost-compile-manifest,stage2-cli-build-run-and-chooser-smoke	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_check_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ctfe.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_dependency_trace.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_diagnostic.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_driver_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_embedded_stdlib_payload.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_embedded_stdlib_payload.tl	stage2-selfhost-compile-manifest,embedded-stdlib-build-payload,stage0-size-ratchet	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_embedded_stdlib.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_float.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_global_effects.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_intern.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_intern.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ir_return_storage_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ir_return_storage.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_ir_types.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_ir_types.tl	stage2-selfhost-compile-manifest,stage2-core-ir-dependency-boundary	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_liveness.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_load.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_lower.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -200,12 +200,12 @@ src/compiler_module_name.tl	stage2-selfhost-compile-manifest	@compiler	Direct tr
 src/compiler_optimize.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_cleanup_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_core_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_ownership_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_ownership_core.tl	stage2-selfhost-compile-manifest,stage2-ownership-model	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_dump.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_loan_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_normalize_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_normalize.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_parse_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_parse_core.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_pointer_proof_input.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_regalloc.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_semantic_index.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
@@ -214,27 +214,27 @@ src/compiler_specialize.tl	stage2-selfhost-compile-manifest	@compiler	Direct tra
 src/compiler_spmd_logical_gang.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_stack_traffic.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_state_schema.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/compiler_symbols.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_symbols.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typecheck_core.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_typed_occurrence.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/doc_expand.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/doc_extract.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/doc_html.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/doc_render.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/doc_extract.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/doc_html.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/doc_render.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/doc_test.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/format_cst.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/format_render_buf.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/format_rules.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/format_tokens.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/lex.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/lex.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/linker_ar_dialect_reader.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/linker_archive_core_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/linker_archive_core_tests.tl	stage2-selfhost-compile-manifest,stage2-native-integration-corpus	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/linker_coff_import_reader.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/linker_elf_object_reader.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/read.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/sym_i64_env.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
-src/token.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/read.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/sym_i64_env.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/token.tl	stage2-selfhost-compile-manifest,stage2-deterministic-assembly	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 stdlib/core_macros.tl	stage2-prelude-macro-mutation-guard,tlci-mutation-bootstrap-fixpoint	@stdlib	Direct tracked input named by its owning verifier or compile manifest.
 stdlib/format.tl	stage2-stdlib-modules-and-fixtures	@stdlib	Direct tracked input named by its owning verifier or compile manifest.
 stdlib/generated/idna_unicode12_data.tl	stage2-idna-unicode12-data	@stdlib	Direct tracked input named by its owning verifier or compile manifest.
@@ -256,7 +256,7 @@ tests/integration/string_concat_deep.tl	stage2-compile-profile-verifier	@corpus	
 tests/integration/string_eq.tl	stage2-deterministic-assembly	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/string_length.tl	stage2-deterministic-assembly,stage2-windows-coff-batch-plan	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/string_match.tl	stage2-windows-coff-batch-plan	@corpus	Direct tracked input named by its owning verifier or compile manifest.
-tests/integration/string_record_extent.tl	stage2-windows-coff-batch-plan	@corpus	Direct tracked input named by its owning verifier or compile manifest.
+tests/integration/string_record_extent.tl	stage2-windows-coff-batch-plan,stage2-native-link-generated-programs	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/substring.tl	stage2-deterministic-assembly	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/sym_i64_env.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/tail_call_stack_args.tl	stage2-windows-coff-batch-plan	@corpus	Direct tracked input named by its owning verifier or compile manifest.
@@ -273,3 +273,230 @@ tests/integration/tree.tl	stage2-deterministic-assembly	@corpus	Direct tracked i
 tests/integration/u64_float_casts.tl	stage2-windows-coff-batch-plan	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/unit_functions.tl	stage2-deterministic-assembly	@corpus	Direct tracked input named by its owning verifier or compile manifest.
 tests/integration/unit_main.tl	stage2-deterministic-assembly	@corpus	Direct tracked input named by its owning verifier or compile manifest.
+src/build_cli_core_tests.tl	stage2-compile-profile-verifier	@compiler	Direct named source input to its owning verifier.
+src/compiler_clone_tests.tl	stage2-public-tool-surface	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/compiler_embedded_stdlib_tlci_payload.tl	stage0-size-ratchet	@compiler	Direct named source input to its owning verifier.
+src/compiler_package_surface_producer.tl	package-native-tlci-dependency-macros	@compiler	Direct named source input to its owning verifier.
+src/compiler_profile_summary.tl	stage2-inline-typelisp-tests	@compiler	Direct named source input to its owning verifier.
+src/tests/canonical_import_alias_first_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/canonical_import_default_first_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/cli_common_option_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_abort_sites.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ast_types_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_backend_raw_pointer_fixture.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_backend_stack_args_fixture.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_bounds_check_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_check_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ctfe_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_driver_base_transients_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ir_return_storage_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ir_types_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_liveness_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_load_decls_nil_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_load_includes.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_load_lazy_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_lower_symbol_identity_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_macro_diagnostic_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_cleanup_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_core_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_loan_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_ownership_normalize_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_parse_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_pointer_proof_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_regalloc_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_call_lower_avx512_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_call_lower_scalar_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_imported_selection_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_abi_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_callable_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_mutual_recursion_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_recursion_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_spmd_package_validation_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_stack_traffic_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_tlci_native_producer_smoke.tl	stage2-cli-host-action-smoke,stage2-public-tool-surface	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_tlci_native_source_owners.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_typecheck_reflection_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/compiler_typed_occurrence_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_expand_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_extract_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_html_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/doc_render_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/format_cst_integration.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/format_rules_integration.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lex_span_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/linker_coff_import_reader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/linker_elf_dso_reader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/linker_elf_object_reader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lint_driver_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lint_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lsp_frame_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/lsp_position_edit_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/package_cache_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/read_pool_arena_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/test_cli_entry_memory_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/test_cli_entry_state_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+src/tests/tlci_loader_smoke.tl	stage2-native-integration-corpus	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
+stdlib/math.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+stdlib/tests/byte_buf_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+stdlib/tests/raw_copy_api.tl	stage2-native-integration-corpus	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+stdlib/tests/vector_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+stdlib/tests/wire_byte_buf_live_extent.tl	stage2-public-tool-surface	@stdlib	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/alias_global_shift.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/alias_row_overflow.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/alias_typed_word.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/alu_mem_operand_tie.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/arena_branded_operands.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/array_field_store_growth.tl	stage2-safety-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/bce_binary_interval.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/bit_length_loop.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/bit_test_mask_admission.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/bit_test_phi_edge.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/block_layout.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/borrow_local_frame_storage.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/borrowed_struct_pattern_string.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/by_value_aggregate_abi.tl	stage2-by-value-aggregate-abi-shape-gate	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_arm_wrapper.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_arm_wrapper_abort.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_cheap_tier_claim.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_depth0_site.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_dispatch_arm.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_dispatch_arm_abort.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_post_multi_call.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_post_multi_call_abort.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/checked_setup_helper.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/cmp_fold_load.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/const_global_mask_unroll.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/const_index_bounds.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/copy_call_next_index.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/copy_call_word.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/counter_sink_loops.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/csr_census_loop.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/csr_push_prologue.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/csr_unused_save.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/dce_late_flag_loop.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/dead_frame_boundary.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/dead_result_store.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/divmagic_hoist.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/early_return.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/extern_data_memory.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/extern_data_places.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/extern_data_places_direct.tl	stage2-native-link-generated-programs	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/fallthrough_jmp_chain.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/float_comparisons.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/for_range_lean.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/gep_copy_sib_shape.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/gep_load_cmp_spilled_stage.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/gep_value_direct.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/global_add_mem_fold.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/global_cell_writer_loop_reads.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/global_cmp_mem_fold.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/global_cursor_guarded.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/global_cursor_helper.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/global_handle_cse.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/global_len_fold.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/group_copy_direct.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/group_pair_home.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/group_pair_phi_home.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/handle_arg_csr.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/hashmap_slot_update_shape.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/hoist_priority.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/inline_array_field_store_growth.tl	stage2-safety-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/jump_only_forward.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/latch_sink_for_loops.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/lattice_join_split.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/lftr_counter_retire.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/licm_desc_hoist.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/licm_memclean_global_promote.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/load_widen_cast_fold.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/loadcse_forward.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/mem_dest_rmw_fold.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/param_csr_home.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/param_pin_interval.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/param_shift_pin.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/range_loop_shapes.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/range_merge_unsigned.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/raw_pointer_field_place.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/rbp_sixth_csr.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/recursive_loop_import.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/red_zone_leaf.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/ref_fixed_array_return.tl	stage2-native-link-generated-programs	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/ref_param_identity.tl	stage2-native-link-generated-programs	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/ref_return.tl	stage2-native-link-generated-programs	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/ref_tuple_return.tl	stage2-native-link-generated-programs	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/rmw_mem_operand_fold.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/save_reload_elide.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/select_flags_lea.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/short_trip_copy.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/source_selected_generated_dep.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/source_selected_generated_export.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/source_selected_generated_macro_dep.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/source_selected_generated_shadow.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/source_selected_generated_user.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_compact_destination_oob_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_compact_overflow_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_gather_lane_offset_oob.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_gather_oob.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_scan_negative_start_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_scan_short_output_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_abort_nested.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_lane1_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_negative_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_tail_computed_selector.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_tail_oob.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_tail_selector.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/static_scalar_array_globals.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/stdlib_math_ieee.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/string_literal_eq.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/switch_dispatch_scavenge.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/synth_struct_accessor.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/synth_struct_accessor_abort.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/synth_tail_wrapper.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/synth_tail_wrapper_abort.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/synth_wrapped_probe.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/synth_wrapped_probe_abort.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/tail_borrowed_enum_match.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/tail_call_frame_provenance.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/tail_call_stack_forward.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/tail_reborrow_param.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/thread_safe_i64_vec.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/try_propagation.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/try_sret_forward.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/unroll_descending_shift.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/vt_derived_stride.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/vt_offset_copy.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/wide_const_hoist.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/win64_rbp_eighth_csr.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/arena_bare_operand_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/arena_branded_operand_wrong_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrow_temporary_call_arg_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrow_temporary_cleanup_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrowed_pattern_copy_binding_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/borrowed_pattern_copy_deferred_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/box_deref_copy_projection_reuse_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/dead_frame_abort_only_trap.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/decls_generated_conflicting_import_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/decls_generated_missing_import_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/decls_generated_missing_selected_import_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/foreign_global_lambda_set_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/foreign_global_macro_write_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/foreign_global_selected_set_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_argument_local_mutation_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_match_local_shadow_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_mixed_copy_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/global_call_pure_constructor_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/inline_aggregate_global_live_borrow_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/match_copy_loan_ends_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/mutable_reference_read_disjoint_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/shift_count_trap.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/spmd_unmasked_scatter_index_reject.tl	ispc-mandelbrot-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/with_owner_destroy_use_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/with_owner_rewind_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane0_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane0_u32.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane0_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane1_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane1_u32.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane1_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/lane_identity_2d.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/lane_identity_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/lane_identity_reduce_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

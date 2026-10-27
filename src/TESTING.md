@@ -2691,6 +2691,16 @@ require the safety corpus. Shared bootstrap, formatting, lint and shared-view
 checks are always included. Direct native, codegen and documentation inputs add
 their owning gates through the reviewed map.
 
+Required fixture owners follow declared primary inputs: native-manifest source
+entries and suite members, case-file source declarations and explicit repository
+fixture commands, plus safety and compile-manifest source entries. Imported or
+staged compiler/stdlib dependency closures stay in the advisory source classes.
+Generic compiler comparisons and produced-CLI build workloads are advisory;
+an exact primary fixture contract adds its comparison gate to the minimum.
+When changing gate commands or primary inventories, update the reviewed path
+map and run `--self-test`. Its ownership audit uses the canonical case translator
+in list mode, expands manifest primaries, and checks Windows checkout bytes.
+
 `--tier advisory` prints a broader conservative superset for reviewing other
 affected checks. It includes the required tier, but it is not a requirement to
 run that entire superset locally. `--run` executes whichever tier is selected,

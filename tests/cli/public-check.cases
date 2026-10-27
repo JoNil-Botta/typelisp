@@ -96,6 +96,29 @@ run check tests/integration/macro_dotted_root_nested_borrow.tl --target {{target
 stdout contains Type checking passed!
 stderr empty
 
+case check-macro-dotted-root-borrow-types
+target linux-x86_64 windows-x86_64
+step narrow-borrow
+run check tests/integration/macro_dotted_root_narrow_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step wide-borrow
+run check tests/integration/macro_dotted_root_wide_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step write-borrow
+run check tests/integration/macro_dotted_root_write_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step scalar-borrow
+run check tests/integration/macro_dotted_root_scalar_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step noncall-borrow
+run check tests/integration/macro_dotted_root_noncall_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+
 case check-hello
 run check examples/hello.tl
 stderr empty

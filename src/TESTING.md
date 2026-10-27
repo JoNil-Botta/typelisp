@@ -15,6 +15,12 @@ and native execution must agree at opt0/1/2 on both hosts.
 The borrow entries retain the global root's type as well as its storage for
 shared/mutable field borrows, a reference-typed caller and nested projections.
 The mutable case also borrows the whole root to cover call-argument dispatch.
+Width-sensitive shared borrows retain u8 globals against wide caller fields and
+wide globals against narrow caller fields, including nested calls and tail
+results. Non-call mutable borrows retain the global type against reference and
+by-value caller parameters; writes change only the selected field. Scalar and
+bool caller locals keep nested shared borrows accepted. Each fixture retains a
+control without shadowing.
 
 `ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
 phi links, capacity growth, missing labels and renamed-block logical positions.

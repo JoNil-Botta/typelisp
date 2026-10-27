@@ -197,6 +197,11 @@ macro_dotted_root_ref_borrow|all|0,1,2|tests/integration/macro_dotted_root_ref_b
 macro_dotted_root_same|all|0,1,2|tests/integration/macro_dotted_root_same.tl|2|-|-|-|-
 macro_dotted_root_scalar|all|0,1,2|tests/integration/macro_dotted_root_scalar.tl|2|-|-|-|-
 macro_dotted_root_small|all|0,1,2|tests/integration/macro_dotted_root_small.tl|2|-|-|-|-
+macro_dotted_root_narrow_borrow|all|0,1,2|tests/integration/macro_dotted_root_narrow_borrow.tl|42|-|-|-|-
+macro_dotted_root_wide_borrow|all|0,1,2|tests/integration/macro_dotted_root_wide_borrow.tl|42|-|-|-|-
+macro_dotted_root_write_borrow|all|0,1,2|tests/integration/macro_dotted_root_write_borrow.tl|42|-|-|-|-
+macro_dotted_root_scalar_borrow|all|0,1,2|tests/integration/macro_dotted_root_scalar_borrow.tl|42|-|-|-|-
+macro_dotted_root_noncall_borrow|all|0,1,2|tests/integration/macro_dotted_root_noncall_borrow.tl|42|-|-|-|-
 macro_try_operand|all|0,1,2|tests/integration/macro_try_operand.tl|42|-|-|stdlib/comptime.tl|-
 macro_value_same_spelling|all|-|tests/integration/macro_value_same_spelling.tl|42|-|-|-|-
 macro_module_local_shadow_provider|all|-|tests/integration/macro_module_local_shadow_provider.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-

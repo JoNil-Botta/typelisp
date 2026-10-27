@@ -117,6 +117,49 @@ exit 6
 stdout empty
 stderr empty
 
+case selfhost-cli-build-macro-dotted-root-borrow-types
+opt 0 1 2
+step narrow-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_narrow_borrow.tl" --opt-level {{opt}} -o "{{dir}}/narrow_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/narrow_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step wide-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_wide_borrow.tl" --opt-level {{opt}} -o "{{dir}}/wide_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/wide_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step write-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_write_borrow.tl" --opt-level {{opt}} -o "{{dir}}/write_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/write_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step scalar-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_scalar_borrow.tl" --opt-level {{opt}} -o "{{dir}}/scalar_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/scalar_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step noncall-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_noncall_borrow.tl" --opt-level {{opt}} -o "{{dir}}/noncall_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/noncall_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
 case selfhost-cli-build
 file main.tl
 (define (main) : i64 19)

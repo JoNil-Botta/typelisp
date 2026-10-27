@@ -76206,7 +76206,20 @@
               mutable
               (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcBorrowPlace.Err message)])
-        (match (tc-lookup-visible-id ctx env name)
+        (match (if (and
+          (macro-hygiene-global-id? (tc-context-structural-session ctx) name)
+          (not
+            (macro-hygiene-global-legacy-id?
+              (tc-context-structural-session ctx)
+              name)))
+          (tc-var-expr-after-local-field-check
+            ctx
+            env
+            name
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name))
+          (tc-lookup-visible-id ctx env name))
           [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
           [(ResultTcType.Err message)
             (match (tc-var-expr-after-local-field-check
@@ -76309,7 +76322,24 @@
     expr)
     [(Var name)
       (let
-        [ty (try (tc-lookup-visible-id ctx env name))]
+        [ty
+          (try
+            (if (and
+              (macro-hygiene-global-id?
+                (tc-context-structural-session ctx)
+                name)
+              (not
+                (macro-hygiene-global-legacy-id?
+                  (tc-context-structural-session ctx)
+                  name)))
+              (tc-var-expr-after-local-field-check
+                ctx
+                env
+                name
+                (tc-hygiene-name-text-id-for-session
+                  (tc-context-structural-session ctx)
+                  name))
+              (tc-lookup-visible-id ctx env name)))]
         (if (tc-mut-borrow-storage-backed-type? ctx ty)
           Ok
           (let

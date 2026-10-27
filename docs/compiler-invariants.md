@@ -1537,8 +1537,17 @@ References, slices, strings-as-views and inline aggregates require a proof:
 an unchanged parameter, a reference-parameter reborrow, caller-owned
 memory-class parameter storage, a typed global binding without a local IR
 binding, or a supported heap projection. A shared
-borrow of a plain scalar variable is safe because lowering copies it into
-`tl_alloc` storage. Local reference/view aliases, unknown call results and
+borrow of a dynamic-array or String variable is safe because it lends the
+variable's heap handle. A shared borrow of a scalar or register-resident
+variable is not: lowering copies the value into a frame slot of the borrowing
+function, never into the current arena, which a `with-arena` or `in-arena`
+around the borrow may rewind or destroy while the reference still borrows the
+live variable (#9297). The frame slot is sound because the borrow never
+outlives the borrowed binder's storage, which ends no later than the frame:
+for a lambda's capture the ownership graph retires the capture at every
+return of the lambda, as it does a by-value parameter, so a borrow of the
+capture cannot be returned or stored past the call. Such a call stays an
+ordinary call, like a borrow of a local aggregate. Local reference/view aliases, unknown call results and
 Copy aggregates materialized from heap elements do not acquire a proof.
 Slice-pattern rest views inherit a proven external scrutinee's storage;
 their IR IDs are retained in a persistent set so lowering-state forks do not
@@ -1898,6 +1907,8 @@ frame layout continues to use only the physical slot count.
 Private AVX2 parameter entry stores participate in the full-width stack-home
 census even when optimization removes every body use and liveness interval.
 An empty body still needs disjoint YMM homes inside its accepted frame.
+Debug private AVX2 functions use this same census and coloring path; their
+instruction-span keys are remapped with the IR.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes

@@ -826,6 +826,72 @@ st_tree() {
     git rev-parse "$1^{tree}"
 }
 
+# Exercise the real copied fallback tool and checkout/target restoration. Only
+# the bootstrap compiler and measurement payload are tiny fixture programs.
+st_fallback() {
+    case "$(uname -s)" in Linux*) ;; *) return 0 ;; esac
+    _sfb_dir=$1
+    mkdir -p "$_sfb_dir/repo/scripts" "$_sfb_dir/bin" "$_sfb_dir/tmp"
+    cp "$SC_TOOL_DIR/self-compile.sh" "$SC_TOOL_DIR/lib-self-compile.sh" \
+        "$SC_TOOL_DIR/self-compile-self-test.sh" "$_sfb_dir/repo/scripts/"
+    cat > "$_sfb_dir/repo/scripts/ci-verify.sh" <<'EOF'
+#!/bin/sh
+set -eu
+[ "${ST_BOOTSTRAP_FAIL:-no}" != yes ] || exit 17
+mkdir -p target/mock
+printf '#!/bin/sh\necho typelisp %s built fixture\n' "$(git rev-parse HEAD)" > target/mock/compiler
+chmod +x target/mock/compiler
+echo target/mock/compiler > target/ci-verify-stage2.path
+EOF
+    cat > "$_sfb_dir/repo/scripts/measure-instruction-counts.sh" <<'EOF'
+#!/bin/sh
+set -eu
+# env -i LC_ALL=C "$VALGRIND"
+[ ! -f fail-measurement ] || exit 18
+mkdir -p target/instruction-count-check/measure/logs
+printf 'self_compile\tcompile_cli_opt1\t116000000000\n' > target/instruction-count-check/measure/summary.tsv
+printf 'cmd: compiler compile src/main.tl -o target/instruction-count-check/measure/bin/self-compile.opt1.s\n' > target/instruction-count-check/measure/logs/self_compile-compile_cli_opt1-1.cachegrind.out
+EOF
+    chmod +x "$_sfb_dir/repo/scripts/measure-instruction-counts.sh"
+    echo fixture > "$_sfb_dir/repo/scripts/lib-benchmark.sh"
+    printf '#!/bin/sh\necho valgrind-fixture\n' > "$_sfb_dir/bin/valgrind"
+    chmod +x "$_sfb_dir/bin/valgrind"
+    (
+        cd "$_sfb_dir/repo"
+        git init -q
+        st_git add -A
+        st_git commit -qm base
+        _sfb_base=$(git rev-parse HEAD)
+        echo head > README
+        st_git add README
+        st_git commit -qm head
+        _sfb_head=$(git rev-parse HEAD)
+        ROOT=$PWD
+        RUNNER_TEMP=$_sfb_dir/tmp
+        PATH=$_sfb_dir/bin:$PATH
+        export RUNNER_TEMP PATH
+        mkdir target
+        echo preserved > target/sentinel
+        st_succeeds "copied fallback measures parent" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/parent.tsv parent-fallback
+        st_eq "fallback parent provenance" "$(sc_record_get target/records/parent.tsv commit)" "$_sfb_base"
+        st_succeeds "second copied fallback measures PR base" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/base.tsv base-fallback
+        st_eq "fallback restores checkout" "$(git rev-parse HEAD)" "$_sfb_head"
+        st_eq "fallback restores target" "$(cat target/sentinel)" preserved
+        st_fails "bootstrap failure propagates" env ST_BOOTSTRAP_FAIL=yes TYPELISP_SELF_COMPILE_ROOT="$PWD" \
+            sh "$SC_TOOL_DIR/self-compile.sh" fallback "$_sfb_base" "$_sfb_head" "$_sfb_dir/failure.tsv" parent-fallback
+        st_eq "failed bootstrap restores checkout" "$(git rev-parse HEAD)" "$_sfb_head"
+        st_eq "failed bootstrap restores target" "$(cat target/sentinel)" preserved
+        : > fail-measurement
+        st_fails "measurement failure propagates" sc_run_fallback "$_sfb_base" "$_sfb_head" target/records/failed.tsv base-fallback
+        st_eq "failed measurement restores checkout" "$(git rev-parse HEAD)" "$_sfb_head"
+        st_eq "failed measurement restores target" "$(cat target/sentinel)" preserved
+        # Return counters explicitly because the fixture changes directory in
+        # a subshell, while its diagnostics still name individual assertions.
+        printf '%s %s\n' "$st_count" "$st_failures" > "$_sfb_dir/counts"
+    )
+    read -r st_count st_failures < "$_sfb_dir/counts"
+}
+
 # st_e2e_check_repo DIR [DECLARATION]  ->  B, H and the tested merge T.
 st_e2e_check_repo() {
     mkdir -p "$1"
@@ -986,20 +1052,49 @@ st_e2e_ledger() {
         GITHUB_RUN_ID=$3
         GITHUB_WORKFLOW_REF="$ST_REPO/.github/workflows/self-compile-reference.yml@refs/heads/main"
         export GITHUB_SHA GITHUB_EVENT_NAME GITHUB_RUN_ID GITHUB_WORKFLOW_REF
+        TYPELISP_SELF_COMPILE_TOOLS_READY=
+        GITHUB_OUTPUT=$_sel_dir/outputs
+        export TYPELISP_SELF_COMPILE_TOOLS_READY GITHUB_OUTPUT
+        : > "$_sel_dir/events"
         # This runner's identity is the fixture identity, and the parent
         # measured here is a fixture record.
         sc_this_runner_record() {
-            st_record "$1"
+            [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 1
+            echo identity >> "$_sel_dir/events"
+            st_record "$1" "key.kernel=${ST_RUNNER_KERNEL:-6.11.0-1018-azure}"
         }
         sc_run_fallback() {
+            [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 1
+            echo "$4" >> "$_sel_dir/events"
             _self_sha=${ST_FALLBACK_SHA:-7777777777777777777777777777777777777777777777777777777777777777}
             if [ "$4" = base-fallback ] && [ -n "${ST_FALLBACK_BASE_SHA:-}" ]; then
                 _self_sha=$ST_FALLBACK_BASE_SHA
             fi
             st_record "$3" commit="$1" tree="$(st_tree "$1")" ir_count=116000000000 role="$4" \
-                run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="$_self_sha"
+                run.id="$GITHUB_RUN_ID" run.attempt=1 compiler_sha256="$_self_sha" \
+                "key.kernel=${ST_RUNNER_KERNEL:-6.11.0-1018-azure}"
+        }
+        sc_ledger_measure_pair_here() {
+            [ "$TYPELISP_SELF_COMPILE_TOOLS_READY" = true ] || return 3
+            echo pair >> "$_sel_dir/events"
+            cp "$3/landed.tsv" "$3/landed-reference.tsv"
+            if [ -f "$3/parent.tsv" ]; then
+                cp "$3/parent.tsv" "$3/parent-reference.tsv"
+            fi
+            st_record "$3/landed.tsv" commit="$1" tree="$(st_tree "$1")" ir_count=116000050000 \
+                "key.kernel=${ST_RUNNER_KERNEL:-6.11.0-1018-azure}"
+            sc_run_fallback "$2" "$1" "$3/parent.tsv" parent-fallback
         }
         _sel_rc=0
+        (sc_cmd_ledger_prepare) > "$_sel_dir/prepare.log" 2>&1 || _sel_rc=$?
+        # Preparation must never probe identity or measure, even on a miss.
+        [ ! -s "$_sel_dir/events" ] || exit 99
+        GITHUB_RUN_ATTEMPT=${ST_COMPLETION_ATTEMPT:-1}
+        if [ "$(sc_record_get target/self-compile/ledger-work/preparation.tsv needs_tools)" = yes ] &&
+            [ "${ST_TOOLS_FAILURE:-no}" = no ]; then
+            echo install >> "$_sel_dir/events"
+            TYPELISP_SELF_COMPILE_TOOLS_READY=true
+        fi
         (sc_cmd_ledger) > "$_sel_dir/ledger.log" 2>&1 || _sel_rc=$?
         _sel_o=target/self-compile/ledger/outcome.tsv
         printf '%s %s %s %s %s' "$_sel_rc" \
@@ -1088,6 +1183,10 @@ st_e2e() {
     st_eq "e2e ledger seeds the anchor at the first merge" "$(st_e2e_ledger c0 "$_st_c0" 900)" "0 ok yes clean 1"
     st_eq "e2e ledger anchor parent" "$(sc_record_get "$ST_E2E/ledger-c0/repo/target/self-compile/ledger/account.tsv" anchor.parent)" "$_st_p0"
     st_eq "e2e ledger carries the account forward" "$(st_e2e_ledger c1 "$_st_c1" 901)" "0 ok yes clean 2"
+    st_eq "record-only ledger requests no tools" "$(cat "$ST_E2E/ledger-c1/outputs")" needs-tools=no
+    st_eq "record-only ledger installs and probes nothing" "$(cat "$ST_E2E/ledger-c1/events")" ""
+    st_eq "missing parent installs before runner identity and fallback" \
+        "$(tr '\n' ' ' < "$ST_E2E/ledger-c0/events")" "install identity parent-fallback "
     st_eq "e2e ledger sums both merges" \
         "$(sc_record_get "$ST_E2E/ledger-c1/repo/target/self-compile/ledger/summary.tsv" sum.step)" 60000
     st_eq "e2e ledger uploads compact records only" \
@@ -1167,17 +1266,55 @@ st_e2e() {
     st_eq "e2e ledger attributes a PR whose CI job ran twice" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e8)" "0 ok yes clean 1"
     st_e2e_ledger_set e6 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
+
+    st_e2e_ledger_set lazy-pair - 116000050100
+    st_eq "different runner identity remeasures both operands after install" \
+        "$(ST_RUNNER_KERNEL=other-kernel st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-pair)" "0 ok yes clean 1"
+    st_eq "different runner pair ordering" \
+        "$(tr '\n' ' ' < "$ST_E2E/lazy-pair-c0/events")" "install identity pair parent-fallback identity base-fallback "
+    st_e2e_ledger_set lazy-failure - 116000050100
+    st_eq "failed package action cannot reach identity or measurement" \
+        "$(ST_TOOLS_FAILURE=yes st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-failure)" "1 none none none none"
+    st_eq "failed action leaves no probe or measurement" "$(cat "$ST_E2E/lazy-failure-c0/events")" ""
+
+    # A comparable reference pair can still require a PR reproduction. This
+    # exercises the second identity branch independently of a parent miss.
+    st_e2e_ledger_set lazy-reproduce - 116000050100
+    st_eq "prepare predecessor for reproduction" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-reproduce)" "0 ok yes clean 1"
+    (cd "$ST_E2E/lazy-reproduce-repo" &&
+        st_e2e_pr_api "$ST_SET_C1" 51 "$ST_SHA_F" 7051 116000060300 116000050000 "$ST_SET_C0" key.kernel=other-kernel)
+    st_eq "PR-only identity mismatch requests installed tools" \
+        "$(st_e2e_ledger c1 "$ST_SET_C1" 901 lazy-reproduce)" "1 numerical-failure yes unresolved 2"
+    st_eq "PR reproduction installs before its identity probe" \
+        "$(tr '\n' ' ' < "$ST_E2E/lazy-reproduce-c1/events")" "install identity base-fallback "
+
+    st_e2e_ledger_set lazy-stale - 116000050100
+    st_eq "prepare predecessor for stale reference" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-stale)" "0 ok yes clean 1"
+    st_record "$ST_E2E/lazy-stale-art/id-9001/record.tsv" commit="$ST_SET_C0" \
+        tree="$(git -C "$ST_E2E/lazy-stale-repo" rev-parse "$ST_SET_C0^{tree}")" \
+        ir_count=116000050000 run.id=900 key.valgrind=valgrind-old
+    st_eq "incompatible parent reference falls back after setup" \
+        "$(st_e2e_ledger c1 "$ST_SET_C1" 901 lazy-stale)" "1 numerical-failure yes unresolved 2"
+    st_eq "stale reference requests tools" "$(cat "$ST_E2E/lazy-stale-c1/outputs")" needs-tools=yes
+    st_e2e_ledger_set lazy-replay - 116000050100
+    st_eq "prepare predecessor for replay check" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lazy-replay)" "0 ok yes clean 1"
+    st_eq "prepared records cannot cross run attempts" \
+        "$(ST_COMPLETION_ATTEMPT=2 st_e2e_ledger c1 "$ST_SET_C1" 901 lazy-replay)" "1 none none none none"
+    st_eq "replayed preparation reaches no installation or identity" "$(cat "$ST_E2E/lazy-replay-c1/events")" ""
 }
 
 sc_self_test() {
     [ -f "$ROOT/scripts/self-compile.sh" ] || sc_fail "self-test root is not the repository: $ROOT"
     command -v jq >/dev/null 2>&1 || sc_fail "the self-test requires jq (scripts/ci-host-tools.tsv)"
-    _st_root="${ROOT:?}/target/self-compile-self-test"
-    rm -rf -- "${_st_root:?}"
-    for _st_part in arithmetic records gate declarations selection resolve ledger account chain e2e; do
+    mkdir -p "$ROOT/target/exp"
+    _st_root=$(mktemp -d "$ROOT/target/exp/self-compile-self-test.XXXXXX")
+    for _st_part in arithmetic records gate declarations selection resolve ledger account chain fallback e2e; do
         mkdir -p "$_st_root/$_st_part"
         "st_$_st_part" "$_st_root/$_st_part"
     done
+    case "$(uname -s)" in
+        Linux*) bash "$SC_TOOL_DIR/ci-linux-tools-self-test.sh" || st_bad "shared Linux package paths" ;;
+    esac
     if [ "$st_failures" -ne 0 ]; then
         echo "[self-compile self-test] $st_failures of $st_count checks failed" >&2
         exit 1

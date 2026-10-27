@@ -89748,8 +89748,8 @@ tl_shared_object_init:
 ;; Every `.seh_` note counts -- Windows unwind describes a
 ;; prologue/epilogue by position, so no `.seh_` line may be moved or copied.
 ;;
-;; The second byte selects the arm: no two of these names share it except the
-;; three `s` spellings, so a directive pays one byte compare and at most three
+;; The second byte selects the arm: the `s` and `c` spellings share it,
+;; so a directive pays one byte compare and a short name dispatch
 ;; name compares -- and the token
 ;; end, which is a walk of its own, is only measured once that byte has already
 ;; said a barrier is possible. Every emitted `.quad`, `.byte` and `.zero` leaves
@@ -90828,7 +90828,7 @@ tl_shared_object_init:
 ;; every line. Accepted regions never overlap: a candidate whose `jmp` sits
 ;; inside one already taken is skipped, so each line moves at most once. An
 ;; accepted region is re-inserted at the first delimiting directive at or after
-;; its join -- the `.size` / `.seh_endproc` that closes the function the join
+;; its join -- the first debug end label or closing directive of the function the join
 ;; belongs to -- found by advancing one cursor along the same flow list, which
 ;; is sound because the accepted joins only ever move forward. Returns the
 ;; number selected.
@@ -91123,7 +91123,7 @@ tl_shared_object_init:
 ;; order. Accepted regions never overlap: a candidate whose `jmp` sits inside
 ;; one already taken is skipped, so each line moves at most once. An accepted
 ;; region is re-inserted at the first delimiting directive at or after its join
-;; -- the `.size` / `.seh_endproc` that closes the function the join belongs to
+;; -- the first debug end label or closing directive of the function the join belongs to
 ;; -- found by advancing one cursor along the flow list, which is sound because
 ;; the accepted joins only ever move forward. The candidate arrays are compacted
 ;; in place: the write index never runs ahead of the read index. Returns the

@@ -13316,6 +13316,9 @@ f:
     .type f,@function
 f:
 .Lf0_entry:
+    testq %rdi, %rdi
+    jl .Lf0_else
+.Lf0_check:
     cmpq %r9, %rdi
     jge .Lf0_else
 .Lf0_then:
@@ -13323,6 +13326,8 @@ f:
     jmp .Lf0_cont
 .Lf0_else:
     movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
 .Lf0_cont:
     cmpq $40, %rcx
     ret
@@ -13334,6 +13339,9 @@ f:
     .type f,@function
 f:
 .Lf0_entry:
+    testq %rdi, %rdi
+    jl .Lf0_else
+.Lf0_check:
     cmpq %r9, %rdi
     jge .Lf0_else
 .Lf0_then:
@@ -13343,6 +13351,8 @@ f:
     ret
 .Lf0_else:
     movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
     jmp .Lf0_cont
 "
       closing

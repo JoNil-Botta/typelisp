@@ -316,14 +316,43 @@ phi interaction; its independent opt2 load-forwarding defect remains #8514.
 reference or slice. It covers explicit and implicit field borrows, array and
 tuple elements, local aliases, call-returned references, shadowed parameters,
 heap aggregate copies and indirect calls at opt0/1/2 on both hosts. Its
-assembly cases retain ordinary calls for unproven storage and tail jumps for
-reference parameters, reborrows, caller-owned projections and heap storage.
+assembly cases retain ordinary calls for unproven storage and for a borrowed
+scalar local, whose copy is a frame slot (#9297), and tail jumps for reference
+parameters, reborrows, caller-owned projections, heap storage and borrows of
+dynamic-array and String locals, which lend their heap handles.
 Parameter-derived slice rests keep tail jumps through nested patterns and a
 300,000-element walk. Sibling local-array views and rebound rests retain calls,
 checking that external-storage facts neither leak between arms nor survive a
 reassignment.
 The safety corpus rejects rebinding a reference parameter to a shorter local
 borrow before forwarding it.
+
+`with_arena_scalar_borrow.tl` is #9297's program: a reference to a scalar
+local borrowed inside `with-arena` outlives the form, and the next allocation
+reuses the rewound arena. `borrow_local_frame_storage.tl` extends it to
+integer, float, bool, char and narrow locals, whole register-resident structs
+and their fields, parameters, a match payload bound through a shared
+reference, nested regions, a returned reference, a holder struct, borrow sites
+in loops and `in-arena` followed by `arena.destroy-safe!`. Each case refills
+the released arena before it reads, and `profile.alloc-total` must not move
+around borrows of locals. Both run at opt0/1/2 on both hosts, and the
+`borrow-local-no-alloc` assembly case forbids `tl_alloc` in the borrowing
+function on both targets.
+
+A lambda's by-value capture is storage of each call, so its frame-slot copy
+is only sound because the ownership graph retires the capture at every return.
+The `capture_borrow_*_reject` safety rows return or store a borrow of a
+capture (scalar, register-resident field, a `String` snapshotted into a
+`with-arena` region, under `with-arena`, `in-arena` with
+`arena.destroy-safe!`, auto-borrowed into a lifetime-carrying call, nested
+lambdas, a captured lambda parameter); main accepted each, and each must
+report the capture's E0205. Two controls keep the inferred-result and
+lambda-parameter diagnostics. `capture_borrow_storage.tl` runs the accepted
+side at opt0/1/2 on both hosts: captured references returned or reborrowed,
+non-escaping borrows (lent, annotated with the capture's lifetime, in a loop),
+shadowing, nested lambdas and field borrows. Its lambdas differ in signature
+or body, because opt2 still fails to link two identical capturing lambdas
+(#9317).
 
 `tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
 in one frame, including register-resident enum spills. Their tail jumps and

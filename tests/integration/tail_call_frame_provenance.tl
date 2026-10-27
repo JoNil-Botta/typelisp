@@ -5,6 +5,7 @@
 ;; frame, so a read through a reference into the caller's abandoned frame sees
 ;; the fill instead of the value.
 (import stdlib.iterator)
+(import stdlib.string)
 
 (defstruct Rec
   (x i64)
@@ -40,6 +41,26 @@
     (for [k (iterator.range 0 32)]
       (set! (array-ref a k) (+ 3000000 k)))
     (+ (array-ref xs 0) (- (array-ref a (% seed 32)) (array-ref a (% seed 32))))))
+
+;; The same through a dynamic array, reading its first element.
+(define (scrub-handle [xs : (& (__tl_dyn-array i64))] [seed : i64]) : i64
+  (let
+    [a : (Array i64 32)
+      (array 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
+    (for [k (iterator.range 0 32)]
+      (set! (array-ref a k) (+ 4000000 k)))
+    (+ (array-ref xs 0) (- (array-ref a (% seed 32)) (array-ref a (% seed 32))))))
+
+;; The same through a `str` view, reading its length.
+(define (scrub-str [s : (& str)] [seed : i64]) : i64
+  (let
+    [a : (Array i64 32)
+      (array 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0)]
+    (for [k (iterator.range 0 32)]
+      (set! (array-ref a k) (+ 5000000 k)))
+    (+
+      (string.string-length s)
+      (- (array-ref a (% seed 32)) (array-ref a (% seed 32))))))
 
 (define (field-ref [r : (& r Rec)]) : (& r i64)
   (& r.x))
@@ -125,6 +146,13 @@
     [r : (& x i64) (& x)]
     (scrub-ref (& r) 7)))
 
+;; A borrow of a scalar local is a copy in a frame slot, not in the current
+;; arena (#9297).
+(define (scalar-copy [n : i64]) : i64
+  (let
+    [x : i64 n]
+    (scrub-ref (& x) 7)))
+
 ;; A let-bound slice view of a frame-local array.
 (define (local-slice-view [n : i64]) : i64
   (let
@@ -199,6 +227,19 @@
 (define (heap-slice [l : (& Lst)] [k : i64]) : i64
   (scrub-slice (slice-view l.slots 0 1) k))
 
+;; A borrow of a dynamic-array local is its heap handle, not a copy.
+(define (handle-borrow [n : i64]) : i64
+  (let
+    [xs : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (set! (array-ref xs 0) n)
+    (scrub-handle (& xs) 7)))
+
+;; A String local lends its heap text as `str`.
+(define (string-borrow [n : i64]) : i64
+  (let
+    [s : String (string.int->string n)]
+    (scrub-str (& s) 7)))
+
 ;; A direct projection keeps the heap element's address. Binding the Copy
 ;; aggregate to a local instead is covered by heap-copy-field above.
 (define (heap-projected-field [n : i64]) : i64
@@ -227,12 +268,6 @@
   (let
     [global-shared : (Array i64 3) (array n 0 0)]
     (scrub-ref (& (array-ref global-shared 0)) 7)))
-
-;; A borrow of a scalar local is a copy in its own heap storage.
-(define (scalar-copy [n : i64]) : i64
-  (let
-    [x : i64 n]
-    (scrub-ref (& x) 7)))
 
 ;; A borrowed enum match can lower its arms in tail position, but payload
 ;; references and views still need the same frame-storage proof.
@@ -355,13 +390,13 @@
               (+ (local-ref-scrutinee 5) (local-ref-direct 6))
               (+
                 (+ (local-ref-reborrow 7) (local-slice-view 8))
-                (local-lst-reborrow 9)))))]
+                (+ (local-lst-reborrow 9) (scalar-copy 9))))))]
       [outside : i64
         (+
           (+ (param-ref (& v) 7) (param-reborrow (& v) 7))
           (+
             (+ (param-field (& rec) 7) (heap-element (& lst) 7))
-            (+ (heap-slice (& lst) 7) (scalar-copy 9))))]
+            (heap-slice (& lst) 7)))]
       [extra : i64
         (+
           (+ (local-implicit-field 1) (local-array-element 2))
@@ -369,10 +404,12 @@
             (local-indirect-field scrub-ref 3)
             (+ (shadowed-ref (& v) 4) (heap-copy-field 5))))]
       (if (and
-        (= frame 45)
-        (= outside 47)
+        (= frame 54)
+        (= outside 38)
         (= extra 15)
         (= (heap-projected-field 42) 42)
+        (= (handle-borrow 42) 42)
+        (= (string-borrow 4200) 4)
         (= (global-pair 42) 42)
         (= (global-shadow 42) 42)
         (= (param-slice-rest (slice-view (& sample) 0 3) 7) 42)

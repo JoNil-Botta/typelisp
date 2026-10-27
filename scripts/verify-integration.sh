@@ -14,6 +14,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-source-location.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
 BOUNDED_POOL_LABEL=integration
 . "$ROOT/scripts/lib-bounded-pool.sh"
@@ -260,6 +261,7 @@ MANIFEST="$ROOT/tests/integration/native.manifest"
 WORKDIR="$ROOT/target/integration-verify/$HOST_OS$WORK_SUFFIX"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+source_location_self_test "$WORKDIR/source-location-self-test"
 # This host's rows of the shared manifest, one per name and opt level.
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 awk -v host="$HOST_OS" -f "$ROOT/scripts/expand-integration-manifest.awk" "$MANIFEST" \
@@ -1043,7 +1045,7 @@ validate_manifest() {
 }
 
 write_expected_stream() {
-    _spec=$1
+    _spec=$(resolve_source_locations "$1") || exit 1
     _out=$2
     case "$_spec" in
         "" | -)
@@ -3476,8 +3478,55 @@ integration_batch_sentinel() {
 }
 
 # Staging stays inside the batch-compile phase row it has always been part of.
+integration_source_location_self_test() (
+    # Exercise the real assertion on every anchored row for this host. Planted
+    # failures stay in private logs and do not enter the corpus timing/counts.
+    TYPELISP_CI_TIMING=0
+    sl_checked=0
+    while IFS='|' read -r sl_name sl_source sl_want sl_stdout sl_args sl_deps sl_extra sl_suite; do
+        case "$sl_extra" in *'@loc{'*) ;; *) continue ;; esac
+        sl_spec=${sl_extra#*expected-stderr:}
+        sl_token=${sl_spec#*@loc\{}
+        sl_token=${sl_token%%\}*}
+        sl_location=$(resolve_source_locations "@loc{$sl_token}") || exit 1
+        sl_column=${sl_location##*:}
+        sl_prefix=${sl_location%:*}
+        sl_line=${sl_prefix##*:}
+        sl_dir="$WORKDIR/source-location-self-test/$sl_name"
+        mkdir -p "$sl_dir"
+        : > "$sl_dir/stdout"
+        : > "$sl_dir/shell-stderr"
+        write_expected_stream "$sl_spec" "$sl_dir/correct"
+        for sl_mutation in correct wrong-line wrong-column; do
+            case "$sl_mutation" in
+                correct) cp "$sl_dir/correct" "$sl_dir/actual"; sl_failures=0 ;;
+                wrong-line)
+                    sed "s/:$sl_line:$sl_column:/:$((sl_line + 1)):$sl_column:/" "$sl_dir/correct" > "$sl_dir/actual"
+                    sl_failures=1 ;;
+                wrong-column)
+                    sed "s/:$sl_line:$sl_column:/:$sl_line:$((sl_column + 1)):/" "$sl_dir/correct" > "$sl_dir/actual"
+                    sl_failures=1 ;;
+            esac
+            got=$sl_want
+            failed=0
+            ran=0
+            case_timed_out=0
+            assert_manifest_case "$sl_name" "$sl_want" "$sl_stdout" "$sl_spec" \
+                "$sl_dir/unused.s" "$sl_dir/stdout" "$sl_dir/actual" "$sl_dir" "$sl_dir/shell-stderr" \
+                > "$sl_dir/$sl_mutation.log" 2>&1
+            [ "$ran" -eq 1 ] && [ "$failed" -eq "$sl_failures" ] || {
+                echo "source location assertion self-test failed: $sl_name $sl_mutation" >&2
+                exit 1
+            }
+            sl_checked=$((sl_checked + 1))
+        done
+    done < "$NORMALIZED_MANIFEST"
+    echo "native source location assertions passed $sl_checked mutation/control cases"
+)
+
 integration_prepare() {
     integration_stage_corpus
+    integration_source_location_self_test
     integration_batch_precompile
 }
 

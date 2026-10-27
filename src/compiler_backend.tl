@@ -61870,10 +61870,16 @@
   [dst : (& dst str)]
   [ty : (& ty compiler_ast_types.AstType)]) : String
   (let
-    [abi : compiler_abi.CompilerRegTargetAbi (compiler-backend-target-abi target)]
-    [args : i64 (compiler_abi.compiler-abi-float-arg-register-count abi (Internal))]
+    [abi : compiler_abi.CompilerRegTargetAbi
+      (compiler-backend-target-abi target)]
+    [args : i64
+      (compiler_abi.compiler-abi-float-arg-register-count abi (Internal))]
     [sse? : bool
-      (< args (compiler_abi.compiler-abi-caller-saved-xmm-register-count abi (Internal)))]
+      (<
+        args
+        (compiler_abi.compiler-abi-caller-saved-xmm-register-count
+          abi
+          (Internal)))]
     [f32? : bool
       (match ty
         [(F32) true]
@@ -61881,14 +61887,30 @@
     [mov : String
       (if sse?
         (compiler-backend-float-move ty)
-        (if f32? "movl" "movq"))]
+        (if f32?
+          "movl"
+          "movq"))]
     [stage : String
       (if sse?
         (compiler_abi.compiler-abi-register-spelling
           (compiler_abi.compiler-abi-xmm-register-id args))
-        (if f32? "%eax" "%rax"))]
+        (if f32?
+          "%eax"
+          "%rax"))]
     (str_cat.str-cat
-      "    " mov " " src ", " stage "\n    " mov " " stage ", " dst "\n")))
+      "    "
+      mov
+      " "
+      src
+      ", "
+      stage
+      "\n    "
+      mov
+      " "
+      stage
+      ", "
+      dst
+      "\n")))
 
 ;; Is this stack-passed parameter an entry copy: a float homed in a frame slot?
 (define (compiler-backend-param-entry-float-copy?
@@ -61914,8 +61936,12 @@
   [backend-state : CompilerBackendState]) : unit
   (let
     [dst : String
-      (compiler-backend-float-value-stack-address assignments (Var var-id) backend-state)]
-    (unless (string.eq dst "")
+      (compiler-backend-float-value-stack-address
+        assignments
+        (Var var-id)
+        backend-state)]
+    (unless
+      (string.eq dst "")
       (compiler-backend-asm-append
         entry
         (compiler-backend-param-entry-memory-copy target addr (& dst) ty)))))

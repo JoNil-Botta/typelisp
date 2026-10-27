@@ -36979,7 +36979,13 @@ entry:
         backend-state)
       (has
         "    movq 56(%rbp), %rax\n    movq %rax, -8(%rbp)\n    movq 72(%rbp), %rax\n    movq %rax, -16(%rbp)\n    movsd 48(%rbp), %xmm6\n    movsd 64(%rbp), %xmm7\n")
-      (lacks ", %xmm0\n" ", %xmm1\n" ", %xmm2\n" ", %xmm3\n" ", %xmm4\n" ", %xmm5\n"))))
+      (lacks
+        ", %xmm0\n"
+        ", %xmm1\n"
+        ", %xmm2\n"
+        ", %xmm3\n"
+        ", %xmm4\n"
+        ", %xmm5\n"))))
 
 ;; A System V register group whose two SSE words do not fit the one float
 ;; argument register left after g arrives on the stack. With c..g pinned to
@@ -44405,6 +44411,7 @@ user_fn:
   (test.assert-true
     (compiler-backend-packed-literal-records-ok?)
     "packed literal bytes, terminal zeros and aligned pointer/length headers"))
+
 (test
   backend-c-export-entries
   (test.assert-true

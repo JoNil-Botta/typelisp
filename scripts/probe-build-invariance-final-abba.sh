@@ -237,22 +237,40 @@ def sample_telemetry(out):
 
 class Runner:
  def __init__(self,root,work,job):
-  self.root=root;self.work=work;self.job=job;self.active=None;self.proc=None;self.identity=identity();self.deadline=time.monotonic()+max(0,dt(job['started_at'])+140*60-time.time());self.final_deadline=self.deadline+8*60
+  self.root=root;self.work=work;self.job=job;self.active=None;self.proc=None;self.service=None;self.identity=identity();self.deadline=time.monotonic()+max(0,dt(job['started_at'])+140*60-time.time());self.final_deadline=self.deadline+8*60
  def stop(self):
   if self.active is None:return
   proc=self.proc
-  if proc is None:self.active=None;return
-  # A payload publishes service.unit before any native work. Wait for startup
-  # publication or wrapper exit; do not lose ownership if neither is known.
-  until=time.monotonic()+5
-  receipt=self.active/'service.unit'
-  while proc.poll()is None and not receipt.is_file()and time.monotonic()<until:time.sleep(.05)
-  if proc.poll()is None:
-   need(receipt.is_file(),'cannot stop: exact unit receipt not yet published;ownership retained')
-   unit=receipt.read_text().strip();need(re.fullmatch(r'run-[A-Za-z0-9_.-]+\.service',unit)is not None,'invalid unit')
-   with(self.work/'evidence/stop.log').open('a')as log:subprocess.run(['systemctl','--user','stop',unit],stdout=log,stderr=subprocess.STDOUT,timeout=25,check=True)
+  if proc is None:
+   # Popen did not create a wrapper; no unit launch occurred.
+   need(self.service is None,'service handle without wrapper');self.active=None;return
+  # The independently managed service can outlive its systemd-run client.
+  # Receipt discovery therefore never depends on wrapper liveness.
+  until=time.monotonic()+5;receipt=self.active/'service.unit'
+  while self.service is None and not receipt.is_file()and time.monotonic()<until:time.sleep(.05)
+  if self.service is None:
+   need(receipt.is_file(),'exact unit receipt missing;ownership retained')
+   self.service=receipt.read_text().strip()
+  unit=self.service;need(re.fullmatch(r'run-[A-Za-z0-9_.-]+\.service',unit)is not None,'invalid unit')
+  with(self.work/'evidence/stop.log').open('a')as log:
+   stopped=subprocess.run(['systemctl','--user','stop',unit],stdout=log,stderr=subprocess.STDOUT,timeout=25)
+  # A collected unit makes stop return nonzero. Only positive inactive/empty
+  # evidence permits release; a bus error or still-populated node does not.
+  shown=subprocess.run(['systemctl','--user','show','--property=LoadState','--property=ActiveState','--property=ControlGroup',unit],capture_output=True,text=True,timeout=10)
+  props=dict(l.split('=',1)for l in shown.stdout.splitlines()if'='in l)
+  proof={'unit':unit,'stop_exit':stopped.returncode,'show_exit':shown.returncode,'properties':props,'show_stderr':shown.stderr,'wrapper_status':proc.poll()}
+  dump(self.active/'termination.json',proof)
+  need(props.get('LoadState')in('loaded','not-found')and props.get('ActiveState')in('inactive','failed'),'service termination not positively established;ownership retained')
+  cg=props.get('ControlGroup');need(cg is not None,'missing cgroup termination property')
+  if cg:
+   need(cg.startswith('/')and ('/'+unit)in cg,'unexpected service cgroup')
+   try:
+    events=dict(l.split()for l in(Path('/sys/fs/cgroup')/cg.lstrip('/')/'cgroup.events').read_text().splitlines())
+   except FileNotFoundError:events={'populated':'0','source':'inactive cgroup removed'}
+   proof['cgroup_events']=events;dump(self.active/'termination.json',proof)
+   need(events.get('populated')=='0','service cgroup still populated;ownership retained')
   proc.wait(timeout=30)
-  self.proc=None;self.active=None
+  self.proc=None;self.service=None;self.active=None
  def bounded(self,out,cwd,cmd,limit=6080,ceiling=2700,perf=False,final=False,env_extra=None):
   out.mkdir(parents=True,exist_ok=True);need(not(out/'phase.json').exists(),'repeated phase')
   remaining=(self.final_deadline if final else self.deadline)-time.monotonic();seconds=min(ceiling,int(remaining));need(seconds>0,'budget exhausted before phase')
@@ -267,7 +285,7 @@ class Runner:
      trace.write(json.dumps(sample)+'\n');trace.flush()
      if time.monotonic()>t+seconds+20:self.stop()
      time.sleep(.5)
-    status=proc.wait();self.proc=None;self.active=None
+    status=proc.poll();self.stop()
   except BaseException:
    # Monitoring/logging/receipt errors must stop and reap before any archival.
    try:self.stop()
@@ -334,7 +352,7 @@ def run_job(root,work):
   dump(e/'status.json',state);print('[D-C21] FAILED/INCOMPLETE',repr(ex),flush=True)
   runner.stop()
  finally:
-  need(runner.active is None and runner.proc is None,'ownership unresolved;do not rename or archive a live payload')
+  need(runner.active is None and runner.proc is None and runner.service is None,'ownership unresolved;do not rename or archive a live payload')
   # Preserve even incomplete outputs before packaging; no cleanup/deletion.
   if current is not None:
    for src,dst in[(source/'target/build-invariance',current/'raw'),(source/'target/opt1-reference.path',current/'handoff.path')]:
@@ -404,8 +422,11 @@ def test_monitor_ownership(work,source):
   def wait(self,timeout=None):
    need(not self.alive,'wrapper reaped before exact service stop');self.waited=True;return self.returncode
  def stop_command(argv,**kwargs):
-  need(argv==['systemctl','--user','stop','run-fixture.service'],'wrong unit stopped');stops.append(argv);instances[0].alive=False;instances[0].returncode=-15
-  return subprocess.CompletedProcess(argv,0)
+  if argv==['systemctl','--user','stop','run-fixture.service']:
+   stops.append(argv);instances[0].alive=False;instances[0].returncode=-15
+   return subprocess.CompletedProcess(argv,0)
+  need(argv==['systemctl','--user','show','--property=LoadState','--property=ActiveState','--property=ControlGroup','run-fixture.service'],'wrong service query')
+  return subprocess.CompletedProcess(argv,0,stdout='LoadState=not-found\nActiveState=inactive\nControlGroup=\n',stderr='')
  runner=Runner(SCRIPT.parent.parent,work,{'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat()})
  with mock.patch.object(subprocess,'Popen',MockProcess),mock.patch.object(subprocess,'run',stop_command):
   try:runner.bounded(out,source,['unused-fixture-command'],limit=32,ceiling=10)
@@ -420,6 +441,31 @@ def test_monitor_ownership(work,source):
  with mock.patch.object(Path,'read_text',cgroup_teardown):
   observed=sample_telemetry(out);need(len(observed['errors'])==6 and all(v is None for v in observed['cgroup'].values()),'ENODEV telemetry not retained as missing')
 
+
+def test_exited_wrapper_live_service(work,source):
+ import unittest.mock as mock
+ for mode in('direct-stop','bounded-exit'):
+  out=work/('exited-wrapper-'+mode);out.mkdir();state={'service_live':True,'stop_calls':0,'waited':False}
+  atomic_text(out/'service.unit','run-exited-fixture.service\n')
+  class ExitedWrapper:
+   returncode=-9
+   def __init__(self,*args,**kwargs):pass
+   def poll(self):return -9
+   def wait(self,timeout=None):
+    need(not state['service_live'],'reaped/cleared before live service stopped');state['waited']=True;return -9
+  def systemctl(argv,**kwargs):
+   if argv==['systemctl','--user','stop','run-exited-fixture.service']:
+    state['service_live']=False;state['stop_calls']+=1;return subprocess.CompletedProcess(argv,0)
+   need(argv[-1]=='run-exited-fixture.service'and 'show'in argv,'wrong service queried')
+   return subprocess.CompletedProcess(argv,0,stdout='LoadState=loaded\nActiveState=inactive\nControlGroup=\n',stderr='')
+  runner=Runner(SCRIPT.parent.parent,work,{'started_at':datetime.datetime.now(datetime.timezone.utc).isoformat()})
+  with mock.patch.object(subprocess,'Popen',ExitedWrapper),mock.patch.object(subprocess,'run',systemctl):
+   if mode=='direct-stop':runner.active=out;runner.proc=ExitedWrapper();runner.stop()
+   else:
+    try:runner.bounded(out,source,['unused-command'],limit=32,ceiling=10)
+    except Failure as ex:need('bounded phase failed'in str(ex),'wrong exited-wrapper failure')
+    else:raise Failure('killed wrapper accepted')
+  need(state['stop_calls']==1 and state['waited']and not state['service_live']and runner.active is None and runner.proc is None and runner.service is None,'exited wrapper lost service ownership')
 
 def test_input_and_fallback(work,source,parent):
  import unittest.mock as mock
@@ -461,6 +507,7 @@ def selftest(parent):
   except Failure:pass
   else:raise Failure('negative fixture accepted '+defect)
  test_monitor_ownership(w,source)
+ test_exited_wrapper_live_service(w,source)
  test_input_and_fallback(w,source,parent)
  archive_input={str(p.relative_to(w/'evidence')):sha(p)for p in(w/'evidence').rglob('*')if p.is_file()and not p.is_symlink()}
  pack(w)
@@ -484,7 +531,7 @@ def selftest(parent):
  except Failure as ex:need('budget exhausted' in str(ex),'wrong budget failure')
  else:raise Failure('expired budget launched a command')
  need(not(w/'expired-budget/phase.memory').exists(),'expired budget entered wrapper')
- print('SELFTEST PASS all4 mock trials,5 negative fixtures,complete CAS,ownership/error-stop,generated-input mutation,archive-failure fallback,all-regular-file reconstruction,ENODEV telemetry,expired-budget rejection;no timing evidence',w)
+ print('SELFTEST PASS all4 mock trials,5 negative fixtures,complete CAS,ownership/error-stop,exited-wrapper/live-service stop+proof,generated-input mutation,archive-failure fallback,all-regular-file reconstruction,ENODEV telemetry,expired-budget rejection;no timing evidence',w)
 
 try:
  mode=ARGS[0]if ARGS else''

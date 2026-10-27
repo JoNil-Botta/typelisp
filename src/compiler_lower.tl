@@ -35331,8 +35331,7 @@
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
-    [(Ok layout)
-      (lower-sysv-classify-layout abi ctx layout base-offset slots)]
+    [(Ok layout) (lower-sysv-classify-layout abi ctx layout base-offset slots)]
     [(Err _) (Unsupported)]))
 
 (define (lower-sysv-classify-type

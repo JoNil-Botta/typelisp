@@ -7,10 +7,12 @@ src/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-f
 src/compiler_*	stage2-codegen-target-parity	@compiler	Compiler data and target references retain the target boundary check.
 src/compiler_backend*	x64-executable-template-registry-coverage	@compiler	Backend source families include the executable-template registry's direct inputs.
 src/compiler_x64*	x64-executable-template-registry-coverage	@compiler	Executable-template code and catalog data are read by the registry guard.
+src/main.tl	cli-help-surface	@compiler	The help-surface guard reads the dispatcher help text directly.
+src/*_cli_core.tl	cli-help-surface	@compiler	CLI parser modules are compared with their help text by the direct source guard.
 src/compile_manifest.txt	stage2-selfhost-compile-manifest	@compiler	Exact compiler-manifest input, expectations and standalone coverage.
 stdlib/*	stage2-safety-corpus	@stdlib	Every stdlib edit can change located safety diagnostics and pins.
 stdlib/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@stdlib	Stdlib sources can carry target references and are read by source-content and module-path guards.
-tests/*	-	@corpus	Compiler-consumed test data and corpus metadata; retain direct corpus validators in the advisory plan.
+tests/*	-	@corpus	Advisory corpus class; a path also needs a required trigger or both tiers fall back to full.
 tests/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Source fixtures can carry target references and are read by source-invariant checks.
 tests/integration/*	stage2-native-integration-corpus	@corpus	Native integration sources, manifest, dependencies and expected outputs.
 tests/safety/*	stage2-safety-corpus	@corpus	Safety sources, manifest and every pinned expectation.
@@ -20,6 +22,9 @@ tests/codegen/math.cases	stage2-math-exp-codegen-verifier,stage2-math-log-codege
 tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-mandelbrot-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Exact case file named by the ISPC contract gates.
 tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpus	Exact case file named by the must-use gate.
 tests/codegen/asm-shape.cases	stage2-regalloc-backend-asm-shape-gates	@corpus	Exact case file named by the backend shape gate.
+tests/codegen/native-link.cases	stage2-native-link-generated-programs	@corpus	The Linux native-link runner directly consumes this case file.
+tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus	@corpus	The native integration runner also executes this codegen case file.
+tests/golden/*	ir-observability-golden	@corpus	IR observability compares these golden snapshots and expectations.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
 tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@corpus	Exact case file named by the secret-wipe gate.
 tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.
@@ -27,6 +32,7 @@ tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast	@cor
 tests/cli/public-*.cases	stage2-public-tool-surface	@corpus	Public command transcripts discovered by the public-tool runner.
 tests/cli/selfhost-surface.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact command-surface corpus named by the CLI smoke runner.
 tests/cli/selfhost-build-run.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact build/run corpus named by the CLI smoke runner.
+tests/cli/host-action.cases	stage2-cli-host-action-smoke	@corpus	The host-action smoke runner directly consumes this transcript.
 tests/*.sh	*	-	Executable corpus harness changes can alter every gate contract.
 tests/*.ps1	*	-	Executable corpus harness changes can alter every gate contract.
 tests/*.awk	*	-	Corpus validation harness changes require the full table.

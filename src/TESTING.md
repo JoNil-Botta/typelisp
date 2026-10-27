@@ -2694,7 +2694,9 @@ CI on the delivered head.
 Selection compares the merge base of the named ref and HEAD with the working
 tree, including committed, staged, unstaged, deleted, both sides of renamed,
 and nonignored untracked paths. All matching map rows contribute. Unmapped or
-unusually quoted Git paths select the full host table. Invalid refs, invalid
+unusually quoted Git paths select the full host table. An advisory-only match
+also selects full coverage in both tiers until its required trigger is reviewed.
+Invalid refs, invalid
 maps and unreadable path inventories fail before any gate runs. The shared
 source hygiene gates are always selected, even for an empty diff.
 

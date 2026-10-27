@@ -140,7 +140,7 @@ expanded_map=$(awk -F '\t' -v tier="$tier" '
         if (stale) print "[ci-affected] unreviewed gate inventory; selecting the full table" > "/dev/stderr"
         for (p = 1; p <= paths; p++) {
             split(rows[p], fields, "\t")
-            if (stale) { print fields[1] "\t*\t" fields[4]; continue }
+            if (stale) { print fields[1] "\t*\t" fields[4] "\t1"; continue }
             request = fields[2] (tier == "advisory" ? "," fields[3] : "")
             count = split(request, ids, ",")
             expanded = ""
@@ -157,7 +157,7 @@ expanded_map=$(awk -F '\t' -v tier="$tier" '
             }
             sub(/,$/, "", expanded)
             if (expanded == "") expanded = "-"
-            print fields[1] "\t" expanded "\t" fields[4]
+            print fields[1] "\t" expanded "\t" fields[4] "\t" (fields[2] != "-")
         }
     }
 ' "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-affected-inputs.tsv" "$map")
@@ -187,7 +187,7 @@ add_requested() {
     done
     IFS=$_affected_old_ifs
 }
-while IFS=$TAB read -r pattern gates reason; do
+while IFS=$TAB read -r pattern gates reason covered; do
     if [ "$pattern" = '@always' ]; then
         if [ "$gates" = '*' ]; then full=1; elif [ "$gates" != - ]; then add_requested "$gates"; fi
     fi
@@ -197,10 +197,11 @@ EOF
 while IFS= read -r path || [ -n "$path" ]; do
     [ -n "$path" ] || continue
     matched=0
-    while IFS=$TAB read -r pattern gates reason; do
+    while IFS=$TAB read -r pattern gates reason covered; do
         case "$pattern" in '' | \#* | path | @always) continue ;; esac
         case "$path" in $pattern)
-            matched=1
+            # An advisory class alone cannot authorize an empty required set.
+            [ "$covered" != 1 ] || matched=1
             # Each row contributes once, even for a repository-wide change.
             # Otherwise repeated group IDs can exceed the shell argv limit.
             case "$contributed" in *",$pattern,"*) continue ;; esac

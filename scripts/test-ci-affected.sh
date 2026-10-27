@@ -74,6 +74,14 @@ for host in linux windows; do
         "$selector" --host "$host" --paths "$work/paths" > "$work/literal.ids"
         has_gate "$work/literal.ids" "$gate"
     done < "$work/literal-inputs.tsv"
+    for row in 'tests/codegen/native-link.cases stage2-native-link-generated-programs' 'tests/codegen/integration-fixtures.cases stage2-native-integration-corpus' 'tests/cli/host-action.cases stage2-cli-host-action-smoke' 'tests/golden/optimizer_fold.after-fold.ir ir-observability-golden' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+        path=${row% *}
+        gate=${row##* }
+        if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
+        printf '%s\n' "$path" > "$work/paths"
+        "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
+        has_gate "$work/direct-reader.ids" "$gate"
+    done
     for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
         path=${row% *}
         gate=${row##* }
@@ -91,6 +99,11 @@ for host in linux windows; do
     printf '%s\n' 'unmapped/new file.tl' > "$work/paths"
     "$selector" --host "$host" --paths "$work/paths" > "$work/unknown.ids" 2> "$work/unknown.log"
     cmp "$work/unknown.ids" "$work/$host.full" || fail 'unmapped path did not select full table'
+    printf '%s\n' tests/unmapped-corpus-data.bin > "$work/paths"
+    for tier in required advisory; do
+        "$selector" --host "$host" --paths "$work/paths" --tier "$tier" > "$work/advisory-only.ids" 2> "$work/advisory-only.log"
+        cmp "$work/advisory-only.ids" "$work/$host.full" || fail 'advisory-only match omitted an unknown required consumer'
+    done
     for path in scripts/ci-verify.sh .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
         printf '%s\n' "$path" > "$work/paths"
         "$selector" --host "$host" --paths "$work/paths" > "$work/harness.ids"

@@ -10,6 +10,69 @@
 # bound runs each job under the cap it was admitted with.
 BOUNDED_POOL_LABEL=${BOUNDED_POOL_LABEL:-pool}
 
+# Read a bounded invocation's complete report, tied to the status its caller
+# waited for, host and admitted cap. A report reason alone is not completion
+# evidence. Ordinary failures and known panic/crash exits may supply bounded
+# diagnostics; cancellation, wrapper failure and inconsistent records fail
+# before a caller publishes output. Replaying diagnostics cannot change the
+# original failed batch verdict. Windows reports native signed exit codes.
+bounded_pool_read_report() {
+    BOUNDED_POOL_REPORT_REASON=invalid-completion
+    BOUNDED_POOL_REPORT_FAILURE='has no eligible bounded completion'
+    BOUNDED_POOL_REPORT_PEAK=0
+    BOUNDED_POOL_REPORT_EXIT_CODE=
+    _bp_report=$(awk -F '=' -v status="$2" -v cap="$3" -v host="$4" '
+        { sub(/\r$/, "") }
+        NF != 2 || seen[$1]++ { bad = 1 }
+        { value[$1] = $2 }
+        END {
+            if (bad || NR != 8 || value["schema_version"] != "1" ||
+                value["host"] != host ||
+                value["backend"] != (host == "linux" ? "systemd-user-cgroup" : "job-object") ||
+                status !~ /^(0|[1-9][0-9]*)$/ || status + 0 > 255 ||
+                value["exit_code"] !~ /^(0|-?[1-9][0-9]*)$/ ||
+                value["limit_bytes"] !~ /^[1-9][0-9]*$/ ||
+                value["limit_bytes"] + 0 != cap * 1024 * 1024 ||
+                value["peak_memory_bytes"] !~ /^(0|[1-9][0-9]*)$/ ||
+                value["wall_ms"] !~ /^(0|[1-9][0-9]*)$/ ||
+                value["reason"] !~ /^(success|command-failure|wrapper-failure|timeout|memory-limit)$/)
+                exit 1
+            code = value["exit_code"] + 0
+            if (host == "windows") {
+                if (code < -2147483648 || code > 4294967295) exit 1
+                code = ((code % 256) + 256) % 256
+            }
+            if (code != status + 0) exit 1
+            print value["reason"] "|" value["peak_memory_bytes"] "|" value["exit_code"]
+        }
+    ' "$1" 2>/dev/null) || return 1
+    BOUNDED_POOL_REPORT_REASON=${_bp_report%%|*}
+    _bp_report=${_bp_report#*|}
+    BOUNDED_POOL_REPORT_PEAK=${_bp_report%%|*}
+    BOUNDED_POOL_REPORT_EXIT_CODE=${_bp_report#*|}
+    case $BOUNDED_POOL_REPORT_REASON in
+        timeout | memory-limit) BOUNDED_POOL_REPORT_FAILURE='was stopped by its bound' ;;
+    esac
+    case "$BOUNDED_POOL_REPORT_REASON:$BOUNDED_POOL_REPORT_EXIT_CODE" in
+        success:0) ;;
+        command-failure:*)
+            [ "$2" -gt 0 ] || return 1
+            if [ "$4" = windows ] &&
+                { [ "$BOUNDED_POOL_REPORT_EXIT_CODE" -lt 0 ] || [ "$BOUNDED_POOL_REPORT_EXIT_CODE" -gt 255 ]; }; then
+                # STATUS_CONTROL_C_EXIT is cancellation, not crash diagnostics.
+                case $BOUNDED_POOL_REPORT_EXIT_CODE in -1073741510 | 3221225786) return 1 ;; esac
+            else
+                case $2 in
+                    132 | 133 | 134 | 135 | 136 | 139) ;;
+                    *) [ "$2" -lt 124 ] || return 1 ;;
+                esac
+            fi
+            ;;
+        *) return 1 ;;
+    esac
+    [ "$BOUNDED_POOL_REPORT_PEAK" -gt 0 ]
+}
+
 # Worker pool. A queue lists every job once as `job|cap_mib`, optionally
 # followed by `|need,...` (earlier jobs that must succeed before it starts, or
 # `-`) and `|lock,...` (shared resources no two running jobs may hold at once).

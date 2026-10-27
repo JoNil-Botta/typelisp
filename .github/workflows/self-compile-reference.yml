@@ -28,6 +28,11 @@ on:
       - 'scripts/self-compile.sh'
       - 'scripts/lib-self-compile.sh'
       - 'scripts/self-compile-self-test.sh'
+      - 'src/compiler_build_identity.tl'
+      - 'scripts/check-bootstrap-fixpoint.sh'
+      - 'scripts/build-stage0.sh'
+      - 'scripts/lib-build-provenance.sh'
+      - 'scripts/verify-self-compile-stamp-invariance.sh'
 
 permissions:
   contents: read
@@ -72,6 +77,33 @@ jobs:
       - name: Publish the reference record
         shell: bash
         run: scripts/self-compile.sh reference
+
+      - name: Prove identical-tree commit stamp invariance
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          scripts/verify-self-compile-stamp-invariance.sh --self-test
+          scripts/verify-self-compile-stamp-invariance.sh
+
+      - name: Upload stamp invariance evidence
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: self-compile-stamp-invariance
+          path: |
+            target/exp/self-compile-stamp.*/*.tsv
+            target/exp/self-compile-stamp.*/*.commit
+            target/exp/self-compile-stamp.*/*.log
+            target/exp/self-compile-stamp.*/*.memory
+            target/exp/self-compile-stamp.*/*.cachegrind.out
+            target/exp/self-compile-stamp.*/a-stage2
+            target/exp/self-compile-stamp.*/b-stage2
+            target/exp/self-compile-stamp.*/a-stage2.s
+            target/exp/self-compile-stamp.*/b-stage2.s
+            target/exp/self-compile-stamp.*/*.tlci
+            target/exp/self-compile-stamp.*/*.tlch
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Upload the reference record
         uses: actions/upload-artifact@v4

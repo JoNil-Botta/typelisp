@@ -232,8 +232,10 @@ stderr empty
 stdout match Built[ ]
 test -f "{{dir}}/pkg/target/dev/cli_pkg_smoke{{exe}}"
 sh CCV_head=$(git -C "{{root}}" rev-parse HEAD | tr -d '\r\n')
+sh CCV_tree=$(git -C "{{root}}" rev-parse 'HEAD^{tree}' | tr -d '\r\n')
 sh rm -rf "{{root}}/target/release" && mkdir -p "{{root}}/target/build-stage0"
 sh printf '%s' 0000000000000000000000000000000000000000 > "{{root}}/target/build-stage0/git-hash.txt"
+sh printf '%s' 0000000000000000000000000000000000000000 > "{{root}}/target/build-stage0/tree-hash.txt"
 step selfhost-cli-root-package-build
 cwd {{root}}
 run build --target {{host-target}} --opt-level 0
@@ -242,6 +244,9 @@ stdout match Built[ ]
 test -f "{{root}}/target/release/typelisp{{exe}}"
 in file {{root}}/target/build-stage0/git-hash.txt
 contains {{head}}
+not-contains 0000000000000000000000000000000000000000
+in file {{root}}/target/build-stage0/tree-hash.txt
+contains {{tree}}
 not-contains 0000000000000000000000000000000000000000
 cwd -
 step selfhost-cli-root-package-help
@@ -259,12 +264,13 @@ step selfhost-cli-root-package-version
 exec "{{root}}/target/release/typelisp{{exe}}" --version
 stderr empty
 stdout match typelisp[ ]
+stdout contains {{head}}
 stdout match [ ]built[ ]
 stdout not-contains typelisp unknown
 step selfhost-cli-root-package-producer-identity
 exec "{{root}}/target/release/typelisp{{exe}}" --producer-identity
 stderr empty
-stdout contains {{head}}
+stdout contains {{tree}}
 stdout not-contains unknown
 step selfhost-cli-root-package-build-help
 exec "{{root}}/target/release/typelisp{{exe}}" build --help
@@ -1154,6 +1160,7 @@ stderr empty
 run build "{{dir}}/pkg/src/main.tl" -o "{{dir}}/rejected{{exe}}" --opt-level 0
 exit 1
 stderr contains unbound name probe
+
 test ! -e "{{dir}}/rejected{{exe}}"
 run build --manifest-path "{{dir}}/pkg/typelisp.pkg" --cfg selected --opt-level 0
 stderr empty
@@ -1165,3 +1172,68 @@ stderr empty
 run run --manifest-path "{{dir}}/pkg/typelisp.pkg" --opt-level 0
 exit 1
 stderr contains unbound name probe
+
+# Changing commit metadata may change only the named forty-byte provenance
+# field. Exercise the production identity module, both version inputs and the
+# ordinary unstamped source-tool fallback at every optimization level.
+case compiler-commit-stamp-field
+opt 0 1 2
+file identity/src/main.tl
+(import compiler_build_identity as identity)
+(import stdlib.io)
+(define (main) : i64
+  (io.print-format "{}\n{}\n"
+    (identity.compiler-build-git-hash-shared-view)
+    (identity.compiler-build-producer-identity))
+  0)
+end-file
+file identity/target/build-stage0/tree-hash.txt
+0123456789abcdef0123456789abcdef01234567
+end-file
+file stamp-a.expected
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+0123456789abcdef0123456789abcdef01234567
+end-file
+file stamp-b.expected
+ffffffffffffffffffffffffffffffffffffffff
+0123456789abcdef0123456789abcdef01234567
+end-file
+file unstamped.expected
+unknown
+unknown
+end-file
+sh cp "{{root}}/src/compiler_build_identity.tl" "{{dir}}/identity/src/compiler_build_identity.tl"
+sh printf '%s' 0123456789abcdef0123456789abcdef01234567 > "{{dir}}/identity/target/build-stage0/tree-hash.txt"
+sh printf '%s' aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa > "{{dir}}/identity/target/build-stage0/git-hash.txt"
+run compile "{{dir}}/identity/src/main.tl" -o "{{dir}}/a.s" --target {{host-target}} --opt-level {{opt}} --cfg compiler-build-identity --stdlib-root "{{dir}}/identity/src"
+stderr empty
+stdout match Wrote[ ]
+run build "{{dir}}/identity/src/main.tl" -o "{{dir}}/stamp-a{{exe}}" --target {{host-target}} --opt-level {{opt}} --cfg compiler-build-identity --stdlib-root "{{dir}}/identity/src"
+stderr empty
+exec "{{dir}}/stamp-a{{exe}}"
+stderr empty
+same "{{stdout}}" "{{dir}}/stamp-a.expected"
+sh printf '%s\r\n' ffffffffffffffffffffffffffffffffffffffff > "{{dir}}/identity/target/build-stage0/git-hash.txt"
+run compile "{{dir}}/identity/src/main.tl" -o "{{dir}}/b.s" --target {{host-target}} --opt-level {{opt}} --cfg compiler-build-identity --stdlib-root "{{dir}}/identity/src"
+stderr empty
+stdout match Wrote[ ]
+run build "{{dir}}/identity/src/main.tl" -o "{{dir}}/stamp-b{{exe}}" --target {{host-target}} --opt-level {{opt}} --cfg compiler-build-identity --stdlib-root "{{dir}}/identity/src"
+stderr empty
+exec "{{dir}}/stamp-b{{exe}}"
+stderr empty
+same "{{stdout}}" "{{dir}}/stamp-b.expected"
+test "$(grep -c '^_tl_.*compiler_build_commit_bytes:$' "{{dir}}/a.s")" = 1
+test "$(grep -c '^_tl_.*compiler_build_commit_bytes:$' "{{dir}}/b.s")" = 1
+sh sed '/^_tl_.*compiler_build_commit_bytes:$/,/^    \.balign 8$/ { /^    \.byte /d; }' "{{dir}}/a.s" > "{{dir}}/a-normal.s"
+sh sed '/^_tl_.*compiler_build_commit_bytes:$/,/^    \.balign 8$/ { /^    \.byte /d; }' "{{dir}}/b.s" > "{{dir}}/b-normal.s"
+test "$(grep -c '^    \.byte ' "{{dir}}/a.s")" -gt "$(grep -c '^    \.byte ' "{{dir}}/a-normal.s")"
+sh cmp "{{dir}}/a-normal.s" "{{dir}}/b-normal.s"
+sh printf '%s' gggggggggggggggggggggggggggggggggggggggg > "{{dir}}/identity/target/build-stage0/git-hash.txt"
+run compile "{{dir}}/identity/src/main.tl" -o "{{dir}}/invalid.s" --target {{host-target}} --opt-level {{opt}} --cfg compiler-build-identity --stdlib-root "{{dir}}/identity/src"
+exit 1
+stderr contains compiler commit must be a full Git object name
+run build "{{dir}}/identity/src/main.tl" -o "{{dir}}/unstamped{{exe}}" --target {{host-target}} --opt-level {{opt}} --stdlib-root "{{dir}}/identity/src"
+stderr empty
+exec "{{dir}}/unstamped{{exe}}"
+stderr empty
+same "{{stdout}}" "{{dir}}/unstamped.expected"

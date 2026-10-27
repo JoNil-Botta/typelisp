@@ -257,9 +257,8 @@
     unit)
   true)
 
-;; Git's full object name is independent of host OS, build date, checkout path,
-;; and other temporary build locations while changing with the checked-in
-;; compiler source revision.
+;; The compiler's Git tree object name is independent of commit metadata, host,
+;; build date and checkout path while changing with the checked-in source tree.
 (define (tlci-producer-identity-valid? [identity : (& identity str)]) : bool
   (and
     (= (tlci-string-length identity) 40)

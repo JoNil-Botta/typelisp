@@ -599,7 +599,11 @@ if ! printf '%s\n' "$PRODUCER_IDENTITY" | grep -Eq '^[0-9a-f]{40}$'; then
     fail "compiler reported malformed producer identity: $PRODUCER_IDENTITY"
 fi
 mkdir -p target/build-stage0
-printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/git-hash.txt
+COMPILER_COMMIT=$("$COMPILER" --version | awk 'NR == 1 && $1 == "typelisp" { print $2 }')
+printf '%s\n' "$COMPILER_COMMIT" | grep -Eq '^[0-9a-f]{40}$' ||
+    fail "compiler reported malformed commit: $COMPILER_COMMIT"
+printf '%s' "$COMPILER_COMMIT" > target/build-stage0/git-hash.txt
+printf '%s' "$PRODUCER_IDENTITY" > target/build-stage0/tree-hash.txt
 
 echo "[compile-profile] compile profile-enabled CLI"
 run_logged "$BUILD_STDOUT" "$BUILD_STDERR" "profile-enabled CLI compile failed" \
@@ -732,7 +736,7 @@ MISMATCH_PRODUCER_IDENTITY=0000000000000000000000000000000000000000
 if [ "$MISMATCH_PRODUCER_IDENTITY" = "$PRODUCER_IDENTITY" ]; then
     MISMATCH_PRODUCER_IDENTITY=1111111111111111111111111111111111111111
 fi
-surface_fallback producer-mismatch target/build-stage0/git-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
+surface_fallback producer-mismatch target/build-stage0/tree-hash.txt "$MISMATCH_PRODUCER_IDENTITY"
 
 echo "[compile-profile] compile compact-summary CLI"
 run_logged "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR" "compact-summary CLI compile failed" \

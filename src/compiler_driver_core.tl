@@ -3589,7 +3589,7 @@
     [pools : compiler_ast_types.AstNodePoolContext]) : CompilerDriverPreludeSurface
     (match (tlci.tlci-producer-identity-admit
       outer-build
-      (build_identity.compiler-build-git-hash-shared-view))
+      (build_identity.compiler-build-producer-identity))
       [(ExactMatch)
         (match (compiler_surface_hydrate.compiler-surface-key (& rodata))
           [(or (Missing) (Err _)) Missing]

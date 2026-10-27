@@ -51,7 +51,7 @@ TLCI_NATIVE_ROUTE_TIME_BIN=${TLCI_NATIVE_ROUTE_TIME_BIN:-/usr/bin/time}
 TYPELISP_TLCI_NATIVE_ROUTE_STRESS=1
 export TYPELISP_TLCI_NATIVE_ROUTE_STRESS
 
-rm -rf "$WORKDIR"
+rm -rf "${WORKDIR:?}"
 mkdir -p "$NATIVE_CWD" "$SOURCE_ROOT/stdlib" "$NATIVE_DIR" "$SOURCE_DIR"
 
 finalize_record() {
@@ -88,8 +88,10 @@ capture_now_ms() {
 
 [ -s "$RAW_IMAGE" ] ||
     fail "raw embedded image is missing; run verify-compile-profile.sh first"
-REPOSITORY_IDENTITY=$(git rev-parse --verify HEAD 2>/dev/null || true)
-COMPILER_IDENTITY=$($COMPILER --producer-identity 2>/dev/null | tr -d '\r\n')
+# Producer admission binds source content; the commit remains separate version
+# provenance and may differ for two checkouts with the exact same tree.
+REPOSITORY_IDENTITY=$(git rev-parse --verify 'HEAD^{tree}' 2>/dev/null || true)
+COMPILER_IDENTITY=$("$COMPILER" --producer-identity 2>/dev/null | tr -d '\r\n')
 IDENTITY_OFFSET=$(read_u64_le "$RAW_IMAGE" 32)
 IDENTITY_LENGTH=$(read_u64_le "$RAW_IMAGE" 40)
 case "$IDENTITY_OFFSET:$IDENTITY_LENGTH" in

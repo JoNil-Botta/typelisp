@@ -139,6 +139,22 @@ MUTATED_SURFACE=$WORKDIR/stdlib-mutated-surface.rodata
 MANIFEST=target/embedded-stdlib-tlci/modules.txt
 mkdir -p "$WORKDIR"
 
+# Compile outside the short execution deadline so slow compiler hosts retain
+# the same diagnostic-walk bound. The old computed-splice walk never returns.
+DIAGNOSTIC_DRIVER=$WORKDIR/native-diagnostics
+[ "$HOST_TARGET" != windows ] || DIAGNOSTIC_DRIVER=$DIAGNOSTIC_DRIVER.exe
+"$COMPILER" build tools/embedded-stdlib-tlci/native_diagnostics.tl \
+    --stdlib-root stdlib --stdlib-root src -o "$DIAGNOSTIC_DRIVER"
+diagnostic_status=0
+env -u BASH_ENV scripts/run-memory-bounded.sh \
+    --limit-mib 1024 --timeout-seconds 10 \
+    --report "$WORKDIR/native-diagnostics.report" -- \
+    env -u BASH_ENV "$DIAGNOSTIC_DRIVER" || diagnostic_status=$?
+if [ "$diagnostic_status" -ne 42 ]; then
+    echo "native producer diagnostic regression exited $diagnostic_status, expected 42" >&2
+    exit 1
+fi
+
 if [ "$HOST_TARGET" = windows ]; then
     OTHER_HOST_TARGET=linux
 else

@@ -203,7 +203,7 @@
     "--detach"
     checkout-ref))
 
-(define (source-tool-git-rev-parse-command [root : String]) : process.ProcessCommand
+(define (source-tool-git-rev-parse-command [root : String] [revision : String]) : process.ProcessCommand
   (source-tool-command6
     (source-tool-git-executable)
     "-c"
@@ -211,7 +211,7 @@
     "-C"
     root
     "rev-parse"
-    "HEAD"))
+    revision))
 
 (define (source-tool-args-from-argv
   [idx : i64]

@@ -25,6 +25,7 @@ on:
       - '.github/workflows/self-compile-reference.yml'
       - '.github/actions/linux-instruction-count-tools/**'
       - 'scripts/ci-linux-tools.sh'
+      - 'scripts/ci-linux-tools-self-test.sh'
       - 'scripts/self-compile.sh'
       - 'scripts/lib-self-compile.sh'
       - 'scripts/self-compile-self-test.sh'
@@ -130,7 +131,16 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
-      - name: Install Linux instruction-count tools
+      - name: Prepare ledger records
+        id: ledger-records
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/self-compile.sh ledger --prepare
+
+      - name: Install Linux instruction-count tools when measurement is needed
+        id: ledger-tools
+        if: steps.ledger-records.outputs.needs-tools == 'yes'
         uses: ./.github/actions/linux-instruction-count-tools
 
       - name: Enable Linux kernel memory limits
@@ -152,6 +162,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          TYPELISP_SELF_COMPILE_TOOLS_READY: ${{ steps.ledger-tools.outcome == 'success' }}
         run: scripts/self-compile.sh ledger
 
       - name: Upload the ledger

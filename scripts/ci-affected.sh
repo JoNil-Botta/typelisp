@@ -126,6 +126,9 @@ expanded_map=$(awk -F '\t' -v tier="$tier" '
             fail("line " FNR ": invalid or catch-all path: " $1)
         if (seen[$1]++) fail("line " FNR ": duplicate path: " $1)
         rows[++paths] = $0
+        for (column = 2; column <= 3; column++)
+            if ($column != "-" && $column != "*" && $column ~ /(^|,)(-|\*)(,|$)/)
+                fail("line " FNR ": empty/full marker must stand alone")
         count = split($2 "," $3, ids, ",")
         for (i = 1; i <= count; i++) {
             if (ids[i] != "*" && ids[i] != "-" && !(ids[i] in gates) && ids[i] !~ /^@(compiler|stdlib|corpus|docs)$/)

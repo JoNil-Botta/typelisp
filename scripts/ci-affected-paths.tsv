@@ -12,11 +12,17 @@ src/*_cli_core.tl	cli-help-surface	@compiler	CLI parser modules are compared wit
 src/compile_manifest.txt	stage2-selfhost-compile-manifest	@compiler	Exact compiler-manifest input, expectations and standalone coverage.
 stdlib/*	stage2-safety-corpus	@stdlib	Every stdlib edit can change located safety diagnostics and pins.
 stdlib/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,selfhost-linked-size-attribution-parser-self-tests	@stdlib	Stdlib sources can carry target references and are read by source-content and module-path guards.
+stdlib/tests/*	stage2-stdlib-modules-and-fixtures	@stdlib	The stdlib runner directly executes its fixture manifest under this directory.
+stdlib/README.md	stage2-stdlib-modules-and-fixtures	@stdlib	The stdlib runner checks the documented module inventory.
 tests/*	-	@corpus	Advisory corpus class; a path also needs a required trigger or both tiers fall back to full.
-tests/*.tl	stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Source fixtures can carry target references and are read by source-invariant checks.
-tests/integration/*	stage2-native-integration-corpus	@corpus	Native integration sources, manifest, dependencies and expected outputs.
-tests/safety/*	stage2-safety-corpus	@corpus	Safety sources, manifest and every pinned expectation.
-tests/spmd/*	stage2-spmd-simd-comparison	@corpus	SPMD executable fixtures and comparison case metadata.
+tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
+tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
+tests/spmd/*	stage2-spmd-simd-comparison,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	SPMD comparison data and direct source guards for its executable fixtures.
+tests/public-tools/*	stage2-public-tool-surface,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The public-tool runner consumes the LSP and REPL corpora and their source fixtures.
+tests/apps/*	stage2-app-workflow-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The application runner consumes scenario manifests, packages, case files and sources.
+tests/tlci/corpus/*	tlci-format-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The TLCI runner consumes its recorded container corpus and source fixtures.
+tests/tlci/corpus_emit.tl	tlci-format-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Exact source emitter executed by the TLCI corpus runner.
+tests/tlci/platform_corpus_emit.tl	tlci-format-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Exact platform emitter executed by the TLCI corpus runner.
 tests/spmd/package_*	stage2-spmd-package-calls	@corpus	Package-call fixtures have their own executable consumer.
 tests/codegen/math.cases	stage2-math-exp-codegen-verifier,stage2-math-log-codegen-verifier,stage2-math-pow-codegen-verifier,stage2-math-trig-codegen-verifier	@corpus	Exact case file named by the four math gate commands.
 tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-mandelbrot-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Exact case file named by the ISPC contract gates.
@@ -24,7 +30,8 @@ tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpu
 tests/codegen/asm-shape.cases	stage2-regalloc-backend-asm-shape-gates	@corpus	Exact case file named by the backend shape gate.
 tests/codegen/native-link.cases	stage2-native-link-generated-programs	@corpus	The Linux native-link runner directly consumes this case file.
 tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus	@corpus	The native integration runner also executes this codegen case file.
-tests/golden/*	ir-observability-golden	@corpus	IR observability compares these golden snapshots and expectations.
+tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	The stdlib verifier directly executes the for-source macro cases.
+tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	IR observability consumes golden snapshots and their guarded source fixtures.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
 tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@corpus	Exact case file named by the secret-wipe gate.
 tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.

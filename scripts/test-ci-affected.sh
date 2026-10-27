@@ -99,10 +99,12 @@ for host in linux windows; do
     printf '%s\n' 'unmapped/new file.tl' > "$work/paths"
     "$selector" --host "$host" --paths "$work/paths" > "$work/unknown.ids" 2> "$work/unknown.log"
     cmp "$work/unknown.ids" "$work/$host.full" || fail 'unmapped path did not select full table'
-    printf '%s\n' tests/unmapped-corpus-data.bin > "$work/paths"
-    for tier in required advisory; do
-        "$selector" --host "$host" --paths "$work/paths" --tier "$tier" > "$work/advisory-only.ids" 2> "$work/advisory-only.log"
-        cmp "$work/advisory-only.ids" "$work/$host.full" || fail 'advisory-only match omitted an unknown required consumer'
+    for path in tests/unmapped-corpus-data.bin tests/unmapped-corpus-source.tl; do
+        printf '%s\n' "$path" > "$work/paths"
+        for tier in required advisory; do
+            "$selector" --host "$host" --paths "$work/paths" --tier "$tier" > "$work/advisory-only.ids" 2> "$work/advisory-only.log"
+            cmp "$work/advisory-only.ids" "$work/$host.full" || fail 'advisory-only match omitted an unknown required consumer'
+        done
     done
     for path in scripts/ci-verify.sh .github/workflows/ci.yml tests/public-tools/example.sh tests/fixtures/ci-affected/history.tsv; do
         printf '%s\n' "$path" > "$work/paths"
@@ -250,5 +252,8 @@ cmp "$work/unreviewed-gate.ids" "$work/$native_host.full" || fail 'unreviewed ga
 cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
 printf 'bad-gate\tinvalid-class\tinvalid fixture\n' >> "$repo/scripts/ci-affected-inputs.tsv"
 expect_rejected invalid-input-class "$fixture_selector" --base "$base"
+cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
+printf 'tests/unmapped.dat\t-,-\t@corpus\tinvalid empty minimum\n' >> "$repo/scripts/ci-affected-paths.tsv"
+expect_rejected invalid-empty-minimum "$fixture_selector" --base "$base"
 
 echo "ci-affected self-tests passed (Linux/Windows plans and checkout filters, three historical failed-run diffs, Git discovery, worker guards and execution); evidence: $work"

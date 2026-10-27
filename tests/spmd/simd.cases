@@ -320,6 +320,19 @@ exit 134
 in stderr
 contains array index out of bounds
 
+case shuffle-lane1-debug-backtrace
+source tests/integration/spmd_shuffle_lane1_trap.tl
+do link-run
+mode avx2 avx512
+opt 1 2
+args -g
+exit 134
+in stderr
+contains array index out of bounds
+contains stack backtrace:
+contains 0: main at
+contains spmd_shuffle_lane1_trap.tl:11:3
+
 case shuffle-negative-trap
 source tests/integration/spmd_shuffle_negative_trap.tl
 do link-run

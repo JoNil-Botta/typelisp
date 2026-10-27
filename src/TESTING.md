@@ -280,6 +280,9 @@ bounds locations. The `debug-caller-*` cases in `tests/spmd/simd.cases` execute
 the caller-home matrix witnesses at opt1/2 with their correct result or shift
 trap, alongside scalar debug controls. The wide uniform-stack fixture retains
 its existing AVX-512 private-argument diagnostic.
+`backend-layout-keeps-debug-ends-after-cold-blocks` checks CFI, backtrace and
+CodeView endings through cold-arm layout. `shuffle-lane1-debug-backtrace`
+requires the trapped caller's `main` frame at opt1/2 on both SIMD widths.
 
 `indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
 returns early, for language closures and C code pointers. Counts require one

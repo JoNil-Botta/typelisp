@@ -89744,7 +89744,8 @@ tl_shared_object_init:
 
 ;; Directives that delimit a function or an object: nothing may move across one,
 ;; and the first of them after a join is where an out-of-lined region is
-;; re-inserted. Every `.seh_` note counts -- Windows unwind describes a
+;; re-inserted. Debug range ends and CFI closure delimit the same body.
+;; Every `.seh_` note counts -- Windows unwind describes a
 ;; prologue/epilogue by position, so no `.seh_` line may be moved or copied.
 ;;
 ;; The second byte selects the arm: no two of these names share it except the
@@ -89780,7 +89781,9 @@ tl_shared_object_init:
             [(= b1 100)
               (compiler-backend-peephole-range-eq? data t tend ".data")]
             [(= b1 99)
-              (compiler-backend-peephole-range-eq? data t tend ".comm")]
+              (or
+                (compiler-backend-peephole-range-eq? data t tend ".comm")
+                (compiler-backend-cold-closing-line? data t t e))]
             [else (compiler-backend-peephole-range-eq? data t tend ".extern")]))
         false))
     false))
@@ -90030,7 +90033,11 @@ tl_shared_object_init:
             (= (compiler-backend-peephole-byte-at data (- e 1)) 58)
             (>= (- e s) 2)
             (compiler-backend-asm-label-name-clean? data s e))
-          compiler-backend-layout-flag-label]
+          (bit-or
+            compiler-backend-layout-flag-label
+            (if (compiler-backend-cold-closing-line? data s s e)
+              compiler-backend-layout-flag-barrier
+              0))]
         [else (compiler-backend-layout-classify-token data s t e)]))))
 
 ;; What a mnemonic's first byte can make of a line, as a byte per possible head:

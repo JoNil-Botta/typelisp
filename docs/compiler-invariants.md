@@ -1906,6 +1906,9 @@ in original insertion order before pinning, remapping and emission; duplicate
 keys retain newest-entry precedence without rescanning other functions' spans.
 Non-debug emission keeps its existing span path, and scalar debug keeps its
 original variable identities.
+Post-emission block layout treats debug/backtrace end labels and `.cfi_endproc`
+as function boundaries, using the same closing-line classifier as abort-stub
+placement. Outlined blocks remain inside the function's debug and unwind range.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes

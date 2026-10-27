@@ -13308,10 +13308,67 @@ f:
     .size f, . - f
 ")))
 
+(define (compiler-backend-layout-debug-end-case? [closing : String]) : bool
+  (compiler-backend-layout-case?
+    backend.compiler-backend-layout-mode-sink
+    (str_cat.str-cat
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_else
+.Lf0_then:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_else:
+    movq $-1, %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+"
+      closing
+      "    .size f, . - f\n")
+    (str_cat.str-cat
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    cmpq %r9, %rdi
+    jge .Lf0_else
+.Lf0_then:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+.Lf0_else:
+    movq $-1, %rcx
+    jmp .Lf0_cont
+"
+      closing
+      "    .size f, . - f\n")))
+
+(define (compiler-backend-layout-debug-ends-ok?) : bool
+  (and
+    (compiler-backend-layout-debug-end-case? "    .cfi_endproc\n")
+    (compiler-backend-layout-debug-end-case?
+      ".L_tl_backtrace_function_end_0:\n")
+    (compiler-backend-layout-debug-end-case?
+      ".L_tl_backtrace_function_end_0:\n    .cfi_endproc\n")
+    (compiler-backend-layout-debug-end-case?
+      ".Lcv_func_end_0:\n.L_tl_backtrace_function_end_0:\n    .seh_endproc\n")))
+
+(test
+  backend-layout-keeps-debug-ends-after-cold-blocks
+  (unless
+    (compiler-backend-layout-debug-ends-ok?)
+    (io.panic "cold layout moved instructions beyond a debug function end")))
+
 (define (compiler-backend-layout-ok?) : bool
   (and
     (compiler-backend-layout-tail-duplication-ok?)
     (compiler-backend-layout-cold-arm-ok?)
+    (compiler-backend-layout-debug-ends-ok?)
     (compiler-backend-layout-island-ok?)))
 
 (define (compiler-backend-peephole-ok?) : bool

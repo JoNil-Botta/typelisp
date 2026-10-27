@@ -74,6 +74,13 @@
     [(comptime.Expr.If condition _ _) condition]
     [_ value]))
 
+;; The producer cannot bind this nested callee pattern. Keep its shell and
+;; interpreted expansion equivalent to the forced-source route. Refs #9341.
+(defmacro (probe [value : Expr]) : Expr
+  (match value
+    [(comptime.Expr.Call (comptime.Expr.Var f) args) `(+ 1 2)]
+    [_ `(+ 3 4)]))
+
 (define (helper [x : i64] [scale : i64])
   (:spmd-callable
     (specialization

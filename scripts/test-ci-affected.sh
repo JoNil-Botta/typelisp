@@ -214,16 +214,26 @@ inventory_inputs() {
 inventory_inputs "$ROOT" "$work/inventory-plans" > "$work/primary.raw" || fail 'primary input extraction failed'
 sort -u "$work/primary.raw" > "$work/primary-inputs.tsv"
 # Functions invoked as conditions cannot rely on errexit. Check early and late
-# translator failures explicitly, including failure after useful partial output.
-if inventory_inputs "$work/missing-root" "$work/missing-plans" > "$work/missing.raw" 2> "$work/missing.err"; then
-    fail 'missing inventories passed extraction'
-fi
+# translator failures with every other input present, so a later manifest error
+# cannot mask missing in-loop failure propagation. Omit rather than delete files.
 IFS= read -r first_inventory < "$work/inventory-plans/inventories"
-mkdir -p "$work/partial-root/$(dirname "$first_inventory")"
-printf 'case extraction-failure-probe\nsource tests/integration/tail_call_stack_forward.tl\n' > "$work/partial-root/$first_inventory"
-if inventory_inputs "$work/partial-root" "$work/partial-plans" > "$work/partial.raw" 2> "$work/partial.err"; then
-    fail 'partial inventory extraction hid a later failure'
-fi
+second_inventory=$(sed -n '2p' "$work/inventory-plans/inventories")
+[ -n "$second_inventory" ] || fail 'failure regression needs two inventories'
+cat "$work/inventory-plans/inventories" > "$work/failure-inputs"
+printf '%s\n' tests/integration/native.manifest tests/safety/manifest.txt src/compile_manifest.txt >> "$work/failure-inputs"
+for failure_kind in missing partial; do
+    omitted_inventory=$first_inventory
+    [ "$failure_kind" != partial ] || omitted_inventory=$second_inventory
+    while IFS= read -r affected_inventory; do
+        [ "$affected_inventory" != "$omitted_inventory" ] || continue
+        mkdir -p "$work/$failure_kind-root/$(dirname "$affected_inventory")"
+        cp "$ROOT/$affected_inventory" "$work/$failure_kind-root/$affected_inventory"
+    done < "$work/failure-inputs"
+    if inventory_inputs "$work/$failure_kind-root" "$work/$failure_kind-plans" > "$work/$failure_kind.raw" 2> "$work/$failure_kind.err"; then
+        fail "$failure_kind inventory extraction hid a translator failure"
+    fi
+    grep -F "missing case file: $work/$failure_kind-root/$omitted_inventory" "$work/$failure_kind.err" >/dev/null || fail 'failure regression missed its intended case file'
+done
 [ -s "$work/partial.raw" ] || fail 'late extraction failure probe emitted no initial ownership'
 # Exercise the same inventory reader against Git actual Windows checkout bytes.
 mkdir -p "$work/crlf-inputs"
@@ -334,7 +344,6 @@ for host in linux windows; do
                 src:cli-tools-benchmark-repetition-self-test | src:zero-cons-structural-classifier-self-tests | stdlib:zero-cons-structural-classifier-self-tests | tests:zero-cons-structural-classifier-self-tests | examples:zero-cons-structural-classifier-self-tests | stdlib:docs-site-search-manifest-validator-self-tests) continue ;; # Self-test modes consume synthetic trees instead of repository content.
                 src:stage2-inline-typelisp-tests | stdlib:stage2-inline-typelisp-tests | examples:stage2-inline-typelisp-tests) continue ;; # Broad inline discovery remains advisory; named units retain explicit owners.
                 src:stage2-native-integration-corpus | stdlib:stage2-native-integration-corpus) continue ;; # Native manifest validator catalogs compiler/import dependencies by name only.
-                stdlib:stage2-docs-pages-build-path) continue ;; # Page-name completeness lists module names; no source-content assertion.
                 stdlib:stage2-arena-sanitizer-selfhost) continue ;; # Generic instrumented compiler comparison, not a declared primary fixture contract.
                 stdlib/tests:stage0-size-ratchet | stdlib/tests:stage2-arena-sanitizer-selfhost | stdlib/tests:stage2-stdlib-documentation) continue ;; # Excluded fixture trees.
                 tests/integration:ir-observability-golden | tests/integration:stage2-compile-profile-verifier | tests/integration:compiler-arena-debug-native-matrix | tests/integration:stage2-safety-corpus) continue ;; # Search roots/constructed lists: exact fixtures checked below.
@@ -348,7 +357,7 @@ for host in linux windows; do
         has_gate "$work/direct-reader.ids" "$gate"
     done < "$work/script-inputs.tsv"
     # Constructed script inputs and the reported independent source guards.
-    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi

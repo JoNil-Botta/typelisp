@@ -3529,7 +3529,7 @@ integration_source_location_self_test() (
 
 integration_prepare() {
     integration_stage_corpus
-    integration_source_location_self_test
+    integration_source_location_self_test || exit 1
     integration_batch_precompile
 }
 

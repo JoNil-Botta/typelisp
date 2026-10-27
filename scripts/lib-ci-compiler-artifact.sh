@@ -1,403 +1,582 @@
 #!/usr/bin/env sh
-# #6883's canonical provenance fields/key, extended with a versioned transport
-# envelope. Historical implementation: #6909, removed by #8118. Commit stamps
-# and tree producer identities retain lib-build-provenance.sh semantics.
-# Source this library; no compiler consumes an envelope in D-C27 slice 1.
-ci_compiler_artifact_key() { ci_compiler_artifact key "$@"; }
-ci_compiler_artifact() {
-    node - "$@" <<'JS'
-'use strict';
-const fs = require('fs'), path = require('path'), cp = require('child_process');
-const crypto = require('crypto');
-const args = process.argv.slice(2), op = args.shift();
-const VERSION = 3, CONTRACT = 'ci-compiler-artifact';
-needNodeVersion();
-function needNodeVersion() { if(Number(process.versions.node.split('.')[0])<20) throw Error('Node 20 or newer required'); }
-const FIELDS = ['producer_sha256','producer_identity','host','target','cwd',
-  'source_roots','stdlib_roots','cfg','opt_level','profile','environment','argv',
-  'source_set_sha256','output_kind'];
-const sha = value => crypto.createHash('sha256').update(value).digest('hex');
-const need = (ok, why) => { if (!ok) throw Error(why); };
-const hex = (s,n) => typeof s === 'string' && new RegExp('^[0-9a-f]{'+n+'}$').test(s);
-const json = value => JSON.stringify(value, null, 2)+'\n';
-// Bootstrap enables compiler-build-identity, not stage0-build-version. The
-// normal CLI format includes the latter's explicit unknown date suffix.
-const bootstrapVersion = commit => 'typelisp '+commit+' built unknown';
-const order = (a,b) => Buffer.compare(Buffer.from(a),Buffer.from(b));
-function key(fields) {
-  // Byte-compatible with #6883 ci_compiler_artifact_key (schema=1), including
-  // field order, LF framing and the conservative normalized source manifest.
-  for (const k of FIELDS) need(typeof fields[k]==='string' && fields[k].length &&
-    !/[\x00-\x1f\x7f]/.test(fields[k]), 'unsafe provenance field '+k);
-  return sha('schema=1\n'+FIELDS.map(k=>k+'='+fields[k]+'\n').join(''));
-}
-function hash(file) {
-  const h=crypto.createHash('sha256'), b=Buffer.alloc(1024*1024), fd=fs.openSync(file,'r');
-  try { for (;;) { const n=fs.readSync(fd,b,0,b.length,null); if (!n) break; h.update(b.subarray(0,n)); } }
-  finally { fs.closeSync(fd); }
-  return h.digest('hex');
-}
-function safeRel(s) {
-  need(typeof s==='string' && s.length && !/[\\:\x00-\x1f\x7f]/.test(s) &&
-    !s.startsWith('/') && s.split('/').every(x=>x && x!=='.' && x!=='..'), 'unsafe relative path '+s);
-  return s;
-}
-function below(base, relative, regular=false) {
-  safeRel(relative); let p=base;
-  for (const part of relative.split('/')) {
-    p=path.join(p,part);
-    if (fs.existsSync(p) || (()=>{try{return fs.lstatSync(p).isSymbolicLink();}catch{return false;}})())
-      need(!fs.lstatSync(p).isSymbolicLink(),'symlink path '+p);
-  }
-  if (regular) need(fs.lstatSync(p).isFile(),'not a regular file '+p);
-  return p;
-}
-function owned(root, p) {
-  p=path.resolve(p); const rel=path.relative(root,p).split(path.sep).join('/');
-  need(rel.startsWith('target/'),'envelope must be inside owned target/'); below(root,rel);
-  return p;
-}
-function write(p,value) { fs.mkdirSync(path.dirname(p),{recursive:true}); fs.writeFileSync(p,value,{flag:'wx'}); }
-function load(p) { need(fs.statSync(p).size<=4*1024*1024,'oversized metadata '+p); const text=fs.readFileSync(p,'utf8'), value=JSON.parse(text); need(text===json(value),'noncanonical/duplicate JSON fields '+p); return value; }
-function git(root,...a) { return cp.execFileSync('git',['-C',root,...a],{encoding:'utf8'}).trim(); }
-function normal(root,value) {
-  const r=root.replace(/\\/g,'/'), s=value.replace(/\\/g,'/');
-  return s===r ? '{root}' : s.startsWith(r+'/') ? '{root}/'+s.slice(r.length+1) : s;
-}
-function native(root,value) { return path.resolve(root,value); }
-function regularInput(root,p) {
-  const rel=path.relative(root,p).split(path.sep).join('/');
-  if(rel && !rel.startsWith('../') && !path.isAbsolute(rel)) below(root,rel,true);
-  else need(fs.lstatSync(p).isFile()&&!fs.lstatSync(p).isSymbolicLink(),'invalid external input');
-  return p;
-}
-function identity(file) {
-  const x=cp.execFileSync(file,['--producer-identity'],{encoding:'utf8'}).trim();
-  need(hex(x,40),'malformed producer identity'); return x;
-}
-function context(root,host,local=false,e=process.env) {
-  need(['linux','windows'].includes(host),'unsupported envelope host');
-  const commit=git(root,'rev-parse','HEAD'), tree=git(root,'rev-parse','HEAD^{tree}');
-  if (local) { need(e.GITHUB_ACTIONS!=='true','local envelope mode forbidden in CI');
-    return {scope:'local',repository:'local',run_id:'local',attempt:0,commit,tree,head:commit,workflow_ref:'local',workflow_sha:commit,host}; }
-  need(e.GITHUB_ACTIONS==='true','hosted context required');
-  need(e.GITHUB_SHA===commit && hex(e.GITHUB_WORKFLOW_SHA,40),'checkout/workflow differs from trusted event');
-  need(/^\d+$/.test(e.GITHUB_RUN_ID||'') && /^[1-9]\d*$/.test(e.GITHUB_RUN_ATTEMPT||''),'missing run/attempt');
-  need(cp.spawnSync('git',['-C',root,'diff','--quiet','HEAD'],{stdio:'ignore'}).status===0,'dirty tracked checkout');
-  need(e.GITHUB_EVENT_NAME==='pull_request','required PR workflow context expected');
-  const event=JSON.parse(fs.readFileSync(e.GITHUB_EVENT_PATH,'utf8'));
-  need(event.repository.full_name===e.GITHUB_REPOSITORY && hex(event.pull_request.head.sha,40),'event repository/head mismatch');
-  need(e.GITHUB_WORKFLOW_REF.startsWith(e.GITHUB_REPOSITORY+'/.github/workflows/ci.yml@'),'wrong workflow');
-  return {scope:'github',repository:e.GITHUB_REPOSITORY,run_id:e.GITHUB_RUN_ID,attempt:Number(e.GITHUB_RUN_ATTEMPT),
-    commit,tree,head:event.pull_request.head.sha,workflow_ref:e.GITHUB_WORKFLOW_REF,workflow_sha:e.GITHUB_WORKFLOW_SHA,host};
-}
-function walk(base) {
-  const out=[]; let count=0;
-  function scan(rel) {
-    for (const n of fs.readdirSync(path.join(base,rel)).sort(order)) {
-      need(++count<=10000,'too many envelope entries');
-      const r=rel ? rel+'/'+n : n, p=below(base,r), s=fs.lstatSync(p);
-      if (s.isDirectory()) scan(r); else { need(s.isFile(),'special file '+p); out.push(r); }
-    }
-  }
-  scan(''); return out.sort(order);
-}
-function sources(root) {
-  // Canonical #6883 manifest framing; tracked src/stdlib/tests form a
-  // conservative closure. Explicit generated inputs are bound separately.
-  // Ignored fixtures created later by other gates cannot change this closure.
-  const files=cp.execFileSync('git',['-C',root,'ls-files','-z','--','src','stdlib','tests'],{encoding:'utf8',maxBuffer:8*1024*1024}).split('\0').filter(Boolean).sort(order);
-  need(files.length>0,'source closure empty');
-  const manifest=files.map(p=>hash(below(root,p,true))+'  {root}/'+p+'\n').join('');
-  return {manifest,sha256:sha(manifest)};
+# Canonical #6883 provenance primitives from #6909 (before #8118), extended
+# as one versioned same-run envelope. POSIX shell and existing jq/coreutils.
+# No transported compiler is consumed in D-C27 slice 1.
+
+ci_compiler_artifact_error() {
+    echo "[ci-compiler-artifact] $*" >&2
+    return 1
 }
 
-function inventory(root) {
-  return Object.fromEntries(['scripts/ci-gates.tsv','scripts/ci-compiler-artifacts.tsv','scripts/expand-integration-manifest.awk','tests/integration/native.manifest']
-    .map(p=>[p,hash(below(root,p,true))]));
-}
-function recipeHashes(root) { return Object.fromEntries(['scripts/check-bootstrap-fixpoint.sh','scripts/lib-native-link.sh','scripts/lib-build-provenance.sh','scripts/check-build-invariance.sh','scripts/lib-build-invariance-batch.sh','scripts/ci-compiler-artifact.sh','scripts/lib-ci-compiler-artifact.sh'].map(p=>[p,hash(below(root,p,true))])); }
-function generatedPaths(host) { return ['target/build-stage0/git-hash.txt','target/build-stage0/tree-hash.txt','target/embedded-stdlib-tlci/stdlib.tlci','target/embedded-stdlib-tlci/stdlib.tlci.tlch','target/embedded-stdlib-tlci/source-hash.txt','target/embedded-stdlib-tlci/modules.txt','target/embedded-stdlib-tlci/prelude-surface-'+host+'.rodata']; }
-function expectedCorpus(root) {
-  const rows=cp.execFileSync('awk',['-v','host=linux','-f',path.join(root,'scripts/expand-integration-manifest.awk'),path.join(root,'tests/integration/native.manifest')],{cwd:root,encoding:'utf8'}).trim().split('\n').filter(Boolean);
-  return 'selfhost_main_opt1|src/main.tl|1\nselfhost_main_opt2|src/main.tl|2\n'+rows.map(x=>{const f=x.split('|');need(f[0]&&f[1],'invalid authoritative inventory');return 'integration_'+f[0]+'|'+f[1]+'|2\n';}).join('');
-}
-function artifactName(c) { return 'ci-stage-envelope-'+(c.host==='linux'?'Linux':'Windows')+'-r'+c.run_id+'-a'+c.attempt; }
-function expectedRoles(host) { return host==='linux' ? ['bootstrap-converged','build-invariance-opt1-reference'] : ['bootstrap-converged']; }
-function state(root,work,host) {
-  const d=owned(root,path.join(work,'draft')); const c=load(below(d,'context.json',true));
-  need(json(c)===json(context(root,host,c.scope==='local')),'producer workflow context changed');
-  return {d,c};
-}
-function copy(root,dir,source,dest,files) {
-  const p=path.resolve(source); need(fs.lstatSync(p).isFile() && !fs.lstatSync(p).isSymbolicLink(),'invalid snapshot input '+p);
-  regularInput(root,p); const before=hash(p), size=fs.statSync(p).size; need(size>0,'empty snapshot input '+p);
-  const q=below(dir,dest); fs.mkdirSync(path.dirname(q),{recursive:true}); fs.copyFileSync(p,q,fs.constants.COPYFILE_EXCL);
-  need(before===hash(q) && before===hash(p),'input changed while publishing '+p);
-  files[dest]={sha256:before,bytes:size,source:normal(root,p)}; return files[dest];
-}
-function binaryShape(file,host) {
-  const b=Buffer.alloc(64),fd=fs.openSync(file,'r'); try { need(fs.readSync(fd,b,0,64,0)===64,'short compiler'); } finally {fs.closeSync(fd);}
-  if(host==='linux') need(b.subarray(0,4).equals(Buffer.from([127,69,76,70])) && b[4]===2 && b.readUInt16LE(18)===62,'wrong ELF target');
-  else {
-    need(b[0]===77 && b[1]===90,'wrong PE target'); const offset=b.readUInt32LE(60), pe=Buffer.alloc(6), fd2=fs.openSync(file,'r');
-    try{need(offset>=64&&offset+6<=fs.statSync(file).size&&fs.readSync(fd2,pe,0,6,offset)===6,'truncated PE');}finally{fs.closeSync(fd2);}
-    need(pe.subarray(0,4).equals(Buffer.from([80,69,0,0]))&&pe.readUInt16LE(4)===0x8664,'wrong PE architecture');
-  }
-}
-function record(root,work,host,label,argv) {
-  const {d}=state(root,work,host); let wrapper=[];
-  if (argv[0].endsWith('run-memory-bounded.sh')) {const i=argv.indexOf('--');need(i>0,'bad wrapper argv');wrapper=argv.slice(0,i);argv=argv.slice(i+1);}
-  need(argv[1]==='compile' && argv.includes('--target'),'compiler invocation missing');
-  const producer=regularInput(root,native(root,argv[0])); const rec={producer_version:cp.execFileSync(producer,['--version'],{encoding:'utf8'}).split(/\r?\n/)[0],argv:argv.map(x=>normal(root,x)),producer_path:normal(root,producer),producer_sha256:hash(producer),producer_identity:identity(producer),wrapper:wrapper.map(x=>normal(root,x))};
-  if (label!=='reference') {
-    const out=argv[argv.indexOf('-o')+1]; need(argv.includes('-o') && path.basename(out)===label+'.s','wrong recorded output');
-    rec.compiled_output={path:normal(root,out),sha256:hash(out),bytes:fs.statSync(out).size};
-  }
-  if (label==='reference') {
-    const batch=argv[argv.indexOf('--batch')+1]; need(argv.includes('--batch'),'reference was not a batch');
-    const text=fs.readFileSync(batch,'utf8'); const rows=text.trim().split('\n'); need(rows.length===1,'reference must be a singleton batch');
-    const [source,out]=rows[0].split('|'); need(source==='src/main.tl' && out.endsWith('/selfhost_main_opt1.s'),'wrong reference entry');
-    const normalized=text.split(root).join('{root}'); rec.batch_manifest={text:normalized,sha256:sha(normalized),raw_sha256:hash(batch)};
-  } else need(['stage1','stage2','stage3','stage4'].includes(label),'unexpected bootstrap record');
-  write(below(d,'records/'+label+'.json'),json(rec));
-}
-function flags(rec,host,role) {
-  const a=rec.argv, values=k=>a.flatMap((x,i)=>x===k?[a[i+1]]:[]), target=host+'-x86_64';
-  need(values('--target').length===1 && values('--target')[0]===target,'wrong target');
-  const base=host==='linux'?['linux','unix','target-linux','os-linux']:['windows','target-windows','os-windows'];
-  const cfg=base.concat(role==='bootstrap-converged'?['compiler-build-identity','embedded-stdlib-tlci']:[]);
-  need(JSON.stringify(values('--cfg'))===JSON.stringify(cfg),'cfg substitution');
-  need(JSON.stringify(values('--opt-level'))===JSON.stringify([role==='bootstrap-converged'?'2':'1']),'opt-level substitution');
-  const roots=values('--stdlib-root');
-  need(JSON.stringify(roots)===JSON.stringify(role==='bootstrap-converged'?['{root}/src']:['stdlib','src']),'stdlib roots changed');
-  if(role!=='bootstrap-converged') need(JSON.stringify(values('--backend-mode'))==='["scalar"]','backend changed');
-  const producerPath=a[0]; need(/^\{root\}\/target\/bootstrap-fixpoint\/stage[234](?:\.exe)?$/.test(producerPath),'producer outside bootstrap handoff');
-  let expected;
-  if(role==='bootstrap-converged') {
-    const stage=Number(producerPath.match(/stage([234])/)[1])+1;
-    need(stage===3||stage===4,'invalid producing generation');
-    expected=[producerPath,'compile','src/main.tl','-o','{root}/target/bootstrap-fixpoint/stage'+stage+'.s','--target',target,...cfg.flatMap(x=>['--cfg',x]),'--stdlib-root','{root}/src','--opt-level','2'];
-  } else {
-    const batch=a[3];need(/^\{root\}\/target\/build-invariance\/batches\/opt2-built\/opt1\/chunks\/entries\.[0-9]+\.txt$/.test(batch),'wrong reference batch path');
-    expected=[producerPath,'compile','--batch',batch,'--target',target,...cfg.flatMap(x=>['--cfg',x]),'--backend-mode','scalar','--opt-level','1','--stdlib-root','stdlib','--stdlib-root','src'];
-  }
-  need(JSON.stringify(a)===JSON.stringify(expected),'normalized invocation changed');
-  return {target,cfg:cfg.join(','),opt:role==='bootstrap-converged'?'2':'1',roots:roots.join(',')};
-}
-function producer(root,p,tree) { regularInput(root,p); const r={sha256:hash(p),identity:identity(p),path:normal(root,p)};need(r.identity===tree,'producer tree identity mismatch');return r; }
-function publish(root,work,host,role,argv) {
-  const started=process.hrtime.bigint(), {d,c}=state(root,work,host); need(expectedRoles(host).includes(role),'wrong host role');
-  const dir=below(d,'roles/'+role+'.publishing'); need(!fs.existsSync(dir),'stale partial role'); fs.mkdirSync(dir,{recursive:true}); const files={};
-  const selected=path.resolve(argv[0]); let rec,proof={},generated={};
-  if(role==='bootstrap-converged') {
-    const stage=path.basename(selected).replace(/\.exe$/,''); need(['stage3','stage4'].includes(stage),'unconverged stage');
-    need(selected===path.join(root,'target/bootstrap-fixpoint',stage+(host==='windows'?'.exe':'')),'unexpected converged path');
-    rec=load(below(d,'records/'+stage+'.json',true)); const prev=path.join(path.dirname(selected),stage==='stage3'?'stage2':'stage3')+(host==='windows'?'.exe':'');
-    const p=producer(root,prev,c.tree); need(p.sha256===rec.producer_sha256 && p.identity===rec.producer_identity && rec.producer_version===bootstrapVersion(c.commit),'bootstrap producer changed');
-    const w=path.dirname(selected), pair=stage==='stage3'?['stage2.s','stage3.s']:['stage3.s','stage4.s'];
-    for(const name of new Set([...pair,'stage3.s','stage3-embedded.s'])) proof[name]={sha256:hash(path.join(w,name)),bytes:fs.statSync(path.join(w,name)).size};
-    need(proof[pair[0]].sha256===proof[pair[1]].sha256 && proof['stage3.s'].sha256===proof['stage3-embedded.s'].sha256,'fixpoint/parity failed');
-    need(rec.compiled_output.sha256===proof[stage+'.s'].sha256 && rec.compiled_output.path==='{root}/target/bootstrap-fixpoint/'+stage+'.s','compiled output changed');
-    proof.compile_receipt=rec.compiled_output; proof.fixpoint_pair=pair; proof.selected_stage=stage; proof.seed={sha256:hash(argv[1]),identity:identity(argv[1]),path:normal(root,path.resolve(argv[1]))};
-    const output=producer(root,selected,c.tree); binaryShape(selected,host); copy(root,dir,selected,'payload/compiler',files);
-    const previous=path.resolve(argv[2]); producer(root,previous,c.tree); binaryShape(previous,host); copy(root,dir,previous,'payload/previous-stage',files); proof.output_identity=output.identity;
-    const gen=generatedPaths(host);
-    for(const p of gen) generated[p]=copy(root,dir,below(root,p,true),'generated/'+p,files);
-    need(fs.readFileSync(below(root,gen[0]),'utf8')===c.commit && fs.readFileSync(below(root,gen[1]),'utf8')===c.tree,'stamp changed before snapshot');
-  } else {
-    rec=load(below(d,'records/reference.json',true)); const p=producer(root,path.resolve(argv[1]),c.tree); need(p.sha256===rec.producer_sha256 && rec.producer_version===bootstrapVersion(c.commit),'reference producer changed');
-    const boot=load(below(d,'roles/bootstrap-converged/manifest.json',true));need(p.sha256===boot.files['payload/compiler'].sha256,'reference did not use converged compiler');proof.seed=boot.proof.seed;proof.parent_provenance_key=boot.provenance_key;
-    need(selected===path.join(root,'target/build-invariance/compare/opt2-built/selfhost_main_opt1.s'),'unexpected reference path');
-    proof.batch_manifest=rec.batch_manifest;
-    const other=selected.replace('/opt2-built/','/opt1-built/'); need(other!==selected && hash(other)===hash(selected),'reference comparison missing');
-    copy(root,dir,selected,'payload/reference.s',files); proof.compared_output_sha256=hash(other);
-    copy(root,dir,path.join(root,'target/build-invariance/corpus.txt'),'inventory/corpus.txt',files);
-  }
-  proof.input_producer_sha256=rec.producer_sha256;
-  const f=flags(rec,host,role), src=sources(root); write(below(dir,'source-set.sha256'),src.manifest);
-  const recipes=recipeHashes(root);
-  const relevantEnv=Object.fromEntries(Object.entries(process.env).filter(([k])=>k.startsWith('TYPELISP_')||['CC','CFLAGS','LDFLAGS','LANG','LC_ALL'].includes(k)).sort(([a],[b])=>order(a,b)).map(([k,v])=>[k,sha(normal(root,v))]));
-  const environment=JSON.stringify({producer_commit:c.commit,producer_version:rec.producer_version,toolchain:load(below(d,'toolchain.json',true)),generated_inputs:generated,seed:proof.seed||null,parent_provenance_key:proof.parent_provenance_key||null,recipes,variables_sha256:relevantEnv,resource_wrapper:rec.wrapper,batch_manifest:rec.batch_manifest?{text:rec.batch_manifest.text,sha256:rec.batch_manifest.sha256}:null});
-  const fields={producer_sha256:rec.producer_sha256,producer_identity:rec.producer_identity,host,target:f.target,cwd:'{root}',source_roots:'src,stdlib,tests',stdlib_roots:f.roots,cfg:f.cfg,opt_level:f.opt,profile:'none',environment,argv:JSON.stringify(rec.argv),source_set_sha256:src.sha256,output_kind:role==='bootstrap-converged'?'compiler-binary':'compiler-assembly'};
-  const meta={schema:VERSION,contract:CONTRACT,role,context:c,fields,provenance_key:key(fields),files,generated_inputs:generated,proof,inventory:inventory(root),packaging_ms:Number(process.hrtime.bigint()-started)/1e6};
-  write(below(dir,'manifest.json'),json(meta)); const dest=below(d,'roles/'+role);need(!fs.existsSync(dest),'duplicate role publication');fs.renameSync(dir,dest);
-  console.error('[ci-compiler-artifact] snapshot '+role+' '+meta.packaging_ms.toFixed(3)+'ms');
-}
-function init(root,work,host,local) {
-  const c=context(root,host,local);need(!fs.existsSync(work),'envelope root is not fresh');owned(root,work);fs.mkdirSync(path.join(work,'draft'),{recursive:true});write(path.join(work,'draft/context.json'),json(c));
-  const tools={node:process.version};
-  for(const name of host==='linux'?['as','ld']:['clang','lld-link']) {
-    const override=host==='windows'?process.env[name==='clang'?'TYPELISP_WINDOWS_CLANG':'TYPELISP_WINDOWS_LINK']:undefined;
-    const exe=override||name;const located=override||cp.execFileSync(process.platform==='win32'?'where.exe':'which',[exe],{encoding:'utf8'}).trim().split(/\r?\n/)[0];
-    tools[name]={path:normal(root,located),sha256:hash(fs.realpathSync(located)),version:cp.execFileSync(exe,['--version'],{encoding:'utf8'}).trim()};
-  }
-  write(path.join(work,'draft/toolchain.json'),json(tools));
-}
-function seal(root,work,host) {
-  const {d,c}=state(root,work,host);return sealDirectory(work,host,d,c);
-}
-function sealDirectory(work,host,d,c,quiet=false) {
-  const started=process.hrtime.bigint(),roles={};
-  for(const role of expectedRoles(host)) {const rel='roles/'+role+'/manifest.json',m=load(below(d,rel,true));need(m.role===role,'wrong completed role');roles[role]=hash(below(d,rel,true));}
-  need(fs.readdirSync(path.join(d,'roles')).sort().join(',')===expectedRoles(host).sort().join(','),'extra/partial roles');
-  const files=Object.fromEntries(walk(d).map(p=>[p,{sha256:hash(below(d,p,true)),bytes:fs.statSync(below(d,p,true)).size}]));
-  const bundle={schema:VERSION,contract:CONTRACT,context:c,roles,files};write(path.join(d,'bundle.json'),json(bundle)); const digest=hash(path.join(d,'bundle.json'));
-  need(!fs.existsSync(path.join(work,'complete')),'duplicate complete bundle');fs.renameSync(d,path.join(work,'complete'));
-  if(!quiet){console.error('[ci-compiler-artifact] seal '+Number(process.hrtime.bigint()-started)/1e6+'ms');console.log(host+'_envelope_sha='+digest);}return digest;
-}
-function verify(root,dir,host,expected,expectedContext,transport) {
-  need(hex(expected,64),'trusted bundle digest is missing'); need(hash(below(dir,'bundle.json',true))===expected,'bundle differs from producer job output');
-  const b=load(below(dir,'bundle.json',true));need(b.schema===VERSION&&b.contract===CONTRACT,'envelope version mismatch');need(json(b.context)===json(expectedContext),'trusted workflow context mismatch');
-  need(Object.keys(b.roles).sort().join(',')===expectedRoles(host).sort().join(','),'missing/extra roles');
-  const actual=walk(dir).filter(p=>p!=='bundle.json');need(actual.join('\n')===Object.keys(b.files).sort(order).join('\n'),'missing/extra/partial files');
-  for(const p of actual){const file=below(dir,p,true),m=b.files[p];need(fs.statSync(file).size===m.bytes&&hash(file)===m.sha256,'corrupt payload '+p);}
-  const inv=inventory(root), src=sources(root);
-  for(const role of expectedRoles(host)) {
-    const base=path.join(dir,'roles',role),mp=path.join(base,'manifest.json');need(hash(mp)===b.roles[role],'role manifest mismatch');const m=load(mp);
-    need(m.schema===VERSION&&m.contract===CONTRACT&&m.role===role&&json(m.context)===json(expectedContext),'role/context substitution');
-    need(m.provenance_key===key(m.fields)&&m.fields.producer_identity===expectedContext.tree&&hex(m.fields.producer_sha256,64)&&m.proof.input_producer_sha256===m.fields.producer_sha256,'producer substitution');
-    need(m.fields.source_set_sha256===src.sha256&&fs.readFileSync(path.join(base,'source-set.sha256'),'utf8')===src.manifest,'source-set substitution');
-    need(json(m.inventory)===json(inv),'authoritative inventory changed');const rec={argv:JSON.parse(m.fields.argv)};const f=flags(rec,host,role);
-    need(m.fields.host===host&&m.fields.target===f.target&&m.fields.cfg===f.cfg&&m.fields.opt_level===f.opt&&m.fields.stdlib_roots===f.roots&&m.fields.profile==='none'&&m.fields.cwd==='{root}'&&m.fields.source_roots==='src,stdlib,tests','provenance field substitution');
-    const roleFiles=role==='bootstrap-converged'?['payload/compiler','payload/previous-stage',...generatedPaths(host).map(p=>'generated/'+p)]:['payload/reference.s','inventory/corpus.txt'];
-    need(Object.keys(m.files).sort(order).join('\n')===roleFiles.sort(order).join('\n')&&m.fields.output_kind===(role==='bootstrap-converged'?'compiler-binary':'compiler-assembly'),'role file/kind substitution');
-    for(const [p,v]of Object.entries(m.files)){need(v.source.startsWith('{root}/'),'external payload source');safeRel(v.source.slice(7));const file=below(base,p,true);need(hash(file)===v.sha256&&fs.statSync(file).size===v.bytes,'role payload corrupt');}
-    const env=JSON.parse(m.fields.environment);need(json(env.generated_inputs)===json(m.generated_inputs)&&env.producer_commit===expectedContext.commit&&env.producer_version===bootstrapVersion(expectedContext.commit),'generated input/commit declaration differs');
-    need(json(env.recipes)===json(recipeHashes(root)),'recipe substitution');
-    need(env.toolchain&&typeof env.toolchain.node==='string'&&(host==='linux'?['as','ld']:['clang','lld-link']).every(k=>hex(env.toolchain[k]?.sha256,64)&&typeof env.toolchain[k].version==='string'),'toolchain binding missing');
-    for(const [p,v]of Object.entries(m.generated_inputs)) need(json(v)===json(m.files['generated/'+p]),'generated input missing from payload');
-    if(role==='bootstrap-converged') {
-      need(json(env.seed)===json(m.proof.seed),'seed binding differs');
-      need(Object.keys(m.generated_inputs).sort(order).join('\n')===generatedPaths(host).sort(order).join('\n'),'generated input closure incomplete');
-      binaryShape(below(base,'payload/compiler',true),host);binaryShape(below(base,'payload/previous-stage',true),host);
-      need(m.proof.output_identity===expectedContext.tree&&hex(m.proof.seed.sha256,64)&&hex(m.proof.seed.identity,40),'seed/output identity missing');
-      need(m.proof.compile_receipt.sha256===m.proof[m.proof.selected_stage+'.s'].sha256&&m.proof.compile_receipt.path==='{root}/target/bootstrap-fixpoint/'+m.proof.selected_stage+'.s','compile receipt differs');
-      const pair=m.proof.fixpoint_pair;need(json(pair)===json(m.proof.selected_stage==='stage3'?['stage2.s','stage3.s']:['stage3.s','stage4.s']),'fixpoint stage mismatch');
-      need(m.proof[pair[0]].sha256===m.proof[pair[1]].sha256&&m.proof['stage3.s'].sha256===m.proof['stage3-embedded.s'].sha256,'fixpoint/parity proof missing');
-      need(fs.readFileSync(below(base,'generated/target/build-stage0/git-hash.txt'),'utf8')===expectedContext.commit&&fs.readFileSync(below(base,'generated/target/build-stage0/tree-hash.txt'),'utf8')===expectedContext.tree,'generated stamps mismatch');
-    }else {
-      need(m.proof.compared_output_sha256===m.files['payload/reference.s'].sha256,'reference comparison missing');
-      need(fs.readFileSync(below(base,'inventory/corpus.txt',true),'utf8')===expectedCorpus(root),'reference inventory missing cases');
-      const expectedText='src/main.tl|{root}/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s\n';
-      need(m.proof.batch_manifest.text===expectedText&&m.proof.batch_manifest.sha256===sha(expectedText)&&env.batch_manifest.text===expectedText&&env.batch_manifest.sha256===sha(expectedText),'reference batch substitution');
-      const boot=load(path.join(dir,'roles/bootstrap-converged/manifest.json'));need(m.fields.producer_sha256===boot.files['payload/compiler'].sha256&&m.proof.parent_provenance_key===boot.provenance_key&&env.parent_provenance_key===boot.provenance_key&&json(env.seed)===json(boot.proof.seed)&&json(m.proof.seed)===json(boot.proof.seed),'reference producer role substitution');
-    }
-  }
-  if(transport) verifyTransport(expectedContext,transport);
-  return {schema:VERSION,host,context:expectedContext,roles:Object.keys(b.roles),bundle_sha256:expected,status:'ok'};
-}
-function verifyTransport(c,t) {
-  const jobName=c.host==='linux'?'Test + Integration':'Test + Integration (windows-latest)';
-  const jobs=t.jobs.jobs.filter(j=>j.name===jobName);need(jobs.length===1,'producer job ambiguous');const j=jobs[0];
-  need(j.run_id===Number(c.run_id)&&j.run_attempt===c.attempt&&j.head_sha===c.head&&j.status==='completed'&&j.conclusion==='success','producer attempt/job did not succeed');
-  const arts=t.artifacts.artifacts.filter(a=>a.name===artifactName(c)&&!a.expired);need(arts.length===1,'artifact missing/ambiguous');const a=arts[0];
-  need(a.workflow_run.id===Number(c.run_id)&&a.workflow_run.head_sha===c.head&&/^sha256:[0-9a-f]{64}$/.test(a.digest),'artifact run binding failed');
-  need(Date.parse(a.created_at)>=Date.parse(j.started_at)&&Date.parse(a.created_at)<=Date.parse(j.completed_at),'artifact from a different producer attempt');
+# Set CI_COMPILER_ARTIFACT_SHA256 to FILE's digest: the first field of the
+# tool's output line, as awk '{ print $1 }' read it.
+ci_compiler_artifact_hash_file() {
+    _cica_sha_file=$1
+    CI_COMPILER_ARTIFACT_SHA256=
+    if command -v sha256sum >/dev/null 2>&1; then
+        _cica_sha_line=$(sha256sum "$_cica_sha_file") || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        _cica_sha_line=$(shasum -a 256 "$_cica_sha_file") || return 1
+    else
+        ci_compiler_artifact_error "sha256sum or shasum is required"
+        return 1
+    fi
+    CI_COMPILER_ARTIFACT_SHA256=${_cica_sha_line%%[ 	]*}
 }
 
-function selfTest(actualRoot,work) {
-  need(!fs.existsSync(work),'self-test directory must be fresh');fs.mkdirSync(work,{recursive:true});
-  const source=path.join(work,'source');fs.mkdirSync(source);const results=[];
-  for(const [p,v]of Object.entries({'src/main.tl':'fixture source\n','stdlib/prelude.tl':'fixture stdlib\n','scripts/ci-gates.tsv':'fixture gate inventory\n','scripts/ci-compiler-artifacts.tsv':'fixture role inventory\n'}))write(path.join(source,p),v);
-  for(const name of Object.keys(recipeHashes(actualRoot)))if(!fs.existsSync(path.join(source,name)))write(path.join(source,name),'fixture recipe '+name+'\n');
-  write(path.join(source,'scripts/expand-integration-manifest.awk'),fs.readFileSync(path.join(actualRoot,'scripts/expand-integration-manifest.awk')));
-  write(path.join(source,'tests/integration/native.manifest'),fs.readFileSync(path.join(actualRoot,'tests/integration/native.manifest'),'utf8').split('\n').find(l=>l&&!l.startsWith('#'))+'\n');
-  cp.execFileSync('git',['init','-q',source]);cp.execFileSync('git',['-C',source,'add','src','stdlib','tests','scripts']);
-  const src=sources(source), inventoryValue=inventory(source), c={scope:'github',repository:'owner/repo',run_id:'1234',attempt:2,commit:'a'.repeat(40),tree:'b'.repeat(40),head:'c'.repeat(40),workflow_ref:'owner/repo/.github/workflows/ci.yml@refs/pull/1/merge',workflow_sha:'d'.repeat(40)};
-  const golden=['1'.repeat(64),'2'.repeat(40),'linux','linux-x86_64','{root}','src,stdlib','stdlib,src','linux,unix','2','none','baseline','compile src/main.tl','3'.repeat(64),'compiler-assembly'];
-  need(key(Object.fromEntries(FIELDS.map((k,i)=>[k,golden[i]])))==='5ece1550f75aff6115c39ab8301dc7ddc2e45bf953641f0658a63b4988d1919e','legacy #6883 key changed');
-  results.push({case:'legacy-key-vector',status:'pass'});
-  function fakeBinary(host) {const b=Buffer.alloc(128);if(host==='linux'){b.set([127,69,76,70,2]);b.writeUInt16LE(62,18);}else{b.set([77,90]);b.writeUInt32LE(64,60);b.set([80,69,0,0],64);b.writeUInt16LE(0x8664,68);}return b;}
-  function fixture(host) {
-    const contextValue={...c,host}, w=path.join(work,'base-'+host),draft=path.join(w,'draft');write(path.join(draft,'context.json'),json(contextValue));
-    for(const role of expectedRoles(host)) {
-      const base=path.join(draft,'roles',role),files={},generated={},proof={};fs.mkdirSync(base,{recursive:true});
-      function put(p,data) {const q=path.join(base,p);write(q,data);files[p]={sha256:hash(q),bytes:fs.statSync(q).size,source:'{root}/'+p};return files[p];}
-      let argv,kind,opt,roots,cfg;
-      const nativeCfg=host==='linux'?['linux','unix','target-linux','os-linux']:['windows','target-windows','os-windows'];
-      if(role==='bootstrap-converged') {
-        put('payload/compiler',fakeBinary(host));put('payload/previous-stage',fakeBinary(host));
-        for(const name of generatedPaths(host))generated[name]=put('generated/'+name,name.endsWith('/git-hash.txt')?c.commit:name.endsWith('/tree-hash.txt')?c.tree:'fixture '+name+'\n');
-        const asm={sha256:sha('assembly'),bytes:8};Object.assign(proof,{'stage2.s':asm,'stage3.s':asm,'stage3-embedded.s':asm,selected_stage:'stage3',fixpoint_pair:['stage2.s','stage3.s'],output_identity:c.tree,seed:{sha256:'4'.repeat(64),identity:'5'.repeat(40),path:'{root}/target/stage0/typelisp'},compile_receipt:{...asm,path:'{root}/target/bootstrap-fixpoint/stage3.s'}});
-        cfg=nativeCfg.concat(['compiler-build-identity','embedded-stdlib-tlci']);kind='compiler-binary';opt='2';roots='{root}/src';
-        argv=['{root}/target/bootstrap-fixpoint/stage2'+(host==='windows'?'.exe':''),'compile','src/main.tl','-o','{root}/target/bootstrap-fixpoint/stage3.s','--target',host+'-x86_64',...cfg.flatMap(x=>['--cfg',x]),'--stdlib-root','{root}/src','--opt-level','2'];
-      } else {
-        put('payload/reference.s','assembly');put('inventory/corpus.txt',expectedCorpus(source));proof.compared_output_sha256=sha('assembly');const parent=load(path.join(draft,'roles/bootstrap-converged/manifest.json'));proof.seed=parent.proof.seed;proof.parent_provenance_key=parent.provenance_key;
-        const text='src/main.tl|{root}/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s\n';proof.batch_manifest={text,sha256:sha(text),raw_sha256:'6'.repeat(64)};
-        cfg=nativeCfg;kind='compiler-assembly';opt='1';roots='stdlib,src';argv=['{root}/target/bootstrap-fixpoint/stage3','compile','--batch','{root}/target/build-invariance/batches/opt2-built/opt1/chunks/entries.0000.txt','--target','linux-x86_64',...cfg.flatMap(x=>['--cfg',x]),'--backend-mode','scalar','--opt-level','1','--stdlib-root','stdlib','--stdlib-root','src'];
-      }
-      const tools={node:'fixture'},toolNames=host==='linux'?['as','ld']:['clang','lld-link'];for(const n of toolNames)tools[n]={sha256:'7'.repeat(64),version:'fixture version'};
-      const env={producer_commit:c.commit,producer_version:bootstrapVersion(c.commit),toolchain:tools,generated_inputs:generated,seed:proof.seed||null,parent_provenance_key:proof.parent_provenance_key||null,recipes:recipeHashes(source),variables_sha256:{},resource_wrapper:[],batch_manifest:proof.batch_manifest?{text:proof.batch_manifest.text,sha256:proof.batch_manifest.sha256}:null};
-      const fields={producer_sha256:role==='bootstrap-converged'?'8'.repeat(64):sha(fakeBinary(host)),producer_identity:c.tree,host,target:host+'-x86_64',cwd:'{root}',source_roots:'src,stdlib,tests',stdlib_roots:roots,cfg:cfg.join(','),opt_level:opt,profile:'none',environment:JSON.stringify(env),argv:JSON.stringify(argv),source_set_sha256:src.sha256,output_kind:kind};
-      proof.input_producer_sha256=fields.producer_sha256;
-      write(path.join(base,'source-set.sha256'),src.manifest);write(path.join(base,'manifest.json'),json({schema:VERSION,contract:CONTRACT,role,context:contextValue,fields,provenance_key:key(fields),files,generated_inputs:generated,proof,inventory:inventoryValue,packaging_ms:0}));
-    }
-    const digest=sealDirectory(w,host,draft,contextValue,true);return {dir:path.join(w,'complete'),digest,context:contextValue,host};
-  }
-  function transport(f) {return {jobs:{jobs:[{name:f.host==='linux'?'Test + Integration':'Test + Integration (windows-latest)',run_id:1234,run_attempt:2,head_sha:c.head,status:'completed',conclusion:'success',started_at:'2026-10-27T00:00:00Z',completed_at:'2026-10-27T00:00:10Z'}]},artifacts:{artifacts:[{name:artifactName(f.context),expired:false,workflow_run:{id:1234,head_sha:c.head},digest:'sha256:'+'9'.repeat(64),created_at:'2026-10-27T00:00:05Z'}]}};}
-  const fixtures=['linux','windows'].map(fixture);
-  for(const f of fixtures){verify(source,f.dir,f.host,f.digest,f.context,transport(f));results.push({case:'complete-'+f.host,status:'pass'});}
-  let serial=0;
-  function clone(f){const dir=path.join(work,'negative-'+(++serial));fs.cpSync(f.dir,dir,{recursive:true,errorOnExist:true,force:false});return {...f,dir};}
-  function rebind(f) {const p=path.join(f.dir,'bundle.json'),b=load(p);for(const role of Object.keys(b.roles))b.roles[role]=hash(path.join(f.dir,'roles',role,'manifest.json'));b.files=Object.fromEntries(walk(f.dir).filter(p=>p!=='bundle.json').map(p=>[p,{sha256:hash(below(f.dir,p,true)),bytes:fs.statSync(below(f.dir,p,true)).size}]));fs.writeFileSync(p,json(b));f.digest=hash(p);}
-  function change(f,edit){const p=path.join(f.dir,'roles/bootstrap-converged/manifest.json'),m=load(p);edit(m);m.provenance_key=key(m.fields);fs.writeFileSync(p,json(m));rebind(f);}
-  function reject(name,fn){let error;try{fn();}catch(e){error=e.message;}need(error,'fixture accepted '+name);results.push({case:name,status:'rejected',reason:error});}
-  const base=fixtures[0];
-  for(const [name,edit]of [
-    ['producer-identity',m=>{m.fields.producer_identity='e'.repeat(40);}],
-    ['producer-digest',m=>{m.fields.producer_sha256='f'.repeat(64);}],
-    ['version-commit',m=>{const env=JSON.parse(m.fields.environment);env.producer_version=bootstrapVersion('f'.repeat(40));m.fields.environment=JSON.stringify(env);}],
-    ['output-kind',m=>{m.fields.output_kind='wrong-kind';}],
-    ['target',m=>{m.fields.target='windows-x86_64';}],
-    ['cfg',m=>{m.fields.cfg+=',compile-profile';}],
-    ['opt',m=>{m.fields.opt_level='0';}],
-    ['source-set',m=>{m.fields.source_set_sha256='f'.repeat(64);}],
-    ['inventory',m=>{m.inventory['scripts/ci-gates.tsv']='f'.repeat(64);}],
-    ['seed-binding',m=>{m.proof.seed.sha256='f'.repeat(64);}],
-    ['missing-generated',m=>{m.generated_inputs={};const env=JSON.parse(m.fields.environment);env.generated_inputs={};m.fields.environment=JSON.stringify(env);}],
-    ['partial-fixpoint',m=>{m.proof['stage2.s'].sha256='f'.repeat(64);}],
-    ['path-escape',m=>{m.files['../outside']={sha256:'f'.repeat(64),bytes:1};}],
-    ['absolute-path',m=>{m.files['/tmp/outside']={sha256:'f'.repeat(64),bytes:1};}]
-  ]){const f=clone(base);change(f,edit);reject(name,()=>verify(source,f.dir,f.host,f.digest,f.context,transport(f)));}
-  {const f=clone(base);fs.appendFileSync(path.join(f.dir,'roles/bootstrap-converged/payload/compiler'),'corrupt');reject('payload-corruption',()=>verify(source,f.dir,f.host,f.digest,f.context,transport(f)));}
-  {const f=clone(base);fs.appendFileSync(path.join(f.dir,'bundle.json'),' ');reject('untrusted-resealed-root',()=>verify(source,f.dir,f.host,f.digest,f.context,transport(f)));}
-  {const f=clone(base), b=load(path.join(f.dir,'bundle.json'));b.context.attempt=1;fs.writeFileSync(path.join(f.dir,'bundle.json'),json(b));f.digest=hash(path.join(f.dir,'bundle.json'));reject('attempt-N-minus-1',()=>verify(source,f.dir,f.host,f.digest,base.context,transport(f)));}
-  {const f=clone(base),t=transport(f);t.jobs.jobs[0].run_attempt=1;reject('producer-job-N-minus-1',()=>verify(source,f.dir,f.host,f.digest,f.context,t));}
-  {const f=clone(base),t=transport(f);t.artifacts.artifacts[0].created_at='2026-10-26T23:59:59Z';reject('old-artifact-renamed-for-N',()=>verify(source,f.dir,f.host,f.digest,f.context,t));}
-  {const f=clone(base),t=transport(f);t.jobs.jobs[0].conclusion='failure';reject('producer-failed',()=>verify(source,f.dir,f.host,f.digest,f.context,t));}
-  {const f=clone(base),t=transport(f);t.jobs.jobs[0].head_sha='f'.repeat(40);reject('producer-head-substitution',()=>verify(source,f.dir,f.host,f.digest,f.context,t));}
-  {const f=clone(base),t=transport(f);t.artifacts.artifacts[0].workflow_run.id=1233;reject('artifact-run-substitution',()=>verify(source,f.dir,f.host,f.digest,f.context,t));}
-  {const f=clone(base),t=transport(f);t.artifacts.artifacts[0].expired=true;reject('expired-artifact',()=>verify(source,f.dir,f.host,f.digest,f.context,t));}
-  for(const [name,value]of [['repository','other/repo'],['tree','e'.repeat(40)],['workflow_sha','f'.repeat(40)]]) {
-    const f=clone(base),expectedContext={...f.context,[name]:value};
-    reject('trusted-'+name+'-substitution',()=>verify(source,f.dir,f.host,f.digest,expectedContext,transport(f)));
-  }
-  {const f=clone(base),t=transport(f);t.artifacts.artifacts.push(t.artifacts.artifacts[0]);reject('duplicate-artifact',()=>verify(source,f.dir,f.host,f.digest,f.context,t));}
-  {const f=clone(base);write(path.join(f.dir,'roles/bootstrap-converged/payload/unlisted'),'extra');reject('extra-payload',()=>verify(source,f.dir,f.host,f.digest,f.context,transport(f)));}
-  {const f=clone(base),b=load(path.join(f.dir,'bundle.json'));b.roles={};fs.writeFileSync(path.join(f.dir,'bundle.json'),json(b));f.digest=hash(path.join(f.dir,'bundle.json'));reject('missing-role',()=>verify(source,f.dir,f.host,f.digest,f.context,transport(f)));}
-  {const partial=path.join(work,'unpublished');write(path.join(partial,'draft/roles/bootstrap-converged.publishing/data'),'partial');reject('partial-publication',()=>verify(source,partial,'linux',base.digest,base.context,transport(base)));need(!fs.existsSync(path.join(partial,'complete')),'partial became complete');}
-  {const f=clone(base),outside=path.join(work,'outside');fs.mkdirSync(outside);write(path.join(outside,'marker'),'untouched');fs.symlinkSync(outside,path.join(f.dir,'redirect'),'junction');reject('junction-escape',()=>verify(source,f.dir,f.host,f.digest,f.context,transport(f)));need(fs.readFileSync(path.join(outside,'marker'),'utf8')==='untouched','escape wrote outside');}
-  reject('Windows-absolute-relative-path',()=>safeRel('C:/outside'));
-  reject('backslash-escape',()=>safeRel('a\\..\\outside'));
-  reject('partial-seal',()=>sealDirectory(path.join(work,'bad-seal'),'linux',path.join(work,'unpublished/draft'),base.context,true));
-  const report={schema:VERSION,status:'pass',cases:results};write(path.join(work,'self-test.json'),json(report));console.log(json(report));console.log('ci-compiler-artifact self-tests passed: '+results.length+' cases');
+ci_compiler_artifact_sha256_file() {
+    ci_compiler_artifact_hash_file "$1" || return 1
+    printf '%s\n' "$CI_COMPILER_ARTIFACT_SHA256"
 }
 
-function main() {
-  if(op==='key') {need(args.length===14,'key expects #6883 fourteen fields');console.log(key(Object.fromEntries(FIELDS.map((k,i)=>[k,args[i]]))));return;}
-  const root=fs.realpathSync(args.shift()),work=owned(root,args.shift()),host=args.shift().toLowerCase();
-  if(op==='self-test')selfTest(root,work);
-  else if(op==='init'||op==='init-local')init(root,work,host,op==='init-local');
-  else if(op==='record')record(root,work,host,args.shift(),args);
-  else if(op==='publish')publish(root,work,host,args.shift(),args);
-  else if(op==='seal')seal(root,work,host);
-  else if(op==='verify'||op==='verify-local') {
-    const started=process.hrtime.bigint(),expected=args.shift(),ctx=context(root,host,op==='verify-local');
-    const transport=op==='verify'?{jobs:JSON.parse(fs.readFileSync(args.shift(),'utf8')),artifacts:JSON.parse(fs.readFileSync(args.shift(),'utf8'))}:null;
-    const result=verify(root,work,host,expected,ctx,transport);result.readback_ms=Number(process.hrtime.bigint()-started)/1e6;console.log(json(result));
-  } else throw Error('unknown operation '+op);
+ci_compiler_artifact_sha256_stdin() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        _cica_sha_line=$(sha256sum) || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        _cica_sha_line=$(shasum -a 256) || return 1
+    else
+        ci_compiler_artifact_error "sha256sum or shasum is required"
+        return 1
+    fi
+    printf '%s\n' "${_cica_sha_line%%[ 	]*}"
 }
-try { main(); } catch(e) {console.error('[ci-compiler-artifact] '+e.message);process.exitCode=1;}
-JS
+
+# A line-based grep never saw a newline inside the value; this check rejects
+# it with every other control byte, since fields are one metadata line each.
+ci_compiler_artifact_field_safe() {
+    _cica_safe_name=$1
+    _cica_safe_value=$2
+    # Every control byte a C-locale [[:cntrl:]] matches, except NUL, which no
+    # shell value can hold. DEL comes last, so the newline stays in the set.
+    [ -n "${CI_COMPILER_ARTIFACT_CONTROL_BYTES:-}" ] ||
+        CI_COMPILER_ARTIFACT_CONTROL_BYTES=$(printf '\001\002\003\004\005\006\007\010\011\012\013\014\015\016\017\020\021\022\023\024\025\026\027\030\031\032\033\034\035\036\037\177')
+    case "$_cica_safe_value" in
+        *["$CI_COMPILER_ARTIFACT_CONTROL_BYTES"]*)
+            ci_compiler_artifact_error \
+                "$_cica_safe_name contains a control character"
+            return 1
+            ;;
+    esac
+    return 0
 }
+
+# True when $1 is exactly forty lowercase hex digits.
+ci_compiler_artifact_is_identity() {
+    case "$1" in
+        '' | *[!0-9a-f]*) return 1 ;;
+    esac
+    [ "${#1}" -eq 40 ]
+}
+
+ci_compiler_artifact_key() {
+    _cica_key_producer_sha=$1
+    _cica_key_producer_identity=$2
+    _cica_key_host=$3
+    _cica_key_target=$4
+    _cica_key_cwd=$5
+    _cica_key_source_roots=$6
+    _cica_key_stdlib_roots=$7
+    _cica_key_cfg=$8
+    _cica_key_opt=$9
+    shift 9
+    _cica_key_profile=$1
+    _cica_key_environment=$2
+    _cica_key_argv=$3
+    _cica_key_source_digest=$4
+    _cica_key_output_kind=$5
+    {
+        printf 'schema=1\n'
+        printf 'producer_sha256=%s\n' "$_cica_key_producer_sha"
+        printf 'producer_identity=%s\n' "$_cica_key_producer_identity"
+        printf 'host=%s\n' "$_cica_key_host"
+        printf 'target=%s\n' "$_cica_key_target"
+        printf 'cwd=%s\n' "$_cica_key_cwd"
+        printf 'source_roots=%s\n' "$_cica_key_source_roots"
+        printf 'stdlib_roots=%s\n' "$_cica_key_stdlib_roots"
+        printf 'cfg=%s\n' "$_cica_key_cfg"
+        printf 'opt_level=%s\n' "$_cica_key_opt"
+        printf 'profile=%s\n' "$_cica_key_profile"
+        printf 'environment=%s\n' "$_cica_key_environment"
+        printf 'argv=%s\n' "$_cica_key_argv"
+        printf 'source_set_sha256=%s\n' "$_cica_key_source_digest"
+        printf 'output_kind=%s\n' "$_cica_key_output_kind"
+    } | ci_compiler_artifact_sha256_stdin
+}
+
+# Envelope paths are literal checkout-relative paths, never evaluated text.
+cica_fail() { ci_compiler_artifact_error "$*"; exit 1; }
+# Native jq.exe otherwise translates LF to CRLF under Git Bash. The canonical
+# metadata and schema-1 key framing are LF on both hosts.
+cica_jq() { command jq -b "$@"; }
+cica_sha() { ci_compiler_artifact_sha256_file "$1"; }
+cica_rel() {
+    ci_compiler_artifact_field_safe path "$1" || return 1
+    case "$1" in '' | /* | *\\* | *:* | . | .. | ./* | ../* | */./* | */../* | */. | */.. | *//*) return 1 ;; esac
+}
+cica_file() (
+    _base=$1 _rel=$2
+    cica_rel "$_rel" || cica_fail 'unsafe relative path'
+    _path=$_base
+    while :; do
+        _part=${_rel%%/*}
+        _path=$_path/$_part
+        [ ! -L "$_path" ] || cica_fail "symlink path: $_path"
+        case "$_rel" in */*) _rel=${_rel#*/} ;; *) break ;; esac
+    done
+    [ "${3:-}" != regular ] || [ -f "$_path" ] || cica_fail "not a regular file: $_path"
+    printf '%s\n' "$_path"
+)
+cica_owned() {
+    case "$2" in "$1"/target/*) cica_file "$1" "${2#"$1"/}" >/dev/null ;; *) cica_fail 'envelope path must be inside owned target/' ;; esac
+}
+cica_json() {
+    [ -f "$1" ] && [ ! -L "$1" ] || cica_fail 'missing regular JSON'
+    [ "$(wc -c < "$1")" -le 4194304 ] || cica_fail 'oversized JSON'
+    cica_jq -S . "$1" > "$CICA_SCRATCH/json-check"
+    cmp -s "$1" "$CICA_SCRATCH/json-check" || cica_fail 'noncanonical or duplicate JSON fields'
+}
+cica_context() (
+    _commit=$(git -C "$CICA_ROOT" rev-parse HEAD)
+    _tree=$(git -C "$CICA_ROOT" rev-parse 'HEAD^{tree}')
+    if [ "$1" = local ]; then
+        [ "${GITHUB_ACTIONS:-}" != true ] || cica_fail 'local mode forbidden in CI'
+        cica_jq -nS --arg c "$_commit" --arg t "$_tree" --arg h "$CICA_HOST" \
+          '{scope:"local",repository:"local",run_id:"local",attempt:0,commit:$c,tree:$t,head:$c,workflow_ref:"local",workflow_sha:$c,host:$h}'
+        exit
+    fi
+    [ "${GITHUB_ACTIONS:-}" = true ] && [ "${GITHUB_EVENT_NAME:-}" = pull_request ] || cica_fail 'required PR workflow context missing'
+    [ "${GITHUB_SHA:-}" = "$_commit" ] || cica_fail 'checkout differs from trusted event'
+    git -C "$CICA_ROOT" diff --quiet HEAD || cica_fail 'dirty tracked checkout'
+    cica_jq -en --arg n "${GITHUB_RUN_ID:-}" --arg a "${GITHUB_RUN_ATTEMPT:-}" --arg s "${GITHUB_WORKFLOW_SHA:-}" \
+      '$n|test("^[0-9]+$")' >/dev/null
+    cica_jq -en --arg a "$GITHUB_RUN_ATTEMPT" --arg s "$GITHUB_WORKFLOW_SHA" \
+      '($a|test("^[1-9][0-9]*$")) and ($s|test("^[0-9a-f]{40}$"))' >/dev/null || cica_fail 'run attempt/workflow SHA missing'
+    case "$GITHUB_WORKFLOW_REF" in "$GITHUB_REPOSITORY"/.github/workflows/ci.yml@*) ;; *) cica_fail 'wrong workflow' ;; esac
+    cica_jq -e --arg r "$GITHUB_REPOSITORY" '.repository.full_name==$r and (.pull_request.head.sha|test("^[0-9a-f]{40}$"))' "$GITHUB_EVENT_PATH" >/dev/null || cica_fail 'event repository/head mismatch'
+    cica_jq -nS --arg c "$_commit" --arg t "$_tree" --arg h "$CICA_HOST" --arg r "$GITHUB_REPOSITORY" \
+      --arg id "$GITHUB_RUN_ID" --argjson a "$GITHUB_RUN_ATTEMPT" --arg w "$GITHUB_WORKFLOW_REF" --arg s "$GITHUB_WORKFLOW_SHA" \
+      --arg head "$(cica_jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")" \
+      '{scope:"github",repository:$r,run_id:$id,attempt:$a,commit:$c,tree:$t,head:$head,workflow_ref:$w,workflow_sha:$s,host:$h}'
+)
+cica_state() {
+    cica_file "$CICA_ROOT" "${CICA_WORK#"$CICA_ROOT"/}/draft/context.json" regular >/dev/null
+    cica_json "$CICA_WORK/draft/context.json"
+    _scope=$(cica_jq -r .scope "$CICA_WORK/draft/context.json")
+    cica_context "$_scope" > "$CICA_SCRATCH/context.json"
+    cmp -s "$CICA_SCRATCH/context.json" "$CICA_WORK/draft/context.json" || cica_fail 'producer context changed'
+}
+cica_sources() (
+    # Preserve #6883's raw-byte manifest framing. Batch hashing avoids one
+    # Git Bash process per source on Windows. Only tracked source inputs enter
+    # the closure; generated inputs are bound separately after bootstrap.
+    cd "$CICA_ROOT"
+    git ls-files -z -- src stdlib tests > "$CICA_SCRATCH/source-paths.z"
+    git -c core.quotePath=false ls-files --stage -- src stdlib tests > "$CICA_SCRATCH/source-modes"
+    awk '$1!="100644" && $1!="100755" {exit 1}' "$CICA_SCRATCH/source-modes" || cica_fail 'special tracked source input'
+    xargs -0 sha256sum -- < "$CICA_SCRATCH/source-paths.z" > "$CICA_SCRATCH/source-hashes"
+    [ -s "$CICA_SCRATCH/source-hashes" ] || cica_fail 'empty source closure'
+    while IFS= read -r _line; do
+        _hash=${_line%% *} _path=${_line#*  }
+        [ "${#_hash}" -eq 64 ] || cica_fail 'unsafe source manifest'
+        case "$_hash" in *[!0-9a-f]*) cica_fail 'unsafe source digest' ;; esac
+        cica_file "$CICA_ROOT" "$_path" regular >/dev/null
+        printf '%s  {root}/%s\n' "$_hash" "$_path"
+    done < "$CICA_SCRATCH/source-hashes" > "$CICA_SCRATCH/source-manifest"
+    LC_ALL=C sort -k2 "$CICA_SCRATCH/source-manifest"
+)
+cica_inventory() (
+    for _p in scripts/ci-gates.tsv scripts/ci-compiler-artifacts.tsv scripts/expand-integration-manifest.awk tests/integration/native.manifest; do
+        cica_jq -cn --arg p "$_p" --arg h "$(cica_sha "$CICA_ROOT/$_p")" '{key:$p,value:$h}'
+    done | cica_jq -sS from_entries
+)
+cica_recipes() (
+    for _p in scripts/ci-verify.sh scripts/check-bootstrap-fixpoint.sh scripts/lib-native-link.sh scripts/lib-linux-entry.sh scripts/lib-build-provenance.sh scripts/check-build-invariance.sh scripts/lib-build-invariance-batch.sh scripts/lib-bounded-pool.sh scripts/run-memory-bounded.sh scripts/lib-linux-memory-limit.sh scripts/run-bounded-process.ps1 scripts/ci-compiler-artifact.sh scripts/lib-ci-compiler-artifact.sh; do
+        cica_jq -cn --arg p "$_p" --arg h "$(cica_sha "$CICA_ROOT/$_p")" '{key:$p,value:$h}'
+    done | cica_jq -sS from_entries
+)
+cica_generated() {
+    printf '%s\n' target/build-stage0/git-hash.txt target/build-stage0/tree-hash.txt \
+      target/embedded-stdlib-tlci/stdlib.tlci target/embedded-stdlib-tlci/stdlib.tlci.tlch \
+      target/embedded-stdlib-tlci/source-hash.txt target/embedded-stdlib-tlci/modules.txt \
+      "target/embedded-stdlib-tlci/prelude-surface-$CICA_HOST.rodata"
+}
+cica_corpus() {
+    printf '%s\n' 'selfhost_main_opt1|src/main.tl|1' 'selfhost_main_opt2|src/main.tl|2'
+    awk -v host=linux -f "$CICA_ROOT/scripts/expand-integration-manifest.awk" "$CICA_ROOT/tests/integration/native.manifest" > "$CICA_SCRATCH/expanded"
+    awk -F'|' 'NF>=2 {print "integration_" $1 "|" $2 "|2"; next} {exit 1}' "$CICA_SCRATCH/expanded"
+}
+cica_roles() { printf '%s\n' bootstrap-converged; [ "$CICA_HOST" != linux ] || printf '%s\n' build-invariance-opt1-reference; }
+cica_files() (
+    _base=$1
+    find "$_base" -type l -print > "$CICA_SCRATCH/symlinks"
+    [ ! -s "$CICA_SCRATCH/symlinks" ] || cica_fail 'symlink in envelope'
+    find "$_base" ! -type d ! -type f -print > "$CICA_SCRATCH/special"
+    [ ! -s "$CICA_SCRATCH/special" ] || cica_fail 'special file in envelope'
+    find "$_base" -type f -print | LC_ALL=C sort > "$CICA_SCRATCH/files"
+    [ "$(wc -l < "$CICA_SCRATCH/files")" -le 10000 ] || cica_fail 'too many envelope files'
+    while IFS= read -r _file; do
+        _rel=${_file#"$_base"/}
+        [ "$_rel" != bundle.json ] || continue
+        cica_file "$_base" "$_rel" regular >/dev/null
+        cica_jq -cn --arg p "$_rel" --arg h "$(cica_sha "$_file")" --argjson n "$(wc -c < "$_file")" '{key:$p,value:{sha256:$h,bytes:$n}}'
+    done < "$CICA_SCRATCH/files" | cica_jq -sS from_entries
+)
+cica_copy() (
+    _src=$1 _dest=$2
+    case "$_src" in "$CICA_ROOT"/*) cica_file "$CICA_ROOT" "${_src#"$CICA_ROOT"/}" regular >/dev/null ;; *) cica_fail 'external payload path' ;; esac
+    [ ! -e "$_dest" ] && [ ! -L "$_dest" ] || cica_fail 'snapshot destination exists'
+    _before=$(cica_sha "$_src")
+    [ -s "$_src" ] || cica_fail 'empty snapshot input'
+    mkdir -p "$(dirname -- "$_dest")"
+    cp -p "$_src" "$_dest"
+    [ "$_before" = "$(cica_sha "$_dest")" ] && [ "$_before" = "$(cica_sha "$_src")" ] || cica_fail 'input changed during copy'
+)
+cica_identity() (
+    _id=$("$1" --producer-identity | tr -d '\r\n')
+    ci_compiler_artifact_is_identity "$_id" || cica_fail 'malformed producer identity'
+    printf '%s\n' "$_id"
+)
+cica_environment() {
+    # NUL records and JSON preserve value boundaries, including newlines. Only
+    # the digest leaves this pipeline; no secret-bearing environment file is
+    # retained. Root normalization matches the canonical argv convention.
+    env -0 | cica_jq -Rsc --arg r "$CICA_ROOT" '
+      split("\u0000")[:-1] | map(index("=") as $i | {key:.[0:$i],value:.[($i+1):]}) |
+      map(select(.key|test("^TYPELISP_|^(CC|CFLAGS|LDFLAGS|LANG|LC_ALL)$"))) |
+      map(.value|= (split($r)|join("{root}"))) | from_entries' | ci_compiler_artifact_sha256_stdin
+}
+cica_binary() (
+    _magic=$(od -An -tx1 -N4 "$1" | tr -d ' \r\n')
+    if [ "$CICA_HOST" = linux ]; then
+        [ "$_magic" = 7f454c46 ] && [ "$(od -An -tx1 -j4 -N1 "$1" | tr -d ' \r\n')" = 02 ] && \
+          [ "$(od -An -tx1 -j18 -N2 "$1" | tr -d ' \r\n')" = 3e00 ] || cica_fail 'wrong ELF target'
+    else
+        case "$_magic" in 4d5a*) ;; *) cica_fail 'wrong PE target' ;; esac
+        _offset=$(od -An -tu4 -j60 -N4 "$1" | tr -d ' \r\n')
+        case "$_offset" in '' | *[!0-9]*) cica_fail 'missing PE offset' ;; esac
+        [ "$_offset" -ge 64 ] && [ "$_offset" -le "$(wc -c < "$1")" ] || cica_fail 'invalid PE offset'
+        [ "$(od -An -tx1 -j"$_offset" -N6 "$1" | tr -d ' \r\n')" = 504500006486 ] || cica_fail 'wrong PE architecture'
+    fi
+)
+cica_record() {
+    _label=$1; shift
+    cica_state
+    _wrapper='[]'
+    case "$1" in */run-memory-bounded.sh)
+        : > "$CICA_SCRATCH/wrapper-args"
+        while [ "$1" != -- ]; do printf '%s\n' "$1" >> "$CICA_SCRATCH/wrapper-args"; shift; done
+        shift
+        _wrapper=$(cica_jq -Rs --arg r "$CICA_ROOT" 'split("\n")[:-1]|map(split($r)|join("{root}"))' "$CICA_SCRATCH/wrapper-args") ;;
+    esac
+    [ "$2" = compile ] || cica_fail 'compiler invocation missing'
+    _producer=$1
+    _argv=$(cica_jq -cn --arg r "$CICA_ROOT" '$ARGS.positional|map(if .==$r then "{root}" elif startswith($r+"/") then "{root}/"+.[($r|length)+1:] else . end)' --args -- "$@")
+    _version=$("$_producer" --version | tr -d '\r')
+    ci_compiler_artifact_field_safe version "$_version" || cica_fail 'malformed version'
+    _id=$(cica_identity "$_producer")
+    _environment_sha=$(cica_environment)
+    _output=null _batch=null
+    if [ "$_label" = reference ]; then
+        _batch_path=$(printf '%s\n' "$_argv" | cica_jq -er '.[index("--batch")+1]')
+        _batch_path=$CICA_ROOT/${_batch_path#'{root}/'}
+        [ "$(wc -l < "$_batch_path")" -eq 1 ] || cica_fail 'reference batch not singleton'
+        _batch=$(cica_jq -Rs --arg r "$CICA_ROOT" 'split($r)|join("{root}")' "$_batch_path")
+        printf '%s\n' "$_batch" | cica_jq -er 'test("^src/main[.]tl[|]\\{root\\}/target/build-invariance/compare/opt2-built/selfhost_main_opt1[.]s\n$")' >/dev/null || cica_fail 'wrong reference entry'
+    else
+        case "$_label" in stage1 | stage2 | stage3 | stage4) ;; *) cica_fail 'unexpected bootstrap record' ;; esac
+        _out=$(printf '%s\n' "$_argv" | cica_jq -er '.[index("-o")+1]')
+        [ "$_out" = "{root}/target/bootstrap-fixpoint/$_label.s" ] || cica_fail 'wrong recorded output'
+        _file=$CICA_ROOT/${_out#'{root}/'}
+        _output=$(cica_jq -cn --arg p "$_out" --arg h "$(cica_sha "$_file")" --argjson n "$(wc -c < "$_file")" '{path:$p,sha256:$h,bytes:$n}')
+    fi
+    _record=$CICA_WORK/draft/records/$_label.json
+    cica_file "$CICA_ROOT" "${_record#"$CICA_ROOT"/}" >/dev/null
+    [ ! -e "$_record" ] && [ ! -L "$_record" ] || cica_fail 'duplicate producer record'
+    mkdir -p "$CICA_WORK/draft/records"
+    cica_jq -nS --argjson a "$_argv" --argjson w "$_wrapper" --arg v "$_version" --arg h "$(cica_sha "$_producer")" --arg i "$_id" --argjson o "$_output" --argjson b "$_batch" --arg e "$_environment_sha" \
+      '{argv:$a,wrapper:$w,producer_version:$v,producer_sha256:$h,producer_identity:$i,compiled_output:$o,batch_manifest:$b,variables_sha256:$e}' > "$_record"
+}
+cica_flags() {
+    cica_jq -e --arg h "$CICA_HOST" --arg role "$1" '
+      . as $m | .argv as $a |
+      (if $h=="linux" then ["linux","unix","target-linux","os-linux"] else ["windows","target-windows","os-windows"] end) as $native |
+      ($native + (if $role=="bootstrap-converged" then ["compiler-build-identity","embedded-stdlib-tlci"] else [] end)) as $cfg |
+      ($a[0]|capture("^\\{root\\}/target/bootstrap-fixpoint/stage(?<n>[234])(?<ext>[.]exe)?$")) as $producer |
+      (if $h=="windows" then ".exe" else "" end) as $ext |
+      if $role=="bootstrap-converged" then
+        (($producer.n|tonumber)+1) as $stage |
+        ($stage==3 or $stage==4) and (($producer.ext//"")==$ext) and
+        $a==([$a[0],"compile","src/main.tl","-o","{root}/target/bootstrap-fixpoint/stage"+($stage|tostring)+".s","--target",$h+"-x86_64"] +
+          [$cfg[]|"--cfg",.] + ["--stdlib-root","{root}/src","--opt-level","2"])
+      else
+        (($producer.ext//"")==$ext) and ($a[3]|test("^\\{root\\}/target/build-invariance/batches/opt2-built/opt1/chunks/entries[.][0-9]+[.]txt$")) and
+        $a==([$a[0],"compile","--batch",$a[3],"--target","linux-x86_64"] + [$cfg[]|"--cfg",.] + ["--backend-mode","scalar","--opt-level","1","--stdlib-root","stdlib","--stdlib-root","src"])
+      end' "$2" >/dev/null || cica_fail 'invocation flags substituted'
+}
+cica_key_json() (
+    _f=$1
+    # Exactly the historical fourteen fields, in its original order/framing.
+    cica_jq -er '[.producer_sha256,.producer_identity,.host,.target,.cwd,
+      .source_roots,.stdlib_roots,.cfg,.opt_level,.profile,.environment,.argv,
+      .source_set_sha256,.output_kind] |
+      if all(.[]; type=="string" and length>0 and (test("[\\x00-\\x1f\\x7f]")|not))
+      then .[] else error("unsafe provenance fields") end' "$_f" > "$CICA_SCRATCH/key-fields" || cica_fail 'unsafe provenance fields'
+    { printf 'schema=1\n'; paste -d= - "$CICA_SCRATCH/key-fields" <<'FIELDS'
+producer_sha256
+producer_identity
+host
+target
+cwd
+source_roots
+stdlib_roots
+cfg
+opt_level
+profile
+environment
+argv
+source_set_sha256
+output_kind
+FIELDS
+    } | ci_compiler_artifact_sha256_stdin
+)
+
+cica_publish() {
+    _role=$1; shift
+    cica_state
+    cica_roles > "$CICA_SCRATCH/expected-roles"
+    grep -qxF "$_role" "$CICA_SCRATCH/expected-roles" || cica_fail 'wrong host role'
+    _started=$(date +%s%3N)
+    _draft=$CICA_WORK/draft _dir=$CICA_WORK/draft/roles/$_role.publishing
+    cica_file "$CICA_ROOT" "${_dir#"$CICA_ROOT"/}" >/dev/null
+    cica_file "$CICA_ROOT" "${_draft#"$CICA_ROOT"/}/roles/$_role" >/dev/null
+    [ ! -e "$_dir" ] && [ ! -e "$_draft/roles/$_role" ] || cica_fail 'partial/duplicate role publication'
+    mkdir -p "$_dir"
+    _commit=$(cica_jq -r .commit "$_draft/context.json") _tree=$(cica_jq -r .tree "$_draft/context.json")
+    if [ "$_role" = bootstrap-converged ]; then
+        _selected=$1 _seed=$2 _previous=$3
+        case "$_selected" in
+          "$CICA_ROOT"/target/bootstrap-fixpoint/stage3 | "$CICA_ROOT"/target/bootstrap-fixpoint/stage3.exe) _stage=stage3 _input=stage2 _pair='["stage2.s","stage3.s"]' ;;
+          "$CICA_ROOT"/target/bootstrap-fixpoint/stage4 | "$CICA_ROOT"/target/bootstrap-fixpoint/stage4.exe) _stage=stage4 _input=stage3 _pair='["stage3.s","stage4.s"]' ;;
+          *) cica_fail 'unexpected converged compiler path' ;;
+        esac
+        _ext=; [ "$CICA_HOST" != windows ] || _ext=.exe
+        _producer=$CICA_ROOT/target/bootstrap-fixpoint/$_input$_ext
+        _rec=$_draft/records/$_stage.json
+        cica_json "$_rec"
+        [ "$(cica_identity "$_producer")" = "$_tree" ] && \
+          [ "$(cica_sha "$_producer")" = "$(cica_jq -r .producer_sha256 "$_rec")" ] || cica_fail 'bootstrap producer changed'
+        [ "$(cica_identity "$_selected")" = "$_tree" ] && [ "$(cica_identity "$_previous")" = "$_tree" ] || cica_fail 'output identity changed'
+        cica_binary "$_selected"; cica_binary "$_previous"
+        cica_copy "$_selected" "$_dir/payload/compiler"
+        cica_copy "$_previous" "$_dir/payload/previous-stage"
+        for _name in stage3.s stage3-embedded.s "$_input.s" "$_stage.s"; do
+            cica_jq -cn --arg p "$_name" --arg h "$(cica_sha "$CICA_ROOT/target/bootstrap-fixpoint/$_name")" \
+              --argjson n "$(wc -c < "$CICA_ROOT/target/bootstrap-fixpoint/$_name")" '{key:$p,value:{sha256:$h,bytes:$n}}'
+        done > "$CICA_SCRATCH/proofs"
+        cica_jq -sS from_entries "$CICA_SCRATCH/proofs" > "$CICA_SCRATCH/proof-base.json"
+        cica_generated > "$CICA_SCRATCH/generated-paths"
+        while IFS= read -r _p; do cica_copy "$CICA_ROOT/$_p" "$_dir/generated/$_p"; done < "$CICA_SCRATCH/generated-paths"
+        [ "$(cat "$_dir/generated/target/build-stage0/git-hash.txt")" = "$_commit" ] && \
+          [ "$(cat "$_dir/generated/target/build-stage0/tree-hash.txt")" = "$_tree" ] || cica_fail 'generated stamp changed'
+        cica_jq -S --arg stage "$_stage" --argjson pair "$_pair" --arg out "$_tree" --arg seed "$(cica_sha "$_seed")" \
+          --arg si "$(cica_identity "$_seed")" --slurpfile r "$_rec" \
+          '.+{selected_stage:$stage,fixpoint_pair:$pair,output_identity:$out,seed:{sha256:$seed,identity:$si},compile_receipt:$r[0].compiled_output,input_producer_sha256:$r[0].producer_sha256}' \
+          "$CICA_SCRATCH/proof-base.json" > "$CICA_SCRATCH/proof.json"
+    else
+        _reference=$1 _producer=$2 _rec=$_draft/records/reference.json
+        cica_json "$_rec"
+        [ "$_reference" = "$CICA_ROOT/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s" ] || cica_fail 'unexpected reference path'
+        [ "$(cica_identity "$_producer")" = "$_tree" ] && [ "$(cica_sha "$_producer")" = "$(cica_jq -r .producer_sha256 "$_rec")" ] || cica_fail 'reference producer changed'
+        _boot=$_draft/roles/bootstrap-converged/manifest.json
+        [ "$(cica_sha "$_producer")" = "$(cica_jq -r '.files["payload/compiler"].sha256' "$_boot")" ] || cica_fail 'reference producer role changed'
+        cmp -s "$_reference" "$CICA_ROOT/target/build-invariance/compare/opt1-built/selfhost_main_opt1.s" || cica_fail 'reference comparison missing'
+        cica_copy "$_reference" "$_dir/payload/reference.s"
+        cica_copy "$CICA_ROOT/target/build-invariance/corpus.txt" "$_dir/inventory/corpus.txt"
+        cica_corpus > "$CICA_SCRATCH/corpus"
+        cmp -s "$CICA_SCRATCH/corpus" "$_dir/inventory/corpus.txt" || cica_fail 'reference corpus incomplete'
+        cica_jq -nS --arg hash "$(cica_sha "$_reference")" --slurpfile r "$_rec" --slurpfile b "$_boot" \
+          '{compared_output_sha256:$hash,input_producer_sha256:$r[0].producer_sha256,batch_manifest:$r[0].batch_manifest,seed:$b[0].proof.seed,parent_provenance_key:$b[0].provenance_key}' > "$CICA_SCRATCH/proof.json"
+    fi
+    cica_jq -e --arg v "typelisp $_commit built unknown" --arg t "$_tree" '.producer_version==$v and .producer_identity==$t' "$_rec" >/dev/null || cica_fail 'producer version/identity changed'
+    cica_flags "$_role" "$_rec"
+    cica_jq -S --slurpfile r "$_rec" '.invocation_record=$r[0]' "$CICA_SCRATCH/proof.json" > "$CICA_SCRATCH/proof-record.json"
+    mv "$CICA_SCRATCH/proof-record.json" "$CICA_SCRATCH/proof.json"
+    cp "$_draft/source-set.sha256" "$_dir/source-set.sha256"
+    cica_files "$_dir" > "$CICA_SCRATCH/snapshot-files.json"
+    cica_jq -S 'del(."source-set.sha256")' "$CICA_SCRATCH/snapshot-files.json" > "$CICA_SCRATCH/files.json"
+    cica_recipes > "$CICA_SCRATCH/recipes.json"
+    # Use the actual successful invocation's environment, not the later
+    # publisher's environment. Values stay hashed; recipes bind defaults.
+    _environment_sha=$(cica_jq -r .variables_sha256 "$_rec")
+    cica_jq -cnS --arg c "$_commit" --arg e "$_environment_sha" --slurpfile r "$_rec" \
+      --slurpfile t "$_draft/toolchain.json" --slurpfile p "$CICA_SCRATCH/proof.json" \
+      --slurpfile f "$CICA_SCRATCH/files.json" --slurpfile recipes "$CICA_SCRATCH/recipes.json" \
+      '{producer_commit:$c,producer_version:$r[0].producer_version,toolchain:$t[0],seed:$p[0].seed,recipes:$recipes[0],variables_sha256:$e,resource_wrapper:$r[0].wrapper,generated_inputs:($f[0]|with_entries(select(.key|startswith("generated/"))))}' > "$CICA_SCRATCH/environment.json"
+    cica_jq -nS --arg role "$_role" --arg host "$CICA_HOST" --arg source "$(cica_sha "$_dir/source-set.sha256")" \
+      --arg env "$(cat "$CICA_SCRATCH/environment.json")" --slurpfile r "$_rec" '
+      ($r[0].argv) as $a |
+      {producer_sha256:$r[0].producer_sha256,producer_identity:$r[0].producer_identity,host:$host,target:$host+"-x86_64",cwd:"{root}",
+       source_roots:"src,stdlib,tests",stdlib_roots:(if $role=="bootstrap-converged" then "{root}/src" else "stdlib,src" end),
+       cfg:([range(0;$a|length) as $i | select($a[$i]=="--cfg")|$a[$i+1]]|join(",")),opt_level:(if $role=="bootstrap-converged" then "2" else "1" end),
+       profile:"none",environment:$env,argv:($a|tojson),source_set_sha256:$source,output_kind:(if $role=="bootstrap-converged" then "compiler-binary" else "compiler-assembly" end)}' > "$CICA_SCRATCH/fields.json"
+    cica_inventory > "$CICA_SCRATCH/inventory.json"
+    cica_jq -nS --arg role "$_role" --arg key "$(cica_key_json "$CICA_SCRATCH/fields.json")" --argjson ms "$(($(date +%s%3N)-_started))" \
+      --slurpfile c "$_draft/context.json" --slurpfile f "$CICA_SCRATCH/fields.json" --slurpfile files "$CICA_SCRATCH/files.json" \
+      --slurpfile p "$CICA_SCRATCH/proof.json" --slurpfile i "$CICA_SCRATCH/inventory.json" \
+      '{schema:3,contract:"ci-compiler-artifact",role:$role,context:$c[0],fields:$f[0],provenance_key:$key,files:$files[0],proof:$p[0],inventory:$i[0],packaging_ms:$ms}' > "$_dir/manifest.json"
+    mv "$_dir" "$_draft/roles/$_role"
+    printf '[ci-compiler-artifact] snapshot %s %sms\n' "$_role" "$(($(date +%s%3N)-_started))" >&2
+}
+cica_init() {
+    [ ! -e "$CICA_WORK" ] || cica_fail 'envelope root is not fresh'
+    mkdir -p "$CICA_WORK/draft"
+    cica_context "$1" > "$CICA_WORK/draft/context.json"
+    cica_sources > "$CICA_WORK/draft/source-set.sha256"
+    case "$CICA_HOST" in linux) _tools='as ld' ;; windows) _tools='clang lld-link' ;; esac
+    for _tool in $_tools; do
+        _exe=$(command -v "$_tool")
+        case "$_tool" in clang) _exe=${TYPELISP_WINDOWS_CLANG:-$_exe} ;; lld-link) _exe=${TYPELISP_WINDOWS_LINK:-$_exe} ;; esac
+        if command -v cygpath >/dev/null 2>&1; then _exe=$(cygpath -u "$_exe"); fi
+        cica_jq -cn --arg k "$_tool" --arg h "$(cica_sha "$_exe")" --arg v "$("$_exe" --version)" '{key:$k,value:{sha256:$h,version:$v}}'
+    done > "$CICA_SCRATCH/tools"
+    cica_jq -sS from_entries "$CICA_SCRATCH/tools" > "$CICA_WORK/draft/toolchain.json"
+}
+cica_seal() {
+    cica_state
+    _started=$(date +%s%3N)
+    _d=$CICA_WORK/draft
+    cica_roles | LC_ALL=C sort > "$CICA_SCRATCH/roles"
+    find "$_d/roles" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort > "$CICA_SCRATCH/actual-roles"
+    cmp -s "$CICA_SCRATCH/roles" "$CICA_SCRATCH/actual-roles" || cica_fail 'missing/extra/partial roles'
+    while IFS= read -r _role; do
+        cica_json "$_d/roles/$_role/manifest.json"
+        cica_jq -e --arg role "$_role" '.role==$role' "$_d/roles/$_role/manifest.json" >/dev/null || cica_fail 'wrong completed role'
+        cica_jq -cn --arg role "$_role" --arg h "$(cica_sha "$_d/roles/$_role/manifest.json")" '{key:$role,value:$h}'
+    done < "$CICA_SCRATCH/roles" > "$CICA_SCRATCH/role-hashes"
+    cica_jq -sS from_entries "$CICA_SCRATCH/role-hashes" > "$CICA_SCRATCH/roles.json"
+    cica_files "$_d" > "$CICA_SCRATCH/files.json"
+    cica_file "$CICA_ROOT" "${CICA_WORK#"$CICA_ROOT"/}/complete" >/dev/null
+    [ ! -e "$_d/bundle.json" ] && [ ! -e "$CICA_WORK/complete" ] || cica_fail 'duplicate bundle publication'
+    cica_jq -nS --slurpfile c "$_d/context.json" --slurpfile r "$CICA_SCRATCH/roles.json" --slurpfile f "$CICA_SCRATCH/files.json" \
+      '{schema:3,contract:"ci-compiler-artifact",context:$c[0],roles:$r[0],files:$f[0]}' > "$_d/bundle.json"
+    _digest=$(cica_sha "$_d/bundle.json")
+    mv "$_d" "$CICA_WORK/complete"
+    printf '[ci-compiler-artifact] seal %sms\n' "$(($(date +%s%3N)-_started))" >&2
+    printf '%s_envelope_sha=%s\n' "$CICA_HOST" "$_digest"
+}
+
+cica_verify_transport() {
+    cica_jq -en --slurpfile c "$CICA_SCRATCH/context.json" --slurpfile jobs "$1" --slurpfile arts "$2" '
+      $c[0] as $c |
+      (if $c.host=="linux" then "Test + Integration" else "Test + Integration (windows-latest)" end) as $name |
+      [$jobs[0].jobs[]|select(.name==$name)] as $js |
+      ("ci-stage-envelope-"+(if $c.host=="linux" then "Linux" else "Windows" end)+"-r"+$c.run_id+"-a"+($c.attempt|tostring)) as $artifact |
+      [$arts[0].artifacts[]|select(.name==$artifact and .expired==false)] as $as |
+      ($js|length)==1 and ($as|length)==1 and
+      ($js[0] as $j | $as[0] as $a |
+        $j.run_id==($c.run_id|tonumber) and $j.run_attempt==$c.attempt and $j.head_sha==$c.head and $j.status=="completed" and $j.conclusion=="success" and
+        $a.workflow_run.id==($c.run_id|tonumber) and $a.workflow_run.head_sha==$c.head and ($a.digest|test("^sha256:[0-9a-f]{64}$")) and
+        ($a.created_at|fromdateiso8601)>=($j.started_at|fromdateiso8601) and ($a.created_at|fromdateiso8601)<=($j.completed_at|fromdateiso8601))' >/dev/null || cica_fail 'producer/artifact attempt binding failed'
+}
+cica_verify() {
+    _readback_started=$(date +%s%3N)
+    _expected=$1 _mode=$2; shift 2
+    case "$_expected" in '' | *[!0-9a-f]*) cica_fail 'trusted bundle digest missing' ;; esac
+    [ "${#_expected}" -eq 64 ] && [ "$(cica_sha "$CICA_WORK/bundle.json")" = "$_expected" ] || cica_fail 'bundle differs from producer job output'
+    cica_context "$_mode" > "$CICA_SCRATCH/context.json"
+    cica_json "$CICA_WORK/bundle.json"
+    cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" '.schema==3 and .contract=="ci-compiler-artifact" and .context==$c[0]' "$CICA_WORK/bundle.json" >/dev/null || cica_fail 'trusted workflow context mismatch'
+    cica_files "$CICA_WORK" > "$CICA_SCRATCH/files.json"
+    cica_jq -e --slurpfile f "$CICA_SCRATCH/files.json" '.files==$f[0]' "$CICA_WORK/bundle.json" >/dev/null || cica_fail 'missing/extra/corrupt bundle files'
+    cica_roles | LC_ALL=C sort > "$CICA_SCRATCH/roles"
+    cica_jq -r '.roles|keys[]' "$CICA_WORK/bundle.json" | LC_ALL=C sort > "$CICA_SCRATCH/actual-roles"
+    cmp -s "$CICA_SCRATCH/roles" "$CICA_SCRATCH/actual-roles" || cica_fail 'missing/extra roles'
+    cica_sources > "$CICA_SCRATCH/source-set.sha256"
+    cica_inventory > "$CICA_SCRATCH/inventory.json"
+    cica_recipes > "$CICA_SCRATCH/recipes.json"
+    while IFS= read -r _role; do
+        _base=$CICA_WORK/roles/$_role _m=$CICA_WORK/roles/$_role/manifest.json
+        cica_json "$_m"
+        [ "$(cica_sha "$_m")" = "$(cica_jq -r --arg r "$_role" '.roles[$r]' "$CICA_WORK/bundle.json")" ] || cica_fail 'role manifest mismatch'
+        cica_jq -S .fields "$_m" > "$CICA_SCRATCH/fields.json"
+        [ "$(cica_key_json "$CICA_SCRATCH/fields.json")" = "$(cica_jq -r .provenance_key "$_m")" ] || cica_fail 'provenance key mismatch'
+        cmp -s "$CICA_SCRATCH/source-set.sha256" "$_base/source-set.sha256" || cica_fail 'source-set substitution'
+        cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" --slurpfile i "$CICA_SCRATCH/inventory.json" \
+          --arg r "$_role" --arg h "$CICA_HOST" --arg s "$(cica_sha "$CICA_SCRATCH/source-set.sha256")" '
+          .schema==3 and .contract=="ci-compiler-artifact" and .role==$r and .context==$c[0] and .inventory==$i[0] and
+          .fields.producer_identity==$c[0].tree and (.fields.producer_sha256|test("^[0-9a-f]{64}$")) and .proof.input_producer_sha256==.fields.producer_sha256 and
+          .fields.host==$h and .fields.target==$h+"-x86_64" and .fields.cwd=="{root}" and .fields.source_roots=="src,stdlib,tests" and
+          .fields.source_set_sha256==$s and .fields.profile=="none" and
+          .fields.stdlib_roots==(if $r=="bootstrap-converged" then "{root}/src" else "stdlib,src" end) and
+          .fields.opt_level==(if $r=="bootstrap-converged" then "2" else "1" end) and
+          .fields.output_kind==(if $r=="bootstrap-converged" then "compiler-binary" else "compiler-assembly" end)' "$_m" >/dev/null || cica_fail 'role/source/identity field substitution'
+        cica_jq -nS --argjson a "$(cica_jq -r '.fields.argv' "$_m")" '{argv:$a}' > "$CICA_SCRATCH/argv.json"
+        cica_flags "$_role" "$CICA_SCRATCH/argv.json"
+        cica_jq -e '(.fields.argv|fromjson) as $a | .fields.cfg==([range(0;$a|length) as $i|select($a[$i]=="--cfg")|$a[$i+1]]|join(","))' "$_m" >/dev/null || cica_fail 'cfg field substitution'
+        # The role index is exact, and the independently bound bundle index
+        # already checked every hash and size. Recompute role-local entries too.
+        cica_files "$_base" > "$CICA_SCRATCH/role-files-all.json"
+        cica_jq -S 'del(."manifest.json",."source-set.sha256")' "$CICA_SCRATCH/role-files-all.json" > "$CICA_SCRATCH/role-files.json"
+        cica_jq -e --slurpfile f "$CICA_SCRATCH/role-files.json" '.files==$f[0]' "$_m" >/dev/null || cica_fail 'role payload corrupt'
+        if [ "$_role" = bootstrap-converged ]; then
+            { printf '%s\n' payload/compiler payload/previous-stage; cica_generated | sed 's|^|generated/|'; } | LC_ALL=C sort > "$CICA_SCRATCH/role-paths"
+        else printf '%s\n' inventory/corpus.txt payload/reference.s > "$CICA_SCRATCH/role-paths"; fi
+        cica_jq -r '.files|keys[]' "$_m" | LC_ALL=C sort > "$CICA_SCRATCH/actual-role-paths"
+        cmp -s "$CICA_SCRATCH/role-paths" "$CICA_SCRATCH/actual-role-paths" || cica_fail 'role payload set changed'
+        cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" --slurpfile recipes "$CICA_SCRATCH/recipes.json" --slurpfile tools "$CICA_WORK/toolchain.json" '
+          (.fields.environment|fromjson) as $e |
+          $e.producer_commit==$c[0].commit and $e.producer_version==("typelisp "+$c[0].commit+" built unknown") and
+          $e.recipes==$recipes[0] and $e.toolchain==$tools[0] and $e.seed==.proof.seed and
+          ($e.variables_sha256|test("^[0-9a-f]{64}$")) and ($e.resource_wrapper|type)=="array" and
+          $e.generated_inputs==(.files|with_entries(select(.key|startswith("generated/")))) and
+          (.proof.invocation_record as $r | $r.argv==(.fields.argv|fromjson) and $r.producer_sha256==.fields.producer_sha256 and $r.producer_identity==.fields.producer_identity and
+           $r.producer_version==$e.producer_version and $r.variables_sha256==$e.variables_sha256 and $r.wrapper==$e.resource_wrapper)' "$_m" >/dev/null || cica_fail 'environment/generated/recipe substitution'
+        if [ "$_role" = bootstrap-converged ]; then
+            cica_binary "$_base/payload/compiler"; cica_binary "$_base/payload/previous-stage"
+            cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" '
+              .proof as $p |
+              ($p.selected_stage=="stage3" or $p.selected_stage=="stage4") and $p.output_identity==$c[0].tree and
+              ($p.seed.sha256|test("^[0-9a-f]{64}$")) and ($p.seed.identity|test("^[0-9a-f]{40}$")) and
+              $p.fixpoint_pair==(if $p.selected_stage=="stage3" then ["stage2.s","stage3.s"] else ["stage3.s","stage4.s"] end) and
+              $p[$p.fixpoint_pair[0]].sha256==$p[$p.fixpoint_pair[1]].sha256 and $p["stage3.s"].sha256==$p["stage3-embedded.s"].sha256 and
+              $p.compile_receipt.sha256==$p[$p.selected_stage+".s"].sha256 and $p.compile_receipt.bytes==$p[$p.selected_stage+".s"].bytes and
+              $p.compile_receipt.path==("{root}/target/bootstrap-fixpoint/"+$p.selected_stage+".s")' "$_m" >/dev/null || cica_fail 'fixpoint/parity proof incomplete'
+            [ "$(cat "$_base/generated/target/build-stage0/git-hash.txt")" = "$(cica_jq -r .commit "$CICA_SCRATCH/context.json")" ] && \
+              [ "$(cat "$_base/generated/target/build-stage0/tree-hash.txt")" = "$(cica_jq -r .tree "$CICA_SCRATCH/context.json")" ] || cica_fail 'generated stamps differ'
+        else
+            cica_corpus > "$CICA_SCRATCH/corpus"
+            cmp -s "$CICA_SCRATCH/corpus" "$_base/inventory/corpus.txt" || cica_fail 'reference inventory incomplete'
+            cica_jq -e --slurpfile b "$CICA_WORK/roles/bootstrap-converged/manifest.json" '
+              .proof.compared_output_sha256==.files["payload/reference.s"].sha256 and
+              .fields.producer_sha256==$b[0].files["payload/compiler"].sha256 and .proof.seed==$b[0].proof.seed and
+              .proof.parent_provenance_key==$b[0].provenance_key and
+              .proof.batch_manifest=="src/main.tl|{root}/target/build-invariance/compare/opt2-built/selfhost_main_opt1.s\n"' "$_m" >/dev/null || cica_fail 'reference producer/comparison proof substituted'
+        fi
+    done < "$CICA_SCRATCH/roles"
+    [ "$_mode" != github ] || cica_verify_transport "$1" "$2"
+    cica_jq -nS --arg h "$CICA_HOST" --arg d "$_expected" --argjson ms "$(($(date +%s%3N)-_readback_started))" --slurpfile c "$CICA_SCRATCH/context.json" '{schema:3,host:$h,context:$c[0],bundle_sha256:$d,readback_ms:$ms,status:"ok"}'
+}
+ci_compiler_artifact() (
+    set -eu
+    _operation=$1; shift
+    if [ "$_operation" = key ]; then ci_compiler_artifact_key "$@"; exit; fi
+    CICA_ROOT=$1 CICA_WORK=$2; shift 2
+    case "$1" in linux | Linux) CICA_HOST=linux ;; windows | Windows) CICA_HOST=windows ;; *) cica_fail 'unsupported host' ;; esac
+    shift
+    CICA_ROOT=$(CDPATH= cd -- "$CICA_ROOT" && pwd -P)
+    cd "$CICA_ROOT"
+    cica_owned "$CICA_ROOT" "$CICA_WORK"
+    mkdir -p "$CICA_ROOT/target/exp"
+    cica_file "$CICA_ROOT" target/exp >/dev/null
+    CICA_SCRATCH=$(mktemp -d "$CICA_ROOT/target/exp/ci-compiler-envelope.XXXXXX")
+    case "$_operation" in
+      init) cica_init github ;;
+      init-local) cica_init local ;;
+      record) cica_record "$@" ;;
+      publish) cica_publish "$@" ;;
+      seal) cica_seal ;;
+      verify) cica_verify "$1" github "$2" "$3" ;;
+      verify-local) cica_verify "$1" local ;;
+      *) cica_fail 'unknown envelope operation' ;;
+    esac
+)

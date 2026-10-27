@@ -28,8 +28,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     outputs:
-      linux_envelope_sha: ${{ steps.verification.outputs.linux_envelope_sha }}
-      windows_envelope_sha: ${{ steps.verification.outputs.windows_envelope_sha }}
+      linux_envelope_sha: ${{ steps.envelope.outputs.linux_envelope_sha }}
+      windows_envelope_sha: ${{ steps.envelope.outputs.windows_envelope_sha }}
     strategy:
       fail-fast: true
       matrix:
@@ -143,9 +143,12 @@ jobs:
         env:
           TYPELISP_CI_TIMING: '1'
           TYPELISP_CI_COMPILER_ENVELOPES: '1'
-        run: |
-          scripts/ci-verify.sh --jobs 4 --memory-mib 14336
-          scripts/ci-compiler-artifact.sh seal "$PWD" "$PWD/target/ci-stage-envelope" "$RUNNER_OS" >> "$GITHUB_OUTPUT"
+        run: scripts/ci-verify.sh --jobs 4 --memory-mib 14336
+
+      - name: Seal completed compiler stage envelope
+        id: envelope
+        shell: bash
+        run: scripts/ci-compiler-artifact.sh seal "$PWD" "$PWD/target/ci-stage-envelope" "$RUNNER_OS" >> "$GITHUB_OUTPUT"
 
       - name: Upload completed compiler stage envelope
         uses: actions/upload-artifact@v4
@@ -156,7 +159,7 @@ jobs:
           retention-days: 90
 
       - name: Preserve incomplete envelope evidence
-        if: failure() && steps.verification.outcome == 'failure'
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ci-stage-envelope-incomplete-${{ runner.os }}-r${{ github.run_id }}-a${{ github.run_attempt }}
@@ -292,9 +295,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
       - uses: actions/download-artifact@v4
         with:
           name: ci-stage-envelope-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}

@@ -443,6 +443,8 @@ is no new producer identity: `lib-build-provenance.sh` still defines the commit
 stamp and `HEAD^{tree}` producer identity. A golden-vector fixture checks the
 legacy key. `ci-compiler-artifacts.tsv` lists only the two envelope roles;
 it does not claim to recreate the removed full producer census.
+The implementation uses the original POSIX shell provenance primitives and
+the existing `jq`/coreutils tools; it adds no implementation-language exception.
 
 When `TYPELISP_CI_COMPILER_ENVELOPES=1`, `ci-verify.sh` records the actual
 successful compiler argv and freezes the completed bootstrap compiler,

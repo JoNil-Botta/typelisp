@@ -708,7 +708,8 @@ case "${TYPELISP_CI_COMPILER_ENVELOPES:-0}" in
         CI_COMPILER_ENVELOPE_DIR=${TYPELISP_CI_COMPILER_ENVELOPE_DIR:-$ROOT/target/ci-stage-envelope}
         envelope_init=init
         if [ "$TYPELISP_CI_COMPILER_ENVELOPES" = local ]; then envelope_init=init-local; fi
-        scripts/ci-compiler-artifact.sh "$envelope_init" "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" "$HOST_OS"
+        ci_timing_run compiler-envelope artifact-init \
+            scripts/ci-compiler-artifact.sh "$envelope_init" "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" "$HOST_OS"
         ;;
     *) ci_verify_error "invalid compiler envelope mode"; exit 2 ;;
 esac

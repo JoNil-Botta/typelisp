@@ -90,9 +90,20 @@ try {
     $stdout = $process.StandardOutput.ReadToEndAsync()
     $stderr = $process.StandardError.ReadToEndAsync()
     $exitAt = $null
+    $nextDrainCheckAt = $null
     while ($true) {
-        if ($process.HasExited -and $null -eq $exitAt) { $exitAt = $clock.ElapsedMilliseconds }
-        if ($null -ne $exitAt -and $clock.ElapsedMilliseconds - $exitAt -ge 1000) { break }
+        if ($process.HasExited -and $null -eq $exitAt) {
+            $exitAt = $clock.ElapsedMilliseconds
+            $nextDrainCheckAt = $exitAt + 1000
+        }
+        if ($null -ne $exitAt -and $clock.ElapsedMilliseconds -ge $nextDrainCheckAt) {
+            # WMI delivery can lag process exit. Keep consuming until the
+            # trailing sentinel branch arrives, with a bounded failure window.
+            $draining = Get-FixtureProcessTree -Records $events.ToArray() -RootId $rootId -ObserverId $PID
+            if ($draining.RootSeen -and $draining.SentinelLeaves -eq 2 -and $draining.SentinelBranches -eq 2) { break }
+            if ($clock.ElapsedMilliseconds - $exitAt -ge 15000) { break }
+            $nextDrainCheckAt = $clock.ElapsedMilliseconds + 1000
+        }
         if ($clock.ElapsedMilliseconds -gt 180000) {
             & taskkill.exe /PID $rootId /T /F | Out-Null
             throw 'Fixture launch observation exceeded 180 seconds'
@@ -108,9 +119,11 @@ try {
             $event.Dispose()
         }
     }
+    $drainMs = $clock.ElapsedMilliseconds - $exitAt
     $process.WaitForExit()
     $stdout.Result | Set-Content -LiteralPath "$OutputPrefix.stdout" -Encoding utf8
     $stderr.Result | Set-Content -LiteralPath "$OutputPrefix.stderr" -Encoding utf8
+    $events | Export-Csv -LiteralPath "$OutputPrefix.all-processes.csv" -NoTypeInformation -Encoding utf8
     $tree = Get-FixtureProcessTree -Records $events.ToArray() -RootId $rootId -ObserverId $PID
     $owned = $tree.Owned
     $rootSeen = $tree.RootSeen
@@ -129,6 +142,7 @@ try {
         "observer_pid=$PID", "excluded_sentinel_process_starts=$($tree.SentinelStarts)",
         "root_start_seen=$rootSeen", "expected_fixture_launches=$ExpectedFixtureLaunches",
         "fixture_launches=$launches", "sentinels=$sentinels",
+        "event_drain_ms=$drainMs", 'event_drain_limit_ms=15000', "observed_process_starts=$($events.Count)",
         "wall_ms=$exitAt", "exit=$($process.ExitCode)",
         'scope=fixture descendants including fork/exec intermediates; excludes root wrapper and both sentinel branches',
         'timing=observer run; canonical same-run gate attribution is recorded separately'

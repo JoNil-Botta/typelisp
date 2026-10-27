@@ -6,6 +6,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$ROOT/scripts/lib-native-link.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
+nl_real_tr=$(command -v tr)
 nl_root=${1:-"$ROOT/target/exp/native-link-failure-self-test"}
 mkdir -p "$nl_root"
 printf 'case\tplan\ttiming\twant\tstatus\ttrace\n' > "$nl_root/results.tsv"
@@ -13,7 +14,7 @@ printf 'case\tplan\ttiming\twant\tstatus\ttrace\n' > "$nl_root/results.tsv"
 
 nl_step() {
     printf '%s\t%s\n' "$nl_case" "$1" >> "$nl_root/trace.tsv"
-    [ "$nl_failure" != "$1" ] || return 23
+    [ "$nl_failure" != "$1" ] || return "${nl_step_status:-23}"
 }
 as() { nl_step assemble; }
 nl_clang() { nl_step assemble; }
@@ -42,6 +43,12 @@ echo() {
 # No host tool or Windows installation participates in either host plan.
 command() {
     [ "$1" = -v ] || return 1
+    if [ "${nl_real_helpers:-0}" -eq 1 ]; then
+        case "$2" in
+            clang.exe | clang) return 1 ;;
+            cygpath | powershell.exe) return 0 ;;
+        esac
+    fi
     case "$2" in
         as | ld) return 0 ;;
         clang.exe | lld-link)
@@ -65,13 +72,31 @@ nl_flow() {
         clang) configure_windows_clang_env || return $? ;;
         linker) configure_windows_linker || return $? ;;
         find) find_clang || return $? ;;
+        real-entry)
+            NL_HOST_OS=linux
+            assemble_and_link fixture fixture.s fixture.obj fixture.exe || return $?
+            ;;
+        short-output)
+            short_windows_path fixture-clang >&- || return $?
+            configure_windows_linker || return $?
+            ;;
+        short-control)
+            nl_path=$(short_windows_path fixture-clang) || return $?
+            [ "$nl_path" = "$nl_expected_path" ] || return 24
+            ;;
+        powershell)
+            NL_HOST_OS=windows
+            configure_toolchain || return $?
+            ;;
     esac
     nl_step continued
 }
 nl_check() {
     nl_route=$1 nl_failure=$2 nl_expected=$3
     nl_case="$nl_plan-$nl_timing-$nl_route-$nl_failure${4:-}"
-    nl_want=23
+    nl_mode=${5:-normal}
+    nl_step_status=${6:-23}
+    nl_want=$nl_step_status
     [ "$nl_failure" != success ] || nl_want=0
     nl_probed=0
     NL_HOST_OS=$nl_plan
@@ -80,7 +105,7 @@ nl_check() {
     TYPELISP_WINDOWS_CLANG_POSIX=nl_clang
     TYPELISP_WINDOWS_LINK_POSIX=nl_linker
     case "$nl_route" in
-        find | clang) TYPELISP_WINDOWS_CLANG= ;;
+        find | clang | powershell) TYPELISP_WINDOWS_CLANG= ;;
         linker) [ "$nl_failure" != discovery ] || TYPELISP_WINDOWS_LINK= ;;
     esac
     nl_rc=0
@@ -151,6 +176,86 @@ for nl_plan in linux windows; do
     done
 done
 
+# Exercise the real entry, short-path and PowerShell helpers below the caller
+# guards too. Only their file/tool leaves are planted. Explicit test -x in
+# discovery makes its directory lookup leaf independent of installed Windows
+# candidates; all other shell predicates keep their real builtin semantics.
+. "$ROOT/scripts/lib-native-link.sh"
+nl_real_helpers=1
+test() { [ "$#" -eq 2 ] && [ "$1" = -x ] || return 2; return 1; }
+grep() {
+    case "$2" in
+        '^_tl_start:$')
+            nl_step entry-first || return $?
+            [ "$nl_mode" = normal ]
+            ;;
+        '^_start:$')
+            nl_step entry-second || return $?
+            [ "$nl_mode" = legacy ]
+            ;;
+        *) return 2 ;;
+    esac
+}
+ld() {
+    nl_step link || return $?
+    nl_expected_entry=_tl_start
+    [ "$nl_mode" != legacy ] || nl_expected_entry=_start
+    [ "$3" = "$nl_expected_entry" ]
+}
+cygpath() {
+    case "$1" in
+        -d)
+            nl_step short-probe || return $?
+            printf '%s\n' fixture-short
+            [ "$nl_mode" != fallback ]
+            ;;
+        -w) nl_step windows-path || return $?; printf '%s\n' fixture-long ;;
+        -u)
+            nl_step unix-path || return $?
+            case "$2" in fixture-clang | nl_linker) ;; *) return 24 ;; esac
+            printf '%s\n' "$2"
+            ;;
+        *) return 2 ;;
+    esac
+}
+powershell.exe() {
+    nl_status=0
+    nl_step powershell || nl_status=$?
+    printf 'fixture-clang\r\nignored\r\n'
+    return "$nl_status"
+}
+tr() {
+    nl_status=0
+    nl_step normalize || nl_status=$?
+    if [ "$nl_status" -eq 0 ]; then
+        "$nl_real_tr" "$@"
+        return $?
+    fi
+    printf 'fixture-clang\nignored\n'
+    return "$nl_status"
+}
+for nl_plan in linux windows; do
+    for nl_timing in 0 1; do
+        TYPELISP_CI_TIMING=$nl_timing
+        TYPELISP_CI_TIMING_HOST=$nl_plan
+        TYPELISP_CI_TIMING_FILE="$nl_root/timing-$nl_plan-$nl_timing.tsv"
+        nl_prefix='assemble-notice assemble entry-first'
+        nl_check real-entry entry-first "$nl_prefix" '' normal 2
+        nl_check real-entry entry-second "$nl_prefix entry-second" '' legacy 2
+        nl_check real-entry success "$nl_prefix link-notice link continued"
+        nl_check real-entry success "$nl_prefix entry-second link-notice link continued" -legacy legacy
+        nl_check real-entry success "$nl_prefix entry-second link-notice link continued" -fallback fallback
+        nl_check short-output output short-probe '' normal 1
+        nl_expected_path=fixture-short
+        nl_check short-control success 'short-probe continued'
+        nl_expected_path=fixture-long
+        nl_check short-control success 'short-probe windows-path continued' -fallback fallback
+        nl_check powershell powershell powershell
+        nl_check powershell normalize 'powershell normalize'
+        nl_check powershell success 'powershell normalize unix-path short-probe clang-notice unix-path linker-notice continued'
+    done
+done
+
 # One assertion process for all cases/traces/rows, rather than cmp/grep/awk
 # per case (expensive on Windows). Exact inventories reject missing work too.
 awk -F '\t' '
@@ -176,7 +281,7 @@ awk -F '\t' '
             $5 != status[$2] || $6 != plan[$2] || rows[$2]++) bad = 1
     }
     END {
-        if (cases != 76) bad = 1
+        if (cases != 120) bad = 1
         for (id in want) {
             if (actual[id] != expected[id] || rows[id] != timing[id]) {
                 print "FAIL: native-link fixture " id ": expected [" expected[id] "] got [" actual[id] "]" > "/dev/stderr"

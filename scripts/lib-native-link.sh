@@ -86,10 +86,11 @@ to_windows_path() {
 
 short_windows_path() {
     if command -v cygpath >/dev/null 2>&1; then
-        short_path=$(cygpath -d "$1" 2>/dev/null || true)
-        if [ -n "$short_path" ]; then
-            printf '%s\n' "$short_path"
-            return 0
+        if short_path=$(cygpath -d "$1" 2>/dev/null); then
+            if [ -n "$short_path" ]; then
+                printf '%s\n' "$short_path" || return $?
+                return 0
+            fi
         fi
     fi
     to_windows_path "$1"
@@ -129,7 +130,7 @@ find_clang() {
         "/c/Program Files/Microsoft Visual Studio/2022/Professional/VC/Tools/Llvm/x64/bin" \
         "/c/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/Llvm/x64/bin" \
         "/c/Program Files (x86)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/Llvm/x64/bin"; do
-        if [ -x "$candidate_dir/clang.exe" ]; then
+        if test -x "$candidate_dir/clang.exe"; then
             printf '%s\n' "$candidate_dir/clang.exe" || return $?
             return 0
         fi
@@ -137,9 +138,15 @@ find_clang() {
 
     if command -v powershell.exe >/dev/null 2>&1; then
         ps_clang=$(powershell.exe -NoProfile -Command '$cmd = Get-Command clang.exe -ErrorAction SilentlyContinue; if ($cmd) { $cmd.Source }') || return $?
-        ps_clang=$(printf '%s\n' "$ps_clang" |
-            tr -d '\r' |
-            sed -n '1p') || return $?
+        # A here-document supplies input without a producer whose failure
+        # could be hidden by the normalization command's pipeline status.
+        ps_clang=$(tr -d '\r' <<EOF
+$ps_clang
+EOF
+        ) || return $?
+        IFS= read -r ps_clang <<EOF || return $?
+$ps_clang
+EOF
         if [ -n "$ps_clang" ]; then
             to_unix_path "$ps_clang" || return $?
             return 0
@@ -158,7 +165,7 @@ configure_windows_clang_env() {
 
     clang_path=$(find_clang) || {
         _clang_status=$?
-        echo "missing assembler: clang" >&2
+        printf '%s%s\n' "${GATE_FAIL_PREFIX-}" 'missing assembler: clang' >&2
         return "$_clang_status"
     }
     if [ -z "$clang_path" ]; then

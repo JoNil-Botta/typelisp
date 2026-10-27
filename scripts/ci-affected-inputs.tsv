@@ -1,0 +1,120 @@
+# Reviewed input classes for every canonical gate. A missing/new gate makes group selection fall back to the full table.
+# compiler/stdlib/corpus include all produced-compiler consumers, plus direct source/corpus readers below.
+id	classes	reason
+x64-executable-template-registry-coverage	compiler,corpus	Reads compiler source structure directly; retain for source and corpus recommendations.
+cross-mode-differential-oracle-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+linux-resident-memory-limit-helper-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+windows-job-object-memory-limit-helper-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+embedded-stdlib-tlci-resource-verifier-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+build-invariance-batch-reuse-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+selfhost-linked-size-attribution-parser-self-tests	compiler,stdlib,corpus	Builds a mangled module-prefix inventory from src and stdlib, even in self-test mode.
+cli-help-surface	compiler,corpus	Reads compiler source structure directly; retain for source and corpus recommendations.
+compiler-state-schema-boundary	compiler,stdlib,corpus	Scans src, stdlib and tests for retired generic state accessors.
+tlci-native-route-size-ratchet-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+zero-cons-structural-classifier-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+zero-cons-fixture-and-embedded-source-invariant	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.
+shared-view-count-ratchet	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.
+spmd-mode-instruction-count-harness-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+c-measured-region-instruction-harness-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+instruction-count-comparison-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+self-compile-gate-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+compiler-scaling-comparison-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+cli-tools-benchmark-repetition-self-test	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+stage0-release-publication-verifier-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+stage0-latest-staged-publication-self-tests	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+bootstrap-adaptive-control-flow	-	Self-contained harness or publication fixtures; no compiler, stdlib or corpus input.
+bootstrap-fixpoint	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage0-size-ratchet	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-opt1-opt2-build-invariance	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+embedded-stdlib-tlci-image	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-opt2-built-cli-compile-cross-fixpoint-regression	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-compile-profile-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-cli-build-run-and-chooser-smoke	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+embedded-stdlib-tlci-bounded-resource-report	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-native-integration-corpus	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+linux-self-compile-measurement	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+linux-instruction-count-baseline	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+tlci-mutation-bootstrap-fixpoint	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-inline-typelisp-tests	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-selfhost-compile-manifest	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-core-ir-dependency-boundary	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+embedded-stdlib-build-payload	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-deterministic-assembly	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+typelisp-format-compiler-selection-control	compiler,stdlib,corpus	Reads the current source inventory or source invariants directly.
+typelisp-source-formatting	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+large-crlf-formatter-diff	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+typelisp-source-lint	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+no-libc-dependency-guard	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-public-tool-surface	compiler,stdlib,corpus,docs	Also validates documented examples or renders and validates documentation pages.
+stage2-app-workflow-corpus	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+ir-observability-golden	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+compiler-arena-debug-native-matrix	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-arena-sanitizer-selfhost	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+tlci-format-corpus	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-spmd-runtime-dispatch	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-spmd-package-calls	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+ispc-perfbench-loads-corpus-contract	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+ispc-perfbench-stores-corpus-contract	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+ispc-perfbench-gathers-corpus-contract	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+ispc-mandelbrot-corpus-contract	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+ispc-point-transform-corpus-contract	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-repository-doctests	compiler,stdlib,corpus,docs	Also validates documented examples or renders and validates documentation pages.
+stage2-prelude-macro-mutation-guard	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+tlci-native-route-sustained-stress	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+package-metadata-only-tlci-dependency-catalogs	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+package-native-tlci-dependency-macros	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+package-dependency-tlci-frontend-surfaces	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-compile-startup-profile-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-allocation-profile-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-math-exp-codegen-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-math-log-codegen-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-math-pow-codegen-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-math-trig-codegen-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-codegen-target-parity	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-backend-target-assembly-parity	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-windows-coff-batch-plan	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-pic-relocation-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-linux-shared-object-code-model	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-coff-relocation-overflow-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-safety-corpus	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-ownership-model	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+integration-manifest-validator-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+windows-coff-plan-validator-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+docs-site-search-manifest-validator-self-tests	corpus,docs	Documentation and corpus manifest validation coverage.
+integration-batch-observability	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+integration-windows-path-normalization	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+integration-compile-failure-diagnostics	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+integration-signal-notice-capture	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+windows-integration-linker-queue-self-test	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+stage2-must-use-metadata-and-abi-codegen	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-regalloc-backend-asm-shape-gates	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-sha-256-fixed-round-wipe-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-sha-512-wipe-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-by-value-aggregate-abi-shape-gate	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-examples	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+benchmark-wall-clock-harness-self-tests	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-benchmark-comparison-correctness	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-optimization-corpus-correctness	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-optimization-corpus-opt2-runtime-correctness	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-idna-unicode12-data	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-stdlib-modules-and-fixtures	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-stdlib-selfhost-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-spmd-simd-comparison	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-cross-mode-semantic-abi-differential	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-spmd-lane-identity	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-spmd-broadcast	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-docs-pages-build-path	compiler,stdlib,corpus,docs	Also validates documented examples or renders and validates documentation pages.
+stage2-cli-host-action-smoke	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-stdlib-documentation	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+linux-heavy-instruction-count-baseline	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+linux-compiler-scaling-budgets	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-native-link-generated-programs	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-rooted-linux-filesystem-boundary	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-linux-process-failure-boundary	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+windows-native-link-build-run	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+win64-seh-unwind-verifier	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-elf-object-reader-oracle	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-elf-dso-reader-oracle	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-backend-source-import-context	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

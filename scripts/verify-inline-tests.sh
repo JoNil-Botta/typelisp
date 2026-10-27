@@ -347,6 +347,16 @@ inline_test_self_test_chunks() {
     ci_timing_set_now_ms
     _inline_matrix_started=$CI_TIMING_NOW_MS
     bounded_completion_fixture_matrix "$HOST_OS"
+    _completion_checks="$INLINE_TEST_SELF_TEST_ROOT/checks.tsv"
+    : > "$_completion_checks"
+    set --
+    for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
+        for _completion_case in $BOUNDED_COMPLETION_CASES; do
+            set -- "$@" "$INLINE_TEST_SELF_TEST_ROOT/worker-$_completion_host-$_completion_case" \
+                "$INLINE_TEST_SELF_TEST_ROOT/reader-$_completion_host-$_completion_case"
+        done
+    done
+    mkdir -p "$@"
     for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _worker_dir="$INLINE_TEST_SELF_TEST_ROOT/worker-$_completion_host-$_completion_case"
@@ -358,7 +368,20 @@ inline_test_self_test_chunks() {
             fi
             (
                 HOST_OS=$_completion_host
-                inline_test_self_test_fixture "$INLINE_TEST_SELF_TEST_ROOT"
+                _self_dir="$INLINE_TEST_SELF_TEST_ROOT/reader-$_completion_host-$_completion_case"
+                # The completion reader consumes only chunk-001. Retain that
+                # chunk from the full accounting fixture exactly; its planner,
+                # second chunk and complete accounting are exercised above.
+                printf 'a.tl\nb.tl\n' > "$_self_dir/chunk-001.list"
+                printf '%s\n' \
+                    'TypeLisp test file: a.tl (2 test(s))' \
+                    'TypeLisp test file: b.tl (2 test(s))' \
+                    'TypeLisp test batch passed: 4 test(s) in 2 file(s)' \
+                    > "$_self_dir/chunk-001.stdout"
+                printf '%s\n' \
+                    'TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total' \
+                    'TypeLisp tests: 2 passed; 0 failed; 0 ignored; 0 slow-skipped; 2 total' \
+                    > "$_self_dir/chunk-001.stderr"
                 bounded_completion_fixture "$_self_dir/chunk-001.memory" \
                     "$_self_dir/chunk-001.status" "$HOST_OS" "$INLINE_TEST_CHUNK_CAP_MIB" "$_completion_case"
                 : > "$_self_dir/combined.stdout"
@@ -372,12 +395,15 @@ inline_test_self_test_chunks() {
                 else
                     [ "$_completion_rc" -ne 0 ] && [ ! -s "$_self_dir/combined.stdout" ] || exit 1
                     case $_completion_case in
-                        command-*) grep -Fq 'batch execution failed' "$_self_dir/reader.log" || exit 1 ;;
+                        command-*)
+                            bounded_completion_fixture_expect "$_completion_checks" "$_completion_host/$_completion_case" contains \
+                                "$_self_dir/reader.log" 'batch execution failed' ;;
                     esac
                 fi
             ) || { echo "inline completion fixture failed: $_completion_host/$_completion_case" >&2; exit 1; }
         done
     done
+    bounded_completion_fixture_check "$_completion_checks" || exit 1
     ci_timing_set_now_ms
     bounded_completion_fixture_cost inline-tests \
         "$((_inline_matrix_started - _inline_fixture_started))" \

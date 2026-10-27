@@ -8,6 +8,13 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$ROOT/scripts/lib-ci-timing.sh"
 nl_real_tr=$(command -v tr)
 nl_root=${1:-"$ROOT/target/exp/native-link-failure-self-test"}
+nl_plans='linux windows'
+nl_case_count=120
+case "$(uname -s)" in
+    MINGW* | MSYS* | CYGWIN*) nl_plans=windows; nl_case_count=64 ;;
+esac
+# Linux keeps both plans. Windows keeps every control for its own plan,
+# including the real entry/path/discovery leaves below, in both timer modes.
 mkdir -p "$nl_root"
 printf 'case\tplan\ttiming\twant\tstatus\ttrace\n' > "$nl_root/results.tsv"
 : > "$nl_root/trace.tsv"
@@ -144,7 +151,7 @@ nl_check() {
         "$nl_timing" "$nl_want" "$nl_rc" "$nl_expected" >> "$nl_root/results.tsv"
 }
 
-for nl_plan in linux windows; do
+for nl_plan in $nl_plans; do
     for nl_timing in 0 1; do
         TYPELISP_CI_TIMING=$nl_timing
         TYPELISP_CI_TIMING_GATE=native-link-failure-self-test
@@ -241,7 +248,7 @@ tr() {
     printf 'fixture-clang\nignored\n'
     return "$nl_status"
 }
-for nl_plan in linux windows; do
+for nl_plan in $nl_plans; do
     for nl_timing in 0 1; do
         TYPELISP_CI_TIMING=$nl_timing
         TYPELISP_CI_TIMING_HOST=$nl_plan
@@ -265,7 +272,9 @@ done
 
 # One assertion process for all cases/traces/rows, rather than cmp/grep/awk
 # per case (expensive on Windows). Exact inventories reject missing work too.
-awk -F '\t' '
+set -- "$nl_root/results.tsv" "$nl_root/trace.tsv"
+for nl_plan in $nl_plans; do set -- "$@" "$nl_root/timing-$nl_plan-1.tsv"; done
+awk -F '\t' -v count="$nl_case_count" '
     FILENAME == ARGV[1] {
         if (FNR == 1) next
         if (want[$1]++ || $4 != $5) {
@@ -288,7 +297,7 @@ awk -F '\t' '
             $5 != status[$2] || $6 != plan[$2] || rows[$2]++) bad = 1
     }
     END {
-        if (cases != 120) bad = 1
+        if (cases != count) bad = 1
         for (id in want) {
             if (actual[id] != expected[id] || rows[id] != timing[id]) {
                 print "FAIL: native-link fixture " id ": expected [" expected[id] "] got [" actual[id] "]" > "/dev/stderr"
@@ -298,4 +307,4 @@ awk -F '\t' '
         if (bad) { print "FAIL: native-link status/trace/timing integrity" > "/dev/stderr"; exit 1 }
         printf "native-link failure self-test passed (%d host/timing/control cases)\n", cases
     }
-' "$nl_root/results.tsv" "$nl_root/trace.tsv" "$nl_root/timing-linux-1.tsv" "$nl_root/timing-windows-1.tsv"
+' "$@"

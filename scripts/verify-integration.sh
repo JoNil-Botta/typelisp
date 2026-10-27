@@ -2009,18 +2009,27 @@ printf 'partial candidate\n' > "$report.candidate.s"
 printf '%s\n' "$*" > "$report.argv"
 printf '[bounded] fixture reason=%s\n' "$_bc_reason" >&2
 case $COMPLETION_CASE in missing-status | bad-status) exit 2 ;; esac
-exit "$(cat "$report.status")"
+bounded_completion_fixture_read "$report.status"
+exit "$BOUNDED_COMPLETION_FIXTURE_TEXT"
 EOF
     chmod +x "$_completion_root/runner/scripts/run-memory-bounded.sh"
     COMPLETION_FIXTURES="$ROOT/scripts/lib-bounded-completion-fixtures.sh"
     export COMPLETION_FIXTURES
     bounded_completion_fixture_matrix "$HOST_OS"
+    _completion_checks="$_completion_root/checks.tsv"
+    : > "$_completion_checks"
+    set --
+    for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
+        for _completion_case in $BOUNDED_COMPLETION_CASES; do
+            set -- "$@" "$_completion_root/$_completion_host-$_completion_case/case"
+        done
+    done
+    mkdir -p "$@"
     _completion_count=0
     for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _completion_count=$((_completion_count + 1))
             _completion_dir="$_completion_root/$_completion_host-$_completion_case"
-            mkdir -p "$_completion_dir/case"
             (
                 WORKDIR=$_completion_dir
                 exec 9> "$WORKDIR/console"
@@ -2035,7 +2044,9 @@ EOF
                 printf '%s|%s|%s\n' "$WORKDIR/case/source.tl" \
                     "$WORKDIR/case/candidate.s" "$WORKDIR/case/candidate.obj" \
                     > "$WORKDIR/batch-embedded-1.list"
-                cp "$WORKDIR/batch-embedded-1.list" "$WORKDIR/batch-embedded-2.list"
+                printf '%s|%s|%s\n' "$WORKDIR/case/source.tl" \
+                    "$WORKDIR/case/candidate.s" "$WORKDIR/case/candidate.obj" \
+                    > "$WORKDIR/batch-embedded-2.list"
                 printf 'partial candidate\n' > "$WORKDIR/case/candidate.s"
                 printf 'partial candidate\n' > "$WORKDIR/case/candidate.obj"
                 # Plant only the compile leaf: the actual worker, join,
@@ -2075,20 +2086,27 @@ EOF
                     [ "$_completion_rc" -eq 0 ] && [ -e "$_completion_dir/accepted" ] || exit 1
                     ;;
                 command-*)
-                    [ "$_completion_rc" -ne 0 ] && [ "$(cat "$_completion_dir/settled")" = 1 ] &&
+                    bounded_completion_fixture_read "$_completion_dir/settled"
+                    _completion_settled=$BOUNDED_COMPLETION_FIXTURE_TEXT
+                    bounded_completion_fixture_read "$_completion_dir/batch-embedded-1.status"
+                    _completion_status=$BOUNDED_COMPLETION_FIXTURE_TEXT
+                    [ "$_completion_rc" -ne 0 ] && [ "$_completion_settled" = 1 ] &&
                         [ -e "$_completion_dir/replayed" ] && [ ! -e "$_completion_dir/accepted" ] &&
                         [ ! -e "$_completion_dir/case/candidate.s" ] || exit 1
-                    grep -Fq "exited $(cat "$_completion_dir/batch-embedded-1.status");" "$_completion_dir/reader.log" || exit 1
-                    grep -Fq 'replay was diagnostic-only' "$_completion_dir/console" || exit 1
+                    bounded_completion_fixture_expect "$_completion_checks" "$_completion_host/$_completion_case" contains \
+                        "$_completion_dir/reader.log" "exited $_completion_status;"
+                    bounded_completion_fixture_expect "$_completion_checks" "$_completion_host/$_completion_case" contains \
+                        "$_completion_dir/console" 'replay was diagnostic-only'
                     ;;
                 *)
                     if [ "$_completion_rc" -eq 0 ] || [ -e "$_completion_dir/accepted" ] ||
                         [ -e "$_completion_dir/registered" ] ||
-                        [ -e "$_completion_dir/batch-pool/claims/batch-embedded-2" ] ||
-                        grep -Fq 'replaying its entries' "$_completion_dir/reader.log"; then
+                        [ -e "$_completion_dir/batch-pool/claims/batch-embedded-2" ]; then
                         echo "FAIL: integration accepted/replayed $_completion_host/$_completion_case" >&2
                         exit 1
                     fi
+                    bounded_completion_fixture_expect "$_completion_checks" "$_completion_host/$_completion_case" absent \
+                        "$_completion_dir/reader.log" 'replaying its entries'
                     ;;
             esac
             if [ "$_completion_case" = missing-report ]; then
@@ -2102,7 +2120,8 @@ EOF
                     echo "FAIL: integration parent accepted $_completion_host/missing-report" >&2
                     exit 1
                 fi
-                grep -Fq 'reason=invalid-completion' "$_completion_dir/parent.log" || exit 1
+                bounded_completion_fixture_expect "$_completion_checks" "$_completion_host/missing-report/parent" contains \
+                    "$_completion_dir/parent.log" 'reason=invalid-completion'
             fi
         done
     done
@@ -2134,16 +2153,23 @@ EOF
             wait "$_completion_pid" || _completion_rc=$?
             case $COMPLETION_CASE in
                 success) [ "$_completion_rc" -eq 0 ] && [ -e "$_completion_report.accepted" ] || exit 1 ;;
-                command-*) [ "$_completion_rc" -eq "$(cat "$_completion_report.status")" ] || exit 1 ;;
+                command-*)
+                    bounded_completion_fixture_read "$_completion_report.status"
+                    _completion_status=$BOUNDED_COMPLETION_FIXTURE_TEXT
+                    [ "$_completion_rc" -eq "$_completion_status" ] || exit 1 ;;
                 *)
                     [ "$_completion_rc" -ne 0 ] && [ ! -e "$_completion_report.accepted" ] || exit 1
-                    grep -Fq 'reason=' "$_completion_report.console" || exit 1
-                    grep -Fq '[bounded] fixture reason=' "$_completion_report.build.stderr" || exit 1
+                    bounded_completion_fixture_expect "$_completion_checks" "$COMPLETION_HOST/$COMPLETION_CASE/standalone" contains \
+                        "$_completion_report.console" 'reason='
+                    bounded_completion_fixture_expect "$_completion_checks" "$COMPLETION_HOST/$COMPLETION_CASE/standalone" contains \
+                        "$_completion_report.build.stderr" '[bounded] fixture reason='
                     ;;
             esac
-            [ "$(cat "$_completion_report.argv")" = 'uncallable-compiler compile fixture.tl' ] || exit 1
+            bounded_completion_fixture_read "$_completion_report.argv"
+            [ "$BOUNDED_COMPLETION_FIXTURE_TEXT" = 'uncallable-compiler compile fixture.tl' ] || exit 1
         done
     done
+    bounded_completion_fixture_check "$_completion_checks" || exit 1
     echo "[integration] bounded completion and standalone retry fixtures passed ($_completion_count host/path cases)"
 )
 
@@ -3732,13 +3758,28 @@ integration_prepare() {
 # broken empty-plan helper, as in #9368's original reproduction.
 run_preparation_failure_self_test() (
     prep_root="$WORKDIR/preparation-failure-self-test"
-    mkdir -p "$prep_root"
-    printf 'host\ttiming\tfailure\texit\n' > "$prep_root/results.tsv"
-    for prep_host in linux windows; do
+    prep_failures='success helper-build helper-assemble helper-link self-test stage-plan dependency stage-copy location batch-queue pool'
+    prep_hosts='linux windows'
+    prep_count=46
+    if [ "$HOST_OS" = windows ]; then prep_hosts=windows; prep_count=24; fi
+    # Create the independent case directories together. Every child still runs
+    # with ordinary errexit and writes only its own streams and timing rows.
+    set --
+    for prep_host in $prep_hosts; do
         for prep_timing in 0 1; do
-            for prep_failure in success helper-build helper-assemble helper-link self-test stage-plan dependency stage-copy location batch-queue pool; do
+            for prep_failure in $prep_failures; do
+                set -- "$@" "$prep_root/$prep_host-$prep_timing-$prep_failure"
+            done
+        done
+    done
+    mkdir -p "$@" "$prep_root/windows-0-invalid-result-plan" "$prep_root/windows-1-invalid-result-plan"
+    printf 'host\ttiming\tfailure\texit\n' > "$prep_root/results.tsv"
+    : > "$prep_root/expected-traces"
+    : > "$prep_root/actual-traces"
+    for prep_host in $prep_hosts; do
+        for prep_timing in 0 1; do
+            for prep_failure in $prep_failures; do
                 prep_dir="$prep_root/$prep_host-$prep_timing-$prep_failure"
-                mkdir -p "$prep_dir"
                 (
                     set -e
                     HOST_OS=$prep_host
@@ -3751,13 +3792,20 @@ run_preparation_failure_self_test() (
                         "$prep_deps" > "$NORMALIZED_MANIFEST"
                     TYPELISP_CI_TIMING=$prep_timing
                     TYPELISP_CI_TIMING_GATE=preparation-failure-self-test
-                    ci_timing_init "$WORKDIR/timing.tsv" "$HOST_OS"
+                    # The real timer runs below; initialize its private artifact
+                    # directly instead of mkdir/dirname for an existing directory.
+                    TYPELISP_CI_TIMING_FILE="$WORKDIR/timing.tsv"
+                    TYPELISP_CI_TIMING_HOST=$HOST_OS
+                    if [ "$prep_timing" -eq 1 ]; then
+                        printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost\n' > "$TYPELISP_CI_TIMING_FILE"
+                    fi
                     INTEGRATION_BATCH_SIZE=1
                     INTEGRATION_BATCH_CHUNKS=0
                     INTEGRATION_BATCH_FAILED_CHUNKS=0
                     INTEGRATION_POOL_PEAK_BYTES=0
                     preparation_fixture_step() {
                         printf '%s\n' "$1" >> "$WORKDIR/trace"
+                        printf '%s\t%s\n' "${WORKDIR##*/}" "$1" >> "$prep_root/actual-traces"
                         [ "$prep_failure" != "$1" ]
                     }
                     run_build() {
@@ -3795,6 +3843,7 @@ run_preparation_failure_self_test() (
                     integration_batch_run_pool() { preparation_fixture_step pool; }
                     ci_timing_run manifest batch-compile integration_prepare
                     printf 'continued\n' >> "$WORKDIR/trace"
+                    printf '%s\tcontinued\n' "${WORKDIR##*/}" >> "$prep_root/actual-traces"
                 ) > "$prep_dir/stdout" 2> "$prep_dir/stderr" &
                 prep_pid=$!
                 prep_rc=0
@@ -3806,36 +3855,10 @@ run_preparation_failure_self_test() (
                 : > "$prep_dir/expected-trace"
                 for prep_phase in helper-build helper-assemble helper-link self-test stage-plan stage-copy location batch-queue pool continued; do
                     printf '%s\n' "$prep_phase" >> "$prep_dir/expected-trace"
+                    printf '%s\t%s\n' "${prep_dir##*/}" "$prep_phase" >> "$prep_root/expected-traces"
                     [ "$prep_phase" != "$prep_stop" ] || break
                 done
-                if ! cmp -s "$prep_dir/expected-trace" "$prep_dir/trace" ||
-                    { [ "$prep_failure" = success ] && [ "$prep_rc" -ne 0 ]; } ||
-                    { [ "$prep_failure" != success ] && [ "$prep_rc" -ne 1 ]; }; then
-                    echo "FAIL: preparation propagated the wrong status/phases: $prep_host/$prep_timing/$prep_failure" >&2
-                    cat "$prep_dir/trace" "$prep_dir/stderr" >&2
-                    exit 1
-                fi
-                if [ "$prep_failure" = self-test ] &&
-                    ! grep -F -q 'FAIL: staging helper rejected an empty plan' "$prep_dir/stderr"; then
-                    echo "FAIL: preparation fixture did not reach the real staging self-test" >&2
-                    exit 1
-                fi
-                if [ "$prep_timing" -eq 0 ]; then
-                    [ ! -e "$prep_dir/timing.tsv" ] || exit 1
-                elif ! awk -F '\t' -v failure="$prep_failure" '
-                    NR == 1 { next }
-                    failed && $5 == 0 { bad = 1 }
-                    $5 != 0 { failed = 1 }
-                    $3 == "batch-compile" { outer++; status = $5 }
-                    END {
-                        if (failure == "location") exit bad || outer != 0
-                        exit bad || outer != 1 || status != (failure == "success" ? 0 : 1)
-                    }
-                ' "$prep_dir/timing.tsv"; then
-                    echo "FAIL: preparation published misleading timing: $prep_host/$prep_failure" >&2
-                    cat "$prep_dir/timing.tsv" >&2
-                    exit 1
-                fi
+                [ "$prep_timing" -ne 0 ] || [ ! -e "$prep_dir/timing.tsv" ] || exit 1
             done
         done
     done
@@ -3844,14 +3867,17 @@ run_preparation_failure_self_test() (
     # replacing it with the chunk's earlier successful compile status.
     for prep_timing in 0 1; do
         prep_dir="$prep_root/windows-$prep_timing-invalid-result-plan"
-        mkdir -p "$prep_dir"
         (
             set -e
             HOST_OS=windows
             WORKDIR=$prep_dir
             TYPELISP_CI_TIMING=$prep_timing
             TYPELISP_CI_TIMING_GATE=preparation-failure-self-test
-            ci_timing_init "$WORKDIR/timing.tsv" "$HOST_OS"
+            TYPELISP_CI_TIMING_FILE="$WORKDIR/timing.tsv"
+            TYPELISP_CI_TIMING_HOST=$HOST_OS
+            if [ "$prep_timing" -eq 1 ]; then
+                printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost\n' > "$TYPELISP_CI_TIMING_FILE"
+            fi
             printf '0\n' > "$WORKDIR/batch-embedded-1.status"
             printf '0\n' > "$WORKDIR/batch-embedded-1.elapsed-ms"
             printf 'invalid\n' > "$WORKDIR/batch-embedded-1.plan"
@@ -3863,18 +3889,57 @@ run_preparation_failure_self_test() (
         prep_pid=$!
         prep_rc=0
         wait "$prep_pid" || prep_rc=$?
-        if [ "$prep_rc" -ne 1 ] || [ -e "$prep_dir/continued" ] ||
-            ! grep -F -q 'FAIL: invalid Windows COFF result plan' "$prep_dir/stderr"; then
+        if [ "$prep_rc" -ne 1 ] || [ -e "$prep_dir/continued" ]; then
             echo 'FAIL: batch settlement lost the Windows plan validator failure' >&2
             cat "$prep_dir/stderr" >&2
             exit 1
         fi
-        if [ "$prep_timing" -eq 1 ]; then
-            awk -F '\t' 'NR > 1 { rows++; if ($3 != "batch-settle" || $5 != 1) bad=1 }
-                END { exit bad || rows != 1 }' "$prep_dir/timing.tsv" || exit 1
-        fi
+        printf 'windows\t%s\tinvalid-result-plan\t%s\n' "$prep_timing" "$prep_rc" >> "$prep_root/results.tsv"
     done
-    echo 'verify-integration preparation failure self-test passed (46 host/timing/control cases)'
+    # Compare the complete tagged trace as bytes once, retaining case identity,
+    # order and every phase. Read all private timing/diagnostic artifacts in one
+    # assertion process, with the original fatal-location exception.
+    cmp -s "$prep_root/expected-traces" "$prep_root/actual-traces" || {
+        echo 'FAIL: preparation phase trace mismatch (case/phase follows)' >&2
+        diff -u "$prep_root/expected-traces" "$prep_root/actual-traces" >&2 || true
+        exit 1
+    }
+    awk -F '\t' -v root="$prep_root" -v count="$prep_count" '
+        function fail(message) { print "FAIL: preparation " id ": " message > "/dev/stderr"; bad = 1 }
+        NR == 1 { next }
+        {
+            id = $1 "-" $2 "-" $3
+            if (seen[id]++ || $4 != ($3 == "success" ? 0 : 1)) fail("wrong status or duplicate case")
+            cases++
+            path = root "/" id "/stderr"
+            diagnostic = ($3 == "self-test" ? "FAIL: staging helper rejected an empty plan" :
+                ($3 == "invalid-result-plan" ? "FAIL: invalid Windows COFF result plan" : ""))
+            if (diagnostic != "") {
+                found = 0
+                while ((rc = (getline line < path)) > 0) if (index(line, diagnostic)) found = 1
+                close(path)
+                if (rc < 0 || !found) fail("lost diagnostic: " diagnostic)
+            }
+            if ($2 != 1) next
+            path = root "/" id "/timing.tsv"
+            rows = failed = outer = status = 0
+            while ((rc = (getline line < path)) > 0) {
+                if (++rows == 1) continue
+                split(line, field, "\t")
+                if (failed && field[5] == 0) fail("successful timing after failure")
+                if (field[5] != 0) failed = 1
+                phase = ($3 == "invalid-result-plan" ? "batch-settle" : "batch-compile")
+                if (field[3] == phase) { outer++; status = field[5] }
+                if ($3 == "invalid-result-plan" && (field[3] != phase || field[5] != 1)) fail("wrong settlement timing")
+            }
+            close(path)
+            if (rc < 0 || rows < 1 || outer != ($3 == "location" ? 0 : 1) ||
+                ($3 != "location" && status != ($3 == "success" ? 0 : 1))) fail("misleading or missing timing")
+            if ($3 == "invalid-result-plan" && rows != 2) fail("wrong settlement row count")
+        }
+        END { if (cases != count) { print "FAIL: preparation case inventory" > "/dev/stderr"; bad = 1 }; exit bad }
+    ' "$prep_root/results.tsv" || exit 1
+    echo "verify-integration preparation failure self-test passed ($prep_count host/timing/control cases)"
 )
 
 if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then

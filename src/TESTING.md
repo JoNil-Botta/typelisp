@@ -2850,23 +2850,17 @@ exit-status, lock-content, conflict-diagnostic or stage-cleanup assertions.
 Premature exit and timeout print the captured child logs; a staging-directory
 observation error fails immediately with those same diagnostics.
 
-For a selfhost compiler change, a typical local check (after
-`scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
+For a compiler change, start with the required minimum and inspect the
+advisory superset when planning additional focused checks:
 
 ```sh
-$tl fmt --check src/<changed>.tl
-TYPELISP_BIN=$tl ./scripts/verify-selfhost-compile-manifest.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-format.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-lint.sh
-TYPELISP_BIN=$tl ./scripts/verify-public-tools.sh
-TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
-TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
-TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
-TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
-scripts/ci-verify.sh
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
 ```
 
-Run the tests that match the layer you touched; `scripts/ci-verify.sh --gates
+Run the focused regressions that match the layer you touched; full hosted
+CI supplies the complete gate table, without duplicating it as a mandatory
+local suite for ordinary compiler changes. `scripts/ci-verify.sh --gates
 <id>` reruns one gate with the gates it needs. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a
 Linux environment.

@@ -1,0 +1,60 @@
+name: Issue 7767 final ABBA diagnostic
+
+# D-C21 item6 only. Throwaway draft into preserved #9304 branch; never merge.
+on:
+  pull_request:
+    branches: [t3/issue-7767-build-invariance-critical-path]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  abba:
+    name: Full-corpus base F1 F1 base
+    runs-on: ubuntu-24.04
+    timeout-minutes: 155
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Enable the existing Linux memory backend
+        shell: bash
+        run: |
+          bounded_uid=$(id -u)
+          sudo systemctl start "user@${bounded_uid}.service"
+          export XDG_RUNTIME_DIR="/run/user/${bounded_uid}"
+          export DBUS_SESSION_BUS_ADDRESS="unix:path=${XDG_RUNTIME_DIR}/bus"
+          printf 'XDG_RUNTIME_DIR=%s\nDBUS_SESSION_BUS_ADDRESS=%s\n' \
+            "$XDG_RUNTIME_DIR" "$DBUS_SESSION_BUS_ADDRESS" >> "$GITHUB_ENV"
+          . scripts/lib-linux-memory-limit.sh
+          linux_memory_limit_systemd_available
+      - name: Execute the approved four trials once
+        timeout-minutes: 149
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROBE_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          TYPELISP_INLINE_TEST_WORKERS: '1'
+          TYPELISP_BUILD_INVARIANCE_WORKERS: '1'
+        run: |
+          env -u BASH_ENV bash scripts/probe-build-invariance-final-abba.sh --run \
+            "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/target/issue7767-final-abba"
+      - name: Preserve complete or censored evidence
+        if: always()
+        timeout-minutes: 6
+        uses: actions/upload-artifact@v4
+        with:
+          name: issue7767-final-abba
+          path: |
+            target/issue7767-final-abba/evidence.tar.gz
+            target/issue7767-final-abba/evidence/*.json
+            target/issue7767-final-abba/evidence/trials/*/*.json
+            target/issue7767-final-abba/evidence/trials/*/*.tsv
+            target/issue7767-final-abba/evidence/trials/*/*.memory
+            target/issue7767-final-abba/evidence/trials/*/gate.log
+            target/issue7767-final-abba/evidence/bootstrap/*.json
+            target/issue7767-final-abba/evidence/bootstrap/gate.log
+            target/issue7767-final-abba/evidence/pack/*.json
+            target/issue7767-final-abba/evidence/pack/gate.log
+          if-no-files-found: error
+          retention-days: 90

@@ -34,6 +34,10 @@
   (:lifetimes leaf)
   (leaf (&mut leaf Leaf)))
 
+;; A memory-class global has existing inline bytes, unlike #9319's register
+;; global root, which still requires its separate place/writeback fix.
+(define state : Outer
+  (Outer 10 (Middle 20 (Leaf 1 2)) 30))
 (define index-calls : i64
   0)
 
@@ -132,21 +136,20 @@
 (define (pointer-fields) : bool
   (let
     [s : PointerOuter (PointerOuter 10 (PointerLeaf (ptr-null : (Ptr i64))) 30)]
-    (let
-      [original : u64
+    [original : u64
+      (unsafe
+        (ptr->int (ptr-addr-of s.leaf.p)))]
+    [same : bool (write-original! (&mut s.leaf.p) original)]
+    (set! s.leaf.p (ptr-null : (Ptr i64)))
+    (nested-pointer! (&mut s))
+    (and
+      same
+      (=
         (unsafe
-          (ptr->int (ptr-addr-of s.leaf.p)))]
-      [same : bool (write-original! (&mut s.leaf.p) original)]
-      (set! s.leaf.p (ptr-null : (Ptr i64)))
-      (nested-pointer! (&mut s))
-      (and
-        same
-        (=
-          (unsafe
-            (ptr->int s.leaf.p))
-          (cast 5 : u64))
-        (= s.head 10)
-        (= s.tail 30)))))
+          (ptr->int s.leaf.p))
+        (cast 5 : u64))
+      (= s.head 10)
+      (= s.tail 30))))
 
 (define (write-float! [x : (&mut x f32)]) : unit
   (set! (deref x) (cast 5.0 : f32)))
@@ -178,6 +181,16 @@
     (reference-holder! (&mut s))
     (= s.x (cast 5 : i32))))
 
+(define (non-call-borrow) : bool
+  (let
+    [s : Outer (Outer 10 (Middle 20 (Leaf 1 2)) 30)]
+    (set! (deref (&mut s.middle.leaf.x)) (cast 5 : i32))
+    (and (= s.middle.leaf.x (cast 5 : i32)) (= s.middle.leaf.y (cast 2 : i32)))))
+
+(define (memory-global) : bool
+  (write! (&mut state.middle.leaf.x) (cast 5 : i32))
+  (and (= state.middle.leaf.x (cast 5 : i32)) (= state.tail 30)))
+
 (define (main) : i64
   (cond
     [(not (memory-and-reference)) 1]
@@ -188,4 +201,6 @@
     [(not (float-fields)) 6]
     [(not (dynamic-array-slots)) 7]
     [(not (reference-field)) 8]
+    [(not (non-call-borrow)) 9]
+    [(not (memory-global)) 10]
     [else 42]))

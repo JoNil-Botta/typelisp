@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory=$true)][string]$Shell,
     [Parameter(Mandatory=$true)][string]$Script,
     [Parameter(Mandatory=$true)][string]$WorkingDirectory,
-    [Parameter(Mandatory=$true)][string]$OutputPrefix
+    [Parameter(Mandatory=$true)][string]$OutputPrefix,
+    [int]$ExpectedFixtureLaunches = -1
 )
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Management
@@ -17,6 +18,7 @@ $process.StartInfo.WorkingDirectory = $WorkingDirectory
 $process.StartInfo.UseShellExecute = $false
 $process.StartInfo.RedirectStandardOutput = $true
 $process.StartInfo.RedirectStandardError = $true
+$process.StartInfo.EnvironmentVariables.Remove('BASH_ENV')
 function Receive-ProcessStart {
     try { return $watcher.WaitForNextEvent() } catch {
         $exception = $_.Exception
@@ -58,6 +60,7 @@ try {
     $stdout.Result | Set-Content -LiteralPath "$OutputPrefix.stdout" -Encoding utf8
     $stderr.Result | Set-Content -LiteralPath "$OutputPrefix.stderr" -Encoding utf8
     $owners = @{}
+    $owners[[UInt32]$rootId] = $true
     $owned = [System.Collections.Generic.List[object]]::new()
     $rootSeen = $false
     foreach ($record in ($events | Sort-Object ticks)) {
@@ -72,9 +75,6 @@ try {
         if ($isOwned) { $owned.Add($record) }
     }
     $sentinels = @($owned | Where-Object { $_.name -ieq 'cmd.exe' }).Count
-    if (-not $rootSeen -or $sentinels -ne 2) {
-        throw "Incomplete process-start observation: root=$rootSeen sentinels=$sentinels (expected 2)"
-    }
     $owned | Export-Csv -LiteralPath "$OutputPrefix.processes.csv" -NoTypeInformation -Encoding utf8
     $owned | Group-Object name | Sort-Object name | ForEach-Object {
         "{0}`t{1}" -f $_.Name, $_.Count
@@ -83,11 +83,18 @@ try {
     @(
         'schema_version=1', 'host=windows', 'observer=Win32_ProcessStartTrace',
         "root_pid=$rootId", "observed_owned_process_starts=$($owned.Count)",
+        "root_start_seen=$rootSeen", "expected_fixture_launches=$ExpectedFixtureLaunches",
         "fixture_launches=$launches", "sentinels=$sentinels",
         "wall_ms=$exitAt", "exit=$($process.ExitCode)",
         'scope=fixture descendants; excludes root wrapper and two cmd sentinels',
         'timing=observer run; canonical same-run gate attribution is recorded separately'
     ) | Set-Content -LiteralPath "$OutputPrefix.report" -Encoding utf8
+    if (-not $rootSeen -or $sentinels -ne 2) {
+        throw "Incomplete process-start observation: root=$rootSeen sentinels=$sentinels (expected 2)"
+    }
+    if ($ExpectedFixtureLaunches -ge 0 -and $launches -ne $ExpectedFixtureLaunches) {
+        throw "Known process tree: observed $launches fixture launches, expected $ExpectedFixtureLaunches"
+    }
     if ($process.ExitCode -ne 0) { throw "Observed fixture failed with exit $($process.ExitCode)" }
     Write-Output "[fixture-processes] fixture_launches=$launches wall_ms=$exitAt evidence=$OutputPrefix"
 } finally {

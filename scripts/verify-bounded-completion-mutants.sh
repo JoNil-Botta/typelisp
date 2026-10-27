@@ -11,6 +11,31 @@ proof_parent=${1:?proof scratch parent required}
 case $proof_parent in "${ROOT:?}/target/"*) ;; *) exit 2 ;; esac
 mkdir -p "$proof_parent"
 proof_root=$(mktemp -d "$proof_parent/run.XXXXXX")
+# Export raw evidence through the existing retained job log, including failures.
+# The archive has explicit framing and a SHA-256 receipt for loss detection.
+proof_export() {
+    proof_exit=$1
+    trap - EXIT
+    ci_timing_set_now_ms
+    proof_export_started=$CI_TIMING_NOW_MS
+    proof_archive="$proof_root.evidence.tar.gz"
+    if ! tar -czf "$proof_archive" \
+        --exclude='./launch-profile/base.tar' --exclude='./launch-profile/head.tar' \
+        --exclude='./launch-profile/base/scripts' --exclude='./launch-profile/head/scripts' \
+        --exclude='./launch-profile/base/tests' --exclude='./launch-profile/head/tests' \
+        -C "$proof_root" .; then exit 1; fi
+    proof_hash=$(sha256sum "$proof_archive")
+    proof_hash=${proof_hash%% *}
+    base64 "$proof_archive" > "$proof_archive.base64" || exit 1
+    printf '[fixture-proof-archive] BEGIN schema=1 sha256=%s\n' "$proof_hash"
+    sed 's/^/[fixture-proof-archive] /' "$proof_archive.base64" || exit 1
+    printf '[fixture-proof-archive] END sha256=%s\n' "$proof_hash"
+    ci_timing_set_now_ms
+    ci_timing_record_elapsed fixture-proof archive-export \
+        "$((CI_TIMING_NOW_MS - proof_export_started))" "$proof_exit" || exit 1
+    exit "$proof_exit"
+}
+trap 'proof_export "$?"' EXIT
 PROOF_ROOT=$ROOT
 PROOF_SCRATCH=$proof_root
 PROOF_REPORT_HOSTS='linux windows'
@@ -273,6 +298,16 @@ if [ "$PROOF_PHYSICAL_HOST" = windows ]; then
     printf 'base=%s\nhead=%s\n' "$profile_base" "$(git -C "$ROOT" rev-parse HEAD)" > "$profile_root/provenance.txt"
     profile_shell=$(cygpath -aw "$(command -v bash)")
     profile_observer=$(cygpath -aw "$ROOT/scripts/measure-fixture-launches.ps1")
+    # Qualify the observer on one known child and both protected sentinels.
+    profile_tiny="$profile_root/known-tree.sh"
+    printf '%s\n' '#!/usr/bin/env sh' 'set -eu' \
+        'MSYS2_ARG_CONV_EXCL="*" cmd.exe /d /c exit 0' \
+        'sh -c :' \
+        'MSYS2_ARG_CONV_EXCL="*" cmd.exe /d /c exit 0' > "$profile_tiny"
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$profile_observer" \
+        -Shell "$profile_shell" -Script "$(cygpath -am "$profile_tiny")" \
+        -WorkingDirectory "$(cygpath -aw "$ROOT")" \
+        -OutputPrefix "$(cygpath -aw "$profile_root/known-tree")" -ExpectedFixtureLaunches 1
     for profile_version in base head; do
         for profile_route in integration inline-tests selfhost-compile-manifest; do
             profile_flag=--self-test-batch-observability
@@ -284,9 +319,9 @@ if [ "$PROOF_PHYSICAL_HOST" = windows ]; then
                 printf '%s\n' 'export TYPELISP_FIXTURE_MUTANTS=0 TYPELISP_CI_TIMING=1 TYPELISP_CI_TIMING_HOST=windows'
                 printf 'export TYPELISP_CI_TIMING_GATE=launch-profile-%s\n' "$profile_version"
                 printf 'export TYPELISP_CI_TIMING_FILE="%s/%s-%s.timing.tsv"\n' "$profile_root" "$profile_version" "$profile_route"
-                printf '%s\n' 'cmd.exe /d /c exit 0'
+                printf '%s\n' 'MSYS2_ARG_CONV_EXCL="*" cmd.exe /d /c exit 0'
                 printf 'sh scripts/verify-%s.sh %s\n' "$profile_route" "$profile_flag"
-                printf '%s\n' 'cmd.exe /d /c exit 0'
+                printf '%s\n' 'MSYS2_ARG_CONV_EXCL="*" cmd.exe /d /c exit 0'
             } > "$profile_driver"
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$profile_observer" \
                 -Shell "$profile_shell" -Script "$(cygpath -am "$profile_driver")" \

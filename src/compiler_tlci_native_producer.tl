@@ -2255,8 +2255,8 @@
               [_
                 (embedded-native-fallback-reason-note!
                   "template-splice:non-variable")
-                (when
-                  (not embedded-native-full-blocker-diagnostic-active)
+                (if embedded-native-full-blocker-diagnostic-active
+                  (+= index 1)
                   (set! ok false))])]
           [_
             (let

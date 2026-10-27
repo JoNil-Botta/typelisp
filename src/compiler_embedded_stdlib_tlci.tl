@@ -5946,7 +5946,7 @@
 
 (cfg
   windows
-  (tlci.tlci-host-callback-table compiler-comptime-host-platform-entries))
+  (tlci.tlci-host-callback-declarations compiler-comptime-host-platform-entries))
 
 (cfg
   windows
@@ -6018,13 +6018,12 @@
                   windows
                   (cast
                     (unsafe
-                      (cast
+                      (ptr->int
                         (ptr-addr-of
                           ,(comptime.expr-var
                             (comptime.string-append
                               "compiler-comptime-host-platform-pointer-"
-                              (comptime.int->string index))))
-                        : u64))
+                              (comptime.int->string index))))))
                     : i64)
                   (compiler-comptime-host-function-address
                     ,(comptime.expr-var row))))
@@ -6057,9 +6056,8 @@
         windows
         (cast
           (unsafe
-            (cast
-              (ptr-addr-of compiler-comptime-host-platform-abort-pointer)
-              : u64))
+            (ptr->int
+              (ptr-addr-of compiler-comptime-host-platform-abort-pointer)))
           : i64)
         (compiler-comptime-host-abort-function-address
           compiler-comptime-host-callback-abort))

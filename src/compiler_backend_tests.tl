@@ -44419,6 +44419,37 @@ user_fn:
     "C export names and collision diagnostics")
   (let
     [source : String
+      "(extern address (:symbol \"tl_entry_address\") : u8)
+(define (entry [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64]) (:export-symbol \"tl_entry_address\") : i64 (+ a b c d e f))
+(define (main) : i64 (cast (unsafe (ptr->int (ptr-addr-of address))) : i64))"]
+    (test.assert-true
+      (match (backend.compiler-backend-emit-source-for-target
+        (clone source)
+        (Windows))
+        [(Ok _) true]
+        [(Err _) false])
+      "a data alias may take the provided C entry address")
+    (test.assert-true
+      (match (backend.compiler-backend-emit-source-object-image-for-target
+        source
+        (Windows))
+        [(Err _) false]
+        [(Ok image)
+          (match (coff.compiler-object-coff-render image)
+            [(Ok _) true]
+            [(Err _) false])])
+      "the C entry and its address alias resolve in direct COFF"))
+  (test.assert-true
+    (match (backend.compiler-backend-emit-source-for-target
+      "(extern address (:symbol \"tl_private_address$typelisp\") : u8)
+(define (entry) (:export-symbol \"tl_private_address\") : i64 42)
+(define (main) : i64 (cast (unsafe (ptr->int (ptr-addr-of address))) : i64))"
+      (Windows))
+      [(Err _) true]
+      [(Ok _) false])
+    "data aliases cannot bypass the private Internal-body collision guard")
+  (let
+    [source : String
       (str_cat.str-cat
         (compiler-backend-export-symbol-source)
         "\n(define (zero) (:export-symbol \"tl_zero\") : i64 0)")]

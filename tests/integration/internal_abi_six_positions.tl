@@ -30,6 +30,7 @@
 (extern (c-touch [value : i64]) : i64 (:symbol "tl_abi_c_touch"))
 (extern (c-entry) : i64 (:symbol "tl_abi_c_entry"))
 (extern (c-macro) : i64 (:symbol "tl_abi_c_macro"))
+(extern macro-entry-address (:symbol "tl_abi_macro") : u8)
 (extern (c-thread [callback : (-> i64 i64)]) : i64 (:symbol "tl_abi_c_thread"))
 (extern (call-macro
   [entry : i64]
@@ -197,6 +198,19 @@
         "abcde")
       (string.eq (str_cat.str-cat "a" "b" "c" "d" "e") "abcde")
       (= (call-macro (c-entry) 11 12 13 14 15 16) 70)
+      (=
+        (call-macro
+          (cast
+            (unsafe
+              (ptr->int (ptr-addr-of macro-entry-address)))
+            : i64)
+          11
+          12
+          13
+          14
+          15
+          16)
+        70)
       (= (macro-target 11 12 13 14 15 16) 70)
       (= (c-macro) 1)
       (= (c-thread thread-target) 1)

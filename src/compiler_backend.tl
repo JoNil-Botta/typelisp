@@ -37777,7 +37777,16 @@
             [else
               (let
                 [out : backend_string_i64_map.Map seen]
-                (backend_string_i64_map.insert-ref! (&mut out) symbol 1)
+                ;; A data extern may take the address of a provided C entry.
+                ;; Ordinary bodies and globals remain collision-protected.
+                (backend_string_i64_map.insert-ref!
+                  (&mut out)
+                  symbol
+                  (if (and
+                    provided?
+                    (compiler-backend-index-c-export? index name))
+                    2
+                    1))
                 (when
                   distinct-body?
                   (backend_string_i64_map.insert-ref! (&mut out) body 1))
@@ -37807,7 +37816,7 @@
   (for [seq-index
     (iterator.range 0 (compiler_ir_types.compiler-ir-extern-seq-count externs))]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ _ abi link-symbol-id _ provided _)
+      [(Extern name-id _ _ ty abi link-symbol-id _ provided _)
         (if (compiler-backend-emits-extern-symbol?
           backend-state
           name-id
@@ -37822,9 +37831,16 @@
                 backend-state
                 (compiler_ast_types.ast-extern-abi-c? abi))]
             (when
-              (backend_string_i64_map.contains?
-                (& seen)
-                (compiler-backend-global-shared-view symbol))
+              (match (backend_string_i64_map.get-borrowed (& seen) (& symbol))
+                [(LookupMissing) false]
+                [(LookupFound kind)
+                  (not
+                    (and
+                      (= kind 2)
+                      (compiler_ast_types.ast-extern-abi-c? abi)
+                      (match ty
+                        [(Func _ _) false]
+                        [_ true])))])
               (return
                 (compiler-backend-symbol-validation-error
                   (str_cat.str-cat

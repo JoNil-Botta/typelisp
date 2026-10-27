@@ -9,6 +9,29 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_owned_view as owned_view)
 (import tlci_core as tlci)
+(import stdlib.comptime)
+(import stdlib.test)
+
+(defmacro (tlci-test-count-callback-rows [offset : Expr] [rows : Expr ...]) : i64
+  `(+ ,offset ,(comptime.expr-int (expr-list-length rows))))
+
+(defmacro (tlci-test-declare-callback-rows [rows : Expr ...]) : Decls
+  `(define (tlci-test-declared-callback-count) : i64
+    ,(comptime.expr-int (expr-list-length rows))))
+
+;; A declaration consumer cannot enter through the expression-only adapter.
+(tlci.tlci-host-callback-declarations tlci-test-declare-callback-rows)
+
+(test
+  tlci-host-callback-declaration-table
+  (test.assert-i64-eq
+    (tlci-test-declared-callback-count)
+    (tlci.tlci-host-callback-table tlci-test-count-callback-rows 0)
+    "declaration and expression consumers see the same ordered inventory")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-table tlci-test-count-callback-rows 7)
+    (+ 7 (tlci-test-declared-callback-count))
+    "expression contexts precede the shared callback rows"))
 
 (define (tlci-test-metadata) : tlci.TlciMetadata
   (tlci.tlci-make-metadata "v1" "demo" "0.1.0"))

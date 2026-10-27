@@ -17,8 +17,20 @@ $process.StartInfo.WorkingDirectory = $WorkingDirectory
 $process.StartInfo.UseShellExecute = $false
 $process.StartInfo.RedirectStandardOutput = $true
 $process.StartInfo.RedirectStandardError = $true
-$watcher.Start()
+function Receive-ProcessStart {
+    try { return $watcher.WaitForNextEvent() } catch {
+        $exception = $_.Exception
+        while ($null -ne $exception.InnerException) { $exception = $exception.InnerException }
+        if ($exception -isnot [System.Management.ManagementException] -or
+            $exception.ErrorCode -ne [System.Management.ManagementStatus]::Timedout) { throw }
+        return $null
+    }
+}
 try {
+    # Establish the synchronous event subscription before the observed root
+    # starts. Its enumerator remains subscribed after a timed-out first read.
+    $initialEvent = Receive-ProcessStart
+    if ($null -ne $initialEvent) { $initialEvent.Dispose() }
     if (-not $process.Start()) { throw 'Fixture process did not start' }
     $rootId = $process.Id
     $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -31,8 +43,8 @@ try {
             & taskkill.exe /PID $rootId /T /F | Out-Null
             throw 'Fixture launch observation exceeded 180 seconds'
         }
-        try {
-            $event = $watcher.WaitForNextEvent()
+        $event = Receive-ProcessStart
+        if ($null -ne $event) {
             $events.Add([pscustomobject]@{
                 ticks = [UInt64]$event.Properties['TIME_CREATED'].Value
                 id = [UInt32]$event.Properties['ProcessID'].Value
@@ -40,11 +52,6 @@ try {
                 name = [string]$event.Properties['ProcessName'].Value
             })
             $event.Dispose()
-        } catch {
-            $exception = $_.Exception
-            while ($null -ne $exception.InnerException) { $exception = $exception.InnerException }
-            if ($exception -isnot [System.Management.ManagementException] -or
-                $exception.ErrorCode -ne [System.Management.ManagementStatus]::Timedout) { throw }
         }
     }
     $process.WaitForExit()

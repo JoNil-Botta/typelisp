@@ -1,5 +1,32 @@
 # Selfhost compiler testing
 
+`macro_dotted_global` and its owner-module control preserve definition-site
+global field roots in quoted expression macros, checking and returning 2 at
+opt0/1/2 on both hosts. The matrix retains nested fields, caller shadowing,
+introduced locals, unquoted caller places, owner-module field assignment and
+mutable borrowing. Importer writes and mutable borrows remain rejected even
+with a same-named caller local; their safety rows retain template locations
+and macro invocation provenance. Keep target IR parity for these fixtures.
+
+The header-less `macro_dotted_root_*` entries retain the definition-site global
+when a caller local has the same name, including scalar, smaller, different and
+identical struct layouts and nested projection roots. Public check, CLI build
+and native execution must agree at opt0/1/2 on both hosts.
+The borrow entries retain the global root's type as well as its storage for
+shared/mutable field borrows, a reference-typed caller and nested projections.
+The mutable case also borrows the whole root to cover call-argument dispatch.
+Width-sensitive shared borrows retain u8 globals against wide caller fields and
+wide globals against narrow caller fields, including nested calls and tail
+results. Non-call mutable borrows retain the global type against reference and
+by-value caller parameters; writes change only the selected field. Scalar and
+bool caller locals keep nested shared borrows accepted. Each fixture retains a
+control without shadowing.
+The imported matrix also borrows an opaque global without reading it by value;
+borrow-place lookup must preserve the opaque reference boundary.
+The header-less replace fixture retains both width directions and a scalar
+caller, with controls without shadowing. Its returned old value and field-only
+update must use the same definition-site type in checking and lowering.
+
 `ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
 phi links, capacity growth, missing labels and renamed-block logical positions.
 The optimizer smoke's `dense-storage` test also checks edge captures before

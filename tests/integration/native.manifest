@@ -186,6 +186,24 @@ core_macros_headerless_prelude_import|all|-|tests/integration/core_macros_header
 implicit_scratch_loop|all|-|tests/integration/implicit_scratch_loop.tl|42|-|-|-|-
 macro_forward_order|all|-|tests/integration/macro_forward_order.tl|42|-|-|-|-
 macro_replace_hygiene|all|0,1,2|tests/integration/macro_replace_hygiene.tl|42|-|-|stdlib/comptime.tl|-
+macro_dotted_global|all|0,1,2|tests/integration/macro_dotted_global.tl|2|-|-|global_field_macro_dep.tl|-
+macro_dotted_global_inside|all|0,1,2|tests/integration/macro_dotted_global_inside.tl|2|-|-|global_field_macro_dep.tl|-
+macro_dotted_global_matrix|all|0,1,2|tests/integration/macro_dotted_global_matrix.tl|42|-|-|global_field_macro_dep.tl|-
+macro_dotted_root_borrow|all|0,1,2|tests/integration/macro_dotted_root_borrow.tl|2|-|-|-|-
+macro_dotted_root_layout|all|0,1,2|tests/integration/macro_dotted_root_layout.tl|2|-|-|-|-
+macro_dotted_root_mut_borrow|all|0,1,2|tests/integration/macro_dotted_root_mut_borrow.tl|2|-|-|-|-
+macro_dotted_root_nested|all|0,1,2|tests/integration/macro_dotted_root_nested.tl|6|-|-|-|-
+macro_dotted_root_nested_borrow|all|0,1,2|tests/integration/macro_dotted_root_nested_borrow.tl|6|-|-|-|-
+macro_dotted_root_ref_borrow|all|0,1,2|tests/integration/macro_dotted_root_ref_borrow.tl|2|-|-|-|-
+macro_dotted_root_same|all|0,1,2|tests/integration/macro_dotted_root_same.tl|2|-|-|-|-
+macro_dotted_root_scalar|all|0,1,2|tests/integration/macro_dotted_root_scalar.tl|2|-|-|-|-
+macro_dotted_root_small|all|0,1,2|tests/integration/macro_dotted_root_small.tl|2|-|-|-|-
+macro_dotted_root_narrow_borrow|all|0,1,2|tests/integration/macro_dotted_root_narrow_borrow.tl|42|-|-|-|-
+macro_dotted_root_wide_borrow|all|0,1,2|tests/integration/macro_dotted_root_wide_borrow.tl|42|-|-|-|-
+macro_dotted_root_write_borrow|all|0,1,2|tests/integration/macro_dotted_root_write_borrow.tl|42|-|-|-|-
+macro_dotted_root_scalar_borrow|all|0,1,2|tests/integration/macro_dotted_root_scalar_borrow.tl|42|-|-|-|-
+macro_dotted_root_noncall_borrow|all|0,1,2|tests/integration/macro_dotted_root_noncall_borrow.tl|42|-|-|-|-
+macro_dotted_root_replace|all|0,1,2|tests/integration/macro_dotted_root_replace.tl|42|-|-|-|-
 macro_try_operand|all|0,1,2|tests/integration/macro_try_operand.tl|42|-|-|stdlib/comptime.tl|-
 macro_value_same_spelling|all|-|tests/integration/macro_value_same_spelling.tl|42|-|-|-|-
 macro_module_local_shadow_provider|all|-|tests/integration/macro_module_local_shadow_provider.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-

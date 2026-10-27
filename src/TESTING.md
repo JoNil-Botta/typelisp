@@ -375,9 +375,11 @@ report the capture's E0205. Two controls keep the inferred-result and
 lambda-parameter diagnostics. `capture_borrow_storage.tl` runs the accepted
 side at opt0/1/2 on both hosts: captured references returned or reborrowed,
 non-escaping borrows (lent, annotated with the capture's lifetime, in a loop),
-shadowing, nested lambdas and field borrows. Its lambdas differ in signature
-or body, because opt2 still fails to link two identical capturing lambdas
-(#9317).
+shadowing, nested lambdas and field borrows. The `lambda_identical_capture`,
+`lambda_identical_capture_ref` and `lambda_identical_capture_nested` rows keep
+identical capturing bodies linkable at opt0/1/2 on both hosts, alongside the
+`lambda_identical_noncapturing` control. The merge self-test excludes either
+twin's stored or global code address and still counts the direct-call merge.
 
 `tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
 in one frame, including register-resident enum spills. Their tail jumps and

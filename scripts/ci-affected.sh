@@ -82,7 +82,7 @@ awk -F '\t' '
         next
     }
     {
-        if (NF != 3 || $3 == "") fail("line " FNR ": expected three nonempty fields")
+        if (NF != 3 || $1 == "" || $2 == "" || $3 == "") fail("line " FNR ": expected three nonempty fields")
         if ($1 != "@always" && ($1 !~ /^[A-Za-z0-9_.*\/-]+$/ || $1 ~ /^\// || $1 ~ /(^|\/)\.\.(\/|$)/ || $1 == "*"))
             fail("line " FNR ": invalid or catch-all path: " $1)
         if (seen[$1]++) fail("line " FNR ": duplicate path: " $1)

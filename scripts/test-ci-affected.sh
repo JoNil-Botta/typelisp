@@ -9,6 +9,14 @@ TAB=$(printf '\t')
 fail() { echo "ci-affected self-test: $* (evidence: $work)" >&2; exit 1; }
 has_gate() { grep -Fx "$2" "$1" >/dev/null || fail "missing $2 in $1"; }
 
+# Exercise Git's actual Windows checkout filter, including the provenance
+# table and byte-compared historical paths. Their LF attributes must win.
+for path in scripts/ci-affected-paths.tsv tests/fixtures/ci-affected/*.paths tests/fixtures/ci-affected/history.tsv; do
+    git cat-file blob "HEAD:$path" > "$work/checkout.expected"
+    git -c core.autocrlf=true cat-file --filters --path="$path" "HEAD:$path" > "$work/checkout.actual"
+    cmp "$work/checkout.actual" "$work/checkout.expected" || fail "Windows checkout changed line endings: $path"
+done
+
 for host in linux windows; do
     "$ROOT/scripts/ci-verify.sh" --list-gates "$host" > "$work/$host.table"
     sed '1d' "$work/$host.table" | cut -f 1 > "$work/$host.full"
@@ -156,5 +164,9 @@ expect_rejected invalid-map "$fixture_selector" --base "$base" --run
 cp "$ROOT/scripts/ci-affected-paths.tsv" "$repo/scripts/ci-affected-paths.tsv"
 printf 'tests/safety/manifest.txt\tstage2-safety-corpus\tduplicate test row\n' >> "$repo/scripts/ci-affected-paths.tsv"
 expect_rejected duplicate-map "$fixture_selector" --base "$base"
+awk -F '\t' -v OFS='\t' '$1 == "tests/safety/manifest.txt" {$2 = ""} {print}' "$ROOT/scripts/ci-affected-paths.tsv" > "$repo/scripts/ci-affected-paths.tsv"
+cp "$work/run.call" "$work/empty-map-before.call"
+expect_rejected empty-gates "$fixture_selector" --base "$base" --run
+cmp "$work/run.call" "$work/empty-map-before.call" || fail 'invalid map executed a gate'
 
-echo "ci-affected self-tests passed (Linux/Windows plans, three historical failed-run diffs, Git discovery, worker guards and execution); evidence: $work"
+echo "ci-affected self-tests passed (Linux/Windows plans and checkout filters, three historical failed-run diffs, Git discovery, worker guards and execution); evidence: $work"

@@ -39,6 +39,137 @@ stdout match Wrote[ ]
 in file {{dir}}/main.s
 contains main:
 
+case selfhost-cli-build-macro-dotted-root
+opt 0 1 2
+step nested
+run build "{{root}}/tests/integration/macro_dotted_root_nested.tl" --opt-level {{opt}} -o "{{dir}}/nested{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/nested{{exe}}"
+exit 6
+stdout empty
+stderr empty
+step scalar
+run build "{{root}}/tests/integration/macro_dotted_root_scalar.tl" --opt-level {{opt}} -o "{{dir}}/scalar{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/scalar{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step small
+run build "{{root}}/tests/integration/macro_dotted_root_small.tl" --opt-level {{opt}} -o "{{dir}}/small{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/small{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step layout
+run build "{{root}}/tests/integration/macro_dotted_root_layout.tl" --opt-level {{opt}} -o "{{dir}}/layout{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/layout{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step same
+run build "{{root}}/tests/integration/macro_dotted_root_same.tl" --opt-level {{opt}} -o "{{dir}}/same{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/same{{exe}}"
+exit 2
+stdout empty
+stderr empty
+
+case selfhost-cli-build-macro-dotted-root-borrow
+opt 0 1 2
+step shared
+run build "{{root}}/tests/integration/macro_dotted_root_borrow.tl" --opt-level {{opt}} -o "{{dir}}/shared{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/shared{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step mutable
+run build "{{root}}/tests/integration/macro_dotted_root_mut_borrow.tl" --opt-level {{opt}} -o "{{dir}}/mutable{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/mutable{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step reference
+run build "{{root}}/tests/integration/macro_dotted_root_ref_borrow.tl" --opt-level {{opt}} -o "{{dir}}/reference{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/reference{{exe}}"
+exit 2
+stdout empty
+stderr empty
+step nested
+run build "{{root}}/tests/integration/macro_dotted_root_nested_borrow.tl" --opt-level {{opt}} -o "{{dir}}/nested{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/nested{{exe}}"
+exit 6
+stdout empty
+stderr empty
+
+case selfhost-cli-build-macro-dotted-root-borrow-types
+opt 0 1 2
+step narrow-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_narrow_borrow.tl" --opt-level {{opt}} -o "{{dir}}/narrow_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/narrow_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step wide-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_wide_borrow.tl" --opt-level {{opt}} -o "{{dir}}/wide_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/wide_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step write-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_write_borrow.tl" --opt-level {{opt}} -o "{{dir}}/write_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/write_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step scalar-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_scalar_borrow.tl" --opt-level {{opt}} -o "{{dir}}/scalar_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/scalar_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+step noncall-borrow
+run build "{{root}}/tests/integration/macro_dotted_root_noncall_borrow.tl" --opt-level {{opt}} -o "{{dir}}/noncall_borrow{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/noncall_borrow{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
+case selfhost-cli-build-macro-dotted-root-replace
+opt 0 1 2
+run build "{{root}}/tests/integration/macro_dotted_root_replace.tl" --opt-level {{opt}} -o "{{dir}}/replace{{exe}}"
+stderr empty
+stdout match Built[ ]
+exec "{{dir}}/replace{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
 case selfhost-cli-build
 file main.tl
 (define (main) : i64 19)

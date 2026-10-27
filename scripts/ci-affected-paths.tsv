@@ -41,7 +41,6 @@ tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape
 tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.
 tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast	@corpus	Exact case file named by the lane and broadcast gates.
 tests/cli/public-*.cases	stage2-public-tool-surface	@corpus	Public command transcripts discovered by the public-tool runner.
-tests/cli/public-dispatch-library.cases	stage2-public-tool-surface,stage2-codegen-target-parity	@corpus	Ordinary dispatch variant library exports and mode diagnostics run in the public CLI corpus.
 tests/cli/selfhost-surface.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact command-surface corpus named by the CLI smoke runner.
 tests/cli/selfhost-build-run.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact build/run corpus named by the CLI smoke runner.
 tests/cli/host-action.cases	stage2-cli-host-action-smoke	@corpus	The host-action smoke runner directly consumes this transcript.
@@ -510,6 +509,27 @@ tests/safety/global_mut_borrow_initializer_location_reject.tl	stage2-public-tool
 tests/safety/global_mut_borrow_noncall_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
 tests/safety/global_mut_borrow_store_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
 tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/integration/macro_dotted_global.tl	stage2-public-tool-surface,stage2-safety-corpus	@corpus	Primary macro hygiene fixture in public-check and the safety corpus.
+tests/integration/macro_dotted_global_inside.tl	stage2-public-tool-surface,stage2-safety-corpus	@corpus	Primary macro hygiene fixture in public-check and the safety corpus.
+tests/integration/macro_dotted_global_matrix.tl	stage2-public-tool-surface,stage2-safety-corpus	@corpus	Primary macro hygiene fixture in public-check and the safety corpus.
+tests/integration/macro_dotted_root_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_layout.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_mut_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_narrow_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_nested.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_nested_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_noncall_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_ref_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_replace.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_same.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_scalar.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_scalar_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_small.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_wide_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_write_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/safety/macro_dotted_global_borrow_reject.tl	stage2-public-tool-surface	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/safety/macro_dotted_global_write_reject.tl	stage2-public-tool-surface	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/cli/public-dispatch-library.cases	stage2-public-tool-surface,stage2-codegen-target-parity	@corpus	Ordinary dispatch variant library exports and mode diagnostics run in the public CLI corpus.
 tests/spmd/dispatch_distinct_direct.tl	stage2-spmd-simd-comparison	@corpus	Distinct ordinary dispatch variants run at every optimization and backend mode in simd.cases.
 tests/spmd/dispatch_shared_direct.tl	stage2-spmd-simd-comparison	@corpus	Shared ordinary dispatch variant calls and values run through simd.cases.
 tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison	@corpus	Dispatch-only control pins ISA selection and absence of an unreferenced ordinary body.

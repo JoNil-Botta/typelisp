@@ -19180,7 +19180,12 @@
   [name : i64]
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (tc_core.tc-lookup-id type-env name)
+  (match (lower-lookup-type-id
+    ctx
+    (lower-state-type-cache state)
+    env
+    type-env
+    name)
     [(Ok place-ty)
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx (lower-global-shared-view place-ty)))
@@ -27405,7 +27410,12 @@
   [effective-arg : ast.AstExpr]
   [arg-ty : ast.AstType]
   [name-id : i64]) : ResultLowerCallArg
-  (match (tc_core.tc-lookup-id type-env name-id)
+  (match (lower-lookup-type-id
+    ctx
+    (lower-state-type-cache state)
+    env
+    type-env
+    name-id)
     [(Ok place-ty)
       (let
         [referent-ty : ast.AstType
@@ -29645,10 +29655,21 @@
           name-id
           true)
           [(Ok lookup-name lookup-name-id)
+            ;; Definition-site globals stay global even when the root module's
+            ;; canonical key is a bare name also bound by a caller local.
             (lower-nullary-variant-or-function-value
               ctx
               state
-              env
+              (if (and
+                (tc_core.macro-hygiene-global-id?
+                  (tc_core.tc-context-structural-session ctx)
+                  name-id)
+                (not
+                  (tc_core.macro-hygiene-global-legacy-id?
+                    (tc_core.tc-context-structural-session ctx)
+                    name-id)))
+                (sym_i64_env.sym-i64-empty)
+                env)
               type-env
               lookup-name
               name-id
@@ -66106,7 +66127,12 @@
   [write : bool]) : ResultLowerSpmdArrayViews
   (match views
     [(Views state env type-env)
-      (match (tc_core.tc-lookup-id type-env name)
+      (match (lower-lookup-type-id
+        ctx
+        (lower-state-type-cache state)
+        env
+        type-env
+        name)
         [(Err _) (Ok (Views state env type-env))]
         [(Ok ty)
           (match (lower-spmd-array-view-array-type ctx ty write)

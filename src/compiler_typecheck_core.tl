@@ -39141,6 +39141,58 @@
           name-id
           first-dot)))))
 
+(define (tc-dotted-global-enum-root-without-value?
+  [ctx : TcContext]
+  [name-id : i64]
+  [source-id : i64]) : bool
+  (and
+    (not
+      (macro-hygiene-global-legacy-id?
+        (tc-context-structural-session ctx)
+        name-id))
+    (let
+      [root-id : i64 (ci.intern-leading-dot-id source-id)]
+      [module-id : i64
+        (macro-hygiene-global-module-id
+          (tc-context-structural-session ctx)
+          name-id)]
+      [lookup-module-id : i64
+        (if (csym.compiler-symbol-root-module-id? module-id)
+          cbi.compiler-builtin-id-fix-empty
+          module-id)]
+      [symbols (tc-context-symbols ctx)]
+      [missing : i64 (csym.compiler-symbols-missing-handle)]
+      ;; An enum type is not a value root. Keep both module values and bare
+      ;; aliases on the canonical path, including its unqualified fallback.
+      (and
+        (>= root-id 0)
+        (not
+          (csym.compiler-symbols-handle-found?
+            (csym.compiler-symbols-lookup-value-in-module-id-or
+              symbols
+              lookup-module-id
+              root-id
+              missing)))
+        (not
+          (csym.compiler-symbols-handle-found?
+            (csym.compiler-symbols-lookup-value-in-module-id-or
+              symbols
+              cbi.compiler-builtin-id-fix-empty
+              root-id
+              missing)))
+        (let
+          [type-handle : i64
+            (csym.compiler-symbols-lookup-type-in-module-id-or
+              symbols
+              lookup-module-id
+              root-id
+              missing)]
+          (and
+            (csym.compiler-symbols-handle-found? type-handle)
+            (=
+              (csym.compiler-symbol-handle-kind type-handle)
+              (csym.compiler-symbol-kind-defenum))))))))
+
 ;; A dotted value first keeps the established local-over-module rule. If no
 ;; local root wins, an existing fully-qualified value still wins over a global
 ;; projection; otherwise a visible value in the leading segment is a place
@@ -39186,7 +39238,11 @@
                         root-id))
                       [(Ok _) true]
                       [(Err _) false])]))))))]
-    [(tc-structural-local-name-id? (tc-context-structural-session ctx) name-id)
+    [(or
+        (tc-structural-local-name-id?
+          (tc-context-structural-session ctx)
+          name-id)
+        (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id))
       (let
         [source-id : i64
           (tc-dotted-name-source-id (tc-context-structural-session ctx) name-id)]
@@ -39194,38 +39250,14 @@
           (tc-dotted-name-first-dot-id
             (tc-context-structural-session ctx)
             name-id)]
-        (if (< first-dot 0)
-          false
-          (let
-            [root-source-id : i64 (ci.intern-leading-dot-id source-id)]
-            (if (< root-source-id 0)
-              false
-              (match (tc-lookup-visible-id
-                ctx
-                env
-                (tc-dotted-name-with-source-id
-                  (tc-context-structural-session ctx)
-                  name-id
-                  root-source-id))
-                [(Ok _) true]
-                [(Err _) false])))))]
-    [(or
-        (< name-id 0)
-        (>= name-id (ci.intern-capacity))
-        (macro-hygiene-global-id? (tc-context-structural-session ctx) name-id))
-      false]
-    [else
-      (let
-        [first-dot : i64
-          (tc-dotted-name-first-dot-id
-            (tc-context-structural-session ctx)
-            name-id)]
-        (if (< first-dot 0)
-          false
-          (let
-            [root-id : i64 (ci.intern-leading-dot-id name-id)]
-            (if (< root-id 0)
-              false
+        (if (or
+          (< first-dot 0)
+          (and
+            (macro-hygiene-global-id?
+              (tc-context-structural-session ctx)
+              name-id)
+            (or
+              (tc-dotted-global-enum-root-without-value? ctx name-id source-id)
               (match (tc-var-expr-after-local-field-check
                 ctx
                 env
@@ -39233,17 +39265,26 @@
                 (tc-hygiene-name-text-id-for-session
                   (tc-context-structural-session ctx)
                   name-id))
-                [(Ok _) false]
-                [(Err _)
-                  (match (tc-var-expr-after-local-field-check
-                    ctx
-                    env
-                    root-id
-                    (tc-hygiene-name-text-id-for-session
-                      (tc-context-structural-session ctx)
-                      root-id))
-                    [(Ok _) true]
-                    [(Err _) false])])))))]))
+                [(Ok _) true]
+                [(Err _) false]))))
+          false
+          (let
+            [root-source-id : i64 (ci.intern-leading-dot-id source-id)]
+            (if (< root-source-id 0)
+              false
+              (match (tc-var-expr-after-local-field-check
+                ctx
+                env
+                (tc-dotted-name-with-source-id
+                  (tc-context-structural-session ctx)
+                  name-id
+                  root-source-id)
+                (tc-hygiene-name-text-id-for-session
+                  (tc-context-structural-session ctx)
+                  root-source-id))
+                [(Ok _) true]
+                [(Err _) false])))))]
+    [else false]))
 
 (define (tc-dotted-local-field-expr-id-tail
   [source-name-id : i64]
@@ -39487,11 +39528,9 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (match expr
     [(Var name)
-      (if (or
-        (macro-hygiene-global-id? (tc-context-structural-session ctx) name)
-        (<
-          (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name)
-          0))
+      (if (<
+        (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name)
+        0)
         Ok
         (if (tc-dotted-place-name-id? ctx env name)
           (let
@@ -39508,11 +39547,9 @@
             Ok)
           Ok))]
     [(Set name value-box)
-      (if (or
-        (macro-hygiene-global-id? (tc-context-structural-session ctx) name)
-        (<
-          (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name)
-          0))
+      (if (<
+        (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name)
+        0)
         Ok
         (if (tc-dotted-place-name-id? ctx env name)
           (let
@@ -42114,12 +42151,29 @@
               ctx
               (tc-env-key-name-text module-id)
               module-id))]
-        (tc-source-name-lookup-key-with-field-check-source-lookup
-          source-ctx
-          env
-          (ci.intern-str source-id)
-          source-id
-          check-local-field))
+        ;; A bare definition-site binding is already resolved. Returning its
+        ;; source spelling here would let renaming select a caller local with
+        ;; that spelling, including a root synthesized for a field projection.
+        (if (and
+          (not
+            (macro-hygiene-global-legacy-id?
+              (tc-context-structural-session ctx)
+              name-id))
+          (<
+            (tc-name-first-dot-id (tc-context-structural-session ctx) source-id)
+            0))
+          (let
+            [key : i64
+              (tc-env-name-key-id (tc-context-structural-session ctx) name-id)]
+            (Ok
+              (tc-env-key-display (tc-context-structural-session ctx) key)
+              key))
+          (tc-source-name-lookup-key-with-field-check-source-lookup
+            source-ctx
+            env
+            (ci.intern-str source-id)
+            source-id
+            check-local-field)))
       (tc-source-name-lookup-key-with-field-check-source-lookup
         ctx
         env
@@ -76206,7 +76260,21 @@
               mutable
               (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcBorrowPlace.Err message)])
-        (match (tc-lookup-visible-id ctx env name)
+        (match (if (and
+          (macro-hygiene-global-id? (tc-context-structural-session ctx) name)
+          (not
+            (macro-hygiene-global-legacy-id?
+              (tc-context-structural-session ctx)
+              name)))
+          (tc-var-expr-after-local-field-check-mode
+            ctx
+            env
+            name
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name)
+            false)
+          (tc-lookup-visible-id ctx env name))
           [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
           [(ResultTcType.Err message)
             (match (tc-var-expr-after-local-field-check
@@ -76309,7 +76377,25 @@
     expr)
     [(Var name)
       (let
-        [ty (try (tc-lookup-visible-id ctx env name))]
+        [ty
+          (try
+            (if (and
+              (macro-hygiene-global-id?
+                (tc-context-structural-session ctx)
+                name)
+              (not
+                (macro-hygiene-global-legacy-id?
+                  (tc-context-structural-session ctx)
+                  name)))
+              (tc-var-expr-after-local-field-check-mode
+                ctx
+                env
+                name
+                (tc-hygiene-name-text-id-for-session
+                  (tc-context-structural-session ctx)
+                  name)
+                false)
+              (tc-lookup-visible-id ctx env name)))]
         (if (tc-mut-borrow-storage-backed-type? ctx ty)
           Ok
           (let
@@ -84188,7 +84274,25 @@
                 virtual-id))]
           [(ResultTcExprId.Err message) (ResultTcType.Err message)])
         (let
-          [ty : ast.AstType (try (tc-lookup-visible-id ctx env name))]
+          [ty : ast.AstType
+            (try
+              (if (and
+                (macro-hygiene-global-id?
+                  (tc-context-structural-session ctx)
+                  name)
+                (not
+                  (macro-hygiene-global-legacy-id?
+                    (tc-context-structural-session ctx)
+                    name)))
+                (tc-var-expr-after-local-field-check-mode
+                  ctx
+                  env
+                  name
+                  (tc-hygiene-name-text-id-for-session
+                    (tc-context-structural-session ctx)
+                    name)
+                  false)
+                (tc-lookup-visible-id ctx env name)))]
           (match (tc-type-strip-region
             (tc-resolve-type ctx (tc-global-shared-view ty)))
             [(ast.AstType.MutRef _ referent-id)
@@ -102768,26 +102872,19 @@
                     tail-id
                     false))]
               [(No)
-                ;; `Enum.Variant` names a variant of an enum the macro's module
-                ;; sees, wherever the macro is used.
+                ;; A value projection or enum variant keeps the leading
+                ;; binding's owner, wherever the macro is used.
                 (let
-                  [enum-owner-module-id : i64
-                    (if (csym.compiler-symbols-handle-found?
-                      (csym.compiler-symbols-lookup-type-in-module-id-or
-                        (macro-hygiene-symbols hygiene)
-                        lookup-module-id
-                        alias-id
-                        (csym.compiler-symbols-missing-handle)))
-                      (macro-hygiene-binding-owner-module-id-or
-                        hygiene
-                        definition-module-id
-                        alias-id
-                        -2)
+                  [binding-owner-module-id : i64
+                    (macro-hygiene-binding-owner-module-id-or
+                      hygiene
+                      definition-module-id
+                      alias-id
                       -2)]
-                  (if (>= enum-owner-module-id -1)
+                  (if (>= binding-owner-module-id -1)
                     (macro-hygiene-global-id
                       (tc-macro-state-structural-session state)
-                      enum-owner-module-id
+                      binding-owner-module-id
                       source-name-id
                       false)
                     source-name-id))])))))))

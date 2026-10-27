@@ -23,6 +23,108 @@ file invalidation.tl
   (arena.destroy-safe! owner))
 end-file
 
+case check-macro-dotted-global
+target linux-x86_64 windows-x86_64
+step importer
+run check tests/integration/macro_dotted_global.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+step owner
+run check tests/integration/macro_dotted_global_inside.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+step matrix
+run check tests/integration/macro_dotted_global_matrix.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+step borrow-authority
+run check tests/safety/macro_dotted_global_borrow_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot mutably borrow global `state` owned by module `macro_dotted_global_dep`
+stderr contains macro_dotted_global_dep.tl:12:13
+stderr contains macro_dotted_global_borrow_reject.tl:6:5
+stderr contains in expansion of macro `macro_dotted_global_dep/borrow-y!` invoked here
+step write-authority
+run check tests/safety/macro_dotted_global_write_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to part of global `state` owned by module `macro_dotted_global_dep`
+stderr contains macro_dotted_global_dep.tl:15:10
+stderr contains macro_dotted_global_write_reject.tl:6:5
+stderr contains in expansion of macro `macro_dotted_global_dep/write-y!` invoked here
+
+case check-macro-dotted-root
+target linux-x86_64 windows-x86_64
+step nested
+run check tests/integration/macro_dotted_root_nested.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step scalar
+run check tests/integration/macro_dotted_root_scalar.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step small
+run check tests/integration/macro_dotted_root_small.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step layout
+run check tests/integration/macro_dotted_root_layout.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step same
+run check tests/integration/macro_dotted_root_same.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+
+case check-macro-dotted-root-borrow
+target linux-x86_64 windows-x86_64
+step shared
+run check tests/integration/macro_dotted_root_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step mutable
+run check tests/integration/macro_dotted_root_mut_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step reference
+run check tests/integration/macro_dotted_root_ref_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step nested
+run check tests/integration/macro_dotted_root_nested_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+
+case check-macro-dotted-root-borrow-types
+target linux-x86_64 windows-x86_64
+step narrow-borrow
+run check tests/integration/macro_dotted_root_narrow_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step wide-borrow
+run check tests/integration/macro_dotted_root_wide_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step write-borrow
+run check tests/integration/macro_dotted_root_write_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step scalar-borrow
+run check tests/integration/macro_dotted_root_scalar_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+step noncall-borrow
+run check tests/integration/macro_dotted_root_noncall_borrow.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+
+case check-macro-dotted-root-replace
+target linux-x86_64 windows-x86_64
+run check tests/integration/macro_dotted_root_replace.tl --target {{target}}
+stdout contains Type checking passed!
+stderr empty
+
 case check-hello
 run check examples/hello.tl
 stderr empty

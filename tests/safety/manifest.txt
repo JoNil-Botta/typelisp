@@ -1626,6 +1626,11 @@ foreign_global_unsafe_set_reject|check-fail|tests/safety/foreign_global_unsafe_s
 foreign_global_lambda_set_reject|check-fail|tests/safety/foreign_global_lambda_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
 foreign_global_initializer_set_reject|check-fail|tests/safety/foreign_global_initializer_set_reject.tl|-|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
 foreign_global_macro_write_reject|check-fail|tests/safety/foreign_global_macro_write_reject.tl|tests/safety/foreign_global_dep.tl:24:10|typecheck: cannot assign to global `counter` owned by module `foreign_global_dep`
+macro_dotted_global|check-ok|tests/integration/macro_dotted_global.tl|-|-
+macro_dotted_global_inside|check-ok|tests/integration/macro_dotted_global_inside.tl|-|-
+macro_dotted_global_matrix|check-ok|tests/integration/macro_dotted_global_matrix.tl|-|-
+macro_dotted_global_borrow_reject|check-fail|tests/safety/macro_dotted_global_borrow_reject.tl|tests/safety/macro_dotted_global_dep.tl:12:13|cannot mutably borrow global `state` owned by module `macro_dotted_global_dep`
+macro_dotted_global_write_reject|check-fail|tests/safety/macro_dotted_global_write_reject.tl|tests/safety/macro_dotted_global_dep.tl:15:10|cannot assign to part of global `state` owned by module `macro_dotted_global_dep`
 macro_nested_frame_template_reject|check-fail|tests/safety/macro_nested_frame_template_reject.tl|tests/safety/macro_nested_frame_dep.tl:5:4|tests/safety/macro_nested_frame_dep.tl:8:4
 macro_nested_frame_caller_reject|check-fail|tests/safety/macro_nested_frame_caller_reject.tl|tests/safety/macro_nested_frame_caller_reject.tl:9:21|tests/safety/macro_nested_frame_dep.tl:14:4
 foreign_global_macro_caller_place_reject|check-fail|tests/safety/foreign_global_macro_caller_place_reject.tl|tests/safety/foreign_global_dep.tl:32:4|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`

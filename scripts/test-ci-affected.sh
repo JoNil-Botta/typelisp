@@ -32,11 +32,19 @@ awk -F '\t' '
             print $1 "\t" script
         }
     }
-    END {
-        print "stage2-compile-profile-verifier\tscripts/verify-compile-profile.sh"
-        print "stage2-opt1-opt2-build-invariance\tscripts/check-build-invariance.sh"
-    }
 ' "$ROOT/scripts/ci-gates.tsv" > "$work/owning-scripts.tsv"
+awk -F '\t' '
+    FILENAME == ARGV[1] { if ($8 ~ /^gate_[a-z_]+$/) gate[$8] = $1; next }
+    /^gate_[a-z_]+\(\)/ { name = $1; sub(/\(\).*/, "", name) }
+    /^}/ { name = "" }
+    name in gate {
+        line = $0
+        while (match(line, /scripts\/[A-Za-z0-9_.-]+\.sh/)) {
+            print gate[name] "\t" substr(line, RSTART, RLENGTH)
+            line = substr(line, RSTART + RLENGTH)
+        }
+    }
+' "$ROOT/scripts/ci-gates.tsv" "$ROOT/scripts/ci-verify.sh" >> "$work/owning-scripts.tsv"
 awk -F '\t' '{
     while ((getline line < $2) > 0) {
         while (match(line, /(src\/tests|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]+/)) {

@@ -16178,3 +16178,89 @@
         "another live job retains its boundary keys"))
     (unsafe
       (arena.tl_arena_destroy owner))))
+
+(cfg
+  test
+  (defstruct BorrowViewObserverState
+    (watched i64)
+    (events (__tl_dyn-array i64))))
+
+(cfg
+  test
+  (define (borrow-view-observe!
+    [address : i64]
+    [_ctx : tc_core.TcContext]
+    [_env : tc_core.TcTypeEnv]
+    [event : tc_core.TcSemanticEvent]) : unit
+    (let
+      [state : BorrowViewObserverState
+        (unsafe
+          (ptr-read (int->ptr address : (Ptr BorrowViewObserverState))))]
+      (match event
+        [(tc_core.TcSemanticEvent.ExpressionEnter expression)
+          (when (= expression state.watched) (+= (array-ref state.events 0) 1))]
+        [(tc_core.TcSemanticEvent.Expression expression _ _)
+          (when (= expression state.watched) (+= (array-ref state.events 1) 1))]
+        [_ unit]))))
+
+(test
+  tc-borrow-source-view-balances-normalization-failure
+  (ast_tests.with-test-interns
+    (let
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 8 8)]
+      [place : i64
+        (ast.ast-node-pool-context-expr-push pools (Var (ci.intern "p.0")))]
+      [borrow : i64
+        (ast.ast-node-pool-context-expr-push pools (Borrow true -1 place))]
+      [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+      [env : tc_core.TcTypeEnv
+        (tc_core.tc-bind-id (tc_core.tc-empty-env) (ci.intern "p") (I64))]
+      [state : BorrowViewObserverState
+        (BorrowViewObserverState borrow (__tl_make-array 0 0))]
+      [observer : tc_core.TcSemanticObserver
+        (tc_core.tc-semantic-observer-new
+          (unsafe
+            (cast (ptr->int (ptr-addr-of state)) : i64))
+          borrow-view-observe!)]
+      (tc_core.tc-job-state-set-semantic-observer!
+        (tc_core.tc-context-job-state ctx)
+        observer)
+      (tc_core.tc-context-set-semantic-observer! ctx observer)
+      (for [view-mode (iterator.range 0 2)]
+        (for [expected-mode (iterator.range 0 2)]
+          (set! (array-ref state.events 0) 0)
+          (set! (array-ref state.events 1) 0)
+          (match (tc_core.tc-check-operand-view
+            ctx
+            env
+            borrow
+            (ast.ast-source-span 9 10 9 21)
+            (= view-mode 1)
+            (Unit)
+            (= expected-mode 1)
+            false)
+            [(tc_core.ResultTcType.Err message)
+              (let
+                [diag : cdiag.CompilerDiagnostic
+                  (tc_core.tc-diag-at-start message)]
+                (test.assert-true
+                  (string.eq
+                    (cdiag.compiler-diagnostic-code-or-empty (& diag))
+                    "E0215")
+                  "a malformed dotted borrow retains its place diagnostic"))]
+            [_ (test.assert-true false "a malformed dotted borrow is rejected")])
+          (test.assert-i64-eq
+            (array-ref state.events 0)
+            1
+            "the borrow enters once")
+          (test.assert-i64-eq
+            (array-ref state.events 1)
+            1
+            "a failed normalization closes the borrow's semantic frame")))
+      (tc_core.tc-context-set-semantic-observer!
+        ctx
+        (tc_core.TcSemanticObserver 0))
+      (tc_core.tc-job-state-set-semantic-observer!
+        (tc_core.tc-context-job-state ctx)
+        (tc_core.TcSemanticObserver 0)))))

@@ -53443,19 +53443,21 @@
               [checked : ResultTcType
                 (if (tc-type-env-scoped-identity-exhausted? env)
                   (Err (tc-selected-error typed.TypedError.Exhausted))
-                  (let
-                    [_
-                      (try
-                        (tc-normalize-dotted-local-field-node! ctx env place-id))]
-                    (tc-borrow-expr-with-policy
-                      ctx
-                      (tc-context-expr-bases ctx)
-                      env
-                      mutable
-                      (ast.ast-borrow-lifetime-from-id lifetime-id)
-                      (tc-context-expr-get ctx place-id)
-                      (and expected? allow-mut-by-value-borrow)
-                      (Some span))))]
+                  (match (tc-normalize-dotted-local-field-node!
+                    ctx
+                    env
+                    place-id)
+                    [(Err message) (Err message)]
+                    [(Ok)
+                      (tc-borrow-expr-with-policy
+                        ctx
+                        (tc-context-expr-bases ctx)
+                        env
+                        mutable
+                        (ast.ast-borrow-lifetime-from-id lifetime-id)
+                        (tc-context-expr-get ctx place-id)
+                        (and expected? allow-mut-by-value-borrow)
+                        (Some span))]))]
               (when
                 (not expected?)
                 (match (clone checked)

@@ -14292,9 +14292,11 @@
       backend-state
       assignments
       compiler_abi.compiler-reg-id-rbp)
-    (compiler-backend-plan-uses-win64-xmm-callee-regs?
-      assignments
-      backend-state)))
+    (and
+      (compiler-backend-current-fn-win64? backend-state)
+      (compiler-backend-plan-uses-win64-xmm-callee-regs?
+        assignments
+        backend-state))))
 
 (define (compiler-backend-win64-xmm-callee-highest-at
   [backend-state : CompilerBackendState]
@@ -14771,8 +14773,8 @@
   [name : i64]
   [params : (& params compiler_ir_types.CompilerIrParamSeq)]) : String
   (if (or
-    (not (compiler-backend-index-c-export? index name))
-    (not (compiler_abi.compiler-abi-platform-entry-bridge? target-policy.abi)))
+    (not (compiler_abi.compiler-abi-platform-entry-bridge? target-policy.abi))
+    (not (compiler-backend-index-c-export? index name)))
     ""
     (let
       [entry : String (compiler-backend-index-extern-link-symbol index name)]
@@ -17212,21 +17214,18 @@
 ;; locally, so no dynamic callee-save tracking is needed -- and it would be unsound:
 ;; the prologue SAVE is emitted post-body (final set) while every RESTORE is emitted
 ;; inline during the body, so an early return would restore a partial set.
+;; Callers select from the common Internal GP CSR order or the Win64 XMM CSR
+;; bank before querying this plan. Platform bridges preserve RSI/RDI separately;
+;; their general ABI eligibility is not recomputed for every Internal save.
 (define (compiler-backend-callee-needs-save?
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [reg : i64]) : bool
-  (and
-    (not
-      (compiler_abi.compiler-abi-caller-saved-gp-register?
-        (compiler-backend-state-emission-target-policy backend-state).abi
-        (Internal)
-        reg))
-    (or
-      (compiler-backend-plan-uses-reg? backend-state assignments reg)
-      (compiler-backend-const-hoist-uses-reg?
-        (compiler-backend-state-function-state backend-state)
-        reg))))
+  (or
+    (compiler-backend-plan-uses-reg? backend-state assignments reg)
+    (compiler-backend-const-hoist-uses-reg?
+      (compiler-backend-state-function-state backend-state)
+      reg)))
 
 (define (compiler-backend-emit-save-callee-reg
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -18187,7 +18186,9 @@
   [index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (if (compiler-backend-index-extern-provided? index name)
-    (if (compiler-backend-index-c-export? index name)
+    (if (and
+      (compiler-backend-state-emission-target-policy index.backend-state).windows
+      (compiler-backend-index-c-export? index name))
       (compiler_abi.compiler-abi-internal-link-symbol
         (compiler-backend-state-emission-target-policy index.backend-state).abi
         (compiler_abi.compiler-abi-c-export-body-symbol
@@ -47045,7 +47046,9 @@
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
-      (if (compiler-backend-index-c-export? program-index name)
+      (if (and
+        (compiler-backend-state-emission-target-policy backend-state).windows
+        (compiler-backend-index-c-export? program-index name))
         (compiler-backend-index-extern-link-symbol program-index name)
         (compiler-backend-inline-memory-call-target
           (compiler-backend-symbol-text-index program-index name)
@@ -55559,7 +55562,10 @@
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
-      (if (compiler-backend-index-c-export? program-index name)
+      (if (and
+        (compiler-backend-state-emission-target-policy
+          program-index.backend-state).windows
+        (compiler-backend-index-c-export? program-index name))
         (compiler-backend-index-extern-link-symbol program-index name)
         (compiler-backend-inline-memory-call-target
           (compiler-backend-symbol-text-index program-index name)
@@ -71569,7 +71575,9 @@
         [symbol : String
           (compiler-backend-function-symbol-index program-index name)]
         [inline-memory-name : String
-          (if (compiler-backend-index-c-export? program-index name)
+          (if (and
+            target-policy.windows
+            (compiler-backend-index-c-export? program-index name))
             (compiler-backend-index-extern-link-symbol program-index name)
             "")]
         [inline-memory-helper? : bool
@@ -71577,14 +71585,14 @@
             (compiler-backend-inline-memory-call-name? (& inline-memory-name))
             (compiler-backend-inline-memory-call-name? (& symbol)))]
         [c-entry : String
-          (if inline-memory-helper?
-            ""
+          (if (and target-policy.windows (not inline-memory-helper?))
             (compiler-backend-emit-c-export-entry
               type-segment-bases
               target-policy
               program-index
               name
-              (& params)))]
+              (& params))
+            "")]
         [emit-params : compiler_ir_types.CompilerIrParamSeq
           (match (compiler-backend-global-shared-view coloring)
             [(None) params]
@@ -72899,10 +72907,6 @@
                                   (compiler-backend-emit-function-type-directive
                                     target
                                     symbol)
-                                  (if (compiler_abi.compiler-abi-platform-entry-bridge?
-                                    target-policy.abi)
-                                    ""
-                                    (string.copy (& c-entry)))
                                   (if wrap-active?
                                     (str_cat.str-cat symbol ":\n" "")
                                     selected-prologue)
@@ -72934,10 +72938,7 @@
                                   (compiler-backend-emit-function-size-directive
                                     target
                                     symbol)
-                                  (if (compiler_abi.compiler-abi-platform-entry-bridge?
-                                    target-policy.abi)
-                                    c-entry
-                                    "")
+                                  c-entry
                                   "\n"
                                   (compiler-backend-backtrace-function-entry
                                     target
@@ -81369,9 +81370,9 @@ tl_shared_object_init:
   [params : (& params compiler_ir_types.CompilerIrParamSeq)]) : object_target.CompilerBackendObjectTargetParts
   (if (not
     (and
-      (compiler-backend-index-c-export? index name)
       (compiler_abi.compiler-abi-platform-entry-bridge?
-        (compiler-backend-target-abi target))))
+        (compiler-backend-target-abi target))
+      (compiler-backend-index-c-export? index name)))
     parts
     (let
       [entry : String (compiler-backend-index-extern-link-symbol index name)]

@@ -23,6 +23,8 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/self-compile-reference.yml'
+      - '.github/actions/linux-instruction-count-tools/**'
+      - 'scripts/ci-linux-tools.sh'
       - 'scripts/self-compile.sh'
       - 'scripts/lib-self-compile.sh'
       - 'scripts/self-compile-self-test.sh'
@@ -50,11 +52,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Linux instruction-count tools
-        shell: bash
-        run: |
-          # The same install as ci.yml, so the measured environment matches.
-          sudo apt-get install -y --no-install-recommends valgrind \
-            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
+        uses: ./.github/actions/linux-instruction-count-tools
 
       - name: Enable Linux kernel memory limits
         shell: bash
@@ -130,10 +128,7 @@ jobs:
           filter: blob:none
 
       - name: Install Linux instruction-count tools
-        shell: bash
-        run: |
-          sudo apt-get install -y --no-install-recommends valgrind \
-            || { sudo apt-get update && sudo apt-get install -y --no-install-recommends valgrind; }
+        uses: ./.github/actions/linux-instruction-count-tools
 
       - name: Enable Linux kernel memory limits
         shell: bash

@@ -42,6 +42,49 @@ A required gate is a row of `ci-gates.tsv`; `ci-verify.sh` rejects a row whose
 command names a missing script or `gate_*` function. Optional local tools
 should use a `benchmark-`, `measure-`, or `analyze-` name.
 
+## Linux instruction-count packages
+
+The shared `.github/actions/linux-instruction-count-tools` action installs
+valgrind and libc6-dbg in required Linux CI and in both self-compile reference
+jobs. On Ubuntu noble, libc6-dbg is a hard dependency of valgrind;
+`--no-install-recommends` excludes gdb, not libc6-dbg. Windows is unchanged.
+
+`ci-linux-tools.sh` resolves exact versions against the runner's apt indexes.
+Its cache key hashes the distro release, dpkg architecture, runner OS,
+ImageOS, ImageVersion, both package versions and their SHA-256 hashes. There
+are no partial restore keys. Only the two archives are cached: the package
+plan, hashes and installed state are recreated on each runner. Restored files
+must match the apt-index SHA-256 hashes before entering fresh private staging.
+The pinned `apt-get --download-only` install authenticates the plan against
+apt's trusted indexes before a separate `--no-download` install; neither
+unauthenticated packages nor insecure repositories are permitted. Both
+installed versions must equal the resolution, and are logged.
+
+A missing, corrupt or mismatched archive uses the normal trusted apt download.
+A failed acquisition refreshes authenticated indexes and resolves again in
+fresh staging; failure of that attempt or installation fails the job. A new
+version or runner image gets a new key. Cache restore/save errors cannot skip
+installation. A corrupt immutable entry can be removed with GitHub's cache
+administration, or invalidated by changing the action's key schema version;
+until then each use falls back safely.
+
+The existing push-to-main self-compile measurement job populates the
+default-branch cache immediately after a successful package installation,
+before its measurement begins. The ledger and new PRs can restore that
+main-scoped entry; PR-scoped entries alone cannot serve another PR's first
+run. Every main push refreshes an absent version/image key, and ordinary cache
+eviction needs no special recovery. Initial cross-PR reach is verified after
+this population path lands, before closing #9305.
+
+Each invocation uploads `linux-instruction-tools-<job>` with package identities,
+source URIs, trusted-index hashes, cache result and `timing.tsv`. Resolution,
+index refresh when needed, cache verification, apt package acquisition and
+installation have separate rows. Acquisition includes apt planning; apt's
+`Fetched` line reports transfer time itself. Restore/save wall timers also
+include intervening Actions step startup, so they conservatively measure cache
+overhead. GitHub job timestamps supply total step time, queue time, execution
+critical path and runner-minutes; these must be reported separately.
+
 ## AVX-512 test execution
 
 CI downloads Intel SDE 10.13.1 from Intel's distribution page through

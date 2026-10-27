@@ -32,7 +32,6 @@ on:
       - 'scripts/check-bootstrap-fixpoint.sh'
       - 'scripts/build-stage0.sh'
       - 'scripts/lib-build-provenance.sh'
-      - 'scripts/verify-tlci-native-route-stress.sh'
       - 'scripts/verify-self-compile-stamp-invariance.sh'
 
 permissions:

@@ -303,8 +303,19 @@
               (array-ref octets 3))]
           [view : (& text str) (string.substring-view (& text) 0 (+ width 1))]
           (if (and (>= value 0xd800) (<= value 0xdfff))
-            (expect-error view 6 2)
             (begin
+              (expect-error view 6 2)
+              (match (utf8.encode-scalar value)
+                [(EncodeError (Surrogate)) unit]
+                [_ (test.assert-true false "encoder rejects surrogate")]))
+            (begin
+              (match (utf8.encode-scalar value)
+                [(Encoded encoded)
+                  (test.assert-string-eq
+                    (& encoded)
+                    (string.substring-view view 1 width)
+                    "encoder matches independent UTF-8 construction")]
+                [_ (test.assert-true false "encoder accepts scalar")])
               (expect-scalar view 1 value (+ width 1))
               (expect-valid view))))
         (set! index (+ index 1))))))
@@ -348,6 +359,42 @@
 
 (test utf8-scalar-roundtrip (assert-scalar-roundtrip))
 
+(define (assert-encode-boundaries) : unit
+  (let
+    [values : (Array i64 12)
+      (array
+        0
+        0x7f
+        0x80
+        0x7ff
+        0x800
+        0xd7ff
+        0xe000
+        0xffff
+        0x10000
+        0x3ffff
+        0x100000
+        0x10ffff)]
+    [invalid : (Array i64 6)
+      (array -9223372036854775808 -1 0xd800 0xdfff 0x110000 9223372036854775807)]
+    [index : i64 0]
+    (while (< index (array-length values))
+      (let
+        [value : i64 (array-ref values index)]
+        (match (utf8.encode-scalar value)
+          [(Encoded text)
+            (expect-scalar (& text) 0 value (string.string-length (& text)))]
+          [_ (test.assert-true false "encoder scalar boundary")]))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index (array-length invalid))
+      (match (utf8.encode-scalar (array-ref invalid index))
+        [(EncodeError _) unit]
+        [_ (test.assert-true false "encoder rejects non-scalars")])
+      (set! index (+ index 1)))))
+
+(test utf8-encode-boundaries (assert-encode-boundaries))
+
 (test utf8-allocation-and-progress (assert-allocation-and-progress))
 
 (define (main) : i64
@@ -357,5 +404,6 @@
   (assert-truncation-and-continuations)
   (assert-offsets-and-provenance)
   (assert-scalar-roundtrip)
+  (assert-encode-boundaries)
   (assert-allocation-and-progress)
   42)

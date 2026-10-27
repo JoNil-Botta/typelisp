@@ -1907,8 +1907,17 @@ frame layout continues to use only the physical slot count.
 Private AVX2 parameter entry stores participate in the full-width stack-home
 census even when optimization removes every body use and liveness interval.
 An empty body still needs disjoint YMM homes inside its accepted frame.
-Debug private AVX2 functions use this same census and coloring path; their
-instruction-span keys are remapped with the IR.
+Debug SIMD callers and private helpers use this same census and coloring path;
+their instruction-span keys are remapped with the IR. Spanned values retain
+private homes so distinct instruction locations cannot acquire one key.
+A program-owned instruction-span link index selects each function's entries
+in original insertion order before pinning, remapping and emission; duplicate
+keys retain newest-entry precedence without rescanning other functions' spans.
+Non-debug emission keeps its existing span path, and scalar debug keeps its
+original variable identities.
+Post-emission block layout treats debug/backtrace end labels and `.cfi_endproc`
+as function boundaries, using the same closing-line classifier as abort-stub
+placement. Outlined blocks remain inside the function's debug and unwind range.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes

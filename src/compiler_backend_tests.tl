@@ -13308,10 +13308,77 @@ f:
     .size f, . - f
 ")))
 
+(define (compiler-backend-layout-debug-end-case? [closing : String]) : bool
+  (compiler-backend-layout-case?
+    backend.compiler-backend-layout-mode-sink
+    (str_cat.str-cat
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    testq %rdi, %rdi
+    jl .Lf0_else
+.Lf0_check:
+    cmpq %r9, %rdi
+    jge .Lf0_else
+.Lf0_then:
+    movzbq (%rax,%rdi,1), %rcx
+    jmp .Lf0_cont
+.Lf0_else:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+"
+      closing
+      "    .size f, . - f\n")
+    (str_cat.str-cat
+      ".globl f
+    .type f,@function
+f:
+.Lf0_entry:
+    testq %rdi, %rdi
+    jl .Lf0_else
+.Lf0_check:
+    cmpq %r9, %rdi
+    jge .Lf0_else
+.Lf0_then:
+    movzbq (%rax,%rdi,1), %rcx
+.Lf0_cont:
+    cmpq $40, %rcx
+    ret
+.Lf0_else:
+    movq $-1, %rcx
+    addq $3, %rcx
+    subq $1, %rcx
+    jmp .Lf0_cont
+"
+      closing
+      "    .size f, . - f\n")))
+
+(define (compiler-backend-layout-debug-ends-ok?) : bool
+  (and
+    (compiler-backend-layout-debug-end-case? "    .cfi_endproc\n")
+    (compiler-backend-layout-debug-end-case?
+      ".L_tl_backtrace_function_end_0:\n")
+    (compiler-backend-layout-debug-end-case?
+      ".L_tl_backtrace_function_end_0:\n    .cfi_endproc\n")
+    (compiler-backend-layout-debug-end-case?
+      ".Lcv_func_end_0:\n.L_tl_backtrace_function_end_0:\n    .seh_endproc\n")))
+
+(test
+  backend-layout-keeps-debug-ends-after-cold-blocks
+  (unless
+    (compiler-backend-layout-debug-ends-ok?)
+    (io.panic "cold layout moved instructions beyond a debug function end")))
+
 (define (compiler-backend-layout-ok?) : bool
   (and
     (compiler-backend-layout-tail-duplication-ok?)
     (compiler-backend-layout-cold-arm-ok?)
+    (compiler-backend-layout-debug-ends-ok?)
     (compiler-backend-layout-island-ok?)))
 
 (define (compiler-backend-peephole-ok?) : bool
@@ -19712,6 +19779,121 @@ entry:
         (backend.CompilerBackendTarget.Windows)))
     (io.panic "prologue-only AVX2 parameter stores escaped their frame")))
 
+(define (compiler-backend-debug-caller-provenance-ok?
+  [target : backend.CompilerBackendTarget]
+  [mode : backend.CompilerBackendMode]) : bool
+  (let
+    [_initialize : unit (cbi.compiler-builtin-initialize-for-parse!)]
+    [previous-debug : bool (ir.compiler-debug-info-enabled?)]
+    [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
+    [name : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id
+        (ir.compiler-ir-test-symbol "debug_caller"))]
+    [other : ir.CompilerIrSymbolId
+      (ir.compiler-ir-symbol-typed-id
+        (ir.compiler-ir-test-symbol "debug_other"))]
+    [path : i64 (ci.intern "debug_caller.tl")]
+    [first : ir.CompilerIrInstr (irt.instr "%0 = add 1, 2 : i64")]
+    [second : ir.CompilerIrInstr (irt.instr "%1 = add 3, 4 : i64")]
+    [bounds : ir.CompilerIrInstr
+      (irt.instr "bounds_check %0, 10 message \"debug_ok\"")]
+    [spans : ir.CompilerSourceSpans
+      (ir.compiler-source-spans-insert-instr-located
+        (ir.compiler-source-spans-insert-instr-located
+          (ir.compiler-source-spans-insert-instr-located
+            (ir.compiler-source-spans-insert-instr-located
+              (ir.compiler-source-spans-empty)
+              name
+              (& first)
+              path
+              (compiler-backend-test-span 17 1))
+            other
+            (& first)
+            path
+            (compiler-backend-test-span 71 7))
+          name
+          (& second)
+          path
+          (compiler-backend-test-span 53 5))
+        name
+        (& first)
+        path
+        (compiler-backend-test-span 37 3))]
+    ;; Interleaved functions and a duplicate key must keep newest-entry wins.
+    [located : ir.CompilerSourceSpans
+      (ir.compiler-source-spans-insert-instr-located
+        spans
+        name
+        (& bounds)
+        path
+        (compiler-backend-test-span 61 6))]
+    ;; Bounds keys remain unchanged while value keys follow coloring.
+    [result : backend.ResultCompilerBackend
+      (backend.compiler-backend-emit-program-target-with-mode
+        (irt.program
+          "typelisp-ir v1
+function @debug_caller() -> i64 vars 2 {
+entry:
+  %0 = add 1, 2 : i64
+  %1 = add 3, 4 : i64
+  bounds_check %0, 10 message \"debug_ok\"
+  return %1
+}
+function @debug_other() -> i64 vars 1 {
+entry:
+  %0 = add 1, 2 : i64
+  return %0
+}")
+        target
+        mode
+        located
+        false)]
+    [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
+    (match result
+      [(Ok asm)
+        (match target
+          [(Linux)
+            (and
+              (asm-has?
+                asm
+                "    .loc 1 37 3\n"
+                "    .loc 1 53 5\n"
+                "    .loc 1 61 6\n"
+                "    .loc 1 71 7\n")
+              (asm-lacks? asm "    .loc 1 17 1\n"))]
+          [(Windows)
+            (and
+              (asm-has?
+                asm
+                "    .cv_loc 0 1 37 3\n"
+                "    .cv_loc 0 1 53 5\n"
+                "    .cv_loc 0 1 61 6\n"
+                "    .cv_loc 1 1 71 7\n")
+              (asm-lacks? asm "    .cv_loc 0 1 17 1\n"))])]
+      [(Err _) false])))
+
+(define (compiler-backend-debug-caller-provenance-targets-ok?) : bool
+  (and
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Linux
+      (Avx2))
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Windows
+      (Avx2))
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Linux
+      (Avx512))
+    (compiler-backend-debug-caller-provenance-ok?
+      backend.CompilerBackendTarget.Windows
+      (Avx512))))
+
+(test
+  backend-debug-simd-caller-provenance
+  (unless
+    (compiler-backend-debug-caller-provenance-targets-ok?)
+    (io.panic
+      "debug SIMD caller locations lost function ownership or remapping")))
+
 (define (compiler-backend-vector-call-lifetime-function) : ir.CompilerIrFunction
   (Function
     (ci.intern "vector_call_lifetime")
@@ -22022,6 +22204,7 @@ entry:
       (backend.CompilerBackendTarget.Linux))
     (compiler-backend-private-param-homes-and-provenance-ok?
       (backend.CompilerBackendTarget.Windows))
+    (compiler-backend-debug-caller-provenance-targets-ok?)
     (compiler-backend-vector-call-lifetime-spill-ok?)
     (compiler-backend-colored-vector-extent-ok?)
     (compiler-backend-simd-scratch-requests-ok?)

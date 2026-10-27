@@ -39141,6 +39141,58 @@
           name-id
           first-dot)))))
 
+(define (tc-dotted-global-enum-root-without-value?
+  [ctx : TcContext]
+  [name-id : i64]
+  [source-id : i64]) : bool
+  (and
+    (not
+      (macro-hygiene-global-legacy-id?
+        (tc-context-structural-session ctx)
+        name-id))
+    (let
+      [root-id : i64 (ci.intern-leading-dot-id source-id)]
+      [module-id : i64
+        (macro-hygiene-global-module-id
+          (tc-context-structural-session ctx)
+          name-id)]
+      [lookup-module-id : i64
+        (if (csym.compiler-symbol-root-module-id? module-id)
+          cbi.compiler-builtin-id-fix-empty
+          module-id)]
+      [symbols (tc-context-symbols ctx)]
+      [missing : i64 (csym.compiler-symbols-missing-handle)]
+      ;; An enum type is not a value root. Keep both module values and bare
+      ;; aliases on the canonical path, including its unqualified fallback.
+      (and
+        (>= root-id 0)
+        (not
+          (csym.compiler-symbols-handle-found?
+            (csym.compiler-symbols-lookup-value-in-module-id-or
+              symbols
+              lookup-module-id
+              root-id
+              missing)))
+        (not
+          (csym.compiler-symbols-handle-found?
+            (csym.compiler-symbols-lookup-value-in-module-id-or
+              symbols
+              cbi.compiler-builtin-id-fix-empty
+              root-id
+              missing)))
+        (let
+          [type-handle : i64
+            (csym.compiler-symbols-lookup-type-in-module-id-or
+              symbols
+              lookup-module-id
+              root-id
+              missing)]
+          (and
+            (csym.compiler-symbols-handle-found? type-handle)
+            (=
+              (csym.compiler-symbol-handle-kind type-handle)
+              (csym.compiler-symbol-kind-defenum))))))))
+
 ;; A dotted value first keeps the established local-over-module rule. If no
 ;; local root wins, an existing fully-qualified value still wins over a global
 ;; projection; otherwise a visible value in the leading segment is a place
@@ -39204,15 +39256,17 @@
             (macro-hygiene-global-id?
               (tc-context-structural-session ctx)
               name-id)
-            (match (tc-var-expr-after-local-field-check
-              ctx
-              env
-              name-id
-              (tc-hygiene-name-text-id-for-session
-                (tc-context-structural-session ctx)
-                name-id))
-              [(Ok _) true]
-              [(Err _) false])))
+            (or
+              (tc-dotted-global-enum-root-without-value? ctx name-id source-id)
+              (match (tc-var-expr-after-local-field-check
+                ctx
+                env
+                name-id
+                (tc-hygiene-name-text-id-for-session
+                  (tc-context-structural-session ctx)
+                  name-id))
+                [(Ok _) true]
+                [(Err _) false]))))
           false
           (let
             [root-source-id : i64 (ci.intern-leading-dot-id source-id)]

@@ -8,16 +8,35 @@
   (y u8)
   (guard u8))
 
+(defenum State
+  (Ready i64))
+
+(defenum Signal
+  (Ready i64))
+
 (define state : Wide
   (Wide 257 66051 131585))
 (define narrow-state : Narrow
   (Narrow 17 23 41))
+
+;; lint-allow: global-name-case -- a value and enum share their root spelling.
+(define State : Wide
+  (Wide 257 66051 131585))
 
 (defmacro (replace-y!) : Expr
   `(cast (replace! state.y 11) : i64))
 
 (defmacro (replace-narrow-y!) : Expr
   `(cast (replace! narrow-state.y 11) : i64))
+
+(defmacro (replace-enum-named-y!) : Expr
+  `(replace! State.y 11))
+
+(defmacro (shared-enum-variant) : Expr
+  `(State.Ready 42))
+
+(defmacro (enum-variant) : Expr
+  `(Signal.Ready 42))
 
 (define (control!) : i64
   (replace-y!))
@@ -37,6 +56,14 @@
   (unless (= state 17) (return 1))
   (replace-y!))
 
+(define (enum-shadow) : i64
+  (let
+    ;; lint-allow: local-name-case -- caller value must not become an enum root.
+    [Signal : Narrow (Narrow 17 23 41)]
+    (unless (= Signal.y 23) (return 1))
+    (match (enum-variant)
+      [(Signal.Ready n) n])))
+
 (define (main) : i64
   (unless (= (control!) 66051) (return 1))
   (unless (= state.y 11) (return 2))
@@ -55,4 +82,21 @@
   (unless (= state.guard 131585) (return 12))
   (unless (= narrow-state.x 17) (return 13))
   (unless (= narrow-state.guard 41) (return 14))
+  (unless (= (replace-enum-named-y!) 66051) (return 15))
+  (unless (= State.y 11) (return 16))
+  (unless (= State.x 257) (return 17))
+  (unless (= State.guard 131585) (return 18))
+  (unless
+    (=
+      (match (shared-enum-variant)
+        [(State.Ready n) n])
+      42)
+    (return 19))
+  (unless
+    (=
+      (match (enum-variant)
+        [(Signal.Ready n) n])
+      42)
+    (return 20))
+  (unless (= (enum-shadow) 42) (return 21))
   42)

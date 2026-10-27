@@ -508,3 +508,23 @@ tests/safety/global_mut_borrow_initializer_location_reject.tl	stage2-public-tool
 tests/safety/global_mut_borrow_noncall_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
 tests/safety/global_mut_borrow_store_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
 tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
+tests/integration/macro_dotted_global.tl	stage2-public-tool-surface,stage2-safety-corpus	@corpus	Primary macro hygiene fixture in public-check and the safety corpus.
+tests/integration/macro_dotted_global_inside.tl	stage2-public-tool-surface,stage2-safety-corpus	@corpus	Primary macro hygiene fixture in public-check and the safety corpus.
+tests/integration/macro_dotted_global_matrix.tl	stage2-public-tool-surface,stage2-safety-corpus	@corpus	Primary macro hygiene fixture in public-check and the safety corpus.
+tests/integration/macro_dotted_root_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_layout.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_mut_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_narrow_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_nested.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_nested_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_noncall_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_ref_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_replace.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_same.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_scalar.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_scalar_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_small.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_wide_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/integration/macro_dotted_root_write_borrow.tl	stage2-public-tool-surface,stage2-cli-build-run-and-chooser-smoke	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/safety/macro_dotted_global_borrow_reject.tl	stage2-public-tool-surface	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
+tests/safety/macro_dotted_global_write_reject.tl	stage2-public-tool-surface	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.

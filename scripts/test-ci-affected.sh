@@ -63,6 +63,12 @@ awk -F '\t' '
                     child=substr(rest,RSTART,RLENGTH)
                     prefix=substr(rest,1,RSTART-1)
                     sub(/["]?\$\{?ROOT\}?\/$/, "", prefix)
+                    # --self-test inspects inventories and planner metadata;
+                    # its planner/probes do not execute primary fixtures.
+                    if(child == "scripts/ci-affected.sh" && substr(rest,RSTART+RLENGTH) ~ /^["]?[[:space:]]+--self-test([[:space:];]|$)/) {
+                        rest=substr(rest,RSTART+RLENGTH)
+                        continue
+                    }
                     # Direct command, sh/bash/exec, or assignment-prefixed call.
                     if(prefix ~ /(^|[;&|()][[:space:]]*)[[:space:]]*(sh|bash|exec)[[:space:]]+$/ || prefix ~ /^[[:space:]]*(([^[:space:]]+=[^[:space:]]+)[[:space:]]+)*["$A-Za-z_{}\/]*$/) {
                         gate[++count]=gate[i]; script[count]=child

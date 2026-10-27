@@ -2728,6 +2728,8 @@ When changing gate commands or primary inventories, update the reviewed path
 map and run `--self-test`. Its ownership audit follows invoked owning scripts
 and whole-directory content guards, uses the canonical case translator
 in list mode, expands manifest primaries, and checks Windows checkout bytes.
+Hosted Linux CI runs this audit unconditionally on every PR as part of
+`stage2-public-tool-surface`, before its compiler-dependent checks.
 
 `--tier advisory` prints a broader conservative superset for reviewing other
 affected checks. It includes the required tier, but it is not a requirement to

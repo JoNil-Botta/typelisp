@@ -346,7 +346,16 @@ linux_memory_limit_run_systemd() {
         echo "Linux memory limiting failed to create invocation peak evidence: $TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE" >&2
         return 2
     fi
-    _linux_memory_limit_scratch_parent=$(CDPATH= cd -- "${TMPDIR:-/tmp}" && pwd -P) || return 2
+    # Workload stderr can be large. Keep its capture on the caller's metrics
+    # filesystem, as before: a tmpfs capture would consume the workload cap.
+    # Without metrics stderr streams directly; only tiny private records use
+    # TMPDIR on that route.
+    if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+        _linux_memory_limit_scratch_parent=$(CDPATH= cd -- \
+            "$(dirname -- "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE")" && pwd -P) || return 2
+    else
+        _linux_memory_limit_scratch_parent=$(CDPATH= cd -- "${TMPDIR:-/tmp}" && pwd -P) || return 2
+    fi
     _linux_memory_limit_scratch=$(mktemp -d \
         "$_linux_memory_limit_scratch_parent/typelisp-memory-limit.XXXXXX") || {
         echo "Linux memory limiting failed to create invocation terminal evidence" >&2
@@ -400,7 +409,7 @@ linux_memory_limit_run_systemd() {
     # show what it saw: `ran`, `cgroup PATH`, `kills N` and `peak N`.
     _linux_memory_limit_record_peak='{ echo ran; while read -r line; do case $line in 0::*) cgroup="/sys/fs/cgroup${line#0::}"; cgroup="${cgroup%/.control}/workload"; echo "cgroup $cgroup"; kills=0; while read -r key value; do if [ "$key" = oom_kill ]; then kills=$value; fi; done < "$cgroup/tlmem-run/memory.events"; echo "kills $kills"; read -r peak < "$cgroup/memory.peak" && echo "peak $peak" ;; esac; done < /proc/self/cgroup; } > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE" 2>&1 || true'
     _linux_memory_limit_status=0
-    TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak \
+    set -- env "TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE=$_linux_memory_limit_cgroup_peak" \
         LC_ALL=C SYSTEMD_COLORS=0 systemd-run \
         --user \
         --wait \
@@ -414,8 +423,12 @@ linux_memory_limit_run_systemd() {
         --property=OOMPolicy=continue \
         --setenv=TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE \
         "--property=ExecStopPost=:/bin/sh -c '$_linux_memory_limit_record_peak'" \
-        "$@" 2> "$_linux_memory_limit_systemd_stderr" ||
-        _linux_memory_limit_status=$?
+        "$@"
+    if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
+        "$@" 2> "$_linux_memory_limit_systemd_stderr" || _linux_memory_limit_status=$?
+    else
+        "$@" || _linux_memory_limit_status=$?
+    fi
     cat "$_linux_memory_limit_systemd_stderr" >&2
     _linux_memory_limit_hook_bytes=0
     _linux_memory_limit_hook_kills=0

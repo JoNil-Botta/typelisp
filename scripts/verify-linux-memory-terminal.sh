@@ -50,7 +50,8 @@ esac
 case $TERMINAL_MODE in
     absent)
         case $terminal in
-            "${TERMINAL_CASE:?}"/tmp/typelisp-memory-limit.??????/terminal) rm -- "${terminal:?}" ;;
+            "${TERMINAL_CASE:?}"/tmp/typelisp-memory-limit.??????/terminal | \
+                "${TERMINAL_CASE:?}"/typelisp-memory-limit.??????/terminal) rm -- "${terminal:?}" ;;
             *) exit 93 ;;
         esac
         ;;
@@ -70,7 +71,11 @@ case $TERMINAL_MODE in
         ;;
     known-7) exit 7 ;;
     timeout) exit 124 ;;
-    oom) echo 'Finished with result: oom-kill' >&2; exit 0 ;;
+    oom)
+        printf 'ran\nkills 1\npeak 33554432\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_CGROUP_PEAK_FILE"
+        echo 'Finished with result: oom-kill' >&2
+        exit 0
+        ;;
 esac
 # Also verify the status record can recover exit 7 from a zero launcher.
 [ "$TERMINAL_MODE" != exit-7 ] || exit 0
@@ -127,7 +132,8 @@ assert_case() {
     fi
     # A killed sampler cannot clean its older launch gate; the outer backend
     # must still remove its own terminal/stderr/peak records after unit stop.
-    for evidence in "$TERMINAL_CASE/tmp"/typelisp-memory-limit.*; do
+    for evidence in "$TERMINAL_CASE/tmp"/typelisp-memory-limit.* \
+        "$TERMINAL_CASE"/typelisp-memory-limit.*; do
         [ ! -e "$evidence" ] || fail 'terminal helper left private evidence after return'
     done
 }
@@ -268,3 +274,46 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
     done
 done
 echo '[linux-memory-limit] 38 real status/stdin/signal/OOM/timeout/owned-unit-stop fixtures passed'
+
+# Capturing stderr on tmpfs would charge it irreclaimably to the workload.
+# Use a fresh tmpfs TMPDIR, a disk-backed report and more stderr than the cap.
+stderr_fs=$(stat -f -c %T "$WORKDIR") || fail 'cannot identify stderr fixture filesystem'
+if [ "$stderr_fs" = tmpfs ]; then
+    echo '[linux-memory-limit] stderr filesystem regression requires a disk-backed checkout; other terminal fixtures passed'
+    exit 0
+fi
+awk '$2 == "/dev/shm" && $3 == "tmpfs" { found=1 } END { exit !found }' /proc/mounts ||
+    fail 'stderr cap fixture requires writable /dev/shm tmpfs'
+for route in library-none library-metrics wrapper-none wrapper-metrics; do
+    TERMINAL_CASE="$WORKDIR/stderr-$route"
+    mkdir -p "$TERMINAL_CASE/tmp"
+    tmpfs_root=$(mktemp -d /dev/shm/typelisp-memory-terminal.XXXXXX)
+    terminal_status=0
+    (
+        unset TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
+        if [ "${route#*-}" = metrics ]; then
+            TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE="$TERMINAL_CASE/caller-peak"
+            export TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
+            printf 'caller-owned\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+        fi
+        TMPDIR=$tmpfs_root
+        export TMPDIR
+        case $route in
+            library-*) linux_memory_limit_run 16777216 \
+                sh -c 'exec dd if=/dev/zero bs=1048576 count=20 >&2' ;;
+            wrapper-*) "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 16 --timeout-seconds 10 \
+                --report "$TERMINAL_CASE/report" -- \
+                sh -c 'exec dd if=/dev/zero bs=1048576 count=20 >&2' ;;
+        esac
+    ) > "$TERMINAL_CASE/stdout" 2> "$TERMINAL_CASE/stderr" || terminal_status=$?
+    [ "$terminal_status" -eq 0 ] || fail "stderr cap $route returned $terminal_status"
+    [ "$(wc -c < "$TERMINAL_CASE/stderr")" -ge 20971520 ] || fail 'stderr cap fixture lost output'
+    expected=0
+    TERMINAL_MODE=stderr
+    assert_case
+    case ${tmpfs_root:?} in
+        /dev/shm/typelisp-memory-terminal.??????) rmdir -- "${tmpfs_root:?}" ;;
+        *) fail 'refused unowned tmpfs fixture cleanup' ;;
+    esac
+done
+echo '[linux-memory-limit] four tmpfs stderr ownership/cap fixtures passed'

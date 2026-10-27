@@ -460,6 +460,10 @@ separate readback job checks that digest, trusted checkout/event/workflow/run
 and attempt, successful producer job metadata, artifact creation window and
 content/provenance keys. An attempt cannot reuse the previous attempt's
 bundle, even if its source tree is identical. Missing or partial data fails.
+Readback is a small two-host matrix: each host verifies its own exact checkout
+bytes, including text paths that Git can materialize as CRLF on Windows. This
+avoids a separate normalized-source identity. The workflow has four jobs total;
+both readback jobs and their setup cost count toward the runner-minute budget.
 
 No compiler or gate consumes a transported envelope yet. All existing path-file
 handoffs, compiler choices, gate dependencies, comparisons, limits and required

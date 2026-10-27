@@ -20,6 +20,9 @@ const sha = value => crypto.createHash('sha256').update(value).digest('hex');
 const need = (ok, why) => { if (!ok) throw Error(why); };
 const hex = (s,n) => typeof s === 'string' && new RegExp('^[0-9a-f]{'+n+'}$').test(s);
 const json = value => JSON.stringify(value, null, 2)+'\n';
+// Bootstrap enables compiler-build-identity, not stage0-build-version. The
+// normal CLI format includes the latter's explicit unknown date suffix.
+const bootstrapVersion = commit => 'typelisp '+commit+' built unknown';
 const order = (a,b) => Buffer.compare(Buffer.from(a),Buffer.from(b));
 function key(fields) {
   // Byte-compatible with #6883 ci_compiler_artifact_key (schema=1), including
@@ -191,7 +194,7 @@ function publish(root,work,host,role,argv) {
     const stage=path.basename(selected).replace(/\.exe$/,''); need(['stage3','stage4'].includes(stage),'unconverged stage');
     need(selected===path.join(root,'target/bootstrap-fixpoint',stage+(host==='windows'?'.exe':'')),'unexpected converged path');
     rec=load(below(d,'records/'+stage+'.json',true)); const prev=path.join(path.dirname(selected),stage==='stage3'?'stage2':'stage3')+(host==='windows'?'.exe':'');
-    const p=producer(root,prev,c.tree); need(p.sha256===rec.producer_sha256 && p.identity===rec.producer_identity && rec.producer_version==='typelisp '+c.commit,'bootstrap producer changed');
+    const p=producer(root,prev,c.tree); need(p.sha256===rec.producer_sha256 && p.identity===rec.producer_identity && rec.producer_version===bootstrapVersion(c.commit),'bootstrap producer changed');
     const w=path.dirname(selected), pair=stage==='stage3'?['stage2.s','stage3.s']:['stage3.s','stage4.s'];
     for(const name of new Set([...pair,'stage3.s','stage3-embedded.s'])) proof[name]={sha256:hash(path.join(w,name)),bytes:fs.statSync(path.join(w,name)).size};
     need(proof[pair[0]].sha256===proof[pair[1]].sha256 && proof['stage3.s'].sha256===proof['stage3-embedded.s'].sha256,'fixpoint/parity failed');
@@ -203,7 +206,7 @@ function publish(root,work,host,role,argv) {
     for(const p of gen) generated[p]=copy(root,dir,below(root,p,true),'generated/'+p,files);
     need(fs.readFileSync(below(root,gen[0]),'utf8')===c.commit && fs.readFileSync(below(root,gen[1]),'utf8')===c.tree,'stamp changed before snapshot');
   } else {
-    rec=load(below(d,'records/reference.json',true)); const p=producer(root,path.resolve(argv[1]),c.tree); need(p.sha256===rec.producer_sha256 && rec.producer_version==='typelisp '+c.commit,'reference producer changed');
+    rec=load(below(d,'records/reference.json',true)); const p=producer(root,path.resolve(argv[1]),c.tree); need(p.sha256===rec.producer_sha256 && rec.producer_version===bootstrapVersion(c.commit),'reference producer changed');
     const boot=load(below(d,'roles/bootstrap-converged/manifest.json',true));need(p.sha256===boot.files['payload/compiler'].sha256,'reference did not use converged compiler');proof.seed=boot.proof.seed;proof.parent_provenance_key=boot.provenance_key;
     need(selected===path.join(root,'target/build-invariance/compare/opt2-built/selfhost_main_opt1.s'),'unexpected reference path');
     proof.batch_manifest=rec.batch_manifest;
@@ -260,7 +263,7 @@ function verify(root,dir,host,expected,expectedContext,transport) {
     const roleFiles=role==='bootstrap-converged'?['payload/compiler','payload/previous-stage',...generatedPaths(host).map(p=>'generated/'+p)]:['payload/reference.s','inventory/corpus.txt'];
     need(Object.keys(m.files).sort(order).join('\n')===roleFiles.sort(order).join('\n')&&m.fields.output_kind===(role==='bootstrap-converged'?'compiler-binary':'compiler-assembly'),'role file/kind substitution');
     for(const [p,v]of Object.entries(m.files)){need(v.source.startsWith('{root}/'),'external payload source');safeRel(v.source.slice(7));const file=below(base,p,true);need(hash(file)===v.sha256&&fs.statSync(file).size===v.bytes,'role payload corrupt');}
-    const env=JSON.parse(m.fields.environment);need(json(env.generated_inputs)===json(m.generated_inputs)&&env.producer_commit===expectedContext.commit&&env.producer_version==='typelisp '+expectedContext.commit,'generated input/commit declaration differs');
+    const env=JSON.parse(m.fields.environment);need(json(env.generated_inputs)===json(m.generated_inputs)&&env.producer_commit===expectedContext.commit&&env.producer_version===bootstrapVersion(expectedContext.commit),'generated input/commit declaration differs');
     need(json(env.recipes)===json(recipeHashes(root)),'recipe substitution');
     need(env.toolchain&&typeof env.toolchain.node==='string'&&(host==='linux'?['as','ld']:['clang','lld-link']).every(k=>hex(env.toolchain[k]?.sha256,64)&&typeof env.toolchain[k].version==='string'),'toolchain binding missing');
     for(const [p,v]of Object.entries(m.generated_inputs)) need(json(v)===json(m.files['generated/'+p]),'generated input missing from payload');
@@ -325,7 +328,7 @@ function selfTest(actualRoot,work) {
         cfg=nativeCfg;kind='compiler-assembly';opt='1';roots='stdlib,src';argv=['{root}/target/bootstrap-fixpoint/stage3','compile','--batch','{root}/target/build-invariance/batches/opt2-built/opt1/chunks/entries.0000.txt','--target','linux-x86_64',...cfg.flatMap(x=>['--cfg',x]),'--backend-mode','scalar','--opt-level','1','--stdlib-root','stdlib','--stdlib-root','src'];
       }
       const tools={node:'fixture'},toolNames=host==='linux'?['as','ld']:['clang','lld-link'];for(const n of toolNames)tools[n]={sha256:'7'.repeat(64),version:'fixture version'};
-      const env={producer_commit:c.commit,producer_version:'typelisp '+c.commit,toolchain:tools,generated_inputs:generated,seed:proof.seed||null,parent_provenance_key:proof.parent_provenance_key||null,recipes:recipeHashes(source),variables_sha256:{},resource_wrapper:[],batch_manifest:proof.batch_manifest?{text:proof.batch_manifest.text,sha256:proof.batch_manifest.sha256}:null};
+      const env={producer_commit:c.commit,producer_version:bootstrapVersion(c.commit),toolchain:tools,generated_inputs:generated,seed:proof.seed||null,parent_provenance_key:proof.parent_provenance_key||null,recipes:recipeHashes(source),variables_sha256:{},resource_wrapper:[],batch_manifest:proof.batch_manifest?{text:proof.batch_manifest.text,sha256:proof.batch_manifest.sha256}:null};
       const fields={producer_sha256:role==='bootstrap-converged'?'8'.repeat(64):sha(fakeBinary(host)),producer_identity:c.tree,host,target:host+'-x86_64',cwd:'{root}',source_roots:'src,stdlib,tests',stdlib_roots:roots,cfg:cfg.join(','),opt_level:opt,profile:'none',environment:JSON.stringify(env),argv:JSON.stringify(argv),source_set_sha256:src.sha256,output_kind:kind};
       proof.input_producer_sha256=fields.producer_sha256;
       write(path.join(base,'source-set.sha256'),src.manifest);write(path.join(base,'manifest.json'),json({schema:VERSION,contract:CONTRACT,role,context:contextValue,fields,provenance_key:key(fields),files,generated_inputs:generated,proof,inventory:inventoryValue,packaging_ms:0}));
@@ -344,6 +347,7 @@ function selfTest(actualRoot,work) {
   for(const [name,edit]of [
     ['producer-identity',m=>{m.fields.producer_identity='e'.repeat(40);}],
     ['producer-digest',m=>{m.fields.producer_sha256='f'.repeat(64);}],
+    ['version-commit',m=>{const env=JSON.parse(m.fields.environment);env.producer_version=bootstrapVersion('f'.repeat(40));m.fields.environment=JSON.stringify(env);}],
     ['output-kind',m=>{m.fields.output_kind='wrong-kind';}],
     ['target',m=>{m.fields.target='windows-x86_64';}],
     ['cfg',m=>{m.fields.cfg+=',compile-profile';}],

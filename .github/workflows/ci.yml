@@ -274,10 +274,20 @@ jobs:
   # Validation only: no compiler/test gate consumes the transported envelope.
   # The two existing required-check names and their complete flows stay intact.
   stage-envelope-readback:
-    name: Compiler stage envelope readback
+    name: Compiler stage envelope readback (${{ matrix.host }})
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
+    # Verify the materialized source bytes on the producing host: unqualified
+    # text paths can be CRLF on Windows, despite identical Git tree identity.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: Linux
+            os: ubuntu-latest
+          - host: Windows
+            os: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -287,13 +297,9 @@ jobs:
           node-version: '20'
       - uses: actions/download-artifact@v4
         with:
-          name: ci-stage-envelope-Linux-r${{ github.run_id }}-a${{ github.run_attempt }}
-          path: target/envelope-readback/Linux
-      - uses: actions/download-artifact@v4
-        with:
-          name: ci-stage-envelope-Windows-r${{ github.run_id }}-a${{ github.run_attempt }}
-          path: target/envelope-readback/Windows
-      - name: Verify trusted producer context and both transported bundles
+          name: ci-stage-envelope-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/envelope-readback/${{ matrix.host }}
+      - name: Verify trusted producer context and transported bundle
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -302,11 +308,15 @@ jobs:
         run: |
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > target/envelope-readback/jobs.json
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > target/envelope-readback/artifacts.json
-          scripts/ci-compiler-artifact.sh verify "$PWD" "$PWD/target/envelope-readback/Linux" linux "$LINUX_ENVELOPE_SHA" target/envelope-readback/jobs.json target/envelope-readback/artifacts.json > target/envelope-readback/Linux.result.json
-          scripts/ci-compiler-artifact.sh verify "$PWD" "$PWD/target/envelope-readback/Windows" windows "$WINDOWS_ENVELOPE_SHA" target/envelope-readback/jobs.json target/envelope-readback/artifacts.json > target/envelope-readback/Windows.result.json
+          case "$RUNNER_OS" in
+            Linux) envelope_sha=$LINUX_ENVELOPE_SHA ;;
+            Windows) envelope_sha=$WINDOWS_ENVELOPE_SHA ;;
+            *) exit 1 ;;
+          esac
+          scripts/ci-compiler-artifact.sh verify "$PWD" "$PWD/target/envelope-readback/$RUNNER_OS" "$RUNNER_OS" "$envelope_sha" target/envelope-readback/jobs.json target/envelope-readback/artifacts.json > "target/envelope-readback/$RUNNER_OS.result.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: compiler-stage-envelope-readback-r${{ github.run_id }}-a${{ github.run_attempt }}
+          name: compiler-stage-envelope-readback-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: target/envelope-readback/*.json
           if-no-files-found: error

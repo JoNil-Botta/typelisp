@@ -4,6 +4,7 @@
 (import stdlib.arena)
 (import stdlib.string)
 (import compiler_ir_types)
+(import compiler_optimize as opt)
 (import compiler_owned_view as owned_view)
 
 (define (compiler-ir-types-smoke-instr-seq-prepend
@@ -3033,35 +3034,10 @@
       [(Some _) " | typed"]
       [(No) ""])))
 
-(define (compiler-ir-smoke-value-eq
-  [a : compiler_ir_types.CompilerIrValue]
-  [b : compiler_ir_types.CompilerIrValue]) : bool
-  (match a
-    [(Var x)
-      (match b
-        [(Var y) (= x y)]
-        [_ false])]
-    [_ false]))
-
-(define (compiler-ir-smoke-type-eq [a : ast.AstType] [b : ast.AstType]) : bool
-  (match a
-    [(I64)
-      (match b
-        [(I64) true]
-        [_ false])]
-    [_ false]))
-
-(define (compiler-ir-smoke-zip-eq?
+(define (compiler-ir-smoke-instr-eq?
   [a : compiler_ir_types.CompilerIrInstr]
   [b : (& b compiler_ir_types.CompilerIrInstr)]) : bool
-  (let
-    [b : compiler_ir_types.CompilerIrInstr
-      (owned_view.compiler-owned-reference-shared-view b)]
-    (compiler_ir_types.compiler-ir-instr-zip-eq
-      a
-      b
-      compiler-ir-smoke-value-eq
-      compiler-ir-smoke-type-eq)))
+  (opt.opt-instr-eq (ast.ast-node-pool-reader-type-segment-bases) (& a) b))
 
 ;; 0, or the number of the failed check.
 (define (compiler-ir-smoke-operand-failure
@@ -3115,26 +3091,35 @@
         5]
       [(not
           (=
-            (compiler-ir-smoke-zip-eq?
+            (compiler-ir-smoke-instr-eq?
               (compiler_ir_types.compiler-ir-global-shared-view instr)
               instr)
             (not spmd?)))
         6]
       [(and
           (not (string.eq (compiler-ir-smoke-uses-text instr 0) ""))
-          (compiler-ir-smoke-zip-eq?
+          (compiler-ir-smoke-instr-eq?
             (compiler_ir_types.compiler-ir-global-shared-view instr)
             mapped))
         7]
       [(and
           (not spmd?)
           (not
-            (compiler-ir-smoke-zip-eq?
+            (compiler-ir-smoke-instr-eq?
               (compiler_ir_types.compiler-ir-clone-instr
                 (ast.ast-node-pool-reader-context-current)
                 (compiler_ir_types.compiler-ir-global-shared-view instr))
               instr)))
         8]
+      ;; Destinations and successor labels are identities, even when uses agree.
+      [(and
+          (or
+            (>= dst 0)
+            (not (string.eq (compiler-ir-smoke-successor-text instr 0) "")))
+          (compiler-ir-smoke-instr-eq?
+            (compiler_ir_types.compiler-ir-global-shared-view instr)
+            renamed))
+        10]
       [(not
           (=
             (let

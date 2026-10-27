@@ -15,6 +15,15 @@ the borrowed field into the current local. Shared borrows, whole-local
 writebacks, memory-backed receivers and reference receivers remain controls;
 the safety corpus retains overlapping-place borrow rejection.
 
+`nested_mut_borrow_pointer` and `nested_mut_borrow_receiver` require exit 5
+at opt0/1/2 on both hosts: nested call borrows lend original inline storage
+from memory-backed locals and mutable-reference receivers.
+`nested_mut_borrow_storage` covers deeper/nonzero-offset projections, narrow
+and floating fields, fixed/dynamic arrays, tuples, boxes, reference-valued
+fields, single index evaluation, non-call borrows, memory-class globals and
+shared reads. Keep register-local call writebacks covered by
+`mut_borrow_field_writeback` alongside them.
+
 `compiler-lower-unit-field-reads` requires canonical unit results without
 addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
 `unit_struct_fields` exercises empty, one/two-word and memory-class structs,
@@ -181,6 +190,15 @@ bitwise masks and high bits, commuted operands, minimum signed values, narrow
 results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
 i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
 with smaller memory-storage layouts and zero/positive field values as controls.
+
+`return-storage-identity-moves` checks that full-width U64 self copies preserve
+the incoming hidden result address. Real overwrites, narrowing moves, undefined
+pointers, local aliases and local ranges retain their definition checks.
+`recursive_aggregate_return.tl` retains #9337's exact recursive three-word
+reproducer; its variants cover a deeper chain, a result live across a second
+call, register and memory-class results, both hidden-argument positions and
+mutual recursion. Both fixtures run natively and with `--verify-ir` at opt0/1/2
+on both hosts; the IR observability gate also verifies both target modes.
 
 `regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
 compare stack tail fallbacks with ordinary calls on both ABIs. The overflow

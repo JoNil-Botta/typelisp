@@ -422,6 +422,9 @@ run_batch_chunk() {
     batch_stdout="${batch_chunk_path%.txt}.stdout"
     batch_stderr="${batch_chunk_path%.txt}.stderr"
     batch_timing_label="$batch_compiler_label:opt$batch_opt_level:chunk$batch_id"
+    # A pool worker handles multiple chunks in one shell. Do not carry a
+    # previous singleton's identity into an ordinary multi-entry chunk.
+    batch_single_name=
     if [ "$batch_entries" -eq 1 ]; then
         batch_single_name=$(awk -F'|' 'NR == 1 { print $1; exit }' "$batch_case_chunk")
         case "$batch_single_name" in
@@ -480,6 +483,12 @@ run_batch_chunk() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$batch_elapsed_ms" "$batch_compiler_label" "$batch_opt_level" "$batch_id" "$batch_logical_cases" "$batch_peak_bytes" >> "$CHUNK_METRICS"
     echo "[build-invariance] $batch_label elapsed_ms=$batch_elapsed_ms peak_memory_bytes=$batch_peak_bytes"
+    if [ -n "${TYPELISP_CI_REFERENCE_ENVELOPE_DIR:-}" ] && \
+        [ "$batch_compiler_label:$batch_opt_level:${batch_single_name:-}" = opt2-built:1:selfhost_main_opt1 ]; then
+        ci_timing_run reference artifact-record \
+            "$ROOT/scripts/ci-compiler-artifact.sh" record "$ROOT" \
+            "$TYPELISP_CI_REFERENCE_ENVELOPE_DIR" linux reference "$@"
+    fi
 }
 
 compare_case() {

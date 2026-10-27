@@ -370,6 +370,7 @@ ci_verify_load_handoffs() {
 gate_bootstrap_fixpoint() {
     TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$CI_VERIFY_STAGE1_PATH_FILE \
         TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$CI_VERIFY_STAGE2_PATH_FILE \
+        TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
         scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN" || return $?
     # The cross-mode differential also runs the previous-stage compiler.
     ci_verify_load_handoffs bootstrap-fixpoint || return 1
@@ -390,6 +391,11 @@ gate_bootstrap_fixpoint() {
                 "safety, integration, and examples run-assert tiers depend on this probe"
         fi
         echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
+    fi
+    if [ -n "$CI_COMPILER_ENVELOPE_DIR" ]; then
+        ci_timing_run bootstrap-converged artifact-snapshot \
+            scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" \
+            "$HOST_OS" bootstrap-converged "$STAGE2_BIN" "$SEED_TYPELISP_BIN" "$STAGE1_BIN" || return $?
     fi
 }
 
@@ -492,8 +498,14 @@ stage2_can_compile_native_windows() {
 # standalone reference compile there.
 gate_build_invariance() {
     TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE=$CI_VERIFY_OPT2_REFERENCE_PATH_FILE \
+        TYPELISP_CI_REFERENCE_ENVELOPE_DIR=$CI_COMPILER_ENVELOPE_DIR \
         scripts/check-build-invariance.sh || return $?
-    ci_verify_load_handoffs stage2-opt1-opt2-build-invariance
+    ci_verify_load_handoffs stage2-opt1-opt2-build-invariance || return $?
+    if [ -n "$CI_COMPILER_ENVELOPE_DIR" ]; then
+        ci_timing_run build-invariance-opt1-reference artifact-snapshot \
+            scripts/ci-compiler-artifact.sh publish "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" \
+            "$HOST_OS" build-invariance-opt1-reference "$OPT2_REFERENCE_ASM" "$TYPELISP_BIN"
+    fi
 }
 
 gate_opt2_cli_regression() {
@@ -687,6 +699,19 @@ case ",$CI_VERIFY_PLAN_IDS" in
         fi
         ensure_executable "seed" "$SEED_TYPELISP_BIN"
         ;;
+esac
+
+CI_COMPILER_ENVELOPE_DIR=
+case "${TYPELISP_CI_COMPILER_ENVELOPES:-0}" in
+    0) ;;
+    1 | local)
+        CI_COMPILER_ENVELOPE_DIR=${TYPELISP_CI_COMPILER_ENVELOPE_DIR:-$ROOT/target/ci-stage-envelope}
+        envelope_init=init
+        if [ "$TYPELISP_CI_COMPILER_ENVELOPES" = local ]; then envelope_init=init-local; fi
+        ci_timing_run compiler-envelope artifact-init \
+            scripts/ci-compiler-artifact.sh "$envelope_init" "$ROOT" "$CI_COMPILER_ENVELOPE_DIR" "$HOST_OS"
+        ;;
+    *) ci_verify_error "invalid compiler envelope mode"; exit 2 ;;
 esac
 
 # Produced compilers and artifact paths are set only by the gate that produces

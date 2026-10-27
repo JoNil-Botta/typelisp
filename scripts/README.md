@@ -473,3 +473,58 @@ Before moving or deleting a script:
 4. Run shell/PowerShell syntax checks for moved files and the focused gate for
    every changed live reference.
 5. Run `check-implementation-languages.sh` and `git diff --check`.
+
+## Same-run compiler stage envelopes (D-C27 slice 1)
+
+`ci-compiler-artifact.sh` restores #6883's canonical provenance namespace
+(#6909, removed in #8118). The envelope is version 3; its provenance key keeps
+#6883's schema-1 field order, LF framing and normalized `{root}` paths. There
+is no new producer identity: `lib-build-provenance.sh` still defines the commit
+stamp and `HEAD^{tree}` producer identity. A golden-vector fixture checks the
+legacy key. `ci-compiler-artifacts.tsv` lists only the two envelope roles;
+it does not claim to recreate the removed full producer census.
+The implementation uses the original POSIX shell provenance primitives and
+the existing `jq`/coreutils tools; it adds no implementation-language exception.
+
+When `TYPELISP_CI_COMPILER_ENVELOPES=1`, `ci-verify.sh` records the actual
+successful compiler argv and freezes the completed bootstrap compiler,
+previous-stage compiler and generated inputs before dependent gates can mutate
+shared files. Linux additionally freezes the fully compared opt1 reference.
+The source-set manifest conservatively binds tracked `src/`, `stdlib/` and
+`tests/`; generated stamps, image/surface/module files and invocation recipes
+are bound separately. Relevant environment values are hashed, not disclosed.
+Seed and independent fixpoint/parity proofs retain their distinct roles.
+
+Publication uses fresh owned directories and rename commit points. A final
+bundle index binds every file and role. Its digest travels through distinct
+Linux/Windows producer job outputs, independently of artifact contents. The
+separate readback job checks that digest, trusted checkout/event/workflow/run
+and attempt, successful producer job metadata, artifact creation window and
+content/provenance keys. An attempt cannot reuse the previous attempt's
+bundle, even if its source tree is identical. Missing or partial data fails.
+Readback is a small two-host matrix: each host verifies its own exact checkout
+bytes, including text paths that Git can materialize as CRLF on Windows. This
+avoids a separate normalized-source identity. The workflow has four jobs total;
+both readback jobs and their setup cost count toward the runner-minute budget.
+The complete fixture suite runs on Linux, including static Windows envelopes,
+both coreutils digest markers and planted LF/CRLF checkouts. Real Windows
+publication and readback validate that host's bytes and native tool behavior.
+
+No compiler or gate consumes a transported envelope yet. All existing path-file
+handoffs, compiler choices, gate dependencies, comparisons, limits and required
+check names remain. Removing this opt-in publication/readback removes the
+slice without changing compilation. The small readback job must also pass
+before council disposition; it changes no branch-protection settings.
+Transport does not preserve executable permission bits, so readback is static:
+it verifies bytes and ELF/PE target headers and never runs a downloaded binary.
+A future consumer must restore its declared executable mode only after checking
+the entire envelope. Cross-run caching is outside this contract.
+
+`scripts/verify-ci-compiler-artifacts.sh [fresh-owned-output]` runs compiler-free
+fail-closed fixtures, including substitution, corruption, partial publication,
+path escape and stale attempts. Explicit `init-local`/`verify-local` modes
+support affected local preflight, are marked local and are forbidden as a CI
+fallback. The hosted verifier always derives expected context independently.
+Packaging has `artifact-record` and `artifact-snapshot` timing rows; sealing,
+upload/readback steps and per-role metadata report the additional cost. These
+are overhead observations, not a speed gain.

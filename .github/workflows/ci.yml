@@ -27,6 +27,9 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    outputs:
+      linux_envelope_sha: ${{ steps.envelope.outputs.linux_envelope_sha }}
+      windows_envelope_sha: ${{ steps.envelope.outputs.windows_envelope_sha }}
     strategy:
       fail-fast: true
       matrix:
@@ -127,11 +130,58 @@ jobs:
           sde_bin=$(sh scripts/fetch-sde.sh)
           printf 'TYPELISP_SDE_BIN=%s\n' "$sde_bin" >> "$GITHUB_ENV"
 
+      - name: Compiler artifact envelope fail-closed fixtures
+        # The full suite is host-independent (both binary headers, planted
+        # MSYS binary markers and LF/CRLF checkouts). Windows verifies actual
+        # producer bytes in its own readback job, without thousands of forks.
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          fixture_root="$PWD/target/exp/ci-compiler-artifact-fixtures"
+          scripts/run-memory-bounded.sh --limit-mib 512 --timeout-seconds 120 \
+            --report target/ci-compiler-artifact-fixtures.memory -- \
+            sh scripts/verify-ci-compiler-artifacts.sh "$fixture_root"
+          cp "$fixture_root/self-test.json" target/ci-compiler-artifact-fixtures.json
+
+      - name: Upload compiler envelope fixture evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compiler-stage-envelope-fixtures-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            target/ci-compiler-artifact-fixtures.memory
+            target/ci-compiler-artifact-fixtures.json
+          if-no-files-found: warn
+
       - name: CI verification
+        id: verification
         shell: bash
         env:
           TYPELISP_CI_TIMING: '1'
+          TYPELISP_CI_COMPILER_ENVELOPES: '1'
         run: scripts/ci-verify.sh --jobs 4 --memory-mib 14336
+
+      - name: Seal completed compiler stage envelope
+        id: envelope
+        shell: bash
+        run: scripts/ci-compiler-artifact.sh seal "$PWD" "$PWD/target/ci-stage-envelope" "$RUNNER_OS" >> "$GITHUB_OUTPUT"
+
+      - name: Upload completed compiler stage envelope
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-stage-envelope-${{ runner.os }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/ci-stage-envelope/complete/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve incomplete envelope evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-stage-envelope-incomplete-${{ runner.os }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/ci-stage-envelope/draft/
+          if-no-files-found: warn
+
 
       - name: Exercise SDE fallback on native AVX-512 hosts
         shell: bash
@@ -256,3 +306,50 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
           overwrite: true
+
+  # Validation only: no compiler/test gate consumes the transported envelope.
+  # The two existing required-check names and their complete flows stay intact.
+  stage-envelope-readback:
+    name: Compiler stage envelope readback (${{ matrix.host }})
+    needs: ci
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    # Verify the materialized source bytes on the producing host: unqualified
+    # text paths can be CRLF on Windows, despite identical Git tree identity.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: Linux
+            os: ubuntu-latest
+          - host: Windows
+            os: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-stage-envelope-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/envelope-readback/${{ matrix.host }}
+      - name: Verify trusted producer context and transported bundle
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINUX_ENVELOPE_SHA: ${{ needs.ci.outputs.linux_envelope_sha }}
+          WINDOWS_ENVELOPE_SHA: ${{ needs.ci.outputs.windows_envelope_sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > target/envelope-readback/jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > target/envelope-readback/artifacts.json
+          case "$RUNNER_OS" in
+            Linux) envelope_sha=$LINUX_ENVELOPE_SHA ;;
+            Windows) envelope_sha=$WINDOWS_ENVELOPE_SHA ;;
+            *) exit 1 ;;
+          esac
+          scripts/ci-compiler-artifact.sh verify "$PWD" "$PWD/target/envelope-readback/$RUNNER_OS" "$RUNNER_OS" "$envelope_sha" target/envelope-readback/jobs.json target/envelope-readback/artifacts.json > "target/envelope-readback/$RUNNER_OS.result.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compiler-stage-envelope-readback-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/envelope-readback/*.json
+          if-no-files-found: error

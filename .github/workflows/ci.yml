@@ -27,6 +27,9 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
+    outputs:
+      linux_envelope_sha: ${{ steps.verification.outputs.linux_envelope_sha }}
+      windows_envelope_sha: ${{ steps.verification.outputs.windows_envelope_sha }}
     strategy:
       fail-fast: true
       matrix:
@@ -127,11 +130,39 @@ jobs:
           sde_bin=$(sh scripts/fetch-sde.sh)
           printf 'TYPELISP_SDE_BIN=%s\n' "$sde_bin" >> "$GITHUB_ENV"
 
+      - name: Compiler artifact envelope fail-closed fixtures
+        shell: bash
+        run: |
+          scripts/run-memory-bounded.sh --limit-mib 512 --timeout-seconds 120 \
+            --report target/ci-compiler-artifact-fixtures.memory -- \
+            sh scripts/verify-ci-compiler-artifacts.sh
+
       - name: CI verification
+        id: verification
         shell: bash
         env:
           TYPELISP_CI_TIMING: '1'
-        run: scripts/ci-verify.sh --jobs 4 --memory-mib 14336
+          TYPELISP_CI_COMPILER_ENVELOPES: '1'
+        run: |
+          scripts/ci-verify.sh --jobs 4 --memory-mib 14336
+          scripts/ci-compiler-artifact.sh seal "$PWD" "$PWD/target/ci-stage-envelope" "$RUNNER_OS" >> "$GITHUB_OUTPUT"
+
+      - name: Upload completed compiler stage envelope
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-stage-envelope-${{ runner.os }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/ci-stage-envelope/complete/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Preserve incomplete envelope evidence
+        if: failure() && steps.verification.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-stage-envelope-incomplete-${{ runner.os }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/ci-stage-envelope/draft/
+          if-no-files-found: warn
+
 
       - name: Exercise SDE fallback on native AVX-512 hosts
         shell: bash
@@ -239,3 +270,43 @@ jobs:
           if-no-files-found: warn
           retention-days: 90
           overwrite: true
+
+  # Validation only: no compiler/test gate consumes the transported envelope.
+  # The two existing required-check names and their complete flows stay intact.
+  stage-envelope-readback:
+    name: Compiler stage envelope readback
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-stage-envelope-Linux-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/envelope-readback/Linux
+      - uses: actions/download-artifact@v4
+        with:
+          name: ci-stage-envelope-Windows-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/envelope-readback/Windows
+      - name: Verify trusted producer context and both transported bundles
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LINUX_ENVELOPE_SHA: ${{ needs.ci.outputs.linux_envelope_sha }}
+          WINDOWS_ENVELOPE_SHA: ${{ needs.ci.outputs.windows_envelope_sha }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > target/envelope-readback/jobs.json
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > target/envelope-readback/artifacts.json
+          scripts/ci-compiler-artifact.sh verify "$PWD" "$PWD/target/envelope-readback/Linux" linux "$LINUX_ENVELOPE_SHA" target/envelope-readback/jobs.json target/envelope-readback/artifacts.json > target/envelope-readback/Linux.result.json
+          scripts/ci-compiler-artifact.sh verify "$PWD" "$PWD/target/envelope-readback/Windows" windows "$WINDOWS_ENVELOPE_SHA" target/envelope-readback/jobs.json target/envelope-readback/artifacts.json > target/envelope-readback/Windows.result.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compiler-stage-envelope-readback-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/envelope-readback/*.json
+          if-no-files-found: error

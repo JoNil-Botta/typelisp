@@ -480,6 +480,12 @@ run_batch_chunk() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$batch_elapsed_ms" "$batch_compiler_label" "$batch_opt_level" "$batch_id" "$batch_logical_cases" "$batch_peak_bytes" >> "$CHUNK_METRICS"
     echo "[build-invariance] $batch_label elapsed_ms=$batch_elapsed_ms peak_memory_bytes=$batch_peak_bytes"
+    if [ -n "${TYPELISP_CI_REFERENCE_ENVELOPE_DIR:-}" ] && \
+        [ "$batch_compiler_label:$batch_opt_level:${batch_single_name:-}" = opt2-built:1:selfhost_main_opt1 ]; then
+        ci_timing_run reference artifact-record \
+            "$ROOT/scripts/ci-compiler-artifact.sh" record "$ROOT" \
+            "$TYPELISP_CI_REFERENCE_ENVELOPE_DIR" linux reference "$@"
+    fi
 }
 
 compare_case() {

@@ -247,9 +247,22 @@ run_bootstrap_compile() {
     shift
     if [ "$BOOTSTRAP_TLCI_MUTATION" -eq 1 ]; then
         run_with_heartbeat \
-            "$_btc_label" env -C "$BOOTSTRAP_SOURCE_ROOT" "$@"
+            "$_btc_label" env -C "$BOOTSTRAP_SOURCE_ROOT" "$@" || return $?
     else
-        run_with_heartbeat "$_btc_label" "$@"
+        run_with_heartbeat "$_btc_label" "$@" || return $?
+    fi
+    if [ -n "${TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR:-}" ]; then
+        [ "$BOOTSTRAP_TLCI_MUTATION" -eq 0 ] || return 1
+        case "$_btc_label" in
+            'stage0 -> stage1.s') _btc_stage=stage1 ;;
+            'stage1 -> stage2.s') _btc_stage=stage2 ;;
+            'stage2 -> stage3.s') _btc_stage=stage3 ;;
+            'stage3 -> stage4.s') _btc_stage=stage4 ;;
+            *) return 1 ;;
+        esac
+        ci_timing_run "$_btc_stage" artifact-record \
+            "$ROOT/scripts/ci-compiler-artifact.sh" record "$ROOT" \
+            "$TYPELISP_CI_BOOTSTRAP_ENVELOPE_DIR" "$HOST_OS" "$_btc_stage" "$@"
     fi
 }
 

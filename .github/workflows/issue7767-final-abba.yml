@@ -3,6 +3,7 @@ name: Issue 7767 final ABBA diagnostic
 # D-C21 item6 only. Throwaway draft into preserved #9304 branch; never merge.
 on:
   pull_request:
+    types: [opened]
     branches: [t3/issue-7767-build-invariance-critical-path]
 permissions:
   contents: read

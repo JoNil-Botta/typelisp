@@ -134,6 +134,12 @@ def cas_add(p,work,index_key,index,freeze=False):
    with p.open('rb')as src,dest.open('xb')as out:shutil.copyfileobj(src,out,1048576)
   else:os.link(p,dest)
  index[index_key]={'sha256':digest,'bytes':p.stat().st_size}
+def raw_cas_path(relative):
+ return relative.suffix in('.s','.o')or relative.as_posix()in('opt1/opt1','backend-memory/backend-tests')
+def evidence_cas_path(relative):
+ parts=relative.parts
+ return len(parts)>=4 and parts[0]=='trials'and parts[2]=='raw'and raw_cas_path(Path(*parts[3:]))
+
 def auxiliary_files(work):
  result=[]
  for p in(work/'toolchain').glob('*'):
@@ -142,7 +148,7 @@ def auxiliary_files(work):
  for directory in('target/build-stage0','target/embedded-stdlib-tlci'):
   for p in(source/directory).rglob('*'):
    if p.is_file()and not p.is_symlink():result.append(p)
- for p in(source/'target/bootstrap-fixpoint').rglob('*.s'):
+ for p in(source/'target/bootstrap-fixpoint').rglob('*'):
   if p.is_file()and not p.is_symlink():result.append(p)
  for name in('ci-verify-stage1.path','ci-verify-stage2.path'):
   p=source/'target'/name
@@ -161,7 +167,7 @@ def pack(work,inject_failure=False):
   raw=trial/'raw'
   if not raw.exists():continue
   for p in raw.rglob('*'):
-   if p.is_file()and not p.is_symlink()and(p.suffix=='.s'or p.relative_to(raw).as_posix()in('opt1/opt1','backend-memory/backend-tests')):
+   if p.is_file()and not p.is_symlink()and raw_cas_path(p.relative_to(raw)):
     cas_add(p,work,str(p.relative_to(e)),index)
  for p in auxiliary_files(work):
   key=str(p.relative_to(work))
@@ -172,8 +178,9 @@ def pack(work,inject_failure=False):
   for p in sorted(e.rglob('*')):
    if not p.is_file()or p.is_symlink():continue
    rel=p.relative_to(e);parts=rel.parts
-   # All raw assemblies and native outputs are retained in CAS; never unlink them.
-   if 'raw'in parts and(p.suffix in('.s','.o')or p.name in('opt1','backend-tests')):continue
+   # Exactly the same path predicate selects CAS contents and tar exclusions.
+   if evidence_cas_path(rel):
+    need(str(rel)in index,'archive would drop evidence '+str(rel));continue
    tar.add(p,arcname=str(rel),recursive=False)
    if inject_failure:raise Failure('injected archive failure')
  dump(e/'archive.json',{'complete':True,'sha256':sha(archive),'bytes':archive.stat().st_size,'logical_content_files':len(index),'unique_blobs':len(list((e/'cas').iterdir()))})
@@ -216,6 +223,18 @@ def payload(args):
  if useperf:cpu+=['perf','stat','-x','\t','--no-big-num','-e','cycles:u,instructions:u','-o',str(out/'perf.tsv'),'--']
  os.chdir(cwd);os.execvp(cpu[0],cpu+cmd)
 
+def sample_telemetry(out):
+ sample={'monotonic_s':time.monotonic(),'errors':{}}
+ def read(path):
+  try:return path.read_text().strip()
+  except (OSError,ValueError)as ex:sample['errors'][str(path)]=repr(ex);return None
+ sample['load']=read(Path('/proc/loadavg'));cpu=read(Path('/proc/stat'));sample['cpu']=cpu.splitlines()[0]if cpu else None;mem=read(Path('/proc/meminfo'));sample['meminfo']=[l for l in mem.splitlines()if l.startswith(('MemAvailable:','SwapFree:'))]if mem else None
+ pp=out/'payload.json'
+ if pp.exists():
+  node=Path(json.loads(pp.read_text())['node']);need(str(node).startswith('/sys/fs/cgroup/'),'invalid node');sample['cgroup']={}
+  for key in('memory.current','memory.peak','memory.events','memory.pressure','cpu.stat','cpu.pressure'):sample['cgroup'][key]=read(node/key)
+ return sample
+
 class Runner:
  def __init__(self,root,work,job):
   self.root=root;self.work=work;self.job=job;self.active=None;self.proc=None;self.identity=identity();self.deadline=time.monotonic()+max(0,dt(job['started_at'])+140*60-time.time());self.final_deadline=self.deadline+8*60
@@ -244,13 +263,7 @@ class Runner:
    with(out/'gate.log').open('w')as log,(out/'telemetry.jsonl').open('w')as trace:
     proc=subprocess.Popen(args,cwd=cwd,env=env,stdout=log,stderr=subprocess.STDOUT);self.proc=proc
     while proc.poll()is None:
-     sample={'monotonic_s':time.monotonic(),'load':Path('/proc/loadavg').read_text().strip(),'cpu':Path('/proc/stat').read_text().splitlines()[0],'meminfo':[l for l in Path('/proc/meminfo').read_text().splitlines()if l.startswith(('MemAvailable:','SwapFree:'))]}
-     pp=out/'payload.json'
-     if pp.exists():
-      node=Path(json.loads(pp.read_text())['node']);need(str(node).startswith('/sys/fs/cgroup/'),'invalid node');sample['cgroup']={}
-      for k in('memory.current','memory.peak','memory.events','memory.pressure','cpu.stat','cpu.pressure'):
-       try:sample['cgroup'][k]=(node/k).read_text().strip()
-       except FileNotFoundError:pass
+     sample=sample_telemetry(out)
      trace.write(json.dumps(sample)+'\n');trace.flush()
      if time.monotonic()>t+seconds+20:self.stop()
      time.sleep(.5)
@@ -311,7 +324,7 @@ def run_job(root,work):
    runner.bounded(current,source,['bash','scripts/check-build-invariance.sh'],perf=perf,env_extra={'TYPELISP_BIN':str(common),'TYPELISP_INLINE_TEST_WORKERS':'1','TYPELISP_BUILD_INVARIANCE_WORKERS':'2','TYPELISP_BUILD_INVARIANCE_BATCH_SIZE':'64','TYPELISP_CI_TIMING':'1','TYPELISP_CI_TIMING_FILE':str(timing),'TYPELISP_CI_TIMING_HOST':'linux','TYPELISP_CI_TIMING_GATE':'stage2 opt1/opt2 build-invariance','TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE':str(source/'target/opt1-reference.path')})
    need(fingerprint(source)==initial and sha(common)==commonsha,'input changed during trial');(source/'target/build-invariance').rename(owned(current/'raw',work));(source/'target/opt1-reference.path').rename(owned(current/'handoff.path',work))
    # Audit and cross-trial comparisons are outside gate wall, inside total budget.
-   runner.bounded(current/'audit-phase',source,['bash',str(SCRIPT),'--audit',str(current),str(source),'A'if ref==A else'B','-'if name=='A1'else str(e/'trials/A1')],ceiling=300)
+   runner.bounded(current/'audit-phase',source,['bash',str(SCRIPT),'--audit',str(current),str(source),'A'if ref==A else'B','-'if name=='A1'else str(e/'trials/A1')],ceiling=300,final=name=='A2')
    result=json.loads((current/'audit.json').read_text());state['trials'][name]='passed';dump(e/'status.json',state)
    print('[D-C21]',name,'wall',json.loads((current/'phase.json').read_text())['wall_s'],'all',result['comparisons'],'comparisons verified',flush=True)
   summarize(e);state['status']='all_four_passed';dump(e/'status.json',state)
@@ -344,6 +357,7 @@ def summarize(e):
  maps={n:chunks(a)for n,a in audits.items()};common=set.intersection(*(set(v)for v in maps.values()));result['common_ordinary_chunks']=len(common)
  result['ordinary_chunks']={hashlib.sha256(k.encode()).hexdigest():{n:maps[n][k]for n,_ in ORDER}for k in sorted(common)}
  ratios=result['paired_ratios'];result['direction']='faster_in_both_pairs'if all(v<1 for v in ratios.values())else('slower_in_both_pairs'if all(v>1 for v in ratios.values())else'mixed_or_equal_inconclusive')
+ result['direction_is_descriptive_only']=True;result['scope']='raw paired signs;no magnitude threshold or automatic acceptance,inspect dispersion/resources and full evidence'
  dump(e/'summary.json',result)
 
 # Local protocol fixtures exercise both planners, result enforcement, exact bytes,
@@ -370,8 +384,8 @@ def mock_trial(trial,source,variant):
     if selfhost:timing.append(['gate',prod+':selfhost_main_opt'+opt,'compile','10','0','linux'])
   for name in('integration_aggregate_globals','integration_sym_i64_env'):
    p=raw/'sentinels'/prod/(name+'.standalone.s');p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes((raw/'compare'/prod/(name+'.s')).read_bytes())
- for name in('opt1/opt1','backend-memory/backend-tests'):
-  p=raw/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'fixed binary')
+ for name in('opt1/opt1','opt1/opt1.o','backend-memory/backend-tests'):
+  p=raw/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_bytes(b'fixed binary or object')
  (raw/'backend-memory/backend-tests.memory').write_text(f'schema_version=1\nhost=linux\nbackend=systemd-user-cgroup\nreason=success\nexit_code=0\npeak_memory_bytes=1048576\nlimit_bytes={8192*1048576}\nwall_ms=10\n');(raw/'pool-queue.txt').write_text('\n'.join(queue)+'\n');results=raw/'pool/results';results.mkdir(parents=True)
  for q in queue:(results/q.split('|')[0]).write_text('0\n')
  (raw/'chunk-metrics.tsv').write_text('\n'.join(metrics)+'\n');timing.extend(['gate',x.split('|')[0],'compare','0','0','linux']for x in corpus)
@@ -398,6 +412,14 @@ def test_monitor_ownership(work,source):
   except json.JSONDecodeError:pass
   else:raise Failure('partial receipt did not exercise monitor exception')
  need(len(stops)==1 and instances[0].waited and not instances[0].alive and runner.active is None and runner.proc is None,'monitor lost service ownership')
+ original=Path.read_text
+ dump(out/'payload.json',{'node':'/sys/fs/cgroup/fixture-teardown'})
+ def cgroup_teardown(path,*args,**kwargs):
+  if str(path).startswith('/sys/fs/cgroup/fixture-teardown'):raise OSError(19,'No such device')
+  return original(path,*args,**kwargs)
+ with mock.patch.object(Path,'read_text',cgroup_teardown):
+  observed=sample_telemetry(out);need(len(observed['errors'])==6 and all(v is None for v in observed['cgroup'].values()),'ENODEV telemetry not retained as missing')
+
 
 def test_input_and_fallback(work,source,parent):
  import unittest.mock as mock
@@ -440,18 +462,29 @@ def selftest(parent):
   else:raise Failure('negative fixture accepted '+defect)
  test_monitor_ownership(w,source)
  test_input_and_fallback(w,source,parent)
+ archive_input={str(p.relative_to(w/'evidence')):sha(p)for p in(w/'evidence').rglob('*')if p.is_file()and not p.is_symlink()}
  pack(w)
  need(upload_paths(w)[0]==str(w/'evidence.complete.tar.gz'),'completed archive selection')
  with tarfile.open(w/'evidence.complete.tar.gz','r:gz')as tar:
   idx=json.load(tar.extractfile('content-index.json'))
   need({'toolchain/typelisp-stage0-linux','toolchain/SHA256SUMS','source/target/bootstrap-fixpoint/stage2.s','source/target/embedded-stdlib-tlci/stdlib.tlci','source/target/build-stage0/git-hash.txt'}<=set(idx),'archive auxiliary identities missing')
   for v in idx.values():need(hashlib.sha256(tar.extractfile('cas/'+v['sha256']).read()).hexdigest()==v['sha256'],'CAS reconstruction')
+  archived={m.name for m in tar.getmembers()if m.isfile()}
+  for relative,digest in archive_input.items():
+   if relative in archived:restored=hashlib.sha256(tar.extractfile(relative).read()).hexdigest()
+   else:
+    need(relative in idx,'regular evidence omitted from tar and CAS: '+relative);restored=hashlib.sha256(tar.extractfile('cas/'+idx[relative]['sha256']).read()).hexdigest()
+   need(restored==digest,'regular evidence byte reconstruction failed')
+  for name,_ in ORDER:
+   need('trials/'+name+'/raw/pool/results/backend-tests'in archived,'backend result receipt omitted')
+   need('trials/'+name+'/raw/opt1/opt1.o'in idx,'opt1 object omitted')
+
  expired=Runner(SCRIPT.parent.parent,w,{'started_at':'2000-01-01T00:00:00Z'})
  try:expired.bounded(w/'expired-budget',source,['false'])
  except Failure as ex:need('budget exhausted' in str(ex),'wrong budget failure')
  else:raise Failure('expired budget launched a command')
  need(not(w/'expired-budget/phase.memory').exists(),'expired budget entered wrapper')
- print('SELFTEST PASS all4 mock trials,5 negative fixtures,complete CAS,ownership/error-stop,generated-input mutation,archive-failure fallback,expired-budget rejection;no timing evidence',w)
+ print('SELFTEST PASS all4 mock trials,5 negative fixtures,complete CAS,ownership/error-stop,generated-input mutation,archive-failure fallback,all-regular-file reconstruction,ENODEV telemetry,expired-budget rejection;no timing evidence',w)
 
 try:
  mode=ARGS[0]if ARGS else''

@@ -152,6 +152,12 @@ scripts/build-stage0.sh target/stage0/typelisp.exe typelisp-stage0-windows.exe #
 `build-stage0.sh` compiles `src/main.tl` with the seed and links through the
 host toolchain, so a stage0 never depends on its own `build` command.
 
+`--version` records the source commit. `--producer-identity` reports its Git
+tree object name, which keys exact frontend-surface and embedded TLCI admission.
+The commit occupies a named static byte array, separate from content-derived
+literal labels and the compressed image. Different commits of an identical
+tree therefore retain distinct provenance while compiling the same workload.
+
 The serialized publisher uploads a complete private candidate before replacing
 the convenience release. It moves `stage0-latest` to the new commit without
 deleting that tag: delayed GitHub tag-deletion events can make a replacement

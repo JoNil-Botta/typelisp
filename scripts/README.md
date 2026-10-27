@@ -353,8 +353,10 @@ describes its caps and reports.
 Linux success also requires an invocation-owned terminal status: the unit's
 private waiter publishes it only after its command's wait completes. A zero
 `systemd-run --wait` status or a positive memory peak alone proves no workload
-completion. Missing, malformed or foreign terminal evidence fails with exit 2,
-including direct library calls without metrics. Known nonzero launcher statuses,
+completion. Missing, malformed or foreign terminal evidence reports
+`wrapper-failure` regardless of peak measurement, including direct library calls
+without metrics (`LINUX_MEMORY_LIMIT_REASON`). A zero launcher status becomes
+exit 2; an actual workload exit 2 remains `command-failure`. Known nonzero launcher statuses,
 OOM evidence (137) and timeouts (124) keep their established precedence. Nested
 calls use ordinary child waits inside their enclosing cap. Terminal records are
 fresh per invocation, passed to the waiter through arguments rather than the
@@ -362,6 +364,35 @@ workload's environment, and removed with that invocation's stderr/peak scratch.
 Direct calls without metrics now also retain stop-post OOM evidence while
 streaming stderr directly. A known OOM returns 137;
 systemd's generic failure status alone does not identify an OOM.
+
+Integration, inline-test and selfhost-manifest pools validate the complete
+bounded report against the waited status, host and admitted cap before using
+outputs. Cancellation and invalid completion stop further pool admission and
+fail the gate. Integration may replay ordinary failures and known panic/crash
+exits (including `os-exit 134` and native Windows exceptions) for per-entry
+diagnostics. Replay is labelled diagnostic-only: every failed batch remains a
+gate failure even if all standalone entries succeed. Standalone compiles retain
+the chunk memory cap, swap policy and timeout, and their completion is checked
+before diagnostics are used. Replay assembly cannot supply passing native
+results. Refusal reasons reach the gate console even when
+compile streams are redirected. Interrupted chunks cannot supply passing
+evidence through replay.
+
+Linux pool self-tests exhaust both report encodings and all completion faults.
+Windows runs representative native reports through each real worker, reader and
+diagnostic path, retaining cancellation, invalid/missing completion, ordinary
+failure, panic, native exception and success cases. Native Ctrl-C and nonzero
+exits truncated to shell zero are included. Both hosts keep admission-stop,
+output-rejection, bounded-replay and console-reason assertions. Report parsing
+and fixture verdicts use the same host-independent shell/AWK code; the full
+Linux matrix includes Windows CRLF and native status mappings. Hosted Windows
+workloads additionally exercise actual MSYS launches and Job Object reports.
+Native exception replay remains conditional on the observed shell mapping.
+
+The existing pool self-tests print same-run cost attribution for the new
+completion matrices beside the unchanged fixture portion. With CI timing
+enabled these are sub-phase rows, preserving the canonical gate inventory;
+they are not a paired causal base/head measurement.
 
 `verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
 including the root opt0 build, at 8192 MiB and writes

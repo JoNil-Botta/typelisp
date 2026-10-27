@@ -24,7 +24,17 @@ set -eu
 while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
 [ "$#" -gt 0 ] || exit 90
 shift
-case ${3:-} in 'unset _tlmem_terminal '*) ;; *) exit 0 ;; esac # capability probe
+case ${3:-} in
+    'unset _tlmem_terminal '*) ;;
+    *)
+        if [ "${TERMINAL_MODE:-}" = cwd-removed ]; then
+            case ${TERMINAL_CASE:?} in "${TERMINAL_ROOT:?}"/wrapper-cwd-removed) ;; *) exit 94 ;; esac
+            [ ! -L "$TERMINAL_CASE/gone" ] || exit 94
+            rmdir -- "${TERMINAL_CASE:?}/gone" || exit 94
+        fi
+        exit 0 # capability probe
+        ;;
+esac
 [ "$1:$2:$4" = sh:-c:sh ] || exit 91
 program=$3
 shift 4
@@ -32,7 +42,11 @@ terminal=$1
 owner=$2
 printf '%s\n' "$terminal" > "$TERMINAL_CASE/terminal-path"
 if [ -n "${TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE:-}" ]; then
-    printf '4194304\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE"
+    case ${TERMINAL_PEAK:-positive} in
+        positive) printf '4194304\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE" ;;
+        zero) printf '0\n' > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE" ;;
+        unavailable) : > "$TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE" ;;
+    esac
 fi
 status=0
 case $TERMINAL_MODE in
@@ -41,6 +55,7 @@ case $TERMINAL_MODE in
         sh -c "$program" sh "$terminal" "$owner" sh -c '
             case $1 in
                 exit-7) exit 7 ;;
+                exit-2) exit 2 ;;
                 term) kill -TERM "$$" ;;
                 kill) kill -KILL "$$" ;;
             esac
@@ -98,7 +113,10 @@ route_run() (
         library-*)
             . "$ROOT/scripts/lib-linux-memory-limit.sh"
             LINUX_MEMORY_LIMIT_BACKEND=systemd-user-cgroup
-            linux_memory_limit_run 67108864 sh -c 'exit 0'
+            route_rc=0
+            linux_memory_limit_run 67108864 sh -c 'exit 0' || route_rc=$?
+            printf '%s\n' "$LINUX_MEMORY_LIMIT_REASON" > "$TERMINAL_CASE/library-reason"
+            exit "$route_rc"
             ;;
         wrapper-*)
             "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 64 \
@@ -108,11 +126,19 @@ route_run() (
 )
 
 assert_case() {
+    expected_reason=wrapper-failure
+    case $TERMINAL_MODE in
+        valid | real-valid | real-stdin | stderr) expected_reason=success ;;
+        exit-2 | exit-7 | term | real-exit-2 | real-exit-7 | real-term | real-int | real-quit)
+            expected_reason=command-failure ;;
+        kill | oom | real-kill | real-oom) expected_reason=memory-limit ;;
+        timeout | real-timeout) expected_reason=timeout ;;
+    esac
     [ "$terminal_status" -eq "$expected" ] || {
         cat "$TERMINAL_CASE/stderr" >&2
         fail "terminal $route/$TERMINAL_MODE expected $expected, got $terminal_status"
     }
-    if [ "$expected" -eq 2 ] && [ "$TERMINAL_MODE" != real-exit-2 ]; then
+    if [ "$expected" -eq 2 ] && [ "$TERMINAL_MODE" != real-exit-2 ] && [ "$TERMINAL_MODE" != exit-2 ]; then
         grep -Fq 'invocation terminal evidence' "$TERMINAL_CASE/stderr" ||
             fail "terminal $route/$TERMINAL_MODE lost its diagnostic"
     fi
@@ -120,10 +146,16 @@ assert_case() {
         wrapper-*)
             grep -Fxq "exit_code=$expected" "$TERMINAL_CASE/report" ||
                 fail 'terminal wrapper report lost its status'
+            grep -Fxq "reason=$expected_reason" "$TERMINAL_CASE/report" ||
+                fail "terminal wrapper $TERMINAL_MODE lost its reason $expected_reason"
             if [ "$expected" -ne 0 ]; then
                 ! grep -Fxq reason=success "$TERMINAL_CASE/report" ||
                     fail 'terminal wrapper reported false success'
             fi
+            ;;
+        library-*)
+            [ "$(cat "$TERMINAL_CASE/library-reason")" = "$expected_reason" ] ||
+                fail "terminal library $TERMINAL_MODE lost its reason $expected_reason"
             ;;
     esac
     if [ "$route" = wrapper-metrics ]; then
@@ -140,12 +172,13 @@ assert_case() {
 
 for route in library-none library-metrics wrapper-none wrapper-metrics; do
     for TERMINAL_MODE in valid missing absent malformed mismatch range duplicate truncated \
-        exit-7 term kill known-7 timeout oom; do
+        exit-2 exit-7 term kill known-7 timeout oom; do
         TERMINAL_CASE="$WORKDIR/$route-$TERMINAL_MODE"
         mkdir -p "$TERMINAL_CASE/tmp"
         expected=2
         case $TERMINAL_MODE in
             valid) expected=0 ;;
+            exit-2) expected=2 ;;
             exit-7 | known-7) expected=7 ;;
             term) expected=143 ;;
             kill | oom) expected=137 ;;
@@ -156,6 +189,23 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
             TERMINAL_MODE=$TERMINAL_MODE TERMINAL_CASE=$TERMINAL_CASE \
             route_run "$route" > "$TERMINAL_CASE/stdout" 2> "$TERMINAL_CASE/stderr" || terminal_status=$?
         assert_case
+    done
+done
+
+# Invalid completion remains a wrapper failure even when peak measurement is
+# zero or unavailable. Positive peaks are covered by the full matrix above.
+for route in library-none library-metrics wrapper-none wrapper-metrics; do
+    for TERMINAL_PEAK in zero unavailable; do
+        for TERMINAL_MODE in missing absent malformed mismatch range duplicate truncated; do
+            TERMINAL_CASE="$WORKDIR/$route-$TERMINAL_PEAK-$TERMINAL_MODE"
+            mkdir -p "$TERMINAL_CASE/tmp"
+            expected=2
+            terminal_status=0
+            PATH="$WORKDIR/bin:$PATH" TMPDIR="$TERMINAL_CASE/tmp" \
+                TERMINAL_PEAK=$TERMINAL_PEAK TERMINAL_MODE=$TERMINAL_MODE TERMINAL_CASE=$TERMINAL_CASE \
+                route_run "$route" > "$TERMINAL_CASE/stdout" 2> "$TERMINAL_CASE/stderr" || terminal_status=$?
+            assert_case
+        done
     done
 done
 
@@ -178,7 +228,22 @@ for route in library-none wrapper-metrics; do
     wait "$first" || terminal_status=$?
     [ "$terminal_status" -eq 2 ] || fail 'concurrent terminal swap accepted first record'
 done
-echo '[linux-memory-limit] 56 deterministic terminal/status fixtures and concurrent record swaps passed'
+echo '[linux-memory-limit] 116 deterministic terminal/status/peak fixtures and concurrent record swaps passed'
+
+# A working directory may disappear after argument validation but before cd.
+# The wrapper must still publish a setup failure, as it did before inlining
+# its Linux library call. Only the empty directory this fixture created moves.
+TERMINAL_CASE="$WORKDIR/wrapper-cwd-removed"
+mkdir -p "$TERMINAL_CASE/gone"
+terminal_status=0
+PATH="$WORKDIR/bin:$PATH" TERMINAL_MODE=cwd-removed TERMINAL_ROOT=$WORKDIR \
+    TERMINAL_CASE=$TERMINAL_CASE "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 64 \
+    --timeout-seconds 10 --working-directory "$TERMINAL_CASE/gone" \
+    --report "$TERMINAL_CASE/report" -- sh -c 'exit 0' \
+    > "$TERMINAL_CASE/stdout" 2> "$TERMINAL_CASE/stderr" || terminal_status=$?
+[ "$terminal_status" -eq 2 ] && grep -Fxq reason=wrapper-failure "$TERMINAL_CASE/report" &&
+    grep -Fxq exit_code=2 "$TERMINAL_CASE/report" || fail 'working-directory setup failure lost its report'
+echo '[linux-memory-limit] working-directory setup refusal passed'
 
 linux_memory_limit_systemd_available || {
     echo 'Linux terminal integration requires a usable user systemd manager with delegated memory' >&2
@@ -204,8 +269,13 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
             }
             [ "${route#*-}" != none ] || unset TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE
             real_run() {
+                real_rc=0
                 case $route in
-                    library-*) linux_memory_limit_run 67108864 timeout "$deadline" "$@" ;;
+                    library-*)
+                        linux_memory_limit_run 67108864 timeout "$deadline" "$@" || real_rc=$?
+                        printf '%s\n' "$LINUX_MEMORY_LIMIT_REASON" > "$TERMINAL_CASE/library-reason"
+                        return "$real_rc"
+                        ;;
                     wrapper-*) "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 64 \
                         --timeout-seconds "$deadline" --report "$TERMINAL_CASE/report" -- "$@" ;;
                 esac
@@ -301,8 +371,11 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
         TMPDIR="$TERMINAL_CASE/tmp"
         export TMPDIR
         case $route in
-            library-*) linux_memory_limit_run 16777216 \
-                timeout 10 sh -c "$stderr_program" sh "$TERMINAL_CASE" ;;
+            library-*)
+                linux_memory_limit_run 16777216 \
+                    timeout 10 sh -c "$stderr_program" sh "$TERMINAL_CASE"
+                printf '%s\n' "$LINUX_MEMORY_LIMIT_REASON" > "$TERMINAL_CASE/library-reason"
+                ;;
             wrapper-*) "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 16 --timeout-seconds 10 \
                 --report "$TERMINAL_CASE/report" -- \
                 sh -c "$stderr_program" sh "$TERMINAL_CASE" ;;

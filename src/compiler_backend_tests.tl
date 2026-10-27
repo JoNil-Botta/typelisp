@@ -44435,6 +44435,16 @@ user_fn:
         (Windows))
         [(Err _) false]
         [(Ok image)
+          (let
+            [entries : i64 0]
+            (for [slot (iterator.range 0 image.symbols.len)]
+              (match (& (array-ref image.symbols.slots slot))
+                [(Symbol name _ _ _)
+                  (when (string.eq name "tl_entry_address") (+= entries 1))]))
+            (test.assert-i64-eq
+              entries
+              1
+              "one defined C entry, no undefined alias row"))
           (match (coff.compiler-object-coff-render image)
             [(Ok _) true]
             [(Err _) false])])

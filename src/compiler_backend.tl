@@ -81900,6 +81900,14 @@ tl_shared_object_init:
                 link-symbol-id
                 provided
                 plan)
+              ;; A provided entry already owns this symbol definition. An
+              ;; address alias must not add a second undefined COFF/ELF row.
+              (not
+                (cobj.compiler-object-symbol-builder-contains?
+                  (& parts.symbols)
+                  (string.copy (& link-symbol))
+                  (Export)
+                  (Function)))
               ;; Object relocations are the exact reference inventory.
               has-relocation)
               (object_target.compiler-backend-object-symbol-extern

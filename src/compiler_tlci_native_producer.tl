@@ -8656,7 +8656,7 @@
     [bind-code : String
       (embedded-native-value-match-bind context pat-args 0 param)]
     [arm-code : String
-      (if (string.eq bind-code "")
+      (if (string.eq bind-code "$tlci-unsupported")
         ""
         (embedded-native-body-code context params body-node))]
     [bound : i64 (embedded-native-pattern-binder-count pat-args 0)]

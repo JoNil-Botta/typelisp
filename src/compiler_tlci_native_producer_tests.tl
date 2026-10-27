@@ -49,6 +49,81 @@
   native-source-unspellable-failure-sentinel
   (producer-source-failure-sentinel!))
 
+;; Parse real macro input and exercise the complete source producer, including
+;; native-entry accounting and its registration-shell fallback. Refs #9341.
+(define (producer-pattern-source! [pattern : String] [expected-native : i64]) : unit
+  (let
+    [source : String
+      (str_cat.str-cat
+        "(defmacro (probe [value : Expr]) : Expr (match value ["
+        pattern
+        " `(+ 1 2)] [_ `(+ 3 4)]))")]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [parse-state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-capture-active))]
+    (match (parser.parse-ast-source-with-cfg-and-pools
+      (& source)
+      (parser.compiler-parse-state-cfgs
+        (& parse-state)
+        (parser.compiler-cfg-empty))
+      pools)
+      [(Err message) (io.panic message)]
+      [(Ok (Program declarations))
+        (match (ast.ast-decl-list-step (deref declarations))
+          [(Cons (DefMacro _ _ params _ body) _)
+            (let
+              [context : producer.TlciNativeSourceContext
+                (producer.tlci-native-source-context-new
+                  (ast.ast-node-pool-context-capture-active)
+                  (parser.compiler-parse-state-owner
+                    (parser.compiler-parse-state-control-addr (& parse-state))))]
+              [names : (__tl_dyn-array String) (__tl_make-array "probe/probe")]
+              [captures : producer.TlciNativeMacroCaptures
+                (producer.tlci-native-macro-captures-new)]
+              [_capture : unit
+                (producer.tlci-native-macro-captures-push!
+                  (&mut captures)
+                  (producer.TlciNativeMacroCapture "probe/probe" params 0 body))]
+              [generated : String
+                (producer.embedded-native-source
+                  (& context)
+                  (& names)
+                  (& captures))]
+              (test.assert-i64-eq
+                (array-ref producer.embedded-stdlib-tlci-native-report-count 0)
+                expected-native
+                "unsupported patterns must not count as native entries")
+              (test.assert-i64-eq
+                (occurrences (& generated) "$tlci-unsupported")
+                0
+                "the failure sentinel must not reach generated source")
+              (test.assert-i64-eq
+                (occurrences
+                  (&
+                    (array-ref
+                      producer.embedded-stdlib-tlci-native-report-reasons
+                      0))
+                  "probe/probe\t")
+                (- 1 expected-native)
+                "only unsupported patterns report a registration shell")
+              (test.assert-i64-eq
+                (array-ref producer.embedded-native-local-len 0)
+                0
+                "failed and successful arm binding scopes are restored"))]
+          [_ (io.panic "pattern fixture must contain a macro")])]
+      [_ (io.panic "pattern fixture must contain a program")])))
+
+(define (producer-pattern-fallback!) : unit
+  (producer-pattern-source! "(comptime.Expr.Call (comptime.Expr.Var f) args)" 0)
+  (producer-pattern-source! "(comptime.Expr.Call f (comptime.Expr.Int n))" 0)
+  (producer-pattern-source! "(comptime.Expr.Call f args)" 1)
+  (producer-pattern-source! "(comptime.Expr.Call _ args)" 1)
+  (producer-pattern-source! "(comptime.Expr.Call f _)" 1)
+  (producer-pattern-source! "(comptime.Expr.Call _ _)" 1))
+
+(test native-source-call-pattern-fallback (producer-pattern-fallback!))
+
 ;; The batch tokens of `line`, or "none" when it is not batchable.
 (define (batch-tokens [line : String]) : String
   (match (producer.embedded-native-batch-op (& line))

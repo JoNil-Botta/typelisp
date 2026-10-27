@@ -207,6 +207,14 @@ call, register and memory-class results, both hidden-argument positions and
 mutual recursion. Both fixtures run natively and with `--verify-ir` at opt0/1/2
 on both hosts; the IR observability gate also verifies both target modes.
 
+`fixed_array_result_tailrec.tl` checks complete fixed-array result forwarding,
+different layouts, changed scalar arguments and independent live results at
+opt0/1/2 on both hosts. Its opt2 shape requires loops while frame-held borrows
+and post-call result reads retain recursive calls. Authored optimizer IR also
+rejects direct/derived result aliases, result escapes, partial/incompatible
+copies and additional temporary observers. Forwarding reuses result-slot
+confinement, and the ordinary frame-capture guard must still admit the loop.
+
 `regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
 compare stack tail fallbacks with ordinary calls on both ABIs. The overflow
 boundary test checks twice each GP window and one argument beyond it; the

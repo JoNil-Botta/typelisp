@@ -60662,10 +60662,206 @@
               (return false))]))
       true]))
 
+;; Structural calls materialize a leading result pointer, then copy the fixed
+;; array into this function's result. Expose only an adjacent, complete
+;; call/copy/return suffix. The slot-fwd confinement proof excludes every
+;; ordinary argument/escape of the incoming result and its derived addresses;
+;; the self call has exactly this function's result layout and convention.
+;; No memory operation moves across observable post-call work. The temporary
+;; address and its cast have no other observers. Frame capture is checked on
+;; the proposed tail transfer below, before any rewrite is committed.
+(define (opt-tailrec-result-block
+  [name : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [storage : (& ir.CompilerIrReturnStorageAbi)]
+  [uses : (& (__tl_dyn-array i64))]
+  [derived : (& (__tl_dyn-array bool))]
+  [block : ir.CompilerIrBlock]) : ir.CompilerIrBlock
+  (match (& block)
+    [(Block label instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [sret : i64
+          (match (ir.compiler-ir-param-seq-ref params 0)
+            [(Param _ _ var) var])]
+        (when (< count 5) (return block))
+        (match (ir.compiler-ir-instr-seq-ref instrs (- count 5))
+          [(AddrOf address temp words)
+            (let
+              [definition : i64
+                (opt-ctor-fwd-find-def (& instrs) (- count 6) temp)]
+              (when (< definition 0) (return block))
+              (unless
+                (match (ir.compiler-ir-instr-seq-ref instrs definition)
+                  [(Alloc _ ty)
+                    (ast.ast-type-eq-with-seg-bases?
+                      (ast.ast-node-pool-reader-type-segment-bases)
+                      ty
+                      (ast.ty-node-persist (& storage.output)))]
+                  [_ false])
+                (return block)))
+            (match (ir.compiler-ir-instr-seq-ref instrs (- count 4))
+              [(Cast pointer (Var source) from (U64))
+                (unless
+                  (and
+                    (= source address)
+                    (=
+                      words
+                      (+
+                        (/ storage.bytes 8)
+                        (if (= (% storage.bytes 8) 0)
+                          0
+                          1)))
+                    (ast.ast-type-eq-with-seg-bases?
+                      (ast.ast-node-pool-reader-type-segment-bases)
+                      from
+                      (ast.ty-node-persist (& storage.output)))
+                    (= (opt-ctor-fwd-use-count (& uses) temp) 1)
+                    (= (opt-ctor-fwd-use-count (& uses) address) 2)
+                    (= (opt-ctor-fwd-use-count (& uses) pointer) 1))
+                  (return block))
+                (match (ir.compiler-ir-instr-seq-ref instrs (- count 3))
+                  [(Call
+                    result
+                    callee
+                    (ir.CompilerIrCallArgs.Sret values 0)
+                    (U64))
+                    (unless
+                      (and
+                        (ir.compiler-ir-symbol-eq? callee name)
+                        (= (array-length values) params.len)
+                        (=
+                          (match (& (array-ref values 0))
+                            [(Var var) var]
+                            [_ -1])
+                          pointer)
+                        (= (opt-ctor-fwd-use-count (& uses) result) 0)
+                        (opt-slot-fwd-args-underived? (& derived) (& values) 0))
+                      (return block))
+                    (match (ir.compiler-ir-instr-seq-ref instrs (- count 2))
+                      [(CopyBytes (Var destination) (Var copied) bytes)
+                        (unless
+                          (and
+                            (= destination sret)
+                            (= copied address)
+                            (= bytes storage.bytes))
+                          (return block))
+                        (unless
+                          (opt-slot-fwd-returns-forwarded?
+                            (&
+                              (ir.compiler-ir-instr-seq-ref instrs (- count 1)))
+                            sret
+                            (& (Var sret)))
+                          (return block))
+                        (let
+                          [out : ir.CompilerIrInstrBuilder
+                            (ir.compiler-ir-instr-builder-with-capacity count)]
+                          [args : ir.CompilerIrValueSeq
+                            (ir.CompilerIrValueSeq
+                              (__tl_make-array ir.CompilerIrValue params.len)
+                              params.len)]
+                          ;; Drop the private AddrOf/Cast as well as the copy.
+                          ;; The hidden result argument retains its explicit role.
+                          (for [i (iterator.range 0 params.len)]
+                            (set!
+                              (array-ref args.slots i)
+                              (if (= i 0)
+                                (Var sret)
+                                (ir.compiler-ir-clone-value
+                                  (& (array-ref values i))))))
+                          (for [i (iterator.range 0 (- count 5))]
+                            (ir.compiler-ir-instr-builder-push!
+                              (&mut out)
+                              (ir.compiler-ir-instr-seq-ref instrs i)))
+                          (ir.compiler-ir-instr-builder-push!
+                            (&mut out)
+                            (TailCall
+                              callee
+                              (ir.compiler-ir-call-args-sret-from-seq
+                                (& args)
+                                0)
+                              (U64)))
+                          (return
+                            (Block
+                              label
+                              (ir.compiler-ir-instr-builder-to-seq out))))]
+                      [_ unit])]
+                  [_ unit])]
+              [_ unit])]
+          [_ unit])
+        block)]))
+
+(define (opt-tailrec-forward-array-blocks
+  [name : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [ret : (& ast.AstType)]
+  [vars : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [storage : (& ir.CompilerIrReturnStorageAbi)]) : ir.CompilerIrBlockList
+  (unless
+    (and
+      (> params.len 0)
+      (= storage.index 0)
+      (> storage.bytes 0)
+      (match storage.convention
+        [(ir.CompilerIrReturnStorageConvention.InternalLeading) true]
+        [_ false])
+      (match storage.output
+        [(ast.AstType.Array _ _) true]
+        [_ false])
+      (match ret
+        [(U64) true]
+        [_ false])
+      (opt-blocks-any-seq? blocks opt-slot-fwd-block-candidate?))
+    (return blocks))
+  (let
+    [uses : (__tl_dyn-array i64)
+      (opt-collect-blocks-uses-array vars (& blocks))]
+    [derived : (__tl_dyn-array bool) (__tl_make-array bool vars)]
+    [sret : i64
+      (match (ir.compiler-ir-param-seq-ref params 0)
+        [(Param _ _ var) var])]
+    (if (opt-slot-fwd-confined? vars sret (& uses) (& blocks) (&mut derived))
+      (opt-blocks-map
+        blocks
+        opt-tailrec-result-block
+        name
+        params
+        storage
+        (& uses)
+        (& derived))
+      blocks)))
+
+(define (opt-tailrec-forward-result
+  [name : i64]
+  [params : (& ir.CompilerIrParamSeq)]
+  [ret : (& ast.AstType)]
+  [vars : i64]
+  [blocks : ir.CompilerIrBlockList]
+  [abi : (& ir.CompilerIrFunctionAbi)]) : ir.CompilerIrBlockList
+  (match abi
+    [(ir.CompilerIrFunctionAbi.ReturnStorage boxed)
+      (opt-tailrec-forward-array-blocks
+        name
+        params
+        ret
+        vars
+        blocks
+        (& (deref boxed)))]
+    [_ blocks]))
+
 (define (opt-tailrec-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret vars blocks function-abi)
       (let
+        [blocks : ir.CompilerIrBlockList
+          (opt-tailrec-forward-result
+            name
+            (& params)
+            (& ret)
+            vars
+            blocks
+            (& function-abi))]
         [n : i64 (opt-tailrec-param-count params)]
         (if (and
           ;; Re-entering this frame is not recursion when an outgoing argument
@@ -95924,7 +96120,7 @@
 ;; One marking sweep: flag every var some instruction derives from a flagged
 ;; var. `changed` is a one-element flag.
 (define (opt-slot-fwd-mark-seq!
-  [derived : (__tl_dyn-array bool)]
+  [derived : (&mut (__tl_dyn-array bool))]
   [changed : (__tl_dyn-array bool)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
@@ -96085,7 +96281,7 @@
     [_ unit]))
 
 (define (opt-slot-fwd-count-seq!
-  [derived : (__tl_dyn-array bool)]
+  [derived : (& (__tl_dyn-array bool))]
   [allowed : (__tl_dyn-array i64)]
   [instrs : ir.CompilerIrInstrSeq]) : unit
   (let
@@ -96113,7 +96309,7 @@
   [sret : i64]
   [uses : (& uses (__tl_dyn-array i64))]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [derived : (__tl_dyn-array bool)]) : bool
+  [derived : (&mut (__tl_dyn-array bool))]) : bool
   (if (or (< sret 0) (>= sret vars))
     false
     (let
@@ -96132,12 +96328,12 @@
         (opt-blocks-visit-seq
           blocks
           opt-slot-fwd-mark-seq!
-          (compiler-opt-global-shared-view derived)
+          (&mut derived)
           (compiler-opt-global-shared-view changed)))
       (opt-blocks-visit-seq
         blocks
         opt-slot-fwd-count-seq!
-        (compiler-opt-global-shared-view derived)
+        (& derived)
         (compiler-opt-global-shared-view allowed))
       (set! index 0)
       (while (and ok (< index vars))
@@ -96242,7 +96438,7 @@
 
 (define (opt-slot-fwd-args-underived?
   [derived : (& derived (__tl_dyn-array bool))]
-  [values : (__tl_dyn-array ir.CompilerIrValue)]
+  [values : (& (__tl_dyn-array ir.CompilerIrValue))]
   [skip : i64]) : bool
   (let
     [i : i64 0]
@@ -96250,9 +96446,9 @@
     (while (and ok (< i (array-length values)))
       (if (and
         (not (= i skip))
-        (opt-slot-fwd-value-flagged?
-          derived
-          (compiler-opt-global-array-element-shared-view values i)))
+        (match (& (array-ref values i))
+          [(Var var) (opt-slot-fwd-flagged? derived var)]
+          [_ false]))
         (set! ok false)
         unit)
       (set! i (+ i 1)))
@@ -96271,15 +96467,9 @@
           (opt-slot-fwd-value-flagged? derived a)
           (opt-slot-fwd-value-flagged? derived b)))]
     [(ir.CompilerIrCallArgs.Array values)
-      (opt-slot-fwd-args-underived?
-        derived
-        (compiler-opt-global-shared-view values)
-        -1)]
+      (opt-slot-fwd-args-underived? derived (& values) -1)]
     [(ir.CompilerIrCallArgs.Sret values _)
-      (opt-slot-fwd-args-underived?
-        derived
-        (compiler-opt-global-shared-view values)
-        -1)]))
+      (opt-slot-fwd-args-underived? derived (& values) -1)]))
 
 ;; Clause (3): one window instruction.
 (define (opt-slot-fwd-window-instr-ok?
@@ -96485,11 +96675,7 @@
               (not (= size (* 8 words)))
               (not (= (opt-ctor-fwd-use-count uses slot-ptr) 1))
               (not (= (opt-ctor-fwd-use-count uses temp) 1))
-              (not
-                (opt-slot-fwd-args-underived?
-                  derived
-                  (compiler-opt-global-shared-view values)
-                  index)))
+              (not (opt-slot-fwd-args-underived? derived (& values) index)))
               false
               (let
                 [ok : bool true]
@@ -96705,7 +96891,7 @@
           sret
           (& uses)
           (& blocks)
-          (compiler-opt-global-shared-view derived))
+          (&mut derived))
           (opt-slot-fwd-blocks (& uses) (& derived) sret blocks)
           blocks)))))
 
@@ -105670,22 +105856,24 @@
     [index : i64 0]
     (set! opt-inline-tailrec-converted (__tl_make-array bool functions.len))
     (while (< index functions.len)
-      (match (compiler-opt-global-array-element-shared-view
-        functions.slots
-        index)
-        [(Function name params _ _ blocks _)
-          (if (and
-            (opt-tailrec-blocks-have-convertible?
-              blocks
-              name
-              (opt-tailrec-param-count params))
-            (opt-ssa-explicit-entry-available? (& blocks)))
-            (set! (array-ref opt-inline-tailrec-converted index) true)
-            unit)])
-      (set!
-        (array-ref functions.slots index)
-        (opt-tailrec-function
-          (compiler-opt-global-array-element-shared-view functions.slots index)))
+      (let
+        [original : ir.CompilerIrFunction
+          (compiler-opt-global-array-element-shared-view functions.slots index)]
+        [converted : ir.CompilerIrFunction
+          (opt-tailrec-function (compiler-opt-global-shared-view original))]
+        [original-blocks : ir.CompilerIrBlockList
+          (opt-function-blocks original)]
+        [converted-blocks : ir.CompilerIrBlockList
+          (opt-function-blocks converted)]
+        ;; Every committed loop rewrite adds the explicit entry preheader.
+        ;; Include calls exposed by result forwarding, also for zero parameters.
+        (set!
+          (array-ref opt-inline-tailrec-converted index)
+          (not
+            (=
+              (opt-cfg-entry-label converted-blocks)
+              (opt-cfg-entry-label original-blocks))))
+        (set! (array-ref functions.slots index) converted))
       (+= index 1))
     functions))
 

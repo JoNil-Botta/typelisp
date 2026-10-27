@@ -27300,6 +27300,78 @@
         3]
       [else 42])))
 
+;; Authored IR reaches the optimizer even when source lowering cannot produce
+;; an outgoing argument aliasing its own hidden result. Modes retain ordinary
+;; calls for aliases, exposed frames, post-call effects, partial/incompatible
+;; copies, and additional observers of the temporary/result.
+(define (opt-tailrec-array-result-fixture [mode : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @array_tail(output=%0:u64, depth=%1:i64, seed=%2:u64) -> u64 vars 12 abi return-storage internal-leading arg 0 bytes 24 align 8 output (Array i64 3) result u64 params (u64 i64 u64) source (-> i64 u64 (Array i64 3)) {\nentry:\n"
+      (if (= mode 10)
+        "%3 = alloc (Array i64 4)\n"
+        "%3 = alloc (Array i64 3)\n")
+      (cond
+        [(= mode 2) "%10 = addr_of %2\n"]
+        [(= mode 6) "%10 = addr_of %3 storage 3\n"]
+        [(= mode 8) "%10 = gep %0, 0 : u8\n"]
+        [(= mode 9) "store_ptr %2, %0 : u64\n"]
+        [else ""])
+      "%4 = addr_of %3 storage 3\n%5 = cast %4 : "
+      (if (= mode 5)
+        "(Array i64 4)"
+        "(Array i64 3)")
+      " to u64\n%6 = call "
+      (if (= mode 11)
+        "other_array"
+        "array_tail")
+      "([sret arg 0] %5, %1, "
+      (cond [(= mode 1) "%0"] [(or (= mode 2) (= mode 8)) "%10"] [else "%2"])
+      ") : u64\n"
+      (cond
+        [(= mode 3) "%7 = call observe() : i64\n"]
+        [(= mode 7) "%7 = load %6 : i64\n"]
+        [else ""])
+      "copy_bytes %0, %4, "
+      (if (= mode 4)
+        "16"
+        "24")
+      "\nreturn %0\n}")))
+
+(test
+  tailrec-fixed-array-result
+  (for [mode (iterator.range 0 12)]
+    (let
+      [input : ir.CompilerIrFunction (opt-tailrec-array-result-fixture mode)]
+      [output : ir.CompilerIrFunction
+        (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view input))]
+      [output-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks output)]
+      (if (= mode 0)
+        (begin
+          (test.assert-i64-eq
+            (opt.opt-function-frame output)
+            15
+            "self call becomes a loop")
+          (test.assert-i64-eq
+            (opt-count-tail-call-blocks
+              (ir.compiler-ir-block-list-view output-blocks))
+            0
+            "loop consumes the exposed tail call")
+          (let
+            [ssa : ir.CompilerIrFunction
+              (opt.opt-ssa-construct-function
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (& output))]
+            (match (opt.opt-verify-function (& ssa))
+              [(Err message) (test.assert-true false message)]
+              [(Ok) unit])))
+        (test.assert-true
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            input
+            output)
+          "alias/frame/post-call/layout/observer controls retain the original function")))))
+
 (define (compiler-optimize-tailrec-self-test) : i64
   (let
     [rewritten : ir.CompilerIrFunction

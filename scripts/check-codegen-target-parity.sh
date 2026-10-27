@@ -63,6 +63,9 @@ control_flow tests/integration/control_flow.tl
 enum_match tests/integration/enum_match.tl
 fixed_array tests/integration/fixed_array.tl
 functions tests/integration/functions.tl
+macro_dotted_global tests/integration/macro_dotted_global.tl
+macro_dotted_global_inside tests/integration/macro_dotted_global_inside.tl
+macro_dotted_global_matrix tests/integration/macro_dotted_global_matrix.tl
 lambda_capture_struct_enum tests/integration/lambda_capture_struct_enum.tl
 many_args tests/integration/many_args.tl
 register_group_phi_return tests/integration/register_group_phi_return.tl

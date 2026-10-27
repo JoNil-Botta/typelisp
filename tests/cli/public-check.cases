@@ -23,6 +23,37 @@ file invalidation.tl
   (arena.destroy-safe! owner))
 end-file
 
+case check-macro-dotted-global
+target linux-x86_64 windows-x86_64
+step importer
+run check tests/integration/macro_dotted_global.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+step owner
+run check tests/integration/macro_dotted_global_inside.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+step matrix
+run check tests/integration/macro_dotted_global_matrix.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+step borrow-authority
+run check tests/safety/macro_dotted_global_borrow_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot mutably borrow global `state` owned by module `macro_dotted_global_dep`
+stderr contains macro_dotted_global_dep.tl:12:13
+stderr contains macro_dotted_global_borrow_reject.tl:6:5
+stderr contains in expansion of macro `macro_dotted_global_dep/borrow-y!` invoked here
+step write-authority
+run check tests/safety/macro_dotted_global_write_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0220]: typecheck: cannot assign to part of global `state` owned by module `macro_dotted_global_dep`
+stderr contains macro_dotted_global_dep.tl:15:10
+stderr contains macro_dotted_global_write_reject.tl:6:5
+stderr contains in expansion of macro `macro_dotted_global_dep/write-y!` invoked here
+
 case check-hello
 run check examples/hello.tl
 stderr empty

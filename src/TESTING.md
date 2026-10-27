@@ -1,5 +1,13 @@
 # Selfhost compiler testing
 
+`macro_dotted_global` and its owner-module control preserve definition-site
+global field roots in quoted expression macros, checking and returning 2 at
+opt0/1/2 on both hosts. The matrix retains nested fields, caller shadowing,
+introduced locals, unquoted caller places, owner-module field assignment and
+mutable borrowing. Importer writes and mutable borrows remain rejected even
+with a same-named caller local; their safety rows retain template locations
+and macro invocation provenance. Keep target IR parity for these fixtures.
+
 `ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
 phi links, capacity growth, missing labels and renamed-block logical positions.
 The optimizer smoke's `dense-storage` test also checks edge captures before

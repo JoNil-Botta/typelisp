@@ -105,7 +105,10 @@ _tlmem_terminal=$1
 _tlmem_owner=$2
 shift 2
 _tlmem_status=0
-"$@" <&0 &
+# POSIX asynchronous lists may replace fd 0 with /dev/null before applying
+# their redirections (dash does). Save stdin before starting that list.
+exec 3<&0
+"$@" <&3 3<&- &
 _tlmem_child=$!
 wait "$_tlmem_child" || _tlmem_status=$?
 printf "tlmem-terminal-v1 %s %s\n" "$_tlmem_owner" "$_tlmem_status" > "$_tlmem_terminal" || exit 2

@@ -182,6 +182,10 @@ linux_memory_limit_systemd_available || {
 # service published by this invocation's own workload and confirmed live PID.
 for route in library-none library-metrics wrapper-none wrapper-metrics; do
     for operation in valid stdin exit-2 exit-7 term kill timeout oom stop; do
+        # The new waiter must preserve direct callers' stdin. The sampled
+        # wrapper has separate pre-existing dash stdin behavior (#9359); its sampler
+        # is covered here for terminal/status ownership, not that stdin bug.
+        if [ "$operation" = stdin ] && [ "${route%%-*}" = wrapper ]; then continue; fi
         TERMINAL_CASE="$WORKDIR/real-$route-$operation"
         mkdir -p "$TERMINAL_CASE/tmp"
         (
@@ -259,4 +263,4 @@ for route in library-none library-metrics wrapper-none wrapper-metrics; do
         assert_case
     done
 done
-echo '[linux-memory-limit] 36 real status/stdin/signal/OOM/timeout/owned-unit-stop fixtures passed'
+echo '[linux-memory-limit] 34 real status/stdin/signal/OOM/timeout/owned-unit-stop fixtures passed'

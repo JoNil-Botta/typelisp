@@ -1,0 +1,6 @@
+scripts/verify-spmd-simd.sh
+src/TESTING.md
+src/compiler_backend.tl
+src/compiler_backend_tests.tl
+tests/spmd/private_helper_entry_uniform_float.tl
+tests/spmd/simd.cases

@@ -2201,6 +2201,10 @@
   (Slots LowerCAbiEightbyteClass LowerCAbiEightbyteClass)
   (Unsupported))
 
+(defenum LowerSysvAbi
+  (C)
+  (Internal))
+
 (defenum LowerCAbiSlot
   (Slot ast.AstType i64))
 
@@ -18960,39 +18964,6 @@
       (box
         (lower-diagnostic-at-expr ctx origin (lower-reference-support-message))))))
 
-(define (lower-borrow-copy-to-storage
-  [ctx : tc_core.TcContext]
-  [state : LowerState]
-  [value : ir.CompilerIrValue]
-  [referent-ty : ast.AstType]
-  [result-ty : ast.AstType]) : LowerExpr
-  (let
-    [resolved : ast.AstType
-      (tc_core.tc-type-without-regions
-        (tc_core.tc-resolve-type ctx referent-ty))]
-    [size : i64 (lower-type-size ctx resolved)]
-    (match (lower-reserve-heap-storage
-      state
-      (if (= size 0)
-        1
-        size)
-      result-ty
-      (lower-tl-alloc-symbol))
-      [(Expr base-state base _)
-        (Expr
-          (if (> size 0)
-            (lower-store-inline-value-at-offset
-              ctx
-              base-state
-              base
-              0
-              value
-              resolved
-              size)
-            base-state)
-          base
-          result-ty)])))
-
 (define (lower-borrow-copy-to-inline-storage
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -19064,6 +19035,16 @@
           (Global (lower-resolve-name-symbol-id state name-id))
           result-ty)))))
 
+;; A local whose borrow is not its own value (a scalar or a register-resident
+;; aggregate) has no address, so a shared borrow points at a copy in a fresh
+;; frame slot. The shared loan keeps the local unchanged while the reference
+;; lives, so the copy always reads as the local does, and the slot lives for
+;; the whole activation. No borrow outlives its binder's storage, which ends
+;; within the activation: a lambda's capture is the call's own copy, retired
+;; at every return like a parameter (`normalize-parameters!`). The copy must
+;; not be allocated in the current arena: a `with-arena` or
+;; `in-arena` around the borrow would rewind or destroy it while the reference
+;; is still live (#9297).
 (define (lower-borrow-var-address-by-value
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -19096,7 +19077,7 @@
           [_
             (if (not (lower-state-deferred-copy? state id))
               (ResultLowerExpr.Ok
-                (lower-borrow-copy-to-storage
+                (lower-borrow-copy-to-inline-storage
                   ctx
                   state
                   (Var id)
@@ -19112,7 +19093,7 @@
                 (lower-global-shared-view referent-ty))
                 [(LowerExpr.Expr read-state value _)
                   (ResultLowerExpr.Ok
-                    (lower-borrow-copy-to-storage
+                    (lower-borrow-copy-to-inline-storage
                       ctx
                       read-state
                       value
@@ -19213,7 +19194,7 @@
   ;; word to a fresh slot, then take the field address through the same memory
   ;; helper used for borrowed struct references.
   (if (tc_core.tc-name-register-resident-id? ctx struct-id)
-    (match (lower-borrow-copy-to-storage
+    (match (lower-borrow-copy-to-inline-storage
       ctx
       state
       receiver-value
@@ -19248,6 +19229,69 @@
   [field : String]
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
+  ;; A projected struct or global already has inline storage. Borrow it before
+  ;; reading its value: a register-sized intermediate would otherwise be
+  ;; loaded and materialized as a detached copy. Register-local roots
+  ;; retain their copy path; mutable register-local calls handle writeback
+  ;; in `lower-call-arg-mut-borrow-place-as`.
+  (if (match (ast.ast-expr-unspan (& receiver))
+    [(or (StructGet _ _) (TupleRef _ _) (ArrayRef _ _) (BoxGet _) (BoxTake _))
+      true]
+    [(Var name) (not (sym_i64_env.sym-i64-contains-id env name))]
+    [_ false])
+    (match (lower-expr-result-type-or-check
+      ctx
+      env
+      type-env
+      (lower-state-type-cache state)
+      (lower-state-function-state state)
+      receiver)
+      [(Ok receiver-ty)
+        (let
+          [resolved : ast.AstType
+            (tc_core.tc-type-strip-region
+              (tc_core.tc-resolve-type ctx receiver-ty))]
+          (match (& resolved)
+            [(or (Struct name) (StructArgs name _))
+              (let
+                [borrow-ty : ast.AstType
+                  (match (& result-ty)
+                    [(MutRef lifetime _)
+                      (ast.ast-ty-mut-ref-with-pools
+                        (tc_core.tc-context-pools ctx)
+                        lifetime
+                        (& resolved))]
+                    [(Ref lifetime _)
+                      (ast.ast-ty-ref-with-pools
+                        (tc_core.tc-context-pools ctx)
+                        lifetime
+                        (& resolved))]
+                    [_ (clone result-ty)])]
+                [borrowed
+                  (try
+                    (lower-borrow-place-address
+                      ctx
+                      state
+                      env
+                      type-env
+                      receiver
+                      (clone origin)
+                      borrow-ty))]
+                (match borrowed
+                  [(Expr borrowed-state base _)
+                    (return
+                      (lower-borrow-struct-field-address-from-memory
+                        ctx
+                        borrowed-state
+                        base
+                        name
+                        (tc_core.tc-nominal-name-id-display name)
+                        field
+                        origin
+                        result-ty))]))]
+            [_ unit]))]
+      [(Err _) unit])
+    unit)
   (let
     [lowered : LowerExpr (try (lower-expr ctx state env type-env receiver))]
     (match lowered
@@ -27129,9 +27173,8 @@
         arg-ty))))
 
 ;; Resolve a pure inline field path to its local root and byte range. A
-;; register-resident root needs call-scoped copy/writeback; a scalar leaf in
-;; a memory-backed root lends its original address, even when an intermediate
-;; struct field would be read by value into a register.
+;; register-resident root needs call-scoped copy/writeback. Memory-backed
+;; roots use the ordinary recursive borrow-place path.
 (define (lower-call-arg-field-place
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
@@ -27267,9 +27310,6 @@
                           addressed
                           (clone pointer)
                           (Some (FieldWriteback field pointer arg))))])])]
-            [(lower-clone-scalar-type? (& field.ty))
-              (match (lower-gep-byte state (Var field.local-id) field.offset)
-                [(Expr addressed pointer _) (Ok (Arg addressed pointer (No)))])]
             [else
               (lower-call-arg-normal-as
                 ctx
@@ -35171,14 +35211,16 @@
             (Unsupported)))]
       [(Unsupported) (Unsupported)])))
 
-(define (lower-c-abi-sysv-classify-fields
+(define (lower-sysv-classify-fields
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [fields : tc_core.TcInlineFieldLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-c-abi-sysv-classify-fields-at ctx fields base-offset slots 0))
+  (lower-sysv-classify-fields-at abi ctx fields base-offset slots 0))
 
-(define (lower-c-abi-sysv-classify-fields-at
+(define (lower-sysv-classify-fields-at
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [fields : tc_core.TcInlineFieldLayoutList]
   [base-offset : i64]
@@ -35189,25 +35231,29 @@
     (let
       [field : tc_core.TcInlineFieldLayout
         (tc_core.tc-inline-field-layout-list-ref fields index)]
-      (lower-c-abi-sysv-classify-fields-at
+      (lower-sysv-classify-fields-at
+        abi
         ctx
         fields
         base-offset
-        (lower-c-abi-sysv-classify-type
+        (lower-sysv-classify-type
+          abi
           ctx
           (tc_core.tc-inline-field-layout-type (lower-global-shared-view field))
           (+ base-offset (tc_core.tc-inline-field-layout-offset field))
           slots)
         (+ index 1)))))
 
-(define (lower-c-abi-sysv-classify-payloads
+(define (lower-sysv-classify-payloads
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [payloads : tc_core.TcInlinePayloadLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-c-abi-sysv-classify-payloads-at ctx payloads base-offset slots 0))
+  (lower-sysv-classify-payloads-at abi ctx payloads base-offset slots 0))
 
-(define (lower-c-abi-sysv-classify-payloads-at
+(define (lower-sysv-classify-payloads-at
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [payloads : tc_core.TcInlinePayloadLayoutList]
   [base-offset : i64]
@@ -35218,11 +35264,13 @@
     (let
       [payload : tc_core.TcInlinePayloadLayout
         (tc_core.tc-inline-payload-layout-list-ref payloads index)]
-      (lower-c-abi-sysv-classify-payloads-at
+      (lower-sysv-classify-payloads-at
+        abi
         ctx
         payloads
         base-offset
-        (lower-c-abi-sysv-classify-type
+        (lower-sysv-classify-type
+          abi
           ctx
           (tc_core.tc-inline-payload-layout-type
             (lower-global-shared-view payload))
@@ -35230,14 +35278,16 @@
           slots)
         (+ index 1)))))
 
-(define (lower-c-abi-sysv-classify-variants
+(define (lower-sysv-classify-variants
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [variants : tc_core.TcInlineVariantLayoutList]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-c-abi-sysv-classify-variants-at ctx variants base-offset slots 0))
+  (lower-sysv-classify-variants-at abi ctx variants base-offset slots 0))
 
-(define (lower-c-abi-sysv-classify-variants-at
+(define (lower-sysv-classify-variants-at
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [variants : tc_core.TcInlineVariantLayoutList]
   [base-offset : i64]
@@ -35247,39 +35297,52 @@
     slots
     (match (tc_core.tc-inline-variant-layout-list-ref variants index)
       [(Variant _ _ _ payloads)
-        (lower-c-abi-sysv-classify-variants-at
+        (lower-sysv-classify-variants-at
+          abi
           ctx
           variants
           base-offset
-          (lower-c-abi-sysv-classify-payloads ctx payloads base-offset slots)
+          (lower-sysv-classify-payloads abi ctx payloads base-offset slots)
           (+ index 1))])))
 
-(define (lower-c-abi-sysv-classify-layout
+(define (lower-sysv-classify-layout
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [layout : tc_core.TcInlineAggregateLayout]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match layout
     [(Struct _ _ fields)
-      (lower-c-abi-sysv-classify-fields ctx fields base-offset slots)]
+      (lower-sysv-classify-fields abi ctx fields base-offset slots)]
     [(Enum _ _ variants)
       ;; Synthetic tagged-union view: int64 tag at offset 0 plus every variant
       ;; payload overlaid in the union region starting at offset 8.
-      (lower-c-abi-sysv-classify-variants
+      (lower-sysv-classify-variants
+        abi
         ctx
         variants
         base-offset
         (lower-c-abi-sysv-mark-integer-range slots base-offset 8))]))
 
-(define (lower-c-abi-sysv-classify-struct-id
+(define (lower-sysv-classify-nominal-id
+  [abi : LowerSysvAbi]
   [ctx : tc_core.TcContext]
   [name-id : i64]
   [base-offset : i64]
   [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
   (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
-    [(Ok layout)
-      (lower-c-abi-sysv-classify-layout ctx layout base-offset slots)]
+    [(Ok layout) (lower-sysv-classify-layout abi ctx layout base-offset slots)]
     [(Err _) (Unsupported)]))
+
+(define (lower-sysv-classify-type
+  [abi : LowerSysvAbi]
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [offset : i64]
+  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
+  (match abi
+    [(C) (lower-c-abi-sysv-classify-type ctx ty offset slots)]
+    [(Internal) (lower-internal-sysv-classify-type ctx ty offset slots)]))
 
 (define (lower-c-abi-sysv-classify-type
   [ctx : tc_core.TcContext]
@@ -35291,7 +35354,7 @@
       (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))]
     (match (& resolved)
       [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
-        (lower-c-abi-sysv-classify-struct-id ctx name offset slots)]
+        (lower-sysv-classify-nominal-id (LowerSysvAbi.C) ctx name offset slots)]
       [(F64) (lower-c-abi-sysv-mark-sse-slot slots (F64) offset)]
       [(F32) (lower-c-abi-sysv-mark-sse-slot slots (F32) offset)]
       [_
@@ -35419,7 +35482,12 @@
         mode
         resolved
         size
-        (lower-c-abi-sysv-classify-fields ctx fields 0 (Slots (Empty) (Empty)))
+        (lower-sysv-classify-fields
+          (LowerSysvAbi.C)
+          ctx
+          fields
+          0
+          (Slots (Empty) (Empty)))
         allow-return?)]))
 
 (define (lower-c-abi-sysv-register-enum-aggregate
@@ -35438,7 +35506,8 @@
       mode
       resolved
       size
-      (lower-c-abi-sysv-classify-layout
+      (lower-sysv-classify-layout
+        (LowerSysvAbi.C)
         ctx
         (Enum size align variants)
         0
@@ -35663,11 +35732,9 @@
         [_ (ir.CompilerIrReturnStorage.None)])]
     [_ (ir.CompilerIrReturnStorage.None)]))
 
-;; Internal aggregate ABI classification is deliberately separate from the C
-;; extern classifier above.  The latter is selected only for nominal
-;; Struct/Enum declarations and is part of the existing extern contract;
-;; these helpers select only structural Tuple/Array values for future internal
-;; parameter/return lowering.
+;; The internal type leaf also traverses structural Tuple/Array values and
+;; admits TypeLisp handles. Nominal layouts share the SysV walk above, while
+;; the C type leaf preserves the narrower extern field contract.
 (define (lower-internal-sysv-classify-tuple-at
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
@@ -35755,7 +35822,12 @@
             offset
             slots))]
       [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _))
-        (lower-internal-sysv-classify-nominal-id ctx name offset slots)]
+        (lower-sysv-classify-nominal-id
+          (LowerSysvAbi.Internal)
+          ctx
+          name
+          offset
+          slots)]
       [(F64) (lower-c-abi-sysv-mark-sse-slot slots (F64) offset)]
       [(F32) (lower-c-abi-sysv-mark-sse-slot slots (F32) offset)]
       [_
@@ -35771,116 +35843,6 @@
                 slots
                 (lower-c-abi-sysv-mark-integer-range slots offset size)))]
           [(Err _) (Unsupported)])])))
-
-(define (lower-internal-sysv-classify-fields
-  [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-internal-sysv-classify-fields-at ctx fields base-offset slots 0))
-
-(define (lower-internal-sysv-classify-fields-at
-  [ctx : tc_core.TcContext]
-  [fields : tc_core.TcInlineFieldLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]
-  [index : i64]) : LowerCAbiSysvSlots
-  (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
-    slots
-    (let
-      [field : tc_core.TcInlineFieldLayout
-        (tc_core.tc-inline-field-layout-list-ref fields index)]
-      (lower-internal-sysv-classify-fields-at
-        ctx
-        fields
-        base-offset
-        (lower-internal-sysv-classify-type
-          ctx
-          (tc_core.tc-inline-field-layout-type (lower-global-shared-view field))
-          (+ base-offset (tc_core.tc-inline-field-layout-offset field))
-          slots)
-        (+ index 1)))))
-
-(define (lower-internal-sysv-classify-payloads
-  [ctx : tc_core.TcContext]
-  [payloads : tc_core.TcInlinePayloadLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-internal-sysv-classify-payloads-at ctx payloads base-offset slots 0))
-
-(define (lower-internal-sysv-classify-payloads-at
-  [ctx : tc_core.TcContext]
-  [payloads : tc_core.TcInlinePayloadLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]
-  [index : i64]) : LowerCAbiSysvSlots
-  (if (>= index (tc_core.tc-inline-payload-layout-list-count payloads))
-    slots
-    (let
-      [payload : tc_core.TcInlinePayloadLayout
-        (tc_core.tc-inline-payload-layout-list-ref payloads index)]
-      (lower-internal-sysv-classify-payloads-at
-        ctx
-        payloads
-        base-offset
-        (lower-internal-sysv-classify-type
-          ctx
-          (tc_core.tc-inline-payload-layout-type
-            (lower-global-shared-view payload))
-          (+ base-offset (tc_core.tc-inline-payload-layout-offset payload))
-          slots)
-        (+ index 1)))))
-
-(define (lower-internal-sysv-classify-variants
-  [ctx : tc_core.TcContext]
-  [variants : tc_core.TcInlineVariantLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (lower-internal-sysv-classify-variants-at ctx variants base-offset slots 0))
-
-(define (lower-internal-sysv-classify-variants-at
-  [ctx : tc_core.TcContext]
-  [variants : tc_core.TcInlineVariantLayoutList]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]
-  [index : i64]) : LowerCAbiSysvSlots
-  (if (>= index (tc_core.tc-inline-variant-layout-list-count variants))
-    slots
-    (match (tc_core.tc-inline-variant-layout-list-ref variants index)
-      [(Variant _ _ _ payloads)
-        (lower-internal-sysv-classify-variants-at
-          ctx
-          variants
-          base-offset
-          (lower-internal-sysv-classify-payloads ctx payloads base-offset slots)
-          (+ index 1))])))
-
-(define (lower-internal-sysv-classify-layout
-  [ctx : tc_core.TcContext]
-  [layout : tc_core.TcInlineAggregateLayout]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match layout
-    [(Struct _ _ fields)
-      (lower-internal-sysv-classify-fields ctx fields base-offset slots)]
-    [(Enum _ _ variants)
-      ;; Synthetic tagged-union view: int64 tag at offset 0 plus every variant
-      ;; payload overlaid in the union region starting at offset 8.
-      (lower-internal-sysv-classify-variants
-        ctx
-        variants
-        base-offset
-        (lower-c-abi-sysv-mark-integer-range slots base-offset 8))]))
-
-(define (lower-internal-sysv-classify-nominal-id
-  [ctx : tc_core.TcContext]
-  [name-id : i64]
-  [base-offset : i64]
-  [slots : LowerCAbiSysvSlots]) : LowerCAbiSysvSlots
-  (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
-    [(Ok layout)
-      (lower-internal-sysv-classify-layout ctx layout base-offset slots)]
-    [(Err _) (Unsupported)]))
 
 (define (lower-internal-sysv-register-aggregate
   [ctx : tc_core.TcContext]
@@ -72269,9 +72231,10 @@
         [place : ast.AstExpr (lower-context-expr-get ctx place-id)]
         (or
           (lower-tail-call-external-place? ctx state env type-env (& place))
-          ;; A shared borrow of a plain scalar variable is copied by
-          ;; lower-borrow-copy-to-storage into tl_alloc storage. A projection
-          ;; does not take that path; a copied view can still name this frame.
+          ;; A shared borrow of a plain dynamic-array variable, or of a String
+          ;; variable lent as `str`, is the variable's heap handle. A borrow of
+          ;; any other plain variable names this frame: its own storage or a
+          ;; copy in a frame slot (`lower-borrow-var-address-by-value`).
           (and
             (not mutable)
             (match (ast.ast-expr-unspan (& place))
@@ -72280,7 +72243,12 @@
                   (not (tc_core.tc-dotted-local-field-name-id? type-env name))
                   (match (tc_core.tc-lookup-id type-env name)
                     [(Ok ty)
-                      (not (lower-tail-call-frame-sensitive-type? ctx ty))]
+                      (match (tc_core.tc-type-strip-region
+                        (tc_core.tc-resolve-type
+                          ctx
+                          (tc_core.tc-borrow-referent-type ty)))
+                        [(or (Str) (DynArray _)) true]
+                        [_ false])]
                     [(Err _) false]))]
               [_ false]))))]
     [(Call callee args)

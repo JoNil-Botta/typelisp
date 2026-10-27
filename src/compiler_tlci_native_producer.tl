@@ -2255,8 +2255,8 @@
               [_
                 (embedded-native-fallback-reason-note!
                   "template-splice:non-variable")
-                (when
-                  (not embedded-native-full-blocker-diagnostic-active)
+                (if embedded-native-full-blocker-diagnostic-active
+                  (+= index 1)
                   (set! ok false))])]
           [_
             (let
@@ -6672,6 +6672,10 @@
       rest
       "))\n")))
 
+;; Failure paths below return `$tlci-unsupported`. `$` is excluded by
+;; lex.is-symbol-char, so this bare token cannot be a source symbol or valid
+;; generated code. SPEC 2.3 does not recognize a `\x01` control-byte escape.
+;;
 ;; Compile the statement prefix of a computed `(begin ...)`; every prefix item
 ;; is an i64 status expression, and the final item is compiled separately with
 ;; the caller's result operation.
@@ -6690,7 +6694,7 @@
           params
           (compiler_ast_types.ast-expr-list-get exprs index 0))]
       (if (string.eq head "")
-        "\x01"
+        "$tlci-unsupported"
         (let
           [rest : String
             (embedded-native-computed-begin-statements-code
@@ -6699,8 +6703,8 @@
               exprs
               (+ index 1)
               last)]
-          (if (string.eq rest "\x01")
-            "\x01"
+          (if (string.eq rest "$tlci-unsupported")
+            "$tlci-unsupported"
             (embedded-native-status-sequence-code head rest)))))))
 
 (define (embedded-native-computed-begin-code
@@ -6726,7 +6730,7 @@
             params
             (compiler_ast_types.ast-expr-list-get exprs (- count 1) 0)
             final)]
-        (if (or (string.eq prefix "\x01") (string.eq tail ""))
+        (if (or (string.eq prefix "$tlci-unsupported") (string.eq tail ""))
           ""
           (embedded-native-status-sequence-code prefix tail))))))
 
@@ -6921,7 +6925,7 @@
                 (& bindings)
                 0
                 (&mut opens))]
-            (if (string.eq open-code "\x01")
+            (if (string.eq open-code "$tlci-unsupported")
               (begin
                 (embedded-native-fallback-reason-note! "statement-let:bindings")
                 (set! (array-ref embedded-native-local-len 0) saved)
@@ -7870,7 +7874,7 @@
                 (& bindings)
                 0
                 (&mut opens))]
-            (if (string.eq open-code "\x01")
+            (if (string.eq open-code "$tlci-unsupported")
               (begin
                 (set! (array-ref embedded-native-local-len 0) saved)
                 (set! (array-ref embedded-native-data-local-len 0) data-saved)
@@ -7913,7 +7917,7 @@
                 (& bindings)
                 0
                 (&mut opens))]
-            (if (string.eq open-code "\x01")
+            (if (string.eq open-code "$tlci-unsupported")
               (begin
                 (set! (array-ref embedded-native-local-len 0) saved)
                 (set! (array-ref embedded-native-data-local-len 0) data-saved)
@@ -7932,8 +7936,8 @@
         [_ ""])]
     [_ ""]))
 
-;; The open chain for one or more bindings, or "\x01" on any failure (a
-;; sentinel that cannot appear in valid generated code). `opens` accumulates
+;; The open chain for one or more bindings, or `$tlci-unsupported` on failure
+;; (an invalid source token, as documented above). `opens` accumulates
 ;; the closing parens the chain owes, which is per binding neither fixed nor
 ;; the same across the two binding kinds: a session binding always opens a
 ;; let/if pair, a probed data binding opens one pair per probe, and a data
@@ -7962,7 +7966,7 @@
               maybe-ty
               init
               opens)]
-          (if (string.eq binding-code "\x01")
+          (if (string.eq binding-code "$tlci-unsupported")
             (begin
               (when
                 (embedded-native-fallback-unreported-since? blockers-before)
@@ -7978,7 +7982,7 @@
                   bindings
                   (+ index 1)
                   opens)
-                "\x01"))
+                "$tlci-unsupported"))
             (let
               [rest : String
                 (embedded-native-let-bindings-open
@@ -7987,8 +7991,8 @@
                   bindings
                   (+ index 1)
                   opens)]
-              (if (string.eq rest "\x01")
-                "\x01"
+              (if (string.eq rest "$tlci-unsupported")
+                "$tlci-unsupported"
                 (str_cat.str-cat binding-code rest)))))])))
 
 ;; One binding: an i64-valued init joins the compile-time data table. Materialize
@@ -8032,13 +8036,13 @@
               " : i64 "
               data.text
               "]\n"))
-          "\x01"))
+          "$tlci-unsupported"))
       (if (not
         (string.eq
           (embedded-native-data-local-text
             (ci.intern-compat-state-str context.intern-state name))
           ""))
-        "\x01"
+        "$tlci-unsupported"
         (embedded-native-let-session-binding-open
           context
           params
@@ -8064,7 +8068,7 @@
         (ci.intern-compat-state-str context.intern-state name)
         boolean?)]
     (if (< slot 0)
-      "\x01"
+      "$tlci-unsupported"
       (let
         [init-code : String
           (embedded-native-computed-expr-code
@@ -8073,7 +8077,7 @@
             init
             (embedded-native-local-set-final slot))]
         (if (string.eq init-code "")
-          "\x01"
+          "$tlci-unsupported"
           (begin
             (set! (array-ref opens 0) (+ (array-ref opens 0) 2))
             (str_cat.str-cat
@@ -8652,7 +8656,7 @@
     [bind-code : String
       (embedded-native-value-match-bind context pat-args 0 param)]
     [arm-code : String
-      (if (string.eq bind-code "")
+      (if (string.eq bind-code "$tlci-unsupported")
         ""
         (embedded-native-body-code context params body-node))]
     [bound : i64 (embedded-native-pattern-binder-count pat-args 0)]
@@ -8704,7 +8708,8 @@
 
 ;; Emit the `(let [sN : i64 <accessor>] (if (not (= sN 0)) sN` opens that bind
 ;; one arm's payload patterns to session local slots: a binder takes the value,
-;; a wildcard consumes nothing. Returns "\x01" on any unsupported piece.
+;; a wildcard consumes nothing. Returns `$tlci-unsupported` on any unsupported
+;; piece.
 (define (embedded-native-value-match-bind
   [context : (& context TlciNativeSourceContext)]
   [pat-args : (& pat-args compiler_ast_types.AstPatternList)]
@@ -8729,7 +8734,7 @@
                 (embedded-native-local-push!
                   (ci.intern-compat-state-str context.intern-state bind-id))]
               (if (< slot 0)
-                "\x01"
+                "$tlci-unsupported"
                 (str_cat.str-cat
                   "  (let [s"
                   (string.int->string slot)
@@ -8748,9 +8753,9 @@
                   " 0)) s"
                   (string.int->string slot)
                   "\n")))]
-          [_ "\x01"])]
-      (if (string.eq head "\x01")
-        "\x01"
+          [_ "$tlci-unsupported"])]
+      (if (string.eq head "$tlci-unsupported")
+        "$tlci-unsupported"
         (let
           [rest : String
             (embedded-native-value-match-bind
@@ -8758,8 +8763,8 @@
               pat-args
               (+ index 1)
               param)]
-          (if (string.eq rest "\x01")
-            "\x01"
+          (if (string.eq rest "$tlci-unsupported")
+            "$tlci-unsupported"
             (str_cat.str-cat head rest)))))))
 
 (define (embedded-native-int-match-arms

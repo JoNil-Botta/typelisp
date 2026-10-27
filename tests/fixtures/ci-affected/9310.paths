@@ -1,0 +1,7 @@
+docs/compiler-invariants.md
+scripts/verify-spmd-simd.sh
+src/compiler_backend_tests.tl
+src/compiler_regalloc.tl
+src/compiler_regalloc_tests.tl
+tests/spmd/empty_private_params.tl
+tests/spmd/simd.cases

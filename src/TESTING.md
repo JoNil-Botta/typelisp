@@ -15,6 +15,22 @@ the borrowed field into the current local. Shared borrows, whole-local
 writebacks, memory-backed receivers and reference receivers remain controls;
 the safety corpus retains overlapping-place borrow rejection.
 
+`nested_mut_borrow_pointer` and `nested_mut_borrow_receiver` require exit 5
+at opt0/1/2 on both hosts: nested call borrows lend original inline storage
+from memory-backed locals and mutable-reference receivers.
+`nested_mut_borrow_storage` covers deeper/nonzero-offset projections, narrow
+and floating fields, fixed/dynamic arrays, tuples, boxes, reference-valued
+fields, single index evaluation, non-call borrows, memory-class globals and
+shared reads. Keep register-local call writebacks covered by
+`mut_borrow_field_writeback` alongside them.
+
+`global_mut_borrow_field` requires exit 5 at opt0/1/2 on both hosts for a
+mutable call borrow of a two-word global's field. `global_mut_borrow_storage`
+checks one/two-word globals, disjoint and repeated writes, narrow/SSE/pointer
+fields, original-slot identity, shared reads and unit-tail borrows,
+and nested memory-class globals. Global fields lend their existing storage;
+register-local call borrows retain their separate writeback path.
+
 `compiler-lower-unit-field-reads` requires canonical unit results without
 addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
 `unit_struct_fields` exercises empty, one/two-word and memory-class structs,
@@ -182,6 +198,30 @@ results and unknown operands. `packed_narrow_bitwise_fold.tl` exercises negative
 i8/i16/i32 fields in one-word layouts across calls at opt0/1/2 on both hosts,
 with smaller memory-storage layouts and zero/positive field values as controls.
 
+`return-storage-identity-moves` checks that full-width U64 self copies preserve
+the incoming hidden result address. Real overwrites, narrowing moves, undefined
+pointers, local aliases and local ranges retain their definition checks.
+`recursive_aggregate_return.tl` retains #9337's exact recursive three-word
+reproducer; its variants cover a deeper chain, a result live across a second
+call, register and memory-class results, both hidden-argument positions and
+mutual recursion. Both fixtures run natively and with `--verify-ir` at opt0/1/2
+on both hosts; the IR observability gate also verifies both target modes.
+
+`fixed_array_result_tailrec.tl` checks complete fixed-array result forwarding,
+different layouts, changed scalar arguments and independent live results at
+opt0/1/2 on both hosts. Its opt2 shape requires loops while frame-held borrows
+and post-call result reads retain recursive calls. Authored optimizer IR also
+rejects direct/derived result aliases, result escapes, partial/incompatible
+copies and additional temporary observers. Forwarding reuses result-slot
+confinement, and the ordinary frame-capture guard must still admit the loop.
+The complete private allocation run is retired before scratch-loop analysis.
+The optimizer's owner regression verifies legal array IR before and after a
+full `OptimizeRequest(A, 2)` run with empty and colliding B pools installed;
+B stays installed and unchanged. A scalar frame-refusal control preserves the
+existing inliner policy. The target-parity corpus uses the exact golden array
+witness; by-value array controls retain their legitimate ABI differences in
+the native and IR-verification matrices.
+
 `regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
 compare stack tail fallbacks with ordinary calls on both ABIs. The overflow
 boundary test checks twice each GP window and one argument beyond it; the
@@ -269,6 +309,21 @@ the original variable count. Keep final side tables in that logical ID domain,
 while existing compact-frame and register-home cases preserve the separate
 physical slot count. The case also runs in the native SIMD backend suite.
 
+`backend-empty-private-body-keeps-entry-stores-inside-frame` covers private
+AVX2 parameter homes with and without debug info on both ABIs, plus distinct
+instruction locations after coloring. `empty-private-params-debug-run` runs
+the empty-body regression at opt1/2 alongside the non-debug controls.
+
+`backend-debug-simd-caller-provenance` checks ordinary callers on both SIMD
+widths and ABIs, with interleaved function locations, duplicate value keys and
+bounds locations. The `debug-caller-*` cases in `tests/spmd/simd.cases` execute
+the caller-home matrix witnesses at opt1/2 with their correct result or shift
+trap, alongside scalar debug controls. The wide uniform-stack fixture retains
+its existing AVX-512 private-argument diagnostic.
+`backend-layout-keeps-debug-ends-after-cold-blocks` checks CFI, backtrace and
+CodeView endings through cold-arm layout. `shuffle-lane1-debug-backtrace`
+requires the trapped caller's `main` frame at opt1/2 on both SIMD widths.
+
 `indirect_callee_never.tl` checks ordinary and tail indirect calls whose callee
 returns early, for language closures and C code pointers. Counts require one
 callee evaluation, no later argument effects and the enclosing cleanup. A
@@ -301,14 +356,45 @@ phi interaction; its independent opt2 load-forwarding defect remains #8514.
 reference or slice. It covers explicit and implicit field borrows, array and
 tuple elements, local aliases, call-returned references, shadowed parameters,
 heap aggregate copies and indirect calls at opt0/1/2 on both hosts. Its
-assembly cases retain ordinary calls for unproven storage and tail jumps for
-reference parameters, reborrows, caller-owned projections and heap storage.
+assembly cases retain ordinary calls for unproven storage and for a borrowed
+scalar local, whose copy is a frame slot (#9297), and tail jumps for reference
+parameters, reborrows, caller-owned projections, heap storage and borrows of
+dynamic-array and String locals, which lend their heap handles.
 Parameter-derived slice rests keep tail jumps through nested patterns and a
 300,000-element walk. Sibling local-array views and rebound rests retain calls,
 checking that external-storage facts neither leak between arms nor survive a
 reassignment.
 The safety corpus rejects rebinding a reference parameter to a shorter local
 borrow before forwarding it.
+
+`with_arena_scalar_borrow.tl` is #9297's program: a reference to a scalar
+local borrowed inside `with-arena` outlives the form, and the next allocation
+reuses the rewound arena. `borrow_local_frame_storage.tl` extends it to
+integer, float, bool, char and narrow locals, whole register-resident structs
+and their fields, parameters, a match payload bound through a shared
+reference, nested regions, a returned reference, a holder struct, borrow sites
+in loops and `in-arena` followed by `arena.destroy-safe!`. Each case refills
+the released arena before it reads, and `profile.alloc-total` must not move
+around borrows of locals. Both run at opt0/1/2 on both hosts, and the
+`borrow-local-no-alloc` assembly case forbids `tl_alloc` in the borrowing
+function on both targets.
+
+A lambda's by-value capture is storage of each call, so its frame-slot copy
+is only sound because the ownership graph retires the capture at every return.
+The `capture_borrow_*_reject` safety rows return or store a borrow of a
+capture (scalar, register-resident field, a `String` snapshotted into a
+`with-arena` region, under `with-arena`, `in-arena` with
+`arena.destroy-safe!`, auto-borrowed into a lifetime-carrying call, nested
+lambdas, a captured lambda parameter); main accepted each, and each must
+report the capture's E0205. Two controls keep the inferred-result and
+lambda-parameter diagnostics. `capture_borrow_storage.tl` runs the accepted
+side at opt0/1/2 on both hosts: captured references returned or reborrowed,
+non-escaping borrows (lent, annotated with the capture's lifetime, in a loop),
+shadowing, nested lambdas and field borrows. The `lambda_identical_capture`,
+`lambda_identical_capture_ref` and `lambda_identical_capture_nested` rows keep
+identical capturing bodies linkable at opt0/1/2 on both hosts, alongside the
+`lambda_identical_noncapturing` control. The merge self-test excludes either
+twin's stored or global code address and still counts the direct-call merge.
 
 `tail_borrowed_enum_match.tl` keeps borrowed array-element and field walkers
 in one frame, including register-resident enum spills. Their tail jumps and
@@ -2165,6 +2251,15 @@ for downstream binary and static-library package builds. The stage0 workflow
 keeps using the direct `compile src/main.tl` path plus native linking so a seed
 compiler can build its successor without depending on its own `build` command.
 
+Compiler builds record the commit in a fixed static byte array for `--version`
+and use the Git tree object name for `--producer-identity` and exact TLCI/surface
+admission. The `compiler-commit-stamp-field` CLI case exercises the production
+module at opt0/1/2: two stamps with one tree, assembly equality outside the
+named field, CRLF trimming, malformed stamps and unstamped source tools.
+The reference workflow's PR dry run additionally requires full identical-tree
+compiler/image byte equality and exact self-compile Ir via
+`scripts/verify-self-compile-stamp-invariance.sh`.
+
 `scripts/ci-verify.sh` is the complete local verification gate. With
 `TYPELISP_BIN` unset it fetches `stage0-latest` as the seed, which performs the
 single compiler build of the flow: the stage1->stage2->stage3 bootstrap
@@ -2277,6 +2372,9 @@ mapped catalog entry. Small required probes retain `__tl-box-place`, `and`,
 compile-profile detail rows per batch entry and requires exact
 identity/arity/call counts; built-in controls prove missing, duplicate,
 wrong-arity, and wrong-count rows fail closed.
+Before running, it requires the repository tree, compiler producer identity and
+embedded image producer identity to match exactly; commit provenance remains
+available separately through `--version`.
 `target/tlci-native-route-stress/<host>/evidence.tsv` records native and source
 compile time, assembly comparison and diagnostic-control time, generated-source
 and native/source assembly bytes, and native/source main-backend time for all
@@ -2609,6 +2707,92 @@ publishes.
 
 ### CI expectations
 
+To select the required local minimum and inspect the advisory superset, use
+the reviewed path map in
+[`ci-affected-paths.tsv`](../scripts/ci-affected-paths.tsv):
+
+```sh
+scripts/ci-affected.sh --base origin/main
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
+scripts/ci-affected.sh --self-test
+```
+
+The default `required` tier prints the deterministic local minimum, one ID per
+line in canonical order with producer dependencies from `ci-verify.sh`. Owners
+run that minimum (the second command) plus focused regressions for their change,
+recording applicable input-scoped reuse or host-qualified evidence. Backend and
+target-bearing sources require target parity; stdlib, safety inputs and pins
+require the safety corpus. Shared bootstrap, formatting, lint and shared-view
+checks and the cheap documented-source doctest guard are always included.
+Stdlib source edits also require documentation, rendered-site links and anchors, and
+module/fixture guards.
+Direct native, codegen and documentation inputs add
+their owning gates through the reviewed map.
+
+Required fixture owners follow declared primary inputs: native-manifest source
+entries and suite members, case-file source declarations and explicit repository
+fixture commands, plus safety and compile-manifest source entries. Imported or
+staged compiler/stdlib dependency closures stay in the advisory source classes.
+Generic compiler comparisons and produced-CLI build workloads are advisory;
+an exact primary fixture contract adds its comparison gate to the minimum.
+Broad inline discovery is advisory; named inline fixture contracts remain
+required. Diagnostic anchor references into imported or staged dependencies
+also remain advisory, rather than becoming new primary source declarations.
+When changing gate commands or primary inventories, update the reviewed path
+map and run `--self-test`. Its ownership audit follows invoked owning scripts
+and whole-directory content guards, uses the canonical case translator
+in list mode, expands manifest primaries, and checks Windows checkout bytes.
+
+`--tier advisory` prints a broader conservative superset for reviewing other
+affected checks. It includes the required tier, but it is not a requirement to
+run that entire superset locally. `--run` executes whichever tier is selected,
+one gate at a time through the canonical runner. Ordinary compiler PRs do not
+require the full local table. Full hosted coverage still applies. Unknown,
+workflow and executable-harness changes fail safe to the full table in both
+tiers. In every selector mode, these compiler worker
+counts default to `1`; any other explicit value, including empty, fails:
+
+- `TYPELISP_INLINE_TEST_WORKERS`
+- `TYPELISP_BUILD_INVARIANCE_WORKERS`
+- `TYPELISP_INTEGRATION_WORKERS`
+- `TYPELISP_COMPILE_MANIFEST_WORKERS`
+
+Use the ordinary memory-bounded invocation around the `--run` command on a
+shared development host. A partial local preflight still requires full hosted
+CI on the delivered head.
+
+Selection compares the merge base of the named ref and HEAD with the working
+tree, including committed, staged, unstaged, deleted, both sides of renamed,
+and nonignored untracked paths. All matching map rows contribute. Unmapped or
+unusually quoted Git paths select the full host table. An advisory-only match
+also selects full coverage in both tiers until its required trigger is reviewed.
+Invalid refs, invalid
+maps and unreadable path inventories fail before any gate runs. The shared
+source hygiene gates are always selected, even for an empty diff.
+
+The advisory compiler, stdlib and corpus groups select consumers recorded in
+[`ci-affected-inputs.tsv`](../scripts/ci-affected-inputs.tsv): all produced-compiler
+gates and their bootstrap dependencies, plus direct source/corpus guards.
+Compiler/backend target references therefore include target parity, and stdlib
+changes include the safety corpus. Independent memory-helper, benchmark-harness
+and publication fixtures are excluded from these source recommendations.
+Prose selects documentation consumers plus the shared hygiene floor. Executable
+harnesses, workflow paths, selector fixtures and unknown paths select the full
+table. A new or missing gate classification also makes input groups select the
+full table until their consumers have been reviewed. Review input roles when
+changing gate contracts. `--host linux|windows`
+can inspect either host plan; execution requires the native host.
+
+`--paths FILE` replays a newline-delimited repository-relative path inventory
+in either tier without executing gates. The self-test uses the required tier
+for the original changed paths at the
+failed heads of PRs #9310, #9326 and #9327, with run/base/head provenance in
+`tests/fixtures/ci-affected/history.tsv`; it also checks isolated triggers,
+fallback, dependency closure, Git discovery and the single-worker boundary.
+The fixtures work offline in shallow checkouts; when their Git objects are
+available the test also verifies them against the recorded historical diffs.
+
 Pull requests get Linux and Windows coverage from `scripts/ci-verify.sh`
 (wired in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each
 host bootstraps the full `src/main.tl` CLI as described under
@@ -2678,19 +2862,36 @@ this backend before running the gates. Reports and command logs are retained in
 `target/build-invariance/backend-memory/` and uploaded by Linux CI; large
 assembly/executable outputs remain local.
 
-The four selfhost compiles run alone within the gate, before its pool starts;
-under `ci-verify.sh --jobs` other gates may run beside them, so their timing
-rows are evidence, not budgets. Every other chunk of both producers and the
-backend-tests build are jobs of one worker pool
-(`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 reproduces the serial
-order). Each pooled job runs through `scripts/run-memory-bounded.sh` with swap
-disabled and a 600 s timeout: 8192 MiB for the backend-tests build and both
-producers' complete codegen smoke, and 4096 MiB for every other chunk, about
-1.5 times the largest measured chunk peak (2.7 GiB). A job starts only while
-the caps of all running jobs fit 12288 MiB, so no two 8 GiB jobs overlap and
-the bound holds for every worker count; a job whose cap does not fit waits
-while later jobs that fit run. Chunk metrics and the chunk log lines carry each
-pooled chunk's peak.
+Every chunk of both producers, including the four selfhost compiles, and
+backend-tests are jobs of the existing bounded worker pool
+(`TYPELISP_BUILD_INVARIANCE_WORKERS`, 1-3, default 2; 1 executes one job at a
+time). Large compiler smoke inputs stay isolated from other unique inputs;
+consecutive logical cases naming the same actual input at the same requested
+optimization share one fresh compile through the ordinary alias plan. All
+logical cases still count toward the 64-case ceiling, produce their named
+assembly, and receive their own byte comparison. Integration case names retain
+their manifest spelling; the build-invariance corpus requests opt2 for them,
+while its two selfhost rows request opt1 and opt2.
+
+Each job runs through `scripts/run-memory-bounded.sh` with swap disabled:
+8192 MiB for the backend-tests build, both producers' complete
+codegen smoke and all four selfhost compiles, and 4096 MiB for every other
+chunk. Selfhost compiles have a 1200 s timeout; every other job retains its
+600 s timeout. Before joining the pool, selfhost compiles had no per-job
+timeout and were bounded only by the workflow deadline. A job starts only
+while the caps of all running jobs fit 12288 MiB,
+so no two 8 GiB jobs overlap; a job whose cap does not fit waits while later
+jobs that fit run. The existing outer CI scheduler still owns the complete
+verification graph. Chunk metrics and the chunk log lines carry every chunk's
+peak. Locally, use one worker for the shared 8 GiB test allowance; the hosted
+two-worker resource topology is separate from that local allowance.
+
+Linux CI retains the authoritative corpus, both producers' complete case,
+entry and alias plans, queue records, chunk metrics and `provenance.txt` in
+its existing `backend-memory-Linux` artifact. The provenance records source
+and compiler identities and the common target, cfgs, backend and ordered roots,
+so a coverage audit can interpret every requested optimization and comparison
+from the same records the local gate executes.
 
 The gate compares a chunk as soon as both producers have emitted it. It passes
 only with exactly one successful result per queued job: a failed, missing or
@@ -2722,23 +2923,17 @@ exit-status, lock-content, conflict-diagnostic or stage-cleanup assertions.
 Premature exit and timeout print the captured child logs; a staging-directory
 observation error fails immediately with those same diagnostics.
 
-For a selfhost compiler change, a typical local check (after
-`scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
+For a compiler change, start with the required minimum and inspect the
+advisory superset when planning additional focused checks:
 
 ```sh
-$tl fmt --check src/<changed>.tl
-TYPELISP_BIN=$tl ./scripts/verify-selfhost-compile-manifest.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-format.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-lint.sh
-TYPELISP_BIN=$tl ./scripts/verify-public-tools.sh
-TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
-TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
-TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
-TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
-scripts/ci-verify.sh
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
 ```
 
-Run the tests that match the layer you touched; `scripts/ci-verify.sh --gates
+Run the focused regressions that match the layer you touched; full hosted
+CI supplies the complete gate table, without duplicating it as a mandatory
+local suite for ordinary compiler changes. `scripts/ci-verify.sh --gates
 <id>` reruns one gate with the gates it needs. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a
 Linux environment.

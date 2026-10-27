@@ -301,10 +301,13 @@ lambdas snapshot supported captures (scalars, function values, `String`,
 aggregates, fixed arrays — recursively deep-copied) into heap environments
 that outlive the creating frame. Local non-escaping closures may capture
 immutable references; escaping closures reject reference captures, and
-mutation of captured names is rejected by design. Direct, mutual, and
-supported indirect function-value tail calls are optimized to jumps; ABI
-shapes that cannot be tail-jumped are conservatively emitted as ordinary
-calls.
+mutation of captured names is rejected by design. A borrow of a by-value
+capture borrows the lambda's own copy, so it cannot outlive the call; capture
+a reference to the enclosing binding to return or store a borrow of it.
+Direct, mutual, and supported indirect function-value tail calls are optimized
+to jumps; ABI shapes that cannot be tail-jumped are conservatively emitted as
+ordinary calls, as is a tail call whose argument borrows a local of the
+calling frame (including an auto-borrowed scalar).
 
 ### Builtins and stdlib
 
@@ -328,7 +331,8 @@ use the end-state forms:
 
 - Use dotted module imports with aliases and qualified member access:
   `(import stdlib.string)` and `(string.eq left right)`. Legacy string-path
-  imports are compatibility-only.
+  imports have been removed: replace `(import "stdlib/string.tl")` with
+  `(import stdlib.string)`.
 - Prefer qualified short stdlib names such as `string.append`; flat
   module-prefixed names such as `string-append` are transitional.
 - Use the prelude spellings `when`, `unless`, `and`, `or`, scalar `for`,

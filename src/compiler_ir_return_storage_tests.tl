@@ -665,3 +665,55 @@
     (return-storage-proof-self-test)
     42
     "return storage signatures and ranges"))
+
+(define (incoming-identity-range? [body : String] [var : i64]) : bool
+  (match (irt.func
+    (str_cat.str-cat
+      "function @identity(other=%1:u64, output=%0:u64) -> u64 vars 8 abi return-storage internal-trailing arg 1 bytes 24 output SretValue result u64 params (u64 u64) source (-> u64 SretValue) {\nentry:\n"
+      body
+      "\nreturn %0\n}"))
+    [(ir.CompilerIrFunction.Function _ params _ vars blocks abi)
+      (let
+        [facts : storage.StorageFacts
+          (storage.facts
+            (ast.ast-node-pool-reader-type-segment-bases)
+            params
+            abi
+            blocks
+            vars)]
+        [budget : i64 256]
+        (match (storage.range facts (ir.CompilerIrValue.Var var) (&mut budget))
+          [(storage.StorageRange.Range root bytes)
+            (and (= root -1) (= bytes 24))]
+          [_ false]))]))
+
+(test
+  return-storage-identity-moves
+  (test.assert-true
+    (incoming-identity-range? "%0 = mov %0 : u64\n%0 = mov %0 : u64" 0)
+    "full-width self copies retain the incoming output address")
+  (test.assert-false
+    (incoming-identity-range? "%2 = mov %0 : u64\n%2 = mov %2 : u64" 2)
+    "local aliases retain the single-definition requirement")
+  (test.assert-true
+    (case?
+      1
+      ""
+      (private-body "%3 = mov %3 : u64\n%4 = call make([sret arg 0] %3) : u64")
+      -1)
+    "local output ranges retain the single-definition requirement")
+  (test.assert-false
+    (incoming-identity-range? "%0 = mov %1 : u64" 0)
+    "a different parameter replaces the hidden address")
+  (test.assert-false
+    (incoming-identity-range? "%0 = mov 0 : u64\n%0 = mov %0 : u64" 0)
+    "identity copies cannot hide a real overwrite")
+  (test.assert-false
+    (incoming-identity-range? "%0 = mov %0 : u32" 0)
+    "a narrowing self move remains a definition")
+  (test.assert-false
+    (incoming-identity-range? "%2 = mov %2 : u64" 2)
+    "identity copies cannot initialize an undefined pointer")
+  (test.assert-false
+    (incoming-identity-range? "%2 = gep %0, 8 : u8\n%2 = mov %2 : u64" 2)
+    "identity copies cannot turn an interior pointer into the output root"))

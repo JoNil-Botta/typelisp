@@ -2024,7 +2024,12 @@
   (entries backend_i64_i64_map.Map)
   (values (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan))
   (debug-files CompilerBackendDebugFileIndex)
+  (instructions CompilerBackendInstrSpanIndex)
   (backend-state CompilerBackendState))
+
+(defenum CompilerBackendInstrSpanIndex
+  (None)
+  (Links backend_i64_i64_map.Map (__tl_dyn-array i64)))
 
 (defstruct CompilerBackendDebugFileBuildState
   (numbers backend_i64_i64_map.Map)
@@ -4642,6 +4647,8 @@
         [count : i64 (compiler_ir_types.compiler-source-spans-count (& spans))]
         [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)
           (__tl_make-array compiler_ir_types.CompilerMaybeSourceSpan count)]
+        [instructions : CompilerBackendInstrSpanIndex
+          (compiler-backend-instr-span-index-build (& spans))]
         (compiler-backend-source-span-index-fill (&mut values) 0)
         (CompilerBackendSourceSpanIndex
           (compiler-backend-source-span-index-add
@@ -4652,7 +4659,65 @@
           (compiler-backend-debug-file-index-build-with-backend-state
             backend-state
             spans)
+          instructions
           backend-state))]))
+
+;; Preserve insertion order, including duplicate keys, while selecting only the
+;; current function's instruction locations. Build once in the program arena;
+;; pinning, remapping and instruction lookup then visit function-local entries.
+;; Non-debug emission retains its existing span path and builds no links.
+(define (compiler-backend-instr-span-index-build
+  [spans : (& spans compiler_ir_types.CompilerSourceSpans)]) : CompilerBackendInstrSpanIndex
+  (if (not (compiler_ir_types.compiler-debug-info-enabled?))
+    None
+    (match spans
+      [(Spans entries instr-entries _ _)
+        (let
+          [heads : backend_i64_i64_map.Map
+            (backend_i64_i64_map.with-capacity (+ (* entries.len 2) 16))]
+          [next : (__tl_dyn-array i64) (__tl_make-array i64 instr-entries.len)]
+          [index : i64 instr-entries.len]
+          (while (> index 0)
+            (-= index 1)
+            (let
+              [entry : (& spans compiler_ir_types.CompilerSourceSpansInstrEntry)
+                (& (array-ref instr-entries.slots index))]
+              [name : i64 entry.function.value]
+              (set!
+                (array-ref next index)
+                (match (backend_i64_i64_map.get (& heads) name)
+                  [(LookupFound slot) slot]
+                  [(LookupMissing) -1]))
+              (backend_i64_i64_map.insert-ref! (&mut heads) name index)
+              unit))
+          (Links heads next))])))
+
+(define (compiler-backend-function-source-spans
+  [spans : compiler_ir_types.CompilerSourceSpans]
+  [index : (& index CompilerBackendSourceSpanIndex)]
+  [function : i64]) : compiler_ir_types.CompilerSourceSpans
+  (match index.instructions
+    [(None) spans]
+    [(Links heads next)
+      (match spans
+        [(Spans entries instr-entries _ spmd)
+          (let
+            [local : compiler_ir_types.CompilerSourceSpansInstrEntryList
+              (compiler_ir_types.compiler-source-spans-instr-entry-list-empty)]
+            [slot : i64
+              (match (backend_i64_i64_map.get (& heads) function)
+                [(LookupFound found) found]
+                [(LookupMissing) -1])]
+            (while (>= slot 0)
+              (set!
+                local
+                (compiler_ir_types.compiler-source-spans-instr-entry-list-append
+                  local
+                  (array-ref instr-entries.slots slot)))
+              (set! slot (array-ref next slot)))
+            (let
+              [count : i64 local.len]
+              (Spans entries local count spmd)))])]))
 
 (define (compiler-backend-source-span-index-lookup
   [index : (& index CompilerBackendSourceSpanIndex)]
@@ -4691,9 +4756,8 @@
 ;; Instruction spans use the destination variable as their provenance key.
 ;; Stack-slot coloring may renumber that variable, so keep every keyed value
 ;; out of shared slots and rebuild those keys with the resulting bijection.
-;; Non-debug optimization retains only runtime-abort value spans; debug builds
-;; bypass coloring entirely below so every original variable identity remains
-;; available to the debug metadata path.
+;; Non-debug optimization retains only runtime-abort value spans. Debug SIMD
+;; functions use the same pin/remap path for their instruction locations.
 (define (compiler-backend-source-span-pinned-vars
   [spans : compiler_ir_types.CompilerSourceSpans]
   [function : i64]
@@ -4731,15 +4795,17 @@
                       (set! pinned true))]
                   [_ unit])))
             (if pinned
-              (compiler_liveness.compiler-live-set-from-words-trimmed
-                (compiler-backend-global-shared-view words)
-                (array-length words))
+              (let
+                [count : i64 (array-length words)]
+                (compiler_liveness.compiler-live-set-from-words-trimmed
+                  words
+                  count))
               (compiler_liveness.compiler-live-set-empty))))])))
 
 (define (compiler-backend-remap-source-span-key
   [key : compiler_ir_types.CompilerSourceSpansInstrKey]
   [function : i64]
-  [remap : (__tl_dyn-array i64)]) : compiler_ir_types.CompilerSourceSpansInstrKey
+  [remap : (& (__tl_dyn-array i64))]) : compiler_ir_types.CompilerSourceSpansInstrKey
   (match key
     [(Value key-function var)
       (if (=
@@ -4774,10 +4840,7 @@
             (set!
               (array-ref slots index)
               (compiler_ir_types.compiler-source-spans-instr-entry
-                (compiler-backend-remap-source-span-key
-                  key
-                  function
-                  (compiler-backend-global-shared-view remap))
+                (compiler-backend-remap-source-span-key key function (& remap))
                 path-id
                 span))))
         (Spans
@@ -71232,16 +71295,30 @@
             (and
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))]
-        ;; Non-debug optimization retains only source spans used by runtime
-        ;; aborts. Their value ids are provenance keys, so keep those values in
-        ;; distinct private slots and remap the keys alongside the IR below.
-        [source-span-pinned-vars : compiler_liveness.CompilerLiveI64Set
-          (if (compiler_ir_types.compiler-debug-info-enabled?)
-            (compiler_liveness.compiler-live-set-empty)
-            (compiler-backend-source-span-pinned-vars
+        ;; SIMD caller lanes and masks, as well as private entry stores, need
+        ;; full-width homes under debug info. Scalar debug keeps its raw IDs.
+        [color-stack-slots? : bool
+          (or
+            (not (compiler_ir_types.compiler-debug-info-enabled?))
+            (not (compiler-backend-mode-scalar? mode))
+            (compiler_regalloc.compiler-reg-spmd-avx2-special-params?
+              (& params)))]
+        [coloring-spans : compiler_ir_types.CompilerSourceSpans
+          (if color-stack-slots?
+            (compiler-backend-function-source-spans
               (compiler-backend-global-shared-view spans)
+              (& span-index)
+              name)
+            (compiler-backend-global-shared-view spans))]
+        ;; Value ids are provenance keys: pin spanned scalars against sharing
+        ;; and remap their keys alongside the emitted IR.
+        [source-span-pinned-vars : compiler_liveness.CompilerLiveI64Set
+          (if color-stack-slots?
+            (compiler-backend-source-span-pinned-vars
+              (compiler-backend-global-shared-view coloring-spans)
               name
-              scratch-vars))]
+              scratch-vars)
+            (compiler_liveness.compiler-live-set-empty))]
         [coloring-pinned-vars : compiler_liveness.CompilerLiveI64Set
           (compiler_liveness.compiler-live-set-union
             fusion-pinned-vars
@@ -71259,10 +71336,7 @@
           ;; slot; word1 indexes the second var-region by the same remapped id.
           ;; That keeps both words inside the `slot-vars`-sized frame rather
           ;; than at high raw ids that would grow it.
-          ;; Debug records deliberately keep the original SSA identities.
-          ;; Compacting a debug frame is less important than keeping every
-          ;; instruction and variable provenance key exact.
-          (if (compiler_ir_types.compiler-debug-info-enabled?)
+          (if (not color-stack-slots?)
             None
             (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases
@@ -71291,17 +71365,17 @@
           (compiler_regalloc.compiler-reg-max scratch-vars slot-vars)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (match (compiler-backend-global-shared-view coloring)
-            [(None) (owned_view.compiler-owned-shared-view spans)]
+            [(None) (owned_view.compiler-owned-shared-view coloring-spans)]
             [(Remap remap _)
               (if (>
                 (compiler_liveness.compiler-live-set-word-count
                   source-span-pinned-vars)
                 0)
                 (compiler-backend-remap-source-spans
-                  (compiler-backend-global-shared-view spans)
+                  (compiler-backend-global-shared-view coloring-spans)
                   name
                   remap)
-                (owned_view.compiler-owned-shared-view spans))])]
+                (owned_view.compiler-owned-shared-view coloring-spans))])]
         [assignments : compiler_regalloc.CompilerRegAssignmentTable
           (match (compiler-backend-global-shared-view coloring)
             [(None)
@@ -89670,11 +89744,12 @@ tl_shared_object_init:
 
 ;; Directives that delimit a function or an object: nothing may move across one,
 ;; and the first of them after a join is where an out-of-lined region is
-;; re-inserted. Every `.seh_` note counts -- Windows unwind describes a
+;; re-inserted. Debug range ends and CFI closure delimit the same body.
+;; Every `.seh_` note counts -- Windows unwind describes a
 ;; prologue/epilogue by position, so no `.seh_` line may be moved or copied.
 ;;
-;; The second byte selects the arm: no two of these names share it except the
-;; three `s` spellings, so a directive pays one byte compare and at most three
+;; The second byte selects the arm: the `s` and `c` spellings share it,
+;; so a directive pays one byte compare and a short name dispatch
 ;; name compares -- and the token
 ;; end, which is a walk of its own, is only measured once that byte has already
 ;; said a barrier is possible. Every emitted `.quad`, `.byte` and `.zero` leaves
@@ -89706,7 +89781,9 @@ tl_shared_object_init:
             [(= b1 100)
               (compiler-backend-peephole-range-eq? data t tend ".data")]
             [(= b1 99)
-              (compiler-backend-peephole-range-eq? data t tend ".comm")]
+              (or
+                (compiler-backend-peephole-range-eq? data t tend ".comm")
+                (compiler-backend-cold-closing-line? data t t e))]
             [else (compiler-backend-peephole-range-eq? data t tend ".extern")]))
         false))
     false))
@@ -89956,7 +90033,11 @@ tl_shared_object_init:
             (= (compiler-backend-peephole-byte-at data (- e 1)) 58)
             (>= (- e s) 2)
             (compiler-backend-asm-label-name-clean? data s e))
-          compiler-backend-layout-flag-label]
+          (bit-or
+            compiler-backend-layout-flag-label
+            (if (compiler-backend-cold-closing-line? data s s e)
+              compiler-backend-layout-flag-barrier
+              0))]
         [else (compiler-backend-layout-classify-token data s t e)]))))
 
 ;; What a mnemonic's first byte can make of a line, as a byte per possible head:
@@ -90747,7 +90828,7 @@ tl_shared_object_init:
 ;; every line. Accepted regions never overlap: a candidate whose `jmp` sits
 ;; inside one already taken is skipped, so each line moves at most once. An
 ;; accepted region is re-inserted at the first delimiting directive at or after
-;; its join -- the `.size` / `.seh_endproc` that closes the function the join
+;; its join -- the first debug end label or closing directive of the function the join
 ;; belongs to -- found by advancing one cursor along the same flow list, which
 ;; is sound because the accepted joins only ever move forward. Returns the
 ;; number selected.
@@ -91042,7 +91123,7 @@ tl_shared_object_init:
 ;; order. Accepted regions never overlap: a candidate whose `jmp` sits inside
 ;; one already taken is skipped, so each line moves at most once. An accepted
 ;; region is re-inserted at the first delimiting directive at or after its join
-;; -- the `.size` / `.seh_endproc` that closes the function the join belongs to
+;; -- the first debug end label or closing directive of the function the join belongs to
 ;; -- found by advancing one cursor along the flow list, which is sound because
 ;; the accepted joins only ever move forward. The candidate arrays are compacted
 ;; in place: the write index never runs ahead of the read index. Returns the

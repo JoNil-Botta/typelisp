@@ -3,6 +3,11 @@
 ;# Provides a canonical JSON value model, recoverable parser, and serializer
 ;# for tools that need JSON without a private selfhost-only implementation.
 ;#
+;# Strings accept JSON's quote, backslash, slash, b/f/n/r/t escapes and every
+;# Unicode scalar via `\uXXXX`, including adjacent high/low surrogate pairs.
+;# Unpaired or misordered surrogates are errors located at the first escape's
+;# hex digits (zero-based byte offset); they are never replaced or emitted as UTF-8.
+;#
 ;# Primitives required from the compiler/runtime: `string-length`,
 ;# `string-ref`, `substring`, `comptime.string-append`, and the imported
 ;# `stdlib/string.tl`, `stdlib/io.tl`, and `stdlib/text_buf.tl` helpers.
@@ -23,11 +28,11 @@
 ;# (define sample : String (json.stringify (json.JsonBool true)))
 ;# ```
 (import stdlib.comptime)
-(import stdlib.byte_buf)
 (import stdlib.checked_size)
 (import stdlib.format)
 (import stdlib.str_cat)
 (import stdlib.string)
+(import stdlib.string_utf8)
 (import stdlib.io)
 (import stdlib.text_buf)
 (import stdlib.vector)
@@ -240,10 +245,6 @@
 (defenum JsonLookup
   (JsonFound Json)
   (JsonMissing))
-
-;: ASCII printable lookup table used to materialize supported codepoints.
-(define ascii-printable-table : String
-  " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~")
 
 ;: Return the numeric scalar code for `c`.
 (define (char-code [c : char]) : i64
@@ -747,48 +748,77 @@
 (define (u64->number [value : u64]) : Json
   (JsonNumber (format.format-u64-core value)))
 
-;: Convert a supported Unicode scalar codepoint into a TypeLisp String.
-;:
-;: ASCII controls and printable ASCII are supported.
+;: Convert any Unicode scalar codepoint into a UTF-8 TypeLisp String.
+;: Negative, surrogate and above-U+10FFFF values are rejected.
 ;: Successful decoded strings allocate in the active arena.
 (define (codepoint-string [code : i64]) : JsonCodepointStringResult
-  (cond
-    [(and (>= code 0) (< code 32))
-      (OkJsonCodepointString
-        (byte_buf.to-string (byte_buf.push (byte_buf.new) (cast code : u8))))]
-    [(and (>= code 32) (<= code 126))
-      (OkJsonCodepointString
-        (string.substring ascii-printable-table (- code 32) 1))]
-    [else
-      (ErrJsonCodepointString
-        "json: unicode escape outside supported string range")]))
+  (match (string_utf8.encode-scalar code)
+    [(Encoded text) (OkJsonCodepointString text)]
+    [(EncodeError _) (ErrJsonCodepointString "json: invalid Unicode scalar")]))
 
-;: Parse four hex digits after a `\u` escape and return the decoded string.
+;: Read one four-hex-digit UTF-16 code unit, or -1 for missing/invalid digits.
+(define (unicode-code-unit [text : (& text str)] [pos : i64]) : i64
+  (when (or (< pos 0) (> pos (string-length text))) (return -1))
+  (when (< (- (string-length text) pos) 4) (return -1))
+  (let
+    [value : i64 0]
+    [j : i64 0]
+    (while (< j 4)
+      (let
+        [digit : i64 (stdlib.json.hex-value (string-ref text (+ pos j)))]
+        (when (< digit 0) (return -1))
+        (set! value (+ (* value 16) digit))
+        (set! j (+ j 1))))
+    value))
+
+;: Locate a Unicode escape failure at its first hex digit's byte offset.
+(define (unicode-escape-error [message : String] [pos : i64]) : JsonParseEscapeResult
+  (ErrJsonParseEscape
+    (str_cat.str-cat message " at byte " (string.int->string pos))))
+
+;: Parse a scalar escape or adjacent UTF-16 high/low pair; reject lone surrogates.
 (define (parse-unicode-escape [text : (& text str)] [pos : i64]) : JsonParseEscapeResult
   (let
     [n : i64 (string-length text)]
-    (if (> (+ pos 4) n)
-      (ErrJsonParseEscape "json: unterminated unicode escape")
+    [value : i64 (stdlib.json.unicode-code-unit text pos)]
+    (when
+      (< value 0)
+      (return
+        (stdlib.json.unicode-escape-error
+          "json: invalid or incomplete unicode escape"
+          pos)))
+    (let
+      [next : i64 (+ pos 4)]
+      (when
+        (and (>= value 0xd800) (<= value 0xdbff))
+        (when
+          (or
+            (< (- n next) 6)
+            (not (stdlib.json.char-code-eq-at text next 92))
+            (not (stdlib.json.char-code-eq-at text (+ next 1) 117)))
+          (return
+            (stdlib.json.unicode-escape-error
+              "json: expected low surrogate escape"
+              pos)))
+        (let
+          [low : i64 (stdlib.json.unicode-code-unit text (+ next 2))]
+          (when
+            (or (< low 0xdc00) (> low 0xdfff))
+            (return
+              (stdlib.json.unicode-escape-error
+                "json: expected low surrogate escape"
+                pos)))
+          (set! value (+ 0x10000 (+ (* (- value 0xd800) 1024) (- low 0xdc00))))
+          (set! next (+ next 6))))
+      (when
+        (and (>= value 0xdc00) (<= value 0xdfff))
+        (return
+          (stdlib.json.unicode-escape-error
+            "json: unpaired low surrogate escape"
+            pos)))
       (let
-        [j : i64 0]
-        [value : i64 0]
-        [ok : bool true]
-        [message : String ""]
-        (while (and ok (< j 4))
-          (let
-            [digit : i64 (stdlib.json.hex-value (string-ref text (+ pos j)))]
-            (if (< digit 0)
-              (begin
-                (set! ok false)
-                (set! message "json: invalid unicode escape digit"))
-              (begin
-                (set! value (+ (* value 16) digit))
-                (set! j (+ j 1))))))
-        (if ok
-          (let
-            [decoded (try (stdlib.json.codepoint-string value))]
-            (OkJsonParseEscape decoded (+ pos 4)))
-          (ErrJsonParseEscape message))))))
+        [decoded (try (stdlib.json.codepoint-string value))]
+        (OkJsonParseEscape decoded next)))))
 
 ;: Parse a JSON string escape at `pos`.
 ;:
@@ -2239,10 +2269,10 @@
     (stdlib.json.codepoint-string 65)
     "A"
     "stdlib.json.codepoint-string")
-  (match (stdlib.json.codepoint-string 200)
+  (match (stdlib.json.codepoint-string 0xd800)
     [(ErrJsonCodepointString _) unit]
     [(OkJsonCodepointString _)
-      (io.panic "stdlib.json.codepoint-string rejects unsupported")])
+      (io.panic "stdlib.json.codepoint-string rejects surrogate")])
   (stdlib.json.stdlib-inline-test-assert-parse-escape
     (stdlib.json.stdlib-inline-test-parse-unicode-escape "0041" 0)
     "A"

@@ -87,6 +87,18 @@ writes a record: the value and its measurement identity. The identity is:
   path and architecture.
 
 The image version and CPU model are recorded but are not part of the key.
+For identity/build changes, the reference workflow's PR dry run also invokes
+`scripts/verify-self-compile-stamp-invariance.sh`. It reuses the first bootstrap
+and measurement, creates a local second commit of the same tree, then builds
+and measures it at the same path with the same seed and harness. It requires
+equal Ir, byte-identical ordinary/TLCH images, both bootstrap/provenance
+fixpoints, and native compiler equality after replacing only the unique
+40-byte commit field. Both commit objects, records and compilers are retained;
+the synthetic record is experimental and never published as a main reference.
+The probe restores shared image inputs and compiler/profile handoffs on every
+exit, preserving original absence; its failure-injection self-test checks that
+restoration without rebuilding a compiler.
+
 Build-recipe scripts are not part of the harness hash: they shape the compiler
 under test, so their effect is part of a PR's own cost. Locally the record is
 `local`, and nothing local is gated or reused.
@@ -191,10 +203,11 @@ Each merge is then checked as follows:
     T and B trees each taken within one identity. Warn above 1,000 Ir; fail
     above 10,000 Ir.
   - T (the tested merge) and c (its squash) are different commits of one tree.
-    The compiler's commit stamp also reaches content-derived assembly labels and
-    the compressed embedded stdlib image, so their compilers are never
-    byte-identical, and this residual is the reproduction check. Two
-    measurements of one commit must have byte-identical compilers.
+    The commit is recorded in a named static provenance field; content-derived
+    labels and the compressed embedded stdlib image use source-tree identity.
+    Their compilers differ only in that field, and equal trees perform equal
+    measured work. Two measurements of one commit must have byte-identical
+    compilers. The existing residual bounds remain the reproduction check.
   - A is recorded too. When B and p have the same tree it has the same bounds;
     otherwise it is assessed as class M.
 - **Class M** (the landed tree or base differs from the tested composition):
@@ -524,6 +537,13 @@ artifact per run (`target/ci-timing/<host>.tsv`, written by `ci-verify.sh` when
 as the four build-invariance selfhost compiles
 (`opt1-built:selfhost_main_opt1`, `opt2-built:selfhost_main_opt2`, ...). They
 are evidence for performance work; CI applies no wall-clock budget to them.
+Linux also retains build-invariance's authoritative corpus, both producers'
+case/entry/alias plans, pool queue and chunk metrics in the existing
+`backend-memory-Linux` artifact. Its `provenance.txt` identifies the source,
+compiler binaries, common invocation flags and worker count. Those are the
+same plans the local gate validates and executes; there is no artifact cache
+in the comparison gate.
+
 Exact instruction counts guard performance instead. Use
 `scripts/benchmark-compile-cli.sh` for phase-level local investigation of a
 compile-time change.

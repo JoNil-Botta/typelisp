@@ -37,6 +37,8 @@ on:
     paths:
       - '.github/workflows/bootstrap-stage0.yml'
       - 'scripts/*stage0*.sh'
+      - 'scripts/lib-build-provenance.sh'
+      - 'src/compiler_build_identity.tl'
       - 'src/compiler_ctfe.tl'
       - 'src/compiler_lzss.tl'
       - 'src/compiler_load.tl'

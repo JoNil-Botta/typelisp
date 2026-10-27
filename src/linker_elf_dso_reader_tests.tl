@@ -676,12 +676,35 @@
       (byte_buf.to-array (byte_buf.from-string "NO_VERSION"))]
     [empty : (__tl_dyn-array u8) (__tl_make-array u8 0)]
     [embedded : (__tl_dyn-array u8)
-      (byte_buf.to-array (byte_buf.from-string "api\0tail"))]
+      (byte_buf.to-array
+        (byte_buf.append-string
+          (byte_buf.push (byte_buf.from-string "api") (cast 0 : u8))
+          "tail"))]
+    (test.assert-i64-eq (array-length embedded) 8 "embedded NUL query length")
+    (test.assert-true (= (array-ref embedded 3) (cast 0 : u8)) "real NUL byte")
     (match (dso.read-dso (& gcc-both) (& req))
       [(ReadFailed _) (test.assert-true false "version boundary control")]
       [(ReadDso object)
         (assert-lookup (& object) (& api) (& wrong) -1 (& (dso.PreferGnu)))
         (assert-lookup (& object) (& embedded) (& empty) -1 (& (dso.PreferGnu)))
+        (assert-lookup (& object) (& embedded) (& empty) -1 (& (dso.SysvHash)))
+        ;; Exercise comparison independently of hashing: a hash mismatch must
+        ;; not hide a matcher that incorrectly truncates the query at NUL.
+        (let
+          [index : i64 (linear-index (& object) (& api) -1)]
+          [query : (dso.DsoLookupRequest embedded empty)
+            (dso.DsoLookupRequest
+              (& embedded)
+              (& empty)
+              (dso.PreferGnu)
+              1048576)]
+          [check : dso.DsoCheck (dso.new-check (& req))]
+          (test.assert-true (>= index 0) "plain api lookup control")
+          (assert-lookup (& object) (& api) (& empty) index (& (dso.PreferGnu)))
+          (test.assert-true
+            (not (dso.lookup-match? (& object) index (& query) (&mut check)))
+            "embedded NUL does not match its exported prefix")
+          (test.assert-true check.ok "NUL comparison is within work budget"))
         (test.assert-true (= object.flags (cast 8 : u64)) "DT_FLAGS retained")
         (test.assert-true
           (= object.flags-1 (cast 9 : u64))

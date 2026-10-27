@@ -5,10 +5,23 @@ current explicit-root model. Files here are ordinary TypeLisp modules loaded by
 the same `import` mechanism as project-local files.
 
 This document describes the source-tree convention only. TypeLisp package
-builds support local path dependencies and `pkg:<alias>/...` imports through
-`typelisp.pkg`, but the stdlib is not currently distributed as a package.
-TypeLisp still does not define registry or version solving, default
-installed-root discovery, namespace isolation, or an implicit prelude.
+builds support local path dependencies declared in `typelisp.pkg`. Import a
+dependency module by its dotted dependency-alias identity, for example
+`(import math.src.lib)`; see [Packages](../docs/packages.md). The compiler-owned
+stdlib is not a package dependency. TypeLisp still does not define registry or
+version solving or default installed-root discovery.
+
+Imports are qualified by default: `(import stdlib.string)` binds the module
+alias `string`, and its members are accessed as `string.eq`, for example.
+Use an explicit selected import such as `(import stdlib.string.eq)` or a
+wildcard import such as `(import stdlib.string.*)` to bring items into the
+local unqualified namespace. Legacy string-path imports have been removed;
+use `(import stdlib.string)` instead of `(import "stdlib/string.tl")`.
+
+The compiler injects `stdlib.runtime` and `stdlib.core_macros` as an implicit
+prelude, so core macros such as `when`, `unless`, `and`, and `or` are available
+without explicit imports. See the [language guide's module and import
+rules](../docs/language-guide.md#modules-and-imports).
 
 The in-tree private dynamic-buffer census lives in
 [`DYNAMIC_ARRAY_CENSUS.md`](DYNAMIC_ARRAY_CENSUS.md). Check it before adding a

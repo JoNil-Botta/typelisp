@@ -42,6 +42,55 @@ A required gate is a row of `ci-gates.tsv`; `ci-verify.sh` rejects a row whose
 command names a missing script or `gate_*` function. Optional local tools
 should use a `benchmark-`, `measure-`, or `analyze-` name.
 
+## Linux instruction-count packages
+
+The shared `.github/actions/linux-instruction-count-tools` action installs
+valgrind and libc6-dbg in required Linux CI and the self-compile reference
+measurement. The ledger first runs `self-compile.sh ledger --prepare` to
+validate its reference and PR records. Only a required fallback or reproduction
+runs the shared action, before `self-compile.sh ledger` probes the installed
+runner identity or measures anything. The prepared inputs stay in this job's
+workspace, bound to its commit, run and attempt; they are never a package cache.
+Record-only ledgers skip package resolution, restore, transfer and installation.
+On Ubuntu noble, libc6-dbg is a hard dependency of valgrind;
+`--no-install-recommends` excludes gdb, not libc6-dbg. Windows is unchanged.
+
+`ci-linux-tools.sh` resolves exact versions against the runner's apt indexes.
+Its cache key hashes the distro release, dpkg architecture, runner OS,
+ImageOS, ImageVersion, both package versions and their SHA-256 hashes. There
+are no partial restore keys. Only the two archives are cached: the package
+plan, hashes and installed state are recreated on each runner. Restored files
+must match the apt-index SHA-256 hashes before entering fresh private staging.
+The pinned `apt-get --download-only` install authenticates the plan against
+apt's trusted indexes before a separate `--no-download` install; neither
+unauthenticated packages nor insecure repositories are permitted. Both
+installed versions must equal the resolution, and are logged.
+
+A missing, corrupt or mismatched archive uses the normal trusted apt download.
+A failed acquisition refreshes authenticated indexes and resolves again in
+fresh staging; failure of that attempt or installation fails the job. A new
+version or runner image gets a new key. Cache restore/save errors cannot skip
+installation. A corrupt immutable entry can be removed with GitHub's cache
+administration, or invalidated by changing the action's key schema version;
+until then each use falls back safely.
+
+The existing push-to-main self-compile measurement job populates the
+default-branch cache immediately after a successful package installation,
+before its measurement begins. The ledger and new PRs can restore that
+main-scoped entry; PR-scoped entries alone cannot serve another PR's first
+run. Every main push refreshes an absent version/image key, and ordinary cache
+eviction needs no special recovery. Initial cross-PR reach is verified after
+this population path lands, before closing #9305.
+
+Each invocation uploads `linux-instruction-tools-<job>` with package identities,
+source URIs, trusted-index hashes, cache result and `timing.tsv`. Resolution,
+index refresh when needed, cache verification, apt package acquisition and
+installation have separate rows. Acquisition includes apt planning; apt's
+`Fetched` line reports transfer time itself. Restore/save wall timers also
+include intervening Actions step startup, so they conservatively measure cache
+overhead. GitHub job timestamps supply total step time, queue time, execution
+critical path and runner-minutes; these must be reported separately.
+
 ## AVX-512 test execution
 
 CI downloads Intel SDE 10.13.1 from Intel's distribution page through
@@ -228,7 +277,7 @@ never run at once:
 
 | Lock | Shared path |
 | --- | --- |
-| `build-stamp` | `target/build-stage0/git-hash.txt`, which compiles with `compiler-build-identity` include and root package builds rewrite (the CLI smoke poisons it on purpose) |
+| `build-stamp` | `target/build-stage0/git-hash.txt` and `tree-hash.txt`, which compile with `compiler-build-identity` includes and root package builds rewrite (the CLI smoke poisons them on purpose) |
 | `embedded-image` | `target/embedded-stdlib-tlci/`, which compiles with `embedded-stdlib-tlci` include and the image and resource gates rebuild in place |
 | `embedded-payload` | `target/embedded-stdlib-payload-verify/`, which the payload gate and the stdlib gate (through `verify-embedded-stdlib-payload.sh`) both reset |
 | `instruction-count` | `target/instruction-count-check/`, where the benchmark instruction-count gate (which resets it) and the `self_compile` gate both measure at their historical paths, because measured paths reach the counts |
@@ -301,6 +350,19 @@ failure, and success. `verify-embedded-stdlib-tlci-resources.sh` runs its
 builds under that interface; `src/TESTING.md` (Embedded stdlib and TLCI gates)
 describes its caps and reports.
 
+Linux success also requires an invocation-owned terminal status: the unit's
+private waiter publishes it only after its command's wait completes. A zero
+`systemd-run --wait` status or a positive memory peak alone proves no workload
+completion. Missing, malformed or foreign terminal evidence fails with exit 2,
+including direct library calls without metrics. Known nonzero launcher statuses,
+OOM evidence (137) and timeouts (124) keep their established precedence. Nested
+calls use ordinary child waits inside their enclosing cap. Terminal records are
+fresh per invocation, passed to the waiter through arguments rather than the
+workload's environment, and removed with that invocation's stderr/peak scratch.
+Direct calls without metrics now also retain stop-post OOM evidence while
+streaming stderr directly. A known OOM returns 137;
+systemd's generic failure status alone does not identify an OOM.
+
 `verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
 including the root opt0 build, at 8192 MiB and writes
 `target/selfhost-build-run.memory`. The root release build in
@@ -313,8 +375,11 @@ On Linux, `TYPELISP_LINUX_MEMORY_LIMIT_METRICS_FILE` is an invocation-local
 output destination for the limiting helper. The helper removes it from the
 workload's environment; its own sampler receives the destination explicitly.
 Nested callers can request their own metrics file or `--report` path. They do
-not inherit or remove their parent's evidence. Systemd stderr uses a unique
-temporary file per invocation, cleaned up after success or failure. The helper
+not inherit or remove their parent's evidence. Systemd stderr uses a private
+temporary directory beside the metrics destination, cleaned up after success or
+failure. This preserves its filesystem: moving a large capture to tmpfs would
+charge it against the workload's memory cap. Without metrics only the tiny
+terminal/stop-post records use `TMPDIR`. The helper
 self-test covers nested library calls, explicit inner reports and the hierarchy
 cases without building another compiler: overlapping, concurrent and inner-OOM
 allocations, outer timeout and cancellation, and fail-closed hierarchies. Run

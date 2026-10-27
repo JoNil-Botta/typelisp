@@ -14,6 +14,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-source-location.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"
 BOUNDED_POOL_LABEL=integration
 . "$ROOT/scripts/lib-bounded-pool.sh"
@@ -260,6 +261,7 @@ MANIFEST="$ROOT/tests/integration/native.manifest"
 WORKDIR="$ROOT/target/integration-verify/$HOST_OS$WORK_SUFFIX"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+source_location_self_test "$WORKDIR/source-location-self-test"
 # This host's rows of the shared manifest, one per name and opt level.
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 awk -v host="$HOST_OS" -f "$ROOT/scripts/expand-integration-manifest.awk" "$MANIFEST" \
@@ -380,7 +382,7 @@ integration_batch_settle_chunk() {
         echo "FAIL: batch chunk $_chunk_label left no compile status" >&2
         exit 1
     fi
-    _chunk_rc=$(cat "$_chunk_status")
+    _chunk_rc=$(cat "$_chunk_status") || return 1
     if [ -n "$_chunk_cap" ]; then
         _chunk_reason=$(sed -n 's/^reason=//p' "$_chunk_report" 2>/dev/null || true)
         case "$_chunk_reason" in
@@ -414,7 +416,7 @@ integration_batch_settle_chunk() {
     if [ "$_chunk_rc" -eq 0 ]; then
         if [ "$HOST_OS" = windows ]; then
             integration_windows_register_plan \
-                "$_chunk_list" "$_chunk_plan" "$_chunk_label"
+                "$_chunk_list" "$_chunk_plan" "$_chunk_label" || return 1
         fi
         return 0
     fi
@@ -470,12 +472,12 @@ integration_batch_merge_pool_timing() {
     while IFS='|' read -r _merge_job _merge_cap; do
         _merge_rows="$INTEGRATION_POOL_DIR/timing/$_merge_job.tsv"
         if [ -s "$_merge_rows" ]; then
-            cat "$_merge_rows" >> "$TYPELISP_CI_TIMING_FILE"
+            cat "$_merge_rows" >> "$TYPELISP_CI_TIMING_FILE" || return 1
         elif [ "$1" = required ]; then
             echo "FAIL: batch pool job published no timing row: $_merge_job" >&2
             exit 1
         fi
-    done < "$INTEGRATION_POOL_DIR/queue"
+    done < "$INTEGRATION_POOL_DIR/queue" || return 1
 }
 
 # Compile every chunk queued in QUEUE (`batch-<group>-<index>|<cap MiB>` rows)
@@ -487,34 +489,34 @@ integration_batch_run_pool() {
     INTEGRATION_POOL_DIR="$WORKDIR/batch-pool"
     bounded_pool_init "$INTEGRATION_POOL_DIR" "$INTEGRATION_POOL_BUDGET_MIB" \
         "$_pool_queue" || exit 1
-    mkdir -p "$INTEGRATION_POOL_DIR/timing"
-    _pool_count=$(wc -l < "$_pool_queue" | tr -d ' ')
+    mkdir -p "$INTEGRATION_POOL_DIR/timing" || return 1
+    _pool_count=$(wc -l < "$_pool_queue") || return 1
     echo "[integration] batch pool: $_pool_count chunk(s)," \
         "$INTEGRATION_POOL_WORKERS worker(s)," \
         "$INTEGRATION_POOL_BUDGET_MIB MiB of enforced caps at once"
-    ci_timing_set_now_ms
+    ci_timing_set_now_ms || return 1
     _pool_started=$CI_TIMING_NOW_MS
-    bounded_pool_start "$INTEGRATION_POOL_DIR" "$INTEGRATION_POOL_WORKERS"
+    bounded_pool_start "$INTEGRATION_POOL_DIR" "$INTEGRATION_POOL_WORKERS" || return 1
     if ! bounded_pool_join "$INTEGRATION_POOL_DIR"; then
         integration_batch_merge_pool_timing available
         echo "FAIL: integration batch pool did not complete every chunk" >&2
         exit 1
     fi
-    ci_timing_set_now_ms
+    ci_timing_set_now_ms || return 1
     INTEGRATION_POOL_WALL_MS=$((INTEGRATION_POOL_WALL_MS + CI_TIMING_NOW_MS - _pool_started))
     _pool_settle_started=$CI_TIMING_NOW_MS
-    integration_batch_merge_pool_timing required
+    integration_batch_merge_pool_timing required || return 1
     if ci_timing_enabled; then
         ci_timing_record_elapsed manifest batch-pool \
-            "$((_pool_settle_started - _pool_started))" 0
+            "$((_pool_settle_started - _pool_started))" 0 || return 1
     fi
     while IFS='|' read -r _pool_job _pool_cap; do
         [ "$INTEGRATION_POOL_ENFORCE_CAPS" -eq 1 ] || _pool_cap=
         integration_batch_settle_chunk "$WORKDIR/$_pool_job.list" \
-            "${_pool_job#batch-}" "$_pool_cap"
-    done < "$_pool_queue"
+            "${_pool_job#batch-}" "$_pool_cap" || return 1
+    done < "$_pool_queue" || return 1
     if ci_timing_enabled; then
-        ci_timing_set_now_ms
+        ci_timing_set_now_ms || return 1
         ci_timing_record_elapsed manifest batch-settle \
             "$((CI_TIMING_NOW_MS - _pool_settle_started))" 0
     fi
@@ -650,7 +652,7 @@ integration_windows_register_plan() {
     _windows_plan_result=$2
     _windows_plan_label=$3
     _windows_plan_normalized="$WORKDIR/batch-$_windows_plan_label.validated"
-    ci_timing_set_now_ms
+    ci_timing_set_now_ms || return 1
     _windows_plan_started=$CI_TIMING_NOW_MS
 
     if ! awk -f "$ROOT/scripts/validate-windows-coff-plan.awk" \
@@ -715,18 +717,18 @@ integration_windows_register_plan() {
                     WINDOWS_MANIFEST_FORCED_ASSEMBLIES=$((WINDOWS_MANIFEST_FORCED_ASSEMBLIES + 1))
                 else
                     WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES=$((WINDOWS_MANIFEST_FALLBACK_ASSEMBLIES + 1))
-                    printf '%s\n' "$_plan_reason" >> "$WINDOWS_COFF_FALLBACK_REASONS"
+                    printf '%s\n' "$_plan_reason" >> "$WINDOWS_COFF_FALLBACK_REASONS" || return 1
                 fi
                 ;;
         esac
 
         printf '%s|%s|%s\n' \
             "$_plan_kind" "$_plan_selected_abs" "$_plan_reason" \
-            > "$_plan_marker"
+            > "$_plan_marker" || return 1
         WINDOWS_MANIFEST_PLAN_ROWS=$((WINDOWS_MANIFEST_PLAN_ROWS + 1))
-    done < "$_windows_plan_normalized"
+    done < "$_windows_plan_normalized" || return 1
 
-    ci_timing_set_now_ms
+    ci_timing_set_now_ms || return 1
     _windows_plan_finished=$CI_TIMING_NOW_MS
     WINDOWS_MANIFEST_PLAN_PROCESS_MS=$((
         WINDOWS_MANIFEST_PLAN_PROCESS_MS +
@@ -1002,36 +1004,37 @@ validate_manifest() {
     _known_sorted="$WORKDIR/manifest-known.sorted"
     _actual="$WORKDIR/integration-sources.txt"
     _catalog="$WORKDIR/repository-files.txt"
-    : > "$_known"
+    : > "$_known" || return 1
 
-    find benchmarks examples src stdlib tests/fixtures tests/integration tests/safety -type f -print |
-        sed 's#^\./##' > "$_catalog"
+    find benchmarks examples src stdlib tests/fixtures tests/integration tests/safety -type f -print \
+        > "$_catalog" || return 1
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
-        "$_catalog" "$NORMALIZED_MANIFEST"
+        "$_catalog" "$NORMALIZED_MANIFEST" || return 1
     # The other host's rows are validated too and cover their own sources.
     _other_host=windows
     [ "$HOST_OS" = linux ] || _other_host=linux
     awk -v host="$_other_host" -f "$ROOT/scripts/expand-integration-manifest.awk" \
-        "$MANIFEST" > "$WORKDIR/manifest.$_other_host"
+        "$MANIFEST" > "$WORKDIR/manifest.$_other_host" || return 1
     awk -v root="$ROOT" -v catalog="$_catalog" -v known_out="$_known.$_other_host" \
         -f "$ROOT/scripts/validate-integration-manifest.awk" \
-        "$_catalog" "$WORKDIR/manifest.$_other_host"
-    cat "$_known.$_other_host" >> "$_known"
+        "$_catalog" "$WORKDIR/manifest.$_other_host" || return 1
+    cat "$_known.$_other_host" >> "$_known" || return 1
 
     if [ "$HOST_OS" = windows ]; then
-        validate_windows_manifest_assembly_requirements
+        validate_windows_manifest_assembly_requirements || return 1
     fi
-    fs_rooted_linux_gate_cases >> "$_known"
-    process_runtime_linux_gate_cases >> "$_known"
-    selfhost_native_manifest_cases >> "$_known"
-    spmd_simd_manifest_cases >> "$_known"
-    compiler_cfg_native_fixture_cases >> "$_known"
-    winsock_no_libc_gate_cases >> "$_known"
+    fs_rooted_linux_gate_cases >> "$_known" || return 1
+    process_runtime_linux_gate_cases >> "$_known" || return 1
+    selfhost_native_manifest_cases >> "$_known" || return 1
+    spmd_simd_manifest_cases >> "$_known" || return 1
+    compiler_cfg_native_fixture_cases >> "$_known" || return 1
+    winsock_no_libc_gate_cases >> "$_known" || return 1
 
-    find tests/integration -type f -name '*.tl' |
-        sed 's#^tests/integration/##; s#\.tl$##' | sort > "$_actual"
-    sort -u "$_known" > "$_known_sorted"
+    find tests/integration -type f -name '*.tl' > "$_actual.paths" || return 1
+    sed 's#^tests/integration/##; s#\.tl$##' "$_actual.paths" > "$_actual.names" || return 1
+    sort "$_actual.names" > "$_actual" || return 1
+    sort -u "$_known" > "$_known_sorted" || return 1
     if ! cmp -s "$_actual" "$_known_sorted"; then
         echo "integration manifest is out of date for $HOST_OS" >&2
         echo "every tests/integration/**/*.tl file must be a manifest case, dependency, or documented host exception" >&2
@@ -1044,6 +1047,9 @@ validate_manifest() {
 
 write_expected_stream() {
     _spec=$1
+    case "$_spec" in
+        *'@loc{'*) _spec=$(resolve_source_locations "$_spec") || exit 1 ;;
+    esac
     _out=$2
     case "$_spec" in
         "" | -)
@@ -1875,7 +1881,7 @@ manifest_row_split_opt_level() {
 # Emit one chunk list per group from the staged cases.
 integration_batch_queue() {
     for _group in $INTEGRATION_BATCH_GROUPS; do
-        : > "$WORKDIR/batch-$_group.list"
+        : > "$WORKDIR/batch-$_group.list" || return 1
     done
     while IFS='|' read -r _b_name _b_source _b_want _b_stdout _b_args _b_deps _b_extra _b_suite || [ -n "$_b_name" ]; do
         case "$_b_name" in
@@ -1898,30 +1904,30 @@ integration_batch_queue() {
                 _b_force='|force-assembly'
             fi
             printf '%s.tl|%s.obj|%s.s%s\n' \
-                "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_b_list"
+                "$_b_rel" "$_b_rel" "$_b_rel" "$_b_force" >> "$_b_list" || return 1
         else
-            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_b_list"
+            printf '%s.tl|%s.s\n' "$_b_rel" "$_b_rel" >> "$_b_list" || return 1
         fi
-    done < "$NORMALIZED_MANIFEST"
+    done < "$NORMALIZED_MANIFEST" || return 1
 
     # Every chunk is an independent compiler process writing only its own
     # cases' outputs, so they are queued in chunk order and compiled in the
     # bounded pool; settling afterwards walks the same order.
     _pool_queue="$WORKDIR/batch-pool.queue"
-    : > "$_pool_queue"
+    : > "$_pool_queue" || return 1
     for _group in $INTEGRATION_BATCH_GROUPS; do
         _group_list="$WORKDIR/batch-$_group.list"
         [ -s "$_group_list" ] || continue
-        _total=$(wc -l < "$_group_list" | tr -d ' ')
+        _total=$(wc -l < "$_group_list") || return 1
         _offset=0
         _index=0
         while [ "$_offset" -lt "$_total" ]; do
             _index=$((_index + 1))
             _chunk="$WORKDIR/batch-$_group-$_index.list"
             sed -n "$((_offset + 1)),$((_offset + INTEGRATION_BATCH_SIZE))p" \
-                "$_group_list" > "$_chunk"
+                "$_group_list" > "$_chunk" || return 1
             printf 'batch-%s-%s|%s\n' "$_group" "$_index" \
-                "$INTEGRATION_POOL_CHUNK_CAP_MIB" >> "$_pool_queue"
+                "$INTEGRATION_POOL_CHUNK_CAP_MIB" >> "$_pool_queue" || return 1
             _offset=$((_offset + INTEGRATION_BATCH_SIZE))
         done
     done
@@ -2253,10 +2259,6 @@ assert_manifest_case() {
     fi
 }
 
-if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
-    run_batch_observability_self_test
-    exit 0
-fi
 if [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 1 ]; then
     run_empty_compile_diagnostic_self_test
     exit 0
@@ -3228,25 +3230,6 @@ windows_print_manifest_summary() {
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }
 
-if [ "$BACKEND_CMP_MEM_FOLD_PARITY_ONLY" -eq 1 ]; then
-    if [ "$HOST_OS" = linux ]; then
-        run_linux_fixture_cases --only backend-cmp-mem-fold-parity
-    else
-        run_backend_cmp_mem_fold_parity_fixtures
-    fi
-    exit 0
-fi
-
-# The wide-struct literal declarations are generated, not committed.
-awk -f "$ROOT/tests/integration/wide_struct_literal_decls.awk" > "$WORKDIR/wide_struct_literal_decls.tl"
-mv "$WORKDIR/wide_struct_literal_decls.tl" "$ROOT/tests/integration/wide_struct_literal_decls.tl"
-
-ci_timing_run manifest validate validate_manifest
-if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
-    echo "integration manifest validation passed for $HOST_OS"
-    exit 0
-fi
-
 # Batched compile pre-pass. Every manifest case is a compile-success
 # case -- the third field is the *program's* exit code, not a compile
 # expectation -- so the only thing that partitions them is whether the case
@@ -3274,7 +3257,7 @@ INTEGRATION_STANDALONE_COMPILES=0
 STAGE_PLAN="$WORKDIR/stage.plan"
 
 integration_stage_plan() {
-    : > "$STAGE_PLAN"
+    : > "$STAGE_PLAN" || return 1
     while IFS='|' read -r _s_name _s_source _s_want _s_stdout _s_args _s_deps _s_extra _s_suite || [ -n "$_s_name" ]; do
         case "$_s_name" in
             "" | \#*) continue ;;
@@ -3294,7 +3277,7 @@ integration_stage_plan() {
             copy_dep "$_s_dep" "${_s_source_path%/*}" "$_s_case_dir" "$_s_stage" \
                 || return 1
         done
-    done < "$NORMALIZED_MANIFEST"
+    done < "$NORMALIZED_MANIFEST" || return 1
 }
 
 # Build the staging helper once per run with the host toolchain the manifest
@@ -3302,17 +3285,17 @@ integration_stage_plan() {
 integration_stage_helper_build() {
     _helper_dir="$WORKDIR/stage-helper"
     _helper_asm="$_helper_dir/stage.s"
-    mkdir -p "$_helper_dir"
+    mkdir -p "$_helper_dir" || return 1
     if [ "$HOST_OS" = windows ]; then
         STAGE_HELPER="$_helper_dir/stage.exe"
         run_build "$COMPILER" compile tools/integration-staging/stage.tl \
             --target windows-x86_64 --cfg windows -o "$_helper_asm" \
-            > "$_helper_dir/build.stdout" 2> "$_helper_dir/build.stderr"
+            > "$_helper_dir/build.stdout" 2> "$_helper_dir/build.stderr" || return 1
     else
         STAGE_HELPER="$_helper_dir/stage"
         run_build "$COMPILER" compile tools/integration-staging/stage.tl \
             -o "$_helper_asm" \
-            > "$_helper_dir/build.stdout" 2> "$_helper_dir/build.stderr"
+            > "$_helper_dir/build.stdout" 2> "$_helper_dir/build.stderr" || return 1
     fi
     if [ "$build_rc" -ne 0 ]; then
         echo "FAIL: integration staging helper compile failed" >&2
@@ -3344,13 +3327,13 @@ integration_stage_self_test() {
     _t="$WORKDIR/stage-self-test"
     _tp="${_t#"$ROOT"/}"
     _odd="sp ace'q$(printf '\303\251')"
-    mkdir -p "$_t/src"
-    printf 'A\n' > "$_t/src/a.tl"
-    printf 'B\n' > "$_t/src/b.tl"
-    : > "$_t/src/empty.tl"
-    printf 'odd\n' > "$_t/src/$_odd.tl"
-    : > "$_t/src/not-a-dir"
-    : > "$_t/empty.plan"
+    mkdir -p "$_t/src" || return 1
+    printf 'A\n' > "$_t/src/a.tl" || return 1
+    printf 'B\n' > "$_t/src/b.tl" || return 1
+    : > "$_t/src/empty.tl" || return 1
+    printf 'odd\n' > "$_t/src/$_odd.tl" || return 1
+    : > "$_t/src/not-a-dir" || return 1
+    : > "$_t/empty.plan" || return 1
     "$STAGE_HELPER" "$_tp/empty.plan" || {
         echo "FAIL: staging helper rejected an empty plan" >&2
         return 1
@@ -3363,7 +3346,7 @@ integration_stage_self_test() {
         "$_tp/src/b.tl" "$_tp/out/r.tl" \
         "$_tp/src/empty.tl" "$_tp/out/e.tl" \
         "$_tp/src/$_odd.tl" "$_tp/out/sp ace/$_odd.tl" \
-        > "$_t/ok.plan"
+        > "$_t/ok.plan" || return 1
     "$STAGE_HELPER" "$_tp/ok.plan" || {
         echo "FAIL: staging helper rejected a valid plan" >&2
         return 1
@@ -3388,7 +3371,7 @@ integration_stage_self_test() {
             "$_tp/src/a.tl" "$_tp/out/$_name-first.tl" \
             "$_from" "$_to" \
             "$_tp/src/a.tl" "$_tp/out/$_name-after.tl" \
-            > "$_t/$_name.plan"
+            > "$_t/$_name.plan" || return 1
         if "$STAGE_HELPER" "$_tp/$_name.plan" 2> "$_t/$_name.stderr"; then
             echo "FAIL: staging helper accepted a plan with a $_name failure" >&2
             return 1
@@ -3400,7 +3383,7 @@ integration_stage_self_test() {
             return 1
         fi
     done
-    printf 'no tab here\n' > "$_t/malformed.plan"
+    printf 'no tab here\n' > "$_t/malformed.plan" || return 1
     if "$STAGE_HELPER" "$_tp/malformed.plan" 2> "$_t/malformed.stderr" ||
         ! grep -F -q 'plan line 1: expected `source<TAB>destination`' "$_t/malformed.stderr"; then
         echo "FAIL: staging helper accepted a malformed plan line" >&2
@@ -3414,18 +3397,21 @@ integration_stage_self_test() {
 }
 
 integration_stage_corpus() {
-    ci_timing_run manifest stage-helper integration_stage_helper_build
-    integration_stage_self_test
-    ci_timing_run manifest stage-plan integration_stage_plan
+    # ci_timing_run disables errexit, including for nested shell functions.
+    ci_timing_run manifest stage-helper integration_stage_helper_build || return 1
+    integration_stage_self_test || return 1
+    ci_timing_run manifest stage-plan integration_stage_plan || return 1
     ci_timing_run manifest stage-copy integration_stage_copy
 }
 
 
 integration_batch_precompile() {
     [ "$INTEGRATION_BATCH_SIZE" -gt 0 ] || return 0
-    ci_timing_run manifest batch-queue integration_batch_queue
+    ci_timing_run manifest batch-queue integration_batch_queue || return 1
     _pool_queue="$WORKDIR/batch-pool.queue"
-    [ ! -s "$_pool_queue" ] || integration_batch_run_pool "$_pool_queue"
+    if [ -s "$_pool_queue" ]; then
+        integration_batch_run_pool "$_pool_queue" || return 1
+    fi
     echo "[integration] batched compile: $INTEGRATION_BATCH_CHUNKS chunk(s)" \
         "of up to $INTEGRATION_BATCH_SIZE, $INTEGRATION_BATCH_FAILED_CHUNKS failed"
     if [ "$INTEGRATION_POOL_PEAK_BYTES" -gt 0 ]; then
@@ -3476,10 +3462,234 @@ integration_batch_sentinel() {
 }
 
 # Staging stays inside the batch-compile phase row it has always been part of.
+integration_source_location_self_test() (
+    # Exercise the real assertion on every anchored row for this host. Planted
+    # failures stay in private logs and do not enter the corpus timing/counts.
+    TYPELISP_CI_TIMING=0
+    sl_checked=0
+    while IFS='|' read -r sl_name sl_source sl_want sl_stdout sl_args sl_deps sl_extra sl_suite; do
+        case "$sl_extra" in *'@loc{'*) ;; *) continue ;; esac
+        sl_spec=${sl_extra#*expected-stderr:}
+        sl_token=${sl_spec#*@loc\{}
+        sl_token=${sl_token%%\}*}
+        sl_location=$(resolve_source_locations "@loc{$sl_token}") || exit 1
+        sl_column=${sl_location##*:}
+        sl_prefix=${sl_location%:*}
+        sl_line=${sl_prefix##*:}
+        sl_dir="$WORKDIR/source-location-self-test/$sl_name"
+        mkdir -p "$sl_dir" || exit 1
+        : > "$sl_dir/stdout" || exit 1
+        : > "$sl_dir/shell-stderr" || exit 1
+        write_expected_stream "$sl_spec" "$sl_dir/correct" || exit 1
+        for sl_mutation in correct wrong-line wrong-column; do
+            case "$sl_mutation" in
+                correct) cp "$sl_dir/correct" "$sl_dir/actual" || exit 1; sl_failures=0 ;;
+                wrong-line)
+                    sed "s/:$sl_line:$sl_column:/:$((sl_line + 1)):$sl_column:/" "$sl_dir/correct" > "$sl_dir/actual" || exit 1
+                    sl_failures=1 ;;
+                wrong-column)
+                    sed "s/:$sl_line:$sl_column:/:$sl_line:$((sl_column + 1)):/" "$sl_dir/correct" > "$sl_dir/actual" || exit 1
+                    sl_failures=1 ;;
+            esac
+            got=$sl_want
+            failed=0
+            ran=0
+            case_timed_out=0
+            assert_manifest_case "$sl_name" "$sl_want" "$sl_stdout" "$sl_spec" \
+                "$sl_dir/unused.s" "$sl_dir/stdout" "$sl_dir/actual" "$sl_dir" "$sl_dir/shell-stderr" \
+                > "$sl_dir/$sl_mutation.log" 2>&1 || exit 1
+            [ "$ran" -eq 1 ] && [ "$failed" -eq "$sl_failures" ] || {
+                echo "source location assertion self-test failed: $sl_name $sl_mutation" >&2
+                exit 1
+            }
+            sl_checked=$((sl_checked + 1))
+        done
+    done < "$NORMALIZED_MANIFEST"
+    echo "native source location assertions passed $sl_checked mutation/control cases"
+)
+
 integration_prepare() {
-    integration_stage_corpus
+    integration_stage_corpus || return 1
+    integration_source_location_self_test || exit 1
     integration_batch_precompile
 }
+
+# Exercise the actual preparation chain without another compiler build. Each
+# child has ordinary errexit semantics, its own timing file and phase trace;
+# only leaf work is planted. The real staging self-test rejects the deliberately
+# broken empty-plan helper, as in #9368's original reproduction.
+run_preparation_failure_self_test() (
+    prep_root="$WORKDIR/preparation-failure-self-test"
+    mkdir -p "$prep_root"
+    printf 'host\ttiming\tfailure\texit\n' > "$prep_root/results.tsv"
+    for prep_host in linux windows; do
+        for prep_timing in 0 1; do
+            for prep_failure in success helper-build helper-assemble helper-link self-test stage-plan dependency stage-copy location batch-queue pool; do
+                prep_dir="$prep_root/$prep_host-$prep_timing-$prep_failure"
+                mkdir -p "$prep_dir"
+                (
+                    set -e
+                    HOST_OS=$prep_host
+                    WORKDIR=$prep_dir
+                    STAGE_PLAN="$WORKDIR/stage.plan"
+                    NORMALIZED_MANIFEST="$WORKDIR/manifest"
+                    prep_deps=-
+                    [ "$prep_failure" != dependency ] || prep_deps=missing-regression.tl
+                    printf 'fixture|tests/integration/exit_42.tl|42|-|-|%s\n' \
+                        "$prep_deps" > "$NORMALIZED_MANIFEST"
+                    TYPELISP_CI_TIMING=$prep_timing
+                    TYPELISP_CI_TIMING_GATE=preparation-failure-self-test
+                    ci_timing_init "$WORKDIR/timing.tsv" "$HOST_OS"
+                    INTEGRATION_BATCH_SIZE=1
+                    INTEGRATION_BATCH_CHUNKS=0
+                    INTEGRATION_BATCH_FAILED_CHUNKS=0
+                    INTEGRATION_POOL_PEAK_BYTES=0
+                    preparation_fixture_step() {
+                        printf '%s\n' "$1" >> "$WORKDIR/trace"
+                        [ "$prep_failure" != "$1" ]
+                    }
+                    run_build() {
+                        if preparation_fixture_step helper-build; then
+                            build_rc=0
+                        else
+                            build_rc=1
+                        fi
+                    }
+                    as() { preparation_fixture_step helper-assemble; }
+                    ld() {
+                        STAGE_HELPER=preparation_fixture_helper
+                        preparation_fixture_step helper-link
+                    }
+                    assemble_link_windows() { as && ld; }
+                    preparation_fixture_helper() {
+                        if [ "$prep_failure" = self-test ]; then
+                            preparation_fixture_step self-test
+                        else
+                            preparation_fixture_step stage-copy
+                        fi
+                    }
+                    if [ "$prep_failure" != self-test ]; then
+                        integration_stage_self_test() { preparation_fixture_step self-test; }
+                    fi
+                    stage_plan_copy() {
+                        preparation_fixture_step stage-plan || return 1
+                        printf '%s\t%s\n' "$1" "$2" >> "$STAGE_PLAN"
+                    }
+                    integration_source_location_self_test() { preparation_fixture_step location; }
+                    integration_batch_queue() {
+                        preparation_fixture_step batch-queue || return 1
+                        printf 'batch-embedded-1|64\n' > "$WORKDIR/batch-pool.queue"
+                    }
+                    integration_batch_run_pool() { preparation_fixture_step pool; }
+                    ci_timing_run manifest batch-compile integration_prepare
+                    printf 'continued\n' >> "$WORKDIR/trace"
+                ) > "$prep_dir/stdout" 2> "$prep_dir/stderr" &
+                prep_pid=$!
+                prep_rc=0
+                wait "$prep_pid" || prep_rc=$?
+                printf '%s\t%s\t%s\t%s\n' "$prep_host" "$prep_timing" \
+                    "$prep_failure" "$prep_rc" >> "$prep_root/results.tsv"
+                prep_stop=$prep_failure
+                [ "$prep_failure" != dependency ] || prep_stop=stage-plan
+                : > "$prep_dir/expected-trace"
+                for prep_phase in helper-build helper-assemble helper-link self-test stage-plan stage-copy location batch-queue pool continued; do
+                    printf '%s\n' "$prep_phase" >> "$prep_dir/expected-trace"
+                    [ "$prep_phase" != "$prep_stop" ] || break
+                done
+                if ! cmp -s "$prep_dir/expected-trace" "$prep_dir/trace" ||
+                    { [ "$prep_failure" = success ] && [ "$prep_rc" -ne 0 ]; } ||
+                    { [ "$prep_failure" != success ] && [ "$prep_rc" -ne 1 ]; }; then
+                    echo "FAIL: preparation propagated the wrong status/phases: $prep_host/$prep_timing/$prep_failure" >&2
+                    cat "$prep_dir/trace" "$prep_dir/stderr" >&2
+                    exit 1
+                fi
+                if [ "$prep_failure" = self-test ] &&
+                    ! grep -F -q 'FAIL: staging helper rejected an empty plan' "$prep_dir/stderr"; then
+                    echo "FAIL: preparation fixture did not reach the real staging self-test" >&2
+                    exit 1
+                fi
+                if [ "$prep_timing" -eq 0 ]; then
+                    [ ! -e "$prep_dir/timing.tsv" ] || exit 1
+                elif ! awk -F '\t' -v failure="$prep_failure" '
+                    NR == 1 { next }
+                    failed && $5 == 0 { bad = 1 }
+                    $5 != 0 { failed = 1 }
+                    $3 == "batch-compile" { outer++; status = $5 }
+                    END {
+                        if (failure == "location") exit bad || outer != 0
+                        exit bad || outer != 1 || status != (failure == "success" ? 0 : 1)
+                    }
+                ' "$prep_dir/timing.tsv"; then
+                    echo "FAIL: preparation published misleading timing: $prep_host/$prep_failure" >&2
+                    cat "$prep_dir/timing.tsv" >&2
+                    exit 1
+                fi
+            done
+        done
+    done
+    # A successful Windows compile can still return an invalid result plan.
+    # Settling must preserve the real plan validator's refusal rather than
+    # replacing it with the chunk's earlier successful compile status.
+    for prep_timing in 0 1; do
+        prep_dir="$prep_root/windows-$prep_timing-invalid-result-plan"
+        mkdir -p "$prep_dir"
+        (
+            set -e
+            HOST_OS=windows
+            WORKDIR=$prep_dir
+            TYPELISP_CI_TIMING=$prep_timing
+            TYPELISP_CI_TIMING_GATE=preparation-failure-self-test
+            ci_timing_init "$WORKDIR/timing.tsv" "$HOST_OS"
+            printf '0\n' > "$WORKDIR/batch-embedded-1.status"
+            printf '0\n' > "$WORKDIR/batch-embedded-1.elapsed-ms"
+            printf 'invalid\n' > "$WORKDIR/batch-embedded-1.plan"
+            printf 'invalid\n' > "$WORKDIR/batch-embedded-1.list"
+            ci_timing_run manifest batch-settle integration_batch_settle_chunk \
+                "$WORKDIR/batch-embedded-1.list" embedded-1 ''
+            : > "$WORKDIR/continued"
+        ) > "$prep_dir/stdout" 2> "$prep_dir/stderr" &
+        prep_pid=$!
+        prep_rc=0
+        wait "$prep_pid" || prep_rc=$?
+        if [ "$prep_rc" -ne 1 ] || [ -e "$prep_dir/continued" ] ||
+            ! grep -F -q 'FAIL: invalid Windows COFF result plan' "$prep_dir/stderr"; then
+            echo 'FAIL: batch settlement lost the Windows plan validator failure' >&2
+            cat "$prep_dir/stderr" >&2
+            exit 1
+        fi
+        if [ "$prep_timing" -eq 1 ]; then
+            awk -F '\t' 'NR > 1 { rows++; if ($3 != "batch-settle" || $5 != 1) bad=1 }
+                END { exit bad || rows != 1 }' "$prep_dir/timing.tsv" || exit 1
+        fi
+    done
+    echo 'verify-integration preparation failure self-test passed (46 host/timing/control cases)'
+)
+
+if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
+    sh "$ROOT/scripts/verify-native-link-failures.sh" "$WORKDIR/native-link-failure-self-test"
+    run_preparation_failure_self_test
+    run_batch_observability_self_test
+    exit 0
+fi
+
+if [ "$BACKEND_CMP_MEM_FOLD_PARITY_ONLY" -eq 1 ]; then
+    if [ "$HOST_OS" = linux ]; then
+        run_linux_fixture_cases --only backend-cmp-mem-fold-parity
+    else
+        run_backend_cmp_mem_fold_parity_fixtures
+    fi
+    exit 0
+fi
+
+# The wide-struct literal declarations are generated, not committed.
+awk -f "$ROOT/tests/integration/wide_struct_literal_decls.awk" > "$WORKDIR/wide_struct_literal_decls.tl"
+mv "$WORKDIR/wide_struct_literal_decls.tl" "$ROOT/tests/integration/wide_struct_literal_decls.tl"
+
+ci_timing_run manifest validate validate_manifest
+if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
+    echo "integration manifest validation passed for $HOST_OS"
+    exit 0
+fi
 
 ci_timing_run manifest batch-compile integration_prepare
 integration_batch_sentinel

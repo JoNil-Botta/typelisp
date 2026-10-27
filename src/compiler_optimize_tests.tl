@@ -32,6 +32,7 @@
 (import compiler_builtin_ids as cbi)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import lex)
 
 ;; Whole-program entries arm the checked tier; a fixture must restore the
 ;; caller's mode so later band-only and explicitly armed probes stay distinct.
@@ -27273,11 +27274,16 @@
     [allocation : ir.CompilerIrFunction (opt-tailrec-frame-test-function 1)]
     [contained : ir.CompilerIrFunction (opt-tailrec-frame-test-function 2)]
     [contained-out : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt-tailrec-frame-test-function 2))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-tailrec-frame-test-function 2))]
     [address-out : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view address))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.compiler-opt-global-shared-view address))]
     [allocation-out : ir.CompilerIrFunction
       (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
         (opt.compiler-opt-global-shared-view allocation))]
     (cond
       [(not
@@ -27299,17 +27305,288 @@
         3]
       [else 42])))
 
+;; Authored IR reaches the optimizer even when source lowering cannot produce
+;; an outgoing argument aliasing its own hidden result. Modes retain ordinary
+;; calls for aliases, exposed frames, post-call effects, partial/incompatible
+;; copies, and additional observers of the temporary/result.
+(define (opt-tailrec-array-result-fixture [mode : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @array_tail(output=%0:u64, depth=%1:i64, seed=%2:u64) -> u64 vars 12 abi return-storage internal-leading arg 0 bytes 24 align 8 output (Array i64 3) result u64 params (u64 i64 u64) source (-> i64 u64 (Array i64 3)) {\nentry:\n"
+      (cond
+        [(= mode 2) "%10 = addr_of %2\n"]
+        [(= mode 8) "%10 = gep %0, 0 : u8\n"]
+        [(= mode 9) "store_ptr %2, %0 : u64\n"]
+        [else ""])
+      "%3 = alloc (Array i64 3)\n%4 = alloc (Array i64 3)\n"
+      (if (= mode 10)
+        "%5 = alloc (Array i64 4)\n"
+        "%5 = alloc (Array i64 3)\n")
+      "%6 = addr_of %5 storage 3\n"
+      (if (= mode 6)
+        "%10 = mov %6 : u64\n"
+        "")
+      "%7 = cast %6 : "
+      (if (= mode 5)
+        "(Array i64 4)"
+        "(Array i64 3)")
+      " to u64\n%8 = call "
+      (if (= mode 11)
+        "other_array"
+        "array_tail")
+      "([sret arg 0] %7, %1, "
+      (cond [(= mode 1) "%0"] [(or (= mode 2) (= mode 8)) "%10"] [else "%2"])
+      ") : u64\n"
+      (cond
+        [(= mode 3) "%11 = call observe() : i64\n"]
+        [(= mode 7) "%11 = load %8 : i64\n"]
+        [else ""])
+      "copy_bytes %0, %6, "
+      (if (= mode 4)
+        "16"
+        "24")
+      "\nreturn %0\n}")))
+
+(define (opt-tailrec-array-authorize
+  [pools : ast.AstNodePoolContext]
+  [program : ir.CompilerIrProgram]) : ir.CompilerIrProgram
+  (match program
+    [(Program globals functions externs _)
+      (let
+        [interns : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+        [claims : ir.CompilerIrReturnStorageIndex
+          (ir.compiler-ir-return-storage-index-claims
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            (ir.compiler-ir-type-pool-count pools)
+            (& functions)
+            (& externs))]
+        (Program
+          globals
+          functions
+          externs
+          (ir.compiler-ir-return-storage-authority-capture
+            pools
+            (& interns)
+            -1
+            (& claims))))]))
+
+(test
+  tailrec-fixed-array-result
+  (for [mode (iterator.range 0 12)]
+    (let
+      [input : ir.CompilerIrFunction (opt-tailrec-array-result-fixture mode)]
+      [output : ir.CompilerIrFunction
+        (opt.opt-tailrec-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (opt.compiler-opt-global-shared-view input))]
+      [output-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks output)]
+      ;; Layout/nonself controls intentionally lack the self-call's exact
+      ;; declaration. Legal guard controls must first pass storage verification.
+      (unless
+        (or (= mode 5) (= mode 10) (= mode 11))
+        (let
+          [pools : ast.AstNodePoolContext
+            (ast.ast-node-pool-reader-context-current)]
+          [program : ir.CompilerIrProgram
+            (opt-tailrec-array-authorize
+              pools
+              (Program
+                (ir.compiler-ir-global-seq-empty)
+                (ir.compiler-ir-function-seq1 (& input))
+                (ir.compiler-ir-extern-seq-empty)
+                ir.CompilerIrReturnStorageAuthority.None))]
+          (match (opt.opt-verify-program (& program))
+            [(Err message) (test.assert-true false message)]
+            [(Ok) unit])))
+      (if (= mode 0)
+        (begin
+          (test.assert-i64-eq
+            (opt.opt-function-frame output)
+            15
+            "self call becomes a loop")
+          (test.assert-i64-eq
+            (opt-count-tail-call-blocks
+              (ir.compiler-ir-block-list-view output-blocks))
+            0
+            "loop consumes the exposed tail call")
+          (let
+            [ssa : ir.CompilerIrFunction
+              (opt.opt-ssa-construct-function
+                (ast.ast-node-pool-reader-type-segment-bases)
+                (& output))]
+            (match (opt.opt-verify-function (& ssa))
+              [(Err message) (test.assert-true false message)]
+              [(Ok) unit])))
+        (test.assert-true
+          (opt.opt-function-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            input
+            output)
+          "alias/frame/post-call/layout/observer controls retain the original function")))))
+
+(test
+  tailrec-frame-refusal-preserves-inline-policy
+  (let
+    [input : ir.CompilerIrFunction (opt-tailrec-frame-test-function 0)]
+    [functions : ir.CompilerIrFunctionSeq
+      (opt.opt-tailrec-function-seq!
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq1 (& input)))]
+    [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
+    (test.assert-true
+      (opt.opt-inline-tailrec-converted-slot?
+        (& index)
+        (opt.opt-function-name (& input)))
+      "the original frame-refused self tail call retains its inliner refusal")))
+
+(define (opt-tailrec-array-owner-program) : ir.CompilerIrProgram
+  (irt.program
+    "function @array_tail(output=%0:u64, depth=%1:i64, seed=%2:u64) -> u64 vars 14 abi return-storage internal-leading arg 0 bytes 24 align 8 output (Array i64 3) result u64 params (u64 i64 u64) source (-> i64 u64 (Array i64 3)) {
+     entry:
+       %9 = gt %1, 0 : i64
+       branch %9, recur, base
+     recur:
+       %11 = sub %1, 1 : i64
+       %3 = alloc (Array i64 3)
+       %4 = alloc (Array i64 3)
+       %5 = alloc (Array i64 3)
+       %6 = addr_of %5 storage 3
+       %7 = cast %6 : (Array i64 3) to u64
+       %8 = call array_tail([sret arg 0] %7, %11, %2) : u64
+       copy_bytes %0, %6, 24
+       return %0
+     base:
+       store_ptr %0, 10 : i64
+       %12 = gep %0, 8 : u8
+       store_ptr %12, 11 : i64
+       %13 = gep %0, 16 : u8
+       store_ptr %13, 21 : i64
+       return %0
+     }
+     function @main() -> i64 vars 7 {
+     entry:
+       %0 = alloc (Array i64 3)
+       %1 = alloc (Array i64 3)
+       %2 = alloc (Array i64 3)
+       %3 = addr_of %2 storage 3
+       %4 = cast %3 : (Array i64 3) to u64
+       %5 = call array_tail([sret arg 0] %4, 2, 0) : u64
+       %6 = load %3 : i64
+       return %6
+     }"))
+
+(test
+  tailrec-array-result-explicit-owner
+  (let
+    [saved : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    (for [colliding? (array false true)]
+      (ast.ast-node-pool-context-install!
+        (ast.ast-node-pool-context-new-with-capacities 4 16))
+      (let
+        [raw : ir.CompilerIrProgram (opt-tailrec-array-owner-program)]
+        [owner : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        [program : ir.CompilerIrProgram (opt-tailrec-array-authorize owner raw)]
+        [_verify-input : unit
+          (match (opt.opt-verify-program (& program))
+            [(Err message) (test.assert-true false message)]
+            [(Ok) unit])]
+        [request : opt.OptimizeRequest (opt.optimize-request owner 2)]
+        [decoy : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 4 16)]
+        [_fill : unit
+          (when
+            colliding?
+            (let
+              [filler : i64 (ast.ast-node-pool-context-type-push decoy (F64))]
+              (for [i (iterator.range 0 32)]
+                (set!
+                  filler
+                  (ast.ast-node-pool-context-type-push
+                    decoy
+                    (Array filler (+ i 1)))))))]
+        [_install : unit (ast.ast-node-pool-context-install! decoy)]
+        [before : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        [optimized : opt.CompilerOptimizedProgram
+          (with-test-inline-mode
+            (opt.optimize-program
+              program
+              (ir.compiler-source-spans-empty)
+              request))]
+        [after : ast.AstNodePoolContext
+          (ast.ast-node-pool-reader-context-current)]
+        (test.assert-i64-eq
+          (ast.ast-node-pool-context-type-segment-bases before)
+          (ast.ast-node-pool-context-type-segment-bases after)
+          "optimization preserves the installed peer")
+        (test.assert-i64-eq
+          (ir.compiler-ir-type-pool-count before)
+          (ir.compiler-ir-type-pool-count after)
+          "optimization does not add types to the peer")
+        (ast.ast-node-pool-context-install! owner)
+        (match optimized
+          [(Program result _)
+            (match (opt.opt-verify-program (& result))
+              [(Err message) (test.assert-true false message)]
+              [(Ok) unit])
+            (match result
+              [(Program _ functions _ _)
+                (match (opt-function-seq-find (& functions) "array_tail")
+                  [(Some func)
+                    (let
+                      [blocks : ir.CompilerIrBlockList
+                        (opt.opt-function-blocks (& func))]
+                      (test.assert-i64-eq
+                        (opt-count-direct-call-name-blocks
+                          (ir.compiler-ir-block-list-view blocks)
+                          "array_tail")
+                        0
+                        "the owner's array self call becomes a loop")
+                      (test.assert-i64-eq
+                        (opt-scratch-reset-call-count (& func) "tl_region_mark")
+                        0
+                        "retired result slots do not open an arena scope")
+                      (test.assert-i64-eq
+                        (opt-scratch-reset-call-count
+                          (& func)
+                          "tl_region_reset")
+                        0
+                        "retired result slots do not reset an arena each iteration")
+                      (match func
+                        [(Function
+                            _
+                            _
+                            _
+                            _
+                            _
+                            (ir.CompilerIrFunctionAbi.ReturnStorage _))
+                          unit]
+                        [_
+                          (test.assert-true
+                            false
+                            "the hidden result ABI survives")]))]
+                  [(No)
+                    (test.assert-true
+                      false
+                      "the recursive array function remains")])])])))
+    (ast.ast-node-pool-context-install! saved)))
+
 (define (compiler-optimize-tailrec-self-test) : i64
   (let
     [rewritten : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt-tailrec-test-function))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-tailrec-test-function))]
     [rewritten-blocks : ir.CompilerIrBlockList
       (opt.opt-function-blocks rewritten)]
     [rewritten-instrs : ir.CompilerIrInstrSeq
       (opt-tailrec-entry-instrs rewritten-blocks)]
     [collision : ir.CompilerIrFunction (opt-tailrec-entry-collision-function)]
     [collision-out : ir.CompilerIrFunction
-      (opt.opt-tailrec-function (opt.compiler-opt-global-shared-view collision))]
+      (opt.opt-tailrec-function
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.compiler-opt-global-shared-view collision))]
     (cond
       [(not (= (opt.opt-function-frame rewritten) 4)) 1]
       [(not
@@ -34289,6 +34566,57 @@
     (not (opt.opt-licm-store-summary-clean? (opt-licm-summary-for-instr instr)))))
 
 ;; --- CALLMEM-ROOTS: the sret slot and the callee's own allocas ---------------
+(test
+  compiler-hidden-sret-name-identity
+  (let
+    [hidden : String (ir.compiler-ir-hidden-sret-param-name)]
+    [names : (Array String 2) (array "__sret" "x01__sret")]
+    [types : (Array ast.AstType 3)
+      (array (ast.ast-ty-ref 0 (& (I64))) (ast.ast-ty-mut-ptr (& (I64))) (U64))]
+    (test.assert-true
+      (not (lex.is-symbol-char (string.string-ref hidden 0)))
+      "hidden name has a prefix the source lexer cannot produce as a symbol")
+    (for [n (iterator.range 0 2)]
+      (for [t (iterator.range 0 3)]
+        (let
+          [params : ir.CompilerIrParamSeq
+            (ir.compiler-ir-param-seq-prepend
+              (Param (clone (array-ref names n)) (clone (array-ref types t)) 0)
+              (ir.compiler-ir-param-seq-empty))]
+          (test.assert-true
+            (not (opt.opt-inline-param-is-sret? (& params) 0))
+            "ordinary parameter must be staged")
+          (test.assert-true
+            (not (opt.opt-inline-params-have-sret? (& params)))
+            "ordinary parameter cannot admit an aggregate return")
+          (test.assert-i64-eq
+            (opt.opt-inline-checked-sret-var (& params))
+            -1
+            "ordinary parameter is not checked-inline result storage")
+          (test.assert-i64-eq
+            (opt.opt-slot-fwd-sret-param params)
+            -1
+            "ordinary parameter is not slot-forwarding result storage"))))
+    (let
+      [params : ir.CompilerIrParamSeq
+        (ir.compiler-ir-param-seq-prepend
+          (Param hidden (U64) 7)
+          (ir.compiler-ir-param-seq-empty))]
+      (test.assert-true
+        (opt.opt-inline-param-is-sret? (& params) 0)
+        "hidden stage control")
+      (test.assert-true
+        (opt.opt-inline-params-have-sret? (& params))
+        "hidden return control")
+      (test.assert-i64-eq
+        (opt.opt-inline-checked-sret-var (& params))
+        7
+        "hidden checked-inline control")
+      (test.assert-i64-eq
+        (opt.opt-slot-fwd-sret-param params)
+        7
+        "hidden slot-forwarding control"))))
+
 ;;
 ;; `sret_callee` stores its result through the hidden `__sret` parameter and
 ;; fills a temporary it allocated itself. Its call-memory row names a write
@@ -34347,6 +34675,7 @@
       (opt-callmem-roots-row (ir.compiler-ir-hidden-sret-param-name) 1)]
     [raw : i64 (opt-callmem-roots-row "raw" 1)]
     [source-name : i64 (opt-callmem-roots-row "__sret" 1)]
+    [escaped-source-name : i64 (opt-callmem-roots-row "x01__sret" 1)]
     [scalar : i64
       (opt-callmem-roots-row (ir.compiler-ir-hidden-sret-param-name) 2)]
     (cond
@@ -34364,6 +34693,8 @@
       ;; A source-spellable `__sret` is still just an ordinary raw u64 param.
       [(< source-name 0) 11]
       [(not (opt.opt-call-memory-summary-unknown? source-name)) 12]
+      [(< escaped-source-name 0) 13]
+      [(not (opt.opt-call-memory-summary-unknown? escaped-source-name)) 14]
       ;; a store through a non-pointer parameter is unknown whatever the slot
       [(< scalar 0) 9]
       [(not (opt.opt-call-memory-summary-unknown? scalar)) 10]
@@ -48018,7 +48349,9 @@
       (opt-test-optimize-function
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
-        (opt.opt-tailrec-function (opt-merged-loop-test-function)))]
+        (opt.opt-tailrec-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (opt-merged-loop-test-function)))]
     [merged-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks merged)]
     (cond
       [(not (opt.opt-verify-ok? (& (opt.opt-verify-function (& optimized))))) 1]
@@ -55771,7 +56104,7 @@
       [else 42])))
 
 ;; --- identical function merging self-test ----------------------------------
-(define (opt-merge-test-seq [texts : (__tl_dyn-array String)]) : ir.CompilerIrFunctionSeq
+(define (opt-merge-test-seq [texts : (& texts (__tl_dyn-array String))]) : ir.CompilerIrFunctionSeq
   (let
     [out : (__tl_dyn-array ir.CompilerIrFunction)
       (__tl_make-array ir.CompilerIrFunction (array-length texts))]
@@ -55855,22 +56188,62 @@
           (set! i (+ i 1)))
         out)]))
 
-(define (opt-merge-test-run [texts : (__tl_dyn-array String)] [init : String]) : String
+(define (opt-merge-test-run-value
+  [texts : (& texts (__tl_dyn-array String))]
+  [init : ir.CompilerIrValue]) : String
   (let
     [globals : (__tl_dyn-array ir.CompilerIrGlobal)
       (__tl_make-array ir.CompilerIrGlobal 1)]
     (set!
       (array-ref globals 0)
-      (ir.CompilerIrGlobal.Global
-        (opt-test-symbol "cell")
-        (I64)
-        (ir.CompilerIrValue.RuntimeGlobal (opt-test-symbol init))))
+      (ir.CompilerIrGlobal.Global (opt-test-symbol "cell") (I64) init))
     (opt-merge-test-render
       (opt.opt-merge-identical-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.CompilerIrGlobalSeq globals 1)
         (opt-merge-test-seq texts)
         (& (ir.compiler-ir-extern-seq-empty))))))
+
+(define (opt-merge-test-run
+  [texts : (& texts (__tl_dyn-array String))]
+  [init : String]) : String
+  (opt-merge-test-run-value
+    texts
+    (ir.CompilerIrValue.RuntimeGlobal (opt-test-symbol init))))
+
+;; Refuse either twin as a representative as well as a dropped candidate.
+;; Closure code addresses occur in stores, while global code addresses must
+;; obey the same rule without going through the instruction operand walker.
+(define (opt-merge-code-addresses-ok? [body : (& body str)]) : bool
+  (let
+    [texts : (__tl_dyn-array String) (__tl_make-array String 3)]
+    [names : (Array String 2) (array "a" "b")]
+    (set! (array-ref texts 0) (opt-merge-test-twin "a" (string.copy body)))
+    (set! (array-ref texts 1) (opt-merge-test-twin "b" (string.copy body)))
+    (for [i (iterator.range 0 2)]
+      (let
+        [name : String (string.copy (& (array-ref names i)))]
+        (set!
+          (array-ref texts 2)
+          (opt-merge-test-main
+            (str_cat.str-cat
+              "%3 = alloc u64\nstore_ptr %3, &@"
+              (string.copy (& name))
+              " : u64\n")))
+        (unless
+          (string.eq
+            (opt-merge-test-run (& texts) "b")
+            "a b main call:a call:b init:b ")
+          (return false))
+        (set! (array-ref texts 2) (opt-merge-test-main ""))
+        (unless
+          (string.eq
+            (opt-merge-test-run-value
+              (& texts)
+              (ir.CompilerIrValue.GlobalAddr (opt-test-symbol name)))
+            "a b main call:a call:b ")
+          (return false))))
+    true))
 
 (define (compiler-optimize-merge-functions-self-test) : i64
   (cbi.compiler-builtin-initialize-for-parse!)
@@ -55910,27 +56283,28 @@
       ;; The twin `b` folds into `a`: main's call and the initializer follow it.
       [(not
           (string.eq
-            (opt-merge-test-run plain "b")
+            (opt-merge-test-run (& plain) "b")
             "a main call:a call:a init:a "))
         1]
       ;; `fn@b` observes b's identity: nothing merges.
       [(not
           (string.eq
-            (opt-merge-test-run taken "b")
+            (opt-merge-test-run (& taken) "b")
             "a b main call:a call:b init:b "))
         2]
       ;; A located abort site names its own function: nothing merges.
       [(not
           (string.eq
-            (opt-merge-test-run checked "b")
+            (opt-merge-test-run (& checked) "b")
             "a b main call:a call:b init:b "))
         3]
       ;; Different bodies stay apart.
       [(not
           (string.eq
-            (opt-merge-test-run differ "b")
+            (opt-merge-test-run (& differ) "b")
             "a b main call:a call:b init:b "))
         4]
+      [(not (opt-merge-code-addresses-ok? (& body))) 5]
       [else 42])))
 
 ;; --- noalias fact model self-test -------------------------------------------

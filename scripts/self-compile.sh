@@ -40,7 +40,8 @@ usage:
   scripts/self-compile.sh measure --compiler PATH
   scripts/self-compile.sh check        (GitHub Actions pull_request, Linux)
   scripts/self-compile.sh reference    (GitHub Actions push or dry run, Linux)
-  scripts/self-compile.sh ledger       (GitHub Actions push to main, Linux)
+  scripts/self-compile.sh ledger --prepare  (validate records; output needs-tools)
+  scripts/self-compile.sh ledger       (finish the prepared ledger)
   scripts/self-compile.sh --self-test
 
 measure runs the self_compile measurement on PATH (the bootstrap fixpoint
@@ -801,6 +802,8 @@ sc_pr_record_binding() {
 # sc_this_runner_record DEST LIKE  ->  the identity a measurement taken on
 # this runner of the checkout would have, with LIKE's measured argv.
 sc_this_runner_record() {
+    [ "${TYPELISP_SELF_COMPILE_TOOLS_READY:-}" = true ] ||
+        sc_fail "install the shared Linux instruction-count tools before probing the ledger runner"
     {
         sc_record_line schema "$SC_RECORD_SCHEMA"
         sc_record_line metric "$SC_METRIC"
@@ -829,14 +832,11 @@ sc_ledger_measure_pair_here() {
         { echo "measuring $2 on the ledger runner failed" > "$3/measurement-problem"; return 3; }
 }
 
-# sc_ledger_pair C P DEST WORK
-#   A comparable measurement pair of P and C in DEST/parent.tsv and
-#   DEST/landed.tsv: C's reference from this run, with P's reference when
-#   comparable; otherwise P measured on this runner, and C as well when C's
-#   reference is not comparable with this runner. Downloads go to WORK.
-#   Sets SC_PAIR_SOURCE. Returns 1 for an infrastructure failure, 2 for a
-#   provenance failure, 3 for a measurement failure.
-sc_ledger_pair() {
+# sc_ledger_pair_references C P DEST WORK
+#   Validate C's reference and resolve P's comparable reference without probing
+#   this runner. Sets SC_PAIR_SOURCE and SC_REF_STATUS. Returns 1 for an
+#   infrastructure failure, 2 for provenance, or 4 when measurement is needed.
+sc_ledger_pair_references() {
     _slp_c=$1
     _slp_p=$2
     _slp_dest=$3
@@ -877,6 +877,16 @@ sc_ledger_pair() {
         SC_LEDGER_INFRA="resolving the parent reference failed"
         return 1
     fi
+    # No runner identity is needed until the workflow has installed its tools.
+    return 4
+}
+
+# Continue the prepared pair after the shared package action has succeeded.
+sc_ledger_pair_measure() {
+    _slp_c=$1
+    _slp_p=$2
+    _slp_dest=$3
+    _slp_work=$4
     sc_this_runner_record "$_slp_work/this-runner.tsv" "$_slp_dest/landed.tsv"
     if sc_records_comparable "$_slp_dest/landed.tsv" "$_slp_work/this-runner.tsv" > "$_slp_work/runner-differences"; then
         sc_run_fallback "$_slp_p" "$_slp_c" "$_slp_dest/parent.tsv" parent-fallback ||
@@ -1001,7 +1011,7 @@ sc_ledger_repair_entries() {
     done
 }
 
-sc_cmd_ledger() {
+sc_cmd_ledger_prepare() {
     sc_require_actions ledger
     [ "${GITHUB_EVENT_NAME:-}" = push ] || sc_fail "the ledger runs on pushes to main"
     _scl_c=$(git rev-parse HEAD)
@@ -1014,6 +1024,8 @@ sc_cmd_ledger() {
     [ ! -e "$_scl_work" ] || sc_fail "$_scl_work already exists"
     mkdir -p "$_scl_out/entry-inputs" "$_scl_work/walk"
     SC_LEDGER_INFRA=
+    SC_PAIR_SOURCE=
+    SC_REF_STATUS=
     {
         sc_record_line commit "$_scl_c"
         sc_run_lines
@@ -1028,9 +1040,9 @@ sc_cmd_ledger() {
     _scl_outcome=
     _scl_detail=
     _scl_pair_rc=0
-    sc_ledger_pair "$_scl_c" "$_scl_p" "$_scl_in" "$_scl_work/pair" || _scl_pair_rc=$?
+    sc_ledger_pair_references "$_scl_c" "$_scl_p" "$_scl_in" "$_scl_work/pair" || _scl_pair_rc=$?
     case "$_scl_pair_rc" in
-        0) ;;
+        0 | 4) ;;
         1) _scl_outcome=infrastructure-failure; _scl_detail=$SC_LEDGER_INFRA ;;
         2) _scl_outcome=provenance-failure; _scl_detail=$(cat "$_scl_in/provenance-problem") ;;
         *) _scl_outcome=measurement-failure; _scl_detail=$(cat "$_scl_in/measurement-problem" 2>/dev/null || echo "pair measurement failed") ;;
@@ -1042,16 +1054,75 @@ sc_cmd_ledger() {
             if git merge-base --is-ancestor "$_scl_b" "$_scl_p" 2>/dev/null; then
                 git log --first-parent --format=%H "$_scl_b..$_scl_p" > "$_scl_in/merges-between"
             fi
-            if ! sc_records_comparable "$_scl_in/pr-head.tsv" "$_scl_in/landed.tsv" >/dev/null ||
-                ! sc_records_comparable "$_scl_in/pr-base.tsv" "$_scl_in/landed.tsv" >/dev/null; then
-                sc_ledger_reproduce "$_scl_c" "$_scl_in" "$_scl_work/reproduce" ||
-                    sc_log "could not reproduce the PR comparison: $(cat "$_scl_in/reproduction-problem" 2>/dev/null)"
-            fi
         elif [ -n "$SC_LEDGER_INFRA" ]; then
             _scl_outcome=infrastructure-failure
             _scl_detail=$SC_LEDGER_INFRA
         else
             cp "$_scl_work/pr/attribution-problem" "$_scl_in/attribution-problem" 2>/dev/null || true
+        fi
+    fi
+    _scl_tools=no
+    if [ "$_scl_pair_rc" -eq 4 ] || {
+        [ -z "$_scl_outcome" ] && [ -f "$_scl_in/pr.tsv" ] && {
+            ! sc_records_comparable "$_scl_in/pr-head.tsv" "$_scl_in/landed.tsv" >/dev/null ||
+            ! sc_records_comparable "$_scl_in/pr-base.tsv" "$_scl_in/landed.tsv" >/dev/null
+        }
+    }; then
+        _scl_tools=yes
+    fi
+    {
+        sc_record_line pair_rc "$_scl_pair_rc"
+        sc_record_line pair_source "${SC_PAIR_SOURCE:-}"
+        sc_record_line reference_status "${SC_REF_STATUS:-}"
+        sc_record_line outcome "$_scl_outcome"
+        sc_record_line detail "$_scl_detail"
+        sc_record_line needs_tools "$_scl_tools"
+    } > "$_scl_work/preparation.tsv"
+    if [ -n "${GITHUB_OUTPUT:-}" ]; then
+        printf 'needs-tools=%s\n' "$_scl_tools" >> "$GITHUB_OUTPUT"
+    fi
+    sc_log "ledger records prepared; measurement tools needed: $_scl_tools"
+}
+
+sc_cmd_ledger() {
+    sc_require_actions ledger
+    [ "${GITHUB_EVENT_NAME:-}" = push ] || sc_fail "the ledger runs on pushes to main"
+    _scl_out=$SC_OUT/ledger
+    _scl_work=$SC_OUT/ledger-work
+    if [ ! -f "$_scl_work/preparation.tsv" ]; then
+        sc_cmd_ledger_prepare
+    fi
+    _scl_c=$(git rev-parse HEAD)
+    _scl_p=$(git rev-parse HEAD^1)
+    [ "$_scl_c" = "${GITHUB_SHA:-}" ] || sc_fail "checkout is not GITHUB_SHA"
+    [ ! -e "$_scl_out/entry.tsv" ] || sc_fail "the prepared ledger has already been completed"
+    [ "$(sc_record_get "$_scl_out/producer.tsv" commit)" = "$_scl_c" ] &&
+        [ "$(sc_record_get "$_scl_out/producer.tsv" run.id)" = "$GITHUB_RUN_ID" ] &&
+        [ "$(sc_record_get "$_scl_out/producer.tsv" run.attempt)" = "$GITHUB_RUN_ATTEMPT" ] ||
+        sc_fail "ledger preparation belongs to another commit or run attempt"
+    _scl_in=$_scl_out/entry-inputs
+    _scl_outcome=$(sc_record_get "$_scl_work/preparation.tsv" outcome)
+    _scl_detail=$(sc_record_get "$_scl_work/preparation.tsv" detail)
+    _scl_pair_rc=$(sc_record_get "$_scl_work/preparation.tsv" pair_rc)
+    SC_PAIR_SOURCE=$(sc_record_get "$_scl_work/preparation.tsv" pair_source)
+    SC_REF_STATUS=$(sc_record_get "$_scl_work/preparation.tsv" reference_status)
+    if [ "$(sc_record_get "$_scl_work/preparation.tsv" needs_tools)" = yes ]; then
+        # This value is set only by the workflow's successful shared action.
+        # Never predict valgrind's identity from a reference or package plan.
+        [ "${TYPELISP_SELF_COMPILE_TOOLS_READY:-}" = true ] ||
+            sc_fail "ledger measurement requires the successful shared Linux instruction-count tools action"
+    fi
+    if [ "$_scl_pair_rc" -eq 4 ]; then
+        if ! sc_ledger_pair_measure "$_scl_c" "$_scl_p" "$_scl_in" "$_scl_work/pair"; then
+            _scl_outcome=measurement-failure
+            _scl_detail=$(cat "$_scl_in/measurement-problem" 2>/dev/null || echo "pair measurement failed")
+        fi
+    fi
+    if [ -z "$_scl_outcome" ] && [ -f "$_scl_in/pr.tsv" ]; then
+        if ! sc_records_comparable "$_scl_in/pr-head.tsv" "$_scl_in/landed.tsv" >/dev/null ||
+            ! sc_records_comparable "$_scl_in/pr-base.tsv" "$_scl_in/landed.tsv" >/dev/null; then
+            sc_ledger_reproduce "$_scl_c" "$_scl_in" "$_scl_work/reproduce" ||
+                sc_log "could not reproduce the PR comparison: $(cat "$_scl_in/reproduction-problem" 2>/dev/null)"
         fi
     fi
     if [ -z "$_scl_outcome" ]; then
@@ -1236,7 +1307,14 @@ case "${1:-}" in
     measure) shift; sc_cmd_measure "$@" ;;
     check) shift; sc_cmd_check "$@" ;;
     reference) shift; sc_cmd_reference "$@" ;;
-    ledger) shift; sc_cmd_ledger "$@" ;;
+    ledger)
+        shift
+        case "$*" in
+            --prepare) sc_cmd_ledger_prepare ;;
+            "") sc_cmd_ledger ;;
+            *) usage >&2; exit 2 ;;
+        esac
+        ;;
     fallback) shift; sc_cmd_fallback "$@" ;;
     --self-test) sc_self_test ;;
     -h | --help) usage ;;

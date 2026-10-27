@@ -131,6 +131,20 @@ grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
 # Dumping them must resolve syntax IDs through their owner, never as pool indexes.
 STRUCTURAL_SOURCE="$ROOT/tests/golden/ir_structural_names.tl"
 for opt in 0 1 2; do
+    for source in recursive_aggregate_return recursive_aggregate_return_variants fixed_array_result_tailrec; do
+        for target in linux-x86_64 windows-x86_64; do
+            "$COMPILER" compile "$ROOT/tests/integration/$source.tl" \
+                --target "$target" --dump-ir --verify-ir --opt-level "$opt" \
+                -o "$WORKDIR/$source-$target-$opt.ir" \
+                >"$WORKDIR/$source-$target-$opt.stdout" \
+                2>"$WORKDIR/$source-$target-$opt.stderr"
+        done
+    done
+    "$COMPILER" compile "$ROOT/tests/integration/hidden_sret_source_name.tl" \
+        --dump-ir --verify-ir --opt-level "$opt" \
+        -o "$WORKDIR/hidden-sret-source-name-$opt.ir" \
+        >"$WORKDIR/hidden-sret-source-name-$opt.stdout" \
+        2>"$WORKDIR/hidden-sret-source-name-$opt.stderr"
     "$COMPILER" compile "$STRUCTURAL_SOURCE" --dump-ir --opt-level "$opt" \
         -o "$WORKDIR/structural-$opt.ir" \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \

@@ -66,8 +66,13 @@ sc_record_get() {
     ' "$1"
 }
 
+SC_RECORD_CR=$(printf '\r')
 sc_record_line() {
-    _srl_value=$(printf '%s' "$2" | tr '\t\r\n' '   ')
+    _srl_value=$2
+    case "$_srl_value" in
+        *'	'* | *'
+'* | *"$SC_RECORD_CR"*) _srl_value=$(printf '%s' "$2" | tr '\t\r\n' '   ') ;;
+    esac
     printf '%s\t%s\n' "$1" "$_srl_value"
 }
 
@@ -87,59 +92,76 @@ sc_is_count() {
 
 # sc_record_validate FILE [ROLE...]
 #   Structural validation; prints the first problem and fails.
-sc_record_validate() {
-    _srv_file=$1
-    shift
-    [ -f "$_srv_file" ] || { echo "missing record $_srv_file"; return 1; }
-    for _srv_key in $SC_RECORD_REQUIRED_KEYS; do
-        _srv_value=$(sc_record_get "$_srv_file" "$_srv_key") || {
-            echo "record $_srv_file lacks $_srv_key"
-            return 1
+SC_RECORD_AWK='
+    # Prefix values so awk never compares numeric-looking identities as numbers.
+    # Match sc_record_get: first occurrence wins; retain the complete value.
+    function record_read(file, slot,    line, key, pos) {
+        while ((getline line < file) > 0) {
+            pos = index(line, "\t")
+            key = pos ? substr(line, 1, pos - 1) : line
+            if (!((slot SUBSEP key) in rec))
+                rec[slot, key] = "x" (pos ? substr(line, pos + 1) : "")
         }
-        [ -n "$_srv_value" ] || { echo "record $_srv_file has an empty $_srv_key"; return 1; }
-    done
-    [ "$(sc_record_get "$_srv_file" schema)" = "$SC_RECORD_SCHEMA" ] || {
-        echo "record $_srv_file has schema $(sc_record_get "$_srv_file" schema), expected $SC_RECORD_SCHEMA"
-        return 1
+        close(file)
     }
-    [ "$(sc_record_get "$_srv_file" metric)" = "$SC_METRIC" ] || {
-        echo "record $_srv_file measures $(sc_record_get "$_srv_file" metric), not $SC_METRIC"
-        return 1
-    }
-    sc_is_count "$(sc_record_get "$_srv_file" ir_count)" || {
-        echo "record $_srv_file has a malformed ir_count"
-        return 1
-    }
-    sc_is_sha "$(sc_record_get "$_srv_file" commit)" || { echo "record $_srv_file has a malformed commit"; return 1; }
-    sc_is_sha "$(sc_record_get "$_srv_file" tree)" || { echo "record $_srv_file has a malformed tree"; return 1; }
-    [ "$(sc_record_get "$_srv_file" compiler_commit)" = "$(sc_record_get "$_srv_file" commit)" ] || {
-        echo "record $_srv_file measured a compiler stamped $(sc_record_get "$_srv_file" compiler_commit), not its commit"
-        return 1
-    }
-    if [ "$#" -gt 0 ]; then
-        _srv_role=$(sc_record_get "$_srv_file" role)
-        _srv_ok=1
-        for _srv_want in "$@"; do
-            [ "$_srv_role" = "$_srv_want" ] && _srv_ok=0
-        done
-        [ "$_srv_ok" -eq 0 ] || { echo "record $_srv_file has role $_srv_role, expected one of: $*"; return 1; }
-    fi
+    function value(slot, key) { return substr(rec[slot, key], 2) }
+    function problem(message) { print "record " ARGV[1] " " message; exit 1 }
+'
+
+sc_record_validate() {
+    [ -f "$1" ] || { echo "missing record $1"; return 1; }
+    awk -v required="$SC_RECORD_REQUIRED_KEYS" -v schema="$SC_RECORD_SCHEMA" -v metric="$SC_METRIC" "$SC_RECORD_AWK"'
+        BEGIN {
+            record_read(ARGV[1], 1)
+            n = split(required, keys, " ")
+            for (i = 1; i <= n; i++) {
+                key = keys[i]
+                if (!((1 SUBSEP key) in rec)) problem("lacks " key)
+                if (length(value(1, key)) == 0) problem("has an empty " key)
+            }
+            if (rec[1, "schema"] != "x" schema) problem("has schema " value(1, "schema") ", expected " schema)
+            if (rec[1, "metric"] != "x" metric) problem("measures " value(1, "metric") ", not " metric)
+            count = value(1, "ir_count")
+            if (count !~ /^[1-9][0-9]*$/ || length(count) > 15) problem("has a malformed ir_count")
+            for (i = 1; i <= 2; i++) {
+                key = i == 1 ? "commit" : "tree"
+                sha = value(1, key)
+                if (length(sha) != 40 || sha ~ /[^0-9a-f]/) problem("has a malformed " key)
+            }
+            if (rec[1, "compiler_commit"] != rec[1, "commit"])
+                problem("measured a compiler stamped " value(1, "compiler_commit") ", not its commit")
+            if (ARGC > 2) {
+                wants = ""
+                for (i = 2; i < ARGC; i++) {
+                    if (rec[1, "role"] == "x" ARGV[i]) ok = 1
+                    wants = wants (i == 2 ? "" : " ") ARGV[i]
+                }
+                if (!ok) problem("has role " value(1, "role") ", expected one of: " wants)
+            }
+            exit 0
+        }' "$@"
 }
 
 # sc_records_comparable A B
 #   Succeeds when every identity key matches; otherwise prints one line per
 #   differing key and fails. A hosted record never compares with a local one.
 sc_records_comparable() {
-    _src_status=0
-    for _src_key in $SC_COMPARABLE_KEYS authority; do
-        _src_a=$(sc_record_get "$1" "$_src_key" 2>/dev/null || printf '<missing>')
-        _src_b=$(sc_record_get "$2" "$_src_key" 2>/dev/null || printf '<missing>')
-        if [ "$_src_a" != "$_src_b" ] || [ "$_src_a" = unknown ] || [ "$_src_a" = '<missing>' ]; then
-            printf '%s: %s | %s\n' "$_src_key" "$_src_a" "$_src_b"
-            _src_status=1
-        fi
-    done
-    return "$_src_status"
+    awk -v keys="$SC_COMPARABLE_KEYS authority" "$SC_RECORD_AWK"'
+        BEGIN {
+            record_read(ARGV[1], 1)
+            record_read(ARGV[2], 2)
+            n = split(keys, names, " ")
+            for (i = 1; i <= n; i++) {
+                key = names[i]
+                a = ((1 SUBSEP key) in rec) ? rec[1, key] : "x<missing>"
+                b = ((2 SUBSEP key) in rec) ? rec[2, key] : "x<missing>"
+                if (a != b || a == "xunknown" || a == "x<missing>") {
+                    print key ": " substr(a, 2) " | " substr(b, 2)
+                    bad = 1
+                }
+            }
+            exit bad ? 1 : 0
+        }' "$1" "$2"
 }
 
 # sc_same_commit_binary A B  ->  two records of one commit built with the same
@@ -159,10 +181,9 @@ sc_same_commit_binary() {
 
 # sc_records_same_compiler A B
 #   Two measurements of one tree. The fixpoint compiler is stamped with its
-#   source commit, and the stamp also reaches content-derived assembly labels
-#   and the compressed embedded stdlib image, so builds of one tree from two
-#   commits (a tested merge and its squash) never match byte for byte. Two
-#   measurements of one commit must have measured byte-identical compilers.
+#   source commit in a separate static field, so builds of one tree from two
+#   commits (a tested merge and its squash) differ there. Two measurements of
+#   one commit must have measured byte-identical compilers.
 #   Prints `identical` or `commit-stamped`; prints a problem and fails otherwise.
 sc_records_same_compiler() {
     [ "$(sc_record_get "$1" tree)" = "$(sc_record_get "$2" tree)" ] || {

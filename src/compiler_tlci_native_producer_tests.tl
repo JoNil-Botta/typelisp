@@ -14,6 +14,241 @@
 (import stdlib.string)
 (import stdlib.test)
 (import tlci_core)
+(import lex)
+
+(define (producer-source-failure-sentinel!) : unit
+  (let
+    [context : producer.TlciNativeSourceContext
+      (producer.tlci-native-source-context-new
+        (ast.ast-node-pool-context-new-with-capacities 1 1)
+        (ci.intern-compat-state-new))]
+    [patterns : ast.AstPatternList (ast.ast-pattern-list-new)]
+    (ast.ast-pattern-list-push (&mut patterns) (Wildcard))
+    (ast.ast-pattern-list-push
+      (&mut patterns)
+      (Tuple (box (ast.ast-pattern-list-new))))
+    (let
+      [failure : String
+        (producer.embedded-native-value-match-bind (& context) (& patterns) 1 0)]
+      (test.assert-true
+        (> (string.string-length failure) 0)
+        "failure is not empty success")
+      (test.assert-true
+        (not (lex.is-symbol-char (string.string-ref failure 0)))
+        "failure sentinel cannot be a source symbol")
+      (test.assert-owned-string-eq
+        (producer.embedded-native-value-match-bind (& context) (& patterns) 0 0)
+        failure
+        "unsupported tail propagates the sentinel")
+      (test.assert-owned-string-eq
+        (producer.embedded-native-value-match-bind (& context) (& patterns) 2 0)
+        ""
+        "completed binding chain is empty success"))))
+
+(test
+  native-source-unspellable-failure-sentinel
+  (producer-source-failure-sentinel!))
+
+;; Parse real macro input and exercise the complete source producer, including
+;; native-entry accounting and its registration-shell fallback. Refs #9341.
+(define (producer-pattern-source! [pattern : String] [expected-native : i64]) : unit
+  (let
+    [source : String
+      (str_cat.str-cat
+        "(defmacro (probe [value : Expr]) : Expr (match value ["
+        pattern
+        " `(+ 1 2)] [_ `(+ 3 4)]))")]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [parse-state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-capture-active))]
+    (match (parser.parse-ast-source-with-cfg-and-pools
+      (& source)
+      (parser.compiler-parse-state-cfgs
+        (& parse-state)
+        (parser.compiler-cfg-empty))
+      pools)
+      [(Err message) (io.panic message)]
+      [(Ok (Program declarations))
+        (match (ast.ast-decl-list-step (deref declarations))
+          [(Cons (DefMacro _ _ params _ body) _)
+            (let
+              [context : producer.TlciNativeSourceContext
+                (producer.tlci-native-source-context-new
+                  (ast.ast-node-pool-context-capture-active)
+                  (parser.compiler-parse-state-owner
+                    (parser.compiler-parse-state-control-addr (& parse-state))))]
+              [names : (__tl_dyn-array String) (__tl_make-array "probe/probe")]
+              [captures : producer.TlciNativeMacroCaptures
+                (producer.tlci-native-macro-captures-new)]
+              [_capture : unit
+                (producer.tlci-native-macro-captures-push!
+                  (&mut captures)
+                  (producer.TlciNativeMacroCapture "probe/probe" params 0 body))]
+              [generated : String
+                (producer.embedded-native-source
+                  (& context)
+                  (& names)
+                  (& captures))]
+              (test.assert-i64-eq
+                (array-ref producer.embedded-stdlib-tlci-native-report-count 0)
+                expected-native
+                "unsupported patterns must not count as native entries")
+              (test.assert-i64-eq
+                (occurrences (& generated) "$tlci-unsupported")
+                0
+                "the failure sentinel must not reach generated source")
+              (test.assert-i64-eq
+                (occurrences
+                  (&
+                    (array-ref
+                      producer.embedded-stdlib-tlci-native-report-reasons
+                      0))
+                  "probe/probe\t")
+                (- 1 expected-native)
+                "only unsupported patterns report a registration shell")
+              (test.assert-i64-eq
+                (array-ref producer.embedded-native-local-len 0)
+                0
+                "failed and successful arm binding scopes are restored"))]
+          [_ (io.panic "pattern fixture must contain a macro")])]
+      [_ (io.panic "pattern fixture must contain a program")])))
+
+(define (producer-pattern-fallback!) : unit
+  (producer-pattern-source! "(comptime.Expr.Call (comptime.Expr.Var f) args)" 0)
+  (producer-pattern-source! "(comptime.Expr.Call f (comptime.Expr.Int n))" 0)
+  (producer-pattern-source! "(comptime.Expr.Call f args)" 1)
+  (producer-pattern-source! "(comptime.Expr.Call _ args)" 1)
+  (producer-pattern-source! "(comptime.Expr.Call f _)" 1)
+  (producer-pattern-source! "(comptime.Expr.Call _ _)" 1))
+
+(test native-source-call-pattern-fallback (producer-pattern-fallback!))
+
+;; Run by the TLCI image gate's separately built, short-timeout driver: the
+;; unfixed diagnostic revisits a computed splice forever. Refs #9356.
+(define (producer-splice-source!
+  [template : String]
+  [expected-native : i64]
+  [expected-later-blocker : i64]) : unit
+  (let
+    [source : String
+      (str_cat.str-cat
+        "(defmacro (probe [values : Expr ...]) : Expr `"
+        template
+        ")")]
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [parse-state : parser.CompilerParseState
+      (parser.compiler-parse-state-new-with-intern-state
+        (ci.intern-compat-state-capture-active))]
+    (match (parser.parse-ast-source-with-cfg-and-pools
+      (& source)
+      (parser.compiler-parse-state-cfgs
+        (& parse-state)
+        (parser.compiler-cfg-empty))
+      pools)
+      [(Err message) (io.panic message)]
+      [(Ok (Program declarations))
+        (match (ast.ast-decl-list-step (deref declarations))
+          [(Cons (DefMacro _ _ params _ body) _)
+            (let
+              [context : producer.TlciNativeSourceContext
+                (producer.tlci-native-source-context-new
+                  (ast.ast-node-pool-context-capture-active)
+                  (parser.compiler-parse-state-owner
+                    (parser.compiler-parse-state-control-addr (& parse-state))))]
+              [names : (__tl_dyn-array String) (__tl_make-array "probe/probe")]
+              [captures : producer.TlciNativeMacroCaptures
+                (producer.tlci-native-macro-captures-new)]
+              [_capture : unit
+                (producer.tlci-native-macro-captures-push!
+                  (&mut captures)
+                  (producer.TlciNativeMacroCapture "probe/probe" params 0 body))]
+              [_normal-mode : unit
+                (producer.embedded-native-full-blocker-report-set! false)]
+              [normal : String
+                (producer.embedded-native-source
+                  (& context)
+                  (& names)
+                  (& captures))]
+              [normal-reasons : String (producer-owner-reasons)]
+              [normal-native : i64
+                (array-ref producer.embedded-stdlib-tlci-native-report-count 0)]
+              [_full-mode : unit
+                (producer.embedded-native-full-blocker-report-set! true)]
+              [full : String
+                (producer.embedded-native-source
+                  (& context)
+                  (& names)
+                  (& captures))]
+              [full-reasons : String
+                (string.copy
+                  (&
+                    (array-ref
+                      producer.embedded-stdlib-tlci-native-report-full-reasons
+                      0)))]
+              (test.assert-owned-string-eq
+                full
+                normal
+                "diagnostics preserve emitted source")
+              (test.assert-owned-string-eq
+                (producer-owner-reasons)
+                (string.copy (& normal-reasons))
+                "diagnostics preserve first reason")
+              (test.assert-i64-eq
+                normal-native
+                expected-native
+                "ordinary native accounting")
+              (test.assert-i64-eq
+                (array-ref producer.embedded-stdlib-tlci-native-report-count 0)
+                normal-native
+                "diagnostic native accounting")
+              (test.assert-i64-eq
+                (array-ref
+                  producer.embedded-stdlib-tlci-native-report-partial-count
+                  0)
+                0
+                "no partial native entry")
+              (test.assert-i64-eq
+                (array-ref
+                  producer.embedded-stdlib-tlci-native-report-interpreted-arms
+                  0)
+                0
+                "no interpreted native arms")
+              (test.assert-i64-eq
+                (occurrences
+                  (& normal-reasons)
+                  "probe/probe\ttemplate-splice:non-variable\n")
+                (- 1 expected-native)
+                "computed splice keeps its registration shell")
+              (test.assert-i64-eq
+                (occurrences
+                  (& full-reasons)
+                  "probe/probe\tblocked\ttemplate-splice:non-variable\n")
+                (- 1 expected-native)
+                "computed splice blocker is deduplicated")
+              (test.assert-i64-eq
+                (occurrences
+                  (& full-reasons)
+                  "probe/probe\tblocked\ttemplate-node:try\n")
+                expected-later-blocker
+                "walk continues to a later unsupported sibling")
+              (test.assert-true
+                (not producer.embedded-native-full-blocker-diagnostic-active)
+                "diagnostic mode is cleared"))]
+          [_ (io.panic "splice fixture must contain a macro")])]
+      [_ (io.panic "splice fixture must contain a program")])))
+
+(define (producer-splice-diagnostics!) : unit
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [saved : bool producer.embedded-native-full-blocker-report-enabled]
+    (producer-splice-source! "(call ,@(comptime.expr-list-cons `1 values))" 0 0)
+    (producer-splice-source!
+      "(call 0 ,@(comptime.expr-list-cons `1 values) ,@(comptime.expr-list-cons `2 values) (try 1))"
+      0
+      1)
+    (producer-splice-source! "(call ,@values)" 1 0)
+    (producer.embedded-native-full-blocker-report-set! saved)))
 
 ;; The batch tokens of `line`, or "none" when it is not batchable.
 (define (batch-tokens [line : String]) : String

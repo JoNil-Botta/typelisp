@@ -1537,8 +1537,17 @@ References, slices, strings-as-views and inline aggregates require a proof:
 an unchanged parameter, a reference-parameter reborrow, caller-owned
 memory-class parameter storage, a typed global binding without a local IR
 binding, or a supported heap projection. A shared
-borrow of a plain scalar variable is safe because lowering copies it into
-`tl_alloc` storage. Local reference/view aliases, unknown call results and
+borrow of a dynamic-array or String variable is safe because it lends the
+variable's heap handle. A shared borrow of a scalar or register-resident
+variable is not: lowering copies the value into a frame slot of the borrowing
+function, never into the current arena, which a `with-arena` or `in-arena`
+around the borrow may rewind or destroy while the reference still borrows the
+live variable (#9297). The frame slot is sound because the borrow never
+outlives the borrowed binder's storage, which ends no later than the frame:
+for a lambda's capture the ownership graph retires the capture at every
+return of the lambda, as it does a by-value parameter, so a borrow of the
+capture cannot be returned or stored past the call. Such a call stays an
+ordinary call, like a borrow of a local aggregate. Local reference/view aliases, unknown call results and
 Copy aggregates materialized from heap elements do not acquire a proof.
 Slice-pattern rest views inherit a proven external scrutinee's storage;
 their IR IDs are retained in a persistent set so lowering-state forks do not
@@ -1898,6 +1907,17 @@ frame layout continues to use only the physical slot count.
 Private AVX2 parameter entry stores participate in the full-width stack-home
 census even when optimization removes every body use and liveness interval.
 An empty body still needs disjoint YMM homes inside its accepted frame.
+Debug SIMD callers and private helpers use this same census and coloring path;
+their instruction-span keys are remapped with the IR. Spanned values retain
+private homes so distinct instruction locations cannot acquire one key.
+A program-owned instruction-span link index selects each function's entries
+in original insertion order before pinning, remapping and emission; duplicate
+keys retain newest-entry precedence without rescanning other functions' spans.
+Non-debug emission keeps its existing span path, and scalar debug keeps its
+original variable identities.
+Post-emission block layout treats debug/backtrace end labels and `.cfi_endproc`
+as function boundaries, using the same closing-line classifier as abort-stub
+placement. Outlined blocks remain inside the function's debug and unwind range.
 Final scavenger intervals still describe the
 final emitted IR at instruction precision. Call-hole retry context retains its
 edge-precise liveness while candidate rewrites still consume it. These lifetimes
@@ -1958,6 +1978,13 @@ Memoized provenance stays in the verification call's scratch lifetime. This
 storage-origin check does not establish the callee's return convention or the
 output extent; [#7738](https://github.com/JoNil-Botta/typelisp/issues/7738) owns
 those proofs and their enforcement before stack coloring, including mutable IR.
+
+Return-storage provenance ignores full-width `%v = mov %v : u64` definitions
+of the incoming hidden pointer in mutable final IR: that parameter has an
+initial value at every use and the copy preserves all address bits. Other
+variables retain their definition checks. This does not allow a narrowing
+write or relax the required root, extent, output type or callee contract;
+ordinary-function facts used for storage coloring are unchanged.
 
 Inline-storage coloring tracks addresses through its known alias forms. A
 `Pack` can retain such an address in a register group after the original pointer

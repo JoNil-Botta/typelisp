@@ -5,6 +5,8 @@
 # For check-fail, field 4 is the primary diagnostic source, optionally followed
 # by :line:column; '-' means the fixture source. The diagnostic must exit 1 and
 # match field 5 in its message/metadata, not merely in echoed source text.
+# @loc{path;column;exact source line} resolves a unique source line at run time;
+# the resulting path:line:column is still compared exactly.
 #
 # This corpus consolidates the SPEC.md "Safe code: no undefined behavior"
 # contract into TypeLisp fixtures. Comments name the safety area each fixture
@@ -330,6 +332,24 @@ caller_lifetime_global_and_lambda_names_ok|check-ok|tests/safety/caller_lifetime
 caller_lifetime_owned_for_item_store_same_name_reject|check-fail|tests/safety/caller_lifetime_owned_for_item_store_same_name_reject.tl|-|`t` does not live long enough
 caller_lifetime_nested_resource_store_same_name_reject|check-fail|tests/safety/caller_lifetime_nested_resource_store_same_name_reject.tl|-|`h` does not live long enough
 caller_lifetime_lambda_param_return_same_name_reject|check-fail|tests/safety/caller_lifetime_lambda_param_return_same_name_reject.tl|-|cannot return a reference to parameter `a`
+
+# A lambda's by-value capture is its own copy, storage of each call: a borrow
+# of it cannot outlive the call, whatever lifetime name it spells (#9297).
+# Main accepted each of these rejects. The last two are unchanged controls.
+capture_borrow_return_reject|check-fail|tests/safety/capture_borrow_return_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_return_call_reject|check-fail|tests/safety/capture_borrow_return_call_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_field_return_reject|check-fail|tests/safety/capture_borrow_field_return_reject.tl|-|cannot return a reference to captured `p`: a by-value capture is this lambda's own copy
+capture_borrow_with_arena_return_reject|check-fail|tests/safety/capture_borrow_with_arena_return_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_call_in_arena_reject|check-fail|tests/safety/capture_borrow_call_in_arena_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_store_reject|check-fail|tests/safety/capture_borrow_store_reject.tl|-|captured `x` does not live long enough: a by-value capture is this lambda's own copy
+capture_borrow_store_with_arena_reject|check-fail|tests/safety/capture_borrow_store_with_arena_reject.tl|-|captured `x` does not live long enough: a by-value capture is this lambda's own copy
+capture_borrow_auto_call_reject|check-fail|tests/safety/capture_borrow_auto_call_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_nested_lambda_reject|check-fail|tests/safety/capture_borrow_nested_lambda_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_lambda_param_nested_reject|check-fail|tests/safety/capture_borrow_lambda_param_nested_reject.tl|-|cannot return a reference to captured `n`: a by-value capture is this lambda's own copy
+capture_borrow_in_arena_destroy_reject|check-fail|tests/safety/capture_borrow_in_arena_destroy_reject.tl|-|cannot return a reference to captured `x`: a by-value capture is this lambda's own copy
+capture_borrow_string_with_arena_reject|check-fail|tests/safety/capture_borrow_string_with_arena_reject.tl|-|cannot return a reference to captured `s`: a by-value capture is this lambda's own copy
+capture_borrow_inferred_return_reject|check-fail|tests/safety/capture_borrow_inferred_return_reject.tl|-|lambda return value has region-tagged type; region value would escape
+capture_borrow_lambda_param_return_reject|check-fail|tests/safety/capture_borrow_lambda_param_return_reject.tl|-|cannot return a reference to parameter `n`
 caller_lifetime_renamed_body_ok|run-exit|tests/safety/caller_lifetime_renamed_body_ok.tl|6|-
 caller_lifetime_pointer_store_same_name_ok|check-ok|tests/safety/caller_lifetime_pointer_store_same_name_ok.tl|-|-
 caller_lifetime_written_types_ok|check-ok|tests/safety/caller_lifetime_written_types_ok.tl|-|-
@@ -844,6 +864,8 @@ dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_bo
 dotted_field_shared_borrow_write_reject|check-fail|tests/safety/dotted_field_shared_borrow_write_reject.tl|-|cannot assign to borrowed place `pair.left.x`
 dotted_field_cleanup_move_reject|check-fail|tests/safety/dotted_field_cleanup_move_reject.tl|-|cleanup owner `h` moved before with scope exit
 dotted_field_disjoint_mut_borrow_ok|check-ok|tests/safety/dotted_field_disjoint_mut_borrow_ok.tl|-|-
+global_mut_borrow_field_overlap_reject|check-fail|tests/safety/global_mut_borrow_field_overlap_reject.tl|-|cannot mutably borrow borrowed place `state.x`
+global_shared_borrow_field_write_reject|check-fail|tests/safety/global_shared_borrow_field_write_reject.tl|-|cannot assign to borrowed place `state.x`
 struct_field_set_immutable_ref_reject|check-fail|tests/safety/struct_field_set_immutable_ref_reject.tl|-|set! struct field requires mutable struct access
 struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_temporary_reject.tl|-|expression is not a storage place
 box_take_use_after_move_reject|check-fail|tests/safety/box_take_use_after_move_reject.tl|-|use of moved value `cell`
@@ -1024,12 +1046,12 @@ serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_ob
 
 # Serialize view macros add no `unsafe` of their own, and generator helpers
 # check a caller's value expression in the caller's context.
-serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
-serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
-serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|stdlib/serialize.tl:72:4|typecheck: ptr-read requires unsafe context
-serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
-serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
-serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|stdlib/serialize.tl:77:4|typecheck: ptr-read requires unsafe context
+serialize_view_direct_reject|check-fail|tests/safety/serialize_view_direct_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_view_alias_reject|check-fail|tests/safety/serialize_view_alias_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_view_transitive_reject|check-fail|tests/safety/serialize_view_transitive_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_direct_reject|check-fail|tests/safety/serialize_element_view_direct_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_alias_reject|check-fail|tests/safety/serialize_element_view_alias_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+serialize_element_view_transitive_reject|check-fail|tests/safety/serialize_element_view_transitive_reject.tl|@loc{stdlib/serialize.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
 serialize_helper_caller_index_reject|check-fail|tests/safety/serialize_helper_caller_index_reject.tl|-|typecheck: ptr-read requires unsafe context
 serialize_views_explicit_unsafe_ok|run-exit|tests/safety/serialize_views_explicit_unsafe_ok.tl|42|-
 module_catalog_invalid_unused_helper_reject|check-fail|tests/safety/module_catalog_invalid_unused_helper_reject.tl|-|typecheck: return type mismatch: expected i64, found bool
@@ -1645,15 +1667,15 @@ json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|
 
 # JSON view macros add no `unsafe` of their own: safe callers reject at the raw
 # read however they reach the macro, and explicit caller `unsafe` compiles.
-json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|stdlib/json.tl:42:4|typecheck: ptr-read requires unsafe context
-json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|stdlib/json.tl:42:4|typecheck: ptr-read requires unsafe context
-json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|stdlib/json.tl:42:4|typecheck: ptr-read requires unsafe context
-json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|stdlib/json.tl:47:4|typecheck: ptr-read requires unsafe context
-json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|stdlib/json.tl:47:4|typecheck: ptr-read requires unsafe context
-json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|stdlib/json.tl:47:4|typecheck: ptr-read requires unsafe context
-json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|stdlib/json.tl:56:6|typecheck: ptr-read requires unsafe context
-json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|stdlib/json.tl:56:6|typecheck: ptr-read requires unsafe context
-json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|stdlib/json.tl:56:6|typecheck: ptr-read requires unsafe context
+json_view_direct_reject|check-fail|tests/safety/json_view_direct_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_view_alias_reject|check-fail|tests/safety/json_view_alias_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_view_transitive_reject|check-fail|tests/safety/json_view_transitive_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-addr-of ,place)))}|typecheck: ptr-read requires unsafe context
+json_element_view_direct_reject|check-fail|tests/safety/json_element_view_direct_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_element_view_alias_reject|check-fail|tests/safety/json_element_view_alias_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_element_view_transitive_reject|check-fail|tests/safety/json_element_view_transitive_reject.tl|@loc{stdlib/json.tl;4;  `(ptr-read (ptr-offset (__tl_array-data ,items) ,index)))}|typecheck: ptr-read requires unsafe context
+json_box_view_direct_reject|check-fail|tests/safety/json_box_view_direct_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
+json_box_view_alias_reject|check-fail|tests/safety/json_box_view_alias_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
+json_box_view_transitive_reject|check-fail|tests/safety/json_box_view_transitive_reject.tl|@loc{stdlib/json.tl;6;    `(ptr-read}|typecheck: ptr-read requires unsafe context
 json_views_explicit_unsafe_ok|run-exit|tests/safety/json_views_explicit_unsafe_ok.tl|42|-
 
 # A typecheck code follows the raise site's kind, not words in the message.
@@ -2184,3 +2206,10 @@ macro_table_cycle_control|check-ok|tests/safety/macro_table_cycle_control/main.t
 decls_same_scope_incompatible|check-fail|tests/safety/decls_same_scope_incompatible.tl|-|has incompatible payload
 decls_explicit_module_tail_conflict|check-fail|tests/safety/decls_explicit_module_tail_conflict.tl|-|duplicate value declaration generated.decls_explicit_global/value
 decls_explicit_target_incompatible|check-fail|tests/safety/decls_explicit_target_incompatible.tl|-|duplicate generated key for answer has incompatible payload
+
+# A non-call global field borrow keeps the borrow expression's source location.
+global_mut_borrow_noncall_location_reject|check-fail|tests/safety/global_mut_borrow_noncall_location_reject.tl|tests/safety/global_mut_borrow_noncall_location_reject.tl:10:23|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_deref_location_reject|check-fail|tests/safety/global_mut_borrow_deref_location_reject.tl|tests/safety/global_mut_borrow_deref_location_reject.tl:9:10|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_store_location_reject|check-fail|tests/safety/global_mut_borrow_store_location_reject.tl|tests/safety/global_mut_borrow_store_location_reject.tl:9:16|mutable borrow of by-value place is only supported as an immediate call argument
+global_mut_borrow_initializer_location_reject|check-fail|tests/safety/global_mut_borrow_initializer_location_reject.tl|tests/safety/global_mut_borrow_initializer_location_reject.tl:8:10|mutable borrow of by-value place is only supported as an immediate call argument
+mut_borrow_forwarded_diagnostic_location_reject|check-fail|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl:2:3|set! deref requires mutable access

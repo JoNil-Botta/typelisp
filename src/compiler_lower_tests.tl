@@ -5591,16 +5591,32 @@
     [_ false]))
 
 (define (compiler-lower-defdispatch-direct-shape-ok?) : bool
-  (match (lower-test-functions
-    (lower.lower-compiler-source (compiler-lower-defdispatch-direct-source)))
-    [(Some functions)
-      (and
-        (lower-test-function-defined? functions "dot")
-        (lower-test-function-defined? functions "dot-avx2")
-        (not (lower-test-function-defined? functions "dot-scalar"))
-        (not (lower-test-function-defined? functions "dot-avx512"))
-        (= (lower-test-function-call-count functions "main" "dot") 1)
-        (= (lower-test-function-call-count functions "main" "dot-avx2") 1))]
+  (match (parser.parse-ast-source
+    (& (compiler-lower-defdispatch-direct-source)))
+    [(Ok program)
+      (match (lower-test-functions
+        (lower-compiler-program-with-decl-paths
+          "<source>"
+          program
+          (ast.ast-decl-path-list-new)))
+        [(Some functions)
+          (and
+            (lower-test-function-defined? functions "<source>::dot")
+            (lower-test-function-defined? functions "<source>::dot-avx2")
+            (not
+              (lower-test-function-defined? functions "<source>::dot-scalar"))
+            (not
+              (lower-test-function-defined? functions "<source>::dot-avx512"))
+            (=
+              (lower-test-function-call-count functions "main" "<source>::dot")
+              1)
+            (=
+              (lower-test-function-call-count
+                functions
+                "main"
+                "<source>::dot-avx2")
+              1))]
+        [_ false])]
     [_ false]))
 
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool

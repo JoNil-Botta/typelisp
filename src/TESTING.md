@@ -15,6 +15,15 @@ the borrowed field into the current local. Shared borrows, whole-local
 writebacks, memory-backed receivers and reference receivers remain controls;
 the safety corpus retains overlapping-place borrow rejection.
 
+`nested_mut_borrow_pointer` and `nested_mut_borrow_receiver` require exit 5
+at opt0/1/2 on both hosts: nested call borrows lend original inline storage
+from memory-backed locals and mutable-reference receivers.
+`nested_mut_borrow_storage` covers deeper/nonzero-offset projections, narrow
+and floating fields, fixed/dynamic arrays, tuples, boxes, reference-valued
+fields, single index evaluation, non-call borrows, memory-class globals and
+shared reads. Keep register-local call writebacks covered by
+`mut_borrow_field_writeback` alongside them.
+
 `compiler-lower-unit-field-reads` requires canonical unit results without
 addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
 `unit_struct_fields` exercises empty, one/two-word and memory-class structs,

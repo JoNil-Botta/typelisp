@@ -19225,6 +19225,66 @@
   [field : String]
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
+  ;; A projected struct already has inline storage. Borrow that place before
+  ;; reading its value: a register-sized intermediate would otherwise be
+  ;; loaded and materialized as a detached copy. Unprojected register roots
+  ;; retain their copy path; mutable register-local calls handle writeback
+  ;; in `lower-call-arg-mut-borrow-place-as`.
+  (match (ast.ast-expr-unspan (& receiver))
+    [(or (StructGet _ _) (TupleRef _ _) (ArrayRef _ _) (BoxGet _) (BoxTake _))
+      (match (lower-expr-result-type-or-check
+        ctx
+        env
+        type-env
+        (lower-state-type-cache state)
+        (lower-state-function-state state)
+        receiver)
+        [(Ok receiver-ty)
+          (let
+            [resolved : ast.AstType
+              (tc_core.tc-type-strip-region
+                (tc_core.tc-resolve-type ctx receiver-ty))]
+            (match (& resolved)
+              [(or (Struct name) (StructArgs name _))
+                (let
+                  [borrow-ty : ast.AstType
+                    (match (& result-ty)
+                      [(MutRef lifetime _)
+                        (ast.ast-ty-mut-ref-with-pools
+                          (tc_core.tc-context-pools ctx)
+                          lifetime
+                          (& resolved))]
+                      [(Ref lifetime _)
+                        (ast.ast-ty-ref-with-pools
+                          (tc_core.tc-context-pools ctx)
+                          lifetime
+                          (& resolved))]
+                      [_ (clone result-ty)])]
+                  [borrowed
+                    (try
+                      (lower-borrow-place-address
+                        ctx
+                        state
+                        env
+                        type-env
+                        receiver
+                        (clone origin)
+                        borrow-ty))]
+                  (match borrowed
+                    [(Expr borrowed-state base _)
+                      (return
+                        (lower-borrow-struct-field-address-from-memory
+                          ctx
+                          borrowed-state
+                          base
+                          name
+                          (tc_core.tc-nominal-name-id-display name)
+                          field
+                          origin
+                          result-ty))]))]
+              [_ unit]))]
+        [(Err _) unit])]
+    [_ unit])
   (let
     [lowered : LowerExpr (try (lower-expr ctx state env type-env receiver))]
     (match lowered
@@ -27106,9 +27166,8 @@
         arg-ty))))
 
 ;; Resolve a pure inline field path to its local root and byte range. A
-;; register-resident root needs call-scoped copy/writeback; a scalar leaf in
-;; a memory-backed root lends its original address, even when an intermediate
-;; struct field would be read by value into a register.
+;; register-resident root needs call-scoped copy/writeback. Memory-backed
+;; roots use the ordinary recursive borrow-place path.
 (define (lower-call-arg-field-place
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
@@ -27244,9 +27303,6 @@
                           addressed
                           (clone pointer)
                           (Some (FieldWriteback field pointer arg))))])])]
-            [(lower-clone-scalar-type? (& field.ty))
-              (match (lower-gep-byte state (Var field.local-id) field.offset)
-                [(Expr addressed pointer _) (Ok (Arg addressed pointer (No)))])]
             [else
               (lower-call-arg-normal-as
                 ctx

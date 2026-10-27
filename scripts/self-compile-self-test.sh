@@ -52,6 +52,8 @@ ST_REPO=JoNil-Botta/typelisp
 ST_REF_WORKFLOW_REF="$ST_REPO/.github/workflows/self-compile-reference.yml@refs/heads/main"
 
 # st_record FILE [KEY=VALUE...]  ->  a valid hosted gate record with overrides.
+# Overrides are literal values, including Windows path backslashes; unlike the
+# former per-override awk -v invocation, they do not expand awk escape syntax.
 st_record() {
     _str_file=$1
     shift
@@ -225,6 +227,8 @@ st_records() {
     done
     st_eq "record writer sanitizes separators" "$(sc_record_line key "$(printf 'a\tb\rc\nd')")" "$(printf 'key\ta b c d')"
     st_eq "record writer retains backslashes" "$(sc_record_line key 'a\rb')" "$(printf 'key\t%s' 'a\rb')"
+    st_record "$_d/windows-path.tsv" 'key.workspace=C:\tools\typelisp'
+    st_eq "fixture override retains Windows backslashes" "$(sc_record_get "$_d/windows-path.tsv" key.workspace)" 'C:\tools\typelisp'
 }
 
 st_gate() {
@@ -1364,6 +1368,8 @@ sc_self_test() {
     FIXTURE_METRICS_TOOLS=$SC_TOOL_DIR
     . "$SC_TOOL_DIR/lib-fixture-metrics.sh"
     fixture_metrics_init "$_st_root"
+    mkdir -p "$_st_root/metrics"
+    st_succeeds "pipeline/substitution tool-start counter" fixture_metrics_self_test "$_st_root/metrics"
     for _st_part in arithmetic records gate declarations selection resolve ledger account chain fallback e2e; do
         mkdir -p "$_st_root/$_st_part"
         fixture_metrics_run "$_st_part" "st_$_st_part" "$_st_root/$_st_part"

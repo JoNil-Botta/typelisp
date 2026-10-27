@@ -9,7 +9,7 @@ fixture_metrics_init() {
     FIXTURE_METRICS_STARTS=$1/tool-starts
     : > "$FIXTURE_METRICS_STARTS"
     # Only wrap installed tools: command -v must retain its missing-tool verdict.
-    for _fm_tool in awk basename bash cat chmod cmp cp cut dirname env find git grep head jq ln mkdir mktemp mv paste rm rmdir sed sh sort tail tr uname wc; do
+    for _fm_tool in awk basename bash cat chmod cmp cp cut date dirname env find gh git grep head jq ln mkdir mktemp mv paste perl pwsh rm rmdir sed sh sha256sum sleep sort tail tr uname unzip valgrind wc; do
         if command -v "$_fm_tool" >/dev/null 2>&1; then
             eval "$_fm_tool() { printf '%s\\n' $_fm_tool >> \"\$FIXTURE_METRICS_STARTS\"; command $_fm_tool \"\$@\"; }"
         fi
@@ -49,3 +49,22 @@ fixture_metrics_command() {
     shift 3
     "$@"
 }
+
+# A separate shell keeps the control's forced instrumentation and counters out
+# of the surrounding gate. Exercise a pipeline inside a command substitution:
+# printf is builtin, while sha256sum and cut must each contribute one start.
+fixture_metrics_self_test() (
+    TYPELISP_CI_TIMING=1
+    TYPELISP_CI_TIMING_FILE=$1/timing.tsv
+    fixture_metrics_init "$1"
+    _fm_before=$(command wc -l < "$FIXTURE_METRICS_STARTS")
+    _fm_hash=$(printf 'fixture\n' | sha256sum | cut -c1-64)
+    _fm_after=$(command wc -l < "$FIXTURE_METRICS_STARTS")
+    [ "${#_fm_hash}" -eq 64 ] || exit 1
+    [ "$((_fm_after - _fm_before))" -eq 2 ] || exit 1
+    _fm_before=$_fm_after
+    _fm_text=$(printf 'fixture\n' | cat)
+    _fm_after=$(command wc -l < "$FIXTURE_METRICS_STARTS")
+    [ "$_fm_text" = fixture ] || exit 1
+    [ "$((_fm_after - _fm_before))" -eq 1 ] || exit 1
+)

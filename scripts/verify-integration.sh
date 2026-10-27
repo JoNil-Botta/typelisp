@@ -1974,22 +1974,32 @@ integration_batch_queue() {
     # bounded pool; settling afterwards walks the same order.
     _pool_queue="$WORKDIR/batch-pool.queue"
     : > "$_pool_queue" || return 1
+    set --
     for _group in $INTEGRATION_BATCH_GROUPS; do
         _group_list="$WORKDIR/batch-$_group.list"
-        [ -s "$_group_list" ] || continue
-        _total=$(wc -l < "$_group_list") || return 1
-        _offset=0
-        _index=0
-        while [ "$_offset" -lt "$_total" ]; do
-            _index=$((_index + 1))
-            _chunk="$WORKDIR/batch-$_group-$_index.list"
-            sed -n "$((_offset + 1)),$((_offset + INTEGRATION_BATCH_SIZE))p" \
-                "$_group_list" > "$_chunk" || return 1
-            printf 'batch-%s-%s|%s\n' "$_group" "$_index" \
-                "$INTEGRATION_POOL_CHUNK_CAP_MIB" >> "$_pool_queue" || return 1
-            _offset=$((_offset + INTEGRATION_BATCH_SIZE))
-        done
+        [ ! -s "$_group_list" ] || set -- "$@" "$_group_list"
     done
+    [ "$#" -gt 0 ] || return 0
+    # Split every nonempty group in one process. Argument order preserves the
+    # group order; FNR preserves each group's row order and chunk boundaries.
+    awk -v dir="$WORKDIR" -v size="$INTEGRATION_BATCH_SIZE" \
+        -v cap="$INTEGRATION_POOL_CHUNK_CAP_MIB" -v queue="$_pool_queue" '
+        (FNR - 1) % size == 0 {
+            if (output != "" && close(output) != 0) exit 1
+            group = FILENAME
+            sub(/^.*\/batch-/, "", group)
+            sub(/[.]list$/, "", group)
+            index_in_group = int((FNR - 1) / size) + 1
+            output = dir "/batch-" group "-" index_in_group ".list"
+            print "batch-" group "-" index_in_group "|" cap >> queue
+            chunks++
+        }
+        { print > output }
+        END {
+            if (output != "" && close(output) != 0) exit 1
+            if (chunks && close(queue) != 0) exit 1
+        }
+    ' "$@" || return 1
 }
 
 
@@ -3523,7 +3533,7 @@ integration_stage_plan() {
 integration_stage_helper_build() {
     _helper_dir="$WORKDIR/stage-helper"
     _helper_asm="$_helper_dir/stage.s"
-    mkdir -p "$_helper_dir" || return 1
+    [ -d "$_helper_dir" ] || mkdir -p "$_helper_dir" || return 1
     if [ "$HOST_OS" = windows ]; then
         STAGE_HELPER="$_helper_dir/stage.exe"
         run_build "$COMPILER" compile tools/integration-staging/stage.tl \
@@ -3768,7 +3778,7 @@ run_preparation_failure_self_test() (
     for prep_host in $prep_hosts; do
         for prep_timing in 0 1; do
             for prep_failure in $prep_failures; do
-                set -- "$@" "$prep_root/$prep_host-$prep_timing-$prep_failure"
+                set -- "$@" "$prep_root/$prep_host-$prep_timing-$prep_failure/stage-helper"
             done
         done
     done

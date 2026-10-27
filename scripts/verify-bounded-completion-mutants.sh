@@ -304,7 +304,8 @@ if [ "$PROOF_PHYSICAL_HOST" = windows ]; then
     printf 'base=%s\nhead=%s\n' "$profile_base" "$(git -C "$ROOT" rev-parse HEAD)" > "$profile_root/provenance.txt"
     profile_shell=$(cygpath -aw "$(command -v bash)")
     profile_observer=$(cygpath -aw "$ROOT/scripts/measure-fixture-launches.ps1")
-    # Qualify the observer on one known child and both protected sentinels.
+    # One external sh command creates a Bash fork and a sh executable on MSYS.
+    # Pin that complete known tree, including both protected sentinel branches.
     profile_tiny="$profile_root/known-tree.sh"
     printf '%s\n' '#!/usr/bin/env sh' 'set -eu' \
         'MSYS2_ARG_CONV_EXCL="*" cmd.exe /d /c exit 0' \
@@ -313,7 +314,7 @@ if [ "$PROOF_PHYSICAL_HOST" = windows ]; then
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$profile_observer" \
         -Shell "$profile_shell" -Script "$(cygpath -am "$profile_tiny")" \
         -WorkingDirectory "$(cygpath -aw "$ROOT")" \
-        -OutputPrefix "$(cygpath -aw "$profile_root/known-tree")" -ExpectedFixtureLaunches 1
+        -OutputPrefix "$(cygpath -aw "$profile_root/known-tree")" -ExpectedFixtureLaunches 2
     for profile_version in base head; do
         for profile_route in integration inline-tests selfhost-compile-manifest; do
             profile_flag=--self-test-batch-observability

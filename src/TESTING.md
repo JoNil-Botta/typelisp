@@ -24,6 +24,13 @@ fields, single index evaluation, non-call borrows, memory-class globals and
 shared reads. Keep register-local call writebacks covered by
 `mut_borrow_field_writeback` alongside them.
 
+`global_mut_borrow_field` requires exit 5 at opt0/1/2 on both hosts for a
+mutable call borrow of a two-word global's field. `global_mut_borrow_storage`
+checks one/two-word globals, disjoint and repeated writes, narrow/SSE/pointer
+fields, original-slot identity, shared reads and unit-tail borrows,
+and nested memory-class globals. Global fields lend their existing storage;
+register-local call borrows retain their separate writeback path.
+
 `compiler-lower-unit-field-reads` requires canonical unit results without
 addresses, loads or packed-word extraction for zero-sized fields on both ABIs.
 `unit_struct_fields` exercises empty, one/two-word and memory-class structs,

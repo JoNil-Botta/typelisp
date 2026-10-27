@@ -34,8 +34,7 @@
   (:lifetimes leaf)
   (leaf (&mut leaf Leaf)))
 
-;; A memory-class global has existing inline bytes, unlike #9319's register
-;; global root, which still requires its separate place/writeback fix.
+;; Keep memory-class global projections alongside the register-global cases.
 (define state : Outer
   (Outer 10 (Middle 20 (Leaf 1 2)) 30))
 (define index-calls : i64

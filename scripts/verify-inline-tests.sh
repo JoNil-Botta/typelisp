@@ -138,7 +138,7 @@ inline_test_settle_chunk() {
     fi
     _settle_rc=$(cat "$_settle_status")
     if ! bounded_pool_read_report "$_settle_report" "$_settle_rc" "$INLINE_TEST_CHUNK_CAP_MIB" "$HOST_OS"; then
-        echo "inline test $_settle_job was stopped by its bound" \
+        echo "inline test $_settle_job $BOUNDED_POOL_REPORT_FAILURE" \
             "(reason=$BOUNDED_POOL_REPORT_REASON," \
             "cap $INLINE_TEST_CHUNK_CAP_MIB MiB," \
             "timeout $INLINE_TEST_JOB_TIMEOUT_SECONDS s)" >&2
@@ -280,13 +280,16 @@ bounded_pool_run_job() {
         _pool_rc=$?
     printf '%s\n' "$_pool_rc" > "$WORKDIR/$_pool_job.status"
     if ! bounded_pool_read_report "$WORKDIR/$_pool_job.memory" "$_pool_rc" "$_pool_cap" "$HOST_OS"; then
-        echo "inline test $_pool_job has invalid bounded completion (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        echo "inline test $_pool_job $BOUNDED_POOL_REPORT_FAILURE" \
+            "(reason=$BOUNDED_POOL_REPORT_REASON, reported-exit=$BOUNDED_POOL_REPORT_EXIT_CODE)" >&2
         show_streams "$WORKDIR/$_pool_job.stdout" "$WORKDIR/$_pool_job.stderr"
         return 1
     fi
 }
 
 inline_test_self_test_chunks() {
+    ci_timing_set_now_ms
+    _inline_fixture_started=$CI_TIMING_NOW_MS
     . "$ROOT/scripts/lib-bounded-completion-fixtures.sh"
     mkdir -p "$ROOT/target/exp/inline-test-verify-self-test"
     INLINE_TEST_SELF_TEST_ROOT=$(mktemp -d "$ROOT/target/exp/inline-test-verify-self-test/run.XXXXXX")
@@ -342,6 +345,8 @@ inline_test_self_test_chunks() {
     # Plausible passing stdout must not survive a cancelled or invalid attempt.
     # Exercise both report encodings on both hosts, with ordinary failures
     # retaining their diagnostics rather than becoming successful summaries.
+    ci_timing_set_now_ms
+    _inline_matrix_started=$CI_TIMING_NOW_MS
     for _completion_host in linux windows; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _worker_dir="$INLINE_TEST_SELF_TEST_ROOT/worker-$_completion_host-$_completion_case"
@@ -373,6 +378,10 @@ inline_test_self_test_chunks() {
             ) || { echo "inline completion fixture failed: $_completion_host/$_completion_case" >&2; exit 1; }
         done
     done
+    ci_timing_set_now_ms
+    bounded_completion_fixture_cost inline-tests \
+        "$((_inline_matrix_started - _inline_fixture_started))" \
+        "$((CI_TIMING_NOW_MS - _inline_matrix_started))" || exit 1
     echo "[inline-tests] chunk accounting self-test passed"
 }
 

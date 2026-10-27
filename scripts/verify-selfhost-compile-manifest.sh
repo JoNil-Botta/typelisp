@@ -554,7 +554,7 @@ manifest_settle_chunk() {
         if ! bounded_pool_read_report "$_chunk.memory" "$_chunk_rc" "$_chunk_cap" "$HOST_OS"; then
             echo "stderr:" >&2
             sed 's/^/  /' "$_chunk.err" >&2 || true
-            fail "$_chunk_label was stopped by its bound" \
+            fail "$_chunk_label $BOUNDED_POOL_REPORT_FAILURE" \
                 "(reason=$BOUNDED_POOL_REPORT_REASON, cap $_chunk_cap MiB," \
                 "timeout $MANIFEST_POOL_JOB_TIMEOUT_SECONDS s)"
         fi
@@ -601,7 +601,8 @@ bounded_pool_run_job() {
     if [ -n "$_pool_cap" ] && ! bounded_pool_read_report \
         "$(manifest_chunk_path "$_pool_index").memory" \
         "$(cat "$(manifest_chunk_path "$_pool_index").status")" "$_pool_cap" "$HOST_OS"; then
-        echo "[selfhost-compile] batch compile manifest chunk $_pool_index/$batch_chunk_count was stopped by its bound (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        echo "[selfhost-compile] batch compile manifest chunk $_pool_index/$batch_chunk_count $BOUNDED_POOL_REPORT_FAILURE" \
+            "(reason=$BOUNDED_POOL_REPORT_REASON, reported-exit=$BOUNDED_POOL_REPORT_EXIT_CODE)" >&2
         sed 's/^/  /' "$(manifest_chunk_path "$_pool_index").err" >&2 || true
         return 1
     fi
@@ -824,6 +825,12 @@ manifest_pool_self_test_stderr_has() {
 }
 
 manifest_pool_self_test() {
+    _manifest_cost_gate=${TYPELISP_CI_TIMING_GATE:-}
+    _manifest_cost_file=${TYPELISP_CI_TIMING_FILE:-}
+    _manifest_cost_enabled=${TYPELISP_CI_TIMING:-0}
+    _manifest_cost_host=${TYPELISP_CI_TIMING_HOST:-$HOST_OS}
+    ci_timing_set_now_ms
+    _manifest_fixture_started=$CI_TIMING_NOW_MS
     . "$ROOT/scripts/lib-bounded-completion-fixtures.sh"
     mkdir -p "$ROOT/target/exp/selfhost-compile-manifest-pool-self-test"
     MANIFEST_POOL_SELF_TEST_ROOT=$(mktemp -d "$ROOT/target/exp/selfhost-compile-manifest-pool-self-test/run.XXXXXX")
@@ -929,6 +936,8 @@ FAKE
     done
     # Reader checks run with valid-looking assembly already present. Neither
     # cancelled nor invalid completion may authorize its expectations.
+    ci_timing_set_now_ms
+    _manifest_matrix_started=$CI_TIMING_NOW_MS
     for _completion_host in linux windows; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _completion_dir="$MANIFEST_POOL_SELF_TEST_ROOT/$_completion_host-$_completion_case"
@@ -957,7 +966,7 @@ FAKE
                     manifest_pool_self_test_fail "$_completion_host/$_completion_case accepted"
                 case $_completion_case in
                     command-*)
-                        grep -Fq "exited ${_completion_case#command-} in stage1 mode" "$_completion_dir/reader.log" &&
+                        grep -Fq "exited $(cat "$_completion_dir/chunk.status") in stage1 mode" "$_completion_dir/reader.log" &&
                             grep -Fq 'compiler diagnostic' "$_completion_dir/reader.log" ||
                             manifest_pool_self_test_fail "$_completion_host/$_completion_case lost diagnostics"
                         ;;
@@ -965,6 +974,14 @@ FAKE
             fi
         done
     done
+    ci_timing_set_now_ms
+    TYPELISP_CI_TIMING_GATE=$_manifest_cost_gate
+    TYPELISP_CI_TIMING_FILE=$_manifest_cost_file
+    TYPELISP_CI_TIMING=$_manifest_cost_enabled
+    TYPELISP_CI_TIMING_HOST=$_manifest_cost_host
+    bounded_completion_fixture_cost selfhost-manifest \
+        "$((_manifest_matrix_started - _manifest_fixture_started))" \
+        "$((CI_TIMING_NOW_MS - _manifest_matrix_started))" || exit 1
     echo "[selfhost-compile] pool self-test passed"
 }
 

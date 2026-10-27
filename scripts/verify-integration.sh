@@ -1,5 +1,8 @@
 #!/usr/bin/env sh
 set -eu
+# Compile helpers redirect their streams per case; gate failures must still
+# reach the gate's console instead of disappearing inside a build log.
+exec 9>&2
 
 # verify-integration.sh - manifest-driven native integration runner.
 #
@@ -392,8 +395,8 @@ integration_batch_settle_chunk() {
     _chunk_rc=$(cat "$_chunk_status") || return 1
     if [ -n "$_chunk_cap" ]; then
         if ! bounded_pool_read_report "$_chunk_report" "$_chunk_rc" "$_chunk_cap" "$HOST_OS"; then
-            echo "FAIL: batch chunk $_chunk_label was stopped by its bound" \
-                "(reason=$BOUNDED_POOL_REPORT_REASON, cap $_chunk_cap MiB," \
+            echo "FAIL: batch chunk $_chunk_label $BOUNDED_POOL_REPORT_FAILURE" \
+                "(reason=$BOUNDED_POOL_REPORT_REASON, exit=$_chunk_rc, reported-exit=$BOUNDED_POOL_REPORT_EXIT_CODE, cap $_chunk_cap MiB," \
                 "timeout $INTEGRATION_POOL_JOB_TIMEOUT_SECONDS s)" >&2
             sed 's/^/  /' "$_chunk_stderr" >&2 || true
             exit 1
@@ -419,11 +422,13 @@ integration_batch_settle_chunk() {
     fi
     INTEGRATION_BATCH_FAILED_CHUNKS=$((INTEGRATION_BATCH_FAILED_CHUNKS + 1))
     echo "[integration] batch chunk $_chunk_label exited $_chunk_rc;" \
-        "replaying its entries standalone" >&2
+        "replaying its entries standalone (diagnostic-only; batch failure remains fatal)" >&2
+    [ -z "$_chunk_cap" ] || echo "[integration] reported workload exit=$BOUNDED_POOL_REPORT_EXIT_CODE" >&2
     sed 's/^/  /' "$_chunk_stderr" >&2 || true
     while IFS='|' read -r _batch_src _batch_artifact1 _batch_artifact2 _batch_mode; do
         [ -n "$_batch_artifact1" ] || continue
         integration_remove_batch_artifact "$_batch_artifact1" || return 1
+        printf '%s\n' "$_chunk_label" > "${_batch_owned_artifact%/*}/batch-diagnostic-only" || return 1
         if [ -n "$_batch_artifact2" ]; then
             integration_remove_batch_artifact "$_batch_artifact2" || return 1
             _batch_case_path=${_batch_src%/*}
@@ -433,6 +438,13 @@ integration_batch_settle_chunk() {
     done < "$_chunk_list"
     [ -z "$_chunk_plan" ] || integration_remove_batch_artifact "$_chunk_plan" || return 1
     return 0
+}
+
+integration_batch_require_success() {
+    [ "$INTEGRATION_BATCH_FAILED_CHUNKS" -eq 0 ] || {
+        echo "FAIL: $INTEGRATION_BATCH_FAILED_CHUNKS batch chunk(s) failed; standalone replay was diagnostic-only" >&9
+        return 1
+    }
 }
 
 integration_remove_batch_artifact() {
@@ -453,13 +465,18 @@ integration_remove_batch_artifact() {
 integration_standalone_compile() {
     _standalone_report=$1
     shift
+    if [ -f "${_standalone_report%/*}/batch-diagnostic-only" ]; then
+        echo "[integration] diagnostic-only bounded replay; original batch failure remains fatal" >&9
+    fi
     _standalone_rc=0
     "$ROOT/scripts/run-memory-bounded.sh" \
         --limit-mib "$INTEGRATION_POOL_CHUNK_CAP_MIB" --report "$_standalone_report" \
         --timeout-seconds "$INTEGRATION_POOL_JOB_TIMEOUT_SECONDS" -- "$@" || _standalone_rc=$?
     if ! bounded_pool_read_report "$_standalone_report" "$_standalone_rc" \
         "$INTEGRATION_POOL_CHUNK_CAP_MIB" "$HOST_OS"; then
-        echo "FAIL: standalone compile has invalid bounded completion (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        echo "FAIL: standalone compile has no eligible bounded completion" \
+            "(reason=$BOUNDED_POOL_REPORT_REASON, exit=$_standalone_rc," \
+            "cap $INTEGRATION_POOL_CHUNK_CAP_MIB MiB, timeout $INTEGRATION_POOL_JOB_TIMEOUT_SECONDS s)" >&9
         exit 1
     fi
     return "$_standalone_rc"
@@ -492,7 +509,8 @@ bounded_pool_run_job() {
         "$_pool_label" "$_pool_cap" || return 1
     if [ -n "$_pool_cap" ] && ! bounded_pool_read_report "$WORKDIR/$_pool_job.memory" \
         "$(cat "$WORKDIR/$_pool_job.status")" "$_pool_cap" "$HOST_OS"; then
-        echo "FAIL: batch chunk $_pool_label was stopped by its bound (reason=$BOUNDED_POOL_REPORT_REASON)" >&2
+        echo "FAIL: batch chunk $_pool_label $BOUNDED_POOL_REPORT_FAILURE" \
+            "(reason=$BOUNDED_POOL_REPORT_REASON, reported-exit=$BOUNDED_POOL_REPORT_EXIT_CODE)" >&2
         sed 's/^/  /' "$WORKDIR/$_pool_job.stderr" >&2 || true
         return 1
     fi
@@ -1970,12 +1988,31 @@ integration_batch_queue() {
 run_bounded_completion_self_test() (
     . "$ROOT/scripts/lib-bounded-completion-fixtures.sh"
     _completion_root=$(mktemp -d "$WORKDIR/completion.XXXXXX")
+    mkdir -p "$_completion_root/runner/scripts"
+    cat > "$_completion_root/runner/scripts/run-memory-bounded.sh" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$1:$2:$3:$5:$6:$7" = --limit-mib:64:--report:--timeout-seconds:9:-- ] || exit 93
+report=$4
+shift 7
+. "$COMPLETION_FIXTURES"
+bounded_completion_fixture "$report" "$report.status" "$COMPLETION_HOST" 64 "$COMPLETION_CASE"
+printf 'partial candidate\n' > "$report.candidate.s"
+printf '%s\n' "$*" > "$report.argv"
+printf '[bounded] fixture reason=%s\n' "$_bc_reason" >&2
+case $COMPLETION_CASE in missing-status | bad-status) exit 2 ;; esac
+exit "$(cat "$report.status")"
+EOF
+    chmod +x "$_completion_root/runner/scripts/run-memory-bounded.sh"
+    COMPLETION_FIXTURES="$ROOT/scripts/lib-bounded-completion-fixtures.sh"
+    export COMPLETION_FIXTURES
     for _completion_host in linux windows; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _completion_dir="$_completion_root/$_completion_host-$_completion_case"
             mkdir -p "$_completion_dir/case"
             (
                 WORKDIR=$_completion_dir
+                exec 9> "$WORKDIR/console"
                 HOST_OS=$_completion_host
                 INTEGRATION_POOL_WORKERS=1
                 INTEGRATION_POOL_BUDGET_MIB=64
@@ -2003,19 +2040,34 @@ run_bounded_completion_self_test() (
                 }
                 integration_windows_register_plan() { : > "$WORKDIR/registered"; }
                 integration_batch_run_pool "$WORKDIR/queue"
-                printf '%s\n' "$INTEGRATION_BATCH_FAILED_CHUNKS" > "$WORKDIR/accepted"
+                printf '%s\n' "$INTEGRATION_BATCH_FAILED_CHUNKS" > "$WORKDIR/settled"
+                if [ "$INTEGRATION_BATCH_FAILED_CHUNKS" -gt 0 ]; then
+                    ROOT="$_completion_root/runner"
+                    INTEGRATION_POOL_CHUNK_CAP_MIB=64
+                    INTEGRATION_POOL_JOB_TIMEOUT_SECONDS=9
+                    COMPLETION_HOST=$HOST_OS
+                    COMPLETION_CASE=success
+                    export COMPLETION_HOST COMPLETION_CASE
+                    integration_standalone_compile "$WORKDIR/case/replay.memory" \
+                        uncallable-compiler compile fixture.tl
+                    : > "$WORKDIR/replayed"
+                fi
+                integration_batch_require_success || exit 1
+                : > "$WORKDIR/accepted"
             ) > "$_completion_dir/reader.log" 2>&1 &
             _completion_pid=$!
             _completion_rc=0
             wait "$_completion_pid" || _completion_rc=$?
             case $_completion_case in
                 success)
-                    [ "$_completion_rc" -eq 0 ] && [ "$(cat "$_completion_dir/accepted")" = 0 ] || exit 1
+                    [ "$_completion_rc" -eq 0 ] && [ -e "$_completion_dir/accepted" ] || exit 1
                     ;;
                 command-*)
-                    [ "$_completion_rc" -eq 0 ] && [ "$(cat "$_completion_dir/accepted")" = 1 ] &&
+                    [ "$_completion_rc" -ne 0 ] && [ "$(cat "$_completion_dir/settled")" = 1 ] &&
+                        [ -e "$_completion_dir/replayed" ] && [ ! -e "$_completion_dir/accepted" ] &&
                         [ ! -e "$_completion_dir/case/candidate.s" ] || exit 1
-                    grep -Fq "exited ${_completion_case#command-};" "$_completion_dir/reader.log" || exit 1
+                    grep -Fq "exited $(cat "$_completion_dir/batch-embedded-1.status");" "$_completion_dir/reader.log" || exit 1
+                    grep -Fq 'replay was diagnostic-only' "$_completion_dir/console" || exit 1
                     ;;
                 *)
                     if [ "$_completion_rc" -eq 0 ] || [ -e "$_completion_dir/accepted" ] ||
@@ -2033,47 +2085,40 @@ run_bounded_completion_self_test() (
     # The actual standalone function must invoke the bounded runner with the
     # same cap and deadline. Model only that runner's result, including a
     # candidate emitted before cancellation. A direct compiler call is fatal.
-    mkdir -p "$_completion_root/runner/scripts"
-    cat > "$_completion_root/runner/scripts/run-memory-bounded.sh" <<'EOF'
-#!/bin/sh
-set -eu
-[ "$1:$2:$3:$5:$6:$7" = --limit-mib:64:--report:--timeout-seconds:9:-- ] || exit 93
-report=$4
-shift 7
-. "$COMPLETION_FIXTURES"
-bounded_completion_fixture "$report" "$report.status" "$COMPLETION_HOST" 64 "$COMPLETION_CASE"
-printf 'partial candidate\n' > "$report.candidate.s"
-printf '%s\n' "$*" > "$report.argv"
-case $COMPLETION_CASE in missing-status | bad-status) exit 2 ;; esac
-exit "$(cat "$report.status")"
-EOF
-    chmod +x "$_completion_root/runner/scripts/run-memory-bounded.sh"
-    COMPLETION_FIXTURES="$ROOT/scripts/lib-bounded-completion-fixtures.sh"
-    export COMPLETION_FIXTURES
     for COMPLETION_HOST in linux windows; do
         for COMPLETION_CASE in $BOUNDED_COMPLETION_CASES; do
             export COMPLETION_HOST COMPLETION_CASE
             _completion_report="$_completion_root/standalone-$COMPLETION_HOST-$COMPLETION_CASE"
             _completion_rc=0
             (
+                exec 9> "$_completion_report.console"
                 ROOT="$_completion_root/runner"
                 HOST_OS=$COMPLETION_HOST
+                TYPELISP_CI_TIMING=1
+                TYPELISP_CI_TIMING_GATE=standalone-completion-fixture
+                ci_timing_init "$_completion_report.timing" "$HOST_OS"
                 INTEGRATION_POOL_CHUNK_CAP_MIB=64
                 INTEGRATION_POOL_JOB_TIMEOUT_SECONDS=9
-                integration_standalone_compile "$_completion_report" uncallable-compiler compile fixture.tl
+                ci_timing_run "standalone-$COMPLETION_CASE" compile integration_standalone_compile \
+                    "$_completion_report" uncallable-compiler compile fixture.tl \
+                    > "$_completion_report.build.stdout" 2> "$_completion_report.build.stderr"
                 : > "$_completion_report.accepted"
             ) > "$_completion_report.log" 2>&1 &
             _completion_pid=$!
             wait "$_completion_pid" || _completion_rc=$?
             case $COMPLETION_CASE in
                 success) [ "$_completion_rc" -eq 0 ] && [ -e "$_completion_report.accepted" ] || exit 1 ;;
-                command-*) [ "$_completion_rc" -eq "${COMPLETION_CASE#command-}" ] || exit 1 ;;
-                *) [ "$_completion_rc" -ne 0 ] && [ ! -e "$_completion_report.accepted" ] || exit 1 ;;
+                command-*) [ "$_completion_rc" -eq "$(cat "$_completion_report.status")" ] || exit 1 ;;
+                *)
+                    [ "$_completion_rc" -ne 0 ] && [ ! -e "$_completion_report.accepted" ] || exit 1
+                    grep -Fq 'reason=' "$_completion_report.console" || exit 1
+                    grep -Fq '[bounded] fixture reason=' "$_completion_report.build.stderr" || exit 1
+                    ;;
             esac
             [ "$(cat "$_completion_report.argv")" = 'uncallable-compiler compile fixture.tl' ] || exit 1
         done
     done
-    echo '[integration] bounded completion and standalone retry fixtures passed (92 host/path cases)'
+    echo '[integration] bounded completion and standalone retry fixtures passed (132 host/path cases)'
 )
 
 run_batch_observability_self_test() {
@@ -3807,9 +3852,28 @@ run_preparation_failure_self_test() (
 )
 
 if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
+    _integration_cost_gate=${TYPELISP_CI_TIMING_GATE:-}
+    _integration_cost_file=${TYPELISP_CI_TIMING_FILE:-}
+    _integration_cost_enabled=${TYPELISP_CI_TIMING:-0}
+    _integration_cost_host=${TYPELISP_CI_TIMING_HOST:-$HOST_OS}
+    ci_timing_set_now_ms
+    _integration_fixture_started=$CI_TIMING_NOW_MS
     run_preparation_failure_self_test
+    ci_timing_set_now_ms
+    _integration_matrix_started=$CI_TIMING_NOW_MS
     run_bounded_completion_self_test
+    ci_timing_set_now_ms
+    _integration_matrix_finished=$CI_TIMING_NOW_MS
     run_batch_observability_self_test
+    ci_timing_set_now_ms
+    TYPELISP_CI_TIMING_GATE=$_integration_cost_gate
+    TYPELISP_CI_TIMING_FILE=$_integration_cost_file
+    TYPELISP_CI_TIMING=$_integration_cost_enabled
+    TYPELISP_CI_TIMING_HOST=$_integration_cost_host
+    . "$ROOT/scripts/lib-bounded-completion-fixtures.sh"
+    bounded_completion_fixture_cost integration \
+        "$((_integration_matrix_started - _integration_fixture_started + CI_TIMING_NOW_MS - _integration_matrix_finished))" \
+        "$((_integration_matrix_finished - _integration_matrix_started))" || exit 1
     exit 0
 fi
 
@@ -4141,6 +4205,7 @@ if [ "$HOST_OS" = windows ] && [ "$WINDOWS_MANIFEST_QUEUED" -gt 0 ]; then
     windows_print_manifest_summary
 fi
 
+integration_batch_require_success || exit 1
 if [ "$failed" -gt 0 ]; then
     echo "$failed integration case(s) failed out of $ran" >&2
     exit 1

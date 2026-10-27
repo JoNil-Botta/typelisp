@@ -241,7 +241,10 @@ set -- "$ROOT/scripts/run-memory-bounded.sh" --linux-rss-measure \
 if [ "$timeout_seconds" -gt 0 ]; then
     set -- timeout --signal=TERM --kill-after=5s "$timeout_seconds" "$@"
 fi
-cd "$working_directory"
+cd "$working_directory" || {
+    write_wrapper_failure_report "$backend"
+    exit 2
+}
 status=0
 linux_memory_limit_run_sampled "$limit_bytes" "$@" || status=$?
 reason=$LINUX_MEMORY_LIMIT_REASON

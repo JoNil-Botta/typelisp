@@ -2,7 +2,15 @@
 
 # Shared synthetic completions for the three existing pool reader self-tests.
 # Each case gets fresh, caller-owned paths; no compiler or cleanup is needed.
-BOUNDED_COMPLETION_CASES='success command-1 command-2 command-7 cancelled signal timeout oom missing-report missing-status empty-report malformed duplicate status-mismatch false-success lost-failure wrong-limit wrong-host wrong-backend zero-peak missing-peak bad-peak bad-status'
+BOUNDED_COMPLETION_CASES='success command-1 command-2 command-7 command-123 command-132 command-133 command-134 command-135 command-136 command-139 command-native cancelled signal native-cancel native-zero timeout oom missing-report missing-status empty-report malformed duplicate status-mismatch false-success lost-failure wrong-limit wrong-host wrong-backend zero-peak missing-peak bad-peak bad-status'
+
+# Attribute new fixture work within this same run, rather than claiming a
+# causal base/head measurement. These are sub-phases, never canonical gates.
+bounded_completion_fixture_cost() {
+    echo "[bounded-completion-cost] route=$1 unchanged_fixture_ms=$2 new_matrices_ms=$3 attribution=same-run"
+    ci_timing_record_elapsed "$1" unchanged-fixtures "$2" 0 || return 1
+    ci_timing_record_elapsed "$1" new-completion-matrices "$3" 0
+}
 
 bounded_completion_fixture() {
     _bc_report=$1
@@ -14,9 +22,15 @@ bounded_completion_fixture() {
     [ ! -e "$_bc_status_file" ] || mv "$_bc_status_file" "$_bc_status_file.previous"
     _bc_reason=success
     _bc_status=0
+    _bc_code=
     BOUNDED_COMPLETION_ELIGIBLE=0
     case $_bc_case in
         success) BOUNDED_COMPLETION_ELIGIBLE=1 ;;
+        command-native)
+            _bc_reason=command-failure; _bc_status=139
+            [ "$_bc_host" != windows ] || { _bc_status=5; _bc_code=-1073741819; }
+            BOUNDED_COMPLETION_ELIGIBLE=1
+            ;;
         command-*)
             _bc_reason=command-failure
             _bc_status=${_bc_case#command-}
@@ -24,9 +38,15 @@ bounded_completion_fixture() {
             ;;
         cancelled) _bc_reason=wrapper-failure; _bc_status=2 ;;
         signal) _bc_reason=command-failure; _bc_status=143 ;;
+        native-cancel)
+            _bc_reason=command-failure; _bc_status=143
+            [ "$_bc_host" != windows ] || { _bc_status=58; _bc_code=-1073741510; }
+            ;;
+        native-zero) _bc_reason=command-failure; _bc_code=256 ;;
         timeout) _bc_reason=timeout; _bc_status=124 ;;
         oom) _bc_reason=memory-limit; _bc_status=137 ;;
     esac
+    [ -n "$_bc_code" ] || _bc_code=$_bc_status
     if [ "$_bc_case" != missing-status ]; then
         printf '%s\n' "$_bc_status" > "$_bc_status_file"
     fi
@@ -38,7 +58,7 @@ schema_version=1
 host=$_bc_host
 backend=$_bc_backend
 reason=$_bc_reason
-exit_code=$_bc_status
+exit_code=$_bc_code
 limit_bytes=$((_bc_cap * 1024 * 1024))
 peak_memory_bytes=1048576
 wall_ms=1

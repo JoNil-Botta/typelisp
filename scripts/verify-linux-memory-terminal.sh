@@ -24,7 +24,17 @@ set -eu
 while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
 [ "$#" -gt 0 ] || exit 90
 shift
-case ${3:-} in 'unset _tlmem_terminal '*) ;; *) exit 0 ;; esac # capability probe
+case ${3:-} in
+    'unset _tlmem_terminal '*) ;;
+    *)
+        if [ "${TERMINAL_MODE:-}" = cwd-removed ]; then
+            case ${TERMINAL_CASE:?} in "${TERMINAL_ROOT:?}"/wrapper-cwd-removed) ;; *) exit 94 ;; esac
+            [ ! -L "$TERMINAL_CASE/gone" ] || exit 94
+            rmdir -- "${TERMINAL_CASE:?}/gone" || exit 94
+        fi
+        exit 0 # capability probe
+        ;;
+esac
 [ "$1:$2:$4" = sh:-c:sh ] || exit 91
 program=$3
 shift 4
@@ -219,6 +229,21 @@ for route in library-none wrapper-metrics; do
     [ "$terminal_status" -eq 2 ] || fail 'concurrent terminal swap accepted first record'
 done
 echo '[linux-memory-limit] 116 deterministic terminal/status/peak fixtures and concurrent record swaps passed'
+
+# A working directory may disappear after argument validation but before cd.
+# The wrapper must still publish a setup failure, as it did before inlining
+# its Linux library call. Only the empty directory this fixture created moves.
+TERMINAL_CASE="$WORKDIR/wrapper-cwd-removed"
+mkdir -p "$TERMINAL_CASE/gone"
+terminal_status=0
+PATH="$WORKDIR/bin:$PATH" TERMINAL_MODE=cwd-removed TERMINAL_ROOT=$WORKDIR \
+    TERMINAL_CASE=$TERMINAL_CASE "$ROOT/scripts/run-memory-bounded.sh" --limit-mib 64 \
+    --timeout-seconds 10 --working-directory "$TERMINAL_CASE/gone" \
+    --report "$TERMINAL_CASE/report" -- sh -c 'exit 0' \
+    > "$TERMINAL_CASE/stdout" 2> "$TERMINAL_CASE/stderr" || terminal_status=$?
+[ "$terminal_status" -eq 2 ] && grep -Fxq reason=wrapper-failure "$TERMINAL_CASE/report" &&
+    grep -Fxq exit_code=2 "$TERMINAL_CASE/report" || fail 'working-directory setup failure lost its report'
+echo '[linux-memory-limit] working-directory setup refusal passed'
 
 linux_memory_limit_systemd_available || {
     echo 'Linux terminal integration requires a usable user systemd manager with delegated memory' >&2

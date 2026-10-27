@@ -367,11 +367,20 @@ systemd's generic failure status alone does not identify an OOM.
 
 Integration, inline-test and selfhost-manifest pools validate the complete
 bounded report against the waited status, host and admitted cap before using
-outputs. Cancellation, signal exits and invalid completion stop further pool
-admission and fail the gate. Integration may replay ordinary compile failures
-for per-entry diagnostics; standalone compiles retain the chunk memory cap,
-swap policy and timeout, and their completion is checked before any output is
-accepted. Interrupted chunks cannot supply passing evidence through replay.
+outputs. Cancellation and invalid completion stop further pool admission and
+fail the gate. Integration may replay ordinary failures and known panic/crash
+exits (including `os-exit 134` and native Windows exceptions) for per-entry
+diagnostics. Replay is labelled diagnostic-only: every failed batch remains a
+gate failure even if all standalone entries succeed. Standalone compiles retain
+the chunk memory cap, swap policy and timeout, and their completion is checked
+before output is accepted. Refusal reasons reach the gate console even when
+compile streams are redirected. Interrupted chunks cannot supply passing
+evidence through replay.
+
+The existing pool self-tests print same-run cost attribution for the new
+completion matrices beside the unchanged fixture portion. With CI timing
+enabled these are sub-phase rows, preserving the canonical gate inventory;
+they are not a paired causal base/head measurement.
 
 `verify-selfhost-cli-build-run.sh` caps its complete public build/run corpus,
 including the root opt0 build, at 8192 MiB and writes

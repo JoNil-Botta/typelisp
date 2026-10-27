@@ -330,7 +330,7 @@ linux_memory_limit_verify_terminal() {
             fi
             ;;
     esac
-    echo "Linux memory limiting missing, malformed or mismatched invocation terminal evidence; launcher success does not prove workload completion" >&2
+    echo "Linux memory limiting missing, malformed or mismatched invocation terminal evidence; launcher status alone does not prove workload completion" >&2
     _linux_memory_limit_terminal_invalid=1
     [ "$_linux_memory_limit_status" -ne 0 ] || _linux_memory_limit_status=2
 }

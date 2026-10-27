@@ -15,4 +15,6 @@
     (unless (= (dep.read-y) 5) (return 8))
     (unless (= (dep.read-y-inside) 5) (return 9))
     (unless (= state.y 30) (return 10))
+    (unless (= (dep.read-opaque-global) 42) (return 11))
+    (unless (= (dep.read-opaque-inside) 42) (return 12))
     42))

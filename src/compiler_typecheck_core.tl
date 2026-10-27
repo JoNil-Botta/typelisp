@@ -76212,13 +76212,14 @@
             (macro-hygiene-global-legacy-id?
               (tc-context-structural-session ctx)
               name)))
-          (tc-var-expr-after-local-field-check
+          (tc-var-expr-after-local-field-check-mode
             ctx
             env
             name
             (tc-hygiene-name-text-id-for-session
               (tc-context-structural-session ctx)
-              name))
+              name)
+            false)
           (tc-lookup-visible-id ctx env name))
           [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
           [(ResultTcType.Err message)
@@ -76332,13 +76333,14 @@
                 (macro-hygiene-global-legacy-id?
                   (tc-context-structural-session ctx)
                   name)))
-              (tc-var-expr-after-local-field-check
+              (tc-var-expr-after-local-field-check-mode
                 ctx
                 env
                 name
                 (tc-hygiene-name-text-id-for-session
                   (tc-context-structural-session ctx)
-                  name))
+                  name)
+                false)
               (tc-lookup-visible-id ctx env name)))]
         (if (tc-mut-borrow-storage-backed-type? ctx ty)
           Ok

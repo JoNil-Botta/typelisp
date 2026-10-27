@@ -21,6 +21,8 @@ results. Non-call mutable borrows retain the global type against reference and
 by-value caller parameters; writes change only the selected field. Scalar and
 bool caller locals keep nested shared borrows accepted. Each fixture retains a
 control without shadowing.
+The imported matrix also borrows an opaque global without reading it by value;
+borrow-place lookup must preserve the opaque reference boundary.
 
 `ssa-indexed-label-links-preserve-newest-first` checks label heads, interleaved
 phi links, capacity growth, missing labels and renamed-block logical positions.

@@ -49,3 +49,19 @@
 
 (defmacro (caller-value [value : i64]) : Expr
   `(+ 0 ,value))
+
+(defstruct OpaqueToken
+  (:opaque)
+  (value i64))
+
+(define opaque-token : OpaqueToken
+  (OpaqueToken 42))
+
+(define (read-opaque-token [token : (& p OpaqueToken)]) : i64
+  token.value)
+
+(defmacro (read-opaque-global) : Expr
+  `(read-opaque-token (& opaque-token)))
+
+(define (read-opaque-inside) : i64
+  (read-opaque-global))

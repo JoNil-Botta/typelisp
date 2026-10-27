@@ -52,6 +52,8 @@ ST_REPO=JoNil-Botta/typelisp
 ST_REF_WORKFLOW_REF="$ST_REPO/.github/workflows/self-compile-reference.yml@refs/heads/main"
 
 # st_record FILE [KEY=VALUE...]  ->  a valid hosted gate record with overrides.
+# Overrides are literal values, including Windows path backslashes; unlike the
+# former per-override awk -v invocation, they do not expand awk escape syntax.
 st_record() {
     _str_file=$1
     shift
@@ -86,29 +88,43 @@ st_record() {
         sc_record_line run.event push
         sc_record_line run.job measure
         sc_record_line run.sha "$ST_SHA_A"
-    } > "$_str_file.base"
-    for _str_kv in "$@"; do
-        _str_k=${_str_kv%%=*}
-        _str_v=${_str_kv#*=}
-        awk -F '\t' -v k="$_str_k" -v v="$_str_v" '
-            BEGIN { OFS = "\t" }
-            $1 == k { if (v != "<delete>") print k, v; done = 1; next }
-            { print }
-            END { if (!done && v != "<delete>") print k, v }
-        ' "$_str_file.base" > "$_str_file.next"
-        mv "$_str_file.next" "$_str_file.base"
-    done
-    # The compiler stamp follows the record's commit unless overridden.
-    case " $* " in
-        *" compiler_commit="*) ;;
-        *)
-            _str_commit=$(sc_record_get "$_str_file.base" commit)
-            awk -F '\t' -v c="$_str_commit" 'BEGIN { OFS = "\t" } $1 == "compiler_commit" { $2 = c } { print }' \
-                "$_str_file.base" > "$_str_file.next"
-            mv "$_str_file.next" "$_str_file.base"
-            ;;
-    esac
-    mv "$_str_file.base" "$_str_file"
+    } | awk -F '\t' '
+        # Consume arguments ourselves so key=value is data, not an awk variable
+        # assignment. Defaults stream on stdin; no intermediate record remains.
+        BEGIN {
+            argc = ARGC
+            for (arg = 1; arg < argc; arg++) {
+                overrides[arg] = ARGV[arg]
+                ARGV[arg] = ""
+            }
+        }
+        {
+            order[++n] = $1
+            values[$1] = substr($0, length($1) + 2)
+            live[$1] = 1
+        }
+        END {
+          # Apply all overrides in order, including deletion/reinsertion.
+          for (arg = 1; arg < argc; arg++) {
+            pos = index(overrides[arg], "=")
+            key = substr(overrides[arg], 1, pos - 1)
+            val = substr(overrides[arg], pos + 1)
+            if (key == "compiler_commit") stamp = 1
+            if (val == "<delete>") {
+                if (key in live) {
+                    delete live[key]
+                    for (i = 1; i <= n; i++) if (order[i] == key) order[i] = ""
+                }
+            } else {
+                if (!(key in live)) order[++n] = key
+                live[key] = 1
+                values[key] = val
+            }
+          }
+            if (!stamp) values["compiler_commit"] = values["commit"]
+            for (i = 1; i <= n; i++) if (order[i] != "")
+                print order[i] "\t" values[order[i]]
+        }' "$@" > "$_str_file"
 }
 
 st_arithmetic() {
@@ -179,6 +195,40 @@ st_records() {
     st_succeeds "one commit, one binary" sc_same_commit_binary "$_d/r.tsv" "$_d/same-commit.tsv"
     st_record "$_d/other-ws.tsv" compiler_sha256=6666666666666666666666666666666666666666666666666666666666666666 key.workspace=/elsewhere
     st_succeeds "one commit, another workspace" sc_same_commit_binary "$_d/r.tsv" "$_d/other-ws.tsv"
+
+    # Planted failures exercise every required row independently: batching
+    # must not turn a missing/empty later field into a valid record.
+    for _k in $SC_RECORD_REQUIRED_KEYS; do
+        st_record "$_d/missing.tsv" "$_k=<delete>"
+        st_fails "missing required $_k" sc_record_validate "$_d/missing.tsv"
+        st_eq "missing diagnostic $_k" "$(sc_record_validate "$_d/missing.tsv" || true)" "record $_d/missing.tsv lacks $_k"
+        st_record "$_d/empty.tsv" "$_k="
+        st_fails "empty required $_k" sc_record_validate "$_d/empty.tsv"
+    done
+    for _v in 0 01 -1 +1 1.0 1e3 1000000000000000; do
+        st_record "$_d/count.tsv" "ir_count=$_v"
+        st_fails "invalid count $_v" sc_record_validate "$_d/count.tsv"
+    done
+    st_record "$_d/tree.tsv" tree=abc
+    st_fails "malformed tree" sc_record_validate "$_d/tree.tsv"
+    st_fails "absent record" sc_record_validate "$_d/absent.tsv"
+    st_succeeds "multiple accepted roles" sc_record_validate "$_d/r.tsv" reference gate
+    st_record "$_d/duplicate.tsv"
+    printf 'schema\tbad\ncommit\tbad\n' >> "$_d/duplicate.tsv"
+    st_succeeds "first duplicate row wins" sc_record_validate "$_d/duplicate.tsv"
+    st_record "$_d/numeric.tsv" key.kernel=01
+    st_record "$_d/numeric2.tsv" key.kernel=1
+    st_fails "identity comparison is textual" sc_records_comparable "$_d/numeric.tsv" "$_d/numeric2.tsv"
+    for _k in $SC_COMPARABLE_KEYS authority; do
+        st_record "$_d/missing.tsv" "$_k=<delete>"
+        st_fails "missing identity $_k" sc_records_comparable "$_d/r.tsv" "$_d/missing.tsv"
+        st_record "$_d/unknown.tsv" "$_k=unknown"
+        st_fails "unknown identity $_k" sc_records_comparable "$_d/unknown.tsv" "$_d/unknown.tsv"
+    done
+    st_eq "record writer sanitizes separators" "$(sc_record_line key "$(printf 'a\tb\rc\nd')")" "$(printf 'key\ta b c d')"
+    st_eq "record writer retains backslashes" "$(sc_record_line key 'a\rb')" "$(printf 'key\t%s' 'a\rb')"
+    st_record "$_d/windows-path.tsv" 'key.workspace=C:\tools\typelisp'
+    st_eq "fixture override retains Windows backslashes" "$(sc_record_get "$_d/windows-path.tsv" key.workspace)" 'C:\tools\typelisp'
 }
 
 st_gate() {
@@ -1315,12 +1365,19 @@ sc_self_test() {
     # Git fixture repositories must not block clean --experiments after success.
     # Failed runs retain their evidence.
     trap 'if [ "$?" -eq 0 ]; then rm -rf -- "${_st_root:?}"; fi' EXIT
+    FIXTURE_METRICS_TOOLS=$SC_TOOL_DIR
+    . "$SC_TOOL_DIR/lib-fixture-metrics.sh"
+    fixture_metrics_init "$_st_root"
+    mkdir -p "$_st_root/metrics" "$_st_root/metrics-disabled"
+    st_succeeds "pipeline/substitution tool-start counter" fixture_metrics_self_test "$_st_root/metrics"
+    st_succeeds "disabled instrumentation installs no counter" fixture_metrics_disabled_self_test "$_st_root/metrics-disabled"
+    fixture_metrics_overhead_sample
     for _st_part in arithmetic records gate declarations selection resolve ledger account chain fallback e2e; do
         mkdir -p "$_st_root/$_st_part"
-        "st_$_st_part" "$_st_root/$_st_part"
+        fixture_metrics_run "$_st_part" "st_$_st_part" "$_st_root/$_st_part"
     done
     case "$(uname -s)" in
-        Linux*) bash "$SC_TOOL_DIR/ci-linux-tools-self-test.sh" || st_bad "shared Linux package paths" ;;
+        Linux*) fixture_metrics_run linux-tools bash "$SC_TOOL_DIR/ci-linux-tools-self-test.sh" || st_bad "shared Linux package paths" ;;
     esac
     if [ "$st_failures" -ne 0 ]; then
         echo "[self-compile self-test] $st_failures of $st_count checks failed" >&2

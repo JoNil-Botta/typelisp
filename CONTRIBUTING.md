@@ -28,7 +28,8 @@ Thanks for your interest! This is a learning project — all contributions welco
    with the gates that run it. `scripts/ci-verify.sh` checks the tools of the
    gates it will run before the first one starts, and names every missing tool
    with its install hint.
-5. Run the verification gate: `scripts/ci-verify.sh`.
+5. Run the local preflight and affected gates described under
+   [Before Submitting](#before-submitting).
 
 TypeLisp is **fully self-hosted**: the compiler compiles itself. There is no
 Rust (or other-language) compiler — see the self-perpetuating bootstrap in
@@ -137,19 +138,56 @@ generated spellings only when necessary, and put a targeted `lint-allow`
 directive at the declaration. Omit a `(module ...)` header that only repeats the
 file's inferred identity, unless the declaration itself is under test.
 
-Set `TYPELISP_BIN=target/stage0/typelisp` (or `.exe` on Windows) after
-`scripts/fetch-stage0.sh`, then:
+Before pushing, run the preflight gates:
 
-- `$TYPELISP_BIN fmt --check <files>` — format your TypeLisp source
-- `TYPELISP_BIN=$TYPELISP_BIN scripts/check-tl-lint.sh` — fix lint findings
-- `scripts/ci-verify.sh` — run the full verification gate CI uses; add
-  `--jobs 4 --memory-mib 14336` to run four gates at a time as CI does
-- `scripts/ci-verify.sh --gates <id>` — rerun one failing gate with only the
-  gates it needs (IDs from `scripts/ci-verify.sh --list-gates linux`); the
-  result is partial, so finish with the full gate
-- For selfhost compiler changes, follow [`src/TESTING.md`](src/TESTING.md)
-  when choosing module self-tests, smoke drivers, inline tests, and integration
-  coverage.
+```sh
+scripts/ci-verify.sh --gates shared-view-count-ratchet,typelisp-source-formatting,typelisp-source-lint
+```
+
+Choose the affected local gates with the selector, then run its required
+minimum plus focused regressions for your change:
+
+```sh
+scripts/ci-affected.sh --base origin/main
+scripts/ci-affected.sh --base origin/main --run
+```
+
+The required minimum includes the preflight gates and their producer
+dependencies, so running it also satisfies preflight. Follow
+[`src/TESTING.md`](src/TESTING.md#ci-expectations) for the selector's path and
+ownership rules, and for module self-tests, smoke drivers, inline tests and
+integration coverage when changing the selfhost compiler. Add `--tier advisory`
+to inspect the optional superset when planning additional checks; running the
+whole advisory set locally is optional.
+
+When a plan is full only because of harness, workflow or unknown paths, run the
+`--paths FILE` required set for the other paths, plus the gates that invoke the
+changed harness, plus focused tests. `--paths FILE` prints a plan without
+executing it; pass its IDs as a comma-separated list to
+`scripts/ci-verify.sh --gates <ids>`. Hosted CI supplies the full table.
+
+Until [#9389](https://github.com/JoNil-Botta/typelisp/issues/9389) lands, PRs
+that change primary inventories, the map or catalog, gate commands, nested
+owning scripts or translators must record a passing
+`scripts/ci-affected.sh --self-test` in their validation evidence.
+
+`scripts/ci-verify.sh --gates <id>` reruns one failing gate with the gates it
+needs (IDs from `scripts/ci-verify.sh --list-gates linux`). The result remains
+partial; required hosted CI's full gate table on the same PR head completes
+the coverage and is the full-gate authority. Every required check must pass
+before merge. No gate or coverage is removed by using a local subset.
+
+For host-specific gates when the local toolchain differs, record qualified
+hosted evidence for the same head and applicable inputs, identifying the host,
+toolchain and passing run, rather than repeating a known incompatible local
+run (for example [#7792](https://github.com/JoNil-Botta/typelisp/issues/7792)).
+A failed local gate remains a failure; do not change baselines to make it pass.
+
+A full local `scripts/ci-verify.sh` run remains available and is recommended
+when hosted CI cannot exercise something or when diagnosing a failure. It is
+not a mandatory duplicate of required hosted CI. Use the memory-bounded,
+single-worker local invocation described in [`src/TESTING.md`](src/TESTING.md#ci-expectations)
+on a shared development host.
 
 ## Picking Work
 

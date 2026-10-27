@@ -207,6 +207,21 @@ call, register and memory-class results, both hidden-argument positions and
 mutual recursion. Both fixtures run natively and with `--verify-ir` at opt0/1/2
 on both hosts; the IR observability gate also verifies both target modes.
 
+`fixed_array_result_tailrec.tl` checks complete fixed-array result forwarding,
+different layouts, changed scalar arguments and independent live results at
+opt0/1/2 on both hosts. Its opt2 shape requires loops while frame-held borrows
+and post-call result reads retain recursive calls. Authored optimizer IR also
+rejects direct/derived result aliases, result escapes, partial/incompatible
+copies and additional temporary observers. Forwarding reuses result-slot
+confinement, and the ordinary frame-capture guard must still admit the loop.
+The complete private allocation run is retired before scratch-loop analysis.
+The optimizer's owner regression verifies legal array IR before and after a
+full `OptimizeRequest(A, 2)` run with empty and colliding B pools installed;
+B stays installed and unchanged. A scalar frame-refusal control preserves the
+existing inliner policy. The target-parity corpus uses the exact golden array
+witness; by-value array controls retain their legitimate ABI differences in
+the native and IR-verification matrices.
+
 `regalloc-tail-stack-forward-homes` and `backend-tail-stack-forward-registers`
 compare stack tail fallbacks with ordinary calls on both ABIs. The overflow
 boundary test checks twice each GP window and one argument beyond it; the
@@ -2692,6 +2707,92 @@ publishes.
 
 ### CI expectations
 
+To select the required local minimum and inspect the advisory superset, use
+the reviewed path map in
+[`ci-affected-paths.tsv`](../scripts/ci-affected-paths.tsv):
+
+```sh
+scripts/ci-affected.sh --base origin/main
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
+scripts/ci-affected.sh --self-test
+```
+
+The default `required` tier prints the deterministic local minimum, one ID per
+line in canonical order with producer dependencies from `ci-verify.sh`. Owners
+run that minimum (the second command) plus focused regressions for their change,
+recording applicable input-scoped reuse or host-qualified evidence. Backend and
+target-bearing sources require target parity; stdlib, safety inputs and pins
+require the safety corpus. Shared bootstrap, formatting, lint and shared-view
+checks and the cheap documented-source doctest guard are always included.
+Stdlib source edits also require documentation, rendered-site links and anchors, and
+module/fixture guards.
+Direct native, codegen and documentation inputs add
+their owning gates through the reviewed map.
+
+Required fixture owners follow declared primary inputs: native-manifest source
+entries and suite members, case-file source declarations and explicit repository
+fixture commands, plus safety and compile-manifest source entries. Imported or
+staged compiler/stdlib dependency closures stay in the advisory source classes.
+Generic compiler comparisons and produced-CLI build workloads are advisory;
+an exact primary fixture contract adds its comparison gate to the minimum.
+Broad inline discovery is advisory; named inline fixture contracts remain
+required. Diagnostic anchor references into imported or staged dependencies
+also remain advisory, rather than becoming new primary source declarations.
+When changing gate commands or primary inventories, update the reviewed path
+map and run `--self-test`. Its ownership audit follows invoked owning scripts
+and whole-directory content guards, uses the canonical case translator
+in list mode, expands manifest primaries, and checks Windows checkout bytes.
+
+`--tier advisory` prints a broader conservative superset for reviewing other
+affected checks. It includes the required tier, but it is not a requirement to
+run that entire superset locally. `--run` executes whichever tier is selected,
+one gate at a time through the canonical runner. Ordinary compiler PRs do not
+require the full local table. Full hosted coverage still applies. Unknown,
+workflow and executable-harness changes fail safe to the full table in both
+tiers. In every selector mode, these compiler worker
+counts default to `1`; any other explicit value, including empty, fails:
+
+- `TYPELISP_INLINE_TEST_WORKERS`
+- `TYPELISP_BUILD_INVARIANCE_WORKERS`
+- `TYPELISP_INTEGRATION_WORKERS`
+- `TYPELISP_COMPILE_MANIFEST_WORKERS`
+
+Use the ordinary memory-bounded invocation around the `--run` command on a
+shared development host. A partial local preflight still requires full hosted
+CI on the delivered head.
+
+Selection compares the merge base of the named ref and HEAD with the working
+tree, including committed, staged, unstaged, deleted, both sides of renamed,
+and nonignored untracked paths. All matching map rows contribute. Unmapped or
+unusually quoted Git paths select the full host table. An advisory-only match
+also selects full coverage in both tiers until its required trigger is reviewed.
+Invalid refs, invalid
+maps and unreadable path inventories fail before any gate runs. The shared
+source hygiene gates are always selected, even for an empty diff.
+
+The advisory compiler, stdlib and corpus groups select consumers recorded in
+[`ci-affected-inputs.tsv`](../scripts/ci-affected-inputs.tsv): all produced-compiler
+gates and their bootstrap dependencies, plus direct source/corpus guards.
+Compiler/backend target references therefore include target parity, and stdlib
+changes include the safety corpus. Independent memory-helper, benchmark-harness
+and publication fixtures are excluded from these source recommendations.
+Prose selects documentation consumers plus the shared hygiene floor. Executable
+harnesses, workflow paths, selector fixtures and unknown paths select the full
+table. A new or missing gate classification also makes input groups select the
+full table until their consumers have been reviewed. Review input roles when
+changing gate contracts. `--host linux|windows`
+can inspect either host plan; execution requires the native host.
+
+`--paths FILE` replays a newline-delimited repository-relative path inventory
+in either tier without executing gates. The self-test uses the required tier
+for the original changed paths at the
+failed heads of PRs #9310, #9326 and #9327, with run/base/head provenance in
+`tests/fixtures/ci-affected/history.tsv`; it also checks isolated triggers,
+fallback, dependency closure, Git discovery and the single-worker boundary.
+The fixtures work offline in shallow checkouts; when their Git objects are
+available the test also verifies them against the recorded historical diffs.
+
 Pull requests get Linux and Windows coverage from `scripts/ci-verify.sh`
 (wired in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each
 host bootstraps the full `src/main.tl` CLI as described under
@@ -2822,23 +2923,17 @@ exit-status, lock-content, conflict-diagnostic or stage-cleanup assertions.
 Premature exit and timeout print the captured child logs; a staging-directory
 observation error fails immediately with those same diagnostics.
 
-For a selfhost compiler change, a typical local check (after
-`scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
+For a compiler change, start with the required minimum and inspect the
+advisory superset when planning additional focused checks:
 
 ```sh
-$tl fmt --check src/<changed>.tl
-TYPELISP_BIN=$tl ./scripts/verify-selfhost-compile-manifest.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-format.sh
-TYPELISP_BIN=$tl ./scripts/check-tl-lint.sh
-TYPELISP_BIN=$tl ./scripts/verify-public-tools.sh
-TYPELISP_BIN=$tl ./scripts/verify-stdlib-docs.sh
-TYPELISP_BIN=$tl ./scripts/verify-doc-tests.sh
-TYPELISP_BIN=$tl ./scripts/verify-inline-tests.sh
-TYPELISP_BIN=$tl ./scripts/check-codegen-target-parity.sh
-scripts/ci-verify.sh
+scripts/ci-affected.sh --base origin/main --run
+scripts/ci-affected.sh --base origin/main --tier advisory
 ```
 
-Run the tests that match the layer you touched; `scripts/ci-verify.sh --gates
+Run the focused regressions that match the layer you touched; full hosted
+CI supplies the complete gate table, without duplicating it as a mandatory
+local suite for ordinary compiler changes. `scripts/ci-verify.sh --gates
 <id>` reruns one gate with the gates it needs. On non-Linux platforms, scripts
 that require native `as`/`ld` either no-op by design or should be run through a
 Linux environment.

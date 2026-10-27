@@ -88,7 +88,7 @@ short_windows_path() {
     if command -v cygpath >/dev/null 2>&1; then
         if short_path=$(cygpath -d "$1" 2>/dev/null); then
             if [ -n "$short_path" ]; then
-                printf '%s\n' "$short_path" || return $?
+                command printf '%s\n' "$short_path" || return $?
                 return 0
             fi
         fi
@@ -137,7 +137,7 @@ find_clang() {
     done
 
     if command -v powershell.exe >/dev/null 2>&1; then
-        ps_clang=$(powershell.exe -NoProfile -Command '$cmd = Get-Command clang.exe -ErrorAction SilentlyContinue; if ($cmd) { $cmd.Source }') || return $?
+        ps_clang=$(command powershell.exe -NoProfile -Command '$cmd = Get-Command clang.exe -ErrorAction SilentlyContinue; if ($cmd) { $cmd.Source }') || return $?
         # A here-document supplies input without a producer whose failure
         # could be hidden by the normalization command's pipeline status.
         ps_clang=$(tr -d '\r' <<EOF

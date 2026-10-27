@@ -42,6 +42,17 @@ echo() {
 # Discovery probes succeed, then their actual output/status can be planted.
 # No host tool or Windows installation participates in either host plan.
 command() {
+    if [ "$1" = printf ]; then
+        nl_step output || return $?
+        printf "$2" "$3"
+        return $?
+    fi
+    if [ "$1" = powershell.exe ]; then
+        nl_status=0
+        nl_step powershell || nl_status=$?
+        printf 'fixture-clang\r\nignored\r\n'
+        return "$nl_status"
+    fi
     [ "$1" = -v ] || return 1
     if [ "${nl_real_helpers:-0}" -eq 1 ]; then
         case "$2" in
@@ -77,7 +88,7 @@ nl_flow() {
             assemble_and_link fixture fixture.s fixture.obj fixture.exe || return $?
             ;;
         short-output)
-            short_windows_path fixture-clang >&- || return $?
+            short_windows_path fixture-clang || return $?
             configure_windows_linker || return $?
             ;;
         short-control)
@@ -120,12 +131,14 @@ nl_check() {
     else
         # Deliberately ignore errexit in both timer modes: explicit forwarding
         # must remain correct even when an enclosing caller tests its status.
+        set +e
         if ci_timing_run "$nl_case" native-link nl_flow \
                 >> "$nl_root/stdout" 2>> "$nl_root/stderr"; then
             nl_rc=0
         else
             nl_rc=$?
         fi
+        set -e
     fi
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$nl_case" "$nl_plan" \
         "$nl_timing" "$nl_want" "$nl_rc" "$nl_expected" >> "$nl_root/results.tsv"
@@ -218,12 +231,6 @@ cygpath() {
         *) return 2 ;;
     esac
 }
-powershell.exe() {
-    nl_status=0
-    nl_step powershell || nl_status=$?
-    printf 'fixture-clang\r\nignored\r\n'
-    return "$nl_status"
-}
 tr() {
     nl_status=0
     nl_step normalize || nl_status=$?
@@ -245,14 +252,14 @@ for nl_plan in linux windows; do
         nl_check real-entry success "$nl_prefix link-notice link continued"
         nl_check real-entry success "$nl_prefix entry-second link-notice link continued" -legacy legacy
         nl_check real-entry success "$nl_prefix entry-second link-notice link continued" -fallback fallback
-        nl_check short-output output short-probe '' normal 1
+        nl_check short-output output 'short-probe output'
         nl_expected_path=fixture-short
-        nl_check short-control success 'short-probe continued'
+        nl_check short-control success 'short-probe output continued'
         nl_expected_path=fixture-long
         nl_check short-control success 'short-probe windows-path continued' -fallback fallback
         nl_check powershell powershell powershell
         nl_check powershell normalize 'powershell normalize'
-        nl_check powershell success 'powershell normalize unix-path short-probe clang-notice unix-path linker-notice continued'
+        nl_check powershell success 'powershell normalize unix-path short-probe output clang-notice unix-path linker-notice continued'
     done
 done
 

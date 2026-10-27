@@ -159,6 +159,23 @@ jobs:
           path: target/ci-timing/*.tsv
           if-no-files-found: error
 
+      - name: Upload C comparison provenance
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: c-comparison-provenance
+          path: |
+            target/instruction-count-check/measure/c-provenance.json
+            target/instruction-count-check/measure/summary.tsv
+            target/instruction-count-check/current.tsv
+            target/instruction-count-check/diff.txt
+            target/instruction-count-heavy/measure/c-provenance.json
+            target/instruction-count-heavy/measure/summary.tsv
+            target/instruction-count-heavy/current.tsv
+            target/instruction-count-heavy/diff.txt
+          if-no-files-found: warn
+          retention-days: 90
+
       - name: Upload root build memory evidence
         if: always()
         uses: actions/upload-artifact@v4

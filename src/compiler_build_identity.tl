@@ -3,7 +3,9 @@
 ;; enter the compressed stdlib image. The tree identity keys TLCI/frontend
 ;; admission, so different commits of one tree execute the same compiler work.
 ;; Plain source-tool builds carry `unknown` and cannot trust frontend surfaces.
-(import stdlib.comptime)
+(cfg
+  (any stage0-build-version compiler-build-identity)
+  (import stdlib.comptime))
 (import stdlib.string)
 
 (defmacro (compiler-build-identity-global-shared-view [place : Expr]) : Expr

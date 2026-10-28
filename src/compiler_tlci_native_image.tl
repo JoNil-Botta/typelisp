@@ -676,13 +676,6 @@
             fixup-offsets
             (array-ref fixup-count 0)))))))
 
-;; Region offset of exported text symbol `name`, for macro entry records.
-;; Text offsets of exported functions in symbol-table order. Generated
-;; transformer programs define one entry function per catalog identity and
-;; nothing else, so export order is the identity order; compact function
-;; naming makes label names unstable, so offsets are the contract.
-;; Function bodies are emitted in definition order, so ascending text offsets
-;; are definition order regardless of symbol-table ordering.
 ;; Primitives-only packaging boundary: callers (the producer, tools) pass
 ;; metadata as canonical text and plain arrays, and every tlci_core nominal
 ;; stays inside this module's single import instance.
@@ -723,6 +716,8 @@
                 entry-offsets
                 macro-count)))))]))
 
+;; Region offset of a named text entry. Macro records select the provided C
+;; export rather than the private Internal body or its compact function label.
 (define (compiler-tlci-native-entry-offset
   [image : cobj.CompilerObjectImage]
   [name : String]) : i64

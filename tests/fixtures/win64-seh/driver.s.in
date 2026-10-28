@@ -135,5 +135,5 @@ tl_seh_driver_recorded:
     .seh_endproc
 .endm
 
-    SEH_DRIVE tl_seh_drive_framed, _tl_win64_seh_unwind_seh_victim_framed
-    SEH_DRIVE tl_seh_drive_fpo, _tl_win64_seh_unwind_seh_victim_fpo
+    SEH_DRIVE tl_seh_drive_framed, tl_seh_victim_framed
+    SEH_DRIVE tl_seh_drive_fpo, tl_seh_victim_fpo

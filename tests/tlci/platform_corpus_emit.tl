@@ -3,15 +3,17 @@
 ;; legacy classification stay covered alongside the new enum values.
 (import stdlib.byte_buf)
 (import stdlib.io)
+(import stdlib.string)
 (import tlci_core)
 
 (define (tlci-platform-corpus-image
   [platform : i64]
   [package-name : String]
-  [code-bearing : bool]) : tlci_core.TlciImage
+  [code-bearing : bool]
+  [callback-abi : i64]) : tlci_core.TlciImage
   (tlci_core.tlci-make-image
     platform
-    tlci_core.tlci-callback-abi-version
+    callback-abi
     "tlci-v2-platform-corpus"
     (tlci_core.tlci-make-metadata "v1" package-name "1.0.0")
     (tlci_core.tlci-empty-bytes)
@@ -45,7 +47,8 @@
       (tlci-platform-corpus-image
         tlci_core.tlci-host-platform-x86-64-linux
         "corpus.platform-unknown"
-        false)))
+        false
+        2)))
     [(Err message)
       (io.print-error message)
       1]
@@ -59,19 +62,27 @@
 (define (main) : i64
   (if (= (io.arg-count) 1)
     0
-    (if (not (= (io.arg-count) 6))
+    (if (not
+      (or
+        (= (io.arg-count) 6)
+        (and (= (io.arg-count) 7) (string.eq (io.arg 6) "--current-abi"))))
       (begin
         (io.print-error
-          "tlci platform corpus emitter: expected five output paths\n")
+          "tlci platform corpus emitter: expected five output paths and optional --current-abi\n")
         2)
       (let
+        [callback-abi : i64
+          (if (= (io.arg-count) 7)
+            tlci_core.tlci-callback-abi-version
+            2)]
         [linux-metadata : i64
           (tlci-platform-corpus-write
             (io.arg 1)
             (tlci-platform-corpus-image
               tlci_core.tlci-host-platform-x86-64-linux
               "corpus.platform-metadata"
-              false))]
+              false
+              callback-abi))]
         (if (not (= linux-metadata 0))
           linux-metadata
           (let
@@ -81,7 +92,8 @@
                 (tlci-platform-corpus-image
                   tlci_core.tlci-host-platform-x86-64-windows
                   "corpus.platform-metadata"
-                  false))]
+                  false
+                  callback-abi))]
             (if (not (= windows-metadata 0))
               windows-metadata
               (let
@@ -91,7 +103,8 @@
                     (tlci-platform-corpus-image
                       tlci_core.tlci-host-platform-x86-64-linux
                       "corpus.platform-code"
-                      true))]
+                      true
+                      callback-abi))]
                 (if (not (= linux-code 0))
                   linux-code
                   (let
@@ -101,7 +114,8 @@
                         (tlci-platform-corpus-image
                           tlci_core.tlci-host-platform-x86-64-windows
                           "corpus.platform-code"
-                          true))]
+                          true
+                          callback-abi))]
                     (if (not (= windows-code 0))
                       windows-code
                       (tlci-platform-corpus-write-unknown (io.arg 5)))))))))))))

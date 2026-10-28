@@ -4055,6 +4055,7 @@
         (ci.intern "helper")
         (& (ast.ast-param-list-new))
         (& (I64))
+        (No)
         (& (Unavailable)))]
     (match decl
       [(Extern decl-meta _ _ metadata _)
@@ -4066,21 +4067,36 @@
 ;; A dependency function reaches its consumer as an extern with the TypeLisp
 ;; ABI (#8485), so a TypeLisp-internal convention can tell it from a C extern.
 (define (compiler-load-package-extern-typelisp-abi-ok?) : bool
-  (match (load.compiler-load-package-def-fn-extern
-    "dep"
-    "C:/dep/"
-    (& (svec.new))
-    "C:/dep/src/lib.tl"
-    ""
-    (ci.intern "helper")
-    (& (ast.ast-param-list-new))
-    (& (I64))
-    (& (Unavailable)))
-    [(Extern _ _ _ metadata _)
-      (match (ast.ast-extern-metadata-abi (deref metadata))
-        [(TypeLisp) true]
-        [_ false])]
-    [_ false]))
+  (let
+    [ok : bool true]
+    (for [kind (iterator.range 0 2)]
+      (match (load.compiler-load-package-def-fn-extern
+        "dep"
+        "C:/dep/"
+        (& (svec.new))
+        "C:/dep/src/lib.tl"
+        ""
+        (ci.intern "helper")
+        (& (ast.ast-param-list-new))
+        (& (I64))
+        (if (= kind 0)
+          (No)
+          (Export (ci.intern-id-from-renderable (ci.intern "helper_c"))))
+        (& (Unavailable)))
+        [(Extern _ _ _ metadata _)
+          (unless
+            (and
+              (match (& (deref metadata))
+                [(Metadata (TypeLisp) _ _ _ _) true]
+                [_ false])
+              (string.eq
+                (ast.ast-extern-metadata-symbol (& (deref metadata)))
+                (if (= kind 0)
+                  "_tl_dep_src_lib_helper"
+                  "helper_c$typelisp")))
+            (set! ok false))]
+        [_ (set! ok false)]))
+    ok))
 
 (define (compiler-load-package-source-macro-preserved-ok?) : bool
   (let

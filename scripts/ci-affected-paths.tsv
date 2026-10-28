@@ -17,11 +17,15 @@ stdlib/tests/*	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifie
 stdlib/README.md	stage2-stdlib-modules-and-fixtures	@stdlib	The stdlib runner checks the documented module inventory.
 tests/*	-	@corpus	Advisory corpus class; a path also needs a required trigger or both tiers fall back to full.
 tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
+tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
+tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Raw atomic C entries and ordinary Internal bodies retain independent call and assembly coverage.
+benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.
 tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
 tests/spmd/*	stage2-spmd-simd-comparison,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	SPMD comparison data and direct source guards for its executable fixtures.
 tests/public-tools/*	stage2-public-tool-surface,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The public-tool runner consumes the LSP and REPL corpora and their source fixtures.
 tests/apps/*	stage2-app-workflow-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The application runner consumes scenario manifests, packages, case files and sources.
 tests/tlci/corpus/*	tlci-format-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The TLCI runner consumes its recorded container corpus and source fixtures.
+tests/tlci/corpus/valid-abi3-*	tlci-format-corpus	@corpus	Current callback ABI images and metadata preserve admission and legacy inspection coverage.
 tests/tlci/corpus_emit.tl	tlci-format-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Exact source emitter executed by the TLCI corpus runner.
 tests/tlci/platform_corpus_emit.tl	tlci-format-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Exact platform emitter executed by the TLCI corpus runner.
 tests/inline/*	stage2-inline-typelisp-tests,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Dedicated inline-suite fixture inputs.
@@ -75,6 +79,7 @@ src/tests/scan_storage_growth.tl	stage2-compile-profile-verifier	@compiler	Direc
 tests/cross-mode/corpus.tsv	stage2-cross-mode-semantic-abi-differential	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
 tests/fixtures/backend_source_import_str_cat.tl	stage2-backend-source-import-context,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-native-integration-corpus	@corpus	Direct fixture input in verify-backend-source-import-context.sh.
 tests/fixtures/win64-seh/savereg-oracle.expected	win64-seh-unwind-verifier	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
+tests/fixtures/win64-seh/driver.s.in	win64-seh-unwind-verifier	@corpus	Native Windows register canaries and virtual-unwind caller for Platform bridges and Internal frames.
 tests/fixtures/win64-seh/win64_seh_unwind.tl	win64-seh-unwind-verifier,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-regalloc-backend-asm-shape-gates	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
 tests/integration/aggregate_globals.tl	stage2-windows-coff-batch-plan	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
 tests/integration/aggregate_return_no_alloc.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.

@@ -9,6 +9,79 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_owned_view as owned_view)
 (import tlci_core as tlci)
+(import stdlib.comptime)
+(import stdlib.test)
+
+(defmacro (tlci-test-count-callback-rows [offset : Expr] [rows : Expr ...]) : i64
+  `(+ ,offset ,(comptime.expr-int (expr-list-length rows))))
+
+(defmacro (tlci-test-declare-callback-rows [rows : Expr ...]) : Decls
+  `(define (tlci-test-declared-callback-count) : i64
+    ,(comptime.expr-int (expr-list-length rows))))
+
+;; A declaration consumer cannot enter through the expression-only adapter.
+(tlci.tlci-host-callback-declarations tlci-test-declare-callback-rows)
+
+(defmacro (tlci-test-callback-row-indices [rows : Expr ...]) : Expr
+  (let
+    [checks : ExprList (expr-list-empty)]
+    [row : i64 (expr-list-length rows)]
+    [prefix-length : i64
+      (string.string-length "compiler-comptime-host-callback-")]
+    (while (> row 0)
+      (set! row (- row 1))
+      (match (expr-list-nth rows row)
+        [(comptime.Expr.Var text)
+          (let
+            [name : Expr
+              (comptime.expr-string
+                (comptime.string-slice
+                  text
+                  prefix-length
+                  (- (string.string-length text) prefix-length)))]
+            (set!
+              checks
+              (expr-list-cons
+                `(test.assert-i64-eq
+                  (tlci.tlci-host-callback-row-index ,name)
+                  ,(comptime.expr-int row)
+                  "callback row hint preserves inventory order")
+                checks)))]
+        [_ (comptime-error "callback table rows must be bare names")]))
+    `(begin
+      ,@checks)))
+
+(test
+  tlci-host-callback-row-indices
+  (tlci.tlci-host-callback-table tlci-test-callback-row-indices)
+  (test.assert-i64-eq (tlci.tlci-host-callback-row-index "") -1 "empty name")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "fuel-check\n")
+    -1
+    "a delimiter is not part of a callback name")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "fuel-check\0")
+    -1
+    "names are compared at their full length")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "expr-list")
+    -1
+    "a callback prefix is not a row")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "not-a-callback")
+    -1
+    "unknown names do not resolve"))
+
+(test
+  tlci-host-callback-declaration-table
+  (test.assert-i64-eq
+    (tlci-test-declared-callback-count)
+    (tlci.tlci-host-callback-table tlci-test-count-callback-rows 0)
+    "declaration and expression consumers see the same ordered inventory")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-table tlci-test-count-callback-rows 7)
+    (+ 7 (tlci-test-declared-callback-count))
+    "expression contexts precede the shared callback rows"))
 
 (define (tlci-test-metadata) : tlci.TlciMetadata
   (tlci.tlci-make-metadata "v1" "demo" "0.1.0"))
@@ -203,6 +276,8 @@
 
 (define (tlci-test-host-abi-layout-ok?) : bool
   (and
+    (= tlci.tlci-callback-abi-version 3)
+    (= tlci.tlci-host-abi-version 3)
     (= tlci.tlci-host-abi-version tlci.tlci-callback-abi-version)
     (string.eq tlci.tlci-image-entry-symbol "tlci_image_entry")
     (= tlci.tlci-image-entry-param-count 2)
@@ -359,7 +434,10 @@
         "tlci host ABI: bad host callback table magic")
       (tlci-test-table-rejects?
         (tlci-test-table magic (+ version 1) size 0 1 1)
-        "tlci host ABI: unsupported callback ABI version 3")
+        "tlci host ABI: unsupported callback ABI version 4")
+      (tlci-test-table-rejects?
+        (tlci-test-table magic 2 size 0 0 1)
+        "tlci host ABI: unsupported callback ABI version 2")
       (tlci-test-table-rejects?
         (tlci-test-table magic version (- size 1) 0 1 1)
         "tlci host ABI: host callback table byte-size is smaller than v2")
@@ -395,7 +473,10 @@
           0
           0
           0)
-        "tlci host ABI: unsupported callback ABI version 3")
+        "tlci host ABI: unsupported callback ABI version 4")
+      (tlci-test-registration-rejects?
+        (tlci-test-registration registration-magic 2 registration-size 0 0 0)
+        "tlci host ABI: unsupported callback ABI version 2")
       (tlci-test-registration-rejects?
         (tlci-test-registration
           registration-magic

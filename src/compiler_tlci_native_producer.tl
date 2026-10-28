@@ -9145,7 +9145,10 @@
             "(define (macro-entry-"
             (string.int->string index)
             " [image-ctx : i64] [host : i64] [session : i64]"
-            " [operands : i64] [count : i64] [result : i64]) : i64\n"))
+            " [operands : i64] [count : i64] [result : i64])\n"
+            "  (:export-symbol \"tlci_macro_entry_"
+            (string.int->string index)
+            "\") : i64\n"))
         (if (string.eq body-text "")
           (begin
             (set!
@@ -9218,7 +9221,9 @@
         [offset : i64
           (compiler_tlci_native_image.compiler-tlci-native-entry-offset
             (owned_view.compiler-owned-shared-view image)
-            (str_cat.str-cat "_tl_f" (string.int->string index)))]
+            ;; The host calls the Platform entry, not the private Internal
+            ;; body. This also works in a compiler built by a pre-cutover seed.
+            (str_cat.str-cat "tlci_macro_entry_" (string.int->string index)))]
         (if (< offset 0)
           (set! ok false)
           (begin

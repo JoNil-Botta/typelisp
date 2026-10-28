@@ -8,6 +8,7 @@
   compiler-dependency-audit
   (import compiler_dependency_trace as dependency_trace))
 (import compiler_ast_types as ast)
+(import compiler_abi as cabi)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import lex as lexer)
@@ -12281,6 +12282,7 @@
   [name : i64]
   [params : (& ast.AstParamList)]
   [ret : (& ast.AstType)]
+  [export : ast.AstFnExport]
   [spmd-interface : (& CompilerLoadPackageSpmdInterface)]) : ast.AstDecl
   (let
     [name-str : String (ci.intern-str name)]
@@ -12299,7 +12301,10 @@
         (string.copy module)
         name-str)]
     [link-name : String
-      (compiler-load-package-user-symbol (string.copy logical))]
+      (match export
+        [(Export symbol)
+          (cabi.compiler-abi-c-export-body-symbol (ci.intern-id-str symbol))]
+        [(No) (compiler-load-package-user-symbol (string.copy logical))])]
     (Extern
       (ast.ast-decl-meta-runtime-shared-view)
       name
@@ -12328,7 +12333,7 @@
   [spmd-interface : (& CompilerLoadPackageSpmdInterface)]
   [decl : ast.AstDecl]) : CompilerLoadMaybeDecl
   (match (clone decl)
-    [(DefFn decl-meta name params ret _ _)
+    [(DefFn decl-meta name params ret _ metadata)
       (CompilerLoadSomeDecl
         (ast.ast-decl-with-meta
           decl-meta
@@ -12341,6 +12346,7 @@
             name
             (& params)
             (& ret)
+            (ast.ast-fn-metadata-export (& metadata))
             spmd-interface)))]
     ;; Package macro declarations remain source-backed until #2755 commits
     ;; dependency-native results. Retaining the declaration also ensures the

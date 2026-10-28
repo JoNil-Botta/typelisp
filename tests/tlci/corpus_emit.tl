@@ -12,7 +12,7 @@
 (define (tlci-v2-corpus-empty-image) : tlci_core.TlciImage
   (tlci_core.tlci-make-image
     tlci_core.tlci-host-platform-x86-64-legacy
-    tlci_core.tlci-callback-abi-version
+    2
     "tlci-v2-corpus"
     (tlci_core.tlci-make-metadata "v1" "corpus.empty" "1.0.0")
     (tlci_core.tlci-empty-bytes)
@@ -43,7 +43,7 @@
     (tlci_core.tlci-set-u64! (&mut symbols) 32 3)
     (tlci_core.tlci-make-image
       tlci_core.tlci-host-platform-x86-64-legacy
-      tlci_core.tlci-callback-abi-version
+      2
       "tlci-v2-corpus"
       (tlci_core.tlci-make-metadata "v1" "corpus.sections" "1.0.0")
       (__tl_make-array
@@ -63,7 +63,7 @@
 (define (tlci-v2-corpus-imports-image) : tlci_core.TlciImage
   (tlci_core.tlci-make-image
     tlci_core.tlci-host-platform-x86-64-legacy
-    tlci_core.tlci-callback-abi-version
+    2
     "tlci-v2-corpus"
     (tlci_core.tlci-make-metadata "v1" "corpus.imports" "1.0.0")
     (tlci_core.tlci-empty-bytes)

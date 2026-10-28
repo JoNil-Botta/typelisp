@@ -14073,27 +14073,9 @@
 ;; prologue really saves against the set the body really names. The two differ
 ;; exactly where fix B applies.
 (define (compiler-backend-trace-csr-name-at
-  [backend-state : CompilerBackendState]
+  [_backend-state : CompilerBackendState]
   [idx : i64]) : i64
-  (cond
-    [(= idx 0) compiler_abi.compiler-reg-id-r12]
-    [(= idx 1) compiler_abi.compiler-reg-id-r13]
-    [(= idx 2) compiler_abi.compiler-reg-id-r14]
-    [(= idx 3) compiler_abi.compiler-reg-id-r15]
-    [(= idx 4) compiler_abi.compiler-reg-id-rbx]
-    [(= idx 5)
-      (if (compiler-backend-current-fn-win64? backend-state)
-        compiler_abi.compiler-reg-id-rsi
-        compiler_abi.compiler-reg-id-rbp)]
-    [(= idx 6)
-      (if (compiler-backend-current-fn-win64? backend-state)
-        compiler_abi.compiler-reg-id-rdi
-        compiler_abi.compiler-reg-id-invalid)]
-    [(= idx 7)
-      (if (compiler-backend-current-fn-win64? backend-state)
-        compiler_abi.compiler-reg-id-rbp
-        compiler_abi.compiler-reg-id-invalid)]
-    [else compiler_abi.compiler-reg-id-invalid]))
+  (compiler-backend-callee-save-order-reg-id idx))
 
 (define (compiler-backend-trace-csr-set-text
   [backend-state : CompilerBackendState]
@@ -14102,7 +14084,7 @@
   [saved? : bool]) : String
   (let
     [out : String ""]
-    (for [idx (iterator.range 0 8)]
+    (for [idx (iterator.range 0 compiler-backend-callee-save-order-count)]
       (let
         [reg-id : i64 (compiler-backend-trace-csr-name-at backend-state idx)]
         (if (and
@@ -14312,18 +14294,9 @@
       compiler_abi.compiler-reg-id-rbp)
     (and
       (compiler-backend-current-fn-win64? backend-state)
-      (or
-        (compiler-backend-callee-needs-save?
-          backend-state
-          assignments
-          compiler_abi.compiler-reg-id-rsi)
-        (compiler-backend-callee-needs-save?
-          backend-state
-          assignments
-          compiler_abi.compiler-reg-id-rdi)
-        (compiler-backend-plan-uses-win64-xmm-callee-regs?
-          assignments
-          backend-state)))))
+      (compiler-backend-plan-uses-win64-xmm-callee-regs?
+        assignments
+        backend-state))))
 
 (define (compiler-backend-win64-xmm-callee-highest-at
   [backend-state : CompilerBackendState]
@@ -14366,10 +14339,8 @@
     (+ slots 1)))
 
 (define (compiler-backend-rbp-callee-save-slot-index
-  [backend-state : CompilerBackendState]) : i64
-  (if (compiler-backend-current-fn-win64? backend-state)
-    7
-    5))
+  [_backend-state : CompilerBackendState]) : i64
+  5)
 
 (define (compiler-backend-win64-gp-callee-save-prefix
   [backend-state : CompilerBackendState]
@@ -14378,14 +14349,11 @@
     backend-state
     assignments
     compiler_abi.compiler-reg-id-rbp)
-    8
-    7))
+    6
+    5))
 
-;; Callee-saved registers are spilled to frame slots that sit just below the
-;; var slots: r12..r15 occupy idx 0..3 (offset -(8*(vars+idx+1))(%rbp)) and %rbx
-;; occupies idx 4. Linux %rbp occupies idx 5. Win64 keeps its existing %rsi/%rdi
-;; slots at idx 5/6 and appends FPO-only %rbp at idx 7, so all three can be live
-;; without collisions and pre-FPO Win64 layouts stay stable.
+;; Both Internal conventions save r12..r15, rbx, then optional FPO-only rbp.
+;; XMM slots begin after that prefix and retain their 16-byte alignment.
 (define (compiler-backend-frame-slots
   [vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -14394,8 +14362,6 @@
     [highest : i64
       (compiler-backend-win64-xmm-callee-highest assignments backend-state)]
     (if (>= highest 0)
-      ;; Start after the maximum Win64 GP-save prefix so late scavenge saves
-      ;; cannot move or overlap the deterministic 16-byte XMM slots.
       (+
         (compiler-backend-round-up-even-slots
           (+
@@ -14405,41 +14371,18 @@
               assignments)))
         (* 2 (+ highest 1)))
       (if (compiler-backend-plan-uses-callee-regs? assignments backend-state)
-        (if (compiler-backend-current-fn-win64? backend-state)
-          (cond
-            [(compiler-backend-callee-needs-save?
-                backend-state
-                assignments
-                compiler_abi.compiler-reg-id-rbp)
-              (+ vars 8)]
-            [(compiler-backend-callee-needs-save?
-                backend-state
-                assignments
-                compiler_abi.compiler-reg-id-rdi)
-              (+ vars 7)]
-            [(compiler-backend-callee-needs-save?
-                backend-state
-                assignments
-                compiler_abi.compiler-reg-id-rsi)
-              (+ vars 6)]
-            [(compiler-backend-callee-needs-save?
-                backend-state
-                assignments
-                compiler_abi.compiler-reg-id-rbx)
-              (+ vars 5)]
-            [else (+ vars 4)])
-          (cond
-            [(compiler-backend-callee-needs-save?
-                backend-state
-                assignments
-                compiler_abi.compiler-reg-id-rbp)
-              (+ vars 6)]
-            [(compiler-backend-callee-needs-save?
-                backend-state
-                assignments
-                compiler_abi.compiler-reg-id-rbx)
-              (+ vars 5)]
-            [else (+ vars 4)]))
+        (cond
+          [(compiler-backend-callee-needs-save?
+              backend-state
+              assignments
+              compiler_abi.compiler-reg-id-rbp)
+            (+ vars 6)]
+          [(compiler-backend-callee-needs-save?
+              backend-state
+              assignments
+              compiler_abi.compiler-reg-id-rbx)
+            (+ vars 5)]
+          [else (+ vars 4)])
         vars))))
 
 ;; Reserve enough space for either group-home mode. Functions with exposed
@@ -14472,7 +14415,7 @@
     [win64 : bool (compiler-backend-current-fn-win64? backend-state)]
     [base : i64
       (if win64
-        (+ (compiler-backend-round-up-even-slots (+ vars 8)) 20)
+        (+ (compiler-backend-round-up-even-slots (+ vars 6)) 20)
         (+ vars 6))]
     (if has-group-vars
       (+ base (* 2 vars))
@@ -14736,6 +14679,184 @@
   (if (compiler-backend-target-seh-unwind? target)
     "    .seh_endproc\n"
     ""))
+
+;; Physical words of the lowered signature, including sret and both words of
+;; register groups. Platform and Internal share positions; only positions 4/5
+;; move from the incoming stack to registers, and later stack words shift.
+(defstruct CompilerBackendCEntryPlan
+  (float-words (__tl_dyn-array bool))
+  (len i64)
+  (frame i64))
+
+(define (compiler-backend-c-entry-plan
+  [type-segment-bases : i64]
+  [index : CompilerBackendProgramIndex]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]) : CompilerBackendCEntryPlan
+  (let
+    [words : (__tl_dyn-array bool) (__tl_make-array bool (* params.len 2))]
+    [len : i64 0]
+    (for [i (iterator.range 0 params.len)]
+      (match (compiler_ir_types.compiler-ir-param-seq-borrow params i)
+        [(Param _ ty _)
+          (if (compiler-backend-group-type? type-segment-bases index ty)
+            (begin
+              (set!
+                (array-ref words len)
+                (compiler-backend-group-word-sse? type-segment-bases index ty 0))
+              (set!
+                (array-ref words (+ len 1))
+                (compiler-backend-group-word-sse? type-segment-bases index ty 1))
+              (set! len (+ len 2)))
+            (begin
+              (set! (array-ref words len) (compiler-backend-float-type? ty))
+              (set! len (+ len 1))))]))
+    (CompilerBackendCEntryPlan
+      words
+      len
+      (-
+        (compiler-backend-round-up-16
+          (+
+            40
+            (*
+              8
+              (if (> len 6)
+                (- len 6)
+                0))))
+        8))))
+
+(define (compiler-backend-c-entry-shared-needed?
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [index : CompilerBackendProgramIndex]
+  [functions : (& functions compiler_ir_types.CompilerIrFunctionSeq)]) : bool
+  (when
+    (compiler_abi.compiler-abi-platform-entry-bridge?
+      (compiler-backend-target-abi target))
+    (for [slot
+      (iterator.range
+        0
+        (compiler_ir_types.compiler-ir-function-seq-count functions))]
+      (match (compiler_ir_types.compiler-ir-function-seq-borrow functions slot)
+        [(Function name params _ _ _ _)
+          (when
+            (compiler-backend-index-c-export? index name)
+            (let
+              [raw : String
+                (compiler-backend-index-extern-link-symbol index name)]
+              (when
+                (not (compiler-backend-inline-memory-call-name? (& raw)))
+                (let
+                  [plan : CompilerBackendCEntryPlan
+                    (compiler-backend-c-entry-plan
+                      type-segment-bases
+                      index
+                      params)]
+                  (when (<= plan.len 4) (return true))))))])))
+  false)
+
+(define (compiler-backend-emit-c-entry-shared) : String
+  ;; A raw leaf tail-enters with its body in volatile R11. At most four
+  ;; physical words need no argument moves; the common frame preserves the
+  ;; Platform saves and home area, and owns the unwind record for the call.
+  (str_cat.str-cat
+    ".seh_proc __tl$c_entry\n__tl$c_entry:\n    pushq %rsi\n    .seh_pushreg %rsi\n    pushq %rdi\n    .seh_pushreg %rdi\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    call *%r11\n    addq $40, %rsp\n    popq %rdi\n    popq %rsi\n    ret\n    .seh_endproc\n"
+    (if (compiler_ir_types.compiler-debug-info-enabled?)
+      (compiler-backend-backtrace-c-entry-range
+        "__tl$c_entry"
+        ".L_tl_c_entry_shared_end")
+      "")))
+
+(define (compiler-backend-c-entry-incoming-offset
+  [plan : (& plan CompilerBackendCEntryPlan)]
+  [position : i64]) : i64
+  ;; Return address plus the two saved GP registers precede the old home area.
+  (+ plan.frame 24 (* position 8)))
+
+(define (compiler-backend-emit-c-export-entry
+  [type-segment-bases : i64]
+  [target-policy : CompilerBackendTargetPolicy]
+  [index : CompilerBackendProgramIndex]
+  [name : i64]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]) : String
+  (if (or
+    (not (compiler_abi.compiler-abi-platform-entry-bridge? target-policy.abi))
+    (not (compiler-backend-index-c-export? index name)))
+    ""
+    (let
+      [entry : String (compiler-backend-index-extern-link-symbol index name)]
+      [body : String (compiler-backend-function-symbol-index index name)]
+      [plan : CompilerBackendCEntryPlan
+        (compiler-backend-c-entry-plan type-segment-bases index params)]
+      [out : text_buf.TextBuf (text_buf.empty)]
+      (when
+        (<= plan.len 4)
+        (return
+          (str_cat.str-cat
+            ".globl "
+            entry
+            "\n"
+            entry
+            ":\n    leaq "
+            body
+            "(%rip), %r11\n    jmp __tl$c_entry\n")))
+      (text_buf.append!
+        out
+        (str_cat.str-cat
+          ".globl "
+          entry
+          "\n.seh_proc "
+          entry
+          "\n"
+          entry
+          ":\n    pushq %rsi\n    .seh_pushreg %rsi\n    pushq %rdi\n    .seh_pushreg %rdi\n"
+          (compiler-backend-emit-stack-sub target-policy plan.frame)
+          "    .seh_stackalloc "
+          (string.int->string plan.frame)
+          "\n    .seh_endprologue\n"))
+      (for [position (iterator.range 4 plan.len)]
+        (text_buf.append!
+          out
+          (str_cat.str-cat
+            "    movq "
+            (string.int->string
+              (compiler-backend-c-entry-incoming-offset (& plan) position))
+            "(%rsp), %rax\n"))
+        (text_buf.append!
+          out
+          (if (< position 6)
+            (str_cat.str-cat
+              "    movq %rax, "
+              (compiler_abi.compiler-abi-register-spelling
+                (if (array-ref plan.float-words position)
+                  (compiler_abi.compiler-abi-float-arg-register-id
+                    target-policy.abi
+                    (Internal)
+                    position)
+                  (compiler_abi.compiler-abi-gp-arg-register-id
+                    target-policy.abi
+                    (Internal)
+                    position)))
+              "\n")
+            (str_cat.str-cat
+              "    movq %rax, "
+              (string.int->string (+ 32 (* 8 (- position 6))))
+              "(%rsp)\n"))))
+      (text_buf.append!
+        out
+        (str_cat.str-cat
+          "    call "
+          body
+          "\n    addq $"
+          (string.int->string plan.frame)
+          ", %rsp\n    popq %rdi\n    popq %rsi\n    ret\n    .seh_endproc\n"))
+      (when
+        (compiler_ir_types.compiler-debug-info-enabled?)
+        (text_buf.append!
+          out
+          (compiler-backend-backtrace-c-entry-range
+            entry
+            (str_cat.str-cat ".L_tl_c_entry_end_" entry))))
+      (text_buf.render out))))
 
 ;; ELF function symbols for the Linux text path.
 ;;
@@ -17106,6 +17227,9 @@
 ;; locally, so no dynamic callee-save tracking is needed -- and it would be unsound:
 ;; the prologue SAVE is emitted post-body (final set) while every RESTORE is emitted
 ;; inline during the body, so an early return would restore a partial set.
+;; Callers select from the common Internal GP CSR order or the Win64 XMM CSR
+;; bank before querying this plan. Platform bridges preserve RSI/RDI separately;
+;; their general ABI eligibility is not recomputed for every Internal save.
 (define (compiler-backend-callee-needs-save?
   [backend-state : CompilerBackendState]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -17182,37 +17306,18 @@
         backend-state
         assignments
         compiler_abi.compiler-reg-id-rbx)]
-    ;; M-G3 stage 2: %rbp (slot idx 5, allocated LAST) extends the contiguous
-    ;; pop run. Sound: a plan can only home a value in %rbp on the FPO path,
-    ;; where the epilogue `leave` is rewritten to `addq $N,%rsp` (never reads
-    ;; %rbp), so `popq %rbp` restoring the caller's value early is fine; if
-    ;; the FPO audit fails on an rbp-planned function it is DEMOTED (re-planned
-    ;; without %rbp), so `popq %rbp` can never precede a real `leave`.
+    ;; RBP is admitted only after FPO has removed every frame-base use.
     [rbp : bool
       (compiler-backend-callee-needs-save?
         backend-state
         assignments
         compiler_abi.compiler-reg-id-rbp)]
-    [win-extra : bool
-      (and
-        (compiler-backend-current-fn-win64? backend-state)
-        (or
-          (compiler-backend-callee-needs-save?
-            backend-state
-            assignments
-            compiler_abi.compiler-reg-id-rsi)
-          (compiler-backend-callee-needs-save?
-            backend-state
-            assignments
-            compiler_abi.compiler-reg-id-rdi)))]
-    (and
-      (not win-extra)
-      (or
-        (and r12 r13 (not r14) (not r15) (not rbx) (not rbp))
-        (and r12 r13 r14 (not r15) (not rbx) (not rbp))
-        (and r12 r13 r14 r15 (not rbx) (not rbp))
-        (and r12 r13 r14 r15 rbx (not rbp))
-        (and r12 r13 r14 r15 rbx rbp)))))
+    (or
+      (and r12 r13 (not r14) (not r15) (not rbx) (not rbp))
+      (and r12 r13 r14 (not r15) (not rbx) (not rbp))
+      (and r12 r13 r14 r15 (not rbx) (not rbp))
+      (and r12 r13 r14 r15 rbx (not rbp))
+      (and r12 r13 r14 r15 rbx rbp))))
 
 (define (compiler-backend-callee-save-pop-start-idx
   [backend-state : CompilerBackendState]
@@ -17290,17 +17395,9 @@
       assignments
       compiler_abi.compiler-reg-id-r12)))
 
-;; The fixed-slot callee-save order. Position K saves
-;; `compiler-backend-callee-save-order-reg-id K` into slot index
-;; `compiler-backend-callee-save-order-slot-index K`. %rbp is saved like any
-;; other CSR (Linux slot 5, Win64 slot 7); FPO rebases the frame operand before
-;; replacing these moves with unwind-described prologue pushes. Positions 6 and
-;; 7 are the Win64-only %rsi/%rdi: on Win64 they are callee-saved (unlike SysV,
-;; where they are caller-saved argument registers) and keep slots 5/6, so Win64
-;; FPO appends %rbp at the non-overlapping slot 7. The saving prologue and the
-;; Windows unwind description of a framed prologue both walk this order.
+; The shared Internal GP save order includes optional FPO-only RBP last.
 (define compiler-backend-callee-save-order-count : i64
-  8)
+  6)
 
 (define (compiler-backend-callee-save-order-reg-id [k : i64]) : i64
   (cond
@@ -17310,48 +17407,24 @@
     [(= k 3) compiler_abi.compiler-reg-id-r15]
     [(= k 4) compiler_abi.compiler-reg-id-rbx]
     [(= k 5) compiler_abi.compiler-reg-id-rbp]
-    [(= k 6) compiler_abi.compiler-reg-id-rsi]
-    [else compiler_abi.compiler-reg-id-rdi]))
+    [else compiler_abi.compiler-reg-id-invalid]))
 
 (define (compiler-backend-callee-save-order-slot-index
   [k : i64]
-  [backend-state : CompilerBackendState]) : i64
-  (cond
-    [(< k 5) k]
-    [(= k 5) (compiler-backend-rbp-callee-save-slot-index backend-state)]
-    [else (- k 1)]))
+  [_backend-state : CompilerBackendState]) : i64
+  k)
 
-;; The saving prologue stores register K of the order above.
 (define (compiler-backend-callee-save-order-saved?
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [k : i64]
   [backend-state : CompilerBackendState]) : bool
   (and
-    (or (< k 6) (compiler-backend-current-fn-win64? backend-state))
+    (>= k 0)
+    (< k compiler-backend-callee-save-order-count)
     (compiler-backend-callee-needs-save?
       backend-state
       assignments
       (compiler-backend-callee-save-order-reg-id k))))
-
-(define (compiler-backend-emit-restore-win64-callee-regs
-  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
-  [vars : i64]
-  [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-current-fn-win64? backend-state)
-    (str_cat.str-cat
-      (compiler-backend-emit-restore-callee-reg
-        assignments
-        vars
-        compiler_abi.compiler-reg-id-rdi
-        6
-        backend-state)
-      (compiler-backend-emit-restore-callee-reg
-        assignments
-        vars
-        compiler_abi.compiler-reg-id-rsi
-        5
-        backend-state))
-    ""))
 
 (define (compiler-backend-emit-save-callee-regs
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -17389,11 +17462,6 @@
           vars
           backend-state)
         (str_cat.str-cat
-          ;; Win64: %rdi/%rsi restores first (no-op on Linux), mirroring the save.
-          (compiler-backend-emit-restore-win64-callee-regs
-            assignments
-            vars
-            backend-state)
           (compiler-backend-emit-restore-callee-reg
             assignments
             vars
@@ -18131,7 +18199,14 @@
   [index : CompilerBackendProgramIndex]
   [name : i64]) : String
   (if (compiler-backend-index-extern-provided? index name)
-    (compiler-backend-index-extern-link-symbol index name)
+    (if (and
+      (compiler-backend-state-emission-target-policy index.backend-state).windows
+      (compiler-backend-index-c-export? index name))
+      (compiler_abi.compiler-abi-internal-link-symbol
+        (compiler-backend-state-emission-target-policy index.backend-state).abi
+        (compiler_abi.compiler-abi-c-export-body-symbol
+          (compiler-backend-index-extern-link-symbol index name)))
+      (compiler-backend-index-extern-link-symbol index name))
     (let
       [name-text : String (compiler-backend-symbol-text-index index name)]
       [runtime-symbol : String
@@ -18207,11 +18282,18 @@
 (define (compiler-backend-link-symbol-id
   [name-id : i64]
   [plan : CompilerBackendRuntimePlan]
-  [backend-state : CompilerBackendState]) : String
-  (if (compiler-backend-call-raw-symbol-id? plan backend-state name-id)
-    (compiler-backend-symbol-text-state backend-state name-id)
-    (compiler-backend-asm-safe-symbol
-      (compiler-backend-symbol-text-state backend-state name-id))))
+  [backend-state : CompilerBackendState]
+  [c-abi? : bool]) : String
+  ;; Resolve the reserved package-body identity before linking. C ABI names
+  ;; retain their raw-symbol/encoding policy and never take this mapping.
+  (if (not c-abi?)
+    (compiler_abi.compiler-abi-internal-link-symbol
+      (compiler-backend-state-emission-target-policy backend-state).abi
+      (compiler-backend-symbol-text-state backend-state name-id))
+    (if (compiler-backend-call-raw-symbol-id? plan backend-state name-id)
+      (compiler-backend-symbol-text-state backend-state name-id)
+      (compiler-backend-asm-safe-symbol
+        (compiler-backend-symbol-text-state backend-state name-id)))))
 
 (define (compiler-backend-call-symbol-index
   [name : i64]
@@ -18221,7 +18303,7 @@
     [name-text : String (compiler-backend-symbol-text-index index name)]
     (cond
       [(compiler-backend-index-extern-provided? index name)
-        (compiler-backend-index-extern-link-symbol index name)]
+        (compiler-backend-function-symbol-index index name)]
       [(compiler-backend-index-extern-references? index name)
         (let
           [link-symbol-id : i64
@@ -18234,7 +18316,9 @@
             (compiler-backend-link-symbol-id
               link-symbol-id
               plan
-              index.backend-state)))]
+              index.backend-state
+              (compiler-backend-extern-call-info-c-abi?
+                (compiler-backend-index-extern-call-info index name)))))]
       [(and
           (compiler-backend-call-raw-symbol-id? plan index.backend-state name)
           (not (compiler-backend-index-function-defines? index name)))
@@ -18657,6 +18741,20 @@
       "    .globl tl_backtrace_map_data_end\ntl_backtrace_map_data_end:\n"
       (compiler-backend-backtrace-string-section target)
       "    .globl tl_backtrace_string_data_end\ntl_backtrace_string_data_end:\n    .text\n")))
+
+;; ABI bridges own unwind frames but no source frame. A validated map row with
+;; an empty name marks that distinction without inventing a source location.
+;; Both zero-length strings still point inside the bounded string section.
+(define (compiler-backend-backtrace-c-entry-range
+  [begin : String]
+  [end : String]) : String
+  (str_cat.str-cat
+    end
+    ":\n    .section .rdata$TLBT,\"dr\"\n    .balign 8\n    .quad "
+    begin
+    "\n    .quad "
+    end
+    "\n    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad 0\n    .quad 0\n    .text\n"))
 
 (define (compiler-backend-backtrace-function-id
   [program-index : CompilerBackendProgramIndex]
@@ -20878,17 +20976,13 @@
         (compiler-backend-peephole-register-operand? dst))
       (Ok (compiler-backend-emit-group-word-move src dst sse?))]
     ;; An SSE word bound for a frame slot is an entry copy
-    ;; (compiler-backend-param-entry-xmm-stage): the XMM pool below would
+    ;; (compiler-backend-param-entry-memory-copy): the XMM pool below would
     ;; fall back to a pinned parameter home.
     [sse?
-      (let
-        [stage : String (compiler-backend-param-entry-xmm-stage target)]
-        (compiler-backend-asm-append
-          entry
-          (str_cat.str-cat
-            (compiler-backend-emit-group-word-move src stage true)
-            (compiler-backend-emit-group-word-move stage dst true)))
-        (Ok ""))]
+      (compiler-backend-asm-append
+        entry
+        (compiler-backend-param-entry-memory-copy target src dst (& (F64))))
+      (Ok "")]
     [else
       (let
         ;; Incoming parameter materialization runs before the emitted body.
@@ -23060,9 +23154,8 @@
 ;;     the region avoids R; the site's own dividend/mask/magic scratch picks
 ;;     additionally exclude R so even an emergency pick cannot alias it.
 ;;
-;; Scalar-opt2 text path. Win64 excludes rsi/rdi because they are callee-saved;
-;; r8/r9 remain caller-saved, and rbx is callee-saved under both ABIs (with a
-;; frame home for divmod).
+;; Scalar-opt2 text path. Both Internal conventions admit rsi/rdi/r8/r9 as
+;; caller-saved carriers; rbx uses a callee-saved frame home for divmod.
 ;; ===========================================================================
 (defenum CompilerBackendConstHoistHome
   (CompilerBackendNoConstHoistHome)
@@ -23187,9 +23280,8 @@
   (compiler-backend-shrinkwrap-admission-state-clean? function-state))
 
 ;; Registers eligible to carry a hoisted magic across a leaf loop region.
-;; Win64 excludes %rsi/%rdi because they are callee-saved there. %r8/%r9 are
-;; volatile under both ABIs, while %rbx is callee-saved under both and uses the
-;; frame-home path for divmod.
+;; Both Internal conventions make RSI/RDI/R8/R9 volatile. RBX is callee-saved
+;; under both and uses the frame-home path for divmod.
 ;;
 ;; %rbx is the revertible M-F extension for register-saturated leaf loops. The
 ;; ordinary caller-saved candidates are all loop-carried in vm-run, while %rbx
@@ -36288,8 +36380,6 @@
     (compiler-backend-target-abi target)
     convention))
 
-;; Number of f64 argument registers. System V uses xmm0..xmm7 (8) and
-;; Windows shares its 4 positional slots, so the float bank also tops out at 4.
 (define (compiler-backend-emit-call-space-sub [space : i64]) : String
   (if (= space 0)
     ""
@@ -37552,6 +37642,14 @@
       [(LookupFound slot) (array-ref tables.extern-provided slot)]
       [(LookupMissing) false])))
 
+(define (compiler-backend-index-c-export?
+  [index : CompilerBackendProgramIndex]
+  [name : i64]) : bool
+  (and
+    (compiler-backend-index-extern-provided? index name)
+    (compiler-backend-extern-call-info-c-abi?
+      (compiler-backend-index-extern-call-info index name))))
+
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
   (Err (box (compiler_diagnostic.compiler-diagnostic-at-start "" message))))
 
@@ -37648,31 +37746,50 @@
     (match (owned_view.compiler-owned-element-view functions.slots seq-index)
       [(Function name _ _ _ _ _)
         (let
-          [symbol : String (compiler-backend-function-symbol-index index name)]
+          [provided? : bool
+            (compiler-backend-index-extern-provided? index name)]
+          [symbol : String
+            (if provided?
+              (compiler-backend-index-extern-link-symbol index name)
+              (compiler-backend-function-symbol-index index name))]
+          ;; Only a provided extern can have a distinct Platform entry and body.
+          [body : String
+            (if provided?
+              (compiler-backend-function-symbol-index index name)
+              "")]
+          [distinct-body? : bool
+            (and
+              (> (string.string-length body) 0)
+              (not (string.eq body symbol)))]
           (cond
             [(and
                 (string.eq
                   (compiler-backend-symbol-text-index index name)
                   "main")
-                (compiler-backend-index-extern-provided? index name))
+                provided?)
               (compiler-backend-symbol-validation-error
                 "backend: main cannot use :export-symbol")]
-            [(backend_string_i64_map.contains?
-                (& seen)
-                (compiler-backend-global-shared-view symbol))
+            [(backend_string_i64_map.contains-borrowed? (& seen) (& symbol))
               (compiler-backend-symbol-validation-error
                 (str_cat.str-cat
                   "backend: duplicate emitted function symbol "
                   symbol))]
             [(and
-                (compiler-backend-index-extern-provided? index name)
+                distinct-body?
+                (backend_string_i64_map.contains-borrowed? (& seen) (& body)))
+              (compiler-backend-symbol-validation-error
+                (str_cat.str-cat
+                  "backend: duplicate emitted function symbol "
+                  body))]
+            [(and
+                provided?
                 (not (compiler-backend-valid-export-symbol? symbol)))
               (compiler-backend-symbol-validation-error
                 (str_cat.str-cat
                   "backend: invalid exported function symbol "
                   symbol))]
             [(and
-                (compiler-backend-index-extern-provided? index name)
+                provided?
                 (compiler-backend-runtime-helper-known-id?
                   (compiler-backend-index-extern-link-symbol-id index name))
                 (not
@@ -37687,7 +37804,19 @@
             [else
               (let
                 [out : backend_string_i64_map.Map seen]
-                (backend_string_i64_map.insert-ref! (&mut out) symbol 1)
+                ;; A data extern may take the address of a provided C entry.
+                ;; Ordinary bodies and globals remain collision-protected.
+                (backend_string_i64_map.insert-ref!
+                  (&mut out)
+                  symbol
+                  (if (and
+                    provided?
+                    (compiler-backend-index-c-export? index name))
+                    2
+                    1))
+                (when
+                  distinct-body?
+                  (backend_string_i64_map.insert-ref! (&mut out) body 1))
                 (compiler-backend-validate-function-symbol-seq-into
                   functions
                   _plan
@@ -37714,7 +37843,7 @@
   (for [seq-index
     (iterator.range 0 (compiler_ir_types.compiler-ir-extern-seq-count externs))]
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id _ _ _ _ link-symbol-id _ provided _)
+      [(Extern name-id _ _ ty abi link-symbol-id _ provided _)
         (if (compiler-backend-emits-extern-symbol?
           backend-state
           name-id
@@ -37726,11 +37855,19 @@
               (compiler-backend-link-symbol-id
                 link-symbol-id
                 plan
-                backend-state)]
+                backend-state
+                (compiler_ast_types.ast-extern-abi-c? abi))]
             (when
-              (backend_string_i64_map.contains?
-                (& seen)
-                (compiler-backend-global-shared-view symbol))
+              (match (backend_string_i64_map.get-borrowed (& seen) (& symbol))
+                [(LookupMissing) false]
+                [(LookupFound kind)
+                  (not
+                    (and
+                      (= kind 2)
+                      (compiler_ast_types.ast-extern-abi-c? abi)
+                      (match ty
+                        [(Func _ _) false]
+                        [_ true])))])
               (return
                 (compiler-backend-symbol-validation-error
                   (str_cat.str-cat
@@ -40565,8 +40702,8 @@
     program-index
     (compiler_ast_types.ast-type-list-len (& types))))
 
-;; GP arg-reg threshold SysV 6 / Win64 4 -- mirrors compiler-reg-arg-reg-limit-for-abi
-;; (regalloc); keep the two in sync (the rev6 integration test guards 6-arg SysV).
+;; GP thresholds match compiler-reg-arg-reg-limit-for-abi: six for Internal,
+;; six for SysV Platform and four for Win64 Platform.
 ;; The argument marshalling loop appends straight into the caller's sequence
 ;; buffer rather than building one String per argument and folding them with
 ;; `append`, which would re-copy the whole accumulated prefix at every step.
@@ -46825,18 +46962,22 @@
 
 (define (compiler-backend-emit-inline-memory-helper-function
   [target : CompilerBackendTarget]
-  [symbol : String]) : String
+  [symbol : String]
+  [inline-name : String]) : String
   (str_cat.str-cat
+    ;; These finite atomic/volatile leaves use at most three shared GP argument
+    ;; slots and common volatile registers. Both ABIs can enter the same bytes;
+    ;; in particular, Windows RSI/RDI are untouched and no bridge is needed.
+    (if (string.eq (& symbol) (& inline-name))
+      ""
+      (str_cat.str-cat ".globl " inline-name "\n" inline-name ":\n"))
     ".globl "
     symbol
     "\n"
     (compiler-backend-emit-function-type-directive target symbol)
     symbol
     ":\n"
-    (compiler-backend-inline-memory-call-asm
-      target
-      (Platform)
-      (compiler-backend-global-shared-view symbol))
+    (compiler-backend-inline-memory-call-asm target (Internal) inline-name)
     "    ret\n"
     (compiler-backend-emit-function-size-directive target symbol)))
 
@@ -46948,9 +47089,13 @@
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
-      (compiler-backend-inline-memory-call-target
-        (compiler-backend-symbol-text-index program-index name)
-        (compiler-backend-global-shared-view call-symbol))]
+      (if (and
+        (compiler-backend-state-emission-target-policy backend-state).windows
+        (compiler-backend-index-c-export? program-index name))
+        (compiler-backend-index-extern-link-symbol program-index name)
+        (compiler-backend-inline-memory-call-target
+          (compiler-backend-symbol-text-index program-index name)
+          (compiler-backend-global-shared-view call-symbol)))]
     (cond
       [(and
           (> fast-alloc-size 0)
@@ -55460,9 +55605,14 @@
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
-      (compiler-backend-inline-memory-call-target
-        (compiler-backend-symbol-text-index program-index name)
-        (compiler-backend-global-shared-view call-symbol))]
+      (if (and
+        (compiler-backend-state-emission-target-policy
+          program-index.backend-state).windows
+        (compiler-backend-index-c-export? program-index name))
+        (compiler-backend-index-extern-link-symbol program-index name)
+        (compiler-backend-inline-memory-call-target
+          (compiler-backend-symbol-text-index program-index name)
+          (compiler-backend-global-shared-view call-symbol)))]
     [extern-call-info : i64
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : compiler_ast_types.AstTypeList
@@ -61548,7 +61698,7 @@
                             stack-idx))]
                       (cond
                         ;; #9302: a frame-homed uniform float is an entry copy
-                        ;; (compiler-backend-param-entry-xmm-stage). Here the
+                        ;; (compiler-backend-param-entry-memory-copy). Here the
                         ;; old pick could land on a varying home this walk had
                         ;; already loaded.
                         [(compiler-backend-param-entry-float-copy?
@@ -61673,7 +61823,7 @@
         (if opmask?
           (compiler-backend-emit-spmd-mask-entry-plan mask-plan)
           (ResultCompilerBackend.Ok "")))]
-    ;; #9302: the walk's entry copies (compiler-backend-param-entry-xmm-stage)
+    ;; #9302: the walk's entry copies (compiler-backend-param-entry-memory-copy)
     ;; run ahead of the opmask plan and every special-parameter load.
     [entry : CompilerBackendAsmBuf (compiler-backend-asm-buf-with-capacity 0)]
     ;; #9301: home uniform floats before a varying destination can overwrite an
@@ -61751,23 +61901,65 @@
       (str_cat.str-cat "    leaq " addr ", " home "\n"))))
 
 ;; #8894: a float parameter word that arrives in the incoming stack area and
-;; lives in a frame slot is copied memory to memory through an XMM register.
+;; lives in a frame slot is copied memory to memory through a volatile register.
 ;; Picking that register at the word's place in the walk was unsound: the
 ;; earlier parameters already occupy their homes, the scavenger's occupancy
 ;; is the cursor the body left behind, and its XMM pool (%xmm2-%xmm5) runs
 ;; out when those four are pinned parameter homes, so the pick fell back to a
 ;; pinned register and overwrote that parameter. These copies are entry
 ;; copies instead: they run first, before any incoming register is written,
-;; when only the incoming argument registers are live. The first XMM register
-;; past the target's float argument bank (System V %xmm8, Win64 %xmm4) is
-;; caller-saved and never carries an argument, so it is free there.
-(define (compiler-backend-param-entry-xmm-stage
-  [target : CompilerBackendTarget]) : String
-  (compiler_abi.compiler-abi-register-spelling
-    (compiler_abi.compiler-abi-xmm-register-id
-      (compiler_abi.compiler-abi-float-arg-register-count
-        (compiler-backend-target-abi target)
-        (Internal)))))
+;; when only the incoming argument registers are live. Use the first XMM past
+;; the argument bank only when it is volatile. Otherwise copy the bits through
+;; RAX, which neither Internal convention uses for incoming arguments or the
+;; private SPMD block pointer. In particular, Windows XMM0-5 are all arguments
+;; and XMM6 must be preserved; choosing it would require a new callee save.
+(define (compiler-backend-param-entry-memory-copy
+  [target : CompilerBackendTarget]
+  [src : (& src str)]
+  [dst : (& dst str)]
+  [ty : (& ty compiler_ast_types.AstType)]) : String
+  (let
+    [abi : compiler_abi.CompilerRegTargetAbi
+      (compiler-backend-target-abi target)]
+    [args : i64
+      (compiler_abi.compiler-abi-float-arg-register-count abi (Internal))]
+    [sse? : bool
+      (<
+        args
+        (compiler_abi.compiler-abi-caller-saved-xmm-register-count
+          abi
+          (Internal)))]
+    [f32? : bool
+      (match ty
+        [(F32) true]
+        [_ false])]
+    [mov : String
+      (if sse?
+        (compiler-backend-float-move ty)
+        (if f32?
+          "movl"
+          "movq"))]
+    [stage : String
+      (if sse?
+        (compiler_abi.compiler-abi-register-spelling
+          (compiler_abi.compiler-abi-xmm-register-id args))
+        (if f32?
+          "%eax"
+          "%rax"))]
+    (str_cat.str-cat
+      "    "
+      mov
+      " "
+      src
+      ", "
+      stage
+      "\n    "
+      mov
+      " "
+      stage
+      ", "
+      dst
+      "\n")))
 
 ;; Is this stack-passed parameter an entry copy: a float homed in a frame slot?
 (define (compiler-backend-param-entry-float-copy?
@@ -61792,17 +61984,16 @@
   [ty : (& compiler_ast_types.AstType)]
   [backend-state : CompilerBackendState]) : unit
   (let
-    [stage : String (compiler-backend-param-entry-xmm-stage target)]
-    (compiler-backend-asm-append
-      entry
-      (str_cat.str-cat
-        (compiler-backend-emit-load-float-memory addr stage ty)
-        (compiler-backend-emit-store-float-var
-          assignments
-          var-id
-          stage
-          ty
-          backend-state)))))
+    [dst : String
+      (compiler-backend-float-value-stack-address
+        assignments
+        (Var var-id)
+        backend-state)]
+    (unless
+      (string.eq dst "")
+      (compiler-backend-asm-append
+        entry
+        (compiler-backend-param-entry-memory-copy target addr (& dst) ty)))))
 
 (define (compiler-backend-emit-param-spills-from
   [entry : (&mut entry CompilerBackendAsmBuf)]
@@ -62210,7 +62401,7 @@
   [vars : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
-    ;; The walk's entry copies (compiler-backend-param-entry-xmm-stage) run
+    ;; The walk's entry copies (compiler-backend-param-entry-memory-copy) run
     ;; ahead of every other parameter copy. Most functions have none, so the
     ;; buffer starts at the minimum size and grows on demand.
     [entry : CompilerBackendAsmBuf (compiler-backend-asm-buf-with-capacity 0)]
@@ -62999,47 +63190,41 @@
   [slot-vars : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
   [intervals : compiler_regalloc.CompilerRegIntervalSeq]
-  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]
-  [backend-state : CompilerBackendState]) : unit
-  (let
-    [abi-mask : i64
-      (if (compiler-backend-current-fn-win64? backend-state)
-        compiler-backend-scavenge-plan-win64-bit
-        0)]
-    (compiler-backend-function-state-set-emit-instr-post-base! function-state 0)
-    (if (< slot-vars 1)
-      (match (compiler-backend-scavenge-assignments-build assignments 0)
-        [(CompilerBackendScavengeAssignments assignment-index plan-mask)
-          (compiler-backend-set-scavenge-ctx-index!
+  [segments : (__tl_dyn-array compiler_regalloc.CompilerRegIntervalSeq)]) : unit
+  (compiler-backend-function-state-set-emit-instr-post-base! function-state 0)
+  (if (< slot-vars 1)
+    (match (compiler-backend-scavenge-assignments-build assignments 0)
+      [(CompilerBackendScavengeAssignments assignment-index plan-mask)
+        (compiler-backend-set-scavenge-ctx-index!
+          function-state
+          (__tl_make-array i64 0)
+          (__tl_make-array i64 0)
+          assignment-index
+          segments
+          plan-mask
+          0)])
+    (match (compiler-backend-scavenge-assignments-build assignments slot-vars)
+      [(CompilerBackendScavengeAssignments assignment-index plan-mask)
+        (let
+          [interval-index : compiler_regalloc.CompilerRegIntervalIndex
+            (compiler_regalloc.compiler-reg-interval-index-build
+              (& intervals)
+              slot-vars)]
+          [starts : (__tl_dyn-array i64) interval-index.starts]
+          [ends : (__tl_dyn-array i64) interval-index.ends]
+          (compiler-backend-set-scavenge-ctx-ready!
             function-state
-            (__tl_make-array i64 0)
-            (__tl_make-array i64 0)
+            (compiler-backend-global-shared-view starts)
+            (compiler-backend-global-shared-view ends)
             assignment-index
-            segments
-            (bit-or plan-mask abi-mask)
-            0)])
-      (match (compiler-backend-scavenge-assignments-build assignments slot-vars)
-        [(CompilerBackendScavengeAssignments assignment-index plan-mask)
-          (let
-            [interval-index : compiler_regalloc.CompilerRegIntervalIndex
-              (compiler_regalloc.compiler-reg-interval-index-build
-                (& intervals)
-                slot-vars)]
-            [starts : (__tl_dyn-array i64) interval-index.starts]
-            [ends : (__tl_dyn-array i64) interval-index.ends]
-            (compiler-backend-set-scavenge-ctx-ready!
-              function-state
-              (compiler-backend-global-shared-view starts)
-              (compiler-backend-global-shared-view ends)
+            plan-mask
+            (compiler-backend-scavenge-occupancy-build
+              starts
+              ends
               assignment-index
-              (bit-or plan-mask abi-mask)
-              (compiler-backend-scavenge-occupancy-build
-                starts
-                ends
-                assignment-index
-                segments
-                slot-vars)
-              slot-vars))]))))
+              segments
+              slot-vars)
+            slot-vars))])))
 
 (define (compiler-backend-scavenge-excluded?
   [exclude : (& exclude (__tl_dyn-array String))]
@@ -63214,23 +63399,15 @@
 
 (define compiler-backend-scavenge-xmm-candidate-pool : (__tl_dyn-array i64)
   (compiler-backend-scavenge-xmm-candidates))
-(define compiler-backend-scavenge-plan-win64-bit : i64
-  0x4000000000000000)
 
-(define (compiler-backend-callee-saved-reg? [plan-mask : i64] [reg : i64]) : bool
-  (or
-    (>=
-      (compiler_regalloc.compiler-reg-id-seq-index-of
-        (compiler-backend-global-shared-view
-          compiler-backend-scavenge-callee-list)
-        reg
-        0)
+(define (compiler-backend-callee-saved-reg? [_plan-mask : i64] [reg : i64]) : bool
+  (>=
+    (compiler_regalloc.compiler-reg-id-seq-index-of
+      (compiler-backend-global-shared-view
+        compiler-backend-scavenge-callee-list)
+      reg
       0)
-    (and
-      (not (= (bit-and plan-mask compiler-backend-scavenge-plan-win64-bit) 0))
-      (or
-        (= reg compiler_abi.compiler-reg-id-rsi)
-        (= reg compiler_abi.compiler-reg-id-rdi)))))
+    0))
 
 ;; A candidate is usable as scratch iff: free at `point`, not excluded, and
 ;; (caller-saved OR already saved by the prologue).
@@ -64277,9 +64454,8 @@
 ;; offset is unambiguous. Any OTHER line shape referencing one fails the audit
 ;; (keep-rbp fallback on the ORIGINAL text stays correct: mov saves intact).
 ;; Win64 uses the same conversion, with every prologue push described by
-;; `.seh_pushreg` and no `.seh_setframe`. Saved-CSR names are indexed by
-;; ABI-specific callee-save slot: common 0..4 = r12..r15,rbx; Linux 5 = rbp;
-;; Win64 5..7 = rsi,rdi,rbp. "" = not saved.
+;; `.seh_pushreg` and no `.seh_setframe`. Both Internal save maps use slots
+;; 0..4 = r12..r15,rbx and 5 = rbp. "" = not saved.
 (define (compiler-backend-rsp-rebase-make-push-regs) : (__tl_dyn-array String)
   (let
     [regs : (__tl_dyn-array String) (__tl_make-array String 8)]
@@ -64302,25 +64478,10 @@
   [regs : (&mut regs (__tl_dyn-array String))]
   [backend-state : CompilerBackendState]) : i64
   (let
-    [names : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [count : i64 0]
-    (set! (array-ref names 0) compiler_abi.compiler-reg-id-r12)
-    (set! (array-ref names 1) compiler_abi.compiler-reg-id-r13)
-    (set! (array-ref names 2) compiler_abi.compiler-reg-id-r14)
-    (set! (array-ref names 3) compiler_abi.compiler-reg-id-r15)
-    (set! (array-ref names 4) compiler_abi.compiler-reg-id-rbx)
-    (if (compiler-backend-current-fn-win64? backend-state)
-      (begin
-        (set! (array-ref names 5) compiler_abi.compiler-reg-id-rsi)
-        (set! (array-ref names 6) compiler_abi.compiler-reg-id-rdi)
-        (set! (array-ref names 7) compiler_abi.compiler-reg-id-rbp))
-      (begin
-        (set! (array-ref names 5) compiler_abi.compiler-reg-id-rbp)
-        (set! (array-ref names 6) compiler_abi.compiler-reg-id-invalid)
-        (set! (array-ref names 7) compiler_abi.compiler-reg-id-invalid)))
-    (for [idx (iterator.range 0 (array-length names))]
+    (for [idx (iterator.range 0 (array-length regs))]
       (let
-        [reg-id : i64 (array-ref names idx)]
+        [reg-id : i64 (compiler-backend-callee-save-order-reg-id idx)]
         (if (and
           (not (= reg-id compiler_abi.compiler-reg-id-invalid))
           (compiler-backend-callee-needs-save? backend-state assignments reg-id))
@@ -71454,6 +71615,27 @@
         ;; text that comes out.
         [emit-blocks-list : compiler_ir_types.CompilerIrBlockList
           (compiler-backend-placement-blocks function-state colored-blocks)]
+        [symbol : String
+          (compiler-backend-function-symbol-index program-index name)]
+        [inline-memory-name : String
+          (if (and
+            target-policy.windows
+            (compiler-backend-index-c-export? program-index name))
+            (compiler-backend-index-extern-link-symbol program-index name)
+            "")]
+        [inline-memory-helper? : bool
+          (if (> (string.string-length inline-memory-name) 0)
+            (compiler-backend-inline-memory-call-name? (& inline-memory-name))
+            (compiler-backend-inline-memory-call-name? (& symbol)))]
+        [c-entry : String
+          (if (and target-policy.windows (not inline-memory-helper?))
+            (compiler-backend-emit-c-export-entry
+              type-segment-bases
+              target-policy
+              program-index
+              name
+              (& params))
+            "")]
         [emit-params : compiler_ir_types.CompilerIrParamSeq
           (match (compiler-backend-global-shared-view coloring)
             [(None) params]
@@ -71557,8 +71739,6 @@
               program-index.backend-state
               emit-group-vars
               addressable-group-vars))]
-        [symbol : String
-          (compiler-backend-function-symbol-index program-index name)]
         [label-scope : String
           (compiler-backend-function-label-scope program-index name)]
         [use-counts : (__tl_dyn-array i64) (__tl_make-array i64 emit-vars)]
@@ -71759,11 +71939,18 @@
             ;; Rows exist only for the emitted function's own vars; the
             ;; const-hoist pseudo-vars appended above sit past the end of this
             ;; array and fall back to their single-range hulls.
-            scavenge-segments
-            program-index.backend-state)]
-        (if (compiler-backend-inline-memory-call-name? symbol)
-          (Ok
-            (compiler-backend-emit-inline-memory-helper-function target symbol))
+            scavenge-segments)]
+        (if inline-memory-helper?
+          (let
+            [helper-name : String
+              (if (> (string.string-length inline-memory-name) 0)
+                inline-memory-name
+                (string.copy (& symbol)))]
+            (Ok
+              (compiler-backend-emit-inline-memory-helper-function
+                target
+                symbol
+                helper-name)))
           (let
             [_phi-targets : unit
               (compiler-backend-function-state-install-phi-targets!
@@ -72794,6 +72981,7 @@
                                   (compiler-backend-emit-function-size-directive
                                     target
                                     symbol)
+                                  c-entry
                                   "\n"
                                   (compiler-backend-backtrace-function-entry
                                     target
@@ -73275,6 +73463,14 @@
   [crt-entry : bool]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (let
+    [with-c-entry : text_buf.TextBuf
+      (if (compiler-backend-c-entry-shared-needed?
+        type-segment-bases
+        target
+        program-index
+        (& functions))
+        (text_buf.append buf (compiler-backend-emit-c-entry-shared))
+        buf)]
     [scratch : arena.Arena (arena.make)]
     [result : ResultCompilerBackendBuffer
       (if (compiler-backend-assembly-stream-active?
@@ -73295,7 +73491,7 @@
           emit-entry
           crt-entry
           (arena.raw-handle scratch)
-          buf)
+          with-c-entry)
         (compiler-backend-emit-functions-buffer-raw-into
           type-segment-bases
           target
@@ -73312,7 +73508,7 @@
           emit-entry
           crt-entry
           (arena.raw-handle scratch)
-          buf))]
+          with-c-entry))]
     (arena.destroy-safe! scratch)
     result))
 
@@ -76455,7 +76651,7 @@
 
 (define (compiler-backend-emit-extern-seq-into
   [backend-state : CompilerBackendState]
-  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [externs : (& externs compiler_ir_types.CompilerIrExternSeq)]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : (& runtime-index CompilerBackendRuntimeIndex)]
   [referenced-functions : (& referenced-functions BackendSymbolSeq)]
@@ -76464,7 +76660,7 @@
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     buf
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol-id _ provided _)
+      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _)
         (compiler-backend-emit-extern-seq-into
           backend-state
           externs
@@ -76490,7 +76686,8 @@
                 (compiler-backend-link-symbol-id
                   link-symbol-id
                   plan
-                  backend-state)
+                  backend-state
+                  (compiler_ast_types.ast-extern-abi-c? abi))
                 "\n"
                 ""))
             buf)
@@ -79719,7 +79916,7 @@ tl_shared_object_init:
 (define (compiler-backend-object-param-spills
   [parts : object_target.CompilerBackendObjectTargetParts]
   [target : CompilerBackendTarget]
-  [params : compiler_ir_types.CompilerIrParamSeq]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]
   [int-index : i64]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-param-spills-from parts target params int-index 0))
 
@@ -81031,7 +81228,13 @@ tl_shared_object_init:
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (compiler-backend-object-function-seq
     type-segment-bases
-    parts
+    (if (compiler-backend-c-entry-shared-needed?
+      type-segment-bases
+      target
+      program-index
+      (& functions))
+      (compiler-backend-object-c-entry-shared parts)
+      parts)
     target
     functions
     plan
@@ -81108,7 +81311,7 @@ tl_shared_object_init:
                         (* vars 2)
                         vars))))
                 target
-                params
+                (& params)
                 0)
               target
               symbol
@@ -81120,12 +81323,197 @@ tl_shared_object_init:
             (compiler-backend-group-vars-disable! program-index.backend-state)]
           (compiler-backend-object-function-seq
             type-segment-bases
-            emitted
+            (compiler-backend-object-c-export-entry
+              type-segment-bases
+              emitted
+              target
+              program-index
+              name
+              (& params))
             target
             functions
             plan
             program-index
             (+ index 1)))])))
+
+(define (compiler-backend-object-c-entry-prefix-bytes [frame : i64]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    (compiler-backend-object-push-u8! (&mut out) 0x56)
+    (compiler-backend-object-push-u8! (&mut out) 0x57)
+    (when
+      (< frame 4096)
+      (compiler-backend-object-push-sub-rsp! (&mut out) frame))
+    (compiler-backend-object-bytes-finish (& out))))
+
+(define (compiler-backend-object-c-entry-register-bytes
+  [position : i64]
+  [float? : bool]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+    ;; Bit copies preserve f32/f64 payloads; upper SSE lanes are unspecified.
+    (if float?
+      (begin
+        (compiler-backend-object-push-u8! (&mut out) 0x66)
+        (compiler-backend-object-push-u8! (&mut out) 0x48)
+        (compiler-backend-object-push-u8! (&mut out) 0x0f)
+        (compiler-backend-object-push-u8! (&mut out) 0x6e)
+        (compiler-backend-object-push-u8! (&mut out) (+ 0xc0 (* 8 position))))
+      (begin
+        (compiler-backend-object-push-u8! (&mut out) 0x48)
+        (compiler-backend-object-push-u8! (&mut out) 0x89)
+        (compiler-backend-object-push-u8! (&mut out) (+ 0xc6 (- position 4)))))
+    (compiler-backend-object-bytes-finish (& out))))
+
+(define (compiler-backend-object-c-entry-return-bytes) : String
+  (object_target.compiler-backend-object-bytes-from-hex "5f5ec3"))
+
+(define (compiler-backend-object-c-entry-shared
+  [parts : object_target.CompilerBackendObjectTargetParts]) : object_target.CompilerBackendObjectTargetParts
+  (let
+    [entry : String "__tl$c_entry"]
+    [end : String "__tl$c_entry$end"]
+    [out : object_target.CompilerBackendObjectTargetParts
+      (compiler-backend-object-add-nonempty-bytes
+        (compiler-backend-object-add-nonempty-bytes
+          (compiler-backend-object-add-nonempty-bytes
+            (compiler-backend-object-add-nonempty-bytes
+              (object_target.compiler-backend-object-add-text
+                (object_target.compiler-backend-object-symbol-local-section
+                  parts
+                  (string.copy (& entry))
+                  (Text)
+                  (Function))
+                (Label (string.copy (& entry))))
+              (compiler-backend-object-c-entry-prefix-bytes 40))
+            (compiler-backend-object-call-r11-bytes))
+          (compiler-backend-object-add-rsp-bytes 40))
+        (compiler-backend-object-c-entry-return-bytes))]
+    (object_windows.compiler-backend-object-add-unwind
+      (object_target.compiler-backend-object-add-text
+        (object_target.compiler-backend-object-symbol-local-section
+          out
+          (string.copy (& end))
+          (Text)
+          (Function))
+        (Label (string.copy (& end))))
+      entry
+      end
+      (object_windows.compiler-backend-object-entry-range-unwind-bytes
+        40
+        6
+        true))))
+
+(define (compiler-backend-object-c-export-entry
+  [type-segment-bases : i64]
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [target : CompilerBackendTarget]
+  [index : CompilerBackendProgramIndex]
+  [name : i64]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]) : object_target.CompilerBackendObjectTargetParts
+  (if (not
+    (and
+      (compiler_abi.compiler-abi-platform-entry-bridge?
+        (compiler-backend-target-abi target))
+      (compiler-backend-index-c-export? index name)))
+    parts
+    (let
+      [entry : String (compiler-backend-index-extern-link-symbol index name)]
+      [end : String (str_cat.str-cat entry "$end")]
+      [body : String (compiler-backend-function-symbol-index index name)]
+      [plan : CompilerBackendCEntryPlan
+        (compiler-backend-c-entry-plan type-segment-bases index params)]
+      [prefix : String
+        (if (<= plan.len 4)
+          ""
+          (compiler-backend-object-c-entry-prefix-bytes plan.frame))]
+      [prologue-size : i64
+        (if (>= plan.frame 4096)
+          15
+          (string.string-length prefix))]
+      [out : object_target.CompilerBackendObjectTargetParts
+        (compiler-backend-object-add-nonempty-bytes
+          (object_target.compiler-backend-object-add-text
+            (object_target.compiler-backend-object-symbol-export-section
+              parts
+              (string.copy (& entry))
+              (Text)
+              (Function))
+            (Label (string.copy (& entry))))
+          prefix)]
+      (when
+        (<= plan.len 4)
+        (return
+          (object_target.compiler-backend-object-add-rip-instr
+            (object_target.compiler-backend-object-add-rip-instr
+              out
+              (string.copy (& entry))
+              (RipAddress)
+              (string.copy (& body))
+              (LoadRipAddressR11 body))
+            entry
+            (Branch)
+            "__tl$c_entry"
+            (Jump "__tl$c_entry"))))
+      (when
+        (>= plan.frame 4096)
+        (set!
+          out
+          (object_target.compiler-backend-object-add-call-instr
+            (compiler-backend-object-add-machine
+              out
+              (mx.MachineInstr.MovRI
+                (W32)
+                compiler_abi.compiler-reg-id-rax
+                plan.frame))
+            (string.copy (& entry))
+            "__chkstk"))
+        (set!
+          out
+          (compiler-backend-object-add-nonempty-bytes
+            out
+            (object_target.compiler-backend-object-bytes-from-hex "4829c4"))))
+      (for [position (iterator.range 4 plan.len)]
+        (set!
+          out
+          (compiler-backend-object-add-nonempty-bytes
+            out
+            (compiler-backend-object-load-rax-rsp-bytes
+              (compiler-backend-c-entry-incoming-offset (& plan) position))))
+        (set!
+          out
+          (compiler-backend-object-add-nonempty-bytes
+            out
+            (if (< position 6)
+              (compiler-backend-object-c-entry-register-bytes
+                position
+                (array-ref plan.float-words position))
+              (compiler-backend-object-store-rax-rsp-bytes
+                (+ 32 (* 8 (- position 6))))))))
+      (set!
+        out
+        (compiler-backend-object-add-nonempty-bytes
+          (compiler-backend-object-add-nonempty-bytes
+            (object_target.compiler-backend-object-add-call-instr
+              out
+              (string.copy (& entry))
+              body)
+            (compiler-backend-object-add-rsp-bytes plan.frame))
+          (compiler-backend-object-c-entry-return-bytes)))
+      (object_windows.compiler-backend-object-add-unwind
+        (object_target.compiler-backend-object-add-text
+          (object_target.compiler-backend-object-symbol-local-section
+            out
+            (string.copy (& end))
+            (Text)
+            (Function))
+          (Label (string.copy (& end))))
+        entry
+        end
+        (object_windows.compiler-backend-object-entry-range-unwind-bytes
+          plan.frame
+          prologue-size
+          true)))))
 
 (define (compiler-backend-object-global-value
   [parts : object_target.CompilerBackendObjectTargetParts]
@@ -81485,7 +81873,7 @@ tl_shared_object_init:
 
 (define (compiler-backend-object-extern-seq
   [parts : object_target.CompilerBackendObjectTargetParts]
-  [externs : compiler_ir_types.CompilerIrExternSeq]
+  [externs : (& externs compiler_ir_types.CompilerIrExternSeq)]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
   [referenced-functions : BackendSymbolSeq]
@@ -81494,13 +81882,14 @@ tl_shared_object_init:
   (if (>= seq-index (compiler_ir_types.compiler-ir-extern-seq-count externs))
     parts
     (match (compiler_ir_types.compiler-ir-extern-seq-borrow externs seq-index)
-      [(Extern name-id source-name-id _ _ _ link-symbol-id _ provided _)
+      [(Extern name-id source-name-id _ _ abi link-symbol-id _ provided _)
         (let
           [link-symbol : String
             (compiler-backend-link-symbol-id
               link-symbol-id
               plan
-              program-index.backend-state)]
+              program-index.backend-state
+              (compiler_ast_types.ast-extern-abi-c? abi))]
           [relocations : cobj.CompilerObjectRelocationBuilder
             (compiler-backend-global-shared-view parts.relocations)]
           [has-relocation : bool
@@ -81538,6 +81927,14 @@ tl_shared_object_init:
                 link-symbol-id
                 provided
                 plan)
+              ;; A provided entry already owns this symbol definition. An
+              ;; address alias must not add a second undefined COFF/ELF row.
+              (not
+                (cobj.compiler-object-symbol-builder-contains?
+                  (& parts.symbols)
+                  (string.copy (& link-symbol))
+                  (Export)
+                  (Function)))
               ;; Object relocations are the exact reference inventory.
               has-relocation)
               (object_target.compiler-backend-object-symbol-extern
@@ -83724,8 +84121,8 @@ tl_shared_object_init:
 
 ;; Owner map after a normal call returns. Preserve only stack-slot owners in the
 ;; tracked registers whose values are guaranteed across both SysV and Win64
-;; calls; Win64 also preserves %rsi/%rdi, but SysV does not, and %rbp is
-;; intentionally untracked.
+;; Internal calls; RSI/RDI are volatile under both, and RBP is intentionally
+;; untracked.
 (define (compiler-backend-peephole-owners-clear-call-clobbers
   [owners : CompilerBackendPeepholeOwners]) : CompilerBackendPeepholeOwners
   (CompilerBackendPeepholeOwners

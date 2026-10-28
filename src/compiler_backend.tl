@@ -14758,7 +14758,13 @@
   ;; A raw leaf tail-enters with its body in volatile R11. At most four
   ;; physical words need no argument moves; the common frame preserves the
   ;; Platform saves and home area, and owns the unwind record for the call.
-  ".seh_proc __tl$c_entry\n__tl$c_entry:\n    pushq %rsi\n    .seh_pushreg %rsi\n    pushq %rdi\n    .seh_pushreg %rdi\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    call *%r11\n    addq $40, %rsp\n    popq %rdi\n    popq %rsi\n    ret\n    .seh_endproc\n")
+  (str_cat.str-cat
+    ".seh_proc __tl$c_entry\n__tl$c_entry:\n    pushq %rsi\n    .seh_pushreg %rsi\n    pushq %rdi\n    .seh_pushreg %rdi\n    subq $40, %rsp\n    .seh_stackalloc 40\n    .seh_endprologue\n    call *%r11\n    addq $40, %rsp\n    popq %rdi\n    popq %rsi\n    ret\n    .seh_endproc\n"
+    (if (compiler_ir_types.compiler-debug-info-enabled?)
+      (compiler-backend-backtrace-c-entry-range
+        "__tl$c_entry"
+        ".L_tl_c_entry_shared_end")
+      "")))
 
 (define (compiler-backend-c-entry-incoming-offset
   [plan : (& plan CompilerBackendCEntryPlan)]
@@ -14843,6 +14849,13 @@
           "\n    addq $"
           (string.int->string plan.frame)
           ", %rsp\n    popq %rdi\n    popq %rsi\n    ret\n    .seh_endproc\n"))
+      (when
+        (compiler_ir_types.compiler-debug-info-enabled?)
+        (text_buf.append!
+          out
+          (compiler-backend-backtrace-c-entry-range
+            entry
+            (str_cat.str-cat ".L_tl_c_entry_end_" entry))))
       (text_buf.render out))))
 
 ;; ELF function symbols for the Linux text path.
@@ -18728,6 +18741,20 @@
       "    .globl tl_backtrace_map_data_end\ntl_backtrace_map_data_end:\n"
       (compiler-backend-backtrace-string-section target)
       "    .globl tl_backtrace_string_data_end\ntl_backtrace_string_data_end:\n    .text\n")))
+
+;; ABI bridges own unwind frames but no source frame. A validated map row with
+;; an empty name marks that distinction without inventing a source location.
+;; Both zero-length strings still point inside the bounded string section.
+(define (compiler-backend-backtrace-c-entry-range
+  [begin : String]
+  [end : String]) : String
+  (str_cat.str-cat
+    end
+    ":\n    .section .rdata$TLBT,\"dr\"\n    .balign 8\n    .quad "
+    begin
+    "\n    .quad "
+    end
+    "\n    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad 0\n    .quad 0\n    .text\n"))
 
 (define (compiler-backend-backtrace-function-id
   [program-index : CompilerBackendProgramIndex]

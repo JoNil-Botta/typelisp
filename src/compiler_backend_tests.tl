@@ -15843,11 +15843,22 @@ f:
 (define (compiler-backend-backtrace-metadata-shape-ok?) : bool
   (let
     [previous-debug : bool (ir.compiler-debug-info-enabled?)]
+    [bridge-source : String
+      "(define (small) (:export-symbol \"tl_bt_small\") : i64 1)
+(define (six [a : i64] [b : i64] [c : i64] [d : i64] [e : i64] [f : i64])
+  (:export-symbol \"tl_bt_six\") : i64 (+ a b c d e f))
+(define (main) : i64 (small))"]
     [_disable : unit (ir.compiler-debug-info-set-enabled! false)]
     [disabled-ok : bool
       (asm-ok?
         (backend.compiler-backend-emit-source "(define (main) : i64 0)")
         (lacks "tl_backtrace_map_data_begin" "tl_backtrace_map_begin:"))]
+    [bridge-disabled-ok : bool
+      (asm-ok?
+        (backend.compiler-backend-emit-source-for-target
+          (clone bridge-source)
+          (Windows))
+        (lacks ".L_tl_c_entry_shared_end" ".L_tl_c_entry_end_tl_bt_six"))]
     [_enable : unit (ir.compiler-debug-info-set-enabled! true)]
     [linux-ok : bool
       (asm-ok?
@@ -15866,6 +15877,13 @@ f:
           ".section .rdata$TLBT,\"dr\""
           ".section .rdata$TLBS,\"dr\""
           "tl_backtrace_map_begin:"))]
+    [bridge-ok : bool
+      (asm-ok?
+        (backend.compiler-backend-emit-source-for-target bridge-source (Windows))
+        (has
+          "    .quad __tl$c_entry\n    .quad .L_tl_c_entry_shared_end\n"
+          "    .quad tl_bt_six\n    .quad .L_tl_c_entry_end_tl_bt_six\n"
+          "    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad tl_backtrace_string_data_begin\n    .quad 0\n    .quad 0\n    .quad 0\n"))]
     ;; A two-form body has no `begin` node of its own. Its row still names the
     ;; first form's location (line 2, column 3), not an empty path at 0:0, so
     ;; the frame renders with a location and the runtime-path filter can match
@@ -15878,7 +15896,13 @@ f:
           "    .ascii \"two-forms\"\n.L_tl_backtrace_path_0:\n    .ascii \"<source>\"\n"
           "    .quad .L_tl_backtrace_path_0\n    .quad 8\n    .quad 2\n    .quad 3\n"))]
     [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
-    (and disabled-ok linux-ok windows-ok multi-form-ok)))
+    (and
+      disabled-ok
+      bridge-disabled-ok
+      linux-ok
+      windows-ok
+      bridge-ok
+      multi-form-ok)))
 
 ;; Representation facts are per compile entry even when the explicit backend
 ;; state is reused by a batch. Rebuilding them must rewind their dedicated
@@ -44411,6 +44435,12 @@ user_fn:
   (test.assert-true
     (compiler-backend-packed-literal-records-ok?)
     "packed literal bytes, terminal zeros and aligned pointer/length headers"))
+
+(test
+  backend-c-export-backtrace
+  (test.assert-true
+    (compiler-backend-backtrace-metadata-shape-ok?)
+    "debug backtraces omit shared and dedicated C-entry frames; release emits no map"))
 
 (test
   backend-c-export-entries

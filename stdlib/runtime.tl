@@ -771,7 +771,14 @@
                         (ptr-read (ptr-offset addresses (+ index repeat-count))))
                       return-address))
                     (set! repeat-count (+ repeat-count 1)))
-                  (if (and (not (ptr-null? row)) (backtrace-runtime-path? row))
+                  ;; Empty names identify compiler-only ABI bridge frames.
+                  ;; Corrupt rows have already become null above and must
+                  ;; retain the ordinary address/unknown fallback.
+                  (if (and
+                    (not (ptr-null? row))
+                    (or
+                      (= (backtrace-map-word row 3) 0)
+                      (backtrace-runtime-path? row)))
                     unit
                     (begin
                       (backtrace-write-frame shown pc row)

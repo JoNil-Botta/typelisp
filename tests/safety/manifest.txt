@@ -2226,3 +2226,12 @@ shared_mut_borrow_initializer_location_reject|check-fail|tests/safety/shared_mut
 borrow_lifetime_initializer_location_reject|check-fail|tests/safety/borrow_lifetime_initializer_location_reject.tl|tests/safety/borrow_lifetime_initializer_location_reject.tl:4:10|borrow lifetime mismatch
 shared_mut_borrow_call_location_reject|check-fail|tests/safety/shared_mut_borrow_call_location_reject.tl|tests/safety/shared_mut_borrow_call_location_reject.tl:8:12|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
 borrow_lifetime_call_location_reject|check-fail|tests/safety/borrow_lifetime_call_location_reject.tl|tests/safety/borrow_lifetime_call_location_reject.tl:7:11|borrow lifetime mismatch
+
+# Borrow transport retains replace! classification and macro invocation frames.
+shared_mut_borrow_replace_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_location_reject.tl|tests/safety/shared_mut_borrow_replace_location_reject.tl:6:20|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_let_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_let_location_reject.tl|tests/safety/shared_mut_borrow_replace_let_location_reject.tl:9:22|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_index_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_index_location_reject.tl|tests/safety/shared_mut_borrow_replace_index_location_reject.tl:10:39|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_replace_location_control_reject|check-fail|tests/safety/borrow_lifetime_replace_location_control_reject.tl|tests/safety/borrow_lifetime_replace_location_control_reject.tl:6:3|replace! target must be a storage place
+shared_mut_borrow_macro_location_reject|check-fail|tests/safety/shared_mut_borrow_macro_location_reject.tl|tests/safety/shared_mut_borrow_macro_location_reject.tl:10:31|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_macro_location_reject|check-fail|tests/safety/borrow_lifetime_macro_location_reject.tl|tests/safety/borrow_lifetime_macro_location_reject.tl:12:30|borrow lifetime mismatch
+shared_mut_borrow_replace_macro_location_control_reject|check-fail|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl:9:3|replace! target must be a storage place

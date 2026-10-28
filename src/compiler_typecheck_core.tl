@@ -84508,11 +84508,21 @@
 
 ;; A `replace!` target that is no storage place, or that is reached only
 ;; through a shared reference (E0215). A target whose typing reports the `&mut`
-;; borrow rule's diagnostic (a `&mut` borrow through a shared reference) keeps
-;; it; a write through a `&mut` held behind a shared reference is the graph's
-;; (`normalize-exclusive-ok`).
+;; borrow rule's direct diagnostic keeps it, including a plain source location.
+;; Other framed errors keep the storage fallback. A write through a `&mut` held
+;; behind a shared reference is the graph's (`normalize-exclusive-ok`).
 (define (tc-replace-storage-place-error [message : String]) : String
-  (if (string.eq message (tc-borrow-through-shared-message))
+  (if (or
+    (string.eq message (tc-borrow-through-shared-message))
+    (and
+      (tc-located-error? message)
+      (let
+        [diagnostic : cdiag.CompilerDiagnostic
+          (tc-located-error-diag (clone message))]
+        (string.eq
+          (cdiag.compiler-diagnostic-message (& diagnostic))
+          (cdiag.compiler-diagnostic-untagged-message
+            (tc-borrow-through-shared-message))))))
     message
     (tc-kind-message
       (Place)

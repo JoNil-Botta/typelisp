@@ -547,3 +547,10 @@ tests/safety/shared_mut_borrow_initializer_location_reject.tl	stage2-public-tool
 tests/safety/borrow_lifetime_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
 tests/safety/shared_mut_borrow_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
 tests/safety/borrow_lifetime_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_replace_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_let_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_index_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/borrow_lifetime_replace_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/borrow_lifetime_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture preserving pre-existing framed replace diagnostic classification.

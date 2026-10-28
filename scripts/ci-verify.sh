@@ -424,7 +424,8 @@ stage2_safety_corpus_supported() {
         sed 's/^/  /' "$probe_dir/assemble.stderr" >&2 || true
         return 1
     fi
-    if ! ld "$obj" -o "$bin" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
+    entry=$(linux_entry_symbol_for_asm "$asm") || exit $?
+    if ! ld "$obj" -o "$bin" -static -e "$entry" \
         > "$probe_dir/link.stdout" 2> "$probe_dir/link.stderr"; then
         echo "[ci-verify] stage2 safety probe link failed"
         sed 's/^/  /' "$probe_dir/link.stdout" >&2 || true

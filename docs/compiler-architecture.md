@@ -34,9 +34,10 @@ its scope and regression witnesses are recorded in the
 [detailed macro invariants](compiler-invariants.md#architecture).
 
 Dependency prefix reuse authenticates each semantic declaration by its admitted
-fragment or embedded stdlib source. Interleaved source expressions still requiring
-macro expansion take the ordinary walk, and entry-owned bodies remain subject to
-typechecking; see the [prefix admission invariant](compiler-invariants.md#architecture).
+fragment or embedded stdlib source. The reused prefix ends before the first
+entry-owned body or source expression still requiring macro expansion; that
+declaration and everything after it take the ordinary walks. See the
+[prefix admission invariant](compiler-invariants.md#architecture).
 
 Generated macro commits refresh selected aliases through the existing
 module/import event index and symbol map before the next expansion context is

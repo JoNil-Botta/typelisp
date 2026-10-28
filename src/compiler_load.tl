@@ -657,6 +657,7 @@
   (hit-count (__tl_dyn-array i64))
   (fallback-count (__tl_dyn-array i64))
   (macro-skip-count (__tl_dyn-array i64))
+  (macro-cut-marker (__tl_dyn-array i64))
   (typecheck-skip-count (__tl_dyn-array i64)))
 
 ;; Small lifetime-bound capability used by typechecking after dependency
@@ -756,6 +757,7 @@
     (__tl_make-array (compiler-load-dependency-surface-list-empty))
     (__tl_make-array CompilerLoadDependencySurfaceBaseFacts.None)
     (__tl_make-array (surface_facts.surface-typecheck-facts-builder-empty))
+    (__tl_make-array 0)
     (__tl_make-array 0)
     (__tl_make-array 0)
     (__tl_make-array 0)
@@ -1229,6 +1231,7 @@
     (set! (array-ref surface-state.surface-decl-count 0) 0)
     (set! (array-ref surface-state.surface-provenance-count 0) 0)
     (set! (array-ref surface-state.macro-skip-count 0) 0)
+    (set! (array-ref surface-state.macro-cut-marker 0) 0)
     (set! (array-ref surface-state.typecheck-skip-count 0) 0)))
 
 (define (compiler-load-session-state-dependency-catalog-release!
@@ -1581,6 +1584,7 @@
     (set! (array-ref surface-state.surface-provenance-count 0) 0)
     (set! (array-ref surface-state.hit-count 0) 0)
     (set! (array-ref surface-state.macro-skip-count 0) 0)
+    (set! (array-ref surface-state.macro-cut-marker 0) 0)
     (set! (array-ref surface-state.typecheck-skip-count 0) 0)
     (if (surface_facts.surface-typecheck-facts-composite-active?)
       (surface_facts.surface-typecheck-facts-clear!)
@@ -12849,6 +12853,25 @@
   [state : CompilerLoadSessionState]
   [count : i64]) : unit
   (set! (array-ref state.dependency-surfaces.macro-skip-count 0) count))
+
+;; Declarations the macro walk hydrated this use, or 0 before any hydration.
+(define (compiler-load-session-state-dependency-surface-macro-skip-count
+  [state : (& CompilerLoadSessionState)]) : i64
+  (array-ref state.dependency-surfaces.macro-skip-count 0))
+
+;; When the macro plan stopped before source work, the ordinal among all module
+;; markers of the one governing that declaration (0 when none).
+(define (compiler-load-session-state-dependency-surface-note-macro-cut!
+  [state : (& state CompilerLoadSessionState)]
+  [marker : i64]) : unit
+  (owned_view.compiler-owned-cell-set!
+    state.dependency-surfaces.macro-cut-marker
+    0
+    marker))
+
+(define (compiler-load-session-state-dependency-surface-macro-cut-marker
+  [state : (& CompilerLoadSessionState)]) : i64
+  (array-ref state.dependency-surfaces.macro-cut-marker 0))
 
 (define (compiler-load-session-state-dependency-surface-note-typecheck-skip!
   [state : CompilerLoadSessionState]

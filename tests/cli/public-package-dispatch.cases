@@ -140,7 +140,8 @@ file -x app/src/main.tl
 end-file
 run build --manifest-path "{{dir}}/app/typelisp.pkg" --opt-level {{opt}} --backend-mode {{mode}}
 stderr empty
-exec "{{dir}}/app/target/release/dispatch_selection{{exe}}"
+sh simd_execution_record package-dispatch-isa-selection "{{mode}}"
+exec simd_execute "{{mode}}" "{{dir}}/app/target/release/dispatch_selection{{exe}}"
 exit 42
 stdout empty
 stderr empty

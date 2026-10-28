@@ -12589,7 +12589,9 @@
           next-module
           next-module-id
           symbols
-          spmd-interface)
+          (&
+            (clone
+              (owned_view.compiler-owned-reference-shared-view spmd-interface))))
           [(Ok rest-decls rest-decl-paths rest-modules rest-seen)
             (match (compiler-load-package-transform-decl
               package-owner
@@ -12630,9 +12632,10 @@
   [module : String]
   [module-id : i64]
   [spmd-interface : (& CompilerLoadPackageSpmdInterface)]) : ResultCompilerLoadWithPaths
-  (match (csym.build-compiler-symbols
-    (&
-      (ast.ast-program (owned_view.compiler-owned-reference-shared-view decls))))
+  (match (csym.compiler-symbols-insert-decls
+    (& (csym.compiler-symbols-empty))
+    decls
+    (csym.compiler-symbol-root-module-id))
     [(Err message)
       (Err
         (box

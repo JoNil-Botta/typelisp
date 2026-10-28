@@ -1,0 +1,76 @@
+# Compile-fail diagnostics for inline test names and unchanged malformed shapes.
+do none
+target linux-x86_64 windows-x86_64
+opt -
+
+file string-name.tl
+(test "name" unit)
+end-file
+
+file number-name.tl
+(test 42 unit)
+end-file
+
+file list-name.tl
+(test (name) unit)
+end-file
+
+file missing-name.tl
+(test)
+end-file
+
+file missing-body.tl
+(test my-test)
+end-file
+
+file bad-metadata.tl
+(test my-test (:slow true) unit)
+end-file
+
+case inline-test-name-string
+run compile "{{work}}/string-name.tl" --target {{target}} -o "{{dir}}/out.s"
+exit 1
+stdout empty
+stderr contains error[E0103]: parse: test name must be a symbol; write `(test my-test ...)`
+stderr contains string-name.tl:1:7
+stderr contains |       ^
+
+case inline-test-name-number
+run compile "{{work}}/number-name.tl" --target {{target}} -o "{{dir}}/out.s"
+exit 1
+stdout empty
+stderr contains error[E0103]: parse: test name must be a symbol; write `(test my-test ...)`
+stderr contains number-name.tl:1:7
+stderr contains |       ^
+
+case inline-test-name-list
+run compile "{{work}}/list-name.tl" --target {{target}} -o "{{dir}}/out.s"
+exit 1
+stdout empty
+stderr contains error[E0103]: parse: test name must be a symbol; write `(test my-test ...)`
+stderr contains list-name.tl:1:7
+stderr contains |       ^
+
+case inline-test-missing-name
+run compile "{{work}}/missing-name.tl" --target {{target}} -o "{{dir}}/out.s"
+exit 1
+stdout empty
+stderr contains error[E0103]: parse: malformed test
+stderr contains missing-name.tl:1:1
+stderr not-contains test name must be a symbol
+
+case inline-test-missing-body
+run compile "{{work}}/missing-body.tl" --target {{target}} -o "{{dir}}/out.s"
+exit 1
+stdout empty
+stderr contains error[E0103]: parse: test needs at least one expression
+stderr contains missing-body.tl:1:1
+stderr not-contains test name must be a symbol
+
+case inline-test-bad-metadata
+run compile "{{work}}/bad-metadata.tl" --target {{target}} -o "{{dir}}/out.s"
+exit 1
+stdout empty
+stderr contains error[E0103]: parse: test :slow metadata takes no values
+stderr contains bad-metadata.tl:1:1
+stderr not-contains test name must be a symbol

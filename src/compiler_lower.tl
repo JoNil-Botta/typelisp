@@ -20494,8 +20494,9 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [bind-mode : LowerBindMode]
   [base : ir.CompilerIrValue]
-  [nested-args : ast.AstPatternList]
+  [pattern : ast.AstPattern]
   [resolved : ast.AstType]
   [mode : CompilerLowerMode]
   [enum-id : i64]
@@ -20509,32 +20510,32 @@
   [next-cursor : i64]
   [fail-label : i64]
   [scrut-reg-group? : bool]) : ResultLowerEnv
-  (match (lower-bind-payload-value
+  (match (lower-bind-payload-aggregate
     ctx
     state
+    bind-mode
     (lower-global-shared-view base)
     enum-id
     offset
     (lower-global-shared-view resolved)
     scrut-reg-group?)
     [(Expr field-state field-value _)
-      (match (lower-bind-struct-pattern
+      (match (lower-bind-element-pattern
         ctx
         field-state
         env
         type-env
+        bind-mode
         field-value
-        (lower-global-shared-view resolved)
-        (lower-struct-type-name-or-empty
-          (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx resolved)))
-        nested-args)
+        pattern
+        resolved)
         [(Ok struct-state struct-env struct-type-env)
           (lower-bind-variant-payloads
             ctx
             struct-state
             struct-env
             struct-type-env
-            (Owned)
+            bind-mode
             base
             rest-patterns
             rest-types
@@ -20549,9 +20550,8 @@
             scrut-reg-group?)]
         [(Err message) (Err message)])]))
 
-;; How a pattern binds the parts of the value it matches: owned patterns load
-;; each part, borrowed ones (a match on a reference) bind references to the parts
-;; with the scrutinee borrow's lifetime.
+;; Owned patterns load each part; patterns matched through a shared reference
+;; copy Copy parts and borrow the remaining parts with the scrutinee lifetime.
 (defenum LowerBindMode
   (Owned)
   (Borrowed i64))
@@ -20984,7 +20984,7 @@
                   (str_cat.str-cat
                     "lower: inline enum layout missing payload for "
                     variant-name))))
-            (match pattern
+            (match (lower-global-shared-view pattern)
               [(Wildcard)
                 (lower-bind-variant-payloads
                   ctx
@@ -21317,19 +21317,18 @@
                         next-cursor
                         fail-label
                         scrut-reg-group?)]
-                    [(and
-                        owned?
-                        (lower-struct-pattern-for-type?
-                          ctx
-                          (lower-global-shared-view resolved)
-                          nested-name))
+                    [(lower-struct-pattern-for-type?
+                        ctx
+                        (lower-global-shared-view resolved)
+                        nested-name)
                       (lower-bind-struct-variant-payload
                         ctx
                         state
                         env
                         type-env
+                        bind-mode
                         base
-                        nested-args
+                        pattern
                         resolved
                         mode
                         enum-id

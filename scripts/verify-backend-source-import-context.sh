@@ -10,6 +10,9 @@ native_link_detect_host
 configure_toolchain
 WORK=${TYPELISP_BACKEND_IMPORT_WORK:-"$ROOT/target/exp/backend-source-import-context"}
 mkdir -p "$WORK"
+. "$ROOT/scripts/lib-fixture-inventory.sh"
+fixture_inventory_load tests/fixtures/backend-source-import.fixtures.cases "$WORK/fixtures.tsv"
+TAB=$(printf '\t')
 DRIVER="$WORK/oracle$NL_BIN_EXT"
 "$COMPILER" build tools/backend-source-import-oracle/main.tl \
     --stdlib-root stdlib --stdlib-root src --opt-level 2 -o "$DRIVER"
@@ -46,15 +49,16 @@ check_cli() {
     run_expected "$_cli_name" "$WORK/$_cli_name$NL_BIN_EXT"
 }
 
-for fixture in payload aliases wildcard; do
-    source="tests/fixtures/backend_source_import_$fixture.tl"
+while IFS=$TAB read -r fixture primary; do
+    source=$primary
+    fixture_inventory_require "$WORK/fixtures.tsv" "$source"
     check_assembly "$fixture-asm" "$source"
     "$DRIVER" "$NL_HOST_OS" object "$source" "$WORK/$fixture-object.$NL_OBJ_EXT"
     link_native_object "$fixture-object" "$WORK/$fixture-object.$NL_OBJ_EXT" \
         "$WORK/$fixture-object$NL_BIN_EXT"
     run_expected "$fixture-object" "$WORK/$fixture-object$NL_BIN_EXT"
     check_cli "$fixture-cli" "$source"
-done
+done < "$WORK/fixtures.tsv"
 
 # Raw source-helper images do not certify complete runtime bodies (#8317).
 # Keep the allocation fixture's assembly/CLI behaviour and positive exclusion.

@@ -16,11 +16,16 @@ stdlib/*.tl	stage2-docs-pages-build-path,stage2-stdlib-documentation,stage2-stdl
 stdlib/tests/*	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifier,stage2-prelude-macro-mutation-guard	@stdlib	Stdlib witnesses are executed by both fixture verifiers and copied by the macro-mutation runner.
 stdlib/README.md	stage2-stdlib-modules-and-fixtures	@stdlib	The stdlib runner checks the documented module inventory.
 tests/*	-	@corpus	Advisory corpus class; a path also needs a required trigger or both tiers fall back to full.
+tests/fixtures/ir-*.fixtures.cases	ir-observability-golden,stage2-public-tool-surface	@corpus	Canonical IR primaries, consumed directly and audited without executing the harness.
+tests/fixtures/arena-global-storage.fixtures.cases	compiler-arena-debug-native-matrix,stage2-public-tool-surface	@corpus	Canonical arena global-storage primaries and unconditional inventory audit.
+tests/fixtures/profile-import-order.fixtures.cases	stage2-compile-profile-verifier,stage2-public-tool-surface	@corpus	Canonical profile import-order primaries and unconditional inventory audit.
+tests/fixtures/backend-source-import.fixtures.cases	stage2-backend-source-import-context,stage2-public-tool-surface	@corpus	Canonical backend-import primaries and unconditional inventory audit.
 tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
 tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
 tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Raw atomic C entries and ordinary Internal bodies retain independent call and assembly coverage.
 benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.
 tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
+tests/safety/legacy_box_get_*_reject.tl	stage2-public-tool-surface	-	The public-check matrix directly consumes the legacy BoxGet receiver diagnostic fixtures.
 tests/safety/set_inline_array_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array value/bounds ordering also runs in the native opt0/1/2 matrix.
 tests/safety/set_inline_array_field_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array field value/bounds ordering also runs in the native opt0/1/2 matrix.
 tests/safety/set_inline_array_bounds_after_growth_trap.tl	stage2-native-integration-corpus	@corpus	Captured inner bounds after outer growth also run in the native opt0/1/2 matrix.
@@ -208,6 +213,7 @@ src/compiler_lower.tl	stage2-selfhost-compile-manifest,stage2-public-tool-surfac
 src/compiler_lzss.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_module_name.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_optimize.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_optimize_tests.tl	stage2-public-tool-surface	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 src/compiler_ownership_cleanup_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_core_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_core.tl	stage2-selfhost-compile-manifest,stage2-ownership-model	@compiler	Direct tracked input named by its owning verifier or compile manifest.

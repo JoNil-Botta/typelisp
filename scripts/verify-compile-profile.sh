@@ -19,6 +19,9 @@ gate_require_compiler
 WORKDIR="$ROOT/target/compile-profile-verify/$NL_HOST_OS"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+. "$ROOT/scripts/lib-fixture-inventory.sh"
+fixture_inventory_load tests/fixtures/profile-import-order.fixtures.cases "$WORKDIR/import-order.tsv"
+TAB=$(printf '\t')
 
 PROFILE_ASM="$WORKDIR/typelisp-profile.s"
 PROFILE_OBJ="$WORKDIR/typelisp-profile.$NL_OBJ_EXT"
@@ -1822,15 +1825,15 @@ ROWS
 # another import loading the shared dependency first (json-first is the
 # failure ordering).
 echo "[compile-profile] verify lazy macro definition import order"
-for import_order in repro format_first; do
+while IFS=$TAB read -r import_order primary; do
     route_run "import-order-$import_order" "$STDLIB_TLCI_DIR" compile \
-        "$ROOT/tests/integration/macro_import_order_$import_order.tl"
+        "$ROOT/$primary"
     [ "$route_status" -eq 0 ] || {
         show_failure_logs "$STDLIB_TLCI_DIR/import-order-$import_order.stdout" \
             "$STDLIB_TLCI_DIR/import-order-$import_order.stderr"
         fail "lazy macro definition import-order fixture $import_order failed"
     }
-done
+done < "$WORKDIR/import-order.tsv"
 if ! cmp -s "$STDLIB_TLCI_DIR/import-order-repro.s" "$STDLIB_TLCI_DIR/import-order-format_first.s"; then
     diff -u "$STDLIB_TLCI_DIR/import-order-format_first.s" "$STDLIB_TLCI_DIR/import-order-repro.s" >&2 || true
     fail "import order changed lazy macro definition-context assembly"

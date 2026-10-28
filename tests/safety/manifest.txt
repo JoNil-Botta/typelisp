@@ -1003,6 +1003,10 @@ fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_
 fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items[0]`
 fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
+borrowed_enum_struct_pattern_arity_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_arity_reject.tl|tests/safety/borrowed_enum_struct_pattern_arity_reject.tl:12:8|typecheck: pattern arity mismatch
+borrowed_enum_struct_pattern_escape_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_escape_reject.tl|tests/safety/borrowed_enum_struct_pattern_escape_reject.tl:8:3|does not outlive required lifetime `outer`
+borrowed_enum_struct_pattern_literal_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_literal_reject.tl|tests/safety/borrowed_enum_struct_pattern_literal_reject.tl:12:8|borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern
+borrowed_enum_struct_pattern_mutation_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_mutation_reject.tl|tests/safety/borrowed_enum_struct_pattern_mutation_reject.tl:12:15|cannot assign to borrowed place `item`
 borrowed_struct_pattern_string_escape_reject|check-fail|tests/safety/borrowed_struct_pattern_string_escape_reject.tl|-|does not outlive required lifetime `outer`
 borrowed_struct_pattern_string_mutation_reject|check-fail|tests/safety/borrowed_struct_pattern_string_mutation_reject.tl|-|cannot assign to borrowed place `items[0]`
 borrowed_struct_match_escape_reject|check-fail|tests/safety/borrowed_struct_match_escape_reject.tl|-|does not outlive required lifetime `outer`
@@ -2243,3 +2247,9 @@ shared_mut_borrow_replace_macro_location_control_reject|check-fail|tests/safety/
 # replace! retains already located through-shared call-argument diagnostics.
 shared_mut_borrow_replace_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_call_location_reject.tl:9:26|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
 shared_mut_borrow_replace_index_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl:13:38|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+legacy_box_get_ref_match_reject|check-fail|tests/safety/legacy_box_get_ref_match_reject.tl|tests/safety/legacy_box_get_ref_match_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_shared_box_reject|check-fail|tests/safety/legacy_box_get_shared_box_reject.tl|tests/safety/legacy_box_get_shared_box_reject.tl:5:27|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref_reject.tl|tests/safety/legacy_box_get_store_ref_reject.tl:13:15|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference

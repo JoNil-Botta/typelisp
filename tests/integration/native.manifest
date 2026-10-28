@@ -869,6 +869,7 @@ tuple_values|all|-,0,1,2|tests/integration/tuple_values.tl|42|-|-|-|-
 # Moving a Box out of a nested tuple place leaves its Copy sibling readable.
 tuple_nested_place_move|all|0,1,2|tests/integration/tuple_nested_place_move.tl|42|-|-|-|-
 tuple_match_pattern|all|-|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl|-
+borrowed_enum_struct_pattern|all|0,1,2|tests/integration/borrowed_enum_struct_pattern.tl|42|-|-|struct_match_pattern_geom.tl stdlib/string.tl|-
 borrowed_struct_pattern_string|all|0,1,2|tests/integration/borrowed_struct_pattern_string.tl|42|-|-|stdlib/string.tl stdlib/io.tl|stage-stdlib
 string_literal_eq|all|0,1,2|tests/integration/string_literal_eq.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-
 packed_string_literals|all|0,1,2|tests/integration/packed_string_literals.tl|42|prefix/abcabcbcccabdababbprefixλλbprefix/abc|-|packed_string_literals.in stdlib/io.tl stdlib/byte_buf.tl|stage-stdlib
@@ -1193,3 +1194,6 @@ lambda_identical_capture|all|0,1,2|tests/integration/lambda_identical_capture.tl
 lambda_identical_capture_ref|all|0,1,2|tests/integration/lambda_identical_capture_ref.tl|42|-|-|-|-
 lambda_identical_capture_nested|all|0,1,2|tests/integration/lambda_identical_capture_nested.tl|42|-|-|-|-
 lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_noncapturing.tl|42|-|-|-|-
+legacy_box_get_public_deref|all|0,1,2|tests/integration/legacy_box_get_public_deref.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
+legacy_box_get_owned_template|all|0,1,2|tests/integration/legacy_box_get_owned_template.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
+legacy_box_get_owned_places|all|0,1,2|tests/integration/legacy_box_get_owned_places.tl|42|-|-|-|-

@@ -2798,6 +2798,26 @@ in list mode, expands manifest primaries, and checks Windows checkout bytes.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 
+New constructed primary-input lists in owning scripts must use the checked
+fixture inventory interface in `scripts/lib-fixture-inventory.sh`. Store each
+list as an existing-format `*.fixtures.cases` file with `do none`, unique
+`case LABEL` entries and literal repository-relative `source tests/...tl`
+paths. `fixture_inventory_load tests/...fixtures.cases OUTPUT` validates the
+whole inventory through `verify-codegen-cases.sh --list-fixtures` before the
+caller reads its label/tab/source rows; check its status. Consume the source
+column directly, preserving the harness's target, optimization and assertion
+matrix. If a runtime primary can differ from that column, call
+`fixture_inventory_require OUTPUT SOURCE` and check success before use.
+The IR, arena, compile-profile and backend-import loops use this interface.
+The unconditional audit discovers their literal inventory names through the
+existing owning-script traversal and reads the same checked metadata without
+running harnesses or compiling fixtures. Missing, empty, malformed and
+unsupported inventories fail; there is no independent witness list.
+Other constructed paths retain conservative directory-probe ownership or an
+explicit reviewed exemption. This boundary guards honest edits; code review
+enforces the convention. General discovery from arbitrary shell is not
+required, and the hosted full gate table remains the merge authority.
+
 `--tier advisory` prints a broader conservative superset for reviewing other
 affected checks. It includes the required tier, but it is not a requirement to
 run that entire superset locally. `--run` executes whichever tier is selected,
@@ -3131,3 +3151,12 @@ keeps assembly/CLI execution plus an explicit object-eligibility exclusion;
 it must not execute an unadmitted raw image with #8317's placeholder runtime
 symbols. The shared native-link helper links serialized objects with the same
 entry, libraries and flags as its assembly path.
+
+The `legacy_box_get_*_reject` safety fixtures pin the E0207 receiver span for
+quote-only `box-get` and `__tl-box-place` borrows through references, including
+shared scalar, Store, mutable and nested-Box reference-match receivers. The
+public-check matrix checks the diagnostic and `deref` hint at opt0/1/2 for both
+targets. `legacy_box_get_public_deref.tl` and
+`legacy_box_get_owned_template.tl` print `via-ref=[hello]` at all three levels
+on both hosts; `legacy_box_get_owned_places.tl` retains Box fields reached
+through references, nested owned Boxes and public shared/mutable projections.

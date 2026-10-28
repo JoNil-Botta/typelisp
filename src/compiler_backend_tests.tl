@@ -23924,6 +23924,25 @@ entry:
       "a reused slot has no function-wide address recipe")))
 
 (test
+  backend-forwarded-address-adjacent-definition
+  (for [abi (iterator.range 0 2)]
+    (test.assert-true
+      (asm-ok?
+        (compiler-backend-emit-test-instrs-target
+          (irt.instrs
+            "%2 = gep %0, 0 : u8
+             %2 = addr_of %1
+             return %2")
+          (regalloc.compiler-reg-assignment-table-empty)
+          4
+          (if (= abi 0)
+            (Linux)
+            (Windows)))
+        (has "    leaq -16(%rbp), %rax\n")
+        (lacks "    movq -24(%rbp), %rax\n"))
+      "the adjacent address definition reaches the only read despite an earlier definition")))
+
+(test
   backend-forwarded-address-parameter-redefined
   (let
     [program-index

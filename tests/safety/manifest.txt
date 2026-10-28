@@ -694,6 +694,16 @@ float_literal_infinity_reject|check-fail|tests/safety/float_literal_infinity_rej
 float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|unbound name inf
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
+# Early returns and try residuals must obey the arena return boundary.
+arena_return_box_reject|check-fail|tests/safety/arena_return_box_reject.tl|tests/safety/arena_return_box_reject.tl:2:29|region-tagged value cannot escape with-arena 'phase'
+arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|tests/safety/arena_return_nested_tuple_reject.tl:8:15|region-tagged value cannot escape with-arena 'phase'
+arena_return_outer_reject|check-fail|tests/safety/arena_return_outer_reject.tl|tests/safety/arena_return_outer_reject.tl:8:33|region-tagged value cannot escape with-arena 'outer'
+arena_return_string_reject|check-fail|tests/safety/arena_return_string_reject.tl|tests/safety/arena_return_string_reject.tl:5:45|region-tagged value cannot escape with-arena 'phase'
+arena_try_array_reject|check-fail|tests/safety/arena_try_array_reject.tl|tests/safety/arena_try_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
+arena_try_nested_array_reject|check-fail|tests/safety/arena_try_nested_array_reject.tl|tests/safety/arena_try_nested_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
+arena_try_outer_reject|check-fail|tests/safety/arena_try_outer_reject.tl|tests/safety/arena_try_outer_reject.tl:15:30|region-tagged value cannot escape with-arena 'outer'
+arena_try_string_reject|check-fail|tests/safety/arena_try_string_reject.tl|tests/safety/arena_try_string_reject.tl:14:41|region-tagged value cannot escape with-arena 'phase'
+
 # A with-escape or with-scratch body allocation cannot outlive the form (#8776).
 scratch_body_with_escape_store_reject|check-fail|tests/safety/scratch_body_with_escape_store_reject.tl|-|cannot store region-tagged value into assignment
 scratch_body_with_scratch_store_reject|check-fail|tests/safety/scratch_body_with_scratch_store_reject.tl|-|cannot store region-tagged value into assignment
@@ -2253,13 +2263,3 @@ legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref
 legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
-
-# Early returns and try residuals must obey the arena return boundary.
-arena_return_box_reject|check-fail|tests/safety/arena_return_box_reject.tl|tests/safety/arena_return_box_reject.tl:2:29|region-tagged value cannot escape with-arena 'phase'
-arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|tests/safety/arena_return_nested_tuple_reject.tl:8:15|region-tagged value cannot escape with-arena 'phase'
-arena_return_outer_reject|check-fail|tests/safety/arena_return_outer_reject.tl|tests/safety/arena_return_outer_reject.tl:8:33|region-tagged value cannot escape with-arena 'outer'
-arena_return_string_reject|check-fail|tests/safety/arena_return_string_reject.tl|tests/safety/arena_return_string_reject.tl:5:45|region-tagged value cannot escape with-arena 'phase'
-arena_try_array_reject|check-fail|tests/safety/arena_try_array_reject.tl|tests/safety/arena_try_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
-arena_try_nested_array_reject|check-fail|tests/safety/arena_try_nested_array_reject.tl|tests/safety/arena_try_nested_array_reject.tl:12:41|region-tagged value cannot escape with-arena 'phase'
-arena_try_outer_reject|check-fail|tests/safety/arena_try_outer_reject.tl|tests/safety/arena_try_outer_reject.tl:15:30|region-tagged value cannot escape with-arena 'outer'
-arena_try_string_reject|check-fail|tests/safety/arena_try_string_reject.tl|tests/safety/arena_try_string_reject.tl:14:41|region-tagged value cannot escape with-arena 'phase'

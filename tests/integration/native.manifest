@@ -893,6 +893,7 @@ composed_place_projection|all|-|tests/integration/composed_place_projection.tl|4
 unit_functions|all|-|tests/integration/unit_functions.tl|7|-|-|-|-
 unit_main|all|-|tests/integration/unit_main.tl|0|-|-|-|-
 valid_shift_counts|all|-|tests/integration/valid_shift_counts.tl|42|-|-|-|-
+arena_early_exits|all|0,1,2|tests/integration/arena_early_exits.tl|42|-|-|-|-
 with_arena_builtin_alloc|all|-|tests/integration/with_arena_builtin_alloc.tl|2|-|-|stdlib/string.tl|-
 with_arena_loop|all|-|tests/integration/with_arena_loop.tl|42|-|-|stdlib/string.tl|-
 with_arena_mark_stress|all|-|tests/integration/with_arena_mark_stress.tl|42|-|-|stdlib/string.tl|-
@@ -1194,5 +1195,3 @@ lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_nonca
 legacy_box_get_public_deref|all|0,1,2|tests/integration/legacy_box_get_public_deref.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
 legacy_box_get_owned_template|all|0,1,2|tests/integration/legacy_box_get_owned_template.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
 legacy_box_get_owned_places|all|0,1,2|tests/integration/legacy_box_get_owned_places.tl|42|-|-|-|-
-
-arena_early_exits|all|0,1,2|tests/integration/arena_early_exits.tl|42|-|-|-|-

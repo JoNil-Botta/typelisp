@@ -479,6 +479,14 @@ tests/integration/wide_const_hoist.tl	stage2-regalloc-backend-asm-shape-gates	@c
 tests/integration/win64_rbp_eighth_csr.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/arena_bare_operand_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/arena_branded_operand_wrong_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/arena_return_box_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_nested_tuple_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_nested_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
 tests/safety/borrow_temporary_call_arg_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/borrow_temporary_cleanup_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/borrowed_pattern_copy_binding_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
@@ -561,11 +569,3 @@ tests/safety/borrow_lifetime_macro_location_reject.tl	stage2-public-tool-surface
 tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture preserving pre-existing framed replace diagnostic classification.
 tests/safety/shared_mut_borrow_replace_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace call-argument diagnostic contracts.
 tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace index-call diagnostic contracts.
-tests/safety/arena_return_box_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
-tests/safety/arena_return_nested_tuple_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
-tests/safety/arena_return_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
-tests/safety/arena_return_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
-tests/safety/arena_try_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
-tests/safety/arena_try_nested_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
-tests/safety/arena_try_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
-tests/safety/arena_try_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.

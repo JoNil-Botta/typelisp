@@ -141,7 +141,7 @@ tests/integration/lexer.tl	stage2-deterministic-assembly,stage2-selfhost-compile
 tests/integration/many_args.tl	stage2-backend-target-assembly-parity,stage2-deterministic-assembly	@corpus	Direct fixture input in check-backend-target-asm-parity.sh, check-codegen-target-parity.sh, check-deterministic-asm.sh.
 tests/integration/modules_main.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/narrow_div_mod.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
-tests/integration/native.manifest	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh.
+tests/integration/native.manifest	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance,integration-batch-observability	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh. The real entry-helper caller controls retain the Linux exit-139 row contract.
 tests/integration/nested_eval.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/nested_tuple_array_projection.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/nullary_variant_call.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.

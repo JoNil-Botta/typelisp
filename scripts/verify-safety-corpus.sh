@@ -316,7 +316,8 @@ build_selfhost_checker() {
             show_stream_if_nonempty stderr "$err"
             fail "src/main.tl assemble failed"
         fi
-        if ! ld "$obj" -o "$CHECK_BIN" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
+        entry=$(linux_entry_symbol_for_asm "$asm") || exit $?
+        if ! ld "$obj" -o "$CHECK_BIN" -static -e "$entry" \
             < /dev/null >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
             fail "src/main.tl link failed"
@@ -404,7 +405,8 @@ build_case_program() {
             show_stream_if_nonempty stderr "$build_err"
             fail "$case_id assemble failed"
         fi
-        if ! ld "$obj" -o "$program" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
+        entry=$(linux_entry_symbol_for_asm "$asm") || exit $?
+        if ! ld "$obj" -o "$program" -static -e "$entry" \
             < /dev/null >> "$build_out" 2>> "$build_err"; then
             show_stream_if_nonempty stdout "$build_out"
             show_stream_if_nonempty stderr "$build_err"

@@ -3960,6 +3960,7 @@ if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
     ci_timing_set_now_ms
     _integration_fixture_started=$CI_TIMING_NOW_MS
     sh "$ROOT/scripts/verify-native-link-failures.sh" "$WORKDIR/native-link-failure-self-test"
+    sh "$ROOT/scripts/verify-linux-entry-callers.sh" "$WORKDIR/linux-entry-caller-self-test"
     run_preparation_failure_self_test
     ci_timing_set_now_ms
     _integration_matrix_started=$CI_TIMING_NOW_MS
@@ -4233,6 +4234,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
             ran=$((ran + 1))
             continue
         fi
+        entry=$(ci_timing_run "$name" entry-selection \
+            linux_entry_symbol_for_asm "$asm") || exit $?
         if ! native_objs=$(compile_linux_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr"); then
             echo "FAIL: $name C dependency compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
@@ -4250,7 +4253,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra suite
         fi
         # shellcheck disable=SC2086
         if ! ci_timing_run "$name" link \
-            ld "$obj" $native_objs -o "$bin" $link_extra -e "$(linux_entry_symbol_for_asm "$asm")" \
+            ld "$obj" $native_objs -o "$bin" $link_extra -e "$entry" \
             >> "$build_stdout" 2>> "$build_stderr"; then
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"

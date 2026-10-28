@@ -81,7 +81,7 @@ stage2-ownership-model	compiler,stdlib,corpus	Consumes compiler behavior or embe
 integration-manifest-validator-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
 windows-coff-plan-validator-self-tests	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
 docs-site-search-manifest-validator-self-tests	corpus,docs	Documentation and corpus manifest validation coverage.
-integration-batch-observability	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
+integration-batch-observability	corpus	Corpus metadata, including the exit-139 entry-helper control, source-fixture or integration observation coverage; conservatively retain with test inputs.
 integration-windows-path-normalization	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.
 integration-compile-failure-diagnostics	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 integration-signal-notice-capture	corpus	Corpus metadata, source-fixture or integration observation coverage; conservatively retain with test inputs.

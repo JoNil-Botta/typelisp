@@ -25,6 +25,48 @@ bounded_completion_fixture_cost() {
     ci_timing_record_elapsed "$1" new-completion-matrices "$3" 0
 }
 
+# Batch fixed-text assertions over isolated fixture logs. The real worker and
+# parent still run for every cell; only inspection of their immutable logs is
+# delayed. A missing log is an error even for an absence assertion.
+bounded_completion_fixture_expect() {
+    printf '%s\t%s\t%s\t%s\n' "$2" "$3" "$4" "$5" >> "$1"
+}
+
+bounded_completion_fixture_check() {
+    awk -F '\t' '
+        {
+            found = 0
+            while ((rc = (getline line < $3)) > 0) if (index(line, $4)) found = 1
+            close($3)
+            if (NF != 4 || $2 !~ /^(contains|absent)$/ || rc < 0 ||
+                found != ($2 == "contains")) {
+                print "FAIL: bounded completion fixture " $1 ": " $2 " [" $4 "] in " $3 > "/dev/stderr"
+                bad = 1
+            }
+            rows++
+        }
+        END { exit bad || rows == 0 }
+    ' "$1"
+}
+
+# The small text artifacts here are newline-delimited shell fixtures. Preserve
+# the former `$(cat FILE)` value, including embedded/unterminated lines and its
+# removal of trailing newlines, without a cat process and command substitution.
+bounded_completion_fixture_read() {
+    BOUNDED_COMPLETION_FIXTURE_TEXT=
+    _bc_read_newline='
+'
+    while IFS= read -r _bc_read_line || [ -n "$_bc_read_line" ]; do
+        BOUNDED_COMPLETION_FIXTURE_TEXT=$BOUNDED_COMPLETION_FIXTURE_TEXT$_bc_read_line$_bc_read_newline
+    done < "$1" || return 1
+    while :; do
+        case $BOUNDED_COMPLETION_FIXTURE_TEXT in
+            *"$_bc_read_newline") BOUNDED_COMPLETION_FIXTURE_TEXT=${BOUNDED_COMPLETION_FIXTURE_TEXT%"$_bc_read_newline"} ;;
+            *) break ;;
+        esac
+    done
+}
+
 bounded_completion_fixture() {
     _bc_report=$1
     _bc_status_file=$2
@@ -116,7 +158,7 @@ bounded_completion_worker_fixture() (
     _bc_first=chunk-001
     _bc_second=chunk-002
     if [ "$_bc_kind" = manifest ]; then _bc_first=chunk-1; _bc_second=chunk-2; fi
-    mkdir -p "$WORKDIR"
+    [ -d "$WORKDIR" ] || mkdir -p "$WORKDIR"
     printf '%s|%s\n%s|%s\n' "$_bc_first" "$_bc_worker_cap" \
         "$_bc_second" "$_bc_worker_cap" > "$WORKDIR/queue"
     ci_timing_run() {

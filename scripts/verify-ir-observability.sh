@@ -13,6 +13,10 @@ gate_require_compiler
 WORKDIR="$ROOT/target/ir-observability-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+. "$ROOT/scripts/lib-fixture-inventory.sh"
+fixture_inventory_load tests/fixtures/ir-nested.fixtures.cases "$WORKDIR/nested.tsv"
+fixture_inventory_load tests/fixtures/ir-debug-types.fixtures.cases "$WORKDIR/debug-types.tsv"
+TAB=$(printf '\t')
 
 # Inject a verifier rejection at the CLI result handoff for every result
 # carrier. Real invalid IR is intentionally not needed for this regression:
@@ -131,15 +135,15 @@ grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
 # Dumping them must resolve syntax IDs through their owner, never as pool indexes.
 STRUCTURAL_SOURCE="$ROOT/tests/golden/ir_structural_names.tl"
 for opt in 0 1 2; do
-    for source in recursive_aggregate_return recursive_aggregate_return_variants fixed_array_result_tailrec; do
+    while IFS=$TAB read -r source primary; do
         for target in linux-x86_64 windows-x86_64; do
-            "$COMPILER" compile "$ROOT/tests/integration/$source.tl" \
+            "$COMPILER" compile "$ROOT/$primary" \
                 --target "$target" --dump-ir --verify-ir --opt-level "$opt" \
                 -o "$WORKDIR/$source-$target-$opt.ir" \
                 >"$WORKDIR/$source-$target-$opt.stdout" \
                 2>"$WORKDIR/$source-$target-$opt.stderr"
         done
-    done
+    done < "$WORKDIR/nested.tsv"
     "$COMPILER" compile "$ROOT/tests/integration/hidden_sret_source_name.tl" \
         --dump-ir --verify-ir --opt-level "$opt" \
         -o "$WORKDIR/hidden-sret-source-name-$opt.ir" \
@@ -393,16 +397,8 @@ fi
 # typechecker queries and fails the compile on a disagreement. These fixtures
 # carry the corpus's densest nested, register-resident, C-ABI, generated and
 # tuple aggregates.
-for fixture in \
-    comptime_type_expr_worklist \
-    c_abi_win64_nested_aggregate \
-    c_abi_sysv_register_aggregate_args \
-    factored_addresses \
-    stdlib_hash_generated \
-    nested_tuple_array_projection \
-    generated_option_result_families \
-    aggregate_return_no_alloc; do
-    if ! "$COMPILER" compile "$ROOT/tests/integration/$fixture.tl" \
+while IFS=$TAB read -r fixture primary; do
+    if ! "$COMPILER" compile "$ROOT/$primary" \
         --debug \
         --verify-ir \
         -o "$WORKDIR/debug-types-$fixture.s" \
@@ -411,6 +407,6 @@ for fixture in \
         echo "debug type graph verification failed for $fixture" >&2
         exit 1
     fi
-done
+done < "$WORKDIR/debug-types.tsv"
 
 echo "[ir-observability] dump golden, pass trace, verifier, and scaled dump, and debug type graph passed"

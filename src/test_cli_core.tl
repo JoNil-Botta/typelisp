@@ -1781,6 +1781,21 @@
           (if (tltest-reachable-name-marked? session names name)
             (tltest-reach-mark-expr session body names)
             names)])]
+    [(DefDispatch _ _ variants)
+      ;; Dispatch declarations survive harness pruning even when uncalled.
+      ;; Typechecking needs every variant; the fixpoint follows their bodies.
+      (let
+        [result : tltest_name_map.Map names]
+        [index : i64 0]
+        (while (< index (ast.ast-dispatch-variant-list-len (& variants)))
+          (match (ast.ast-dispatch-variant-list-get
+            (& variants)
+            index
+            (ast.ast-dispatch-variant-fallback))
+            [(Variant _ name)
+              (set! result (tltest-reach-mark-source-name session result name))])
+          (+= index 1))
+        result)]
     ;; A top-level declaration macro call stays unexpanded here and is always
     ;; kept (tltest-reachable-runtime-decl?). Its arguments are the caller's
     ;; references: a constant named only by `(gen-slots first ...)` must survive

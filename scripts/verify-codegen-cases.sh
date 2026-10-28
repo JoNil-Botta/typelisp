@@ -424,8 +424,9 @@ cc_do_action() {
             if [ "$CC_HOST" = linux ]; then
                 cc_run_step assemble as "$CV_ASM" -o "$CV_DIR/out.o"
                 cc_require_step "GNU as" || return 1
+                CV_ENTRY=$(linux_entry_symbol_for_asm "$CV_ASM") || exit $?
                 cc_run_step link ld "$CV_DIR/out.o" -o "$CV_DIR/program" -static \
-                    -e "$(linux_entry_symbol_for_asm "$CV_ASM")"
+                    -e "$CV_ENTRY"
                 cc_require_step "GNU ld" || return 1
                 cc_execute_program "$CV_DIR/program"
             else

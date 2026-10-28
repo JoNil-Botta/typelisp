@@ -21,6 +21,10 @@ tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus
 tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Raw atomic C entries and ordinary Internal bodies retain independent call and assembly coverage.
 benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.
 tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
+tests/safety/set_inline_array_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array value/bounds ordering also runs in the native opt0/1/2 matrix.
+tests/safety/set_inline_array_field_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array field value/bounds ordering also runs in the native opt0/1/2 matrix.
+tests/safety/set_inline_array_bounds_after_growth_trap.tl	stage2-native-integration-corpus	@corpus	Captured inner bounds after outer growth also run in the native opt0/1/2 matrix.
+tests/safety/set_inline_array_field_bounds_after_growth_trap.tl	stage2-native-integration-corpus	@corpus	Captured inner field bounds after outer growth also run in the native opt0/1/2 matrix.
 tests/spmd/*	stage2-spmd-simd-comparison,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	SPMD comparison data and direct source guards for its executable fixtures.
 tests/public-tools/*	stage2-public-tool-surface,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The public-tool runner consumes the LSP and REPL corpora and their source fixtures.
 tests/apps/*	stage2-app-workflow-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The application runner consumes scenario manifests, packages, case files and sources.
@@ -37,7 +41,7 @@ tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-sto
 tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpus	Exact case file named by the must-use gate.
 tests/codegen/asm-shape.cases	stage2-regalloc-backend-asm-shape-gates	@corpus	Exact case file named by the backend shape gate.
 tests/codegen/native-link.cases	stage2-native-link-generated-programs	@corpus	The Linux native-link runner directly consumes this case file.
-tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus	@corpus	The native integration runner also executes this codegen case file.
+tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus,integration-batch-observability	@corpus	Native integration executes this case file; observability exercises its real entry-helper transcript rows without a compiler build.
 tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	The stdlib verifier directly executes the for-source macro cases.
 tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	IR observability consumes golden snapshots and their guarded source fixtures.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
@@ -141,7 +145,7 @@ tests/integration/lexer.tl	stage2-deterministic-assembly,stage2-selfhost-compile
 tests/integration/many_args.tl	stage2-backend-target-assembly-parity,stage2-deterministic-assembly	@corpus	Direct fixture input in check-backend-target-asm-parity.sh, check-codegen-target-parity.sh, check-deterministic-asm.sh.
 tests/integration/modules_main.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/narrow_div_mod.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
-tests/integration/native.manifest	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh.
+tests/integration/native.manifest	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance,integration-batch-observability	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh. The real entry-helper caller controls retain the Linux exit-139 row contract.
 tests/integration/nested_eval.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/nested_tuple_array_projection.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/nullary_variant_call.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.

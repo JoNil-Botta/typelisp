@@ -892,6 +892,14 @@ struct_match_pattern_arity_reject|check-fail|tests/safety/struct_match_pattern_a
 struct_match_pattern_wrong_head_reject|check-fail|tests/safety/struct_match_pattern_wrong_head_reject.tl|-|struct pattern head Size does not match struct Point
 struct_match_pattern_refutable_field_reject|check-fail|tests/safety/struct_match_pattern_refutable_field_reject.tl|-|struct field pattern only supports binding, wildcard, or nested struct patterns
 struct_match_pattern_unreachable_reject|check-fail|tests/safety/struct_match_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
+macro_struct_pattern_arity_reject|check-fail|tests/safety/macro_struct_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
+macro_struct_pattern_wrong_head_reject|check-fail|tests/safety/macro_struct_pattern_wrong_head_reject.tl|-|struct pattern head Other does not match struct Pair
+macro_struct_pattern_nested_reject|check-fail|tests/safety/macro_struct_pattern_nested_reject.tl|-|typecheck: pattern arity mismatch
+macro_struct_pattern_unknown_field_reject|check-fail|tests/safety/macro_struct_pattern_unknown_field_reject.tl|-|unknown struct field Pair.missing
+macro_struct_pattern_duplicate_field_reject|check-fail|tests/safety/macro_struct_pattern_duplicate_field_reject.tl|-|(fields ...) pattern names field `left` twice
+macro_struct_pattern_unreachable_reject|check-fail|tests/safety/macro_struct_pattern_unreachable_reject.tl|-|typecheck: unreachable match arm after wildcard `_`
+macro_struct_pattern_owner_reject|check-fail|tests/safety/macro_struct_pattern_owner_reject.tl|-|does not match struct macro_struct_pattern_owner_reject/Pair
+macro_struct_pattern_root_owner_reject|check-fail|tests/safety/macro_struct_pattern_root_owner_reject.tl|-|does not match struct macro_struct_pattern_defs/Pair
 tuple_match_pattern_arity_reject|check-fail|tests/safety/tuple_match_pattern_arity_reject.tl|-|typecheck: pattern arity mismatch
 tuple_match_pattern_source_reuse_reject|check-fail|tests/safety/tuple_match_pattern_source_reuse_reject.tl|-|use of moved value `pair.0`
 tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_after_move_reject.tl|-|use of moved value `pair.0`

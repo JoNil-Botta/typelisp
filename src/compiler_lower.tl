@@ -67610,7 +67610,10 @@
   [scrut-ty : ast.AstType]
   [name : i64]) : bool
   (let
-    [pattern-name : String (tc_core.tc-env-key-name-text name)]
+    [pattern-name : String
+      (tc_core.tc-env-key-name-text-for-session
+        (tc_core.tc-context-structural-session ctx)
+        name)]
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))
       [(or (Struct struct-name) (StructArgs struct-name _))
         (tc_core.tc-struct-pattern-name-matches?

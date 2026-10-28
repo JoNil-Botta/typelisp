@@ -17,6 +17,7 @@ stdlib/tests/*	stage2-stdlib-modules-and-fixtures,stage2-stdlib-selfhost-verifie
 stdlib/README.md	stage2-stdlib-modules-and-fixtures	@stdlib	The stdlib runner checks the documented module inventory.
 tests/*	-	@corpus	Advisory corpus class; a path also needs a required trigger or both tiers fall back to full.
 tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
+tests/integration/macro_struct_pattern*.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Macro-produced struct patterns retain constructor ownership and binding modes across native optimization levels and targets.
 tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
 tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Raw atomic C entries and ordinary Internal bodies retain independent call and assembly coverage.
 benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.

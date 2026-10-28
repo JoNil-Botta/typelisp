@@ -1,5 +1,14 @@
 # Selfhost compiler testing
 
+`macro_struct_pattern` checks positional, named and nested struct patterns from
+expression macros against direct-source controls at opt0/1/2 on both hosts.
+Owned and shared scrutinees retain their field binding modes, including String
+payloads. Imported macro heads keep their definition-site constructor despite a
+same-named caller struct. The safety rows reject arity, head, nested-field,
+unknown/duplicate named-field and unreachable-arm errors with diagnostics;
+the two owner controls reject same-layout structs from another module in both
+directions. Keep the target IR parity entry with the native matrix.
+
 `macro_dotted_global` and its owner-module control preserve definition-site
 global field roots in quoted expression macros, checking and returning 2 at
 opt0/1/2 on both hosts. The matrix retains nested fields, caller shadowing,

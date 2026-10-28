@@ -2793,12 +2793,13 @@ in list mode, expands manifest primaries, and checks Windows checkout bytes.
 Owning scripts are also the inventory for fixtures they build in shell loops.
 The audit checks constructed paths that are root-relative, under `$ROOT` or
 under a reviewed root alias. A path under any other prefix fails unless the
-audit records that prefix as scratch. When the expanded names are bound only
-by literal `for NAME in WORD...` headers (no other bare word in the script
-names them), each member is a primary contract, so a member added to such a
-list needs its map owner. Any other expansion is unresolved: every tracked
-file it can name must select the gate on each host, or the site needs a
-reviewed reason in the audit.
+audit records that prefix as scratch. A reference inside the body of a literal
+`for NAME in WORD...` loop in code resolves to that list when no other bare
+word in the script or its sourced scripts names it, so a member added to such
+a list is a primary contract that needs its map owner. `eval`, computed `read`
+or `export` targets and computed `source` paths leave every name unresolved.
+Any other expansion is unresolved: every tracked file it can name must select
+the gate on each host, or the site needs a reviewed reason in the audit.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 

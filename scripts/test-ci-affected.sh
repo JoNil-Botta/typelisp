@@ -260,21 +260,23 @@ cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkou
 # Supported boundary: a path word under src, tests, stdlib or docs that expands
 # $NAME or ${NAME}; quotes and backslash-newline join as in sh. It is relative to
 # the root or $ROOT, or under a reviewed prefix: a root alias is audited the
-# same way, scratch is skipped and any other prefix fails. A name resolves only
-# when every bare word naming it in the script is the variable of a literal
-# "for NAME in WORD..." header in code, so reads, assignments, options, comments
-# and heredoc text leave it unresolved. Each resolved expansion is a primary
-# contract; search roots and outputs stay supporting. Any other expansion is a
-# family: every tracked file it can name must select the gate on each host.
+# same way, scratch is skipped and any other prefix fails. A reference resolves
+# only inside the do...done body of a literal "for NAME in WORD..." header at a
+# command position (not quoted, commented or heredoc text), and only when no
+# other bare word in the script or its sourced scripts names it after quote
+# removal. eval, an expanded read/export target or a non-literal source leaves
+# every name unresolved, as does an unbalanced loop. Each resolved expansion is
+# a primary contract; search roots and outputs stay supporting. Any other
+# expansion is a family: every tracked file it can name must select the gate.
 constructed_inputs() {
     awk -F '\t' '
-        function load(script,    line, status, physical, pending, joined, rest, word) {
+        function load(script,    line, status, physical, pending, joined, rest, word, heads, tails) {
             lines = 0; physical = 0; pending = 0; heads = 0; tails = 0
             while ((status = getline line < script) > 0) {
                 sub(/\r$/, "", line)
                 physical++
                 if (heads < tails) {
-                    # Heredoc text is data: it is scanned but cannot bind a name.
+                    # Heredoc text is data: it is scanned but holds no commands.
                     word = line
                     if (tabbed[heads + 1]) sub(/^\t+/, "", word)
                     if (word == delimiter[heads + 1]) heads++
@@ -299,114 +301,194 @@ constructed_inputs() {
             }
             if (status < 0) { print "cannot read owning script: " script > "/dev/stderr"; exit 1 }
             close(script)
-        }
-        function code_end(line,    i, character, quote) {
-            # The first unquoted word-start # begins an inline comment.
             quote = ""
-            for (i = 1; i <= length(line); i++) {
+        }
+        function mask(line,    i, n, character, out) {
+            # Keep positions; quoted or escaped text and inline comments are not code.
+            out = ""; n = length(line)
+            for (i = 1; i <= n; i++) {
                 character = substr(line, i, 1)
-                if (quote != "") { if (character == quote) quote = ""; else if (character == "\\" && quote == "\"") i++; continue }
-                if (character == "\\") i++
-                else if (character == "\"" || character == "\047") quote = character
-                else if (character == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[[:space:];&|()]/)) return i
+                if (quote == "\047") { if (character == quote) { quote = ""; out = out character } else out = out "x"; continue }
+                if (character == "\\" && i < n) { out = out "xx"; i++; continue }
+                if (quote == "\"") { if (character == quote) { quote = ""; out = out character } else out = out "x"; continue }
+                if (character == "\"" || character == "\047") { quote = character; out = out character; continue }
+                if (character == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[[:space:];&|()]/)) {
+                    out = out sprintf("%" (n - i + 1) "s", ""); break
+                }
+                out = out character
             }
-            return i
+            return out
         }
-        function bind(    i, rest, header, name, list, count, words, j, word, line, from, at, previous, following, bare) {
-            split("", members); split("", unresolved); split("", headers)
-            for (i = 1; i <= lines; i++) {
-                if (body[i]) continue
-                rest = substr(text[i], 1, code_end(text[i]) - 1)
-                while (match(rest, /(^|[;&|(]|[[:space:]])for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:];]|$)/)) {
-                    header = substr(rest, RSTART, RLENGTH)
-                    rest = substr(rest, RSTART + RLENGTH)
-                    name = header; sub(/^.*for[[:space:]]+/, "", name); sub(/[[:space:];]+$/, "", name)
+        function blank(line, pattern,    out) {
+            out = ""
+            while (match(line, pattern)) {
+                out = out substr(line, 1, RSTART - 1) sprintf("%" RLENGTH "s", "")
+                line = substr(line, RSTART + RLENGTH)
+            }
+            return out line
+        }
+        function command_at(view, position,    before) {
+            before = substr(view, 1, position - 1)
+            while (match(before, /(^|[[:space:]])[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+$/))
+                before = substr(before, 1, RSTART - (substr(before, RSTART, 1) ~ /[[:space:]]/ ? 0 : 1))
+            return before ~ /(^|[;&|({!])[[:space:]]*$/ || before ~ /(^|[;&|({[:space:]])(do|then|else|elif|if|while|until)[[:space:]]+$/
+        }
+        function normal(value) { gsub(/["\047\\]/, "", value); return value }
+        function arguments(i, view, from,    to, rest) {
+            rest = substr(view, from)
+            to = (match(rest, /[;&|<>)]/) ? from + RSTART - 1 : length(view) + 1)
+            return normal(substr(text[i], from, to - from))
+        }
+        # Commands of one logical line, in order: loop keywords become events;
+        # binders whose target is computed leave the whole script unresolved.
+        function commands(i, view, main,    rest, offset, position, word, after, from, list, count, words, j, value, literal, values, name) {
+            rest = view; offset = 0
+            while (match(rest, /[A-Za-z_][A-Za-z0-9_]*|\./)) {
+                position = offset + RSTART; word = substr(rest, RSTART, RLENGTH)
+                offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
+                if (position > 1 && substr(view, position - 1, 1) ~ /[A-Za-z0-9_$.\/{-]/) continue
+                after = substr(view, position + length(word), 1)
+                if (after != "" && after !~ /[[:space:];&|<>()]/) continue
+                if (!command_at(view, position)) continue
+                if (word == "for" && main) {
+                    if (!match(substr(view, position), /^for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) { unreliable = 1; continue }
+                    name = substr(view, position, RLENGTH); sub(/^for[[:space:]]+/, "", name)
                     headers[name]++
-                    if (header ~ /;$/ || rest !~ /^[[:space:]]*in([[:space:];]|$)/) { unresolved[name] = 1; continue }
-                    list = rest; sub(/^[[:space:]]*in/, "", list)
-                    if (match(list, /;|[[:space:]]do([[:space:]]|$)/)) list = substr(list, 1, RSTART - 1)
-                    count = split(list, words, /[[:space:]]+/)
-                    for (j = 1; j <= count; j++) {
-                        word = words[j]
-                        if (word ~ /^"[^"]*"$/ || word ~ /^\047[^\047]*\047$/) word = substr(word, 2, length(word) - 2)
-                        if (word ~ /^[A-Za-z0-9_.\/+-]+$/) members[name] = members[name] " " word
-                        else if (word != "") unresolved[name] = 1
+                    from = position + RLENGTH; literal = 0; values = ""
+                    if (match(substr(view, from), /^[[:space:]]+in([[:space:]]|;|$)/)) {
+                        from += RLENGTH; literal = 1
+                        list = substr(view, from)
+                        list = substr(text[i], from, match(list, /;/) ? RSTART - 1 : length(list))
+                        count = split(list, words, /[[:space:]]+/)
+                        for (j = 1; j <= count; j++) {
+                            value = words[j]
+                            if (value ~ /^"[^"]*"$/ || value ~ /^\047[^\047]*\047$/) value = substr(value, 2, length(value) - 2)
+                            if (value ~ /^[A-Za-z0-9_.\/+-]+$/) values = values " " value
+                            else if (value != "") literal = 0
+                        }
+                        offset = from + length(list) - 1; rest = substr(view, offset + 1)
                     }
-                }
-            }
-            # A shell word that is the bare name (quoted or not, or NAME= or
-            # ${NAME=) may bind it: read targets, assignments, options, comments,
-            # heredoc text. Each such word must be one of the literal headers.
-            for (name in headers) {
-                bare = 0
-                for (i = 1; i <= lines; i++) {
-                    line = text[i]; from = 1
-                    while ((at = index(substr(line, from), name)) > 0) {
-                        at += from - 1; from = at + length(name)
-                        previous = (at > 1 ? substr(line, at - 1, 1) : "")
-                        following = substr(line, from, 2)
-                        if (at > 2 && substr(line, at - 2, 2) == "${") { if (following ~ /^(=|:=)/) bare++; continue }
-                        if (previous != "" && previous !~ /[[:space:]"\047;&|()<>`{]/) continue
-                        if (following != "" && following !~ /^([[:space:]"\047;&|()<>`=]|\+=)/) continue
-                        bare++
+                    event[i, ++events[i]] = position; kind[i, events[i]] = "for"
+                    block_name[++blocks] = name; block_literal[blocks] = literal; block_values[blocks] = values
+                    data[i, events[i]] = blocks
+                    if (substr(view, from) ~ /^[[:space:]]+do([[:space:];&|]|$)/) { # for NAME do
+                        event[i, ++events[i]] = from + index(substr(view, from), "do") - 1; kind[i, events[i]] = "do"
+                        offset = event[i, events[i]] + 1; rest = substr(view, offset + 1)
                     }
+                } else if ((word == "do" || word == "done") && main) {
+                    event[i, ++events[i]] = position; kind[i, events[i]] = word
+                } else if (word == "eval") unreliable = 1
+                else if (word ~ /^(read|getopts|export|local|readonly|declare|typeset)$/) {
+                    count = split(arguments(i, view, position + length(word)), words, /[[:space:]]+/)
+                    for (j = 1; j <= count; j++) if (words[j] ~ /^\$/) unreliable = 1
+                } else if (word == "." || word == "source") {
+                    count = split(arguments(i, view, position + length(word)), words, /[[:space:]]+/)
+                    value = (words[1] == "" ? words[2] : words[1])
+                    sub(/^\$(ROOT|\{ROOT\})\//, "", value)
+                    if (value ~ /^(\/|scripts\/)[A-Za-z0-9_.\/-]+\.sh$/) { if (!(value in sourced)) { sourced[value] = 1; queue[++queued] = value } }
+                    else unreliable = 1
                 }
-                if (bare != headers[name]) unresolved[name] = 1
             }
         }
-        function scan(script,    i, line, before, prefix, tail, position, character, name, segments, kind, template, pattern, part, k, count, items, values, m, j, n, expanded, found) {
-            found = ""
+        function bare(name,    i, line, from, at, previous, following, total) {
+            total = 0
             for (i = 1; i <= lines; i++) {
-                line = text[i]
-                gsub(/--stdlib-root[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/, "", line)
-                gsub(/(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/, " ", line)
-                while (match(line, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/"\047-]*\$/)) {
-                    before = substr(line, 1, RSTART - 1)
-                    tail = substr(line, RSTART)
-                    line = substr(line, RSTART + RLENGTH - 1)
-                    gsub(/["\047]/, "", before)
+                line = normal(text[i]); from = 1
+                while ((at = index(substr(line, from), name)) > 0) {
+                    at += from - 1; from = at + length(name)
+                    previous = (at > 1 ? substr(line, at - 1, 1) : "")
+                    following = substr(line, from, 2)
+                    if (at > 2 && substr(line, at - 2, 2) == "${") { if (following ~ /^(=|:=)/) total++; continue }
+                    if (previous != "" && previous !~ /[[:space:];&|()<>`{]/) continue
+                    if (following != "" && following !~ /^([[:space:];&|()<>`=]|\+=)/) continue
+                    total++
+                }
+            }
+            return total
+        }
+        function apply(i, k) {
+            if (kind[i, k] == "for") { if (pending) unreliable = 1; pending = data[i, k] }
+            else if (kind[i, k] == "do") { stack[++depth] = pending; pending = 0 }
+            else if (depth > 0) depth--
+            else unreliable = 1
+        }
+        function innermost(name,    d) {
+            for (d = depth; d > 0; d--) if (stack[d] && block_name[stack[d]] == name) return stack[d]
+            return 0
+        }
+        function process(script,    i, k, t, s, q, e, tokens_text, position, tail, before, prefix, character, name, segments, found, pattern, part, template, expanded, count, items, values, n, m, j, resolved) {
+            load(script)
+            split("", headers); split("", sourced); split("", source_bare); split("", unbound)
+            blocks = 0; queued = 0; unreliable = 0; tokens = 0; depth = 0; pending = 0
+            for (i = 1; i <= lines; i++) {
+                events[i] = 0
+                if (!body[i]) commands(i, mask(text[i]), 1)
+                k = 1
+                tokens_text = blank(blank(text[i], "--stdlib-root[[:space:]]+(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]+)"), "(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]+)")
+                position = 1
+                while (match(substr(tokens_text, position), /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/"\047-]*\$/)) {
+                    position += RSTART - 1
+                    while (k <= events[i] && event[i, k] < position) apply(i, k++)
+                    before = substr(text[i], 1, position - 1); gsub(/["\047]/, "", before)
                     prefix = ""
-                    if (before != "" && before !~ /[[:space:]=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT[^}]*\})\/$/ && match(before, /[^[:space:]=(;|&<>]+$/))
+                    if (before != "" && before !~ /[[:space:]=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT([:?=+-][^}]*)?\})\/$/ && match(before, /[^[:space:]=(;|&<>]+$/))
                         prefix = substr(before, RSTART, RLENGTH)
-                    segments = 0; literal[0] = ""; kind = "member"; position = 1
-                    while (position <= length(tail)) {
-                        character = substr(tail, position, 1)
-                        if (character ~ /[A-Za-z0-9_.\/-]/) { literal[segments] = literal[segments] character; position++; continue }
-                        if (character == "\"" || character == "\047") { position++; continue }
+                    tail = substr(text[i], position)
+                    t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix
+                    segments = 0; token_literal[t, 0] = ""; q = 1
+                    while (q <= length(tail)) {
+                        character = substr(tail, q, 1)
+                        if (character ~ /[A-Za-z0-9_.\/-]/) { token_literal[t, segments] = token_literal[t, segments] character; q++; continue }
+                        if (character == "\"" || character == "\047") { q++; continue }
                         if (character != "$") break
                         name = ""
-                        if (match(substr(tail, position), /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { name = substr(tail, position + 2, RLENGTH - 3); position += RLENGTH }
-                        else if (match(substr(tail, position), /^\$[A-Za-z_][A-Za-z0-9_]*/)) { name = substr(tail, position + 1, RLENGTH - 1); position += RLENGTH }
-                        else if (substr(tail, position + 1, 1) ~ /[0-9$@*#?!-]/) position += 2
-                        else position = length(tail) + 1 # Command substitution or operator expansion.
-                        reference[++segments] = name; literal[segments] = ""
-                        if (name == "" || unresolved[name] || !(name in members)) kind = "family"
+                        if (match(substr(tail, q), /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { name = substr(tail, q + 2, RLENGTH - 3); q += RLENGTH }
+                        else if (match(substr(tail, q), /^\$[A-Za-z_][A-Za-z0-9_]*/)) { name = substr(tail, q + 1, RLENGTH - 1); q += RLENGTH }
+                        else if (substr(tail, q + 1, 1) ~ /[0-9$@*#?!-]/) q += 2
+                        else q = length(tail) + 1 # Command substitution or operator expansion.
+                        token_reference[t, ++segments] = name; token_literal[t, segments] = ""
+                        token_block[t, segments] = (name == "" ? 0 : innermost(name))
                     }
-                    template = literal[0]; part = literal[0]; gsub(/\./, "\\.", part); pattern = "^" part; expanded = literal[0]
-                    for (k = 1; k <= segments; k++) {
-                        template = template "${" (reference[k] == "" ? "?" : reference[k]) "}" literal[k]
-                        part = literal[k]; gsub(/\./, "\\.", part); pattern = pattern ".*" part
-                    }
-                    if (prefix != "") {
-                        used[script, prefix] = 1
-                        if (reviewed[script, prefix] == "scratch") continue
-                        if (reviewed[script, prefix] != "root") {
-                            found = found "prefixed\t" prefix "\t" script ":" start[i] "\t" template "\n"
-                            continue
-                        }
-                    }
-                    if (kind == "family") {
-                        found = found "family\t" pattern "$\t" script ":" start[i] "\t" template "\n"
-                        continue
-                    }
-                    for (k = 1; k <= segments; k++) {
-                        count = split(expanded, items, "\n"); n = split(members[reference[k]], values, " ")
-                        expanded = ""
-                        for (m = 1; m <= count; m++) for (j = 1; j <= n; j++) expanded = expanded (expanded == "" ? "" : "\n") items[m] values[j] literal[k]
-                    }
-                    count = split(expanded, items, "\n")
-                    for (m = 1; m <= count; m++) found = found "member\t" items[m] "\t" script ":" start[i] "\t" template "\n"
+                    token_segments[t] = segments
+                    position += q - 1
                 }
+                while (k <= events[i]) apply(i, k++)
+            }
+            if (depth || pending) unreliable = 1
+            for (name in headers) unbound[name] = bare(name)
+            # Sourced scripts can bind names too; read them with the same rules.
+            for (e = 1; e <= queued; e++) {
+                load(queue[e])
+                for (i = 1; i <= lines; i++) if (!body[i]) commands(i, mask(text[i]), 0)
+                for (name in headers) unbound[name] += bare(name)
+            }
+            for (name in headers) unbound[name] = (unbound[name] != headers[name])
+            found = ""
+            for (t = 1; t <= tokens; t++) {
+                segments = token_segments[t]
+                template = token_literal[t, 0]; part = token_literal[t, 0]; gsub(/\./, "\\.", part); pattern = "^" part
+                resolved = !unreliable
+                for (s = 1; s <= segments; s++) {
+                    name = token_reference[t, s]
+                    template = template "${" (name == "" ? "?" : name) "}" token_literal[t, s]
+                    part = token_literal[t, s]; gsub(/\./, "\\.", part); pattern = pattern ".*" part
+                    if (name == "" || !token_block[t, s] || !block_literal[token_block[t, s]] || unbound[name]) resolved = 0
+                }
+                prefix = token_prefix[t]
+                if (prefix != "") {
+                    used[script, prefix] = 1
+                    if (reviewed[script, prefix] == "scratch") continue
+                    if (reviewed[script, prefix] != "root") { found = found "prefixed\t" prefix "\t" script ":" token_site[t] "\t" template "\n"; continue }
+                }
+                if (!resolved) { found = found "family\t" pattern "$\t" script ":" token_site[t] "\t" template "\n"; continue }
+                expanded = token_literal[t, 0]
+                for (s = 1; s <= segments; s++) {
+                    count = split(expanded, items, "\n"); n = split(block_values[token_block[t, s]], values, " ")
+                    expanded = ""
+                    for (m = 1; m <= count; m++) for (j = 1; j <= n; j++) expanded = expanded (expanded == "" ? "" : "\n") items[m] values[j] token_literal[t, s]
+                }
+                count = split(expanded, items, "\n")
+                for (m = 1; m <= count; m++) found = found "member\t" items[m] "\t" script ":" token_site[t] "\t" template "\n"
             }
             return found
         }
@@ -414,7 +496,7 @@ constructed_inputs() {
         { gate[++pairs] = $1; owner[pairs] = $2 }
         END {
             for (p = 1; p <= pairs; p++) {
-                if (!(owner[p] in contracts)) { load(owner[p]); bind(); contracts[owner[p]] = scan(owner[p]) }
+                if (!(owner[p] in contracts)) contracts[owner[p]] = process(owner[p])
                 count = split(contracts[owner[p]], rows, "\n")
                 for (r = 1; r <= count; r++) if (rows[r] != "") {
                     split(rows[r], fields, "\t")
@@ -485,7 +567,7 @@ check_primary_owners() {
         END {exit failed}
     ' "$@"
 }
-# Pin the boundary on a synthetic script and map, independent of today's lists.
+# Pin the boundary on synthetic scripts and a map, independent of today's lists.
 mkdir -p "$work/constructed-probe"
 cat > "$work/constructed-probe/owner.sh" <<'OWNER'
 # for skipped in "tests/integration/$skipped.tl"; do
@@ -493,43 +575,52 @@ for fixture in alpha \
     'beta'; do
     compile "$ROOT/tests/integ\
 ration/$fixture.tl" --stdlib-root "$ROOT/tests/$fixture" -o "tests/out/$fixture.s"
+    for named in gamma; do compile "stdlib/$fixture/$named-source" "$WORK/x-named-y" "$WORK/src/$fixture.tl"; done
 done
-for loose in $LOOSE; do compile "tests/integration/${loose}_case.tl" "$WORK/src/$fixture.tl"; done
-for quoted in gamma; do :; done
-printf 'delta\n' | while read -r 'quoted'; do compile "${ROOT}"'/tests/integration/'"$quoted".tl; done
+compile "tests/integration/$fixture.tl"
+for loose in $LOOSE; do compile "tests/integration/${loose}_case.tl"; done
+for quoted in gamma; do printf 'delta\n' | while read -r 'quoted'; do compile "${ROOT}"'/tests/integration/'"$quoted".tl; done; done
+for split in gamma; do read -r spl""it; compile "tests/integration/$split.tl"; done
 echo ignored # for commented in alpha; do
+printf '%s\n' 'Example: for prose in alpha; do'
 cat <<'SCRIPT' > "$WORK/generated.sh"
 for embedded in alpha; do :; done
 SCRIPT
-for named in gamma; do compile "tests/integration/$commented.tl" "tests/integration/$embedded.tl" "stdlib/$$.tl" "stdlib/$fixture/$named-source" "$WORK/x-named-y"; done
-for defaulted in alpha; do :; done; : "${defaulted:=beta}"
-for positional; do :; done
-for globbed in tests/*.tl; do :; done
-for exported in alpha; do :; done; export exported
-compile "${ROOT:?}/tests/integration/$defaulted.tl" "$ROOT"/tests/integration/"$positional".tl "tests/integration/$globbed.tl" "tests/integration/$exported.tl"
-compile "$ALIAS/tests/integration/$fixture.tl" "$OTHER/tests/$fixture.tl"
+compile "tests/integration/$commented.tl" "tests/integration/$prose.tl" "tests/integration/$embedded.tl" "stdlib/$$.tl"
+for defaulted in alpha; do : "${defaulted:=beta}"; compile "${ROOT:?}/tests/integration/$defaulted.tl"; done
+for positional; do compile "$ROOT"/tests/integration/"$positional".tl; done
+for globbed in tests/*.tl; do compile "tests/integration/$globbed.tl"; done
+for exported in alpha; do export exported; compile "tests/integration/$exported.tl"; done
+for fixture in alpha; do compile "$ALIAS/tests/integration/$fixture.tl" "$OTHER/tests/$fixture.tl" "${ROOT_ALIAS}/tests/$fixture.tl"; done
 OWNER
 probe_owner="$work/constructed-probe/owner.sh"
-printf 'synthetic-gate\t%s\n' "$probe_owner" > "$work/constructed-probe/scripts.tsv"
+# A sourced script can rebind a name, and eval can bind any name.
+printf 'libbound=delta\n' > "$work/constructed-probe/lib.sh"
+printf '. "%s"\nfor libbound in alpha; do compile "tests/integration/$libbound.tl"; done\n' "$work/constructed-probe/lib.sh" > "$work/constructed-probe/sourcing.sh"
+printf 'eval "$BINDING"\nfor evaluated in alpha; do compile "tests/integration/$evaluated.tl"; done\n' > "$work/constructed-probe/evaluating.sh"
+printf 'synthetic-gate\t%s\n' "$probe_owner" "$work/constructed-probe/sourcing.sh" "$work/constructed-probe/evaluating.sh" > "$work/constructed-probe/scripts.tsv"
 printf '%s\t%s\t%s\n' "$probe_owner" '$WORK/' scratch "$probe_owner" '$ALIAS/' root "$probe_owner" '$UNUSED/' scratch > "$work/constructed-probe/prefixes.tsv"
 constructed_inputs "$work/constructed-probe/scripts.tsv" "$work/constructed-probe/prefixes.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
 probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_owner" "$3" "$4"; }
 {
     probe_row member tests/integration/alpha.tl 4 'tests/integration/${fixture}.tl'
     probe_row member tests/integration/beta.tl 4 'tests/integration/${fixture}.tl'
-    probe_row family '^tests/integration/.*_case\.tl$' 7 'tests/integration/${loose}_case.tl'
-    probe_row family '^tests/integration/.*\.tl$' 9 'tests/integration/${quoted}.tl'
-    probe_row family '^tests/integration/.*\.tl$' 14 'tests/integration/${commented}.tl'
-    probe_row family '^tests/integration/.*\.tl$' 14 'tests/integration/${embedded}.tl'
-    probe_row family '^stdlib/.*\.tl$' 14 'stdlib/${?}.tl'
-    probe_row member stdlib/alpha/gamma-source 14 'stdlib/${fixture}/${named}-source'
-    probe_row member stdlib/beta/gamma-source 14 'stdlib/${fixture}/${named}-source'
-    for probe_name in defaulted positional globbed exported; do
-        probe_row family '^tests/integration/.*\.tl$' 19 "tests/integration/\${$probe_name}.tl"
+    probe_row member stdlib/alpha/gamma-source 6 'stdlib/${fixture}/${named}-source'
+    probe_row member stdlib/beta/gamma-source 6 'stdlib/${fixture}/${named}-source'
+    probe_row family '^tests/integration/.*\.tl$' 8 'tests/integration/${fixture}.tl'
+    probe_row family '^tests/integration/.*_case\.tl$' 9 'tests/integration/${loose}_case.tl'
+    for probe_name in quoted:10 split:11 commented:17 prose:17 embedded:17; do
+        probe_row family '^tests/integration/.*\.tl$' "${probe_name#*:}" "tests/integration/\${${probe_name%:*}}.tl"
     done
-    probe_row member tests/integration/alpha.tl 20 'tests/integration/${fixture}.tl'
-    probe_row member tests/integration/beta.tl 20 'tests/integration/${fixture}.tl'
-    probe_row prefixed '$OTHER/' 20 'tests/${fixture}.tl'
+    probe_row family '^stdlib/.*\.tl$' 17 'stdlib/${?}.tl'
+    for probe_name in defaulted:18 positional:19 globbed:20 exported:21; do
+        probe_row family '^tests/integration/.*\.tl$' "${probe_name#*:}" "tests/integration/\${${probe_name%:*}}.tl"
+    done
+    probe_row member tests/integration/alpha.tl 22 'tests/integration/${fixture}.tl'
+    probe_row prefixed '$OTHER/' 22 'tests/${fixture}.tl'
+    probe_row prefixed '${ROOT_ALIAS}/' 22 'tests/${fixture}.tl'
+    printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/sourcing.sh" 'tests/integration/${libbound}.tl'
+    printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/evaluating.sh" 'tests/integration/${evaluated}.tl'
     printf 'unused\t%s\t-\t%s\t-\n' '$UNUSED/' "$probe_owner"
 } > "$work/constructed-probe/expected.tsv"
 cmp "$work/constructed-probe/actual.tsv" "$work/constructed-probe/expected.tsv" || fail 'constructed input discovery left its supported boundary'
@@ -537,7 +628,7 @@ if constructed_prefix_gaps "$work/constructed-probe/actual.tsv" 2> "$work/constr
     fail 'unreviewed synthetic prefix passed'
 fi
 {
-    printf 'constructed path under an unreviewed prefix: %s:20 %s -> synthetic-gate\n' "$probe_owner" '$OTHER/tests/${fixture}.tl'
+    printf 'constructed path under an unreviewed prefix: %s:22 %s -> synthetic-gate\n' "$probe_owner" '$OTHER/tests/${fixture}.tl' "$probe_owner" '${ROOT_ALIAS}/tests/${fixture}.tl'
     printf 'reviewed constructed prefix no longer occurs: %s %s\n' "$probe_owner" '$UNUSED/'
 } > "$work/constructed-probe/prefixes.expected"
 cmp "$work/constructed-probe/prefixes.err" "$work/constructed-probe/prefixes.expected" || fail 'constructed prefix review lost its diagnostic'
@@ -553,9 +644,9 @@ cmp "$work/constructed-probe/owners.err" "$work/constructed-probe/owners.expecte
 # A family is checked through its tracked members, not an unmapped stand-in:
 # a_case needs a replay, b_case has a direct owner and stdlib/x.tl is unmapped.
 printf '%s\n' tests/integration/a_case.tl tests/integration/b_case.tl tests/integration/d_case.tl stdlib/x.tl > "$work/constructed-probe/tracked"
-awk -F '\t' '$1 == "family" && ($5 ~ /loose/ || $2 ~ /stdlib/) {print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/families.tsv"
+awk -F '\t' '$1 == "family" && ($5 ~ /loose/ || $2 ~ /stdlib/) && $4 ~ /owner\.sh:/ {print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/families.tsv"
 constructed_family_members "$work/constructed-probe/map.tsv" "$work/constructed-probe/tracked" "$work/constructed-probe/families.tsv" > "$work/constructed-probe/family-members.tsv" || fail 'synthetic family member grouping failed'
-printf 'tests/integration/a_case.tl\tsynthetic-gate\t%s:7\t%s\n' "$probe_owner" 'tests/integration/${loose}_case.tl' > "$work/constructed-probe/family-members.expected"
+printf 'tests/integration/a_case.tl\tsynthetic-gate\t%s:9\t%s\n' "$probe_owner" 'tests/integration/${loose}_case.tl' > "$work/constructed-probe/family-members.expected"
 cmp "$work/constructed-probe/family-members.tsv" "$work/constructed-probe/family-members.expected" || fail 'constructed family lost a mapped member without its owner'
 
 # Reviewed prefixes of constructed paths. A root alias is audited like $ROOT;

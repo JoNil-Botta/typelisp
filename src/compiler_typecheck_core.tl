@@ -26436,7 +26436,7 @@
     (or
       (tc-diag-string-prefix?
         (& text)
-        "typecheck: region-tagged value cannot escape with-arena '")
+        "typecheck: region-tagged value cannot escape ")
       (tc-diag-string-prefix?
         (& text)
         "typecheck: cannot store region-tagged value into ")
@@ -28492,7 +28492,7 @@
   (match (tc-type-env-scoped-carrier-marker-type
     (tc-global-shared-view carrier)
     (tc-region-marker-id))
-    [(Some (Var region)) (Some region)]
+    [(or (Some (Var region)) (Some (Region region _))) (Some region)]
     [(Some _) (tc-active-region carrier.env)]
     [(No) (No)]))
 
@@ -35419,7 +35419,7 @@
     [(Bind key ty rest)
       (if (= key (tc-region-marker-id))
         (match ty
-          [(Var region) (Some region)]
+          [(or (Var region) (Region region _)) (Some region)]
           [_ (tc-active-region-scan rest)])
         (tc-active-region-scan rest))]))
 
@@ -35430,7 +35430,7 @@
     (begin
       (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-region-marker-id))
-        [(Some (Var region)) (Some region)]
+        [(or (Some (Var region)) (Some (Region region _))) (Some region)]
         [(Some _) (tc-active-region-scan env)]
         [(No) (No)]))))
 
@@ -75401,7 +75401,9 @@
 (define (tc-region-escape-error [region : i64]) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-    "typecheck: region-tagged value cannot escape with-arena '"
+    (if (tc-generated-arena-brand-id? region)
+      "typecheck: region-tagged value cannot escape arena owner '"
+      "typecheck: region-tagged value cannot escape with-arena '")
     (tc-lifetime-name-render region)
     "'"))
 
@@ -84016,7 +84018,17 @@
   [arena : ast.AstExpr]
   [arena-ty : ast.AstType]) : TcTypeEnv
   (match (tc-in-arena-region ctx env arena arena-ty)
-    [(Some region) (tc-push-region env region)]
+    [(Some region)
+      ;; Selecting an existing arena does not introduce its lifetime. Var
+      ;; markers belong to fresh with-arena/scratch scopes; Region markers
+      ;; only change the active allocation target, retaining its older owner.
+      (let
+        [marker : ast.AstType ast.AstType.Unit]
+        (tc-bind-runtime-marker-id
+          env
+          (tc-region-marker-id)
+          (ast.ast-ty-region region (& marker))
+          TcTypeEnvScopedMarkerKind.Region))]
     [(No) env]))
 
 (define (tc-in-arena-body-result
@@ -113024,8 +113036,29 @@
     [(InArena arena-box body)
       (let
         [narena (try (macro-expand-node ctx env decls depth arena-box))]
-        [nbody (try (macro-expand-exprs ctx env decls depth body))]
-        (Ok (ast.ast-expr-in-arena narena nbody)))]
+        [arena-ty-result : ResultTcType (tc-expr-id ctx env narena)]
+        [_publish : unit (tc-context-publish-newer-pools! ctx)]
+        (match arena-ty-result
+          [(Ok arena-ty)
+            (let
+              [body-env : TcTypeEnv
+                (tc-in-arena-body-env
+                  ctx
+                  env
+                  (tc-context-expr-get ctx narena)
+                  arena-ty)]
+              ;; Macro operands (for example when's return) are checked in
+              ;; the same allocation target as the eventual selected body.
+              [_publish : unit (tc-context-publish-newer-pools! ctx)]
+              [nbody (try (macro-expand-exprs ctx body-env decls depth body))]
+              (Ok (ast.ast-expr-in-arena narena nbody)))]
+          [(Err message)
+            (Err
+              (box
+                (tc-expr-diag
+                  (tc-context-expr-bases ctx)
+                  (tc-context-expr-get ctx narena)
+                  message)))]))]
     [(ArrayRef array-box index-box)
       (let
         [narray (try (macro-expand-node ctx env decls depth array-box))]

@@ -102,6 +102,46 @@
     [value : i64 (with-arena phase (try (empty-array)))]
     (Empty.Ok value)))
 
+;; Activating an input's arena must retain its older lifetime, even when
+;; return executes inside the activation and an inner arena scope.
+(defstruct Holder
+  (:lifetimes r)
+  (owner (arena.Arena r)))
+
+(define (inside-return [owner : (arena.Arena source)] [n : i64]) : (in source String)
+  (with-arena
+    phase
+    (in-arena
+      owner
+      (when (> n 0) (return (string.int->string n)))
+      (string.append "neg" ""))))
+
+(define (field-return [holder : (& h (Holder r))] [n : i64]) : (in r String)
+  (in-arena
+    (deref holder).owner
+    (when (> n 0) (return (string.int->string n)))
+    (string.append "neg" "")))
+
+(defenum RefResult
+  (:lifetimes a)
+  (Ok i64)
+  (Err (& a str)))
+
+(define (check-text [text : (& a str)] [n : i64]) : (RefResult a)
+  (if (> n 0)
+    (RefResult.Ok n)
+    (RefResult.Err text)))
+
+(define (reference-try [text : (& a str)] [n : i64]) : (RefResult a)
+  (let
+    [value : i64 (with-arena phase (try (check-text text n)))]
+    (RefResult.Ok (+ value 1))))
+
+(define (scratch-empty-try) : Empty
+  (let
+    [value : i64 (with-scratch (try (empty-array)))]
+    (Empty.Ok value)))
+
 (define (main) : i64
   (unless (= (scalar-return -12345) 6) (return 1))
   (unless (= (string.string-length (outer-return -12345)) 6) (return 2))
@@ -135,4 +175,28 @@
   (match (empty-try)
     [(Empty.Ok _) (return 18)]
     [(Empty.Err items) (unless (= (array-length items) 0) (return 19))])
+  (let
+    [saved : i64 (arena.tl_arena_current)]
+    [owner (arena.make)]
+    [owner-tail (arena.make)]
+    [atomic (arena.make-atomic)]
+    [holder (Holder (arena.make))]
+    [early (inside-return owner 12345)]
+    [tail (inside-return owner-tail -1)]
+    [shared (inside-return atomic 12345)]
+    [field (field-return (& holder) 12345)]
+    (unless (string.eq (& early) "12345") (return 20))
+    (unless (string.eq (& tail) "neg") (return 21))
+    (unless (string.eq (& shared) "12345") (return 22))
+    (unless (string.eq (& field) "12345") (return 23))
+    (match (reference-try (& early) -1)
+      [(RefResult.Ok _) (return 24)]
+      [(RefResult.Err text) (unless (= (string.string-length text) 5) (return 25))])
+    (match (reference-try (& shared) 41)
+      [(RefResult.Ok n) (unless (= n 42) (return 26))]
+      [(RefResult.Err _) (return 27)])
+    (unless (= (arena.tl_arena_current) saved) (return 30)))
+  (match (scratch-empty-try)
+    [(Empty.Ok _) (return 28)]
+    [(Empty.Err items) (unless (= (array-length items) 0) (return 29))])
   42)

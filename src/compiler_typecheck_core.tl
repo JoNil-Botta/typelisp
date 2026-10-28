@@ -36857,7 +36857,10 @@
     [cursor : TcNameIdList lifetimes]
     (while (not (tc-name-id-list-empty? cursor))
       (unless
-        (tc-lifetime-outlives-binding-id? env (tc-name-id-list-head cursor) target-id)
+        (tc-lifetime-outlives-binding-id?
+          env
+          (tc-name-id-list-head cursor)
+          target-id)
         (return (Some (tc-name-id-list-head cursor))))
       (set! cursor (tc-name-id-list-rest cursor))))
   (No))

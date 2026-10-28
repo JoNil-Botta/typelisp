@@ -88763,29 +88763,35 @@
 ;; caller seeds params): a var with exactly one source has a single,
 ;; unchanging value wherever its def dominates, so an address derived from it
 ;; is the same at every use.
+;; Def counts per var, and the address-taken vars from the same walk.
 (define (opt-gep-split-defs-instrs!
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
-  [counts : (&mut counts (__tl_dyn-array i64))]) : unit
+  [counts : (&mut counts (__tl_dyn-array i64))]
+  [taken : (&mut taken OptFunctionAddrTakenScan)]) : unit
   (unless
     (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (match (let
+    (let
       [instr (ir.compiler-ir-instr-seq-ref instrs index)]
-      (opt-instr-def-var (& instr)))
-      [(Some dst) (set! (array-ref counts dst) (+ (array-ref counts dst) 1))]
-      [(None) unit])
-    (opt-gep-split-defs-instrs! instrs (+ index 1) counts)))
+      (match (& instr)
+        [(AddrOf _ src _) (opt-function-addr-taken-scan-note! taken src)]
+        [_ unit])
+      (match (opt-instr-def-var (& instr))
+        [(Some dst) (set! (array-ref counts dst) (+ (array-ref counts dst) 1))]
+        [(None) unit]))
+    (opt-gep-split-defs-instrs! instrs (+ index 1) counts taken)))
 
 (define (opt-gep-split-defs-blocks!
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
-  [counts : (&mut counts (__tl_dyn-array i64))]) : unit
+  [counts : (&mut counts (__tl_dyn-array i64))]
+  [taken : (&mut taken OptFunctionAddrTakenScan)]) : unit
   (match blocks
     [(slice) unit]
     [(slice block & rest)
       (match block
         [(Block _ instrs)
-          (opt-gep-split-defs-instrs! (& instrs) 0 counts)
-          (opt-gep-split-defs-blocks! rest counts)])]))
+          (opt-gep-split-defs-instrs! (& instrs) 0 counts taken)
+          (opt-gep-split-defs-blocks! rest counts taken)])]))
 
 (define (opt-gep-split-seed-params!
   [params : (& ir.CompilerIrParamSeq)]
@@ -88918,23 +88924,22 @@
 
 ;; An operand naming an address-taken var is a load of its storage, which a
 ;; store may change between the Gep and a later use, so such a Gep is never
-;; re-evaluated there. The marks are scanned only once a candidate exists.
+;; re-evaluated there. `taken` holds the marks the defs walk collected.
 ;; Returns whether any candidate is left.
 (define (opt-gep-split-drop-addr-taken!
   [frame : i64]
-  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [taken : (& taken (__tl_dyn-array bool))]
   [cands : (&mut cands (__tl_dyn-array i64))]
   [bases : (& (__tl_dyn-array ir.CompilerIrValue))]
   [offsets : (& (__tl_dyn-array ir.CompilerIrValue))]) : bool
   (let
-    [taken : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
     [left : bool false]
     (for [v (iterator.range 0 frame)]
       (when
         (= (array-ref cands v) 1)
         (if (or
-          (opt-addr-taken-value? (& taken) (& (array-ref bases v)))
-          (opt-addr-taken-value? (& taken) (& (array-ref offsets v))))
+          (opt-addr-taken-value? taken (& (array-ref bases v)))
+          (opt-addr-taken-value? taken (& (array-ref offsets v))))
           (set! (array-ref cands v) 0)
           (set! left true))))
     left))
@@ -89256,6 +89261,8 @@
         [memuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [chainuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
         [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [taken : OptFunctionAddrTakenScan
+          (opt-function-addr-taken-scan-new frame)]
         [bases : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue frame)]
         [offsets : (__tl_dyn-array ir.CompilerIrValue)
@@ -89273,7 +89280,8 @@
             (opt-gep-split-seed-params! (& params) (&mut defs))
             (opt-gep-split-defs-blocks!
               (ir.compiler-ir-block-list-view blocks)
-              (&mut defs)))]
+              (&mut defs)
+              (&mut taken)))]
         [_geps : unit
           (opt-gep-split-geps-blocks!
             type-segment-bases
@@ -89299,7 +89307,7 @@
             any?
             (opt-gep-split-drop-addr-taken!
               frame
-              (& blocks)
+              (& taken.marks)
               (&mut cands)
               (& bases)
               (& offsets))))
@@ -92997,33 +93005,29 @@
         unit)]
     [_ unit]))
 
-(define (opt-guard-sink-any-root?
-  [ptr-root : (& ptr-root (__tl_dyn-array i64))]
-  [frame : i64]) : bool
-  (for [v (iterator.range 0 frame)]
-    (when (= (array-ref ptr-root v) 1) (return true)))
-  false)
-
+;; The pointer roots, and the address-taken vars from the same walk.
 (define (opt-guard-sink-note-ptrs-seq!
   [frame : i64]
   [ptr-kind : (&mut ptr-kind (__tl_dyn-array i64))]
   [ptr-name : (&mut ptr-name (__tl_dyn-array i64))]
   [ptr-root : (&mut ptr-root (__tl_dyn-array i64))]
+  [taken : (&mut taken OptFunctionAddrTakenScan)]
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]) : unit
   (unless
     (>= index (ir.compiler-ir-instr-seq-count instrs))
-    (opt-guard-sink-note-ptr!
-      frame
-      ptr-kind
-      ptr-name
-      ptr-root
-      (ir.compiler-ir-instr-seq-borrow instrs index))
+    (let
+      [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+      (match (& instr)
+        [(AddrOf _ src _) (opt-function-addr-taken-scan-note! taken src)]
+        [_ unit])
+      (opt-guard-sink-note-ptr! frame ptr-kind ptr-name ptr-root (& instr)))
     (opt-guard-sink-note-ptrs-seq!
       frame
       ptr-kind
       ptr-name
       ptr-root
+      taken
       instrs
       (+ index 1))))
 
@@ -93963,6 +93967,7 @@
     [ptr-kind : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [ptr-name : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [ptr-root : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [taken : OptFunctionAddrTakenScan (opt-function-addr-taken-scan-new frame)]
     (for [id (iterator.range 0 count)]
       (set! (array-ref depth id) 0)
       (set! (array-ref blk-cell id) 0)
@@ -93976,6 +93981,7 @@
             (&mut ptr-kind)
             (&mut ptr-name)
             (&mut ptr-root)
+            (&mut taken)
             instrs
             0)
           (opt-guard-sink-fill-block-masks!
@@ -93986,11 +93992,7 @@
             (&mut blk-obj)
             (&mut blk-opaque)
             (&mut blk-call))]))
-    ;; Only a global-rooted def is a candidate, and only a candidate reads the
-    ;; address-taken set, so a function without one never scans for it.
-    (when
-      (opt-guard-sink-any-root? (& ptr-root) frame)
-      (opt-function-addr-taken-install! frame blocks))
+    (opt-function-addr-taken-install-scan! taken)
     (let
       [natural-loops
         (opt-cfg-natural-loops-with-context

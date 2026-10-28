@@ -2797,9 +2797,11 @@ audit records that prefix as scratch. A reference inside the body of a literal
 `for NAME in WORD...` loop in code resolves to that list when no other bare
 word in the script or its sourced scripts names it, so a member added to such
 a list is a primary contract that needs its map owner. `eval`, computed `read`
-or `export` targets and computed `source` paths leave every name unresolved.
-Any other expansion is unresolved: every tracked file it can name must select
-the gate on each host, or the site needs a reviewed reason in the audit.
+or `export` targets, computed `source` paths and unbalanced loops leave every
+name unresolved, and an unterminated heredoc fails the audit. Any other
+expansion, and any unquoted glob word in such a list, is a family: every
+tracked file it can name must select the gate on each host, or the site needs
+a reviewed reason in the audit.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 

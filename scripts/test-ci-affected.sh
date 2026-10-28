@@ -270,8 +270,8 @@ cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkou
 # expansion is a family: every tracked file it can name must select the gate.
 constructed_inputs() {
     awk -F '\t' '
-        function load(script,    line, status, physical, pending, joined, rest, word, heads, tails) {
-            lines = 0; physical = 0; pending = 0; heads = 0; tails = 0
+        function load(script,    line, status, physical, pending, joined, rest, offset, word, heads, tails) {
+            lines = 0; physical = 0; pending = 0; heads = 0; tails = 0; quote = ""
             while ((status = getline line < script) > 0) {
                 sub(/\r$/, "", line)
                 physical++
@@ -288,12 +288,14 @@ constructed_inputs() {
                 else start[lines + 1] = physical
                 if (line ~ /\\$/) { sub(/\\$/, "", line); joined = line; pending = 1; continue }
                 pending = 0
-                text[++lines] = line; body[lines] = 0
-                rest = line
-                while (match(rest, /<<-?[[:space:]]*\\?["\047]?[A-Za-z_][A-Za-z0-9_]*/)) {
-                    word = substr(rest, RSTART, RLENGTH)
-                    if (RSTART > 1 && substr(rest, RSTART - 1, 1) == "<") { rest = substr(rest, RSTART + RLENGTH); continue }
-                    rest = substr(rest, RSTART + RLENGTH)
+                text[++lines] = line; body[lines] = 0; view[lines] = mask(line)
+                # Heredoc operators are code: quoted or commented << opens nothing.
+                rest = view[lines]; offset = 0
+                while (match(rest, /<<-?[[:space:]]*\\?["\047x]?[A-Za-z_][A-Za-z0-9_]*/)) {
+                    word = substr(line, offset + RSTART, RLENGTH)
+                    if (offset + RSTART > 1 && substr(view[lines], offset + RSTART - 1, 1) == "<") word = ""
+                    offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
+                    if (word == "") continue
                     tabbed[++tails] = (word ~ /^<<-/)
                     sub(/^<<-?[[:space:]]*/, "", word); gsub(/[\\"\047]/, "", word)
                     delimiter[tails] = word
@@ -301,7 +303,7 @@ constructed_inputs() {
             }
             if (status < 0) { print "cannot read owning script: " script > "/dev/stderr"; exit 1 }
             close(script)
-            quote = ""
+            if (heads < tails) { print "unterminated heredoc in owning script: " script > "/dev/stderr"; exit 1 }
         }
         function mask(line,    i, n, character, out) {
             # Keep positions; quoted or escaped text and inline comments are not code.
@@ -339,6 +341,32 @@ constructed_inputs() {
             to = (match(rest, /[;&|<>)]/) ? from + RSTART - 1 : length(view) + 1)
             return normal(substr(text[i], from, to - from))
         }
+        # An unquoted glob word in a literal list names every matching file.
+        function globs(i, view, from, size,    rest, offset, at, width, path, prefix, t) {
+            rest = substr(view, from, size); offset = from - 1
+            while (match(rest, /[^[:space:]]+/)) {
+                at = offset + RSTART; width = RLENGTH
+                offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
+                if (substr(view, at, width) !~ /[*?[]/) continue
+                path = normal(substr(text[i], at, width)); prefix = ""
+                if (match(path, /^\$(ROOT|\{ROOT([:?=+-][^}]*)?\})\//)) path = substr(path, RLENGTH + 1)
+                else if (match(path, /^\$(\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)\//)) { prefix = substr(path, 1, RLENGTH); path = substr(path, RLENGTH + 1) }
+                if (path !~ /^(src|tests|stdlib|docs)\// || path ~ /\$/) continue
+                t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix; token_segments[t] = 0; token_glob[t] = path
+            }
+        }
+        function glob_pattern(path,    out, i, character) {
+            out = "^"
+            for (i = 1; i <= length(path); i++) {
+                character = substr(path, i, 1)
+                if (character == "*") out = out "[^/]*"
+                else if (character == "?") out = out "[^/]"
+                else if (character == "[") { while (i < length(path) && substr(path, i, 1) != "]") i++; out = out "[^/]" }
+                else if (character ~ /[.+(){}|^$\\]/) out = out "\\" character
+                else out = out character
+            }
+            return out "$"
+        }
         # Commands of one logical line, in order: loop keywords become events;
         # binders whose target is computed leave the whole script unresolved.
         function commands(i, view, main,    rest, offset, position, word, after, from, list, count, words, j, value, literal, values, name) {
@@ -366,6 +394,7 @@ constructed_inputs() {
                             if (value ~ /^[A-Za-z0-9_.\/+-]+$/) values = values " " value
                             else if (value != "") literal = 0
                         }
+                        globs(i, view, from, length(list))
                         offset = from + length(list) - 1; rest = substr(view, offset + 1)
                     }
                     event[i, ++events[i]] = position; kind[i, events[i]] = "for"
@@ -397,10 +426,12 @@ constructed_inputs() {
                 while ((at = index(substr(line, from), name)) > 0) {
                     at += from - 1; from = at + length(name)
                     previous = (at > 1 ? substr(line, at - 1, 1) : "")
-                    following = substr(line, from, 2)
+                    following = substr(line, from, 3)
                     if (at > 2 && substr(line, at - 2, 2) == "${") { if (following ~ /^(=|:=)/) total++; continue }
-                    if (previous != "" && previous !~ /[[:space:];&|()<>`{]/) continue
-                    if (following != "" && following !~ /^([[:space:];&|()<>`=]|\+=)/) continue
+                    # Arithmetic assignment and increment bind as well: $((n-=1)), $((++n)).
+                    if (at > 2 && substr(line, at - 2, 2) ~ /^(\+\+|--)$/) { total++; continue }
+                    if (previous != "" && previous !~ /[[:space:];&|()<>`{,]/) continue
+                    if (following != "" && following !~ /^([[:space:];&|()<>`=,]|[-+*\/%^|&]=|<<=|>>=|\+\+|--)/) continue
                     total++
                 }
             }
@@ -422,11 +453,11 @@ constructed_inputs() {
             blocks = 0; queued = 0; unreliable = 0; tokens = 0; depth = 0; pending = 0
             for (i = 1; i <= lines; i++) {
                 events[i] = 0
-                if (!body[i]) commands(i, mask(text[i]), 1)
+                if (!body[i]) commands(i, view[i], 1)
                 k = 1
                 tokens_text = blank(blank(text[i], "--stdlib-root[[:space:]]+(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]+)"), "(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]+)")
                 position = 1
-                while (match(substr(tokens_text, position), /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/"\047-]*\$/)) {
+                while (match(substr(tokens_text, position), /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/"\047*?-]*\$/)) {
                     position += RSTART - 1
                     while (k <= events[i] && event[i, k] < position) apply(i, k++)
                     before = substr(text[i], 1, position - 1); gsub(/["\047]/, "", before)
@@ -434,12 +465,17 @@ constructed_inputs() {
                     if (before != "" && before !~ /[[:space:]=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT([:?=+-][^}]*)?\})\/$/ && match(before, /[^[:space:]=(;|&<>]+$/))
                         prefix = substr(before, RSTART, RLENGTH)
                     tail = substr(text[i], position)
-                    t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix
+                    t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix; token_glob[t] = ""
                     segments = 0; token_literal[t, 0] = ""; q = 1
                     while (q <= length(tail)) {
                         character = substr(tail, q, 1)
                         if (character ~ /[A-Za-z0-9_.\/-]/) { token_literal[t, segments] = token_literal[t, segments] character; q++; continue }
                         if (character == "\"" || character == "\047") { q++; continue }
+                        if (character == "*" || character == "?" || character == "[") { # A glob is a wildcard segment.
+                            if (character == "[") while (q < length(tail) && substr(tail, q, 1) != "]") q++
+                            q++; token_reference[t, ++segments] = "*"; token_literal[t, segments] = ""; token_block[t, segments] = 0
+                            continue
+                        }
                         if (character != "$") break
                         name = ""
                         if (match(substr(tail, q), /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { name = substr(tail, q + 2, RLENGTH - 3); q += RLENGTH }
@@ -459,7 +495,7 @@ constructed_inputs() {
             # Sourced scripts can bind names too; read them with the same rules.
             for (e = 1; e <= queued; e++) {
                 load(queue[e])
-                for (i = 1; i <= lines; i++) if (!body[i]) commands(i, mask(text[i]), 0)
+                for (i = 1; i <= lines; i++) if (!body[i]) commands(i, view[i], 0)
                 for (name in headers) unbound[name] += bare(name)
             }
             for (name in headers) unbound[name] = (unbound[name] != headers[name])
@@ -468,9 +504,10 @@ constructed_inputs() {
                 segments = token_segments[t]
                 template = token_literal[t, 0]; part = token_literal[t, 0]; gsub(/\./, "\\.", part); pattern = "^" part
                 resolved = !unreliable
+                if (token_glob[t] != "") { template = token_glob[t]; pattern = glob_pattern(template); sub(/\$$/, "", pattern); resolved = 0 }
                 for (s = 1; s <= segments; s++) {
                     name = token_reference[t, s]
-                    template = template "${" (name == "" ? "?" : name) "}" token_literal[t, s]
+                    template = template (name == "*" ? "*" : "${" (name == "" ? "?" : name) "}") token_literal[t, s]
                     part = token_literal[t, s]; gsub(/\./, "\\.", part); pattern = pattern ".*" part
                     if (name == "" || !token_block[t, s] || !block_literal[token_block[t, s]] || unbound[name]) resolved = 0
                 }
@@ -581,7 +618,7 @@ compile "tests/integration/$fixture.tl"
 for loose in $LOOSE; do compile "tests/integration/${loose}_case.tl"; done
 for quoted in gamma; do printf 'delta\n' | while read -r 'quoted'; do compile "${ROOT}"'/tests/integration/'"$quoted".tl; done; done
 for split in gamma; do read -r spl""it; compile "tests/integration/$split.tl"; done
-echo ignored # for commented in alpha; do
+echo ignored # for commented in alpha; do cat <<IGNORED
 printf '%s\n' 'Example: for prose in alpha; do'
 cat <<'SCRIPT' > "$WORK/generated.sh"
 for embedded in alpha; do :; done
@@ -592,6 +629,7 @@ for positional; do compile "$ROOT"/tests/integration/"$positional".tl; done
 for globbed in tests/*.tl; do compile "tests/integration/$globbed.tl"; done
 for exported in alpha; do export exported; compile "tests/integration/$exported.tl"; done
 for fixture in alpha; do compile "$ALIAS/tests/integration/$fixture.tl" "$OTHER/tests/$fixture.tl" "${ROOT_ALIAS}/tests/$fixture.tl"; done
+for depth in 1; do : $((depth+=1)); compile "tests/integration/$depth.tl" "$ROOT"/tests/$depth/*.tl; done
 OWNER
 probe_owner="$work/constructed-probe/owner.sh"
 # A sourced script can rebind a name, and eval can bind any name.
@@ -613,12 +651,15 @@ probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_own
         probe_row family '^tests/integration/.*\.tl$' "${probe_name#*:}" "tests/integration/\${${probe_name%:*}}.tl"
     done
     probe_row family '^stdlib/.*\.tl$' 17 'stdlib/${?}.tl'
-    for probe_name in defaulted:18 positional:19 globbed:20 exported:21; do
+    for probe_name in defaulted:18 positional:19 glob:20 globbed:20 exported:21; do
+        if [ "$probe_name" = glob:20 ]; then probe_row family '^tests/[^/]*\.tl$' 20 'tests/*.tl'; continue; fi
         probe_row family '^tests/integration/.*\.tl$' "${probe_name#*:}" "tests/integration/\${${probe_name%:*}}.tl"
     done
     probe_row member tests/integration/alpha.tl 22 'tests/integration/${fixture}.tl'
     probe_row prefixed '$OTHER/' 22 'tests/${fixture}.tl'
     probe_row prefixed '${ROOT_ALIAS}/' 22 'tests/${fixture}.tl'
+    probe_row family '^tests/integration/.*\.tl$' 23 'tests/integration/${depth}.tl'
+    probe_row family '^tests/.*/.*\.tl$' 23 'tests/${depth}/*.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/sourcing.sh" 'tests/integration/${libbound}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/evaluating.sh" 'tests/integration/${evaluated}.tl'
     printf 'unused\t%s\t-\t%s\t-\n' '$UNUSED/' "$probe_owner"
@@ -632,8 +673,15 @@ fi
     printf 'reviewed constructed prefix no longer occurs: %s %s\n' "$probe_owner" '$UNUSED/'
 } > "$work/constructed-probe/prefixes.expected"
 cmp "$work/constructed-probe/prefixes.err" "$work/constructed-probe/prefixes.expected" || fail 'constructed prefix review lost its diagnostic'
+# A heredoc that never closes would hide every later line, so it fails.
+printf 'cat <<EOF\nfor fixture in alpha; do compile "tests/integration/$fixture.tl"; done\n' > "$work/constructed-probe/unterminated.sh"
+printf 'synthetic-gate\t%s\n' "$work/constructed-probe/unterminated.sh" > "$work/constructed-probe/unterminated.tsv"
+if constructed_inputs "$work/constructed-probe/unterminated.tsv" "$work/constructed-probe/prefixes.tsv" > "$work/constructed-probe/unterminated.out" 2> "$work/constructed-probe/unterminated.err"; then
+    fail 'unterminated synthetic heredoc passed'
+fi
+grep -Fx "unterminated heredoc in owning script: $work/constructed-probe/unterminated.sh" "$work/constructed-probe/unterminated.err" >/dev/null || fail 'unterminated heredoc lost its diagnostic'
 # A member added to a literal list with neither a map owner nor a witness fails.
-printf 'path\trequired\tadvisory\treason\ntests/integration/*\tother-gate\t-\tsynthetic\ntests/integration/beta.tl\tsynthetic-gate\t-\tsynthetic\nstdlib/*\t-\t@stdlib\tsynthetic\n' > "$work/constructed-probe/map.tsv"
+printf 'path\trequired\tadvisory\treason\ntests/integration/*\tother-gate\t-\tsynthetic\ntests/integration/beta.tl\tsynthetic-gate\t-\tsynthetic\ntests/integration/b_case.tl\tsynthetic-gate\t-\tsynthetic\nstdlib/*\t-\t@stdlib\tsynthetic\n' > "$work/constructed-probe/map.tsv"
 awk -F '\t' '$1 == "member" && $2 ~ /^tests\// && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/members.tsv"
 : > "$work/constructed-probe/directories"
 if check_primary_owners "$work/constructed-probe/map.tsv" "$work/constructed-probe/directories" "$work/constructed-probe/members.tsv" 2> "$work/constructed-probe/owners.err"; then
@@ -642,7 +690,8 @@ fi
 printf 'missing required primary owner: tests/integration/alpha.tl -> synthetic-gate (constructed at %s:4)\n' "$probe_owner" > "$work/constructed-probe/owners.expected"
 cmp "$work/constructed-probe/owners.err" "$work/constructed-probe/owners.expected" || fail 'constructed member omission lost its owner diagnostic'
 # A family is checked through its tracked members, not an unmapped stand-in:
-# a_case needs a replay, b_case has a direct owner and stdlib/x.tl is unmapped.
+# a_case needs a replay, d_case shares its rows, b_case has a direct owner and
+# stdlib/x.tl is unmapped.
 printf '%s\n' tests/integration/a_case.tl tests/integration/b_case.tl tests/integration/d_case.tl stdlib/x.tl > "$work/constructed-probe/tracked"
 awk -F '\t' '$1 == "family" && ($5 ~ /loose/ || $2 ~ /stdlib/) && $4 ~ /owner\.sh:/ {print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/families.tsv"
 constructed_family_members "$work/constructed-probe/map.tsv" "$work/constructed-probe/tracked" "$work/constructed-probe/families.tsv" > "$work/constructed-probe/family-members.tsv" || fail 'synthetic family member grouping failed'
@@ -673,8 +722,12 @@ while IFS=$TAB read -r pattern gate site template; do
     esac
     case "${site%:*} $template $gate" in
         'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix} embedded-stdlib-build-payload') continue ;; # The same payload checks run in the required stdlib module gate.
-        'scripts/build-embedded-stdlib-tlci.sh stdlib/${MODULE_PATH} '* | 'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} '* | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} '*) continue ;; # Whole-payload source hashes and copies; stdlib stays an advisory class.
-    esac
+        'scripts/build-embedded-stdlib-tlci.sh stdlib/${MODULE_PATH} '*) # Payload source hash.
+            case "$gate" in embedded-stdlib-tlci-bounded-resource-report | embedded-stdlib-tlci-image | embedded-stdlib-tlci-resource-verifier-self-tests | stage2-compile-profile-verifier | tlci-mutation-bootstrap-fixpoint) continue ;; esac ;;
+        'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} embedded-stdlib-tlci-image' | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} tlci-mutation-bootstrap-fixpoint') continue ;; # Payload copy and source hash.
+        'scripts/verify-compile-profile.sh stdlib/*.tl stage2-compile-profile-verifier' | 'scripts/verify-stdlib-tlci-identity-differential.sh stdlib/*.tl stage2-compile-profile-verifier') continue ;; # Whole-stdlib copies into a modified root.
+        'scripts/verify-embedded-stdlib-tlci-resources.sh stdlib/*.tl embedded-stdlib-tlci-bounded-resource-report' | 'scripts/verify-embedded-stdlib-tlci-resources.sh stdlib/*.tl embedded-stdlib-tlci-resource-verifier-self-tests' | 'scripts/verify-tlci-native-route-stress.sh stdlib/*.tl tlci-native-route-sustained-stress') continue ;; # Whole-stdlib copies into a modified root.
+    esac # Stdlib stays an advisory class for these produced-compiler consumers.
     printf '%s\t%s\t%s\t%s\n' "$pattern" "$gate" "$site" "$template"
 done < "$work/constructed-families.raw" > "$work/constructed-families.tsv"
 constructed_family_members "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-inputs" "$work/constructed-families.tsv" > "$work/constructed-family-members.tsv" || fail 'constructed family member grouping failed'

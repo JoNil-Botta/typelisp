@@ -92989,12 +92989,17 @@
           [(RuntimeGlobal _) (No)]
           [_ (Yes (None))])
         (No))]
+    ;; A pointer var that is itself address-taken is read from its storage,
+    ;; which a callee handed its address may rewrite without writing the global
+    ;; the pointee names, so neither memory class covers it.
     [(Load _ src _)
       (match src
         [(Var ptr)
-          (if (and (>= ptr 0) (< ptr frame) (= (array-ref ptr-kind ptr) 1))
-            (Yes (Storage (array-ref ptr-name ptr)))
-            (Yes (Unknown)))]
+          (cond
+            [(opt-addr-taken-operand? (& src)) (No)]
+            [(and (>= ptr 0) (< ptr frame) (= (array-ref ptr-kind ptr) 1))
+              (Yes (Storage (array-ref ptr-name ptr)))]
+            [else (Yes (Unknown))])]
         [_ (Yes (Unknown))])]
     [(or (Cast _ src _ _) (Bitcast _ src _ _) (UnOp _ _ src _) (Word _ src _ _))
       (if (opt-guard-sink-plain-value? (& src))

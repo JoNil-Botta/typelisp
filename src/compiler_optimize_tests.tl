@@ -78775,6 +78775,29 @@ return 0" true)
         (irt.instr "%5 = ge %1, 0 : i64")
         (irt.instr "branch %5, use, done")))))
 
+;; v2 addresses a word of the global and is itself address-taken: the callee
+;; handed v3 may rewrite v2 without writing the global, so the load through v2
+;; stays above the call. With `taken` naming another var the same load sinks.
+(define (opt-guard-sink-addr-taken-load-blocks
+  [global : i64]
+  [callee : i64]
+  [taken : i64]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks "use:
+         return %4
+       done:
+         return 0")
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Gep 2 (Global global) (I64 8) (U8))
+        (irt.instr "%7 = add %1, 2 : i64")
+        (ir.CompilerIrInstr.AddrOf 3 taken 0)
+        (irt.instr "%4 = load %2 : i64")
+        (ir.CompilerIrInstr.Call 5 callee (One (Var 3)) (Unit))
+        (irt.instr "%6 = ge %1, 0 : i64")
+        (irt.instr "branch %6, use, done")))))
+
 ;; Both arms of the guard feed the same merge phi, so the nearest common
 ;; dominator of the read's POSITIONS is the defining block itself.
 (define (opt-guard-sink-merge-blocks [global : i64]) : ir.CompilerIrBlockList
@@ -78936,6 +78959,16 @@ return 0" true)
         "guard_sink_addr_other"
         clean
         (opt-guard-sink-addr-taken-blocks global 4))]
+    [load-taken : ir.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_addr_taken_load"
+        clean
+        (opt-guard-sink-addr-taken-load-blocks global callee 2))]
+    [load-other : ir.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_addr_other_load"
+        clean
+        (opt-guard-sink-addr-taken-load-blocks global callee 7))]
     [rotated : ir.CompilerIrBlockList
       (opt-gs-uniform-phi-run
         "guard_sink_uniform_phi"
@@ -79081,6 +79114,24 @@ return 0" true)
           (ir.compiler-ir-label-none))
         (ir.compiler-ir-label "use"))
       (return 16))
+    ;; A load through an address-taken pointer stays above the call that may
+    ;; rewrite the pointer; the same load through a plain pointer still sinks.
+    (unless
+      (=
+        (opt-successor-sink-def-label
+          (ir.compiler-ir-block-list-view load-taken)
+          4
+          (ir.compiler-ir-label-none))
+        (ir.compiler-ir-label "entry"))
+      (return 17))
+    (unless
+      (=
+        (opt-successor-sink-def-label
+          (ir.compiler-ir-block-list-view load-other)
+          4
+          (ir.compiler-ir-label-none))
+        (ir.compiler-ir-label "use"))
+      (return 18))
     42))
 
 (test

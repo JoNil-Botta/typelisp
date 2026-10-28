@@ -956,33 +956,45 @@
   ;; what keeps template construction out of machine code. Refs #8274.
   compiler-comptime-host-callback-run-ops)
 
-;; `(tlci-host-callback-row-index-rows name rows...)` is the row index of the
-;; ABI name `name` among `rows`, or -1: one comparison per row.
+;; Keep the source-order ABI names in one literal rather than repeating the
+;; lookup code for every row. The generated names contain no newlines.
 (defmacro (tlci-host-callback-row-index-rows [name : Expr] [rows : Expr ...]) : i64
   (let
     [prefix-length : i64
       (string.string-length "compiler-comptime-host-callback-")]
     [row : i64 (expr-list-length rows)]
-    [lookup : Expr `-1]
+    [names : String ""]
     (while (> row 0)
       (set! row (- row 1))
       (match (expr-list-nth rows row)
         [(comptime.Expr.Var text)
           (set!
-            lookup
-            `(if (string.eq
-              ,name
-              ,(comptime.expr-string
-                (comptime.string-slice
-                  text
-                  prefix-length
-                  (- (string.string-length text) prefix-length))))
-              ,(comptime.expr-int row)
-              ,lookup))]
+            names
+            (comptime.string-append
+              (comptime.string-slice
+                text
+                prefix-length
+                (- (string.string-length text) prefix-length))
+              (comptime.string-append "\n" names)))]
         [_
           (comptime-error
             "tlci-host-callback-row-index-rows: rows must be bare names")]))
-    lookup))
+    `(let
+      [names : String ,(comptime.expr-string names)]
+      [offset : i64 0]
+      [row : i64 0]
+      [result : i64 -1]
+      (while (and (< offset (string.string-length names)) (< result 0))
+        (let
+          [end : i64 (string.index-of-byte (& names) offset (cast 10 : u8))]
+          (when
+            (string.eq
+              ,name
+              (string.substring-view (& names) offset (- end offset)))
+            (set! result row))
+          (set! offset (+ end 1))
+          (+= row 1)))
+      result)))
 
 ;; The row index of ABI name `name` in `tlci-host-callback-table`, or -1. The
 ;; producer stamps it into `run-ops` batches as a hint that the host confirms

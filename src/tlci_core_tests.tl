@@ -22,6 +22,56 @@
 ;; A declaration consumer cannot enter through the expression-only adapter.
 (tlci.tlci-host-callback-declarations tlci-test-declare-callback-rows)
 
+(defmacro (tlci-test-callback-row-indices [rows : Expr ...]) : Expr
+  (let
+    [checks : ExprList (expr-list-empty)]
+    [row : i64 (expr-list-length rows)]
+    [prefix-length : i64
+      (string.string-length "compiler-comptime-host-callback-")]
+    (while (> row 0)
+      (set! row (- row 1))
+      (match (expr-list-nth rows row)
+        [(comptime.Expr.Var text)
+          (let
+            [name : Expr
+              (comptime.expr-string
+                (comptime.string-slice
+                  text
+                  prefix-length
+                  (- (string.string-length text) prefix-length)))]
+            (set!
+              checks
+              (expr-list-cons
+                `(test.assert-i64-eq
+                  (tlci.tlci-host-callback-row-index ,name)
+                  ,(comptime.expr-int row)
+                  "callback row hint preserves inventory order")
+                checks)))]
+        [_ (comptime-error "callback table rows must be bare names")]))
+    `(begin
+      ,@checks)))
+
+(test
+  tlci-host-callback-row-indices
+  (tlci.tlci-host-callback-table tlci-test-callback-row-indices)
+  (test.assert-i64-eq (tlci.tlci-host-callback-row-index "") -1 "empty name")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "fuel-check\n")
+    -1
+    "a delimiter is not part of a callback name")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "fuel-check\0")
+    -1
+    "names are compared at their full length")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "expr-list")
+    -1
+    "a callback prefix is not a row")
+  (test.assert-i64-eq
+    (tlci.tlci-host-callback-row-index "not-a-callback")
+    -1
+    "unknown names do not resolve"))
+
 (test
   tlci-host-callback-declaration-table
   (test.assert-i64-eq

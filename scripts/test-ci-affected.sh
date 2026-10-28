@@ -255,31 +255,200 @@ done < "$work/inventory-files"
 inventory_inputs "$work/crlf-inputs" "$work/crlf-plans" > "$work/primary-crlf.raw" || fail 'Windows primary input extraction failed'
 sort -u "$work/primary-crlf.raw" > "$work/primary-crlf.tsv"
 cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkout changed primary input ownership'
+
+# Owning scripts are the inventory for fixtures they construct in shell loops.
+# Supported boundary: a path word under src, tests, stdlib or docs, relative to
+# the root or $ROOT, that expands $NAME or ${NAME}. When every name is bound only
+# by literal "for NAME in WORD..." lists in that script, each expansion is a
+# primary contract; search roots and outputs stay supporting. Any other expansion
+# is unresolved, and its probe member must select the gate (checked per host).
+constructed_inputs() {
+    awk -F '\t' '
+        function load(script,    line, status, physical, pending, joined) {
+            lines = 0; physical = 0; pending = 0
+            while ((status = getline line < script) > 0) {
+                sub(/\r$/, "", line)
+                physical++
+                if (pending) line = joined " " line
+                else if (line ~ /^[[:space:]]*#/) continue
+                else start[lines + 1] = physical
+                if (line ~ /\\$/) { sub(/\\$/, "", line); joined = line; pending = 1; continue }
+                pending = 0
+                text[++lines] = line
+            }
+            if (status < 0) { print "cannot read owning script: " script > "/dev/stderr"; exit 1 }
+            close(script)
+        }
+        function assigns(line, name,    before) {
+            line = " " line
+            while (match(line, "[^A-Za-z0-9_$.{/-]" name "=")) {
+                before = substr(line, 1, RSTART)
+                line = substr(line, RSTART + RLENGTH)
+                if (before !~ /-v[[:space:]]+$/) return 1 # awk -v binds awk, not shell
+            }
+            return 0
+        }
+        function bind(    i, rest, header, name, list, count, words, j, word) {
+            split("", members); split("", unresolved); split("", bound)
+            for (i = 1; i <= lines; i++) {
+                rest = text[i]
+                while (match(rest, /(^|[;&|(]|[[:space:]])for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:];]|$)/)) {
+                    header = substr(rest, RSTART, RLENGTH)
+                    rest = substr(rest, RSTART + RLENGTH)
+                    name = header; sub(/^.*for[[:space:]]+/, "", name); sub(/[[:space:];]+$/, "", name)
+                    bound[name] = 1
+                    if (header ~ /;$/ || rest !~ /^[[:space:]]*in([[:space:];]|$)/) { unresolved[name] = 1; continue }
+                    list = rest; sub(/^[[:space:]]*in/, "", list)
+                    if (match(list, /;|[[:space:]]do([[:space:]]|$)/)) list = substr(list, 1, RSTART - 1)
+                    count = split(list, words, /[[:space:]]+/)
+                    for (j = 1; j <= count; j++) {
+                        word = words[j]
+                        if (word ~ /^"[^"]*"$/ || word ~ /^\047[^\047]*\047$/) word = substr(word, 2, length(word) - 2)
+                        if (word ~ /^[A-Za-z0-9_.\/+-]+$/) members[name] = members[name] " " word
+                        else if (word != "") unresolved[name] = 1
+                    }
+                }
+            }
+            # Any other binding form leaves the name unresolved in the whole script.
+            for (name in bound) for (i = 1; i <= lines; i++) {
+                rest = " " text[i] " "
+                if (assigns(text[i], name) || rest ~ ("\\$\\{" name ":?=") ||
+                    (match(rest, /[^A-Za-z0-9_](read|getopts|local|export|readonly|declare|typeset)[[:space:]]/) &&
+                     substr(rest, RSTART) ~ ("[[:space:]]" name "([[:space:];&|)=]|$)"))) { unresolved[name] = 1; break }
+            }
+        }
+        function scan(script,    i, line, before, tail, position, character, name, segments, kind, template, probe, k, count, items, values, m, j, n, expanded, found) {
+            found = ""
+            for (i = 1; i <= lines; i++) {
+                line = text[i]
+                gsub(/--stdlib-root[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/, "", line)
+                gsub(/(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/, " ", line)
+                while (match(line, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]*\$/)) {
+                    before = substr(line, 1, RSTART - 1)
+                    tail = substr(line, RSTART)
+                    line = substr(line, RSTART + RLENGTH - 1)
+                    # Paths below scratch, package or copied roots are not repository inputs.
+                    if (before != "" && before !~ /[[:space:]"\047=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT\})"?\/$/) continue
+                    segments = 0; literal[0] = ""; kind = "member"; position = 1
+                    while (position <= length(tail)) {
+                        character = substr(tail, position, 1)
+                        if (character ~ /[A-Za-z0-9_.\/-]/) { literal[segments] = literal[segments] character; position++; continue }
+                        if (character != "$") break
+                        name = ""
+                        if (match(substr(tail, position), /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { name = substr(tail, position + 2, RLENGTH - 3); position += RLENGTH }
+                        else if (match(substr(tail, position), /^\$[A-Za-z_][A-Za-z0-9_]*/)) { name = substr(tail, position + 1, RLENGTH - 1); position += RLENGTH }
+                        else if (substr(tail, position + 1, 1) ~ /[0-9$@*#?!-]/) position += 2
+                        else position = length(tail) + 1 # Command substitution or operator expansion.
+                        reference[++segments] = name; literal[segments] = ""
+                        if (name == "" || unresolved[name] || !(name in members)) kind = "family"
+                    }
+                    template = literal[0]; probe = literal[0]; expanded = literal[0]
+                    for (k = 1; k <= segments; k++) {
+                        template = template "${" (reference[k] == "" ? "?" : reference[k]) "}" literal[k]
+                        probe = probe "__ci_affected_constructed_probe__" literal[k]
+                    }
+                    if (kind == "family") {
+                        if (literal[segments] == "") probe = probe ".tl" # Probe a source, as directory probes do.
+                        found = found "family\t" probe "\t" script ":" start[i] "\t" template "\n"
+                        continue
+                    }
+                    for (k = 1; k <= segments; k++) {
+                        count = split(expanded, items, "\n"); n = split(members[reference[k]], values, " ")
+                        expanded = ""
+                        for (m = 1; m <= count; m++) for (j = 1; j <= n; j++) expanded = expanded (expanded == "" ? "" : "\n") items[m] values[j] literal[k]
+                    }
+                    count = split(expanded, items, "\n")
+                    for (m = 1; m <= count; m++) found = found "member\t" items[m] "\t" script ":" start[i] "\t" template "\n"
+                }
+            }
+            return found
+        }
+        { gate[++pairs] = $1; owner[pairs] = $2 }
+        END {
+            for (p = 1; p <= pairs; p++) {
+                if (!(owner[p] in contracts)) { load(owner[p]); bind(); contracts[owner[p]] = scan(owner[p]) }
+                count = split(contracts[owner[p]], rows, "\n")
+                for (r = 1; r <= count; r++) if (rows[r] != "") {
+                    split(rows[r], fields, "\t")
+                    print fields[1] "\t" fields[2] "\t" gate[p] "\t" fields[3] "\t" fields[4]
+                }
+            }
+        }
+    ' "$1"
+}
 # Check every declared edge without thousands of recursive planner calls.
 # Allowed map globs contain only literal characters, dots and stars, so this
 # matches the selector case patterns. The witnesses below also replay plans.
-awk -F '\t' '
-    FILENAME == ARGV[1] {
-        if (/^#/ || $1 == "path" || $2 == "-") next
-        pattern=$1; gsub(/\./, "\\.", pattern); gsub(/\*/, ".*", pattern)
-        patterns[++rows]="^" pattern "$"; gates[rows]="," $2 ","
-        next
-    }
-    FILENAME == ARGV[2] {directories[$0]=1; next}
-    {
-        path=($1 in directories ? $1 "/__ci_affected_directory_probe__.tl" : $1)
-        known=0; covered=0
-        for(i=1;i<=rows;i++) if(path ~ patterns[i] || patterns[i] == "^@always$") {
-            if(patterns[i] != "^@always$") known=1
-            if(gates[i] == ",*," || index(gates[i], "," $2 ",")) covered=1
+check_primary_owners() {
+    awk -F '\t' '
+        FILENAME == ARGV[1] {
+            if (/^#/ || $1 == "path" || $2 == "-") next
+            pattern=$1; gsub(/\./, "\\.", pattern); gsub(/\*/, ".*", pattern)
+            patterns[++rows]="^" pattern "$"; gates[rows]="," $2 ","
+            next
         }
-        if(known && !covered) {
-            print "missing required primary owner: " $1 " -> " $2 > "/dev/stderr"
-            failed=1
+        FILENAME == ARGV[2] {directories[$0]=1; next}
+        {
+            path=($1 in directories ? $1 "/__ci_affected_directory_probe__.tl" : $1)
+            known=0; covered=0
+            for(i=1;i<=rows;i++) if(path ~ patterns[i] || patterns[i] == "^@always$") {
+                if(patterns[i] != "^@always$") known=1
+                if(gates[i] == ",*," || index(gates[i], "," $2 ",")) covered=1
+            }
+            if(known && !covered) {
+                print "missing required primary owner: " $1 " -> " $2 ($3 == "" ? "" : " (constructed at " $3 ")") > "/dev/stderr"
+                failed=1
+            }
         }
-    }
-    END {exit failed}
-' "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" || fail 'primary inventory ownership is incomplete'
+        END {exit failed}
+    ' "$@"
+}
+# Pin the boundary on a synthetic script and map, independent of today's lists.
+mkdir -p "$work/constructed-probe"
+cat > "$work/constructed-probe/owner.sh" <<'OWNER'
+# for skipped in "tests/integration/$skipped.tl"; do
+for fixture in alpha \
+    'beta'; do
+    compile "$ROOT/tests/integration/$fixture.tl" --stdlib-root "$ROOT/tests/$fixture" -o "tests/out/$fixture.s"
+done
+for loose in $LOOSE; do compile "tests/integration/${loose}_case.tl" "$WORK/src/$fixture.tl"; done
+for later in gamma; do awk -v later=1 '{print}' "tests/integration/$later.tl"; done
+for moved in delta; do :; done
+moved=epsilon
+compile "tests/integration/$moved.tl" "stdlib/$$.tl" "stdlib/$fixture/$fixture"
+OWNER
+probe_owner="$work/constructed-probe/owner.sh"
+printf 'synthetic-gate\t%s\n' "$probe_owner" > "$work/constructed-probe/scripts.tsv"
+constructed_inputs "$work/constructed-probe/scripts.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
+{
+    printf 'member\ttests/integration/alpha.tl\tsynthetic-gate\t%s:4\ttests/integration/${fixture}.tl\n' "$probe_owner"
+    printf 'member\ttests/integration/beta.tl\tsynthetic-gate\t%s:4\ttests/integration/${fixture}.tl\n' "$probe_owner"
+    printf 'family\ttests/integration/__ci_affected_constructed_probe___case.tl\tsynthetic-gate\t%s:6\ttests/integration/${loose}_case.tl\n' "$probe_owner"
+    printf 'member\ttests/integration/gamma.tl\tsynthetic-gate\t%s:7\ttests/integration/${later}.tl\n' "$probe_owner"
+    printf 'family\ttests/integration/__ci_affected_constructed_probe__.tl\tsynthetic-gate\t%s:10\ttests/integration/${moved}.tl\n' "$probe_owner"
+    printf 'family\tstdlib/__ci_affected_constructed_probe__.tl\tsynthetic-gate\t%s:10\tstdlib/${?}.tl\n' "$probe_owner"
+    for probe_path in alpha/alpha alpha/beta beta/alpha beta/beta; do
+        printf 'member\tstdlib/%s\tsynthetic-gate\t%s:10\tstdlib/${fixture}/${fixture}\n' "$probe_path" "$probe_owner"
+    done
+} > "$work/constructed-probe/expected.tsv"
+cmp "$work/constructed-probe/actual.tsv" "$work/constructed-probe/expected.tsv" || fail 'constructed input discovery left its supported boundary'
+# A member added to a literal list with neither a map owner nor a witness fails.
+printf 'path\trequired\tadvisory\treason\ntests/integration/*\tother-gate\t-\tsynthetic\ntests/integration/beta.tl\tsynthetic-gate\t-\tsynthetic\n' > "$work/constructed-probe/map.tsv"
+awk -F '\t' '$1 == "member" && $2 ~ /^tests\// {print $2 "\t" $3 "\t" $4}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/members.tsv"
+: > "$work/constructed-probe/directories"
+if check_primary_owners "$work/constructed-probe/map.tsv" "$work/constructed-probe/directories" "$work/constructed-probe/members.tsv" 2> "$work/constructed-probe/owners.err"; then
+    fail 'unowned synthetic constructed member passed'
+fi
+{
+    printf 'missing required primary owner: tests/integration/alpha.tl -> synthetic-gate (constructed at %s:4)\n' "$probe_owner"
+    printf 'missing required primary owner: tests/integration/gamma.tl -> synthetic-gate (constructed at %s:7)\n' "$probe_owner"
+} > "$work/constructed-probe/owners.expected"
+cmp "$work/constructed-probe/owners.err" "$work/constructed-probe/owners.expected" || fail 'constructed member omission lost its owner diagnostic'
+
+constructed_inputs "$work/recursive-scripts.tsv" > "$work/constructed.raw" || fail 'constructed input discovery failed'
+awk -F '\t' '$1 == "member" && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed.raw" > "$work/constructed-members.tsv"
+awk -F '\t' '$1 == "family" {script = $4; sub(/:[0-9]+$/, "", script); if (!seen[$3 FS script FS $5]++) print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed.raw" > "$work/constructed-families.tsv"
+check_primary_owners "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" "$work/constructed-members.tsv" || fail 'primary inventory ownership is incomplete'
 
 for host in linux windows; do
     "$ROOT/scripts/ci-verify.sh" --list-gates "$host" > "$work/$host.table"
@@ -356,7 +525,7 @@ for host in linux windows; do
                 src:stage2-native-integration-corpus | stdlib:stage2-native-integration-corpus) continue ;; # Native manifest validator catalogs compiler/import dependencies by name only.
                 stdlib:stage2-arena-sanitizer-selfhost) continue ;; # Generic instrumented compiler comparison, not a declared primary fixture contract.
                 stdlib/tests:stage0-size-ratchet | stdlib/tests:stage2-arena-sanitizer-selfhost | stdlib/tests:stage2-stdlib-documentation) continue ;; # Excluded fixture trees.
-                tests/integration:ir-observability-golden | tests/integration:stage2-compile-profile-verifier | tests/integration:compiler-arena-debug-native-matrix | tests/integration:stage2-safety-corpus) continue ;; # Search roots/constructed lists: exact fixtures checked below.
+                tests/integration:ir-observability-golden | tests/integration:stage2-compile-profile-verifier | tests/integration:compiler-arena-debug-native-matrix | tests/integration:stage2-safety-corpus) continue ;; # Search roots and constructed-path prefixes; discovered members have exact owners.
                 tests/integration:stage2-inline-typelisp-tests) continue ;; # Broad source-suite discovery is advisory; focused tests remain owner-selected.
                 tests/safety:stage2-native-integration-corpus) continue ;; # Existence-only catalog for manifest dependency validation, not a content consumer.
             esac
@@ -366,8 +535,8 @@ for host in linux windows; do
         "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
         has_gate "$work/direct-reader.ids" "$gate"
     done < "$work/script-inputs.tsv"
-    # Constructed script inputs and the reported independent source guards.
-    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/fixed_array_result_tailrec.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'tests/safety/global_mut_borrow_deref_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_field_overlap_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_initializer_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_noncall_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_store_location_reject.tl stage2-public-tool-surface' 'tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl stage2-public-tool-surface' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+    # Inputs outside the constructed-loop boundary and reported independent guards.
+    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'tests/safety/global_mut_borrow_deref_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_field_overlap_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_initializer_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_noncall_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_store_location_reject.tl stage2-public-tool-surface' 'tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl stage2-public-tool-surface' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
@@ -375,6 +544,17 @@ for host in linux windows; do
         "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
         has_gate "$work/direct-reader.ids" "$gate"
     done
+    # An unresolved construction must hold for any member: its probe selects the
+    # gate. A new site fails until it resolves, is owned or has a reviewed reason.
+    while IFS=$TAB read -r path gate site template; do
+        if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
+        case "${site%:*} $template $gate" in
+            'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix} embedded-stdlib-build-payload' | 'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} embedded-stdlib-tlci-image' | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} tlci-mutation-bootstrap-fixpoint') continue ;; # Payload-manifest sweeps; stdlib stays an advisory class for these produced-compiler consumers.
+        esac
+        printf '%s\n' "$path" > "$work/paths"
+        "$selector" --host "$host" --paths "$work/paths" > "$work/constructed-family.ids"
+        grep -Fx "$gate" "$work/constructed-family.ids" >/dev/null || fail "unresolved constructed input: $site $template -> $gate (probe $path)"
+    done < "$work/constructed-families.tsv"
     for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
         path=${row% *}
         gate=${row##* }

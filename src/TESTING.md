@@ -2790,6 +2790,12 @@ When changing gate commands or primary inventories, update the reviewed path
 map and run `--self-test`. Its ownership audit follows invoked owning scripts
 and whole-directory content guards, uses the canonical case translator
 in list mode, expands manifest primaries, and checks Windows checkout bytes.
+Owning scripts are also the inventory for fixtures they build in shell loops.
+A root-relative or `$ROOT` path that expands only names bound by literal
+`for NAME in WORD...` lists yields each member as a primary contract, so a
+member added to such a list needs its map owner. Any other expansion is
+unresolved: its probe path must select the gate, or the site needs a reviewed
+reason in the audit.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 

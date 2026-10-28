@@ -2793,10 +2793,11 @@ in list mode, expands manifest primaries, and checks Windows checkout bytes.
 Owning scripts are also the inventory for fixtures they build in shell loops.
 The audit checks constructed paths that are root-relative, under `$ROOT` or
 under a reviewed root alias. A path under any other prefix fails unless the
-audit records that prefix as scratch. A reference inside the body of a literal
-`for NAME in WORD...` loop in code resolves to that list when no other bare
-word in the script or its sourced scripts names it, so a member added to such
-a list is a primary contract that needs its map owner. `eval`, computed `read`
+audit records that prefix as scratch. A reference inside the body of a
+`for NAME in WORD...` loop in code resolves to the union of that name's lists
+when every one is literal and no other bare word in the script or its sourced
+scripts names it, so a member added to such a list is a primary contract that
+needs its map owner. `eval`, computed `read`
 or `export` targets, computed `source` paths and unbalanced loops leave every
 name unresolved, and an unterminated heredoc fails the audit. Any other
 expansion, and any unquoted glob word in such a list, is a family: every

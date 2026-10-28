@@ -284,7 +284,7 @@ constructed_inputs() {
                     continue
                 }
                 if (pending) line = joined line
-                else if (line ~ /^[[:space:]]*#/) continue
+                else if (quote == "" && line ~ /^[[:space:]]*#/) continue
                 else start[lines + 1] = physical
                 if (line ~ /\\$/) { sub(/\\$/, "", line); joined = line; pending = 1; continue }
                 pending = 0
@@ -337,7 +337,7 @@ constructed_inputs() {
             before = substr(view, 1, position - 1)
             while (match(before, /(^|[[:space:]])[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+$/))
                 before = substr(before, 1, RSTART - (substr(before, RSTART, 1) ~ /[[:space:]]/ ? 0 : 1))
-            return before ~ /(^|[;&|({!])[[:space:]]*$/ || before ~ /(^|[;&|({[:space:]])(do|then|else|elif|if|while|until)[[:space:]]+$/
+            return before ~ /(^|[;&|({!)])[[:space:]]*$/ || before ~ /(^|[;&|({[:space:]])(do|then|else|elif|if|while|until)[[:space:]]+$/
         }
         function normal(value) { gsub(/["\047\\]/, "", value); return value }
         function arguments(i, view, from,    to, rest) {
@@ -353,8 +353,10 @@ constructed_inputs() {
                 offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
                 if (substr(view, at, width) !~ /[*?[]/) continue
                 path = normal(substr(text[i], at, width)); prefix = ""
+                sub(/^\.\//, "", path)
                 if (match(path, /^\$(ROOT|\{ROOT([:?=+-][^}]*)?\})\//)) path = substr(path, RLENGTH + 1)
                 else if (match(path, /^\$(\{[A-Za-z_][A-Za-z0-9_]*[^}]*\}|[A-Za-z_][A-Za-z0-9_]*)\//)) { prefix = substr(path, 1, RLENGTH); path = substr(path, RLENGTH + 1) }
+                sub(/[()`;|&<>].*$/, "", path)
                 if (path !~ /^(src|tests|stdlib|docs)\// || path ~ /\$/) continue
                 t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix; token_segments[t] = 0; token_glob[t] = path
             }
@@ -388,6 +390,7 @@ constructed_inputs() {
         # Commands of one logical line, in order: loop keywords become events;
         # binders whose target is computed leave the whole script unresolved.
         function commands(i, view, main,    rest, offset, position, word, after, from, list, count, words, j, value, literal, values, name) {
+            if (view ~ /\$\{?[A-Za-z0-9_]+\}?(([-+*\/%^|&]|<<|>>)?=[^=]|\+\+|--)/) unreliable = 1
             rest = view; offset = 0
             while (match(rest, /[A-Za-z_][A-Za-z0-9_]*|\./)) {
                 position = offset + RSTART; word = substr(rest, RSTART, RLENGTH)
@@ -408,6 +411,7 @@ constructed_inputs() {
                     continue
                 }
                 if (!command_at(view, position)) continue
+                if (main && word != "for" && word != "do" && word != "done") { event[i, ++events[i]] = position; kind[i, events[i]] = "command" }
                 if (word == "for" && main) {
                     if (!match(substr(view, position), /^for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) { unreliable = 1; continue }
                     name = substr(view, position, RLENGTH); sub(/^for[[:space:]]+/, "", name)
@@ -421,14 +425,17 @@ constructed_inputs() {
                         for (j = 1; j <= count; j++) {
                             value = words[j]
                             if (value ~ /^"[^"]*"$/ || value ~ /^\047[^\047]*\047$/) value = substr(value, 2, length(value) - 2)
-                            if (value ~ /^[A-Za-z0-9_.\/+-]+$/) values = values " " value
-                            else if (value != "") literal = 0
+                            if (value ~ /^[A-Za-z0-9_.\/+-]+$/) {
+                                values = values " " value
+                                if (!((name, value) in listed)) { listed[name, value] = 1; union[name] = union[name] " " value }
+                            } else if (value != "") literal = 0
                         }
                         globs(i, view, from, length(list))
                         offset = from + length(list) - 1; rest = substr(view, offset + 1)
                     }
                     event[i, ++events[i]] = position; kind[i, events[i]] = "for"
                     block_name[++blocks] = name; block_literal[blocks] = literal; block_values[blocks] = values
+                    if (!literal) open_list[name] = 1
                     data[i, events[i]] = blocks
                     if (substr(view, from) ~ /^[[:space:]]+do([[:space:];&|]|$)/) { # for NAME do
                         event[i, ++events[i]] = from + index(substr(view, from), "do") - 1; kind[i, events[i]] = "do"
@@ -469,6 +476,7 @@ constructed_inputs() {
         }
         function apply(i, k) {
             if (kind[i, k] == "for") { if (pending) unreliable = 1; pending = data[i, k] }
+            else if (kind[i, k] == "command") { if (pending) unreliable = 1 }
             else if (kind[i, k] == "do") { stack[++depth] = pending; pending = 0 }
             else if (depth > 0) depth--
             else unreliable = 1
@@ -479,7 +487,7 @@ constructed_inputs() {
         }
         function process(script,    i, k, t, s, q, e, tokens_text, position, tail, before, prefix, character, name, segments, found, pattern, part, template, expanded, count, items, values, n, m, j, resolved) {
             load(script)
-            split("", headers); split("", sourced); split("", source_bare); split("", unbound)
+            split("", headers); split("", sourced); split("", source_bare); split("", unbound); split("", union); split("", listed); split("", open_list)
             blocks = 0; queued = 0; unreliable = 0; tokens = 0; depth = 0; pending = 0
             for (i = 1; i <= lines; i++) {
                 events[i] = 0
@@ -487,7 +495,7 @@ constructed_inputs() {
                 k = 1
                 tokens_text = blank(blank(text[i], "--stdlib-root[[:space:]]+(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]+)"), "(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+(\"[^\"]*\"|\047[^\047]*\047|[^[:space:]]+)")
                 position = 1
-                while (match(substr(tokens_text, position), /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/"\047*?-]*\$/)) {
+                while (match(substr(tokens_text, position), /(src|tests|stdlib|docs)\/([A-Za-z0-9_.\/"\047*?-]|\[|\])*\$/)) {
                     position += RSTART - 1
                     while (k <= events[i] && event[i, k] < position) apply(i, k++)
                     before = substr(text[i], 1, position - 1); gsub(/["\047]/, "", before)
@@ -539,7 +547,7 @@ constructed_inputs() {
                     name = token_reference[t, s]
                     template = template (name == "*" ? "*" : "${" (name == "" ? "?" : name) "}") token_literal[t, s]
                     part = token_literal[t, s]; gsub(/\./, "\\.", part); pattern = pattern ".*" part
-                    if (name == "" || !token_block[t, s] || !block_literal[token_block[t, s]] || unbound[name]) resolved = 0
+                    if (name == "" || !token_block[t, s] || (name in open_list) || unbound[name]) resolved = 0
                 }
                 prefix = token_prefix[t]
                 if (prefix != "") {
@@ -550,7 +558,7 @@ constructed_inputs() {
                 if (!resolved) { found = found "family\t" pattern "$\t" script ":" token_site[t] "\t" template "\n"; continue }
                 expanded = token_literal[t, 0]
                 for (s = 1; s <= segments; s++) {
-                    count = split(expanded, items, "\n"); n = split(block_values[token_block[t, s]], values, " ")
+                    count = split(expanded, items, "\n"); n = split(union[token_reference[t, s]], values, " ")
                     expanded = ""
                     for (m = 1; m <= count; m++) for (j = 1; j <= n; j++) expanded = expanded (expanded == "" ? "" : "\n") items[m] values[j] token_literal[t, s]
                 }
@@ -602,7 +610,8 @@ constructed_family_members() {
                     for (i = 1; i <= rows; i++) if (path ~ patterns[i]) { signature[path] = signature[path] " " i; owners[path] = owners[path] gates[i] }
                 }
                 if (signature[path] == "" || index(owners[path], ",*,") || index(owners[path], "," $2 ",")) continue
-                if (!seen[FNR, signature[path]]++) print path "\t" $2 "\t" $3 "\t" $4
+                if (seen[FNR, signature[path]]++ || replayed[path, $2]++) continue
+                print path "\t" $2 "\t" $3 "\t" $4
             }
         }
     ' "$@"
@@ -666,6 +675,11 @@ for ternary in 1; do : $((1?ternary=2:0)); compile "tests/integration/$ternary.t
 for hidden in alpha; do :; done
 EOF
 for after in omega; do compile "tests/integration/$after.tl"; done
+for reused in alpha; do for reused in gamma; do :; done; compile "tests/integration/$reused.tl"; done
+helper() { for helped in $EXTRA; do :; done; }
+for helped in alpha; do helper; compile "tests/integration/$helped.tl"; done
+for dotted in ./tests/*.in $(ls "$ROOT"/tests/listed/*.in); do :; done
+for bracket_name in alpha; do compile "tests/[ab]/$bracket_name.tl"; done
 OWNER
 probe_owner="$work/constructed-probe/owner.sh"
 # A sourced script can rebind a name, and eval can bind any name.
@@ -673,7 +687,14 @@ printf 'libbound=delta\n' > "$work/constructed-probe/lib.sh"
 printf '. "%s"\nfor libbound in alpha; do compile "tests/integration/$libbound.tl"; done\n' "$work/constructed-probe/lib.sh" > "$work/constructed-probe/sourcing.sh"
 printf 'eval "$BINDING"\nfor evaluated in alpha; do compile "tests/integration/$evaluated.tl"; done\n' > "$work/constructed-probe/evaluating.sh"
 printf 'for computed in alpha; do read -r comp"$SUFFIX"; compile "tests/integration/$computed.tl"; done\n' > "$work/constructed-probe/computed.sh"
-printf 'synthetic-gate\t%s\n' "$probe_owner" "$work/constructed-probe/sourcing.sh" "$work/constructed-probe/evaluating.sh" "$work/constructed-probe/computed.sh" > "$work/constructed-probe/scripts.tsv"
+# A case arm starts a command; a # line inside an open quote is string text; a
+# for header must reach its do before any other command; an expanded arithmetic
+# target can bind any name.
+printf 'case "$MODE" in x) . "$HELPER" ;; esac\nfor cased in alpha; do compile "tests/integration/$cased.tl"; done\n' > "$work/constructed-probe/case-arm.sh"
+printf '%s\n' "printf '%s\\n' 'first line" "# still quoted'; for commenter in alpha; do compile \"tests/integration/\$commenter.tl\"; done" > "$work/constructed-probe/quoted-comment.sh"
+printf 'echo Ready ! for stray in alpha\nwhile read -r line; do compile "tests/integration/$stray.tl"; done\n' > "$work/constructed-probe/stray-for.sh"
+printf 'for arith in alpha; do : $(($TARGET=7)); compile "tests/integration/$arith.tl"; done\n' > "$work/constructed-probe/arithmetic.sh"
+printf 'synthetic-gate\t%s\n' "$probe_owner" "$work/constructed-probe/sourcing.sh" "$work/constructed-probe/evaluating.sh" "$work/constructed-probe/computed.sh" "$work/constructed-probe/case-arm.sh" "$work/constructed-probe/quoted-comment.sh" "$work/constructed-probe/stray-for.sh" "$work/constructed-probe/arithmetic.sh" > "$work/constructed-probe/scripts.tsv"
 printf '%s\t%s\t%s\n' "$probe_owner" '$WORK/' scratch "$probe_owner" '$ALIAS/' root "$probe_owner" '$UNUSED/' scratch > "$work/constructed-probe/prefixes.tsv"
 constructed_inputs "$work/constructed-probe/scripts.tsv" "$work/constructed-probe/prefixes.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
 probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_owner" "$3" "$4"; }
@@ -693,6 +714,7 @@ probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_own
         probe_row family '^tests/integration/.*\.tl$' "${probe_name#*:}" "tests/integration/\${${probe_name%:*}}.tl"
     done
     probe_row member tests/integration/alpha.tl 22 'tests/integration/${fixture}.tl'
+    probe_row member tests/integration/beta.tl 22 'tests/integration/${fixture}.tl' # Every header of a name joins one union.
     probe_row prefixed '$OTHER/' 22 'tests/${fixture}.tl'
     probe_row prefixed '${ROOT_ALIAS}/' 22 'tests/${fixture}.tl'
     probe_row family '^tests/integration/.*\.tl$' 23 'tests/integration/${depth}.tl'
@@ -700,9 +722,19 @@ probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_own
     probe_row family '^tests/[^/][^/]*\.in$' 24 'tests/[[:alpha:]]*.in'
     probe_row family '^tests/integration/.*\.tl$' 25 'tests/integration/${ternary}.tl'
     probe_row member tests/integration/omega.tl 29 'tests/integration/${after}.tl'
+    probe_row member tests/integration/alpha.tl 30 'tests/integration/${reused}.tl'
+    probe_row member tests/integration/gamma.tl 30 'tests/integration/${reused}.tl'
+    probe_row family '^tests/integration/.*\.tl$' 32 'tests/integration/${helped}.tl'
+    probe_row family '^tests/[^/]*\.in$' 33 'tests/*.in'
+    probe_row family '^tests/listed/[^/]*\.in$' 33 'tests/listed/*.in'
+    probe_row family '^tests/.*/.*\.tl$' 34 'tests/*/${bracket_name}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/sourcing.sh" 'tests/integration/${libbound}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/evaluating.sh" 'tests/integration/${evaluated}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:1\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/computed.sh" 'tests/integration/${computed}.tl'
+    printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/case-arm.sh" 'tests/integration/${cased}.tl'
+    printf 'member\t%s\tsynthetic-gate\t%s:2\t%s\n' tests/integration/alpha.tl "$work/constructed-probe/quoted-comment.sh" 'tests/integration/${commenter}.tl'
+    printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/stray-for.sh" 'tests/integration/${stray}.tl'
+    printf 'family\t%s\tsynthetic-gate\t%s:1\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/arithmetic.sh" 'tests/integration/${arith}.tl'
     printf 'unused\t%s\t-\t%s\t-\n' '$UNUSED/' "$probe_owner"
 } > "$work/constructed-probe/expected.tsv"
 cmp "$work/constructed-probe/actual.tsv" "$work/constructed-probe/expected.tsv" || fail 'constructed input discovery left its supported boundary'
@@ -728,7 +760,7 @@ awk -F '\t' '$1 == "member" && $2 ~ /^tests\// && !seen[$2 FS $3]++ {print $2 "\
 if check_primary_owners "$work/constructed-probe/map.tsv" "$work/constructed-probe/directories" "$work/constructed-probe/members.tsv" 2> "$work/constructed-probe/owners.err"; then
     fail 'unowned synthetic constructed member passed'
 fi
-printf 'missing required primary owner: tests/integration/%s -> synthetic-gate (constructed at %s)\n' alpha.tl "$probe_owner:4" omega.tl "$probe_owner:29" > "$work/constructed-probe/owners.expected"
+printf 'missing required primary owner: tests/integration/%s -> synthetic-gate (constructed at %s)\n' alpha.tl "$probe_owner:4" omega.tl "$probe_owner:29" gamma.tl "$probe_owner:30" > "$work/constructed-probe/owners.expected"
 cmp "$work/constructed-probe/owners.err" "$work/constructed-probe/owners.expected" || fail 'constructed member omission lost its owner diagnostic'
 # A family is checked through its tracked members, not an unmapped stand-in:
 # a_case needs a replay, d_case shares its rows, b_case has a direct owner and
@@ -762,13 +794,14 @@ while IFS=$TAB read -r pattern gate site template; do
         'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix}') pattern='^stdlib/.*\.tl$' ;; # Its manifest check admits only stdlib .tl module suffixes.
     esac
     case "${site%:*} $template $gate" in
+        *' embedded-stdlib-tlci-resource-verifier-self-tests') case "${site%:*}" in scripts/verify-embedded-stdlib-tlci-resources.sh | scripts/build-embedded-stdlib-tlci.sh) continue ;; esac ;; # Its --self-test exits before both sweeps.
         'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix} embedded-stdlib-build-payload') continue ;; # The same payload checks run in the required stdlib module gate.
         'scripts/build-embedded-stdlib-tlci.sh stdlib/${MODULE_PATH} '*) # Payload source hash.
-            case "$gate" in embedded-stdlib-tlci-bounded-resource-report | embedded-stdlib-tlci-image | embedded-stdlib-tlci-resource-verifier-self-tests | stage2-compile-profile-verifier | tlci-mutation-bootstrap-fixpoint) continue ;; esac ;;
+            case "$gate" in embedded-stdlib-tlci-bounded-resource-report | embedded-stdlib-tlci-image | stage2-compile-profile-verifier | tlci-mutation-bootstrap-fixpoint) continue ;; esac ;;
         'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} embedded-stdlib-tlci-image' | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} tlci-mutation-bootstrap-fixpoint') continue ;; # Payload copy and source hash.
         'scripts/verify-compile-profile.sh stdlib/*.tl stage2-compile-profile-verifier' | 'scripts/verify-stdlib-tlci-identity-differential.sh stdlib/*.tl stage2-compile-profile-verifier') continue ;; # Whole-stdlib copies into a modified root.
-        'scripts/verify-embedded-stdlib-tlci-resources.sh stdlib/*.tl embedded-stdlib-tlci-bounded-resource-report' | 'scripts/verify-embedded-stdlib-tlci-resources.sh stdlib/*.tl embedded-stdlib-tlci-resource-verifier-self-tests' | 'scripts/verify-tlci-native-route-stress.sh stdlib/*.tl tlci-native-route-sustained-stress') continue ;; # Whole-stdlib copies into a modified root.
-    esac # Stdlib stays an advisory class for these produced-compiler consumers.
+        'scripts/verify-embedded-stdlib-tlci-resources.sh stdlib/*.tl embedded-stdlib-tlci-bounded-resource-report' | 'scripts/verify-tlci-native-route-stress.sh stdlib/*.tl tlci-native-route-sustained-stress') continue ;; # Whole-stdlib copies into a modified root.
+    esac # Stdlib stays an advisory class for the other produced-compiler consumers.
     printf '%s\t%s\t%s\t%s\n' "$pattern" "$gate" "$site" "$template"
 done < "$work/constructed-families.raw" > "$work/constructed-families.tsv"
 constructed_family_members "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-inputs" "$work/constructed-families.tsv" > "$work/constructed-family-members.tsv" || fail 'constructed family member grouping failed'

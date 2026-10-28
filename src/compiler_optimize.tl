@@ -21439,9 +21439,9 @@
 ;;   (`opt-addr-taken-operand?`) and a def of one as a store
 ;;   (`opt-addr-taken-write?`). Successor sinking and store address sinking
 ;;   move such a read only past instructions a load may cross; successor
-;;   sinking never clones a read or a def of one, and neither guard sinking
-;;   nor gep splitting moves or re-evaluates such a read. Each installs the set
-;;   before reading it.
+;;   sinking never clones a read or a def of one, neither guard sinking nor gep
+;;   splitting moves or re-evaluates such a read, and load sinking stops a
+;;   moving load at a def of one. Each installs the set before reading it.
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
 ;; marked vars, so a loop pays for the few there are rather than for the whole
@@ -89453,6 +89453,7 @@
 ;; Calls and memory writes are barriers; only reads, pure value producers and
 ;; BoundsCheck may be crossed. Moving a read later past an abort does not change
 ;; an observable effect, and never moves the read above its guarding check.
+;; A def of an address-taken var is a store too, so a moving load stops at one.
 ;; Plan bottom-up and emit moved instructions in their original order. A
 ;; consumer already scheduled to move cannot receive another motion without
 ;; proving the combined window, so leave that producer in place.
@@ -89489,7 +89490,8 @@
       (= (array-ref use-counts var) 1))))
 
 ;; The unique consumer must be a BinOp for a load, or a Load for a constant
-;; address. Every crossed instruction preserves both operands and the result.
+;; address. Every crossed instruction preserves both operands and the result,
+;; and a moving load crosses no def of an address-taken var.
 (define (opt-load-sink-find-consumer
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [start : i64]
@@ -89507,7 +89509,8 @@
         [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
         (if (or
           (not (opt-load-sink-crossable? instr))
-          (= (ir.compiler-ir-instr-dst instr) load-dst))
+          (= (ir.compiler-ir-instr-dst instr) load-dst)
+          (and (not address?) (opt-addr-taken-write? instr)))
           (set! done true)
           (if (opt-load-sink-instr-uses-var? instr load-dst)
             (begin
@@ -89784,10 +89787,12 @@
 (define (opt-load-sink-blocks [frame : i64] [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (if (not (opt-load-sink-blocks-want-pass? blocks))
     blocks
-    (match (opt-load-sink-blocks-pass
-      (& (opt-collect-blocks-uses-array frame blocks))
-      blocks)
-      [(Result next _) next])))
+    (let
+      [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
+      (match (opt-load-sink-blocks-pass
+        (& (opt-collect-blocks-uses-array frame blocks))
+        blocks)
+        [(Result next _) next]))))
 
 ;; --- store address sinking ------------------------------------------------
 ;;

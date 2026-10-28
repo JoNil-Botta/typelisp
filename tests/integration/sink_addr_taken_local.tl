@@ -2,11 +2,12 @@
 ;; motion may not move it below a store through the local's address, a call
 ;; handed that address, or a direct def of the local. Most cases read the
 ;; local, or copy it, before such a write and use the value in only one arm of
-;; a branch, the shape successor sinking moves into that arm; the last forms an
-;; address from the local, the shape gep splitting re-forms at each use. Each
-;; case returns 44 and recurses on an impossible guard, so it is not inlined
-;; into `main` and keeps its own shape. Exits 42, or the number of the failed
-;; check.
+;; a branch, the shape successor sinking moves into that arm. `split-address`
+;; forms an address from the local, the shape gep splitting re-forms at each
+;; use, and `read-through-then-set` reads through the address before a direct
+;; def, the shape load sinking moves to its consumer. Each case returns 44 and
+;; recurses on an impossible guard, so it is not inlined into `main` and keeps
+;; its own shape. Exits 42, or the number of the failed check.
 (import stdlib.io)
 
 (defstruct P
@@ -208,6 +209,23 @@
         (ptr-write! p (cast 40 : u8)))
       (+ (cast a : i64) (cast (array-ref items 1) : i64)))))
 
+;; A read through the local's address, a direct `set!` of the local, then the
+;; read's consumer in the same block: the read keeps the value from before the
+;; `set!`, 41 + 3.
+(define (read-through-then-set [n : i64]) : i64
+  (if (> n 1000000)
+    (read-through-then-set (- n 1))
+    (let
+      [x : i64 (+ 40 n)]
+      [px : (MutPtr i64)
+        (unsafe
+          (ptr-addr-of x))]
+      [a : i64
+        (unsafe
+          (ptr-read (ptr-offset px (- n 1))))]
+      (set! x 3)
+      (+ a x))))
+
 (define (main) : i64
   (let
     [n : i64 (io.arg-count)]
@@ -222,4 +240,5 @@
       [(!= (set-then-read n) 44) 8]
       [(!= (read-then-set n) 44) 9]
       [(!= (split-address n) 44) 10]
+      [(!= (read-through-then-set n) 44) 11]
       [else 42])))

@@ -9423,6 +9423,17 @@
        %18 = bit_or %11, %5 : i64
        return %18"))
 
+;; v21 is the address of v`taken`. With v20 address-taken, the def of v20 between
+;; the pair and its consumer writes the cell the load reads (#8913), so the pair
+;; stays above it; with another var's address taken the pair reaches its
+;; consumer.
+(define (opt-load-sink-addr-taken-def-blocks [taken : i64]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (str_cat.str-cat
+      "loop:\n%20 = add %3, 40 : i64\n%22 = add %3, 2 : i64\n%21 = addr_of %"
+      (string.int->string taken)
+      "\n%10 = gep %21, 0 : i64\n%11 = load %10 : i64\n%20 = mov 3 : i64\n%18 = bit_or %11, %20 : i64\nreturn %18")))
+
 ;; A call between the load and its consumer may store anywhere.
 (define (opt-load-sink-call-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -9563,6 +9574,35 @@
         [block (opt-load-sink-run (opt-load-sink-bounds-blocks))]
         (opt-load-sink-order? block bounds-expected))
       (return 7))
+    (let
+      [kept : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [moved : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      (set! (array-ref kept 0) 20)
+      (set! (array-ref kept 1) 22)
+      (set! (array-ref kept 2) 21)
+      (set! (array-ref kept 3) 10)
+      (set! (array-ref kept 4) 11)
+      (set! (array-ref kept 5) 20)
+      (set! (array-ref kept 6) 18)
+      (set! (array-ref kept 7) (- 0 1))
+      (unless
+        (let
+          [block (opt-load-sink-run (opt-load-sink-addr-taken-def-blocks 20))]
+          (opt-load-sink-order? block kept))
+        (return 8))
+      (set! (array-ref moved 0) 20)
+      (set! (array-ref moved 1) 22)
+      (set! (array-ref moved 2) 21)
+      (set! (array-ref moved 3) 20)
+      (set! (array-ref moved 4) 10)
+      (set! (array-ref moved 5) 11)
+      (set! (array-ref moved 6) 18)
+      (set! (array-ref moved 7) (- 0 1))
+      (unless
+        (let
+          [block (opt-load-sink-run (opt-load-sink-addr-taken-def-blocks 22))]
+          (opt-load-sink-order? block moved))
+        (return 9)))
     42))
 
 ;; --- store address sinking ----------------------------------------------------

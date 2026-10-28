@@ -1801,3 +1801,24 @@ stdout empty
 stderr contains error[E0505]
 stderr contains math-bits-array: expected a raw integer word literal
 stderr not-contains unbound name
+
+case check-legacy-box-get-reference-borrows
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+each legacy_box_get_ref_match_reject legacy_box_get_ref_match_clone_reject legacy_box_get_shared_box_reject legacy_box_get_store_ref_reject legacy_box_get_mut_box_reject legacy_box_get_nested_match_reject
+step check
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+stderr contains {{each}}.tl:
+stderr contains help: use deref for each indirection level, or pass an owned Box
+stderr not-contains __tl_tc_
+step compile
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/invalid.s"
+exit 1
+stdout empty
+stderr contains error[E0207]: typecheck: legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+stderr contains {{each}}.tl:
+stderr contains help: use deref for each indirection level, or pass an owned Box
+stderr not-contains __tl_tc_

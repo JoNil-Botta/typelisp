@@ -6510,9 +6510,7 @@
           (ast.ast-borrow-lifetime-from-id lifetime-id)
           (tc-global-shared-view place)
           allow-mut-by-value-borrow
-          (if (and (> source.line 0) (> source.column 0))
-            (TcMaybeAstSourceSpan.Some (tc-selected-source-span (& source)))
-            TcMaybeAstSourceSpan.No))
+          (TcBorrowSource.Selected (& source)))
           [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
           [(ResultTcType.Ok ty)
             ;; A mutable borrow of a view binder borrows through the view.
@@ -22866,6 +22864,14 @@
 (defenum ResultTcUnit
   (Ok)
   (Err String))
+
+;; Borrow diagnostic provenance stays borrowed until the direct storage-policy
+;; rejection. Successful borrows neither convert nor package a source span.
+(defenum TcBorrowSource
+  (:lifetimes source)
+  (No)
+  (Selected (& source ownership.OwnershipSource))
+  (Spanned (& source ast.AstSourceSpan)))
 
 (defenum TcMoveKind
   (Copyable)
@@ -53456,6 +53462,68 @@
             macro-name-id
             (tc-unbound-finalize-located-error located))))]))
 
+;; Keep borrow-only observation and result storage off the common operand path.
+;; Normalization failures still close an entered semantic frame.
+(define (tc-check-borrow-operand-view
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [mutable : bool]
+  [lifetime-id : i64]
+  [place-id : i64]
+  [span : ast.AstSourceSpan]
+  [expected? : bool]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (let
+    [exhausted? : bool (tc-type-env-scoped-identity-exhausted? env)]
+    [observed? : bool
+      (and
+        (not exhausted?)
+        (> tc-semantic-observed-jobs 0)
+        (!= (tc-context-semantic-observer ctx).address 0))]
+    [_enter : unit
+      (when observed? (tc-semantic-observe-enter! ctx env expr-id))]
+    [checked : ResultTcType
+      (if exhausted?
+        (Err (tc-selected-error typed.TypedError.Exhausted))
+        (match (tc-normalize-dotted-local-field-node! ctx env place-id)
+          [(Err message) (Err message)]
+          [(Ok)
+            (tc-borrow-expr-with-policy
+              ctx
+              (tc-context-expr-bases ctx)
+              env
+              mutable
+              (ast.ast-borrow-lifetime-from-id lifetime-id)
+              (tc-context-expr-get ctx place-id)
+              (and expected? allow-mut-by-value-borrow)
+              (TcBorrowSource.Spanned (& span)))]))]
+    (when
+      (not expected?)
+      (match (tc-global-shared-view checked)
+        [(Ok ty)
+          (let
+            [body-state : TcBodyState (tc-context-body-state ctx)]
+            (tc-body-type-fact-record!
+              body-state
+              expr-id
+              (tc-global-shared-view ty))
+            (when
+              body-state.inlay-hint-enabled
+              (tc-inlay-hint-maybe-record-expr-for-state
+                body-state.inlay-hint-state
+                (tc-context-expr-get ctx expr-id)
+                ty)))]
+        [(Err _) unit]))
+    (when
+      observed?
+      (tc-semantic-observe-expression!
+        ctx
+        env
+        expr-id
+        (tc-global-shared-view checked)))
+    checked))
+
 ;; Ordinary Spanned nodes and compact caller operands use the same transient
 ;; view. No-view callers retain the ID entrypoint's normalization/observation.
 ;; The view checks Unsafe with its span and locates errors with full context.
@@ -53484,56 +53552,17 @@
               (Some span))]
           [(Borrow mutable lifetime-id place-id)
             ;; A source view must reach the policy check even when a legacy
-            ;; consumer (deref or a store target) types the borrow. Keep the ID
-            ;; entrypoint's observation and intrinsic-result bookkeeping.
-            (let
-              [observed? : bool
-                (and
-                  (not (tc-type-env-scoped-identity-exhausted? env))
-                  (> tc-semantic-observed-jobs 0)
-                  (!= (tc-context-semantic-observer ctx).address 0))]
-              [_enter : unit
-                (when observed? (tc-semantic-observe-enter! ctx env expr-id))]
-              [checked : ResultTcType
-                (if (tc-type-env-scoped-identity-exhausted? env)
-                  (Err (tc-selected-error typed.TypedError.Exhausted))
-                  (match (tc-normalize-dotted-local-field-node!
-                    ctx
-                    env
-                    place-id)
-                    [(Err message) (Err message)]
-                    [(Ok)
-                      (tc-borrow-expr-with-policy
-                        ctx
-                        (tc-context-expr-bases ctx)
-                        env
-                        mutable
-                        (ast.ast-borrow-lifetime-from-id lifetime-id)
-                        (tc-context-expr-get ctx place-id)
-                        (and expected? allow-mut-by-value-borrow)
-                        (Some span))]))]
-              (when
-                (not expected?)
-                (match (clone checked)
-                  [(Ok ty)
-                    (let
-                      [body-state : TcBodyState (tc-context-body-state ctx)]
-                      (tc-body-type-fact-record! body-state expr-id (clone ty))
-                      (when
-                        body-state.inlay-hint-enabled
-                        (tc-inlay-hint-maybe-record-expr-for-state
-                          body-state.inlay-hint-state
-                          (clone inner)
-                          ty)))]
-                  [(Err _) unit]))
-              (when
-                observed?
-                (tc-semantic-observe-expression!
-                  ctx
-                  env
-                  expr-id
-                  (clone checked)))
-              checked)]
+            ;; consumer (deref or a store target) types the borrow.
+            (tc-check-borrow-operand-view
+              ctx
+              env
+              expr-id
+              mutable
+              lifetime-id
+              place-id
+              span
+              expected?
+              allow-mut-by-value-borrow)]
           [_
             (if expected?
               (tc-expr-with-expected-or-actual-core-id
@@ -53726,7 +53755,7 @@
             lifetime
             place
             true
-            TcMaybeAstSourceSpan.No)
+            TcBorrowSource.No)
           (tc-expr ctx env expr)))]
     [(Box inner-box)
       (let
@@ -57444,7 +57473,7 @@
         ctx
         env
         (& (tc-context-expr-get ctx place-id))
-        TcMaybeAstSourceSpan.No)
+        TcBorrowSource.No)
         [(ResultTcUnit.Ok) false]
         [(ResultTcUnit.Err _) true])]
     [(ast.AstExpr.MacroExpansion expanded _ _)
@@ -62300,7 +62329,7 @@
             ctx
             env
             source
-            TcMaybeAstSourceSpan.No)
+            TcBorrowSource.No)
             [(Ok) unit]
             [(Err message)
               (return
@@ -62363,7 +62392,7 @@
                   ctx
                   env
                   source
-                  TcMaybeAstSourceSpan.No)
+                  TcBorrowSource.No)
                   [(Ok) unit]
                   [(Err message)
                     (return
@@ -76371,7 +76400,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : (& ast.AstExpr)]
-  [source : TcMaybeAstSourceSpan]) : ResultTcUnit
+  [source : (TcBorrowSource source)]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
     expr)
@@ -76404,8 +76433,13 @@
             ;; from reference and box checks retain their established spans.
             (Err
               (match source
-                [(Some span) (tc-located-error span message)]
-                [(No) message])))))]
+                [(TcBorrowSource.Selected at)
+                  (if (and (> at.line 0) (> at.column 0))
+                    (tc-located-error (tc-selected-source-span at) message)
+                    message)]
+                [(TcBorrowSource.Spanned span)
+                  (tc-located-error (deref span) message)]
+                [(TcBorrowSource.No) message])))))]
     [(StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
@@ -76680,7 +76714,7 @@
   [lifetime : ast.AstBorrowLifetime]
   [place-expr : ast.AstExpr]
   [allow-mut-by-value-borrow : bool]
-  [source : TcMaybeAstSourceSpan]) : ResultTcType
+  [source : (TcBorrowSource source)]) : ResultTcType
   (match (tc-borrow-place-with-access
     ctx
     expr-bases
@@ -77098,7 +77132,7 @@
     lifetime
     place-expr
     false
-    TcMaybeAstSourceSpan.No))
+    TcBorrowSource.No))
 
 (define (tc-literal-pattern-compatible?
   [lit : ast.AstLiteral]

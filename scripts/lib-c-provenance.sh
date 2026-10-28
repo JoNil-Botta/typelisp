@@ -135,12 +135,13 @@ c_provenance_diagnose() {
     _cpd_diff=$4
     c_provenance_validate "$_cpd_current" measured || return 1
     if c_provenance_validate "$_cpd_baseline"; then
-        _cpd_record=$(cat "$_cpd_baseline")
+        set -- --slurpfile baseline "$_cpd_baseline"
     else
-        _cpd_record='{"schema":1,"status":"unknown","reason":"missing or malformed baseline producer record"}'
+        set -- --argjson baseline '[{"schema":1,"status":"unknown","reason":"missing or malformed baseline producer record"}]'
     fi
-    jq -nr --argjson b "$_cpd_record" --slurpfile now "$_cpd_current" \
+    jq -nr "$@" --slurpfile now "$_cpd_current" \
         --rawfile counts "$_cpd_counts" --rawfile diff "$_cpd_diff" '
+      $baseline[0] as $b |
       $now[0] as $n |
       ($counts | split("\n") | map(split("\t")) |
          map(select(length == 2 and (.[0]|test("^benchmark/c(-scalar)?/")))) |
@@ -261,6 +262,12 @@ c_provenance_self_test() (
     if c_provenance_validate "$_cpst_dir/unknown.json" measured 2>/dev/null; then
         echo 'provenance self-test accepted a historical unknown as a measurement' >&2; return 1
     fi
+    # A complete promoted sidecar must be read from a file, even when larger
+    # than the host's per-argument limit. Extra info is not comparison identity.
+    jq '.info.padding = ("x" * 262144)' "$_cpst_dir/producer.json" > "$_cpst_dir/large.json"
+    _cpst_out=$(c_provenance_diagnose "$_cpst_dir/large.json" "$_cpst_dir/producer.json" \
+        "$_cpst_dir/c-counts.tsv" "$_cpst_dir/c-diff.txt") || return 1
+    case "$_cpst_out" in *'same recorded C comparison identity'*) ;; *) echo 'provenance self-test rejected a large sidecar' >&2; return 1 ;; esac
     printf 'benchmark/typelisp/a | 10 | 11 | +1 | +10%% | REGRESSION\n' > "$_cpst_dir/tl-diff.txt"
     _cpst_out=$(c_provenance_diagnose "$_cpst_dir/producer.json" "$_cpst_dir/producer.json" \
         "$_cpst_dir/c-counts.tsv" "$_cpst_dir/tl-diff.txt") || return 1

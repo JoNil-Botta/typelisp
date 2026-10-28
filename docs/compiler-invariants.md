@@ -2024,10 +2024,14 @@ same-type casts and phi copies must therefore materialize it even when source
 and destination have the same allocator home. Parallel-copy scheduling treats
 it as reading no home, and cycle saves must not replace it with the nominal
 home's contents. Address formation still uses the backing local's storage.
-The recipe applies to the whole emitted function, so its destination must have
-one definition, counting parameters too. Stack-slot coloring can reuse an id
-for a dead address and a later pointer; a single use alone does not prove that
-the use still denotes the address.
+The recipe applies to the whole emitted function and requires one use. An
+immediately preceding definition in the same block certifies which address
+reaches that use, even when other definitions or a parameter share its id.
+This local certificate excludes phi edge inputs and `AddrOf` storage operands.
+Remaining candidates require one definition in the emitted function, counting
+parameters too; only functions with unproven candidates need that count.
+Stack-slot coloring can reuse an id for a dead address and a later pointer, so
+a single use alone does not prove that the use still denotes the address.
 
 A local whose address is taken (`addr_of v` anywhere in the function) is
 memory, not a value: a store or call through the exposed address redefines it

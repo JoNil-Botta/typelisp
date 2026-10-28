@@ -51078,6 +51078,11 @@
         [_ unit])]
     [_ unit]))
 
+;; A candidate's one value use immediately after its definition is dominated
+;; by that definition, even if coloring reuses the id elsewhere. The global
+;; recipe is consulted only at that sole use; suppressing other, dead AddrOf
+;; definitions is harmless. Phi inputs belong to predecessor edges, and an
+;; AddrOf storage operand names a home rather than reading its value.
 (define (compiler-backend-addr-of-forwarding-record-seq!
   [items : (&mut items (__tl_dyn-array i64))]
   [use-counts : (& use-counts (__tl_dyn-array i64))]
@@ -51172,6 +51177,9 @@
                 (set! unproven true))]))
         unproven)]))
 
+;; Retain globally unique recipes for nonadjacent and cross-block uses. Most
+;; functions need no such proof, so defer the complete definition walk until
+;; the local pass leaves a candidate unproven.
 (define (compiler-backend-addr-of-forwarding-enable!
   [backend-state : CompilerBackendState]
   [vars : i64]

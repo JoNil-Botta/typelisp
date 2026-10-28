@@ -257,23 +257,27 @@ sort -u "$work/primary-crlf.raw" > "$work/primary-crlf.tsv"
 cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkout changed primary input ownership'
 
 # Owning scripts are the inventory for fixtures they construct in shell loops.
-# Supported boundary: after sh quote removal, a path word under src, tests,
-# stdlib or docs that expands $NAME or ${NAME}. It is relative to the root or
-# $ROOT, or under a reviewed prefix: a root alias is audited the same way,
-# scratch is skipped and any other prefix fails. A reference resolves only
-# inside a "for NAME in WORD..." loop of that name, when every list for the name
-# is literal, no other bare word names it, and only pure words run between the
-# loop's do and the reference: keywords, nested literal headers and assignments
-# without arithmetic or assigning expansions. The closed whitelist also leaves
-# the whole script unresolved when it or a sourced script has eval, let, alias,
-# a read/getopts/mapfile/readarray/declare/typeset/export/local/readonly/trap
-# with an expansion, printf -v, an expanded arithmetic assignment, a computed
-# source, an unbalanced loop or a for header meeting a command before its do.
-# Each resolved expansion is a primary contract; search roots and outputs stay
-# supporting. Anything unresolved is a family: every tracked file it can name
-# must select the gate on each host.
+# Supported boundary (src/TESTING.md): after sh quote removal, a path word under
+# src, tests, stdlib or docs that expands $NAME or ${NAME}. It is relative to
+# the root or $ROOT, or under a reviewed prefix: a root alias is audited the
+# same way, scratch is skipped and any other prefix fails. A reference resolves
+# only inside a "for NAME in WORD..." loop of that name, when every list for
+# the name is literal, no other bare word names it, nothing earlier in its
+# command leaves the expansion grammar, and only pure words run between the
+# loop's do and the reference: keywords, nested literal headers and
+# assignments within the grammar. The script and its sourced scripts must keep
+# to a closed allowlist of builtins, options and hooks; anything else leaves
+# every reference unresolved. Each resolved expansion is a primary contract;
+# search roots and outputs stay supporting. Anything unresolved is a family:
+# every tracked file it can name must select the gate on each host.
 constructed_inputs() {
     awk -F '\t' '
+        BEGIN {
+            # Every bash and dash builtin, with the select and coproc keywords.
+            # Only allowed() admits one; a name with a slash is never a builtin.
+            split(". : [ alias bg bind break builtin caller cd command compgen complete compopt continue coproc declare dirs disown echo enable eval exec exit export false fc fg getopts hash help history jobs kill let local logout mapfile popd printf pushd pwd read readarray readonly return select set shift shopt source suspend test times trap true type typeset ulimit umask unalias unset wait", names, " ")
+            for (n in names) builtin[names[n]] = 1
+        }
         # Openings of arithmetic in a code view: $(( or an (( command.
         function arith_opens(value,    count, at, before) {
             count = 0
@@ -286,7 +290,7 @@ constructed_inputs() {
         }
         function arith_closes(value) { return gsub(/\)\)/, "", value) }
         function load(script,    line, status, physical, pending, joined, rest, offset, at, before, word, heads, tails, arith) {
-            lines = 0; physical = 0; pending = 0; heads = 0; tails = 0; quote = ""; arith = 0
+            lines = 0; physical = 0; pending = 0; heads = 0; tails = 0; quote = ""; arith = 0; loaded = script; patterns = 0; ifs = 0; braces = 0; scopes = 0; defining = ""; nest = 0; pushes = 0
             while ((status = getline line < script) > 0) {
                 sub(/\r$/, "", line)
                 physical++
@@ -301,9 +305,9 @@ constructed_inputs() {
                 if (pending) line = joined line
                 else if (quote == "" && line ~ /^[[:space:]]*#/) continue
                 else start[lines + 1] = physical
-                if (line ~ /\\$/) { sub(/\\$/, "", line); joined = line; pending = 1; continue }
+                if (continues(line)) { sub(/\\$/, "", line); joined = line; pending = 1; continue }
                 pending = 0
-                text[++lines] = line; body[lines] = 0; quote_at[lines] = quote; view[lines] = mask(line)
+                ansi = 0; text[++lines] = line; body[lines] = 0; quote_at[lines] = quote; view[lines] = mask(line); ansi_c[lines] = ansi
                 # Heredoc operators are code: quoted or commented << opens nothing,
                 # nor does an arithmetic shift, even one spanning lines.
                 rest = view[lines]; offset = 0
@@ -327,6 +331,16 @@ constructed_inputs() {
             close(script)
             if (heads < tails) { print "unterminated heredoc in owning script: " script > "/dev/stderr"; exit 1 }
         }
+        # Whether a final backslash joins the next line as sh reads it: an
+        # unescaped one in code or inside double quotes, not one in a comment,
+        # a single-quoted string or an escaped pair.
+        function continues(line,    tail, saved, masked, ending) {
+            if (line !~ /\\$/) return 0
+            tail = line; sub(/\\+$/, "", tail)
+            if ((length(line) - length(tail)) % 2 == 0) return 0
+            saved = quote; masked = mask(line); ending = quote; quote = saved; ansi = 0
+            return substr(masked, length(masked), 1) == "\\" || ending == "\""
+        }
         function mask(line,    i, n, character, out) {
             # Keep positions; quoted or escaped text and inline comments are not code.
             out = ""; n = length(line)
@@ -335,6 +349,7 @@ constructed_inputs() {
                 if (quote == "\047") { if (character == quote) { quote = ""; out = out character } else out = out "x"; continue }
                 if (character == "\\" && i < n) { out = out "xx"; i++; continue }
                 if (quote == "\"") { if (character == quote) { quote = ""; out = out character } else out = out "x"; continue }
+                if (character == "$" && substr(line, i + 1, 1) == "\047") ansi = 1 # Bash ANSI-C quoting; dash rejects it.
                 if (character == "\"" || character == "\047") { quote = character; out = out character; continue }
                 if (character == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[[:space:];&|()]/)) {
                     out = out sprintf("%" (n - i + 1) "s", ""); break
@@ -352,6 +367,15 @@ constructed_inputs() {
             return out line
         }
         function normal(value) { gsub(/["\047\\]/, "", value); return value }
+        # Text with each literal-dollar mark \001 replaced by mark.
+        function restore(value, mark,    out, at) {
+            out = ""
+            while ((at = index(value, "\001")) > 0) { out = out substr(value, 1, at - 1) mark; value = substr(value, at + 1) }
+            return out value
+        }
+        function here(i) { return loaded ":" start[i] }
+        # The first reason a script leaves the boundary, with its site.
+        function deny(reason, site) { if (!unreliable) { why = reason; why_site = site } unreliable = 1 }
         # The end of the simple command whose words start at from, in the code view.
         function extent(view, from,    j, character) {
             for (j = from; j <= length(view); j++) {
@@ -361,6 +385,30 @@ constructed_inputs() {
             }
             return j
         }
+        # The end of the shell word that starts at at in a code view: $( ),
+        # $(( )) and ( ) groups stay inside the word.
+        function word_end(view, at,    j, n, c, depth) {
+            n = length(view); depth = 0
+            for (j = at; j <= n; j++) {
+                c = substr(view, j, 1)
+                if (c == "(") depth++
+                else if (c == ")") { if (!depth) return j; depth-- }
+                else if (!depth && c ~ /[[:space:];&|<>]/) return j
+            }
+            return j
+        }
+        # Whether view text is exactly one $( ) or $(( )) group.
+        function substitution(value,    j, n, depth) {
+            n = length(value); depth = 0
+            if (substr(value, 1, 2) != "$(" || substr(value, n, 1) != ")") return 0
+            for (j = 2; j <= n; j++) {
+                if (substr(value, j, 1) == "(") depth++
+                else if (substr(value, j, 1) == ")" && --depth == 0 && j < n) return 0
+            }
+            return depth == 0
+        }
+        # A background job runs in a subshell and cannot change this shell.
+        function background(view, from,    j) { j = extent(view, from); return substr(view, j, 1) == "&" && substr(view, j + 1, 1) != "&" }
         # An unquoted glob word in a literal list names every matching file.
         function globs(i, view, from, size,    rest, offset, at, width, path, prefix, t) {
             rest = substr(view, from, size); offset = from - 1
@@ -404,48 +452,185 @@ constructed_inputs() {
             return out "$"
         }
         function regex_literal(value) { gsub(/[\\.+*?()[{}|^$]/, "\\\\&", value); return value }
-        function add_event(i, at, what, value) { event[i, ++events[i]] = at; kind[i, events[i]] = what; data[i, events[i]] = value }
+        function add_event(i, at, what, value, name) { event[i, ++events[i]] = at; kind[i, events[i]] = what; data[i, events[i]] = value; command_of[i, events[i]] = name }
+        # The closed expansion grammar. Effect-free forms are $NAME, positional
+        # and special parameters, ${NAME} alone or with a :- - :+ + :? ? # ## %
+        # or %% operator, ${#NAME}, $(...) and backticks. Any other expansion,
+        # such as $((, $[, a subscript, a substring, ${!, ${...@ or ${...=, may
+        # run arithmetic or assign. Single-quoted and escaped text expands
+        # nothing; in heredoc text (data) quotes are literal.
+        function effectful(value, quoting, data,    j, n, c, rest) {
+            n = length(value)
+            for (j = 1; j <= n; j++) {
+                c = substr(value, j, 1)
+                if (quoting == "\047") { if (c == "\047") quoting = ""; continue }
+                if (c == "\\") { j++; continue }
+                if (!data && c == "\"") { quoting = (quoting == "\"" ? "" : "\""); continue }
+                if (!data && c == "\047" && quoting == "") { quoting = "\047"; continue }
+                if (c != "$") continue
+                rest = substr(value, j + 1)
+                if (rest ~ /^\(\(/ || substr(rest, 1, 1) == "[") return 1
+                if (substr(rest, 1, 1) != "{") continue # $NAME, $1, $?, $( or a literal $
+                if (rest ~ /^\{#([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])\}/) continue
+                if (!match(rest, /^\{([A-Za-z_][A-Za-z0-9_]*|[0-9]+|[@*#?$!-])/)) return 1
+                c = substr(rest, RLENGTH + 1, 1)
+                if (c == ":") { if (substr(rest, RLENGTH + 2, 1) !~ /[-+?]/) return 1 }
+                else if (c != "}" && c !~ /[-+?#%]/) return 1
+            }
+            return 0
+        }
+        # The builtin allowlist. Each admitted builtin can neither bind a name
+        # it does not spell literally (bare words are counted separately) nor
+        # install a hook: no trap, xtrace, shell option, alias, attribute,
+        # callback or computed option.
+        function allowed(word, args,    count, words, j, w) {
+            if (word ~ /^(:|\[|test|true|false|echo|pwd|cd|pushd|popd|dirs|exit|return|break|continue|shift|kill|jobs|bg|fg|disown|suspend|logout|times|ulimit|umask|type|hash|help|exec)$/) return 1
+            if (word == "printf") return args !~ /(^|[[:space:]])-v/
+            if (word == "wait") return args !~ /(^|[[:space:]])-[A-Za-z]*p/
+            if (word ~ /^(read|getopts|unset)$/) return args !~ /[$`]/
+            if (word ~ /^(mapfile|readarray)$/) return args !~ /[$`]/ && args !~ /(^|[[:space:]])-[A-Za-z]*C/
+            if (word ~ /^(declare|typeset|local|export|readonly)$/) {
+                gsub(/=\$[?#$!]/, "=", args) # A status or pid as a value, never a name.
+                if (args ~ /[$`]/) return 0
+                count = split(args, words, /[[:space:]]+/)
+                for (j = 1; j <= count; j++) if (words[j] ~ /^[-+]/ && words[j] != "--" && words[j] !~ /^[-+][aAfFgprx]+$/) return 0
+                return 1
+            }
+            if (word == "set") {
+                count = split(args, words, /[[:space:]]+/)
+                for (j = 1; j <= count; j++) {
+                    w = words[j]
+                    if (w == "") continue
+                    if (w ~ /[$`]/) return 0 # A computed word may be an option.
+                    if (w == "--" || w == "-" || w !~ /^[-+]/) return 1 # Positional parameters follow.
+                    if (w !~ /^[-+][eufCavbhmnB]*o?$/) return 0
+                    if (w ~ /o$/ && words[++j] !~ /^(errexit|nounset|pipefail|noglob|noclobber|allexport|verbose|notify|hashall|monitor|braceexpand|noexec)$/) return 0
+                }
+                return 1
+            }
+            return 0
+        }
         # Shell words of one logical line in order. A word at a command position
         # is classified on its quote-removed text: loop keywords become events,
-        # every real command is an impure event, and the closed whitelist marks
-        # binding-capable forms that leave the whole script unresolved.
-        function commands(i, view, main,    rest, offset, at, width, raw, word, state, args, count, words, j, value, literal, values, name, from, list) {
-            rest = view; offset = 0; state = 1
+        # every real command is an impure event, and the allowlist leaves the
+        # whole script unresolved for anything it does not admit.
+        function commands(i, view, main,    rest, offset, at, width, raw, word, original, state, args, count, words, j, n, value, literal, values, name, from, list, stripped, c, dollar) {
+            # A line that continues a quoted word starts inside that word.
+            rest = view; offset = 0; state = (quote_at[i] == ""); last_sep = "\n"
+            if (ansi_c[i]) deny("an ANSI-C quote", here(i))
             while (match(rest, /[^[:space:];&|()<>]+|[;&|()<>]+/)) {
                 at = offset + RSTART; width = RLENGTH
                 offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
                 raw = substr(view, at, width)
                 if (raw ~ /^[;&|()<>]+$/) {
-                    # A redirection names a target word, not a command.
-                    if (raw !~ /[;|()]/ && raw ~ /[<>]/) {
-                        if (match(rest, /^[[:space:]]*[^[:space:];&|()<>]+/)) { offset += RLENGTH; rest = substr(rest, RLENGTH + 1) }
+                    if ((raw !~ /[;|()]/ && raw ~ /[<>]/) || raw == ">|") {
+                        # A redirection names a target word, not a command. The
+                        # target of a compound command expands before its body,
+                        # so every target keeps to the grammar; a redirection at
+                        # a command position is impure.
+                        if (state && main) add_event(i, at, "command", 1, "")
+                        if (match(rest, /^[[:space:]]*[^[:space:];&|()<>]+/)) {
+                            match(rest, /^[[:space:]]*/); from = offset + 1 + RLENGTH
+                            if ((raw !~ /<<$/ || raw ~ /<<<$/) && effectful(substr(text[i], from, word_end(view, from) - from), "", 0)) deny("an effectful redirection", here(i))
+                            match(rest, /^[[:space:]]*[^[:space:];&|()<>]+/)
+                            offset += RLENGTH; rest = substr(rest, RLENGTH + 1)
+                        }
                         continue
                     }
-                    state = 1; continue
-                }
-                if (!state) continue
-                word = normal(substr(text[i], at, width))
-                if (word ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/) {
-                    # An assignment keeps the command position and is pure unless
-                    # its value has an arithmetic or assigning expansion.
-                    if (main) add_event(i, at, "command", (word ~ /\$\(\(|\$\{[^}]*=/) ? 1 : 0)
+                    if (ifs) { deny("an IFS assignment outside a read prefix", here(i)); ifs = 0 }
+                    last_sep = raw
+                    if (patterns && raw ~ /\)/) { patterns = 0; sub(/^[^)]*\)/, "", raw); state = 1 }
+                    if (raw == "()") { state = 1; continue } # A function definition.
+                    # $( and <( open commands and give the position back when they
+                    # close; $(( and (( hold no commands; after a subshell only
+                    # redirections and separators follow.
+                    if (!patterns) for (j = 1; j <= length(raw); j++) {
+                        c = substr(raw, j, 1)
+                        if (c == "(") {
+                            nest++
+                            dollar = (j == 1 && substr(view, at - 1, 1) == "$") || (j > 1 && substr(raw, j - 1, 1) ~ /[<>]/)
+                            pushed[++pushes] = (dollar ? state : 0)
+                            if (substr(raw, j + 1, 1) == "(" && (dollar || state)) { arith[pushes] = 1; nest++; j++; state = 0 }
+                            else { arith[pushes] = 0; state = 1 }
+                        } else if (c == ")") {
+                            nest--
+                            if (pushes && arith[pushes] && substr(raw, j + 1, 1) == ")") { nest--; j++ }
+                            state = (pushes ? pushed[pushes--] : 1)
+                        } else state = 1
+                    }
+                    if (raw ~ /;;|;&/) { patterns = 1; state = 1 }
                     continue
                 }
-                if (word ~ /^(if|then|else|elif|while|until|!|time|\{)$/) continue
-                if (word == "do") { if (main) add_event(i, at, "do", 0); continue }
-                if (word ~ /^(done|fi|esac|\})$/) { if (main && word == "done") add_event(i, at, "done", 0); state = 0; continue }
-                if (word == "case") { state = 0; continue }
+                # An IO number or {fd} variable before a redirection is part of it.
+                if ((raw ~ /^[0-9]+$/ || raw ~ /^\{[A-Za-z_][A-Za-z0-9_]*\}$/) && substr(view, at + width, 1) ~ /[<>]/) continue
+                original = substr(text[i], at, width); word = normal(original)
+                if (patterns) {
+                    # Case patterns run up to their closing parenthesis.
+                    if (word == "esac") { patterns = 0; state = 0 }
+                    continue
+                }
+                if (!state) continue
+                if (defining != "" && word != "{") { deny("a function body without braces", here(i)); defining = "" }
+                if (word ~ /^[A-Za-z_][A-Za-z0-9_]*\+?=/) {
+                    # An assignment keeps the command position and is pure when
+                    # its value keeps to the grammar. Values are kept to check
+                    # names that run as commands.
+                    # The whole word reaches past $( ) and $(( )) groups; the
+                    # scan itself continues inside them.
+                    original = substr(text[i], at, word_end(view, at) - at); word = normal(original)
+                    name = substr(word, 1, index(word, "=") - 1); sub(/\+$/, "", name)
+                    value = substr(word, index(word, "=") + 1)
+                    if (substitution(substr(view, at + index(original, "="), word_end(view, at) - at - index(original, "=")))) value = "$(...)"
+                    bind(name, value, i)
+                    if (name == "IFS") ifs = 1
+                    if (main) add_event(i, at, "command", effectful(original, (at == 1 ? quote_at[i] : ""), 0), "")
+                    continue
+                }
+                # Brace groups track the function each command belongs to, and
+                # nest counts the compound commands and subshells around it.
+                if (word ~ /^(if|while|until)$/) nest++
+                if (word == "time") { while (match(rest, /^[[:space:]]+(-p|--)([[:space:]]|$)/)) { offset += RLENGTH - 1; rest = substr(rest, RLENGTH) } continue }
+                if (word ~ /^(if|then|else|elif|while|until|!)$/) continue
+                if (word == "{") {
+                    braces++; nest++
+                    if (defining != "") { scope[++scopes] = defining; scope_depth[scopes] = braces; scope_nest[scopes] = nest; defining = "" }
+                    continue
+                }
+                if (word == "}") { if (scopes && scope_depth[scopes] == braces) scopes--; if (braces) braces--; nest--; state = 0; continue }
+                if (word == "do") { if (main) add_event(i, at, "do", 0, ""); continue }
+                if (word ~ /^(done|fi|esac)$/) { if (main && word == "done") add_event(i, at, "done", 0, ""); patterns = 0; nest--; state = 0; continue }
+                if (word == "case") {
+                    nest++
+                    # The subject and patterns expand when the case runs.
+                    if (main) add_event(i, at, "command", 1, "case")
+                    if (match(substr(view, at), /^case[[:space:]]+[^[:space:];&|()<>]+[[:space:]]+in([[:space:]]|$)/)) {
+                        offset = at + RLENGTH - 1; rest = substr(view, offset + 1); patterns = 1
+                    }
+                    state = 0; continue
+                }
+                if (word == "function") {
+                    if (match(rest, /^[[:space:]]+[^[:space:];&|()<>]+/)) {
+                        name = normal(substr(text[i], offset + 1, RLENGTH)); sub(/^[[:space:]]+/, "", name)
+                        if (name in builtin || name == "command_not_found_handle") deny("a function named " name, here(i))
+                        defining = name; defined[name] = 1
+                        offset += RLENGTH; rest = substr(rest, RLENGTH + 1)
+                    }
+                    continue
+                }
                 if (word == "command" || word == "builtin") {
                     # A wrapper runs the next word; command -v and -V only query.
-                    if (match(rest, /^[[:space:]]+-p([[:space:]]|$)/)) { offset += RLENGTH - 1; rest = substr(rest, RLENGTH) }
-                    if (rest ~ /^[[:space:]]+-[A-Za-z]*[vV]/) { if (main) add_event(i, at, "command", 1); state = 0 }
+                    # builtin forces a builtin, so its next word must be literal.
+                    while (match(rest, /^[[:space:]]+(-p|--)([[:space:]]|$)/)) { offset += RLENGTH - 1; rest = substr(rest, RLENGTH) }
+                    if (word == "builtin" && match(rest, /^[[:space:]]+[^[:space:];&|()<>]+/) && substr(text[i], offset + 1, RLENGTH) ~ /[$`]/) deny("a computed builtin", here(i))
+                    if (rest ~ /^[[:space:]]+-[A-Za-z]*[vV]/) { if (main) add_event(i, at, "command", 1, word); state = 0 }
                     continue
                 }
                 if (word == "for") {
-                    state = 0
-                    if (!main) continue
-                    if (!match(substr(view, at), /^for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) { unreliable = 1; continue }
+                    state = 0; nest++
+                    if (!match(substr(view, at), /^for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) { deny("a for header without a name", here(i)); continue }
                     name = substr(view, at, RLENGTH); sub(/^for[[:space:]]+/, "", name)
+                    looped[name]++
+                    if (!main) continue
                     headers[name]++
                     from = at + RLENGTH; literal = 0; values = ""
                     if (match(substr(view, from), /^[[:space:]]+in([[:space:]]|;|$)/)) {
@@ -464,28 +649,75 @@ constructed_inputs() {
                         globs(i, view, from, length(list))
                         offset = from + length(list) - 1; rest = substr(view, offset + 1)
                     } else { state = 1; offset = from - 1; rest = substr(view, from) } # for NAME do, or for NAME; do
-                    add_event(i, at, "for", ++blocks)
+                    # A list that is not literal expands when the loop starts.
+                    if (!literal) add_event(i, at, "command", 1, "for")
+                    add_event(i, at, "for", ++blocks, "")
                     block_name[blocks] = name; block_literal[blocks] = literal; block_values[blocks] = values
                     if (!literal) open_list[name] = 1
                     continue
                 }
                 # Every real command, computed command names included, is impure.
                 state = 0
-                if (main) add_event(i, at, "command", 1)
+                if (ifs) { if (word == "read") ifs_reads++; else deny("an IFS assignment outside a read prefix", here(i)); ifs = 0 }
+                if (main) add_event(i, at, "command", 1, word)
+                if (substr(view, at + width) ~ /^[[:space:]]*\(\)/) {
+                    # A function must not shadow a builtin or a shell hook.
+                    if (word in builtin || word == "command_not_found_handle") deny("a function named " word, here(i))
+                    defining = word; defined[word] = 1
+                    continue
+                }
                 args = normal(substr(text[i], at + width, extent(view, at + width) - at - width))
                 gsub(/[0-9]*[<>]+&?[[:space:]]*[^[:space:]]*/, " ", args)
-                gsub(/\$[?#$!]/, "", args)
-                if (word ~ /^(eval|let|alias)$/) unreliable = 1
-                else if (word ~ /^(read|getopts|mapfile|readarray|declare|typeset|export|local|readonly|trap)$/ && args ~ /[$`]/) unreliable = 1
-                else if (word == "printf" && args ~ /(^|[[:space:]])-v/) unreliable = 1
-                else if (word == "." || word == "source") {
+                if (original ~ /[$`]/) {
+                    # A computed name with a literal slash is a path and a
+                    # background job cannot change this shell. A lone $NAME is
+                    # checked against every binding of NAME; any other computed
+                    # name may be a builtin.
+                    stripped = word
+                    gsub(/\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]|`[^`]*`/, "", stripped)
+                    if (index(stripped, "/") || background(view, at + width) || word ~ /^\$(0|\{0\})$/) continue
+                    if (word ~ /^\$[A-Za-z_][A-Za-z0-9_]*$/ || word ~ /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/) {
+                        name = word; gsub(/[${}]/, "", name)
+                        if (!(name in runs)) { runs[name] = here(i); run_order[++run_count] = name }
+                    } else if (word ~ /^\$([@*1]|\{[@*1]\})$/) {
+                        # A function that runs an argument: its callers pass the
+                        # command, after the literal shifts so far. At top level
+                        # they are the script arguments.
+                        if (scopes) need(scope[scopes], (uncertain[scope[scopes]] ? -1 : shifts[scope[scopes]] + 1), here(i))
+                    } else composite(word, here(i))
+                    continue
+                }
+                calls[word, ++called[word]] = argument_words(i, view, at + width); call_site[word, called[word]] = here(i)
+                call_scope[word, called[word]] = (scopes ? scope[scopes] : ""); call_shift[word, called[word]] = (scopes ? (uncertain[scope[scopes]] ? -1 : shifts[scope[scopes]]) : 0)
+                if (scopes && word == "shift") {
+                    # Literal shifts at the top of a function body fix the
+                    # argument a runner executes; any other shift does not.
+                    value = first_word(args); if (value == "") value = 1
+                    if (value !~ /^[0-9]+$/ || nest != scope_nest[scopes] || last_sep ~ /[&|]/) uncertain[scope[scopes]] = 1
+                    else shifts[scope[scopes]] += value
+                }
+                if (scopes && word == "set" && args ~ /(^|[[:space:]])(--|[^-+[:space:]][^[:space:]]*)([[:space:]]|$)/) uncertain[scope[scopes]] = 1
+                if (!(word in builtin)) continue
+                if (word == "shopt") options = 1
+                if (word == "." || word == "source") {
                     count = split(args, words, /[[:space:]]+/)
                     value = (words[1] == "" ? words[2] : words[1])
                     sub(/^\$(ROOT|\{ROOT\})\//, "", value)
                     if (value ~ /^(\/|scripts\/)[A-Za-z0-9_.\/-]+\.sh$/) { if (!(value in sourced)) { sourced[value] = 1; queue[++queued] = value } }
-                    else unreliable = 1
+                    else deny("a computed source", here(i))
+                } else if (!allowed(word, args)) deny("the builtin " word, here(i))
+                else if (word ~ /^(declare|typeset|local|export|readonly|getopts)$/) {
+                    # Their NAME=value arguments assign like assignment words; a
+                    # getopts target holds a letter of the literal option string.
+                    count = split(args, words, /[[:space:]]+/); j = 0
+                    for (n = 1; n <= count; n++) {
+                        if (words[n] == "" || words[n] ~ /^-/) continue
+                        if (word == "getopts") { if (++j == 2) looped[words[n]]++; continue }
+                        if (match(words[n], /^[A-Za-z_][A-Za-z0-9_]*=/)) bind(substr(words[n], 1, RLENGTH - 1), substr(words[n], RLENGTH + 1), i)
+                    }
                 }
             }
+            if (ifs) { deny("an IFS assignment outside a read prefix", here(i)); ifs = 0 }
         }
         # An arithmetic assignment whose target is an expansion may bind any name.
         function arithmetic(    i, all, code, source, at, region, closing) {
@@ -501,12 +733,12 @@ constructed_inputs() {
             while ((at = index(all, "$((")) > 0) {
                 all = substr(all, at + 3); closing = index(all, "))")
                 region = (closing ? substr(all, 1, closing - 1) : all)
-                if (assigning(region)) unreliable = 1
+                if (assigning(region)) deny("an arithmetic assignment to an expansion", loaded ":-")
             }
             while ((at = index(code, "((")) > 0) {
                 code = substr(code, at + 2); source = substr(source, at + 2); closing = index(code, "))")
                 region = normal(closing ? substr(source, 1, closing - 1) : source)
-                if (assigning(region)) unreliable = 1
+                if (assigning(region)) deny("an arithmetic assignment to an expansion", loaded ":-")
             }
         }
         function assigning(region,    shifted) {
@@ -515,7 +747,9 @@ constructed_inputs() {
             gsub(/[=!<>]=/, "", region)
             return shifted || region ~ /=/ || region ~ /\+\+|--/
         }
-        function bare(name,    i, line, from, at, previous, following, total) {
+        # Occurrences of name that may bind it. With unsetting, env -u NAME and
+        # unset -u style removals do not count.
+        function bare(name, unsetting,    i, line, from, at, previous, following, total) {
             total = 0
             for (i = 1; i <= lines; i++) {
                 line = normal(text[i]); from = 1
@@ -532,70 +766,194 @@ constructed_inputs() {
                     if (previous ~ /[A-Za-z0-9_]/ || following ~ /^[A-Za-z0-9_]/) continue
                     if (previous ~ /[.\/-]/ && substr(line, at - 2, 2) != "--") continue
                     if (following ~ /^[.\/-]/ && following !~ /^(--|-=|\/=)/) continue
+                    if (unsetting && substr(line, 1, at - 1) ~ /(^|[[:space:]])-u[[:space:]]+$/) continue
+                    # The word of ${NAME:?word} only expands as the shell exits.
+                    if (substr(line, 1, at - 1) ~ /\$\{[A-Za-z_][A-Za-z0-9_]*:?\?[^}]*$/) continue
                     total++
                 }
             }
             return total
+        }
+        # The variable a value expands alone, if any.
+        function reference(value) {
+            if (value ~ /^\$[A-Za-z_][A-Za-z0-9_]*$/) return substr(value, 2)
+            if (value ~ /^\$\{[A-Za-z_][A-Za-z0-9_]*(\}$|:?\?)/) { sub(/^\$\{/, "", value); sub(/[}:?].*$/, "", value); return value }
+            return ""
+        }
+        # Count the names that assigning expansions ${NAME=word} and
+        # ${NAME:=word} of line i bind.
+        function defaults(i,    line, name) {
+            line = normal(text[i])
+            while (match(line, /\$\{[A-Za-z_][A-Za-z0-9_]*:?=/)) {
+                name = substr(line, RSTART + 2, RLENGTH - 3); sub(/:$/, "", name); defaulted[name]++
+                line = substr(line, RSTART + RLENGTH)
+            }
+        }
+        # Whether a variable that runs as a command holds no builtin name. The
+        # allowlist leaves these in-script bindings: assignments (words and
+        # declare-family arguments), loops, getopts and assigning expansions.
+        # Every assigned value must be empty, have a literal slash, be command output or a
+        # positional parameter, or expand one variable that is itself such a
+        # variable or has no in-script binding: the environment, read input and
+        # command output are inputs (see TESTING.md).
+        function command_variable(name, trail,    j, value, ref, stripped, n) {
+            if (index(trail, " " name " ") || looped[name] || defaulted[name]) return 0
+            for (j = 1; j <= assignments[name]; j++) {
+                value = assigned[name, j]; stripped = value
+                gsub(/\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]|`[^`]*`/, "", stripped)
+                if (value == "" || index(stripped, "/") || value == "$(...)" || value ~ /^`/) continue
+                if (value ~ /^\$([1-9]|\{[1-9]\})$/) {
+                    # A function argument: every call must pass a command there.
+                    n = value; gsub(/[^0-9]/, "", n)
+                    if (bound_scope[name, j] != "") need(bound_scope[name, j], (bound_shift[name, j] < 0 ? -1 : bound_shift[name, j] + n), bound_site[name, j])
+                    continue
+                }
+                ref = reference(value)
+                if (ref == "") return 0
+                if ((assignments[ref] || looped[ref] || defaulted[ref]) && !command_variable(ref, trail " " name " ")) return 0
+            }
+            return 1
+        }
+        # An in-script assignment of value to name, with the function and the
+        # literal shifts it happens after.
+        function bind(name, value, i,    j) {
+            j = ++assignments[name]; assigned[name, j] = value; bound_site[name, j] = here(i)
+            bound_scope[name, j] = (scopes ? scope[scopes] : ""); bound_shift[name, j] = (scopes ? (uncertain[scope[scopes]] ? -1 : shifts[scope[scopes]]) : 0)
+        }
+        # Function fn runs, or names a command with, its argument at pos.
+        function need(fn, pos, site) {
+            if ((fn, pos) in needed) return
+            needed[fn, pos] = 1; argued[fn] = 1; need_fn[++needs] = fn; need_pos[needs] = pos; need_site[needs] = site
+        }
+        # The arguments of the simple command from position from, as quote-
+        # removed shell words joined by SUBSEP; redirections are dropped.
+        function argument_words(i, view, from,    rest, offset, out, raw, skip, word_text) {
+            rest = substr(view, from, extent(view, from) - from); offset = from - 1; out = ""; skip = 0
+            while (match(rest, /[^[:space:]]+/)) {
+                raw = substr(view, offset + RSTART, RLENGTH)
+                word_text = normal(substr(text[i], offset + RSTART, RLENGTH))
+                offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
+                if (skip) { skip = 0; continue }
+                if (raw ~ /^[0-9]*[<>]/) { skip = (raw ~ /^[0-9]*[<>]+&?$/); continue }
+                out = out (out == "" ? "" : SUBSEP) word_text
+            }
+            return out
+        }
+        # A computed command name that expands more than one parameter. It is
+        # a path when one of its plain references always holds a slash.
+        function composite(word, site,    rest, name) {
+            composites++; composite_site[composites] = site; composite_names[composites] = ""
+            rest = word
+            while (match(rest, /\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) {
+                name = substr(rest, RSTART, RLENGTH); rest = substr(rest, RSTART + RLENGTH)
+                gsub(/[${}]/, "", name); composite_names[composites] = composite_names[composites] " " name
+            }
+        }
+        # Whether every binding of name assigns a value with a literal slash.
+        function path_variable(name, trail,    j, value, ref, stripped) {
+            if (index(trail, " " name " ") || looped[name] || defaulted[name] || !assignments[name]) return 0
+            for (j = 1; j <= assignments[name]; j++) {
+                value = assigned[name, j]; stripped = value
+                gsub(/\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]|`[^`]*`/, "", stripped)
+                if (index(stripped, "/")) continue
+                ref = reference(value)
+                if (ref == "" || !path_variable(ref, trail " " name " ")) return 0
+            }
+            return 1
+        }
+        # The first word of argument text.
+        function first_word(args,    count, words, j) {
+            count = split(args, words, /[[:space:]]+/)
+            for (j = 1; j <= count; j++) if (words[j] != "") return words[j]
+            return ""
         }
         # Replay loop events in order. A command counts once the next one starts,
         # so a use inside a command never sees that command as having run.
         function commit() { effects += staged; staged = 0 }
         function apply(i, k,    what) {
             what = kind[i, k]
-            if (what == "for") { if (pending) unreliable = 1; commit(); pending = data[i, k] }
-            else if (what == "command") { if (pending) unreliable = 1; commit(); staged = data[i, k]; command_start = event[i, k] }
+            if (what == "for") { if (pending) deny("a for header meets a command", here(i)); commit(); pending = data[i, k] }
+            else if (what == "command") { if (pending) deny("a for header meets a command", here(i)); commit(); staged = data[i, k]; command_start = event[i, k]; command_name = command_of[i, k] }
             else if (what == "do") { commit(); stack[++depth] = pending; stacked[depth] = effects; pending = 0 }
-            else { commit(); if (depth > 0) depth--; else unreliable = 1 }
+            else { commit(); if (depth > 0) depth--; else deny("an unbalanced loop", here(i)) }
         }
         function innermost(name,    d) {
             for (d = depth; d > 0; d--) if (stack[d] && block_name[stack[d]] == name) return d
             return 0
         }
-        function process(script,    i, k, t, s, q, d, e, plain, quoting, position, tail, before, prefix, character, name, segments, found, pattern, part, template, expanded, count, items, values, n, m, j, resolved) {
+        # Whether character e of quote-removed text ends a path word. Quoted
+        # metacharacters end it too: a tracked path never holds one, and a
+        # quoted string may be code that sh -c splits again.
+        function stops(value, e) { return substr(value, e, 1) ~ /[[:space:];&|()<>"\047]/ }
+        # Whether characters from up to to hold a backtick that sh substitutes.
+        function substituted(value, from, to,    q) {
+            for (q = from; q < to; q++) if (substr(value, q, 1) == "`" && shield[q] < 2) return 1
+            return 0
+        }
+        function process(script,    i, k, t, s, q, b, d, e, n, m, j, plain, quoting, level, following, position, tail, before, prefix, character, name, segments, found, pattern, base, template, expanded, count, items, values, resolved, more, ref, value) {
             load(script)
             split("", headers); split("", sourced); split("", unbound); split("", union); split("", listed); split("", open_list)
-            blocks = 0; queued = 0; unreliable = 0; tokens = 0; depth = 0; pending = 0; effects = 0; staged = 0
+            split("", assignments); split("", assigned); split("", runs); split("", looped); split("", defaulted)
+            run_count = 0; needs = 0; passes = 0; composites = 0
+            split("", calls); split("", called); split("", call_site); split("", call_scope); split("", call_shift); split("", shifts); split("", uncertain)
+            split("", needed); split("", argued); split("", defined); split("", bound_site); split("", bound_scope); split("", bound_shift)
+            blocks = 0; queued = 0; unreliable = 0; tokens = 0; depth = 0; pending = 0; effects = 0; staged = 0; options = 0; ifs_reads = 0; why = ""; why_site = ""
             for (i = 1; i <= lines; i++) {
-                events[i] = 0
+                events[i] = 0; defaults(i)
                 if (!body[i]) commands(i, view[i], 1)
-                k = 1; command_start = 1
+                else if (!literal_body[i] && effectful(text[i], "", 1)) deny("an effectful expansion in a heredoc", here(i))
+                k = 1; command_start = 1; command_name = ""
                 if (index(text[i], "$")) {
-                    # Constructed paths are found after quote removal, as sh joins
-                    # words. A $ that sh keeps literal (single-quoted or escaped)
-                    # becomes \001, and text of a quoted heredoc never resolves.
+                    # Constructed paths are read as sh reads words. Quote removal
+                    # keeps an origin map and a shield per character: 1 inside
+                    # double quotes, 2 single-quoted or escaped. A $ that sh keeps
+                    # literal becomes \001, $'...' and $"..." an unknown
+                    # expansion, and text of a quoted heredoc never resolves.
                     plain = ""; n = length(text[i]); quoting = (body[i] ? "" : quote_at[i])
                     for (q = 1; q <= n; q++) {
-                        character = substr(text[i], q, 1)
+                        character = substr(text[i], q, 1); following = substr(text[i], q + 1, 1)
+                        level = (quoting == "\047" ? 2 : (quoting == "\"" ? 1 : 0))
                         if (quoting == "\047") { if (character == "\047") { quoting = ""; continue } if (character == "$") character = "\001" }
-                        else if (character == "\\" && q < n) { q++; character = substr(text[i], q, 1); if (character == "$") character = "\001" }
+                        else if (character == "\\" && q < n && ((quoting == "" && !body[i]) || following == "$" || following == "`" || following == "\\" || (following == "\"" && !body[i]))) {
+                            q++; character = following; level = 2
+                            if (character == "$") character = "\001"
+                        }
                         else if (!body[i] && character == "\"") { quoting = (quoting == "\"" ? "" : "\""); continue }
                         else if (!body[i] && character == "\047" && quoting == "") { quoting = "\047"; continue }
-                        plain = plain character; origin[length(plain)] = q
+                        else if (!body[i] && quoting == "" && character == "$" && (following == "\"" || following == "\047")) {
+                            plain = plain "$"; origin[length(plain)] = q; shield[length(plain)] = 0; character = "\002"
+                        }
+                        plain = plain character; origin[length(plain)] = q; shield[length(plain)] = level
                     }
                     plain = blank(blank(plain, "--stdlib-root[[:space:]]+[^[:space:]]+"), "(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+[^[:space:]]+")
                     position = 1
-                    while (match(substr(plain, position), /(src|tests|stdlib|docs)\/[^[:space:];&|()<>"\047$]*\$/)) {
+                    while (match(substr(plain, position), /(src|tests|stdlib|docs)\//)) {
                         position += RSTART - 1
+                        for (e = position; e <= length(plain) && !stops(plain, e); e++) ;
+                        tail = substr(plain, position, e - position)
+                        if (!index(tail, "$") && !substituted(plain, position, e)) { position = e; continue }
                         while (k <= events[i] && event[i, k] < origin[position]) apply(i, k++)
-                        before = substr(plain, 1, position - 1); gsub(/["\047]/, "", before)
+                        for (b = position - 1; b >= 1 && !stops(plain, b); b--) ;
+                        before = restore(substr(plain, b + 1, position - b - 1), "\\$")
                         prefix = ""
-                        if (before != "" && before !~ /[[:space:]=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT([:?=+-][^}]*)?\})\/$/ && match(before, /[^[:space:]=(;|&<>]+$/))
-                            prefix = substr(before, RSTART, RLENGTH)
-                        tail = substr(plain, position)
+                        if (before != "" && before !~ /[=:,]$/ && before !~ /\$(ROOT|\{ROOT([:?=+-][^}]*)?\})\/$/) { prefix = before; sub(/^.*=/, "", prefix) }
                         t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix; token_glob[t] = ""; token_data[t] = (body[i] && literal_body[i])
-                        if (normal(substr(text[i], command_start, origin[position] - command_start)) ~ /\$\(\(|\$\{[^}]*=/) token_data[t] = 1
+                        # An earlier expansion in the same command may change the
+                        # name, and [[ evaluates arithmetic operands.
+                        if (effectful(substr(text[i], command_start, origin[position] - command_start), (command_start == 1 && !body[i] ? quote_at[i] : ""), body[i])) token_data[t] = 1
+                        if (command_name == "[[" && normal(substr(text[i], command_start, origin[position] - command_start)) !~ /^\[\[[[:space:]]+(!?[[:space:]]*-[abcdefghknprstuwxzGLNOS][[:space:]]+)?$/) token_data[t] = 1
                         segments = 0; token_literal[t, 0] = ""; q = 1
                         while (q <= length(tail)) {
                             character = substr(tail, q, 1)
-                            if (character ~ /[[:space:];&|()<>"\047]/) break
-                            if (character == "*" || character == "?" || character == "[" || character == "{") {
-                                # A glob or brace group is a wildcard segment.
+                            if (character == "*" || character == "?" || character == "[" || character == "{" || character == "\t") {
+                                # A glob, a brace group or a quoted tab is a wildcard segment.
                                 if (character == "[" && bracket_end(tail, q)) q = bracket_end(tail, q)
                                 if (character == "{" && index(substr(tail, q), "}")) q += index(substr(tail, q), "}") - 1
                                 q++; token_reference[t, ++segments] = "*"; token_literal[t, segments] = ""; token_block[t, segments] = 0
                                 continue
                             }
-                            if (character != "$") { token_literal[t, segments] = token_literal[t, segments] character; q++; continue }
+                            if (character == "`" && shield[position + q - 1] < 2) { token_reference[t, ++segments] = ""; token_literal[t, segments] = ""; token_block[t, segments] = 0; break }
+                            if (character != "$") { token_literal[t, segments] = token_literal[t, segments] (character == "\001" ? "$" : character); q++; continue }
                             name = ""
                             if (match(substr(tail, q), /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { name = substr(tail, q + 2, RLENGTH - 3); q += RLENGTH }
                             else if (match(substr(tail, q), /^\$[A-Za-z_][A-Za-z0-9_]*/)) { name = substr(tail, q + 1, RLENGTH - 1); q += RLENGTH }
@@ -606,24 +964,83 @@ constructed_inputs() {
                             # Resolved only when nothing impure ran since that loop began.
                             token_block[t, segments] = (d && stacked[d] == effects ? stack[d] : 0)
                         }
+                        # A word that a parenthesis continues, such as an extglob,
+                        # names more than it shows; its operator is not literal.
+                        if (substr(plain, e, 1) == "(") {
+                            sub(/[@+!]$/, "", token_literal[t, segments])
+                            token_reference[t, ++segments] = "*"; token_literal[t, segments] = ""; token_block[t, segments] = 0
+                        }
                         token_segments[t] = segments
-                        position += q - 1
+                        position = e
                     }
                 }
                 while (k <= events[i]) apply(i, k++)
                 commit()
             }
-            if (depth || pending) unreliable = 1
+            if (depth || pending) deny("an unbalanced loop", script ":-")
             arithmetic()
             for (name in headers) unbound[name] = bare(name)
+            ifs_total = bare("IFS"); env_total = bare("BASH_ENV", 1) + bare("ENV", 1)
             # Sourced scripts can bind names too; read them with the same rules.
             for (e = 1; e <= queued; e++) {
                 load(queue[e])
-                for (i = 1; i <= lines; i++) { events[i] = 0; if (!body[i]) commands(i, view[i], 0) }
+                for (i = 1; i <= lines; i++) {
+                    events[i] = 0; defaults(i)
+                    if (!body[i]) commands(i, view[i], 0)
+                    else if (!literal_body[i] && effectful(text[i], "", 1)) deny("an effectful expansion in a heredoc", here(i))
+                }
                 arithmetic()
                 for (name in headers) unbound[name] += bare(name)
+                ifs_total += bare("IFS"); env_total += bare("BASH_ENV", 1) + bare("ENV", 1)
             }
             for (name in headers) unbound[name] = (unbound[name] != headers[name])
+            if (ifs_total > ifs_reads) deny("an IFS binding outside a read prefix", script ":-")
+            if (env_total) deny("a BASH_ENV or ENV binding", script ":-")
+            # Commands named by variables and by function arguments, checked to
+            # a fixpoint. A function that runs an argument, or a variable that
+            # holds one, needs every call to pass an admissible command there;
+            # a call that passes "$@" or $N on moves the need to its caller.
+            checked_runs = 0; checked_needs = 0
+            while (checked_runs < run_count || checked_needs < needs) {
+                while (checked_runs < run_count) { name = run_order[++checked_runs]; if (!command_variable(name, " ")) deny("the command variable " name, runs[name]) }
+                while (checked_needs < needs) {
+                    k = ++checked_needs; name = need_fn[k]; n = need_pos[k]
+                    if (n < 1) { deny("a function runs an argument at an unknown position", need_site[k]); continue }
+                    for (j = 1; j <= called[name]; j++) {
+                        count = split(calls[name, j], items, SUBSEP)
+                        if (n > count) continue
+                        for (m = 1; m <= n; m++) if (items[m] ~ /^\$([@*]|\{[@*]\})$/) break
+                        value = (m <= n ? n - m + 1 : 0)
+                        if (!value && items[n] ~ /^\$([1-9]|\{[1-9]\})$/) { value = items[n]; gsub(/[^0-9]/, "", value) }
+                        if (value) {
+                            # Passed on; at top level these are the script arguments.
+                            if (call_scope[name, j] != "") need(call_scope[name, j], (call_shift[name, j] < 0 ? -1 : value + call_shift[name, j]), call_site[name, j])
+                            continue
+                        }
+                        ref = items[n]
+                        if (ref ~ /[$`]/) {
+                            base = ref
+                            gsub(/\$\{[^}]*\}|\$\([^)]*\)|\$[A-Za-z_][A-Za-z0-9_]*|\$[0-9@*#?$!-]|`[^`]*`/, "", base)
+                            if (index(base, "/")) continue
+                            if (ref ~ /^\$[A-Za-z_][A-Za-z0-9_]*$/ || ref ~ /^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/) { gsub(/[${}]/, "", ref); if (!(ref in runs)) { runs[ref] = call_site[name, j]; run_order[++run_count] = ref } }
+                            else composite(ref, call_site[name, j])
+                            continue
+                        }
+                        base = ""
+                        for (m = n + 1; m <= count; m++) base = base " " items[m]
+                        if (ref in defined) { passed[++passes] = ref; passed_site[passes] = call_site[name, j]; passed_to[passes] = name }
+                        else if (ref == "." || ref == "source" || (ref in builtin && !allowed(ref, base))) deny("the command " ref " passed to " name, call_site[name, j])
+                    }
+                }
+            }
+            # A function passed as the command takes the remaining arguments, so
+            # it must not run or name a command with one of them.
+            for (k = 1; k <= passes; k++) if (passed[k] in argued) deny("the command " passed[k] " passed to " passed_to[k], passed_site[k])
+            for (k = 1; k <= composites; k++) {
+                count = split(composite_names[k], items, " "); value = 0
+                for (m = 1; m <= count; m++) if (path_variable(items[m], " ")) value = 1
+                if (!value) deny("a computed command name", composite_site[k])
+            }
             found = ""
             for (t = 1; t <= tokens; t++) {
                 segments = token_segments[t]
@@ -637,7 +1054,18 @@ constructed_inputs() {
                     pattern = pattern ".*" regex_literal(token_literal[t, s])
                     if (name == "" || !token_block[t, s] || (name in open_list) || unbound[name]) resolved = 0
                 }
+                if (options) {
+                    # Shell options may change glob matching: cover the whole root.
+                    base = (token_glob[t] != "" ? token_glob[t] : token_literal[t, 0])
+                    pattern = "^" substr(base, 1, index(base, "/")) ".*"
+                }
                 prefix = token_prefix[t]
+                # A dot, dot-dot or empty segment names a path its text does not
+                # match, so the map rows would be the wrong ones.
+                base = template
+                if (!resolved) gsub(/\$\{[^}]*\}|\*/, "x", base)
+                else { base = ""; for (s = 1; s <= segments; s++) base = base " " union[token_reference[t, s]]; base = template " " base }
+                if (template ~ /(^|\/)\.\.?(\/|$)|\/\// || base ~ /(^|[\/ ])\.\.?(\/|$| )/) { found = found "dotted\t" template "\t" script ":" token_site[t] "\t" template "\n"; continue }
                 if (prefix != "") {
                     used[script, prefix] = 1
                     if (reviewed[script, prefix] == "scratch") continue
@@ -653,6 +1081,7 @@ constructed_inputs() {
                 count = split(expanded, items, "\n")
                 for (m = 1; m <= count; m++) found = found "member\t" items[m] "\t" script ":" token_site[t] "\t" template "\n"
             }
+            if (unreliable) found = found "unresolved\t" why "\t" why_site "\t" script "\n"
             return found
         }
         FILENAME == ARGV[2] { reviewed[$1, $2] = $3; next }
@@ -675,6 +1104,7 @@ constructed_prefix_gaps() {
     awk -F '\t' '
         $1 == "prefixed" { print "constructed path under an unreviewed prefix: " $4 " " $2 $5 " -> " $3 > "/dev/stderr"; failed = 1 }
         $1 == "unused" { print "reviewed constructed prefix no longer occurs: " $4 " " $2 > "/dev/stderr"; failed = 1 }
+        $1 == "dotted" { print "constructed path with a dot or empty segment: " $4 " " $2 " -> " $3 > "/dev/stderr"; failed = 1 }
         END { exit failed }
     ' "$1"
 }
@@ -782,21 +1212,111 @@ printf '%s\n' "printf '%s\\n' 'first line" "# still quoted'; for commenter in al
 printf 'echo Ready ! for stray in alpha\nwhile read -r line; do compile "tests/integration/$stray.tl"; done\n' > "$work/constructed-probe/stray-for.sh"
 # A regex group is not arithmetic, so the heredoc after it still opens.
 printf '%s\n' '[[ $mode =~ ^((a|b)c)$ ]] && cat <<EOF' 'for hidden in alpha; do compile "tests/integration/$hidden.tl"; done' 'EOF' > "$work/constructed-probe/regex-heredoc.sh"
-# Each closed-whitelist class, written outside the loop, leaves the script
-# unresolved; the benign forms on the last script do not.
+# Each class outside the closed allowlist, written outside the loop, leaves the
+# script unresolved with its reason. Shell options also widen its families.
 probe_script() { printf 'synthetic-gate\t%s\n' "$1" >> "$work/constructed-probe/scripts.tsv"; }
 : > "$work/constructed-probe/scripts.tsv"
+: > "$work/constructed-probe/classes.expected"
 for probe_name in owner sourcing quoted-comment stray-for regex-heredoc; do probe_script "$work/constructed-probe/$probe_name.sh"; done
 probe_class=0
-for probe_construct in 'eval "$BINDING"' 'let other=1' 'alias rd=read' 'read -r "$TARGET" < /dev/null' 're""ad -r fixt"$SUFFIX"' 'export "$TARGET=1"' 'trap "$HANDLER" EXIT' 'printf -v"$TARGET" %s value' ': "$(( $TARGET = 32 ))"' '. "$HELPER"' 'command . "$HELPER"' 'case "$MODE" in x) . "$HELPER" ;; esac' 'builtin eval "$BINDING"'; do
+while IFS='|' read -r probe_reason probe_line probe_pattern probe_construct; do
     probe_class=$((probe_class + 1))
-    printf '%s\n%s\n' "$probe_construct" 'for item in alpha; do compile "tests/integration/$item.tl"; done' > "$work/constructed-probe/whitelist-$probe_class.sh"
-    probe_script "$work/constructed-probe/whitelist-$probe_class.sh"
-done
-printf ': $((\n    $TARGET = 32\n))\nfor item in alpha; do compile "tests/integration/$item.tl"; done\n' > "$work/constructed-probe/whitelist-multiline.sh"
-printf '%s\n' 'command -v cc >/dev/null; IFS= read -r line < /dev/null || return $?; printf "%s\n" "$line"; : $((count + 1))' 'for item in alpha; do compile "tests/integration/$item.tl"; done' > "$work/constructed-probe/benign.sh"
-probe_script "$work/constructed-probe/whitelist-multiline.sh"
-probe_script "$work/constructed-probe/benign.sh"
+    probe_file="$work/constructed-probe/class-$probe_class.sh"
+    printf '%s\n%s\n' "$probe_construct" 'for item in alpha; do compile "tests/integration/$item.tl"; done' > "$probe_file"
+    probe_script "$probe_file"
+    printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' "$probe_pattern" "$probe_file" 'tests/integration/${item}.tl' >> "$work/constructed-probe/classes.expected"
+    printf 'unresolved\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$probe_reason" "$probe_file" "$probe_line" "$probe_file" >> "$work/constructed-probe/classes.expected"
+done <<'CLASSES'
+the builtin eval|1|^tests/integration/.*\.tl$|eval "$BINDING"
+the builtin let|1|^tests/integration/.*\.tl$|let other=1
+the builtin alias|1|^tests/integration/.*\.tl$|alias rd=read
+the builtin read|1|^tests/integration/.*\.tl$|read -r "$TARGET" < /dev/null
+the builtin read|1|^tests/integration/.*\.tl$|re""ad -r fixt"$SUFFIX"
+the builtin read|1|^tests/integration/.*\.tl$|read -r item$# < /dev/null
+the builtin export|1|^tests/integration/.*\.tl$|export "$TARGET=1"
+the builtin trap|1|^tests/integration/.*\.tl$|trap "$HANDLER" EXIT
+the builtin trap|1|^tests/integration/.*\.tl$|trap '((TARGET))' DEBUG
+the builtin printf|1|^tests/integration/.*\.tl$|printf -v"$TARGET" %s value
+an arithmetic assignment to an expansion|-|^tests/integration/.*\.tl$|: "$(( $TARGET = 32 ))"
+a computed source|1|^tests/integration/.*\.tl$|. "$HELPER"
+a computed source|1|^tests/integration/.*\.tl$|command . "$HELPER"
+a computed source|1|^tests/integration/.*\.tl$|case "$MODE" in x) . "$HELPER" ;; esac
+the builtin eval|1|^tests/integration/.*\.tl$|builtin eval "$BINDING"
+the builtin declare|1|^tests/integration/.*\.tl$|declare -i count
+the builtin typeset|1|^tests/integration/.*\.tl$|typeset -n ref
+the builtin set|1|^tests/integration/.*\.tl$|set -x
+the builtin set|1|^tests/integration/.*\.tl$|set $OPTIONS
+the builtin shopt|1|^tests/.*$|shopt -s nocaseglob
+the builtin enable|1|^tests/integration/.*\.tl$|enable -f ./plugin.so plugin
+the builtin wait|1|^tests/integration/.*\.tl$|wait -p job
+the builtin mapfile|1|^tests/integration/.*\.tl$|mapfile -C callback lines < /dev/null
+the builtin select|1|^tests/integration/.*\.tl$|select choice in a b; do break; done
+the builtin coproc|1|^tests/integration/.*\.tl$|coproc cat
+an effectful redirection|1|^tests/integration/.*\.tl$|: > "$((TARGET))"
+an effectful redirection|1|^tests/integration/.*\.tl$|: > $((TARGET))
+an IFS assignment outside a read prefix|1|^tests/integration/.*\.tl$|IFS=,
+an IFS binding outside a read prefix|-|^tests/integration/.*\.tl$|local IFS
+a BASH_ENV or ENV binding|-|^tests/integration/.*\.tl$|BASH_ENV=/dev/null sh -c true
+a function named read|1|^tests/integration/.*\.tl$|read() { :; }
+a function named command_not_found_handle|1|^tests/integration/.*\.tl$|command_not_found_handle() { :; }
+a function body without braces|1|^tests/integration/.*\.tl$|quiet() ( : )
+the command variable runner|1|^tests/integration/.*\.tl$|runner=trap; "$runner" '((TARGET))' DEBUG
+a computed command name|1|^tests/integration/.*\.tl$|"$first$second" run
+a computed builtin|1|^tests/integration/.*\.tl$|builtin "$NAME" run
+the command trap passed to run|1|^tests/integration/.*\.tl$|run() { "$@"; }; run trap '((TARGET))' DEBUG
+a function runs an argument at an unknown position|1|^tests/integration/.*\.tl$|run() { [ "$#" -gt 1 ] && shift; "$@"; }; run true
+the command trap passed to start|1|^tests/integration/.*\.tl$|start() { binary=$2; "$binary" '((TARGET))' DEBUG; }; start label trap
+the command inner passed to outer|1|^tests/integration/.*\.tl$|inner() { "$@"; }; outer() { "$@"; }; outer inner trap '((TARGET))' DEBUG
+the builtin alias|1|^tests/integration/.*\.tl$|2>/dev/null alias rd=read
+the builtin alias|1|^tests/integration/.*\.tl$|{fd}>/dev/null alias rd=read
+the builtin alias|1|^tests/integration/.*\.tl$|>|/dev/null alias rd=read
+the builtin alias|1|^tests/integration/.*\.tl$|command -- alias rd=read
+the builtin alias|1|^tests/integration/.*\.tl$|builtin -- alias rd=read
+the builtin alias|1|^tests/integration/.*\.tl$|time -p alias rd=read
+an ANSI-C quote|1|^tests/integration/.*\.tl$|note=$'it\'s'; eval "$BINDING" # '
+CLASSES
+printf ': $((\n    $TARGET = 32\n))\nfor item in alpha; do compile "tests/integration/$item.tl"; done\n' > "$work/constructed-probe/multiline.sh"
+printf 'cat <<EOF\n$((TARGET))\nEOF\nfor item in alpha; do compile "tests/integration/$item.tl"; done\n' > "$work/constructed-probe/heredoc.sh"
+# A backslash at the end of a comment does not join the next line.
+printf 'set -eu # strict \\\neval "$BINDING"\nfor item in alpha; do compile "tests/integration/$item.tl"; done\n' > "$work/constructed-probe/comment.sh"
+# Inside the loop, an expansion outside the grammar, a redirection-only command,
+# a case, a list that is not literal or an [[ operand runs before the use. The
+# benign forms keep their loops resolved.
+cat > "$work/constructed-probe/region.sh" <<'REGION'
+for item in alpha; do value=${list[$TARGET++]}; compile "tests/integration/$item.tl"; done
+for item in alpha; do value=${item:TARGET}; compile "tests/integration/$item.tl"; done
+for item in alpha; do value=$[TARGET]; compile "tests/integration/$item.tl"; done
+for item in alpha; do value=${!REF}; compile "tests/integration/$item.tl"; done
+for item in alpha; do value=${REF@P}; compile "tests/integration/$item.tl"; done
+for item in alpha; do > "$OUT"; compile "tests/integration/$item.tl"; done
+for item in alpha; do case $MODE in x) ;; esac; compile "tests/integration/$item.tl"; done
+for item in alpha; do for other in $LIST; do value=1; done; compile "tests/integration/$item.tl"; done
+for item in alpha; do [[ $COUNT -eq tests/integration/$item.tl ]]; done
+for item in alpha; do compile ${!REF} "tests/integration/$item.tl"; done
+for item in alpha; do value=${item:-x} other=${#item}; [[ -f tests/integration/$item.tl ]]; done
+for item in alpha; do value=$((TARGET)); compile "tests/integration/$item.tl"; done
+REGION
+# Path words: a literal $ stays, a backslash in double quotes stays, $"...",
+# backticks and an extglob are unknown, a quoted ; ends the word as sh -c
+# would read it (a tracked path never holds one), and a dot segment fails.
+cat > "$work/constructed-probe/paths.sh" <<'PATHS'
+for item in alpha; do compile "tests/integration/${item}"'$.tl'; done
+for item in alpha; do compile "tests/integration/${item}\x.tl"; done
+for item in alpha; do compile tests/integration/$"x"$item.tl; done
+for item in alpha; do compile "tests/integration/`printf x`$item.tl"; done
+for item in alpha; do compile tests/integration/$item@(a|b).tl; done
+for item in alpha; do compile "tests/integration/${item};more.tl"; done
+for dotted in ../src; do compile "tests/integration/$dotted.tl"; done
+PATHS
+cat > "$work/constructed-probe/benign.sh" <<'BENIGN'
+command -v cc >/dev/null; IFS= read -r line < /dev/null || return $?; printf "%s\n" "$line"; : $((count + 1))
+set -eu; set -- one two; env -u BASH_ENV true; local status=$?; tool="$ROOT/bin/tool"; "$tool" run; "$TOOL_FROM_ENV" run
+runner() { shift 2; "$@"; }
+runner out err "$tool" --flag; launch() { binary=$2; "$binary"; }; launch label "$ROOT/bin/tool"
+"$@" &
+for item in alpha; do compile "tests/integration/$item.tl"; done
+BENIGN
+for probe_name in multiline heredoc comment region paths benign; do probe_script "$work/constructed-probe/$probe_name.sh"; done
 printf '%s\t%s\t%s\n' "$probe_owner" '$WORK/' scratch "$probe_owner" '$ALIAS/' root "$probe_owner" '$UNUSED/' scratch > "$work/constructed-probe/prefixes.tsv"
 constructed_inputs "$work/constructed-probe/scripts.tsv" "$work/constructed-probe/prefixes.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
 probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_owner" "$3" "$4"; }
@@ -845,13 +1365,25 @@ probe_family() { probe_row family '^tests/integration/.*\.tl$' "$1" "tests/integ
     printf 'member\t%s\tsynthetic-gate\t%s:2\t%s\n' tests/integration/alpha.tl "$work/constructed-probe/quoted-comment.sh" 'tests/integration/${commenter}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/stray-for.sh" 'tests/integration/${stray}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/regex-heredoc.sh" 'tests/integration/${hidden}.tl'
-    probe_class=0
-    while [ "$probe_class" -lt 13 ]; do
-        probe_class=$((probe_class + 1))
-        printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/whitelist-$probe_class.sh" 'tests/integration/${item}.tl'
-    done
-    printf 'family\t%s\tsynthetic-gate\t%s:4\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/whitelist-multiline.sh" 'tests/integration/${item}.tl'
-    printf 'member\t%s\tsynthetic-gate\t%s:2\t%s\n' tests/integration/alpha.tl "$work/constructed-probe/benign.sh" 'tests/integration/${item}.tl'
+    cat "$work/constructed-probe/classes.expected"
+    probe_other() { printf '%s\t%s\tsynthetic-gate\t%s/%s:%s\t%s\n' "$1" "$2" "$work/constructed-probe" "$3" "$4" "$5"; }
+    probe_other family '^tests/integration/.*\.tl$' multiline.sh 4 'tests/integration/${item}.tl'
+    probe_other unresolved 'an arithmetic assignment to an expansion' multiline.sh - "$work/constructed-probe/multiline.sh"
+    probe_other family '^tests/integration/.*\.tl$' heredoc.sh 4 'tests/integration/${item}.tl'
+    probe_other unresolved 'an effectful expansion in a heredoc' heredoc.sh 2 "$work/constructed-probe/heredoc.sh"
+    probe_other family '^tests/integration/.*\.tl$' comment.sh 3 'tests/integration/${item}.tl'
+    probe_other unresolved 'the builtin eval' comment.sh 2 "$work/constructed-probe/comment.sh"
+    for probe_line in 1 2 3 4 5 6 7 8 9 10; do probe_other family '^tests/integration/.*\.tl$' region.sh "$probe_line" 'tests/integration/${item}.tl'; done
+    probe_other member tests/integration/alpha.tl region.sh 11 'tests/integration/${item}.tl'
+    probe_other family '^tests/integration/.*\.tl$' region.sh 12 'tests/integration/${item}.tl'
+    probe_other member 'tests/integration/alpha$.tl' paths.sh 1 'tests/integration/${item}$.tl'
+    probe_other member 'tests/integration/alpha\x.tl' paths.sh 2 'tests/integration/${item}\x.tl'
+    probe_other family '^tests/integration/.*$' paths.sh 3 'tests/integration/${?}'
+    probe_other family '^tests/integration/.*$' paths.sh 4 'tests/integration/${?}'
+    probe_other family '^tests/integration/.*.*$' paths.sh 5 'tests/integration/${item}*'
+    probe_other member tests/integration/alpha paths.sh 6 'tests/integration/${item}'
+    probe_other dotted 'tests/integration/${dotted}.tl' paths.sh 7 'tests/integration/${dotted}.tl'
+    probe_other member tests/integration/alpha.tl benign.sh 6 'tests/integration/${item}.tl'
     printf 'unused\t%s\t-\t%s\t-\n' '$UNUSED/' "$probe_owner"
 } > "$work/constructed-probe/expected.tsv"
 cmp "$work/constructed-probe/actual.tsv" "$work/constructed-probe/expected.tsv" || fail 'constructed input discovery left its supported boundary'
@@ -860,6 +1392,7 @@ if constructed_prefix_gaps "$work/constructed-probe/actual.tsv" 2> "$work/constr
 fi
 {
     printf 'constructed path under an unreviewed prefix: %s:22 %s -> synthetic-gate\n' "$probe_owner" '$OTHER/tests/${fixture}.tl' "$probe_owner" '${ROOT_ALIAS}/tests/${fixture}.tl'
+    printf 'constructed path with a dot or empty segment: %s:7 %s -> synthetic-gate\n' "$work/constructed-probe/paths.sh" 'tests/integration/${dotted}.tl'
     printf 'reviewed constructed prefix no longer occurs: %s %s\n' "$probe_owner" '$UNUSED/'
 } > "$work/constructed-probe/prefixes.expected"
 cmp "$work/constructed-probe/prefixes.err" "$work/constructed-probe/prefixes.expected" || fail 'constructed prefix review lost its diagnostic'
@@ -872,7 +1405,7 @@ fi
 grep -Fx "unterminated heredoc in owning script: $work/constructed-probe/unterminated.sh" "$work/constructed-probe/unterminated.err" >/dev/null || fail 'unterminated heredoc lost its diagnostic'
 # A member added to a literal list with neither a map owner nor a witness fails.
 printf 'path\trequired\tadvisory\treason\ntests/integration/*\tother-gate\t-\tsynthetic\ntests/integration/beta.tl\tsynthetic-gate\t-\tsynthetic\ntests/integration/b_case.tl\tsynthetic-gate\t-\tsynthetic\nstdlib/*\t-\t@stdlib\tsynthetic\n' > "$work/constructed-probe/map.tsv"
-awk -F '\t' '$1 == "member" && $2 ~ /^tests\// && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/members.tsv"
+awk -F '\t' '$1 == "member" && $2 ~ /^tests\// && $4 ~ /owner\.sh:/ && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/members.tsv"
 : > "$work/constructed-probe/directories"
 if check_primary_owners "$work/constructed-probe/map.tsv" "$work/constructed-probe/directories" "$work/constructed-probe/members.tsv" 2> "$work/constructed-probe/owners.err"; then
     fail 'unowned synthetic constructed member passed'
@@ -900,6 +1433,10 @@ cmp "$work/constructed-probe/family-members.tsv" "$work/constructed-probe/family
     printf '%s\t%s\tscratch\n' scripts/verify-stdlib-tlci-identity-differential.sh '$MODIFIED_ROOT/' # Modified stdlib copy.
     printf '%s\t%s\tscratch\n' scripts/verify-tlci-native-route-stress.sh '$SOURCE_ROOT/' # Copy under WORKDIR.
 } > "$work/constructed-prefixes.tsv"
+# A constructed path word ends at the first shell metacharacter, quoted or not.
+# That reading is exact because no tracked path holds a character outside
+# [A-Za-z0-9._/+-]: a word that sh reads on past one names no tracked file.
+grep -v -E '^[A-Za-z0-9._/+-]+$' "$work/tracked-inputs" > "$work/unsafe-paths" && fail "tracked path outside the constructed path alphabet: $(head -n 1 "$work/unsafe-paths")"
 constructed_inputs "$work/recursive-scripts.tsv" "$work/constructed-prefixes.tsv" > "$work/constructed.raw" || fail 'constructed input discovery failed'
 constructed_prefix_gaps "$work/constructed.raw" || fail 'constructed path prefixes need review'
 awk -F '\t' '$1 == "member" && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed.raw" > "$work/constructed-members.tsv"

@@ -2802,34 +2802,94 @@ when all of these hold:
 - every list for the name in the script is literal;
 - no other bare word in the script or its sourced scripts names it;
 - only pure words run between the loop's `do` and the reference: keywords,
-  nested literal `for` headers, and assignments without arithmetic or
-  assigning expansions. Any other command, including a computed command name,
-  leaves it unresolved;
-- the script passes the closed whitelist below.
+  nested literal `for` headers, and assignments whose expansions keep to the
+  grammar below. Any other command leaves it unresolved, and so do a
+  redirection-only command, a `case` and a `for` list that is not literal;
+- nothing earlier in the reference's own command leaves the grammar, and an
+  `[[` before it tests only with a unary operator;
+- the script passes the closed allowlist below.
 
 A resolved reference expands to the union of the name's lists. Each member is
 a primary contract, so a member added to such a list needs its map owner.
 
-The whitelist is closed: a script, or any script it sources, that contains
-one of these forms leaves every reference in it unresolved:
+The expansion grammar is closed. Only these expansions are effect-free:
 
-- `eval`, `let` or `alias`;
-- a `read`, `getopts`, `mapfile`, `readarray`, `declare`, `typeset`, `export`,
-  `local`, `readonly` or `trap` whose arguments contain an expansion (`$?`,
-  `$#`, `$$` and `$!` excepted);
-- `printf -v`;
-- an arithmetic assignment, `++` or `--` with an expanded target;
-- a computed `.` or `source` path;
-- an unbalanced loop, or a `for` header that meets another command before its
-  `do`.
+- `$NAME`, positional and special parameters;
+- `${NAME}`, alone or with a `:-`, `-`, `:+`, `+`, `:?`, `?`, `#`, `##`, `%`
+  or `%%` operator, and `${#NAME}`;
+- `$(...)` and backticks.
 
-The wrappers `command` and `builtin` count as the command they run. An
-unterminated heredoc fails the audit. A constructed path word runs to the next
-shell metacharacter after quote removal; a `$` that sh keeps literal never
-starts one. Anything unresolved, any unquoted glob word in a literal list, and
-any glob, bracket or brace segment inside a constructed path is a family:
-every tracked file it can name must select the gate on each host, or the site
-needs a reviewed reason in the audit.
+Any other form may run arithmetic or assign: `$((`, `$[`, a subscript, a
+substring, `${!`, `${NAME@...}` and `${NAME=...}` among them. Inside a loop it
+is impure. In a redirection target or an unquoted heredoc body it leaves the
+whole script unresolved, because those expand before a compound command's
+body runs.
+
+The allowlist is closed as well. A script, or any script it sources, leaves
+every reference in it unresolved unless all of these hold:
+
+- Its builtins are among:
+  - `:`, `[`, `test`, `true`, `false`, `echo`, `pwd`, `cd`, `pushd`, `popd`,
+    `dirs`, `exit`, `return`, `break`, `continue`, `shift`, `kill`, `jobs`,
+    `bg`, `fg`, `disown`, `suspend`, `logout`, `times`, `ulimit`, `umask`,
+    `type`, `hash`, `help` and `exec`;
+  - `.` or `source` with a literal `scripts/...sh` path, which is scanned too;
+  - `printf` without `-v`, and `wait` without `-p`;
+  - `read`, `getopts` and `unset` with literal arguments, and `mapfile` or
+    `readarray` with literal arguments and no `-C`;
+  - `declare`, `typeset`, `local`, `export` and `readonly` with literal
+    arguments, apart from a status or pid value such as `=$?`, and options
+    from `-aAfFgprx`;
+  - `set` with options from `-eufCavbhmnB` or a `-o` errexit, nounset,
+    pipefail, noglob, noclobber, allexport, verbose, notify, hashall,
+    monitor, braceexpand or noexec, then any positional parameters.
+
+  Every other builtin is outside, among them `eval`, `let`, `alias`, `trap`,
+  `shopt`, `enable`, `select` and `coproc`. `command` and `builtin` count as
+  the command they run, and `builtin` needs a literal one.
+- `IFS` is assigned only as a prefix of `read`, and `BASH_ENV` or `ENV` is
+  only removed with `env -u`.
+- No function shadows a builtin or `command_not_found_handle`, and every
+  function body is a brace group.
+- A command name with an expansion has a literal slash, runs in the
+  background, or is `$0`, a command variable, a function argument or a path
+  composite:
+  - a command variable is a lone `$NAME`. Every in-script binding of NAME
+    must be an assignment, not a loop, a `getopts` target or an assigning
+    expansion. Each value must be empty, have a literal slash, be command
+    output or a positional parameter, or expand one variable that meets the
+    same rule or has no in-script binding;
+  - a function argument is `"$@"`, `$*` or `$1` run inside a function, or a
+    command variable that holds `$N` there. Literal shifts at the top of the
+    body fix which argument it is; any other shift or a `set` of positional
+    parameters leaves it unknown. Every call must then pass there a path, a
+    command variable, a word that is no builtin outside the allowlist, or a
+    function that runs no argument itself. A call that passes `"$@"` or `$N`
+    on moves the requirement to its caller;
+  - a composite expands several parameters, one of them a plain reference to
+    a variable whose every value has a literal slash.
+- Arithmetic never assigns to an expanded target, loops balance, and a `for`
+  header reaches its `do` before any other command.
+- Code holds no `$'...'` quote, which bash reads and dash rejects.
+
+The environment, `read` input, the script's own arguments and command output
+are inputs. The audit assumes they name no shell builtin and that the hosted
+environment injects no shell code such as `BASH_ENV`, `SHELLOPTS` or `PS4`. A
+static scan cannot see through them, and every real owner runs a compiler
+named that way. An unterminated heredoc fails the audit.
+
+A constructed path word runs to the next shell metacharacter, quoted or not,
+which is how `sh -c` reads a quoted string. The audit fails if a tracked path
+holds a character outside `[A-Za-z0-9._/+-]`, so a word that sh reads further
+names no tracked file. A `$` that sh keeps literal never starts a word and
+stays a `$`, and a backslash that double quotes keep stays as well. A
+constructed path with a `.`, `..` or empty segment fails the audit, because the
+map rows that match its text are not those of the file it names. Anything
+unresolved is a family, and so are an unquoted glob word in a literal list and
+a glob, bracket, brace, `$"..."`, backtick or extglob segment inside a
+constructed path. Every tracked file a family can name must select the gate on
+each host, or the site needs a reviewed reason in the audit. Shell options
+could change glob matching, so after a `shopt` a family covers its whole root.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 

@@ -15,6 +15,10 @@
   (text String)
   (extra i64))
 
+(defenum Item
+  (PairItem Pair)
+  (LabelItem Label))
+
 (defmacro (pair-sum [value : Expr]) : Expr
   `(match ,value
     [(Pair a b) (+ a b)]))
@@ -31,12 +35,19 @@
   `(match ,value
     [(Label text extra) (+ (string.string-length text) extra)]))
 
+(defmacro (item-score [value : Expr]) : Expr
+  `(match ,value
+    [(PairItem (Pair a b)) (+ a b)]
+    [(LabelItem (Label text extra)) (+ (string.string-length text) extra)]))
+
 (define (main) : i64
   (let
     [pair : Pair (Pair 20 22)]
     [packet : Packet (Packet (Pair 10 12) 20)]
     [label : Label (Label "abc" 39)]
     [foreign : defs.Pair (defs.Pair true 19 23)]
+    [pair-item : Item (PairItem (Pair 20 22))]
+    [label-item : Item (LabelItem (Label "abc" 39))]
     ;; Nonmacro controls use exactly the constructor and named field forms.
     (unless
       (=
@@ -104,4 +115,15 @@
     (unless (= (defs.pair-sum (& foreign)) 42) (return 15))
     (unless (= (defs.pair-named-sum foreign) 42) (return 16))
     (unless (= (defs.pair-named-sum (& foreign)) 42) (return 17))
+    (unless
+      (=
+        (match (& label-item)
+          [(PairItem (Pair a b)) (+ a b)]
+          [(LabelItem (Label text extra)) (+ (string.string-length text) extra)])
+        42)
+      (return 22))
+    (unless (= (item-score (& pair-item)) 42) (return 23))
+    (unless (= (item-score pair-item) 42) (return 24))
+    (unless (= (item-score (& label-item)) 42) (return 25))
+    (unless (= (item-score label-item) 42) (return 26))
     42))

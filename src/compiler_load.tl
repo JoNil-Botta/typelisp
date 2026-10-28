@@ -12589,9 +12589,7 @@
           next-module
           next-module-id
           symbols
-          (&
-            (clone
-              (owned_view.compiler-owned-reference-shared-view spmd-interface))))
+          spmd-interface)
           [(Ok rest-decls rest-decl-paths rest-modules rest-seen)
             (match (compiler-load-package-transform-decl
               package-owner

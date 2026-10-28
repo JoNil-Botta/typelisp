@@ -88,6 +88,20 @@ its own blocks before the raw CSE walks. A retired preceding function's facts
 must not be read. Keep the empty-state, generation and repeated-expression
 assertions when changing this fixture's setup.
 
+`sink_addr_taken_ptr_write.tl` is #8913's reproducer and
+`sink_addr_taken_local.tl` its variants: a read of an address-taken local, or a
+copy of one, before a store through its address, a callee store or a
+loop-carried store, used in one arm, and an element address formed from the
+local on both sides of such a store, and a read through its address before a
+direct def. Both run at opt0/1/2 on both hosts. The
+`single-predecessor-successor-sink` smoke keeps the successor-sink IR half:
+such a read, a rematerialized read and a rematerialized def stay above the
+store, and a load stays above a def of an address-taken var; each has a sinking
+control. `guard-first-dominator-sinking`, `gep-split-addr-taken-capture`,
+`store-addr-sink-next-to-store` and `load-sink-to-alu-consumer` pin the same
+rule for guard sinking, gep splitting, store address sinking and load sinking,
+each against a control whose address is not taken.
+
 `stdlib_math_table_payloads.tl` hashes every word of the 15 private math tables
 in little-endian order against independent SHA-256 pins at opt0/1/2. Its length
 checks cover all 1,290 words and empty/zero/max-word construction; the existing

@@ -10577,7 +10577,7 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
-    [(List (slice header colon ret body) _)
+    [(List (slice header colon ret & _) _)
       (match (reader.spanned-sexpr-view header)
         [(List (slice (Sym name _) & params) _)
           (if (sexpr-colon? colon)
@@ -10590,7 +10590,12 @@
               (let
                 [parsed-ret (try (parse-ast-type-spanned dispatch pools ret))]
                 [parsed-body
-                  (try (parse-ast-expr-with-pools dispatch pools body))]
+                  (try
+                    (parse-ast-body-tail
+                      dispatch
+                      pools
+                      (reader.spanned-sexpr-drop rest 3)
+                      "parse: malformed defmacro"))]
                 (Ok
                   (ast.ast-decl-def-macro-id
                     (ci.intern-syntax-id-value name)

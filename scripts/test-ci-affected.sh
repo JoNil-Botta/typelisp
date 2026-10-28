@@ -274,6 +274,17 @@ cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkou
 # must select the gate on each host.
 constructed_inputs() {
     awk -F '\t' '
+        # Openings of arithmetic in a code view: $(( or an (( command.
+        function arith_opens(value,    count, at, before) {
+            count = 0
+            while ((at = index(value, "((")) > 0) {
+                before = substr(value, 1, at - 1); value = substr(value, at + 2)
+                sub(/[[:space:]]+$/, "", before)
+                if (before ~ /\$$/ || before == "" || before ~ /[;&|(!]$/ || before ~ /(^|[[:space:]])(if|elif|while|until|then|do|else)$/) count++
+            }
+            return count
+        }
+        function arith_closes(value) { return gsub(/\)\)/, "", value) }
         function load(script,    line, status, physical, pending, joined, rest, offset, at, before, word, heads, tails, arith) {
             lines = 0; physical = 0; pending = 0; heads = 0; tails = 0; quote = ""; arith = 0
             while ((status = getline line < script) > 0) {
@@ -301,7 +312,7 @@ constructed_inputs() {
                     offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
                     if ((at > 1 && substr(view[lines], at - 1, 1) == "<") || substr(view[lines], at + 2, 1) == "<") continue
                     before = substr(view[lines], 1, at - 1)
-                    if (arith + gsub(/\(\(/, "", before) - gsub(/\)\)/, "", before) > 0) continue
+                    if (arith + arith_opens(before) - arith_closes(before) > 0) continue
                     if (!match(rest, /^[^[:space:];|&<>()]+/)) continue
                     word = normal(substr(line, offset + 1, RLENGTH))
                     offset += RLENGTH; rest = substr(rest, RLENGTH + 1)
@@ -309,8 +320,7 @@ constructed_inputs() {
                     tabbed[++tails] = (substr(view[lines], at, 3) == "<<-")
                     delimiter[tails] = word
                 }
-                before = view[lines]
-                arith += gsub(/\(\(/, "", before) - gsub(/\)\)/, "", before)
+                arith += arith_opens(view[lines]) - arith_closes(view[lines])
                 if (arith < 0) arith = 0
             }
             if (status < 0) { print "cannot read owning script: " script > "/dev/stderr"; exit 1 }
@@ -393,6 +403,7 @@ constructed_inputs() {
             }
             return out "$"
         }
+        function regex_literal(value) { gsub(/[\\.+*?()[{}|^$]/, "\\\\&", value); return value }
         function add_event(i, at, what, value) { event[i, ++events[i]] = at; kind[i, events[i]] = what; data[i, events[i]] = value }
         # Shell words of one logical line in order. A word at a command position
         # is classified on its quote-removed text: loop keywords become events,
@@ -532,7 +543,7 @@ constructed_inputs() {
         function apply(i, k,    what) {
             what = kind[i, k]
             if (what == "for") { if (pending) unreliable = 1; commit(); pending = data[i, k] }
-            else if (what == "command") { if (pending) unreliable = 1; commit(); staged = data[i, k] }
+            else if (what == "command") { if (pending) unreliable = 1; commit(); staged = data[i, k]; command_start = event[i, k] }
             else if (what == "do") { commit(); stack[++depth] = pending; stacked[depth] = effects; pending = 0 }
             else { commit(); if (depth > 0) depth--; else unreliable = 1 }
         }
@@ -547,7 +558,7 @@ constructed_inputs() {
             for (i = 1; i <= lines; i++) {
                 events[i] = 0
                 if (!body[i]) commands(i, view[i], 1)
-                k = 1
+                k = 1; command_start = 1
                 if (index(text[i], "$")) {
                     # Constructed paths are found after quote removal, as sh joins
                     # words. A $ that sh keeps literal (single-quoted or escaped)
@@ -563,7 +574,7 @@ constructed_inputs() {
                     }
                     plain = blank(blank(plain, "--stdlib-root[[:space:]]+[^[:space:]]+"), "(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+[^[:space:]]+")
                     position = 1
-                    while (match(substr(plain, position), /(src|tests|stdlib|docs)\/([A-Za-z0-9_.\/*?:!^-]|\[|\])*\$/)) {
+                    while (match(substr(plain, position), /(src|tests|stdlib|docs)\/[^[:space:];&|()<>"\047$]*\$/)) {
                         position += RSTART - 1
                         while (k <= events[i] && event[i, k] < origin[position]) apply(i, k++)
                         before = substr(plain, 1, position - 1); gsub(/["\047]/, "", before)
@@ -572,16 +583,19 @@ constructed_inputs() {
                             prefix = substr(before, RSTART, RLENGTH)
                         tail = substr(plain, position)
                         t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix; token_glob[t] = ""; token_data[t] = (body[i] && literal_body[i])
+                        if (normal(substr(text[i], command_start, origin[position] - command_start)) ~ /\$\(\(|\$\{[^}]*=/) token_data[t] = 1
                         segments = 0; token_literal[t, 0] = ""; q = 1
                         while (q <= length(tail)) {
                             character = substr(tail, q, 1)
-                            if (character ~ /[A-Za-z0-9_.\/-]/) { token_literal[t, segments] = token_literal[t, segments] character; q++; continue }
-                            if (character == "*" || character == "?" || character == "[") { # A glob is a wildcard segment.
+                            if (character ~ /[[:space:];&|()<>"\047]/) break
+                            if (character == "*" || character == "?" || character == "[" || character == "{") {
+                                # A glob or brace group is a wildcard segment.
                                 if (character == "[" && bracket_end(tail, q)) q = bracket_end(tail, q)
+                                if (character == "{" && index(substr(tail, q), "}")) q += index(substr(tail, q), "}") - 1
                                 q++; token_reference[t, ++segments] = "*"; token_literal[t, segments] = ""; token_block[t, segments] = 0
                                 continue
                             }
-                            if (character != "$") break
+                            if (character != "$") { token_literal[t, segments] = token_literal[t, segments] character; q++; continue }
                             name = ""
                             if (match(substr(tail, q), /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { name = substr(tail, q + 2, RLENGTH - 3); q += RLENGTH }
                             else if (match(substr(tail, q), /^\$[A-Za-z_][A-Za-z0-9_]*/)) { name = substr(tail, q + 1, RLENGTH - 1); q += RLENGTH }
@@ -613,14 +627,14 @@ constructed_inputs() {
             found = ""
             for (t = 1; t <= tokens; t++) {
                 segments = token_segments[t]
-                template = token_literal[t, 0]; part = token_literal[t, 0]; gsub(/\./, "\\.", part); pattern = "^" part
+                template = token_literal[t, 0]; pattern = "^" regex_literal(token_literal[t, 0])
                 resolved = !unreliable
                 if (token_glob[t] != "") { template = token_glob[t]; pattern = glob_pattern(template); sub(/\$$/, "", pattern); resolved = 0 }
                 if (token_data[t]) resolved = 0
                 for (s = 1; s <= segments; s++) {
                     name = token_reference[t, s]
                     template = template (name == "*" ? "*" : "${" (name == "" ? "?" : name) "}") token_literal[t, s]
-                    part = token_literal[t, s]; gsub(/\./, "\\.", part); pattern = pattern ".*" part
+                    pattern = pattern ".*" regex_literal(token_literal[t, s])
                     if (name == "" || !token_block[t, s] || (name in open_list) || unbound[name]) resolved = 0
                 }
                 prefix = token_prefix[t]
@@ -756,6 +770,8 @@ for dotted in ./tests/*.in $(ls "$ROOT"/tests/listed/*.in); do :; done
 for bracket_name in alpha; do compile "tests/[ab]/$bracket_name.tl"; done
 for impure in alpha; do "$TOOL" prepare; compile "tests/integration/$impure.tl"; done
 for joined in alpha; do compile te""sts/integration/"$joined".tl 'tests/literal/$joined.tl' tests/[[:alpha:]]*/"$joined".tl; done
+for sided in alpha; do compile $((sided_expression)) "tests/integration/$sided.tl"; done
+for spelled in alpha; do compile tests/{integration,safety}/$spelled.tl "tests/c++/@$spelled.tl"; done
 OWNER
 probe_owner="$work/constructed-probe/owner.sh"
 # A sourced script can rebind a name; a # line inside an open quote is string
@@ -764,11 +780,13 @@ printf 'libbound=delta\n' > "$work/constructed-probe/lib.sh"
 printf '. "%s"\nfor libbound in alpha; do compile "tests/integration/$libbound.tl"; done\n' "$work/constructed-probe/lib.sh" > "$work/constructed-probe/sourcing.sh"
 printf '%s\n' "printf '%s\\n' 'first line" "# still quoted'; for commenter in alpha; do compile \"tests/integration/\$commenter.tl\"; done" > "$work/constructed-probe/quoted-comment.sh"
 printf 'echo Ready ! for stray in alpha\nwhile read -r line; do compile "tests/integration/$stray.tl"; done\n' > "$work/constructed-probe/stray-for.sh"
+# A regex group is not arithmetic, so the heredoc after it still opens.
+printf '%s\n' '[[ $mode =~ ^((a|b)c)$ ]] && cat <<EOF' 'for hidden in alpha; do compile "tests/integration/$hidden.tl"; done' 'EOF' > "$work/constructed-probe/regex-heredoc.sh"
 # Each closed-whitelist class, written outside the loop, leaves the script
 # unresolved; the benign forms on the last script do not.
 probe_script() { printf 'synthetic-gate\t%s\n' "$1" >> "$work/constructed-probe/scripts.tsv"; }
 : > "$work/constructed-probe/scripts.tsv"
-for probe_name in owner sourcing quoted-comment stray-for; do probe_script "$work/constructed-probe/$probe_name.sh"; done
+for probe_name in owner sourcing quoted-comment stray-for regex-heredoc; do probe_script "$work/constructed-probe/$probe_name.sh"; done
 probe_class=0
 for probe_construct in 'eval "$BINDING"' 'let other=1' 'alias rd=read' 'read -r "$TARGET" < /dev/null' 're""ad -r fixt"$SUFFIX"' 'export "$TARGET=1"' 'trap "$HANDLER" EXIT' 'printf -v"$TARGET" %s value' ': "$(( $TARGET = 32 ))"' '. "$HELPER"' 'command . "$HELPER"' 'case "$MODE" in x) . "$HELPER" ;; esac' 'builtin eval "$BINDING"'; do
     probe_class=$((probe_class + 1))
@@ -820,9 +838,13 @@ probe_family() { probe_row family '^tests/integration/.*\.tl$' "$1" "tests/integ
     probe_family 35 impure # A command ran between the loop's do and the use.
     probe_row member tests/integration/alpha.tl 36 'tests/integration/${joined}.tl'
     probe_row family '^tests/.*.*/.*\.tl$' 36 'tests/**/${joined}.tl'
+    probe_family 37 sided # An arithmetic expansion ran earlier in the same command.
+    probe_row family '^tests/.*/.*\.tl$' 38 'tests/*/${spelled}.tl'
+    probe_row member tests/c++/@alpha.tl 38 'tests/c++/@${spelled}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/sourcing.sh" 'tests/integration/${libbound}.tl'
     printf 'member\t%s\tsynthetic-gate\t%s:2\t%s\n' tests/integration/alpha.tl "$work/constructed-probe/quoted-comment.sh" 'tests/integration/${commenter}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/stray-for.sh" 'tests/integration/${stray}.tl'
+    printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/regex-heredoc.sh" 'tests/integration/${hidden}.tl'
     probe_class=0
     while [ "$probe_class" -lt 13 ]; do
         probe_class=$((probe_class + 1))
@@ -889,7 +911,7 @@ while IFS=$TAB read -r pattern gate site template; do
         'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix}') pattern='^stdlib/.*\.tl$' ;; # Its manifest check admits only stdlib .tl module suffixes.
     esac
     case "${site%:*} $template $gate" in
-        *' embedded-stdlib-tlci-resource-verifier-self-tests') case "${site%:*}" in scripts/verify-embedded-stdlib-tlci-resources.sh | scripts/build-embedded-stdlib-tlci.sh) continue ;; esac ;; # Its --self-test exits before both sweeps.
+        'scripts/verify-embedded-stdlib-tlci-resources.sh stdlib/*.tl embedded-stdlib-tlci-resource-verifier-self-tests' | 'scripts/build-embedded-stdlib-tlci.sh stdlib/${MODULE_PATH} embedded-stdlib-tlci-resource-verifier-self-tests') continue ;; # Its --self-test exits before both sweeps.
         'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix} embedded-stdlib-build-payload') continue ;; # The same payload checks run in the required stdlib module gate.
         'scripts/build-embedded-stdlib-tlci.sh stdlib/${MODULE_PATH} '*) # Payload source hash.
             case "$gate" in embedded-stdlib-tlci-bounded-resource-report | embedded-stdlib-tlci-image | stage2-compile-profile-verifier | tlci-mutation-bootstrap-fixpoint) continue ;; esac ;;

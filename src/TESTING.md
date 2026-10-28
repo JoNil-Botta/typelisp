@@ -2824,10 +2824,12 @@ one of these forms leaves every reference in it unresolved:
   `do`.
 
 The wrappers `command` and `builtin` count as the command they run. An
-unterminated heredoc fails the audit. Anything unresolved, and any unquoted
-glob word in a literal list, is a family: every tracked file it can name must
-select the gate on each host, or the site needs a reviewed reason in the
-audit.
+unterminated heredoc fails the audit. A constructed path word runs to the next
+shell metacharacter after quote removal; a `$` that sh keeps literal never
+starts one. Anything unresolved, any unquoted glob word in a literal list, and
+any glob, bracket or brace segment inside a constructed path is a family:
+every tracked file it can name must select the gate on each host, or the site
+needs a reviewed reason in the audit.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 

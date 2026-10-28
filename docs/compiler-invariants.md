@@ -1261,8 +1261,9 @@ before the first source expression that still needs macro expansion, using the
 same structural and call gates as the ordinary expander. That declaration and
 all later ones take the ordinary walks. Typechecking, and any later macro plan
 in the same use, reuses no more than the first macro plan hydrated and stops at
-the module marker governing that plan's cut, identified by module and
-occurrence. Generated-declaration normalization and template specialization run
+the module marker governing that plan's cut, identified by its ordinal among
+all module markers. Generated-declaration normalization and template
+specialization run
 between the walks and may drop or replace declarations, but they keep module
 markers in order, so no declaration the expander changed reaches the
 typecheck prefix. An empty span clears the composite facts before either walk

@@ -657,7 +657,6 @@
   (hit-count (__tl_dyn-array i64))
   (fallback-count (__tl_dyn-array i64))
   (macro-skip-count (__tl_dyn-array i64))
-  (macro-cut-module (__tl_dyn-array i64))
   (macro-cut-marker (__tl_dyn-array i64))
   (typecheck-skip-count (__tl_dyn-array i64)))
 
@@ -758,7 +757,6 @@
     (__tl_make-array (compiler-load-dependency-surface-list-empty))
     (__tl_make-array CompilerLoadDependencySurfaceBaseFacts.None)
     (__tl_make-array (surface_facts.surface-typecheck-facts-builder-empty))
-    (__tl_make-array 0)
     (__tl_make-array 0)
     (__tl_make-array 0)
     (__tl_make-array 0)
@@ -1233,7 +1231,6 @@
     (set! (array-ref surface-state.surface-decl-count 0) 0)
     (set! (array-ref surface-state.surface-provenance-count 0) 0)
     (set! (array-ref surface-state.macro-skip-count 0) 0)
-    (set! (array-ref surface-state.macro-cut-module 0) 0)
     (set! (array-ref surface-state.macro-cut-marker 0) 0)
     (set! (array-ref surface-state.typecheck-skip-count 0) 0)))
 
@@ -1587,7 +1584,6 @@
     (set! (array-ref surface-state.surface-provenance-count 0) 0)
     (set! (array-ref surface-state.hit-count 0) 0)
     (set! (array-ref surface-state.macro-skip-count 0) 0)
-    (set! (array-ref surface-state.macro-cut-module 0) 0)
     (set! (array-ref surface-state.macro-cut-marker 0) 0)
     (set! (array-ref surface-state.typecheck-skip-count 0) 0)
     (if (surface_facts.surface-typecheck-facts-composite-active?)
@@ -12863,24 +12859,15 @@
   [state : (& CompilerLoadSessionState)]) : i64
   (array-ref state.dependency-surfaces.macro-skip-count 0))
 
-;; When the macro plan stopped before source work, the module marker governing
-;; that declaration: its module ID and occurrence ordinal (0 when none).
+;; When the macro plan stopped before source work, the ordinal among all module
+;; markers of the one governing that declaration (0 when none).
 (define (compiler-load-session-state-dependency-surface-note-macro-cut!
   [state : (& state CompilerLoadSessionState)]
-  [module-id : i64]
   [marker : i64]) : unit
-  (owned_view.compiler-owned-cell-set!
-    state.dependency-surfaces.macro-cut-module
-    0
-    module-id)
   (owned_view.compiler-owned-cell-set!
     state.dependency-surfaces.macro-cut-marker
     0
     marker))
-
-(define (compiler-load-session-state-dependency-surface-macro-cut-module
-  [state : (& CompilerLoadSessionState)]) : i64
-  (array-ref state.dependency-surfaces.macro-cut-module 0))
 
 (define (compiler-load-session-state-dependency-surface-macro-cut-marker
   [state : (& CompilerLoadSessionState)]) : i64

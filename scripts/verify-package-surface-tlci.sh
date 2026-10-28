@@ -575,9 +575,9 @@ run_failure_pair fuel "compile-time evaluation limit exceeded" E0507
 
 # Embedded stdlib source that still expands and an entry-owned global precede
 # the dependency imports. The macro walk reuses the authenticated prefix up to
-# the first such declaration instead of discarding it; typechecking reuses at
-# most that much, ending at the governing module marker. The trusted route still
-# matches forced-source assembly.
+# the first such declaration instead of discarding it; typechecking reuses less,
+# ending at the governing module marker. The trusted route still matches
+# forced-source assembly.
 echo "[package-surface-tlci] interleaved source prefix reuse"
 cat > "$CONSUMER/src/main.tl" <<'EOF'
 (module consumer.src.main)
@@ -621,8 +621,9 @@ interleaved_typecheck=$(runtime_surface_field surface-typecheck-skipped "$WORKDI
     fail "interleaved source reused source that needs ordinary walks"
 [ -n "$interleaved_typecheck" ] && [ "$interleaved_typecheck" -gt 0 ] ||
     fail "interleaved typecheck discarded the reusable prefix"
-[ "$interleaved_typecheck" -le "$interleaved_macro" ] ||
-    fail "interleaved typecheck reuse $interleaved_typecheck exceeds macro reuse $interleaved_macro"
+# The stdlib cut lies past its module marker, where typechecking stops.
+[ "$interleaved_typecheck" -lt "$interleaved_macro" ] ||
+    fail "interleaved typecheck reuse $interleaved_typecheck does not stop before macro reuse $interleaved_macro"
 echo "[package-surface-tlci] interleaved reuse macro=$interleaved_macro typecheck=$interleaved_typecheck"
 cp "$CONSUMER_ASM" "$INTERLEAVED_ASM"
 run_consumer_90 interleaved

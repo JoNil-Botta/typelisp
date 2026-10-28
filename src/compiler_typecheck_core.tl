@@ -117710,9 +117710,10 @@
 ;; must also need no expansion. Caller-owned bodies, and stdlib source the
 ;; expander would change, start the ordinary walks. Typechecking, and any later
 ;; macro plan in the same use, reuses no more than the first macro plan hydrated
-;; and stops at the module marker governing that plan's cut. Generated
-;; declaration normalization and template specialization keep markers in order,
-;; so declarations they drop cannot shift expanded source into the prefix.
+;; and stops at the module marker governing that plan's cut, counted among all
+;; module markers. Generated declaration normalization and template
+;; specialization keep markers in order, so declarations they drop cannot shift
+;; expanded source into the prefix.
 (define (tc-dependency-surface-prefix-candidate
   [load-state : (& cload.CompilerLoadSessionState)]
   [state : TcMacroState]
@@ -117732,17 +117733,13 @@
       (if (> hydrated 0)
         hydrated
         decl-count)]
-    [cut-module : i64
-      (cload.compiler-load-session-state-dependency-surface-macro-cut-module
-        load-state)]
     [cut-marker : i64
       (cload.compiler-load-session-state-dependency-surface-macro-cut-marker
         load-state)]
-    [cut-seen : i64 0]
+    [markers : i64 0]
     [index : i64 0]
     [remaining : i64 surface-count]
     [stopped : bool false]
-    [marker-seen : bool false]
     [module : String ""]
     [module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [embedded-modules : sym_i64_env.SymI64Env
@@ -117769,13 +117766,6 @@
                 paths
                 index
                 cbi.compiler-builtin-id-fix-empty)]
-            [cut-module-marker : bool
-              (and
-                (> cut-marker 0)
-                (match (& decl)
-                  [(Module next-module) (= next-module cut-module)]
-                  [_ false]))]
-            (when cut-module-marker (+= cut-seen 1))
             (unless
               (= provenance-id last-provenance-id)
               (set! last-provenance-id provenance-id)
@@ -117789,7 +117779,11 @@
                 (cload.compiler-load-stdlib-import?
                   (ci.intern-str provenance-id))))
             (cond
-              [(and cut-module-marker (= cut-seen cut-marker))
+              [(and
+                  (= (+ markers 1) cut-marker)
+                  (match (& decl)
+                    [(Module _) true]
+                    [_ false]))
                 (set! stopped true)]
               [dependency (-= remaining 1)]
               [(or
@@ -117814,7 +117808,7 @@
                 [(Module next-module)
                   (set! module (tc-env-key-name-text next-module))
                   (set! module-id next-module)
-                  (set! marker-seen true)]
+                  (+= markers 1)]
                 [_ unit])
               (+= index 1))))
         (cond
@@ -117825,29 +117819,15 @@
                   stopped
                   (= remaining 0)
                   (and (> hydrated 0) (= index hydrated))))
-              (and macro-walk stopped (not marker-seen)))
+              (and macro-walk stopped (= markers 0)))
             No]
           [else
             (when
               (and macro-walk stopped (= cut-marker 0))
               (cload.compiler-load-session-state-dependency-surface-note-macro-cut!
                 load-state
-                module-id
-                (tc-dependency-surface-marker-ordinal decls index module-id)))
+                markers))
             (Some (tc-prefix-key-start cache-scope) index module module-id)])))))
-
-;; Occurrences of a module's marker before `count`.
-(define (tc-dependency-surface-marker-ordinal
-  [decls : (& ast.AstDeclList)]
-  [count : i64]
-  [module-id : i64]) : i64
-  (let
-    [ordinal : i64 0]
-    (for [index (iterator.range 0 count)]
-      (match (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
-        [(Module next-module) (when (= next-module module-id) (+= ordinal 1))]
-        [_ unit]))
-    ordinal))
 
 (define (macro-surface-source-decl-expanded?
   [state : TcMacroState]

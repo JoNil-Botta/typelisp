@@ -51033,14 +51033,6 @@
     compiler-backend-function-bool-fuse-need-ready
     false))
 
-(define (compiler-backend-addr-of-forwarding-fill!
-  [items : (&mut items (__tl_dyn-array i64))]
-  [index : i64]) : unit
-  (unless
-    (>= index (array-length items))
-    (set! (array-ref items index) (- 0 1))
-    (compiler-backend-addr-of-forwarding-fill! items (+ index 1))))
-
 (define (compiler-backend-addr-of-forwarding-record!
   [items : (&mut items (__tl_dyn-array i64))]
   [use-counts : (& use-counts (__tl_dyn-array i64))]
@@ -51114,14 +51106,30 @@
 (define (compiler-backend-addr-of-forwarding-enable!
   [backend-state : CompilerBackendState]
   [vars : i64]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [use-counts : (__tl_dyn-array i64)]) : unit
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    (compiler-backend-addr-of-forwarding-fill! (&mut items) 0)
+    [forwarding-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+    ;; Slot coloring can give a dead AddrOf and a later definition one id.
+    ;; A function-wide address recipe needs one definition, parameters included.
+    (compiler_regalloc.compiler-reg-param-count-defs!
+      params
+      (&mut forwarding-counts))
+    (compiler_regalloc.compiler-reg-count-block-defs!
+      (& blocks)
+      (&mut forwarding-counts))
+    (for [var (iterator.range 0 vars)]
+      (set! (array-ref items var) (- 0 1))
+      (set!
+        (array-ref forwarding-counts var)
+        (if (= (array-ref forwarding-counts var) 1)
+          (array-ref use-counts var)
+          0)))
     (compiler-backend-addr-of-forwarding-record-blocks!
       (compiler-backend-global-shared-view items)
-      use-counts
+      forwarding-counts
       blocks)
     (compiler-backend-function-state-set-i64-array!
       (compiler-backend-state-function-state backend-state)
@@ -72006,6 +72014,7 @@
               (compiler-backend-addr-of-forwarding-enable!
                 program-index.backend-state
                 emit-vars
+                (& emit-params)
                 (compiler-backend-global-shared-view emit-blocks-list)
                 (compiler-backend-global-shared-view use-counts))]
             [_fuse-need : unit

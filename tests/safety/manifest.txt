@@ -2218,3 +2218,11 @@ global_mut_borrow_deref_location_reject|check-fail|tests/safety/global_mut_borro
 global_mut_borrow_store_location_reject|check-fail|tests/safety/global_mut_borrow_store_location_reject.tl|tests/safety/global_mut_borrow_store_location_reject.tl:9:16|mutable borrow of by-value place is only supported as an immediate call argument
 global_mut_borrow_initializer_location_reject|check-fail|tests/safety/global_mut_borrow_initializer_location_reject.tl|tests/safety/global_mut_borrow_initializer_location_reject.tl:8:10|mutable borrow of by-value place is only supported as an immediate call argument
 mut_borrow_forwarded_diagnostic_location_reject|check-fail|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl:2:3|set! deref requires mutable access
+
+# Direct shared-reference and named-lifetime borrow failures retain borrow sites.
+shared_mut_borrow_location_reject|check-fail|tests/safety/shared_mut_borrow_location_reject.tl|tests/safety/shared_mut_borrow_location_reject.tl:9:27|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_location_reject|check-fail|tests/safety/borrow_lifetime_location_reject.tl|tests/safety/borrow_lifetime_location_reject.tl:8:24|borrow lifetime mismatch
+shared_mut_borrow_initializer_location_reject|check-fail|tests/safety/shared_mut_borrow_initializer_location_reject.tl|tests/safety/shared_mut_borrow_initializer_location_reject.tl:5:12|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_initializer_location_reject|check-fail|tests/safety/borrow_lifetime_initializer_location_reject.tl|tests/safety/borrow_lifetime_initializer_location_reject.tl:4:10|borrow lifetime mismatch
+shared_mut_borrow_call_location_reject|check-fail|tests/safety/shared_mut_borrow_call_location_reject.tl|tests/safety/shared_mut_borrow_call_location_reject.tl:8:12|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_call_location_reject|check-fail|tests/safety/borrow_lifetime_call_location_reject.tl|tests/safety/borrow_lifetime_call_location_reject.tl:7:11|borrow lifetime mismatch

@@ -541,3 +541,9 @@ tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison	@corpus	Dispatch-
 tests/spmd/dispatch_variant_support.tl	stage2-spmd-simd-comparison	@corpus	Dispatch regression support independently checks CPU selection and every output lane.
 tests/spmd/dispatch_imported_values.tl	stage2-spmd-simd-comparison	@corpus	Qualified and selected variant calls and values run through simd.cases.
 tests/spmd/dispatch_value_provider.tl	stage2-spmd-simd-comparison	@corpus	Imported dispatch variant provider is consumed by the simd.cases value regression.
+tests/safety/shared_mut_borrow_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.

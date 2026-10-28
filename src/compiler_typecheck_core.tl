@@ -22865,12 +22865,21 @@
   (Ok)
   (Err String))
 
-;; Convert selected source coordinates only at the direct storage-policy
-;; rejection. Legacy views already carry their complete span.
+;; Convert selected coordinates only at direct borrow-policy/type rejections.
+;; Legacy views already carry their complete span.
 (defenum TcBorrowSource
   (No)
   (Selected i64 i64)
   (Spanned ast.AstSourceSpan))
+
+(define (tc-borrow-source-error [source : TcBorrowSource] [message : String]) : String
+  (match source
+    [(TcBorrowSource.Selected line column)
+      (if (and (> line 0) (> column 0))
+        (tc-located-error (ast.ast-source-span line column line column) message)
+        message)]
+    [(TcBorrowSource.Spanned span) (tc-located-error span message)]
+    [(TcBorrowSource.No) message]))
 
 (defenum TcMoveKind
   (Copyable)
@@ -76425,16 +76434,7 @@
             [message : String (tc-mut-borrow-by-value-place-message)]
             ;; Only this producer rejects by-value storage. Errors forwarded
             ;; from reference and box checks retain their established spans.
-            (Err
-              (match source
-                [(TcBorrowSource.Selected line column)
-                  (if (and (> line 0) (> column 0))
-                    (tc-located-error
-                      (ast.ast-source-span line column line column)
-                      message)
-                    message)]
-                [(TcBorrowSource.Spanned span) (tc-located-error span message)]
-                [(TcBorrowSource.No) message])))))]
+            (Err (tc-borrow-source-error source message)))))]
     [(StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
@@ -76679,11 +76679,12 @@
 (define (tc-borrow-place-result-type
   [mutable : bool]
   [lifetime : ast.AstBorrowLifetime]
-  [place : TcBorrowPlace]) : ResultTcType
+  [place : TcBorrowPlace]
+  [source : TcBorrowSource]) : ResultTcType
   (match place
     [(TcBorrowPlace inferred referent-ty through-shared _)
       (if (and mutable through-shared)
-        (Err (tc-borrow-through-shared-message))
+        (Err (tc-borrow-source-error source (tc-borrow-through-shared-message)))
         (match lifetime
           [(Inferred)
             (Ok
@@ -76697,9 +76698,11 @@
                   (ast.ast-ty-mut-ref inferred (& referent-ty))
                   (ast.ast-ty-ref inferred (& referent-ty))))
               (Err
-                (tc-kind-message
-                  (LifetimeMismatch)
-                  "typecheck: borrow lifetime mismatch")))]))]))
+                (tc-borrow-source-error
+                  source
+                  (tc-kind-message
+                    (LifetimeMismatch)
+                    "typecheck: borrow lifetime mismatch"))))]))]))
 
 (define (tc-borrow-expr-with-policy
   [ctx : TcContext]
@@ -76720,8 +76723,8 @@
       (if (and mutable (not allow-mut-by-value-borrow))
         (let
           [_ (try (tc-mut-borrow-non-call-place-ok ctx env place-expr source))]
-          (tc-borrow-place-result-type mutable lifetime place))
-        (tc-borrow-place-result-type mutable lifetime place))]
+          (tc-borrow-place-result-type mutable lifetime place source))
+        (tc-borrow-place-result-type mutable lifetime place source))]
     [(Err message)
       ;; A successfully typed place cannot be a temporary. Direct call
       ;; arguments recover temporary borrows from this error; other positions

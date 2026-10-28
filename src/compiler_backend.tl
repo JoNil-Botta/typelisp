@@ -50605,11 +50605,11 @@
           (set! (array-ref counts var) (+ (array-ref counts var) 1)))))))
 
 (define (compiler-backend-count-use
-  [counts : (__tl_dyn-array i64)]
+  [counts : (&mut counts (__tl_dyn-array i64))]
   [_role : compiler_ir_types.CompilerIrOperandRole]
   [value : compiler_ir_types.CompilerIrValue]) : unit
   (match value
-    [(Var id) (compiler-backend-use-count-inc (&mut counts) id)]
+    [(Var id) (compiler-backend-use-count-inc counts id)]
     [_ unit]))
 
 ;; Every use counts, Pack words included, so the single-use fusion peepholes
@@ -50626,7 +50626,7 @@
       (compiler_ir_types.compiler-ir-instr-visit-uses
         instr
         compiler-backend-count-use
-        (compiler-backend-global-shared-view counts))]))
+        (&mut counts))]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (__tl_dyn-array i64)]

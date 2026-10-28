@@ -1,5 +1,292 @@
 {
   "schema": 1,
-  "status": "unknown",
-  "reason": "Historical C producer provenance was not retained. Establish it from an authoritative complete hosted run that reproduces every stored C row; see perf/README.md."
+  "status": "measured",
+  "complete": true,
+  "origin": {
+    "repository": "JoNil-Botta/typelisp",
+    "run_id": "40582449274",
+    "attempt": "1",
+    "workflow": "JoNil-Botta/typelisp/.github/workflows/ci.yml@refs/pull/9399/merge",
+    "job": "ci",
+    "commit": "e8bb07911031d2449c519180f6114a06777d81cf"
+  },
+  "environment": {
+    "compiler": {
+      "path": "/usr/lib/llvm-18/bin/clang",
+      "sha256": "8ef402d453d1ba4902e4ee0f0f847f6cfa01400c95aa43c24e97818b9c0e3f45",
+      "version": "Ubuntu clang version 18.1.3 (1ubuntu1)\nTarget: x86_64-pc-linux-gnu\nThread model: posix\nInstalledDir: /usr/bin",
+      "target": "x86_64-pc-linux-gnu"
+    },
+    "valgrind": {
+      "path": "/usr/bin/valgrind",
+      "sha256": "4652774bd116cb49951ef74115ad4237cad5021b2bd4d80002f09d986ec438b9",
+      "version": "valgrind-3.22.0"
+    },
+    "linker": {
+      "path": "/usr/bin/x86_64-linux-gnu-ld.bfd",
+      "sha256": "e9ceb054c12207970f2726dfc07e9a66b411602748628baf27399f02a9bbb31b",
+      "version": "GNU ld (GNU Binutils for Ubuntu) 2.42\nCopyright (C) 2024 Free Software Foundation, Inc.\nThis program is free software; you may redistribute it under the terms of\nthe GNU General Public License version 3 or (at your option) a later version.\nThis program has absolutely no warranty."
+    },
+    "libc_version": "glibc 2.39",
+    "arch": "x86_64",
+    "os_release": "PRETTY_NAME=\"Ubuntu 24.04.5 LTS\"\nNAME=\"Ubuntu\"\nVERSION_ID=\"24.04\"\nVERSION=\"24.04.5 LTS (Noble Numbat)\"\nVERSION_CODENAME=noble\nID=ubuntu\nID_LIKE=debian\nHOME_URL=\"https://www.ubuntu.com/\"\nSUPPORT_URL=\"https://help.ubuntu.com/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/ubuntu/\"\nPRIVACY_POLICY_URL=\"https://www.ubuntu.com/legal/terms-and-policies/privacy-policy\"\nUBUNTU_CODENAME=noble\nLOGO=ubuntu-logo",
+    "wrapper_sha256": "8ff551a59011dad2728cb76fe78cb3b65934697ed31f01e0cc424f517957eca8",
+    "cwd": "/home/runner/work/typelisp/typelisp",
+    "cachegrind_argv": [
+      "--quiet",
+      "--tool=cachegrind",
+      "--instr-at-start=no",
+      "--vex-guest-chase=no"
+    ],
+    "runtime_env": [
+      "LC_ALL=C"
+    ]
+  },
+  "info": {
+    "kernel": "6.17.0-1022-azure",
+    "image_os": "ubuntu24",
+    "image_version": "20261023.334.3"
+  },
+  "rows": {
+    "benchmark/c/spmd_map": {
+      "ir_count": 3382228100,
+      "source_sha256": "6d214723e1cc35b6c42bc2110f112c19dcee94fe09cd1325f633216dd674a58b",
+      "metadata_sha256": "absent",
+      "binary_sha256": "2f23714d997d5bdcde26814afa983209252f52e9736fe003c54794945edcfaf1",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_map/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_map.c"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_map.c"
+      ]
+    },
+    "benchmark/c-scalar/spmd_map": {
+      "ir_count": 6760844479,
+      "source_sha256": "6d214723e1cc35b6c42bc2110f112c19dcee94fe09cd1325f633216dd674a58b",
+      "metadata_sha256": "absent",
+      "binary_sha256": "1327c4625111c0cd59e10e28d51c83b48a971256b3bf96a09d05d2184f9ad9b2",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_map/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_map.c-scalar"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_map.c-scalar"
+      ]
+    },
+    "benchmark/c/spmd_mask": {
+      "ir_count": 7069833225,
+      "source_sha256": "9d9e947bcb181e827a66011825198466e62093095197413846e3285954a4fd12",
+      "metadata_sha256": "absent",
+      "binary_sha256": "ce520a3033a5c246d2f6256e2024c905133acb3d4aeccbd899852bb0752216cf",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_mask/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_mask.c"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_mask.c"
+      ]
+    },
+    "benchmark/c-scalar/spmd_mask": {
+      "ir_count": 9833444481,
+      "source_sha256": "9d9e947bcb181e827a66011825198466e62093095197413846e3285954a4fd12",
+      "metadata_sha256": "absent",
+      "binary_sha256": "2b6e7fe5f1f912c64f312de7a701d9b9ea4b8f0077689cee1a403ca219c09718",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_mask/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_mask.c-scalar"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_mask.c-scalar"
+      ]
+    },
+    "benchmark/c/spmd_short_tail": {
+      "ir_count": 2773008013,
+      "source_sha256": "137d363061988d7885c196edf3c788717059efe1dc873c1a5ac2fc436813da1c",
+      "metadata_sha256": "absent",
+      "binary_sha256": "b71146d6bc0f35e1b2f9f570d55f3a7efe6a2505c0a17826bd961d8936d6f393",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_short_tail/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_short_tail.c"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_short_tail.c"
+      ]
+    },
+    "benchmark/c-scalar/spmd_short_tail": {
+      "ir_count": 6030013011,
+      "source_sha256": "137d363061988d7885c196edf3c788717059efe1dc873c1a5ac2fc436813da1c",
+      "metadata_sha256": "absent",
+      "binary_sha256": "d803469f056e5a875ed3a5f30449e556e0fa3dd3e839e483237ecb7d05a0cbfd",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_short_tail/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_short_tail.c-scalar"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_short_tail.c-scalar"
+      ]
+    },
+    "benchmark/c/spmd_zip": {
+      "ir_count": 10755056774,
+      "source_sha256": "0ed83c4c157f545d1122383f44de43c800b9717570adfe1f20a753995c2f410a",
+      "metadata_sha256": "absent",
+      "binary_sha256": "ff3b7ab8402b5d7608c1c3d0580c3708cf789bd6c685ebda15d9a8e91ed3b3a8",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_zip/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_zip.c"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_zip.c"
+      ]
+    },
+    "benchmark/c-scalar/spmd_zip": {
+      "ir_count": 9218460867,
+      "source_sha256": "0ed83c4c157f545d1122383f44de43c800b9717570adfe1f20a753995c2f410a",
+      "metadata_sha256": "absent",
+      "binary_sha256": "7f7ef8690c356975bfe1d1923d951e07f5cfc22474a83b3a0b1baf3e09ef5628",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/spmd_zip/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/spmd_zip.c-scalar"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/spmd_zip.c-scalar"
+      ]
+    },
+    "benchmark/c/string_scan": {
+      "ir_count": 4850001652,
+      "source_sha256": "d2651c6d032f85fbf2862c9747fdde3672d7e7d57dcbddab6a0decf31f761846",
+      "metadata_sha256": "absent",
+      "binary_sha256": "04abb47399be2a8b783a67d82993db27b8ee304326a5dc724154f45774b454d5",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/string_scan/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/string_scan.c"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/string_scan.c"
+      ]
+    },
+    "benchmark/c-scalar/string_scan": {
+      "ir_count": 4850001652,
+      "source_sha256": "d2651c6d032f85fbf2862c9747fdde3672d7e7d57dcbddab6a0decf31f761846",
+      "metadata_sha256": "absent",
+      "binary_sha256": "04abb47399be2a8b783a67d82993db27b8ee304326a5dc724154f45774b454d5",
+      "libc": {
+        "path": "/lib/x86_64-linux-gnu/libc.so.6",
+        "sha256": "3a15d66867d83762c7f2f1e37359cb8f6c5743edb369c65285cb0b1c4f7498bf"
+      },
+      "inputs": {},
+      "build_argv": [
+        "clang",
+        "-O2",
+        "-fno-vectorize",
+        "-fno-slp-vectorize",
+        "-Dmain=typelisp_instruction_count_benchmark_main",
+        "benchmarks/string_scan/baseline.c",
+        "/home/runner/work/typelisp/typelisp/benchmarks/cachegrind-region.c",
+        "-o",
+        "target/instruction-count-heavy/measure/bin/string_scan.c-scalar"
+      ],
+      "run_argv": [
+        "target/instruction-count-heavy/measure/bin/string_scan.c-scalar"
+      ]
+    }
+  }
 }

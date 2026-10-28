@@ -541,6 +541,21 @@ tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison	@corpus	Dispatch-
 tests/spmd/dispatch_variant_support.tl	stage2-spmd-simd-comparison	@corpus	Dispatch regression support independently checks CPU selection and every output lane.
 tests/spmd/dispatch_imported_values.tl	stage2-spmd-simd-comparison	@corpus	Qualified and selected variant calls and values run through simd.cases.
 tests/spmd/dispatch_value_provider.tl	stage2-spmd-simd-comparison	@corpus	Imported dispatch variant provider is consumed by the simd.cases value regression.
+tests/safety/shared_mut_borrow_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_replace_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_let_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_index_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/borrow_lifetime_replace_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/borrow_lifetime_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture preserving pre-existing framed replace diagnostic classification.
+tests/safety/shared_mut_borrow_replace_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace call-argument diagnostic contracts.
+tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace index-call diagnostic contracts.
 tests/safety/arena_return_box_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
 tests/safety/arena_return_nested_tuple_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
 tests/safety/arena_return_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.

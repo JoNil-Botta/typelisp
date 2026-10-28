@@ -1801,3 +1801,257 @@ stdout empty
 stderr contains error[E0505]
 stderr contains math-bits-array: expected a raw integer word literal
 stderr not-contains unbound name
+
+case check-shared-mut-borrow-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_location_reject[.]tl:9:27$
+run compile tests/safety/shared_mut_borrow_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_location_reject[.]tl:9:27$
+
+case check-borrow-lifetime-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/borrow_lifetime_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_location_reject[.]tl:8:24$
+run compile tests/safety/borrow_lifetime_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_location_reject[.]tl:8:24$
+
+case check-shared-mut-borrow-initializer-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_initializer_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_initializer_location_reject[.]tl:5:12$
+run compile tests/safety/shared_mut_borrow_initializer_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_initializer_location_reject[.]tl:5:12$
+
+case check-borrow-lifetime-initializer-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/borrow_lifetime_initializer_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_initializer_location_reject[.]tl:4:10$
+run compile tests/safety/borrow_lifetime_initializer_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_initializer_location_reject[.]tl:4:10$
+
+case check-shared-mut-borrow-call-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_call_location_reject[.]tl:8:12$
+run compile tests/safety/shared_mut_borrow_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_call_location_reject[.]tl:8:12$
+
+case check-borrow-lifetime-call-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/borrow_lifetime_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_call_location_reject[.]tl:7:11$
+run compile tests/safety/borrow_lifetime_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_call_location_reject[.]tl:7:11$
+
+case check-shared-mut-borrow-replace-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_replace_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_location_reject[.]tl:6:20$
+run compile tests/safety/shared_mut_borrow_replace_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_location_reject[.]tl:6:20$
+
+case check-shared-mut-borrow-replace-let-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_replace_let_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_let_location_reject[.]tl:9:22$
+run compile tests/safety/shared_mut_borrow_replace_let_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_let_location_reject[.]tl:9:22$
+
+case check-shared-mut-borrow-replace-index-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_replace_index_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_index_location_reject[.]tl:10:39$
+run compile tests/safety/shared_mut_borrow_replace_index_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_index_location_reject[.]tl:10:39$
+
+case check-borrow-lifetime-replace-location-control-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/borrow_lifetime_replace_location_control_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0215]: typecheck: replace! target must be a storage place
+stderr match borrow_lifetime_replace_location_control_reject[.]tl:6:3$
+run compile tests/safety/borrow_lifetime_replace_location_control_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0215]: typecheck: replace! target must be a storage place
+stderr match borrow_lifetime_replace_location_control_reject[.]tl:6:3$
+
+case check-shared-mut-borrow-macro-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_macro_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_macro_location_reject[.]tl:10:31$
+stderr match shared_mut_borrow_macro_location_reject[.]tl:10:8$
+stderr contains in expansion of macro `stdlib.core_macros/when` invoked here
+stderr not-contains macro operand typecheck failed:
+run compile tests/safety/shared_mut_borrow_macro_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_macro_location_reject[.]tl:10:31$
+stderr match shared_mut_borrow_macro_location_reject[.]tl:10:8$
+stderr contains in expansion of macro `stdlib.core_macros/when` invoked here
+stderr not-contains macro operand typecheck failed:
+
+case check-borrow-lifetime-macro-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/borrow_lifetime_macro_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_macro_location_reject[.]tl:12:30$
+stderr match borrow_lifetime_macro_location_reject[.]tl:9:8$
+stderr contains in expansion of macro `stdlib.core_macros/when` invoked here
+stderr not-contains macro operand typecheck failed:
+run compile tests/safety/borrow_lifetime_macro_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0210]: typecheck: borrow lifetime mismatch
+stderr match borrow_lifetime_macro_location_reject[.]tl:12:30$
+stderr match borrow_lifetime_macro_location_reject[.]tl:9:8$
+stderr contains in expansion of macro `stdlib.core_macros/when` invoked here
+stderr not-contains macro operand typecheck failed:
+
+case check-shared-mut-borrow-replace-macro-location-control-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0215]: typecheck: replace! target must be a storage place
+stderr match shared_mut_borrow_replace_macro_location_control_reject[.]tl:9:3$
+stderr not-contains in expansion of macro
+run compile tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0215]: typecheck: replace! target must be a storage place
+stderr match shared_mut_borrow_replace_macro_location_control_reject[.]tl:9:3$
+stderr not-contains in expansion of macro
+
+case check-shared-mut-borrow-replace-call-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_replace_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_call_location_reject[.]tl:9:26$
+run compile tests/safety/shared_mut_borrow_replace_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_call_location_reject[.]tl:9:26$
+
+case check-shared-mut-borrow-replace-index-call-location-reject
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+run check tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_index_call_location_reject[.]tl:13:38$
+run compile tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl --target {{target}} --stdlib-root "{{root}}/stdlib" --opt-level {{opt}} -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr count = 1 ^error\[
+stderr contains error[E0207]: typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+stderr match shared_mut_borrow_replace_index_call_location_reject[.]tl:13:38$

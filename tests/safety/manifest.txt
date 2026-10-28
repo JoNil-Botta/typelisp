@@ -2219,6 +2219,27 @@ global_mut_borrow_store_location_reject|check-fail|tests/safety/global_mut_borro
 global_mut_borrow_initializer_location_reject|check-fail|tests/safety/global_mut_borrow_initializer_location_reject.tl|tests/safety/global_mut_borrow_initializer_location_reject.tl:8:10|mutable borrow of by-value place is only supported as an immediate call argument
 mut_borrow_forwarded_diagnostic_location_reject|check-fail|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl|tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl:2:3|set! deref requires mutable access
 
+# Direct shared-reference and named-lifetime borrow failures retain borrow sites.
+shared_mut_borrow_location_reject|check-fail|tests/safety/shared_mut_borrow_location_reject.tl|tests/safety/shared_mut_borrow_location_reject.tl:9:27|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_location_reject|check-fail|tests/safety/borrow_lifetime_location_reject.tl|tests/safety/borrow_lifetime_location_reject.tl:8:24|borrow lifetime mismatch
+shared_mut_borrow_initializer_location_reject|check-fail|tests/safety/shared_mut_borrow_initializer_location_reject.tl|tests/safety/shared_mut_borrow_initializer_location_reject.tl:5:12|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_initializer_location_reject|check-fail|tests/safety/borrow_lifetime_initializer_location_reject.tl|tests/safety/borrow_lifetime_initializer_location_reject.tl:4:10|borrow lifetime mismatch
+shared_mut_borrow_call_location_reject|check-fail|tests/safety/shared_mut_borrow_call_location_reject.tl|tests/safety/shared_mut_borrow_call_location_reject.tl:8:12|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_call_location_reject|check-fail|tests/safety/borrow_lifetime_call_location_reject.tl|tests/safety/borrow_lifetime_call_location_reject.tl:7:11|borrow lifetime mismatch
+
+# Borrow transport retains replace! classification and macro invocation frames.
+shared_mut_borrow_replace_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_location_reject.tl|tests/safety/shared_mut_borrow_replace_location_reject.tl:6:20|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_let_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_let_location_reject.tl|tests/safety/shared_mut_borrow_replace_let_location_reject.tl:9:22|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_index_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_index_location_reject.tl|tests/safety/shared_mut_borrow_replace_index_location_reject.tl:10:39|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_replace_location_control_reject|check-fail|tests/safety/borrow_lifetime_replace_location_control_reject.tl|tests/safety/borrow_lifetime_replace_location_control_reject.tl:6:3|replace! target must be a storage place
+shared_mut_borrow_macro_location_reject|check-fail|tests/safety/shared_mut_borrow_macro_location_reject.tl|tests/safety/shared_mut_borrow_macro_location_reject.tl:10:31|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+borrow_lifetime_macro_location_reject|check-fail|tests/safety/borrow_lifetime_macro_location_reject.tl|tests/safety/borrow_lifetime_macro_location_reject.tl:12:30|borrow lifetime mismatch
+shared_mut_borrow_replace_macro_location_control_reject|check-fail|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl:9:3|replace! target must be a storage place
+
+# replace! retains already located through-shared call-argument diagnostics.
+shared_mut_borrow_replace_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_call_location_reject.tl:9:26|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_index_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl:13:38|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+
 # Early returns and try residuals must obey the arena return boundary.
 arena_return_box_reject|check-fail|tests/safety/arena_return_box_reject.tl|tests/safety/arena_return_box_reject.tl:2:29|region-tagged value cannot escape with-arena 'phase'
 arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|tests/safety/arena_return_nested_tuple_reject.tl:8:15|region-tagged value cannot escape with-arena 'phase'

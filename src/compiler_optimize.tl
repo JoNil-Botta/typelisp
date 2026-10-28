@@ -21441,7 +21441,9 @@
 ;;   move such a read only past instructions a load may cross; successor
 ;;   sinking never clones a read or a def of one, neither guard sinking nor gep
 ;;   splitting moves or re-evaluates such a read, and load sinking stops a
-;;   moving load at a def of one. Each installs the set before reading it.
+;;   moving load at a def of one. Each pass reads the set only for the function
+;;   it rewrites, collecting it in a walk it already makes or only once it has
+;;   a candidate.
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
 ;; marked vars, so a loop pays for the few there are rather than for the whole
@@ -21461,36 +21463,47 @@
   (marks (__tl_dyn-array bool))
   (ids opt_dense_i64_vec.Vec))
 
+(define (opt-function-addr-taken-scan-note!
+  [scan : (&mut scan OptFunctionAddrTakenScan)]
+  [src : i64]) : unit
+  (when
+    (and (>= src 0) (< src scan.frame))
+    (if (= (array-length scan.marks) 0)
+      (set! scan.marks (__tl_make-array bool scan.frame))
+      unit)
+    (unless
+      (array-ref scan.marks src)
+      (set! (array-ref scan.marks src) true)
+      (opt_dense_i64_vec.push-ref! (&mut scan.ids) src))))
+
 (define (opt-function-addr-taken-scan-instr!
   [scan : (&mut scan OptFunctionAddrTakenScan)]
   [instr : ir.CompilerIrInstr]) : unit
   (match instr
-    [(AddrOf _ src _)
-      (when
-        (and (>= src 0) (< src scan.frame))
-        (if (= (array-length scan.marks) 0)
-          (set! scan.marks (__tl_make-array bool scan.frame))
-          unit)
-        (unless
-          (array-ref scan.marks src)
-          (set! (array-ref scan.marks src) true)
-          (opt_dense_i64_vec.push-ref! (&mut scan.ids) src)))]
+    [(AddrOf _ src _) (opt-function-addr-taken-scan-note! scan src)]
     [_ unit]))
+
+(define (opt-function-addr-taken-scan-new [frame : i64]) : OptFunctionAddrTakenScan
+  (OptFunctionAddrTakenScan
+    frame
+    (__tl_make-array bool 0)
+    (opt_dense_i64_vec.new)))
+
+;; Installs what a pass's own walk of the whole function collected.
+(define (opt-function-addr-taken-install-scan!
+  [scan : OptFunctionAddrTakenScan]) : unit
+  (set! opt-function-addr-taken (OptFunctionAddrTaken scan.marks scan.ids)))
 
 (define (opt-function-addr-taken-install!
   [frame : i64]
   [blocks : (& ir.CompilerIrBlockList)]) : unit
   (let
-    [scan : OptFunctionAddrTakenScan
-      (OptFunctionAddrTakenScan
-        frame
-        (__tl_make-array bool 0)
-        (opt_dense_i64_vec.new))]
+    [scan : OptFunctionAddrTakenScan (opt-function-addr-taken-scan-new frame)]
     (opt-blocks-visit
       (owned_view.compiler-owned-reference-shared-view blocks)
       opt-function-addr-taken-scan-instr!
       (&mut scan))
-    (set! opt-function-addr-taken (OptFunctionAddrTaken scan.marks scan.ids))))
+    (opt-function-addr-taken-install-scan! scan)))
 
 (define (opt-licm-addr-taken-install-for-loops!
   [frame : i64]
@@ -21505,7 +21518,9 @@
 ;; storage, as a `Global` operand reads its cell; a def of one writes that
 ;; storage, as a store through its address would.
 (define (opt-addr-taken-operand? [value : (& value ir.CompilerIrValue)]) : bool
-  (opt-addr-taken-value? (& opt-function-addr-taken.marks) value))
+  (match value
+    [(Var id) (opt-addr-taken-var? (& opt-function-addr-taken.marks) id)]
+    [_ false]))
 
 (define (opt-addr-taken-write? [instr : (& instr ir.CompilerIrInstr)]) : bool
   (and
@@ -88890,19 +88905,39 @@
 
 ;; A base/index operand is safe to re-evaluate at every use when it is not the
 ;; Gep's own dst and has exactly one source, or is a stable literal/address.
-;; Implicit mutable global reads, and reads of an address-taken var's storage,
-;; must stay at the original capture point.
+;; Implicit mutable global reads must stay at the original capture point, and
+;; so must reads of an address-taken var's storage
+;; (`opt-gep-split-drop-addr-taken!`).
 (define (opt-gep-split-source-ok?
   [value : (& ir.CompilerIrValue)]
   [self : i64]
   [defs : (& defs (__tl_dyn-array i64))]) : bool
   (match value
-    [(Var v)
-      (and
-        (!= v self)
-        (= (array-ref defs v) 1)
-        (not (opt-addr-taken-operand? value)))]
+    [(Var v) (and (!= v self) (= (array-ref defs v) 1))]
     [_ (opt-successor-sink-stable-value? value)]))
+
+;; An operand naming an address-taken var is a load of its storage, which a
+;; store may change between the Gep and a later use, so such a Gep is never
+;; re-evaluated there. The marks are scanned only once a candidate exists.
+;; Returns whether any candidate is left.
+(define (opt-gep-split-drop-addr-taken!
+  [frame : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [cands : (&mut cands (__tl_dyn-array i64))]
+  [bases : (& (__tl_dyn-array ir.CompilerIrValue))]
+  [offsets : (& (__tl_dyn-array ir.CompilerIrValue))]) : bool
+  (let
+    [taken : (__tl_dyn-array bool) (opt-addr-taken-vars frame blocks)]
+    [left : bool false]
+    (for [v (iterator.range 0 frame)]
+      (when
+        (= (array-ref cands v) 1)
+        (if (or
+          (opt-addr-taken-value? (& taken) (& (array-ref bases v)))
+          (opt-addr-taken-value? (& taken) (& (array-ref offsets v))))
+          (set! (array-ref cands v) 0)
+          (set! left true))))
+    left))
 
 (define (opt-gep-split-candidate?
   [v : i64]
@@ -89216,7 +89251,6 @@
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret-ty frame blocks function-abi)
       (let
-        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         [uses : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame blocks)]
         [memuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
@@ -89260,7 +89294,15 @@
             (& offsets)
             (- frame 1)
             false)]
-        (if (not any?)
+        (if (not
+          (and
+            any?
+            (opt-gep-split-drop-addr-taken!
+              frame
+              (& blocks)
+              (&mut cands)
+              (& bases)
+              (& offsets))))
           func
           (let
             [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -90675,6 +90717,7 @@
   (blocks ir.CompilerIrBlockList)
   (instrs ir.CompilerIrInstrSeq)
   (terminator-index i64)
+  (last-barrier i64)
   (defs (__tl_dyn-array i64))
   (all-defs (__tl_dyn-array i64))
   (source-target-live bool)
@@ -90732,38 +90775,33 @@
       true]
     [_ (opt-addr-taken-write? instr)]))
 
-(define (opt-successor-sink-load-clear-to-terminator?
+;; The index of the block's last load barrier before its terminator, or -1.
+;; Computed once per block: a read at `index` reaches the successor without
+;; crossing a barrier exactly when none lies after it.
+(define (opt-successor-sink-last-barrier
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
-  [terminator-index : i64]) : bool
-  (if (>= index terminator-index)
-    true
-    (if (opt-successor-sink-load-barrier?
-      (ir.compiler-ir-instr-seq-borrow instrs index))
-      false
-      (opt-successor-sink-load-clear-to-terminator?
-        instrs
-        (+ index 1)
-        terminator-index))))
+  [terminator-index : i64]) : i64
+  (let
+    [index : i64 (- terminator-index 1)]
+    [found : i64 (- 0 1)]
+    (while (and (< found 0) (>= index 0))
+      (if (opt-successor-sink-load-barrier?
+        (ir.compiler-ir-instr-seq-borrow instrs index))
+        (set! found index)
+        (-= index 1)))
+    found))
 
 ;; A Load reads memory, and so does a form with an operand naming an
 ;; address-taken var: the moved read must not cross a write of what it reads.
 (define (opt-successor-sink-read-clear?
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
-  [terminator-index : i64]
+  [last-barrier : i64]
   [reads? : bool]) : bool
-  (or
-    (not reads?)
-    (opt-successor-sink-load-clear-to-terminator?
-      instrs
-      (+ index 1)
-      terminator-index)))
+  (or (not reads?) (<= last-barrier index)))
 
 (define (opt-successor-sink-candidate?
-  [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
-  [terminator-index : i64]
+  [last-barrier : i64]
   [instr : (& ir.CompilerIrInstr)]) : bool
   (match instr
     [(or (Mov _ src _) (Cast _ src _ _) (Bitcast _ src _ _) (UnOp _ _ src _)
@@ -90771,34 +90809,31 @@
       (and
         (opt-successor-sink-stable-value? (& src))
         (opt-successor-sink-read-clear?
-          instrs
           index
-          terminator-index
+          last-barrier
           (opt-addr-taken-operand? (& src))))]
     [(Gep _ base offset _)
       (and
         (opt-successor-sink-stable-value? (& base))
         (opt-successor-sink-stable-value? (& offset))
         (opt-successor-sink-read-clear?
-          instrs
           index
-          terminator-index
+          last-barrier
           (or
             (opt-addr-taken-operand? (& base))
             (opt-addr-taken-operand? (& offset)))))]
     [(Load _ src _)
       (and
         (opt-successor-sink-stable-value? (& src))
-        (opt-successor-sink-read-clear? instrs index terminator-index true))]
+        (opt-successor-sink-read-clear? index last-barrier true))]
     [(BinOp _ op lhs rhs _)
       (and
         (opt-successor-sink-binop? (& op))
         (opt-successor-sink-stable-value? (& lhs))
         (opt-successor-sink-stable-value? (& rhs))
         (opt-successor-sink-read-clear?
-          instrs
           index
-          terminator-index
+          last-barrier
           (or
             (opt-addr-taken-operand? (& lhs))
             (opt-addr-taken-operand? (& rhs)))))]
@@ -90806,9 +90841,8 @@
       (and
         (opt-successor-sink-stable-values? (& words))
         (opt-successor-sink-read-clear?
-          instrs
           index
-          terminator-index
+          last-barrier
           (opt-addr-taken-value-seq?
             (& opt-function-addr-taken.marks)
             (& words))))]
@@ -91507,6 +91541,38 @@
           (match (ir.compiler-ir-block-seq-borrow seq i)
             [(Block _ instrs) (opt-successor-sink-fill-defs! frame instrs defs)])))]))
 
+;; The function-wide defs walk, which also installs the address-taken set: the
+;; pass reads both, and one walk serves them.
+(define (opt-successor-sink-fill-all-defs-installing!
+  [frame : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [defs : (&mut defs (__tl_dyn-array i64))]) : unit
+  (let
+    [scan : OptFunctionAddrTakenScan (opt-function-addr-taken-scan-new frame)]
+    (match blocks
+      [(Array seq)
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+          (match (ir.compiler-ir-block-seq-borrow seq i)
+            [(Block _ instrs)
+              (for [index
+                (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+                (let
+                  [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+                  (match (& instr)
+                    [(AddrOf dst src _)
+                      (opt-function-addr-taken-scan-note! (&mut scan) src)
+                      (if (and (>= dst 0) (< dst frame))
+                        (set! (array-ref defs dst) (+ index 1))
+                        unit)]
+                    [_
+                      (match (opt-instr-def-var (& instr))
+                        [(Some dst)
+                          (if (and (>= dst 0) (< dst frame))
+                            (set! (array-ref defs dst) (+ index 1))
+                            unit)]
+                        [(None) unit])])))]))])
+    (opt-function-addr-taken-install-scan! scan)))
+
 (define (opt-successor-sink-loop-target?
   [index : (& index OptCfgIndex)]
   [loops : (& loops (Slice OptNaturalLoop))]
@@ -91763,9 +91829,8 @@
               (and
                 all-move?
                 (opt-successor-sink-candidate?
-                  (__tl-project-field context instrs)
                   index
-                  context.terminator-index
+                  context.last-barrier
                   (& producer)))]
             (set! (array-ref context.visiting var) 1)
             (cond
@@ -91866,6 +91931,7 @@
   [target : i64]
   [instrs : ir.CompilerIrInstrSeq]
   [terminator-index : i64]
+  [last-barrier : i64]
   [index : i64]
   [instr : (& ir.CompilerIrInstr)]
   [frame-cell : (__tl_dyn-array i64)]) : OptSuccessorSinkPrepared
@@ -91914,6 +91980,7 @@
           blocks
           instrs
           terminator-index
+          last-barrier
           defs
           all-defs
           source-target-live
@@ -91986,17 +92053,15 @@
                   (opt-cfg-index-successors cfg label)]
                 [_ (Nil)])]
             [moves : OptSuccessorSinkMoves tail]
+            [last-barrier : i64
+              (opt-successor-sink-last-barrier instrs terminator-index)]
             [index : i64 (- terminator-index 1)]
             (while (>= index 0)
               (let
                 [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
                 (if (and
                   (not (opt-successor-sink-source-index? moves label index))
-                  (opt-successor-sink-candidate?
-                    instrs
-                    index
-                    terminator-index
-                    (& instr)))
+                  (opt-successor-sink-candidate? index last-barrier (& instr)))
                   (match (opt-instr-def-var (& instr))
                     [(Some dst)
                       (match (opt-successor-sink-find-target
@@ -92034,6 +92099,7 @@
                             target
                             (compiler-opt-global-shared-view instrs)
                             terminator-index
+                            last-barrier
                             index
                             (& instr)
                             (compiler-opt-global-shared-view frame-cell))
@@ -92290,7 +92356,6 @@
   [blocks : (& ir.CompilerIrBlockList)]
   [context : (& OptCfgContext)]) : OptSuccessorSinkBlocksResult
   (let
-    [_addr-taken : unit (opt-function-addr-taken-install! frame blocks)]
     [initial-uses : (__tl_dyn-array i64)
       (opt-collect-blocks-uses-array frame blocks)]
     [stripped : bool
@@ -92320,7 +92385,7 @@
         cfg-context)]
     [all-defs : (__tl_dyn-array i64) (opt-used-array-new frame)]
     [_all-defs : unit
-      (opt-successor-sink-fill-all-defs! frame ready (&mut all-defs))]
+      (opt-successor-sink-fill-all-defs-installing! frame ready (&mut all-defs))]
     ;; `initial-uses` counted uses over `blocks` and is dead once the strip
     ;; decision is made, so it already is the count over `ready` whenever the
     ;; strip did not run.
@@ -92931,6 +92996,13 @@
           [_ unit])
         unit)]
     [_ unit]))
+
+(define (opt-guard-sink-any-root?
+  [ptr-root : (& ptr-root (__tl_dyn-array i64))]
+  [frame : i64]) : bool
+  (for [v (iterator.range 0 frame)]
+    (when (= (array-ref ptr-root v) 1) (return true)))
+  false)
 
 (define (opt-guard-sink-note-ptrs-seq!
   [frame : i64]
@@ -93914,6 +93986,11 @@
             (&mut blk-obj)
             (&mut blk-opaque)
             (&mut blk-call))]))
+    ;; Only a global-rooted def is a candidate, and only a candidate reads the
+    ;; address-taken set, so a function without one never scans for it.
+    (when
+      (opt-guard-sink-any-root? (& ptr-root) frame)
+      (opt-function-addr-taken-install! frame blocks))
     (let
       [natural-loops
         (opt-cfg-natural-loops-with-context
@@ -94435,8 +94512,6 @@
       (match (compiler-opt-global-shared-view func)
         [(Function name params ret-ty frame blocks function-abi)
           (let
-            [_addr-taken : unit
-              (opt-function-addr-taken-install! frame (& blocks))]
             [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [_frame-init : unit (set! (array-ref frame-cell 0) frame)]
             [result : OptBlockListPassResult

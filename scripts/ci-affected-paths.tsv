@@ -554,3 +554,5 @@ tests/safety/borrow_lifetime_replace_location_control_reject.tl	stage2-public-to
 tests/safety/shared_mut_borrow_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
 tests/safety/borrow_lifetime_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
 tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture preserving pre-existing framed replace diagnostic classification.
+tests/safety/shared_mut_borrow_replace_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace call-argument diagnostic contracts.
+tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace index-call diagnostic contracts.

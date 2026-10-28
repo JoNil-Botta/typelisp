@@ -2235,3 +2235,7 @@ borrow_lifetime_replace_location_control_reject|check-fail|tests/safety/borrow_l
 shared_mut_borrow_macro_location_reject|check-fail|tests/safety/shared_mut_borrow_macro_location_reject.tl|tests/safety/shared_mut_borrow_macro_location_reject.tl:10:31|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
 borrow_lifetime_macro_location_reject|check-fail|tests/safety/borrow_lifetime_macro_location_reject.tl|tests/safety/borrow_lifetime_macro_location_reject.tl:12:30|borrow lifetime mismatch
 shared_mut_borrow_replace_macro_location_control_reject|check-fail|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl|tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl:9:3|replace! target must be a storage place
+
+# replace! retains already located through-shared call-argument diagnostics.
+shared_mut_borrow_replace_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_call_location_reject.tl:9:26|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)
+shared_mut_borrow_replace_index_call_location_reject|check-fail|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl|tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl:13:38|mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)

@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# Exercise the live caller blocks with the real entry helper. Only grep/link
-# leaves are planted; no compiler is built or invoked. The integration block
+# Exercise the live caller blocks with the real entry helper. These block
+# controls plant grep/link leaves; no compiler is built or invoked. Integration
 # retains its C-dependency step, so a helper error must precede that work too.
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 . "$ROOT/scripts/lib-ci-timing.sh"

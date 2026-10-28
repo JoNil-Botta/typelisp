@@ -11,13 +11,17 @@ entry_work=$(mktemp -d "$entry_root/run.XXXXXX")
 entry_work=$(CDPATH= cd -- "$entry_work" && pwd)
 mkdir -p "$entry_work/bin"
 entry_real_grep=$(command -v grep)
-export entry_real_grep
+entry_real_uname=$(command -v uname)
+export entry_real_grep entry_real_uname
 awk '/^sh .*linux_entry_symbol_for_asm/ {print}' \
     "$ROOT/tests/codegen/integration-fixtures.cases" > "$entry_work/callers"
 [ "$(wc -l < "$entry_work/callers")" -eq 11 ]
 printf 'caller\tcontrol\ttiming\twant\tstatus\n' > "$entry_work/results.tsv"
 cat > "$entry_work/bin/grep" <<'EOF'
 #!/usr/bin/env sh
+# These do-none fixtures execute no SIMD program. Plant only the capability
+# leaf so initialization needs neither a host CPU feature nor a compiler.
+if [ "$#" -eq 3 ] && [ "$3" = /proc/cpuinfo ]; then exit 0; fi
 case "${2:-}" in
     '^_tl_start:$' | '^_start:$')
         printf 'grep:%s\n' "$2" >> "$entry_case/trace"
@@ -28,6 +32,13 @@ case "${2:-}" in
         ;;
 esac
 exec "$entry_real_grep" "$@"
+EOF
+cat > "$entry_work/bin/uname" <<'EOF'
+#!/usr/bin/env sh
+# Exercise the Linux entry plan on either physical host. Windows discovery
+# would otherwise build its CPUID detector before any transcript row runs.
+if [ "${1:-}" = -s ]; then printf 'Linux\n'; exit 0; fi
+exec "$entry_real_uname" "$@"
 EOF
 cat > "$entry_work/bin/as" <<'EOF'
 #!/usr/bin/env sh
@@ -46,7 +57,7 @@ cat > "$entry_work/bin/compiler" <<'EOF'
 printf 'compiler\n' >> "$entry_case/trace"
 exit 97
 EOF
-chmod +x "$entry_work/bin/grep" "$entry_work/bin/as" "$entry_work/bin/ld" "$entry_work/bin/compiler"
+chmod +x "$entry_work/bin/grep" "$entry_work/bin/uname" "$entry_work/bin/as" "$entry_work/bin/ld" "$entry_work/bin/compiler"
 entry_index=0
 while IFS= read -r entry_row; do
     entry_index=$((entry_index + 1))
@@ -80,6 +91,7 @@ while IFS= read -r entry_row; do
             export entry_case entry_control entry_expected
             entry_status=0
             env PATH="$entry_work/bin:$PATH" TYPELISP_BIN="$entry_work/bin/compiler" \
+                TYPELISP_AVX512_EXECUTION=auto TYPELISP_SDE_BIN= \
                 CODEGEN_CASES_WORKDIR="$entry_case/output" TYPELISP_CI_TIMING="$entry_timing" \
                 TYPELISP_CI_TIMING_FILE="$entry_case/timing.tsv" \
                 TYPELISP_CI_TIMING_GATE=entry-transcripts TYPELISP_CI_TIMING_HOST=linux \

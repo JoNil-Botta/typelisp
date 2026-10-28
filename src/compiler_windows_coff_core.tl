@@ -20,7 +20,6 @@
 (import compiler_backend)
 (import compiler_ir_types)
 (import compiler_diagnostic)
-(import compiler_optimize)
 (import sym_i64_env)
 
 (defenum CompilerWindowsCoffLinkability
@@ -430,78 +429,39 @@
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]
   [lower-state : compiler_lower.CompilerLowerState]) : ResultCompilerWindowsBatchArtifact
-  (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (Err
-      (box
-        (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
-          input-path))
-      (compiler_driver_core.compiler-driver-advisories-for-job typecheck-state))
-    (let
-      [representations : compiler_ir_types.CompilerIrRepresentationIndex
-        (compiler_driver_core.compiler-driver-representation-index-for-backend
-          pools
-          (& program)
-          backend-state
-          typecheck-state)]
-      (compiler_driver_core.compiler-driver-release-typecheck-caches-after-lower-for-job!
+  ;; The batch takes the Buffer route's optimize step: it snapshots the
+  ;; allocation profile and releases the lowered IR after optimization.
+  (match (compiler_driver_core.compiler-driver-optimize-for-backend
+    (compiler_driver_core.CompilerDriverOutputRoute.Buffer)
+    pools
+    program
+    spans
+    opt-level
+    profile-state
+    backend-state
+    typecheck-state
+    lower-state)
+    [(Exhausted)
+      (Err
+        (box
+          (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
+            input-path))
+        (compiler_driver_core.compiler-driver-advisories-for-job
+          typecheck-state))]
+    [(Program optimized optimized-spans)
+      (compiler-windows-batch-emit-optimized
+        backend-state
+        pools
+        input-path
+        optimized
+        optimized-spans
+        mode
+        emit-entry
+        force-assembly
+        emit-side-assembly
+        profile-state
         typecheck-state
-        lower-state)
-      (compiler_driver_core.compiler-driver-retire-frontend-arena!)
-      (cfg
-        compile-profile
-        (compiler_driver_core.compiler-driver-profile-start-phase profile-state))
-      (match (compiler_optimize.optimize-program
-        program
-        spans
-        (compiler_optimize.OptimizeRequest
-          pools
-          (compiler_backend.compiler-backend-state-intern backend-state)
-          opt-level
-          profile-state
-          true
-          representations
-          (compiler_driver_core.compiler-driver-lowered-input-retirement
-            lower-state)
-          (compiler_driver_core.compiler-driver-lowered-input-chunk-bounds
-            lower-state)))
-        [(Program optimized optimized-spans)
-          (begin
-            (cfg
-              compile-profile
-              (compiler_driver_core.compiler-driver-profile-finish-phase
-                profile-state
-                "optimize"))
-            (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
-              typecheck-state
-              "optimize"
-              lower-state)
-            (compiler_driver_core.compiler-driver-release-lowered-ir!
-              opt-level
-              lower-state)
-            (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (Err
-                (box
-                  (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
-                    input-path))
-                (compiler_driver_core.compiler-driver-advisories-for-job
-                  typecheck-state))
-              (begin
-                (compiler_backend.compiler-backend-state-set-scalar-registers-enabled!
-                  backend-state
-                  (>= opt-level 2))
-                (compiler-windows-batch-emit-optimized
-                  backend-state
-                  pools
-                  input-path
-                  optimized
-                  optimized-spans
-                  mode
-                  emit-entry
-                  force-assembly
-                  emit-side-assembly
-                  profile-state
-                  typecheck-state
-                  lower-state))))]))))
+        lower-state)]))
 
 (define (compiler-windows-batch-emit-lowered-result
   [input-path : String]

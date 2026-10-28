@@ -23948,9 +23948,8 @@ entry:
         (& params)
         (clone blocks)
         (backend.compiler-backend-function-use-counts 4 (clone blocks)))]
-    (test.assert-i64-eq
-      (backend.compiler-backend-forwarded-addr-of-src state 2)
-      -1
+    (test.assert-true
+      (< (backend.compiler-backend-forwarded-addr-of-src state 2) 0)
       "a parameter use cannot become a later address definition")))
 
 (test

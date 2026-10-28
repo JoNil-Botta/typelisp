@@ -51042,6 +51042,7 @@
       (if (and
         (>= dst 0)
         (< dst (array-length items))
+        (= (array-ref items dst) (- 0 1))
         (compiler-backend-var-single-use? use-counts dst))
         (set! (array-ref items dst) src)
         unit)]
@@ -51057,6 +51058,7 @@
               (>= forward-src 0)
               (>= dst 0)
               (< dst (array-length items))
+              (= (array-ref items dst) (- 0 1))
               (compiler-backend-var-single-use? use-counts dst))
               (set! (array-ref items dst) forward-src)
               unit))]
@@ -51111,25 +51113,20 @@
   [use-counts : (__tl_dyn-array i64)]) : unit
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    [forwarding-counts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     ;; Slot coloring can give a dead AddrOf and a later definition one id.
     ;; A function-wide address recipe needs one definition, parameters included.
-    (compiler_regalloc.compiler-reg-param-count-defs!
-      params
-      (&mut forwarding-counts))
-    (compiler_regalloc.compiler-reg-count-block-defs!
-      (& blocks)
-      (&mut forwarding-counts))
+    (compiler_regalloc.compiler-reg-param-count-defs! params (&mut items))
+    (compiler_regalloc.compiler-reg-count-block-defs! (& blocks) (&mut items))
+    ;; Only -1 admits a recipe; other negative entries remain unforwardable.
     (for [var (iterator.range 0 vars)]
-      (set! (array-ref items var) (- 0 1))
       (set!
-        (array-ref forwarding-counts var)
-        (if (= (array-ref forwarding-counts var) 1)
-          (array-ref use-counts var)
-          0)))
+        (array-ref items var)
+        (if (= (array-ref items var) 1)
+          (- 0 1)
+          (- 0 2))))
     (compiler-backend-addr-of-forwarding-record-blocks!
       (compiler-backend-global-shared-view items)
-      forwarding-counts
+      use-counts
       blocks)
     (compiler-backend-function-state-set-i64-array!
       (compiler-backend-state-function-state backend-state)

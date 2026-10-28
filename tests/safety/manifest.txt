@@ -1003,6 +1003,10 @@ fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_
 fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items[0]`
 fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
+borrowed_enum_struct_pattern_arity_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_arity_reject.tl|tests/safety/borrowed_enum_struct_pattern_arity_reject.tl:12:8|typecheck: pattern arity mismatch
+borrowed_enum_struct_pattern_escape_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_escape_reject.tl|tests/safety/borrowed_enum_struct_pattern_escape_reject.tl:8:3|does not outlive required lifetime `outer`
+borrowed_enum_struct_pattern_literal_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_literal_reject.tl|tests/safety/borrowed_enum_struct_pattern_literal_reject.tl:12:8|borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern
+borrowed_enum_struct_pattern_mutation_reject|check-fail|tests/safety/borrowed_enum_struct_pattern_mutation_reject.tl|tests/safety/borrowed_enum_struct_pattern_mutation_reject.tl:12:15|cannot assign to borrowed place `item`
 borrowed_struct_pattern_string_escape_reject|check-fail|tests/safety/borrowed_struct_pattern_string_escape_reject.tl|-|does not outlive required lifetime `outer`
 borrowed_struct_pattern_string_mutation_reject|check-fail|tests/safety/borrowed_struct_pattern_string_mutation_reject.tl|-|cannot assign to borrowed place `items[0]`
 borrowed_struct_match_escape_reject|check-fail|tests/safety/borrowed_struct_match_escape_reject.tl|-|does not outlive required lifetime `outer`

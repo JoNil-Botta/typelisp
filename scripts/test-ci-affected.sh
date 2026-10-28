@@ -270,7 +270,7 @@ cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkou
 # expansion is a family: every tracked file it can name must select the gate.
 constructed_inputs() {
     awk -F '\t' '
-        function load(script,    line, status, physical, pending, joined, rest, offset, word, heads, tails) {
+        function load(script,    line, status, physical, pending, joined, rest, offset, at, before, word, heads, tails) {
             lines = 0; physical = 0; pending = 0; heads = 0; tails = 0; quote = ""
             while ((status = getline line < script) > 0) {
                 sub(/\r$/, "", line)
@@ -289,15 +289,19 @@ constructed_inputs() {
                 if (line ~ /\\$/) { sub(/\\$/, "", line); joined = line; pending = 1; continue }
                 pending = 0
                 text[++lines] = line; body[lines] = 0; view[lines] = mask(line)
-                # Heredoc operators are code: quoted or commented << opens nothing.
+                # Heredoc operators are code: quoted or commented << opens nothing,
+                # nor does an arithmetic shift. The delimiter is a whole shell word.
                 rest = view[lines]; offset = 0
-                while (match(rest, /<<-?[[:space:]]*\\?["\047x]?[A-Za-z_][A-Za-z0-9_]*/)) {
-                    word = substr(line, offset + RSTART, RLENGTH)
-                    if (offset + RSTART > 1 && substr(view[lines], offset + RSTART - 1, 1) == "<") word = ""
+                while (match(rest, /<<-?[[:space:]]*/)) {
+                    at = offset + RSTART
                     offset += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
-                    if (word == "") continue
-                    tabbed[++tails] = (word ~ /^<<-/)
-                    sub(/^<<-?[[:space:]]*/, "", word); gsub(/[\\"\047]/, "", word)
+                    if ((at > 1 && substr(view[lines], at - 1, 1) == "<") || substr(view[lines], at + 2, 1) == "<") continue
+                    before = substr(view[lines], 1, at - 1)
+                    if (gsub(/\(\(/, "", before) > gsub(/\)\)/, "", before)) continue
+                    if (!match(rest, /^[^[:space:];|&<>()]+/)) continue
+                    word = normal(substr(line, offset + 1, RLENGTH))
+                    offset += RLENGTH; rest = substr(rest, RLENGTH + 1)
+                    tabbed[++tails] = (substr(view[lines], at, 3) == "<<-")
                     delimiter[tails] = word
                 }
             }
@@ -355,14 +359,28 @@ constructed_inputs() {
                 t = ++tokens; token_site[t] = start[i]; token_prefix[t] = prefix; token_segments[t] = 0; token_glob[t] = path
             }
         }
-        function glob_pattern(path,    out, i, character) {
+        # The closing ] of a bracket expression starting at i, or 0 when unmatched.
+        function bracket_end(value, i,    j, n, ending) {
+            n = length(value); j = i + 1
+            if (substr(value, j, 1) ~ /[!^]/) j++
+            if (substr(value, j, 1) == "]") j++
+            for (; j <= n; j++) {
+                if (substr(value, j, 1) == "[" && substr(value, j + 1, 1) ~ /[:.=]/) {
+                    ending = index(substr(value, j + 2), substr(value, j + 1, 1) "]")
+                    if (ending) { j += ending + 2; continue }
+                }
+                if (substr(value, j, 1) == "]") return j
+            }
+            return 0
+        }
+        function glob_pattern(path,    out, i, ending, character) {
             out = "^"
             for (i = 1; i <= length(path); i++) {
                 character = substr(path, i, 1)
                 if (character == "*") out = out "[^/]*"
                 else if (character == "?") out = out "[^/]"
-                else if (character == "[") { while (i < length(path) && substr(path, i, 1) != "]") i++; out = out "[^/]" }
-                else if (character ~ /[.+(){}|^$\\]/) out = out "\\" character
+                else if (character == "[" && (ending = bracket_end(path, i))) { out = out "[^/]"; i = ending }
+                else if (character ~ /[.+(){}|^$\\[]/) out = out "\\" character
                 else out = out character
             }
             return out "$"
@@ -377,6 +395,18 @@ constructed_inputs() {
                 if (position > 1 && substr(view, position - 1, 1) ~ /[A-Za-z0-9_$.\/{-]/) continue
                 after = substr(view, position + length(word), 1)
                 if (after != "" && after !~ /[[:space:];&|<>()]/) continue
+                # A computed binding target anywhere in code may bind any name.
+                if (word == "eval") { unreliable = 1; continue }
+                if (word ~ /^(read|getopts|export|local|readonly|declare|typeset|printf|mapfile|readarray)$/) {
+                    count = split(arguments(i, view, position + length(word)), words, /[[:space:]]+/)
+                    for (j = 1; j <= count; j++) {
+                        value = words[j]
+                        if (word == "printf") { if (value == "-v" && words[j + 1] ~ /[$`]/) unreliable = 1; continue }
+                        if (word !~ /^(read|getopts|mapfile|readarray)$/) sub(/=.*/, "", value)
+                        if (value ~ /[$`]/) unreliable = 1
+                    }
+                    continue
+                }
                 if (!command_at(view, position)) continue
                 if (word == "for" && main) {
                     if (!match(substr(view, position), /^for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*/)) { unreliable = 1; continue }
@@ -406,10 +436,6 @@ constructed_inputs() {
                     }
                 } else if ((word == "do" || word == "done") && main) {
                     event[i, ++events[i]] = position; kind[i, events[i]] = word
-                } else if (word == "eval") unreliable = 1
-                else if (word ~ /^(read|getopts|export|local|readonly|declare|typeset)$/) {
-                    count = split(arguments(i, view, position + length(word)), words, /[[:space:]]+/)
-                    for (j = 1; j <= count; j++) if (words[j] ~ /^\$/) unreliable = 1
                 } else if (word == "." || word == "source") {
                     count = split(arguments(i, view, position + length(word)), words, /[[:space:]]+/)
                     value = (words[1] == "" ? words[2] : words[1])
@@ -426,12 +452,16 @@ constructed_inputs() {
                 while ((at = index(substr(line, from), name)) > 0) {
                     at += from - 1; from = at + length(name)
                     previous = (at > 1 ? substr(line, at - 1, 1) : "")
-                    following = substr(line, from, 3)
+                    following = substr(line, from, 2)
+                    # Expansions read the name; ${NAME=...} and ${NAME:=...} assign it.
+                    if (previous == "$" || (at > 3 && substr(line, at - 3, 3) == "${#")) continue
                     if (at > 2 && substr(line, at - 2, 2) == "${") { if (following ~ /^(=|:=)/) total++; continue }
-                    # Arithmetic assignment and increment bind as well: $((n-=1)), $((++n)).
-                    if (at > 2 && substr(line, at - 2, 2) ~ /^(\+\+|--)$/) { total++; continue }
-                    if (previous != "" && previous !~ /[[:space:];&|()<>`{,]/) continue
-                    if (following != "" && following !~ /^([[:space:];&|()<>`=,]|[-+*\/%^|&]=|<<=|>>=|\+\+|--)/) continue
+                    # Inside a longer word or path it is not the name. Every other
+                    # occurrence may bind it, whatever the delimiter: read targets,
+                    # assignments, arithmetic such as $((1?n=2:0)) or $((n--)).
+                    if (previous ~ /[A-Za-z0-9_]/ || following ~ /^[A-Za-z0-9_]/) continue
+                    if (previous ~ /[.\/-]/ && substr(line, at - 2, 2) != "--") continue
+                    if (following ~ /^[.\/-]/ && following !~ /^(--|-=|\/=)/) continue
                     total++
                 }
             }
@@ -472,7 +502,7 @@ constructed_inputs() {
                         if (character ~ /[A-Za-z0-9_.\/-]/) { token_literal[t, segments] = token_literal[t, segments] character; q++; continue }
                         if (character == "\"" || character == "\047") { q++; continue }
                         if (character == "*" || character == "?" || character == "[") { # A glob is a wildcard segment.
-                            if (character == "[") while (q < length(tail) && substr(tail, q, 1) != "]") q++
+                            if (character == "[" && bracket_end(tail, q)) q = bracket_end(tail, q)
                             q++; token_reference[t, ++segments] = "*"; token_literal[t, segments] = ""; token_block[t, segments] = 0
                             continue
                         }
@@ -630,13 +660,20 @@ for globbed in tests/*.tl; do compile "tests/integration/$globbed.tl"; done
 for exported in alpha; do export exported; compile "tests/integration/$exported.tl"; done
 for fixture in alpha; do compile "$ALIAS/tests/integration/$fixture.tl" "$OTHER/tests/$fixture.tl" "${ROOT_ALIAS}/tests/$fixture.tl"; done
 for depth in 1; do : $((depth+=1)); compile "tests/integration/$depth.tl" "$ROOT"/tests/$depth/*.tl; done
+for bracketed in tests/[[:alpha:]]*.in; do :; done
+for ternary in 1; do : $((1?ternary=2:0)); compile "tests/integration/$ternary.tl"; done
+: $((1 << bits)); cat <<E"OF"
+for hidden in alpha; do :; done
+EOF
+for after in omega; do compile "tests/integration/$after.tl"; done
 OWNER
 probe_owner="$work/constructed-probe/owner.sh"
 # A sourced script can rebind a name, and eval can bind any name.
 printf 'libbound=delta\n' > "$work/constructed-probe/lib.sh"
 printf '. "%s"\nfor libbound in alpha; do compile "tests/integration/$libbound.tl"; done\n' "$work/constructed-probe/lib.sh" > "$work/constructed-probe/sourcing.sh"
 printf 'eval "$BINDING"\nfor evaluated in alpha; do compile "tests/integration/$evaluated.tl"; done\n' > "$work/constructed-probe/evaluating.sh"
-printf 'synthetic-gate\t%s\n' "$probe_owner" "$work/constructed-probe/sourcing.sh" "$work/constructed-probe/evaluating.sh" > "$work/constructed-probe/scripts.tsv"
+printf 'for computed in alpha; do read -r comp"$SUFFIX"; compile "tests/integration/$computed.tl"; done\n' > "$work/constructed-probe/computed.sh"
+printf 'synthetic-gate\t%s\n' "$probe_owner" "$work/constructed-probe/sourcing.sh" "$work/constructed-probe/evaluating.sh" "$work/constructed-probe/computed.sh" > "$work/constructed-probe/scripts.tsv"
 printf '%s\t%s\t%s\n' "$probe_owner" '$WORK/' scratch "$probe_owner" '$ALIAS/' root "$probe_owner" '$UNUSED/' scratch > "$work/constructed-probe/prefixes.tsv"
 constructed_inputs "$work/constructed-probe/scripts.tsv" "$work/constructed-probe/prefixes.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
 probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_owner" "$3" "$4"; }
@@ -660,8 +697,12 @@ probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_own
     probe_row prefixed '${ROOT_ALIAS}/' 22 'tests/${fixture}.tl'
     probe_row family '^tests/integration/.*\.tl$' 23 'tests/integration/${depth}.tl'
     probe_row family '^tests/.*/.*\.tl$' 23 'tests/${depth}/*.tl'
+    probe_row family '^tests/[^/][^/]*\.in$' 24 'tests/[[:alpha:]]*.in'
+    probe_row family '^tests/integration/.*\.tl$' 25 'tests/integration/${ternary}.tl'
+    probe_row member tests/integration/omega.tl 29 'tests/integration/${after}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/sourcing.sh" 'tests/integration/${libbound}.tl'
     printf 'family\t%s\tsynthetic-gate\t%s:2\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/evaluating.sh" 'tests/integration/${evaluated}.tl'
+    printf 'family\t%s\tsynthetic-gate\t%s:1\t%s\n' '^tests/integration/.*\.tl$' "$work/constructed-probe/computed.sh" 'tests/integration/${computed}.tl'
     printf 'unused\t%s\t-\t%s\t-\n' '$UNUSED/' "$probe_owner"
 } > "$work/constructed-probe/expected.tsv"
 cmp "$work/constructed-probe/actual.tsv" "$work/constructed-probe/expected.tsv" || fail 'constructed input discovery left its supported boundary'
@@ -687,7 +728,7 @@ awk -F '\t' '$1 == "member" && $2 ~ /^tests\// && !seen[$2 FS $3]++ {print $2 "\
 if check_primary_owners "$work/constructed-probe/map.tsv" "$work/constructed-probe/directories" "$work/constructed-probe/members.tsv" 2> "$work/constructed-probe/owners.err"; then
     fail 'unowned synthetic constructed member passed'
 fi
-printf 'missing required primary owner: tests/integration/alpha.tl -> synthetic-gate (constructed at %s:4)\n' "$probe_owner" > "$work/constructed-probe/owners.expected"
+printf 'missing required primary owner: tests/integration/%s -> synthetic-gate (constructed at %s)\n' alpha.tl "$probe_owner:4" omega.tl "$probe_owner:29" > "$work/constructed-probe/owners.expected"
 cmp "$work/constructed-probe/owners.err" "$work/constructed-probe/owners.expected" || fail 'constructed member omission lost its owner diagnostic'
 # A family is checked through its tracked members, not an unmapped stand-in:
 # a_case needs a replay, d_case shares its rows, b_case has a direct owner and

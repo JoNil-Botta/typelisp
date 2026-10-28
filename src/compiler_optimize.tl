@@ -21423,19 +21423,25 @@
             rest
             (opt-licm-collect-defs-instr-seq (& instrs) (& set)))])]))
 
-;; Address-taken locals of the function LICM or the block-local fold pipeline
-;; is rewriting (#7974, #7973). A write through the address -- in a loop body,
-;; or in a callee handed the address -- redefines the var without naming it as
-;; a dst.
+;; Address-taken locals of the function a pass is rewriting (#7974, #7973,
+;; #8913). A write through the address -- in a loop body, or in a callee handed
+;; the address -- redefines the var without naming it as a dst.
 ;; - LICM counts every such var as defined in every loop
 ;;   (`opt-licm-loop-defs`): an instruction reading one is never invariant, a
 ;;   condition on one never unswitches, and an instruction writing one is never
-;;   hoisted (`opt-licm-writes-addr-taken?`). Each LICM function entry installs
-;;   the set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
+;;   hoisted (`opt-addr-taken-write?`). Each LICM function entry installs the
+;;   set once it has found a loop (`opt-licm-addr-taken-install-for-loops!`),
 ;;   before it examines one.
 ;; - Fold keeps no copy or constant fact naming one (`opt-copy-update-env`,
 ;;   `opt-const-forget-addr-taken!`); `optimize-block-list-for-function-pass`
 ;;   installs the set before its block walk.
+;; - Code motion treats an operand naming one as a load of its storage
+;;   (`opt-addr-taken-operand?`) and a def of one as a store
+;;   (`opt-addr-taken-write?`). Successor sinking and store address sinking
+;;   move such a read only past instructions a load may cross; successor
+;;   sinking never clones a read or a def of one, and neither guard sinking
+;;   nor gep splitting moves or re-evaluates such a read. Each installs the set
+;;   before reading it.
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
 ;; marked vars, so a loop pays for the few there are rather than for the whole
@@ -21494,10 +21500,19 @@
     [(slice) unit]
     [_ (opt-function-addr-taken-install! frame blocks)]))
 
-(define (opt-licm-writes-addr-taken? [instr : (& instr ir.CompilerIrInstr)]) : bool
-  (match (opt-instr-def-var instr)
-    [(Some dst) (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
-    [(None) false]))
+;; The address-taken refinement of `ir.compiler-ir-instr-effect`, which calls
+;; both of these forms `Pure`. An operand naming an address-taken var reads its
+;; storage, as a `Global` operand reads its cell; a def of one writes that
+;; storage, as a store through its address would.
+(define (opt-addr-taken-operand? [value : (& value ir.CompilerIrValue)]) : bool
+  (opt-addr-taken-value? (& opt-function-addr-taken.marks) value))
+
+(define (opt-addr-taken-write? [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (and
+    (> (array-length opt-function-addr-taken.marks) 0)
+    (match (opt-instr-def-var instr)
+      [(Some dst) (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
+      [(None) false])))
 
 ;; The vars a loop may redefine: its own defs plus every address-taken local.
 (define (opt-licm-loop-defs
@@ -26476,7 +26491,7 @@
           (match (& instr)
             [(Load _ _ _) true]
             [_ false])]
-        [addr-taken-write? : bool (opt-licm-writes-addr-taken? (& instr))]
+        [addr-taken-write? : bool (opt-addr-taken-write? (& instr))]
         ;; The final run asks only about reads it may guard.
         [ordinary? : bool
           (and
@@ -88875,13 +88890,18 @@
 
 ;; A base/index operand is safe to re-evaluate at every use when it is not the
 ;; Gep's own dst and has exactly one source, or is a stable literal/address.
-;; Implicit mutable global reads must stay at the original capture point.
+;; Implicit mutable global reads, and reads of an address-taken var's storage,
+;; must stay at the original capture point.
 (define (opt-gep-split-source-ok?
   [value : (& ir.CompilerIrValue)]
   [self : i64]
   [defs : (& defs (__tl_dyn-array i64))]) : bool
   (match value
-    [(Var v) (and (!= v self) (= (array-ref defs v) 1))]
+    [(Var v)
+      (and
+        (!= v self)
+        (= (array-ref defs v) 1)
+        (not (opt-addr-taken-operand? value)))]
     [_ (opt-successor-sink-stable-value? value)]))
 
 (define (opt-gep-split-candidate?
@@ -89196,6 +89216,7 @@
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret-ty frame blocks function-abi)
       (let
+        [_addr-taken : unit (opt-function-addr-taken-install! frame (& blocks))]
         [uses : (__tl_dyn-array i64)
           (opt-collect-blocks-uses-array frame blocks)]
         [memuses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
@@ -89782,7 +89803,10 @@
 ;; The move is pure scheduling. A gep reads nothing but its two operands, so it
 ;; may pass any instruction -- loads, stores, calls, aborting checks -- that
 ;; does not redefine them; with the gep single-use across the function, the
-;; store found first in the same block is its only reader.
+;; store found first in the same block is its only reader. An operand naming an
+;; address-taken var is a load of its storage, which a store, a call or a def of
+;; an address-taken var may redefine, so such a gep stops at those as a load
+;; would.
 ;; The index of the store whose address is the single-use gep at `index`, when
 ;; it lies more than one slot later in the same block, else -1.
 (define (opt-store-addr-sink-target
@@ -89798,6 +89822,10 @@
           [cursor : i64 (+ index 1)]
           [answer : i64 -1]
           [done : bool false]
+          [reads? : bool
+            (or
+              (opt-addr-taken-operand? (& base))
+              (opt-addr-taken-operand? (& offset)))]
           (while (and (not done) (< cursor count))
             (let
               [instr : ir.CompilerIrInstr
@@ -89811,7 +89839,8 @@
                   (set! done true)]
                 [(or
                     (opt-value-is-var? base dst)
-                    (opt-value-is-var? offset dst))
+                    (opt-value-is-var? offset dst)
+                    (and reads? (opt-successor-sink-load-barrier? (& instr))))
                   (set! done true)]
                 [else (set! cursor (+ cursor 1))])))
           (if (> answer (+ index 1))
@@ -89920,6 +89949,8 @@
         (if (not wanted)
           blocks
           (let
+            [_addr-taken : unit
+              (opt-function-addr-taken-install! frame (& blocks))]
             [use-counts : (__tl_dyn-array i64)
               (opt-collect-blocks-uses-array frame blocks)]
             [out : (__tl_dyn-array ir.CompilerIrBlock)
@@ -90694,7 +90725,7 @@
          (TailCallIndirect _ _ _) (Syscall _ _) (VectorStore _)
          (PredicatedStore _))
       true]
-    [_ false]))
+    [_ (opt-addr-taken-write? instr)]))
 
 (define (opt-successor-sink-load-clear-to-terminator?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
@@ -90710,6 +90741,20 @@
         (+ index 1)
         terminator-index))))
 
+;; A Load reads memory, and so does a form with an operand naming an
+;; address-taken var: the moved read must not cross a write of what it reads.
+(define (opt-successor-sink-read-clear?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [terminator-index : i64]
+  [reads? : bool]) : bool
+  (or
+    (not reads?)
+    (opt-successor-sink-load-clear-to-terminator?
+      instrs
+      (+ index 1)
+      terminator-index)))
+
 (define (opt-successor-sink-candidate?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]
@@ -90718,41 +90763,77 @@
   (match instr
     [(or (Mov _ src _) (Cast _ src _ _) (Bitcast _ src _ _) (UnOp _ _ src _)
          (Word _ src _ _))
-      (opt-successor-sink-stable-value? (& src))]
+      (and
+        (opt-successor-sink-stable-value? (& src))
+        (opt-successor-sink-read-clear?
+          instrs
+          index
+          terminator-index
+          (opt-addr-taken-operand? (& src))))]
     [(Gep _ base offset _)
       (and
         (opt-successor-sink-stable-value? (& base))
-        (opt-successor-sink-stable-value? (& offset)))]
+        (opt-successor-sink-stable-value? (& offset))
+        (opt-successor-sink-read-clear?
+          instrs
+          index
+          terminator-index
+          (or
+            (opt-addr-taken-operand? (& base))
+            (opt-addr-taken-operand? (& offset)))))]
     [(Load _ src _)
       (and
         (opt-successor-sink-stable-value? (& src))
-        (opt-successor-sink-load-clear-to-terminator?
-          instrs
-          (+ index 1)
-          terminator-index))]
+        (opt-successor-sink-read-clear? instrs index terminator-index true))]
     [(BinOp _ op lhs rhs _)
       (and
         (opt-successor-sink-binop? (& op))
         (opt-successor-sink-stable-value? (& lhs))
-        (opt-successor-sink-stable-value? (& rhs)))]
-    [(Pack _ words _) (opt-successor-sink-stable-values? (& words))]
+        (opt-successor-sink-stable-value? (& rhs))
+        (opt-successor-sink-read-clear?
+          instrs
+          index
+          terminator-index
+          (or
+            (opt-addr-taken-operand? (& lhs))
+            (opt-addr-taken-operand? (& rhs)))))]
+    [(Pack _ words _)
+      (and
+        (opt-successor-sink-stable-values? (& words))
+        (opt-successor-sink-read-clear?
+          instrs
+          index
+          terminator-index
+          (opt-addr-taken-value-seq?
+            (& opt-function-addr-taken.marks)
+            (& words))))]
     [_ false]))
 
 ;; Rematerialization is intentionally narrower than ordinary sinking. Loads
 ;; and even otherwise-pure Mov/Cast forms may hide mutable or non-local facts;
-;; address arithmetic is limited to non-trapping Gep/BinOp producers.
+;; address arithmetic is limited to non-trapping Gep/BinOp producers over plain
+;; values. A clone runs in the target, so it may neither read an address-taken
+;; var's storage nor recompute one's def: a use there reads the storage, which
+;; a store may have changed since the def.
+(define (opt-successor-sink-remat-value? [value : (& ir.CompilerIrValue)]) : bool
+  (and
+    (opt-successor-sink-stable-value? value)
+    (not (opt-addr-taken-operand? value))))
+
 (define (opt-successor-sink-remat-candidate? [instr : (& ir.CompilerIrInstr)]) : bool
-  (match instr
-    [(Gep _ base offset _)
-      (and
-        (opt-successor-sink-stable-value? (& base))
-        (opt-successor-sink-stable-value? (& offset)))]
-    [(BinOp _ op lhs rhs _)
-      (and
-        (opt-successor-sink-binop? (& op))
-        (opt-successor-sink-stable-value? (& lhs))
-        (opt-successor-sink-stable-value? (& rhs)))]
-    [_ false]))
+  (and
+    (not (opt-addr-taken-write? instr))
+    (match instr
+      [(Gep _ base offset _)
+        (and
+          (opt-successor-sink-remat-value? (& base))
+          (opt-successor-sink-remat-value? (& offset)))]
+      [(BinOp _ op lhs rhs _)
+        (and
+          (opt-successor-sink-binop? (& op))
+          (opt-successor-sink-remat-value? (& lhs))
+          (opt-successor-sink-remat-value? (& rhs)))]
+      [_ false])))
 
 (define (opt-successor-sink-subst-value
   [frame : i64]
@@ -91541,12 +91622,14 @@
   [base : (& ir.CompilerIrValue)]) : bool
   (match base
     [(Var var)
-      (or
-        (< var 0)
-        (>= var context.frame)
-        (<= (array-ref context.defs var) 0)
-        (> (array-ref context.planned var) 0)
-        (> (array-ref context.base-allowed var) 0))]
+      (and
+        (not (opt-addr-taken-operand? base))
+        (or
+          (< var 0)
+          (>= var context.frame)
+          (<= (array-ref context.defs var) 0)
+          (> (array-ref context.planned var) 0)
+          (> (array-ref context.base-allowed var) 0)))]
     [_ (opt-successor-sink-stable-value? base)]))
 
 (define (opt-successor-sink-try-induction-remat!
@@ -92202,6 +92285,7 @@
   [blocks : (& ir.CompilerIrBlockList)]
   [context : (& OptCfgContext)]) : OptSuccessorSinkBlocksResult
   (let
+    [_addr-taken : unit (opt-function-addr-taken-install! frame blocks)]
     [initial-uses : (__tl_dyn-array i64)
       (opt-collect-blocks-uses-array frame blocks)]
     [stripped : bool
@@ -92765,12 +92849,13 @@
   64)
 
 ;; `Global`/`RuntimeGlobal` operands are implicit mutable reads rather than
-;; stable scalar values; a form that would carry one is not a candidate unless
-;; the classification below names the read.
+;; stable scalar values, and so is an operand naming an address-taken var; a
+;; form that would carry one is not a candidate unless the classification below
+;; names the read.
 (define (opt-guard-sink-plain-value? [value : (& ir.CompilerIrValue)]) : bool
   (match value
     [(or (Global _) (RuntimeGlobal _)) false]
-    [_ true]))
+    [_ (not (opt-addr-taken-operand? value))]))
 
 (define (opt-guard-sink-plain-values-from? [values : (& ir.CompilerIrValueSeq)]) : bool
   (for [index (iterator.range 0 values.len)]
@@ -92897,7 +92982,9 @@
         [(or (RuntimeGlobal _) (Var _)) (No)]
         [_ (Yes (None))])]
     [(Gep _ base offset _)
-      (if (opt-guard-sink-plain-value? (& offset))
+      (if (and
+        (opt-guard-sink-plain-value? (& offset))
+        (not (opt-addr-taken-operand? (& base))))
         (match base
           [(RuntimeGlobal _) (No)]
           [_ (Yes (None))])
@@ -94338,6 +94425,8 @@
       (match (compiler-opt-global-shared-view func)
         [(Function name params ret-ty frame blocks function-abi)
           (let
+            [_addr-taken : unit
+              (opt-function-addr-taken-install! frame (& blocks))]
             [frame-cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
             [_frame-init : unit (set! (array-ref frame-cell 0) frame)]
             [result : OptBlockListPassResult

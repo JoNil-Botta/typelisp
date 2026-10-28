@@ -398,6 +398,8 @@ licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0
 licm_addr_taken_local|all|0,1,2|tests/integration/licm_addr_taken_local.tl|42|-|-|-|-
 licm_addr_taken_reset|all|0,1,2|tests/integration/licm_addr_taken_reset.tl|42|-|-|-|-
 fold_addr_taken_local|all|0,1,2|tests/integration/fold_addr_taken_local.tl|42|-|-|-|-
+sink_addr_taken_ptr_write|all|0,1,2|tests/integration/sink_addr_taken_ptr_write.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
+sink_addr_taken_local|all|0,1,2|tests/integration/sink_addr_taken_local.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 addr_taken_frame_slots|all|0,1,2|tests/integration/addr_taken_frame_slots.tl|42|-|-|-|-
 addr_taken_frame_join|all|0,1|tests/integration/addr_taken_frame_join.tl|42|-|-|-|-
 bounds_dom_addr_taken_local|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|42|-|0 2 0|stdlib/io.tl stdlib/string.tl|-

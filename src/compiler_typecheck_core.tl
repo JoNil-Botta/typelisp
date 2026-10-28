@@ -6508,7 +6508,7 @@
           env
           mutable
           (ast.ast-borrow-lifetime-from-id lifetime-id)
-          (tc-global-shared-view place)
+          place
           allow-mut-by-value-borrow
           (TcBorrowSource.Selected (& source)))
           [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
@@ -53500,7 +53500,7 @@
               (TcBorrowSource.Spanned (& span)))]))]
     (when
       (not expected?)
-      (match (tc-global-shared-view checked)
+      (match (clone checked)
         [(Ok ty)
           (let
             [body-state : TcBodyState (tc-context-body-state ctx)]
@@ -53521,7 +53521,7 @@
         ctx
         env
         expr-id
-        (tc-global-shared-view checked)))
+        (clone checked)))
     checked))
 
 ;; Ordinary Spanned nodes and compact caller operands use the same transient

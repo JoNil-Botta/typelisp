@@ -6510,7 +6510,7 @@
           (ast.ast-borrow-lifetime-from-id lifetime-id)
           place
           allow-mut-by-value-borrow
-          (TcBorrowSource.Selected (& source)))
+          (TcBorrowSource.Selected source.line source.column))
           [(ResultTcType.Err message) (TcSelectedResult.Err message sink)]
           [(ResultTcType.Ok ty)
             ;; A mutable borrow of a view binder borrows through the view.
@@ -22865,13 +22865,12 @@
   (Ok)
   (Err String))
 
-;; Borrow diagnostic provenance stays borrowed until the direct storage-policy
-;; rejection. Successful borrows neither convert nor package a source span.
+;; Convert selected source coordinates only at the direct storage-policy
+;; rejection. Legacy views already carry their complete span.
 (defenum TcBorrowSource
-  (:lifetimes source)
   (No)
-  (Selected (& source ownership.OwnershipSource))
-  (Spanned (& source ast.AstSourceSpan)))
+  (Selected i64 i64)
+  (Spanned ast.AstSourceSpan))
 
 (defenum TcMoveKind
   (Copyable)
@@ -53496,7 +53495,7 @@
               (ast.ast-borrow-lifetime-from-id lifetime-id)
               (tc-context-expr-get ctx place-id)
               (and expected? allow-mut-by-value-borrow)
-              (TcBorrowSource.Spanned (& span)))]))]
+              (TcBorrowSource.Spanned span))]))]
     (when
       (not expected?)
       (match (clone checked)
@@ -76395,7 +76394,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : (& ast.AstExpr)]
-  [source : (TcBorrowSource source)]) : ResultTcUnit
+  [source : TcBorrowSource]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
     expr)
@@ -76428,12 +76427,13 @@
             ;; from reference and box checks retain their established spans.
             (Err
               (match source
-                [(TcBorrowSource.Selected at)
-                  (if (and (> at.line 0) (> at.column 0))
-                    (tc-located-error (tc-selected-source-span at) message)
+                [(TcBorrowSource.Selected line column)
+                  (if (and (> line 0) (> column 0))
+                    (tc-located-error
+                      (ast.ast-source-span line column line column)
+                      message)
                     message)]
-                [(TcBorrowSource.Spanned span)
-                  (tc-located-error (deref span) message)]
+                [(TcBorrowSource.Spanned span) (tc-located-error span message)]
                 [(TcBorrowSource.No) message])))))]
     [(StructGet receiver-box _)
       (let
@@ -76709,7 +76709,7 @@
   [lifetime : ast.AstBorrowLifetime]
   [place-expr : ast.AstExpr]
   [allow-mut-by-value-borrow : bool]
-  [source : (TcBorrowSource source)]) : ResultTcType
+  [source : TcBorrowSource]) : ResultTcType
   (match (tc-borrow-place-with-access
     ctx
     expr-bases

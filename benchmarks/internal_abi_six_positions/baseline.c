@@ -13,6 +13,9 @@ extern int64_t tl_atomic_i64_cas_ptr(int64_t *, int64_t, int64_t);
 static volatile int64_t preserved = 1;
 
 #ifdef _WIN32
+/* clang's float-use marker for this fixture's CRT-free Windows link. */
+int _fltused = 0;
+
 /* Normal clang-generated C calls supply all GP/FP arguments. These naked
    Win64 interposers forward only stack words, install canaries immediately
    before the call, and inspect them before any compiler-generated reload.

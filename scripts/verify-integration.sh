@@ -3960,7 +3960,6 @@ if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
     ci_timing_set_now_ms
     _integration_fixture_started=$CI_TIMING_NOW_MS
     sh "$ROOT/scripts/verify-native-link-failures.sh" "$WORKDIR/native-link-failure-self-test"
-    sh "$ROOT/scripts/verify-linux-entry-callers.sh" "$WORKDIR/linux-entry-caller-self-test"
     run_preparation_failure_self_test
     ci_timing_set_now_ms
     _integration_matrix_started=$CI_TIMING_NOW_MS
@@ -3977,6 +3976,8 @@ if [ "$SELF_TEST_BATCH_OBSERVABILITY" -eq 1 ]; then
     bounded_completion_fixture_cost integration \
         "$((_integration_matrix_started - _integration_fixture_started + CI_TIMING_NOW_MS - _integration_matrix_finished))" \
         "$((_integration_matrix_finished - _integration_matrix_started))" || exit 1
+    ci_timing_run linux-entry-callers failure-controls \
+        sh "$ROOT/scripts/verify-linux-entry-callers.sh" "$WORKDIR/linux-entry-caller-self-test" || exit $?
     exit 0
 fi
 

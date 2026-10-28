@@ -96,7 +96,7 @@ contains .section .typelisp_backtrace,"a",@progbits
 contains tl_backtrace_string_data_begin:
 contains fatal_backtrace.tl::backtrace-leaf
 contains tl_backtrace_frame_pointer:
-sh as "{{dir}}/bt.s" -o "{{dir}}/bt.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/bt.s")" "{{dir}}/bt.o" -o "{{dir}}/bt"
+sh as "{{dir}}/bt.s" -o "{{dir}}/bt.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/bt.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/bt.o" -o "{{dir}}/bt"; }
 step full
 exec env TYPELISP_BACKTRACE=full "{{dir}}/bt"
 exit 134
@@ -133,7 +133,7 @@ not-contains {{root}}
 contains WORKSPACE/tests/integration/fatal_backtrace.tl
 step optimized
 run compile tests/integration/fatal_backtrace.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 2 -o "{{dir}}/opt2.s"
-sh as "{{dir}}/opt2.s" -o "{{dir}}/opt2.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/opt2.s")" "{{dir}}/opt2.o" -o "{{dir}}/opt2"
+sh as "{{dir}}/opt2.s" -o "{{dir}}/opt2.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/opt2.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/opt2.o" -o "{{dir}}/opt2"; }
 exec env TYPELISP_BACKTRACE=full "{{dir}}/opt2"
 exit 134
 in stderr
@@ -149,14 +149,14 @@ exit 134
 stderr contains fatal_backtrace.tl::backtrace-leaf
 step corrupt-map
 sh sed '/^    \.quad _tl_fatal_backtrace_backtrace_leaf$/ { n; n; s/^    \.quad .*$/    .quad 1/; }' "{{dir}}/bt.s" > "{{dir}}/corrupt.s"
-sh as "{{dir}}/corrupt.s" -o "{{dir}}/corrupt.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/corrupt.s")" "{{dir}}/corrupt.o" -o "{{dir}}/corrupt"
+sh as "{{dir}}/corrupt.s" -o "{{dir}}/corrupt.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/corrupt.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/corrupt.o" -o "{{dir}}/corrupt"; }
 exec env TYPELISP_BACKTRACE=full "{{dir}}/corrupt"
 exit 134
 stderr match   0: <unknown> \(0x[1-9a-f][0-9a-f]*\)
 stderr contains fatal_backtrace.tl::backtrace-recurse
 step worker
 run compile tests/integration/fatal_backtrace_thread.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/thread.s"
-sh as "{{dir}}/thread.s" -o "{{dir}}/thread.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/thread.s")" "{{dir}}/thread.o" -o "{{dir}}/thread"
+sh as "{{dir}}/thread.s" -o "{{dir}}/thread.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/thread.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/thread.o" -o "{{dir}}/thread"; }
 exec env TYPELISP_BACKTRACE=full "{{dir}}/thread"
 exit 134
 stderr contains stack backtrace:
@@ -174,21 +174,21 @@ stderr contains main at tests/integration/fatal_backtrace.tl:28:3
 case fatal-backtrace-values
 step fatal-backtrace-bounds-values
 run compile tests/integration/red_zone_abort_trap.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/bounds.s"
-sh as "{{dir}}/bounds.s" -o "{{dir}}/bounds.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/bounds.s")" "{{dir}}/bounds.o" -o "{{dir}}/bounds"
+sh as "{{dir}}/bounds.s" -o "{{dir}}/bounds.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/bounds.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/bounds.o" -o "{{dir}}/bounds"; }
 exec env TYPELISP_BACKTRACE=full "{{dir}}/bounds" trap
 exit 134
 stderr contains array index out of bounds: index=4 length=4
 stderr contains stack backtrace:
 step fatal-backtrace-div-values
 run compile tests/safety/division_by_zero_trap.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/div.s"
-sh as "{{dir}}/div.s" -o "{{dir}}/div.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/div.s")" "{{dir}}/div.o" -o "{{dir}}/div"
+sh as "{{dir}}/div.s" -o "{{dir}}/div.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/div.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/div.o" -o "{{dir}}/div"; }
 exec env TYPELISP_BACKTRACE=full "{{dir}}/div"
 exit 135
 stderr contains integer division or remainder error: dividend=1 divisor=0
 stderr contains stack backtrace:
 step fatal-backtrace-shift-values
 run compile tests/integration/shl_count_width_trap.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/shift.s"
-sh as "{{dir}}/shift.s" -o "{{dir}}/shift.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{dir}}/shift.s")" "{{dir}}/shift.o" -o "{{dir}}/shift"
+sh as "{{dir}}/shift.s" -o "{{dir}}/shift.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/shift.s") || exit $?; ld -static -e "$CCV_entry" "{{dir}}/shift.o" -o "{{dir}}/shift"; }
 exec env TYPELISP_BACKTRACE=full "{{dir}}/shift"
 exit 129
 stderr contains shift count out of range: count=64 width=32
@@ -259,7 +259,7 @@ not-contains .L_tl_process_exec_marker:
 not-contains .L_tl_substring_copy_loop:
 not-contains .L_tl_string_concat_copy_a:
 sh as "{{dir}}/runtime_helpers.s" -o "{{dir}}/runtime_helpers.o" && as "{{work}}/runtime_abort.s" -o "{{dir}}/runtime_abort.o"
-sh ld "{{dir}}/runtime_helpers.o" "{{dir}}/runtime_abort.o" -o "{{dir}}/runtime" -e "$(linux_entry_symbol_for_asm "{{dir}}/runtime_helpers.s")"
+sh CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/runtime_helpers.s") || exit $?; ld "{{dir}}/runtime_helpers.o" "{{dir}}/runtime_abort.o" -o "{{dir}}/runtime" -e "$CCV_entry"
 exec "{{dir}}/runtime" < /dev/null
 exit 42
 stdout empty
@@ -281,7 +281,7 @@ match ^[[:space:]]+movq .* 0\(%rsp\)$
 match ^[[:space:]]+movq .* 8\(%rsp\)$
 match ^[[:space:]]+movsd .* [0-9]+\(%rsp\)$
 not-contains backend: too many call args
-sh as "{{dir}}/stack_args.s" -o "{{dir}}/stack_args.o" && ld "{{dir}}/stack_args.o" -o "{{dir}}/stack_args" -e "$(linux_entry_symbol_for_asm "{{dir}}/stack_args.s")"
+sh as "{{dir}}/stack_args.s" -o "{{dir}}/stack_args.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/stack_args.s") || exit $?; ld "{{dir}}/stack_args.o" -o "{{dir}}/stack_args" -e "$CCV_entry"; }
 exec "{{dir}}/stack_args" < /dev/null
 exit 96
 stdout empty
@@ -301,7 +301,7 @@ contains tl_alloc:
 match ^[[:space:]]+movq \(%r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)\), %r(ax|bx|cx|dx|si|di|8|9|10|11|12|13|14|15)$
 not-contains # TODO
 sh as "{{dir}}/raw_pointer.s" -o "{{dir}}/raw_pointer.o" && as "{{work}}/raw_pointer_abort.s" -o "{{dir}}/raw_pointer_abort.o"
-sh ld "{{dir}}/raw_pointer.o" "{{dir}}/raw_pointer_abort.o" -o "{{dir}}/raw_pointer" -e "$(linux_entry_symbol_for_asm "{{dir}}/raw_pointer.s")"
+sh CCV_entry=$(linux_entry_symbol_for_asm "{{dir}}/raw_pointer.s") || exit $?; ld "{{dir}}/raw_pointer.o" "{{dir}}/raw_pointer_abort.o" -o "{{dir}}/raw_pointer" -e "$CCV_entry"
 exec "{{dir}}/raw_pointer" < /dev/null
 exit 42
 stdout empty
@@ -318,7 +318,7 @@ cmp-mem fold smoke: compares=35338 words=388 indirect=280 acc=1579
 end-file
 sh CCV_fold="{{root}}/target/integration-verify/linux/backend-cmp-mem-fold-parity-opt{{opt}}" && mkdir -p "$CCV_fold" && CCV_fold="$CCV_fold/backend-cmp-mem-fold-parity-opt{{opt}}"
 run compile "{{root}}/src/tests/compiler_backend_cmp_mem_fold_smoke.tl" --stdlib-root "{{root}}/src" --opt-level {{opt}} -o "{{fold}}.s"
-sh as "{{fold}}.s" -o "{{fold}}.o" && ld -static -e "$(linux_entry_symbol_for_asm "{{fold}}.s")" "{{fold}}.o" -o "{{fold}}"
+sh as "{{fold}}.s" -o "{{fold}}.o" && { CCV_entry=$(linux_entry_symbol_for_asm "{{fold}}.s") || exit $?; ld -static -e "$CCV_entry" "{{fold}}.o" -o "{{fold}}"; }
 exec "{{fold}}"
 stderr empty
 same "{{dir}}/expected.stdout" "{{stdout}}"

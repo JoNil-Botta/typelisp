@@ -204,3 +204,4 @@ EOF
 done
 [ "$(wc -l < "$entry_work/results.tsv")" -eq 127 ]
 echo "Linux entry caller self-test passed (9 callers, 126 status/trace/timing controls; $entry_work)"
+sh "$ROOT/scripts/verify-linux-entry-transcripts.sh" "$entry_work/transcripts"

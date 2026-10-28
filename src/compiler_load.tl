@@ -12850,6 +12850,11 @@
   [count : i64]) : unit
   (set! (array-ref state.dependency-surfaces.macro-skip-count 0) count))
 
+;; Declarations the macro walk hydrated this use, or 0 before any hydration.
+(define (compiler-load-session-state-dependency-surface-macro-skip-count
+  [state : (& CompilerLoadSessionState)]) : i64
+  (array-ref state.dependency-surfaces.macro-skip-count 0))
+
 (define (compiler-load-session-state-dependency-surface-note-typecheck-skip!
   [state : CompilerLoadSessionState]
   [count : i64]) : unit

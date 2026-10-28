@@ -1256,10 +1256,13 @@ IDs remain valid. Linker strings are deep-copied into the caller's arena.
 Composite dependency facts cover the declarations copied from admitted fragments,
 not every declaration before the last fragment. The reusable span can also contain
 context-only module/import markers and stdlib source with embedded provenance.
-Entry-owned semantic declarations force the ordinary macro/typecheck walks.
-Source expressions within an otherwise admitted span must already need no macro
-expansion, using the same structural and call gates as the ordinary expander;
-otherwise the composite facts are cleared before either walk can skip them.
+It ends before the first entry-owned semantic declaration, and for the macro walk
+before the first source expression that still needs macro expansion, using the
+same structural and call gates as the ordinary expander. That declaration and
+all later ones take the ordinary walks. Typechecking, and any later macro plan
+in the same use, reuses no more than the first macro plan hydrated, so no
+declaration the expander changed is skipped. An empty span clears the composite
+facts before either walk can skip them.
 
 Runtime lowering shares the ordinary/PIC checked-pool handoff. Both ordinary
 functions and generated package SPMD specializations escape through

@@ -56,6 +56,7 @@ CONSUMER_BIN="$CONSUMER_TARGET/surface_consumer$NL_BIN_EXT"
 RIGHT_TLCI="$RIGHT/target/release/surface_right.tlci"
 NATIVE_ASM="$WORKDIR/surface_consumer.native.s"
 SUCCESS_SOURCE="$WORKDIR/surface_consumer.success.tl"
+INTERLEAVED_ASM="$WORKDIR/surface_consumer.interleaved.s"
 
 GATE_FAIL_PREFIX='[package-surface-tlci] '
 . "$ROOT/scripts/lib-gate.sh"
@@ -258,6 +259,23 @@ run_consumer_90() {
         fail "$label consumer wrote stdout"
     [ ! -s "$WORKDIR/$label.program.err" ] ||
         fail "$label consumer wrote stderr"
+}
+
+runtime_surface_field() {
+    field=$1
+    file=$2
+    awk -F '|' -v wanted="$field" '
+        $1 == "dependency-tlci-verification" && $2 == "phase=runtime-finished" &&
+            $3 == "requests=-1" && $4 == "entries=3" {
+            for (i = 5; i <= NF; i++) {
+                split($i, pair, "=")
+                if (pair[1] == wanted) {
+                    print pair[2]
+                    exit
+                }
+            }
+        }
+    ' "$file"
 }
 
 assert_surface_route() {
@@ -553,6 +571,73 @@ echo "[package-surface-tlci] authored dependency diagnostic differential"
 run_failure_pair authored "surface-right authored diagnostic" E0505
 echo "[package-surface-tlci] dependency fuel diagnostic differential"
 run_failure_pair fuel "compile-time evaluation limit exceeded" E0507
+
+# Embedded stdlib source that still expands and an entry-owned global precede
+# the dependency imports. Both walks reuse the same authenticated prefix up to
+# the first such declaration instead of discarding it, and the trusted route
+# still matches forced-source assembly.
+echo "[package-surface-tlci] interleaved source prefix reuse"
+cat > "$CONSUMER/src/main.tl" <<'EOF'
+(module consumer.src.main)
+
+(import stdlib.string)
+
+(define prefix-offset : i64 (+ (string.string-length "abc") 7))
+
+(import base.src.lib as base)
+(import left.src.lib as left)
+(import right.src.lib as right)
+
+(define (main) : i64
+  (+
+    prefix-offset
+    (left.left-value (base.typed-add i64 (left.adjust 1)))
+    (right.right-value (base.typed-add i64 (right.adjust 1)))
+    (left.same 1)
+    (right.same 1)))
+EOF
+unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
+rm -rf "$CONSUMER/target"
+if ! "$COMPILER" build \
+    --manifest-path "$CONSUMER/typelisp.pkg" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    --backend-mode scalar \
+    --opt-level 0 > "$WORKDIR/interleaved.out" 2> "$WORKDIR/interleaved.err"; then
+    cat "$WORKDIR/interleaved.out" >&2
+    cat "$WORKDIR/interleaved.err" >&2
+    fail "interleaved source build failed"
+fi
+[ "$(runtime_surface_field surface-hits "$WORKDIR/interleaved.err")" = 3 ] ||
+    fail "interleaved source did not hydrate all three dependency surfaces"
+[ "$(runtime_surface_field surface-fallbacks "$WORKDIR/interleaved.err")" = 0 ] ||
+    fail "interleaved source fell back to dependency source"
+interleaved_macro=$(runtime_surface_field surface-macro-skipped "$WORKDIR/interleaved.err")
+interleaved_typecheck=$(runtime_surface_field surface-typecheck-skipped "$WORKDIR/interleaved.err")
+[ -n "$interleaved_macro" ] && [ "$interleaved_macro" -gt 0 ] ||
+    fail "interleaved source discarded the reusable prefix"
+[ "$interleaved_macro" -lt "$TRUSTED_PREFIX_SKIPPED" ] ||
+    fail "interleaved source reused source that needs ordinary walks"
+[ "$interleaved_typecheck" = "$interleaved_macro" ] ||
+    fail "interleaved typecheck reuse $interleaved_typecheck differs from macro reuse $interleaved_macro"
+cp "$CONSUMER_ASM" "$INTERLEAVED_ASM"
+run_consumer_90 interleaved
+rm -rf "$CONSUMER/target"
+TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE=1
+export TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE
+if ! "$COMPILER" build \
+    --manifest-path "$CONSUMER/typelisp.pkg" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    --backend-mode scalar \
+    --opt-level 0 > "$WORKDIR/interleaved-source.out" \
+    2> "$WORKDIR/interleaved-source.err"; then
+    cat "$WORKDIR/interleaved-source.out" >&2
+    cat "$WORKDIR/interleaved-source.err" >&2
+    fail "interleaved forced-source build failed"
+fi
+cmp "$INTERLEAVED_ASM" "$CONSUMER_ASM" >/dev/null ||
+    fail "interleaved trusted and forced-source assembly differ"
+run_consumer_90 interleaved-source
+cp "$SUCCESS_SOURCE" "$CONSUMER/src/main.tl"
 
 unset TYPELISP_DEPENDENCY_TLCI_FORCE_SOURCE || true
 rm -rf "$CONSUMER/target"

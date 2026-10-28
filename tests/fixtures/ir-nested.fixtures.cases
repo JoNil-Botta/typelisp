@@ -1,0 +1,8 @@
+# Labels preserve the owning loop's output names. Matrices stay in the harness.
+do none
+case recursive_aggregate_return
+source tests/integration/recursive_aggregate_return.tl
+case recursive_aggregate_return_variants
+source tests/integration/recursive_aggregate_return_variants.tl
+case fixed_array_result_tailrec
+source tests/integration/fixed_array_result_tailrec.tl

@@ -9423,6 +9423,17 @@
        %18 = bit_or %11, %5 : i64
        return %18"))
 
+;; v21 is the address of v`taken`. With v20 address-taken, the def of v20 between
+;; the pair and its consumer writes the cell the load reads (#8913), so the pair
+;; stays above it; with another var's address taken the pair reaches its
+;; consumer.
+(define (opt-load-sink-addr-taken-def-blocks [taken : i64]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (str_cat.str-cat
+      "loop:\n%20 = add %3, 40 : i64\n%22 = add %3, 2 : i64\n%21 = addr_of %"
+      (string.int->string taken)
+      "\n%10 = gep %21, 0 : i64\n%11 = load %10 : i64\n%20 = mov 3 : i64\n%18 = bit_or %11, %20 : i64\nreturn %18")))
+
 ;; A call between the load and its consumer may store anywhere.
 (define (opt-load-sink-call-blocks) : ir.CompilerIrBlockList
   (irt.blocks
@@ -9563,6 +9574,35 @@
         [block (opt-load-sink-run (opt-load-sink-bounds-blocks))]
         (opt-load-sink-order? block bounds-expected))
       (return 7))
+    (let
+      [kept : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [moved : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      (set! (array-ref kept 0) 20)
+      (set! (array-ref kept 1) 22)
+      (set! (array-ref kept 2) 21)
+      (set! (array-ref kept 3) 10)
+      (set! (array-ref kept 4) 11)
+      (set! (array-ref kept 5) 20)
+      (set! (array-ref kept 6) 18)
+      (set! (array-ref kept 7) (- 0 1))
+      (unless
+        (let
+          [block (opt-load-sink-run (opt-load-sink-addr-taken-def-blocks 20))]
+          (opt-load-sink-order? block kept))
+        (return 8))
+      (set! (array-ref moved 0) 20)
+      (set! (array-ref moved 1) 22)
+      (set! (array-ref moved 2) 21)
+      (set! (array-ref moved 3) 20)
+      (set! (array-ref moved 4) 10)
+      (set! (array-ref moved 5) 11)
+      (set! (array-ref moved 6) 18)
+      (set! (array-ref moved 7) (- 0 1))
+      (unless
+        (let
+          [block (opt-load-sink-run (opt-load-sink-addr-taken-def-blocks 22))]
+          (opt-load-sink-order? block moved))
+        (return 9)))
     42))
 
 ;; --- store address sinking ----------------------------------------------------
@@ -9600,6 +9640,27 @@
        %0 = mov 7 : i64
        store_ptr %10, %5 : i64
        return %5"))
+
+;; v20 is address-taken, so the gep's index reads its storage (#8913): the store
+;; through v21 rewrites it, and the gep may not move below that store.
+(define (opt-store-addr-sink-addr-taken-blocks [taken : i64]) : ir.CompilerIrBlockList
+  (irt.blocks
+    (str_cat.str-cat
+      "loop:\n%20 = add %3, 1 : i64\n%22 = add %3, 2 : i64\n%21 = addr_of %"
+      (string.int->string taken)
+      "\n%10 = gep %0, %20 : i64\nstore_ptr %21, 9 : i64\n%12 = add %5, 1 : i64\nstore_ptr %10, %12 : i64\nreturn %12")))
+
+;; With the store above it, the same gep has nothing left to cross but the add.
+(define (opt-store-addr-sink-addr-taken-clear-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "loop:
+       %20 = add %3, 1 : i64
+       %21 = addr_of %20
+       store_ptr %21, 9 : i64
+       %10 = gep %0, %20 : i64
+       %12 = add %5, 1 : i64
+       store_ptr %10, %12 : i64
+       return %12"))
 
 ;; The gep is the stored VALUE, not the address: nothing to fold.
 (define (opt-store-addr-sink-value-blocks) : ir.CompilerIrBlockList
@@ -9677,6 +9738,49 @@
     (unless
       (opt-store-addr-sink-order? (opt-store-addr-sink-value-blocks) (& value))
       (return 5))
+    (let
+      [kept : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [crossed : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [clear : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+      (set! (array-ref kept 0) 20)
+      (set! (array-ref kept 1) 22)
+      (set! (array-ref kept 2) 21)
+      (set! (array-ref kept 3) 10)
+      (set! (array-ref kept 4) (- 0 1))
+      (set! (array-ref kept 5) 12)
+      (set! (array-ref kept 6) (- 0 1))
+      (set! (array-ref kept 7) (- 0 1))
+      (unless
+        (opt-store-addr-sink-order?
+          (opt-store-addr-sink-addr-taken-blocks 20)
+          (& kept))
+        (return 6))
+      ;; Over a var whose address is not taken the same gep reaches its store.
+      (set! (array-ref crossed 0) 20)
+      (set! (array-ref crossed 1) 22)
+      (set! (array-ref crossed 2) 21)
+      (set! (array-ref crossed 3) (- 0 1))
+      (set! (array-ref crossed 4) 12)
+      (set! (array-ref crossed 5) 10)
+      (set! (array-ref crossed 6) (- 0 1))
+      (set! (array-ref crossed 7) (- 0 1))
+      (unless
+        (opt-store-addr-sink-order?
+          (opt-store-addr-sink-addr-taken-blocks 22)
+          (& crossed))
+        (return 7))
+      (set! (array-ref clear 0) 20)
+      (set! (array-ref clear 1) 21)
+      (set! (array-ref clear 2) (- 0 1))
+      (set! (array-ref clear 3) 12)
+      (set! (array-ref clear 4) 10)
+      (set! (array-ref clear 5) (- 0 1))
+      (set! (array-ref clear 6) (- 0 1))
+      (unless
+        (opt-store-addr-sink-order?
+          (opt-store-addr-sink-addr-taken-clear-blocks)
+          (& clear))
+        (return 8)))
     42))
 
 (test
@@ -10814,6 +10918,106 @@
      other:
        return 0"))
 
+;; v2 is address-taken, so the Mov reads its storage (#8913): the StorePtr
+;; through v3 rewrites what it reads, and the Mov must stay above it.
+(define (opt-successor-sink-addr-taken-store-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = add %1, 40 : i64
+       %3 = addr_of %2
+       %4 = mov %2 : i64
+       store_ptr %3, 3 : i64
+       branch %0, use, other
+     use:
+       %5 = add %4, %2 : i64
+       return %5
+     other:
+       return 0"))
+
+;; The same read placed after the store has nothing left to cross.
+(define (opt-successor-sink-addr-taken-clear-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = add %1, 40 : i64
+       %3 = addr_of %2
+       store_ptr %3, 3 : i64
+       %4 = mov %2 : i64
+       branch %0, use, other
+     use:
+       %5 = add %4, %2 : i64
+       return %5
+     other:
+       return 0"))
+
+;; Sinking v5 needs a clone of v4, which would read v2's storage after the
+;; store instead of before it, so v5 stays. v2 is already live in `use`, so
+;; nothing but that read stops the clone.
+(define (opt-successor-sink-addr-taken-remat-read-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = add %1, 40 : i64
+       %3 = addr_of %2
+       %4 = add %2, 8 : i64
+       store_ptr %3, 3 : i64
+       %5 = add %4, 1 : i64
+       %6 = gt %4, 0 : bool
+       branch %6, use, other
+     use:
+       %7 = add %5, %2 : i64
+       return %7
+     other:
+       return 0"))
+
+;; v4 may move, but its operand v2 is the address-taken var itself: a clone of
+;; v2's def would recompute 40 + v1 where v4 must read the stored 3.
+(define (opt-successor-sink-addr-taken-remat-def-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = add %1, 40 : i64
+       %3 = addr_of %2
+       store_ptr %3, 3 : i64
+       %4 = add %2, 1 : i64
+       branch %0, use, other
+     use:
+       return %4
+     other:
+       return 0"))
+
+;; From the second iteration v5 points at v3's storage, which the def of v3
+;; overwrites: the def is a store, and the Load must stay above it.
+(define (opt-successor-sink-addr-taken-def-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       jump header
+     header:
+       %5 = phi [%1, entry], [%4, latch] : i64
+       %6 = phi [0, entry], [%3, latch] : i64
+       %2 = load %5 : i64
+       %3 = add %6, 1 : i64
+       %4 = addr_of %3
+       branch %0, use, latch
+     use:
+       return %2
+     latch:
+       jump header"))
+
+;; The same Load placed after the def has nothing left to cross.
+(define (opt-successor-sink-addr-taken-def-clear-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       jump header
+     header:
+       %5 = phi [%1, entry], [%4, latch] : i64
+       %6 = phi [0, entry], [%3, latch] : i64
+       %3 = add %6, 1 : i64
+       %4 = addr_of %3
+       %2 = load %5 : i64
+       branch %0, use, latch
+     use:
+       return %2
+     latch:
+       jump header"))
+
 (define (opt-successor-sink-instr-seq-defines?
   [instrs : ir.CompilerIrInstrSeq]
   [dst : i64]) : bool
@@ -11154,6 +11358,87 @@
           (ir.compiler-ir-label-none))
         (ir.compiler-ir-label "use"))
       (return 17))
+    (let
+      [store : ir.CompilerIrBlockList
+        (opt-successor-sink-run
+          "successor_sink_addr_taken_store"
+          (opt-successor-sink-addr-taken-store-blocks))]
+      [clear : ir.CompilerIrBlockList
+        (opt-successor-sink-run
+          "successor_sink_addr_taken_clear"
+          (opt-successor-sink-addr-taken-clear-blocks))]
+      [remat-read-function : ir.CompilerIrFunction
+        (opt-successor-sink-run-function
+          "successor_sink_addr_taken_remat_read"
+          (opt-successor-sink-addr-taken-remat-read-blocks))]
+      [remat-read : ir.CompilerIrBlockList
+        (opt.opt-function-blocks remat-read-function)]
+      [remat-def-function : ir.CompilerIrFunction
+        (opt-successor-sink-run-function
+          "successor_sink_addr_taken_remat_def"
+          (opt-successor-sink-addr-taken-remat-def-blocks))]
+      [remat-def : ir.CompilerIrBlockList
+        (opt.opt-function-blocks remat-def-function)]
+      [def : ir.CompilerIrBlockList
+        (opt-successor-sink-run
+          "successor_sink_addr_taken_def"
+          (opt-successor-sink-addr-taken-def-blocks))]
+      [def-clear : ir.CompilerIrBlockList
+        (opt-successor-sink-run
+          "successor_sink_addr_taken_def_clear"
+          (opt-successor-sink-addr-taken-def-clear-blocks))]
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            (ir.compiler-ir-block-list-view store)
+            4
+            (ir.compiler-ir-label-none))
+          (ir.compiler-ir-label "entry"))
+        (return 18))
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            (ir.compiler-ir-block-list-view clear)
+            4
+            (ir.compiler-ir-label-none))
+          (ir.compiler-ir-label "use"))
+        (return 19))
+      (unless
+        (and
+          (= (opt.opt-function-frame remat-read-function) 16)
+          (=
+            (opt-successor-sink-def-label
+              (ir.compiler-ir-block-list-view remat-read)
+              5
+              (ir.compiler-ir-label-none))
+            (ir.compiler-ir-label "entry")))
+        (return 20))
+      (unless
+        (and
+          (= (opt.opt-function-frame remat-def-function) 16)
+          (=
+            (opt-successor-sink-def-label
+              (ir.compiler-ir-block-list-view remat-def)
+              4
+              (ir.compiler-ir-label-none))
+            (ir.compiler-ir-label "entry")))
+        (return 21))
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            (ir.compiler-ir-block-list-view def)
+            2
+            (ir.compiler-ir-label-none))
+          (ir.compiler-ir-label "header"))
+        (return 22))
+      (unless
+        (=
+          (opt-successor-sink-def-label
+            (ir.compiler-ir-block-list-view def-clear)
+            2
+            (ir.compiler-ir-label-none))
+          (ir.compiler-ir-label "use"))
+        (return 23)))
     42))
 
 ;; Returns the lhs var id of the `BinOp` whose destination is `dst`, or -1 if it
@@ -47047,6 +47332,50 @@
             "/"
             (string.int->string effect)))))))
 
+;; An index naming an address-taken var reads its storage (#8913). The store
+;; through its address sits between the gep and both uses, so per-use clones
+;; would read the stored value: the gep stays shared. Over a var whose address
+;; is not taken the same gep splits.
+(test
+  gep-split-addr-taken-capture
+  (for [taken (iterator.range 2 4)]
+    (let
+      [blocks : ir.CompilerIrBlockList
+        (irt.blocks
+          (str_cat.str-cat
+            "entry:\n%2 = add %1, 1 : i64\n%3 = add %1, 2 : i64\n%4 = addr_of %"
+            (string.int->string taken)
+            "\n%5 = gep %0, %2 : i64\nstore_ptr %4, 3 : i64\n%6 = load %5 : i64\nstore_ptr %5, %1 : i64\nreturn %6"))]
+      [function : ir.CompilerIrFunction
+        (Function
+          (opt-test-symbol "gep_split_addr_taken")
+          (irt.params "base=%0:u64, value=%1:i64")
+          (I64)
+          7
+          (clone blocks)
+          Ordinary)]
+      [rewritten : ir.CompilerIrFunction
+        (opt.opt-gep-split-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& function))]
+      [actual : ir.CompilerIrBlockList (opt.opt-function-blocks (& rewritten))]
+      (test.assert-true
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& rewritten))))
+        "gep split over an address-taken index keeps valid IR")
+      (test.assert-true
+        (if (= taken 2)
+          (opt.opt-block-list-eq
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& blocks)
+            (& actual))
+          (=
+            (opt-gep-split-test-gep-count
+              (ir.compiler-ir-block-list-view actual))
+            3))
+        (str_cat.str-cat
+          "gep split re-evaluates an index only when its address is not taken, case "
+          (string.int->string taken))))))
+
 (define (compiler-optimize-gep-split-self-test) : i64
   (let
     [split : ir.CompilerIrFunction
@@ -78463,6 +78792,52 @@ return 0" true)
           (irt.instr "%3 = ge %1, 0 : i64")
           (irt.instr "branch %3, use, done"))))))
 
+;; A global-rooted gep whose index names an address-taken var reads that var's
+;; storage (#8913), which the store through v3 rewrites before the guard: the
+;; gep stays above the store. With `taken` naming another var the same gep
+;; sinks under the guard.
+(define (opt-guard-sink-addr-taken-blocks [global : i64] [taken : i64]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks
+      "use:
+         %7 = load %6 : i64
+         return %7
+       done:
+         return 0")
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (irt.instr "%2 = add %1, 1 : i64")
+        (irt.instr "%4 = add %1, 2 : i64")
+        (ir.CompilerIrInstr.AddrOf 3 taken 0)
+        (ir.CompilerIrInstr.Gep 6 (Global global) (Var 2) (U8))
+        (irt.instr "store_ptr %3, 3 : i64")
+        (irt.instr "%5 = ge %1, 0 : i64")
+        (irt.instr "branch %5, use, done")))))
+
+;; v2 addresses a word of the global and is itself address-taken: the callee
+;; handed v3 may rewrite v2 without writing the global, so the load through v2
+;; stays above the call. With `taken` naming another var the same load sinks.
+(define (opt-guard-sink-addr-taken-load-blocks
+  [global : i64]
+  [callee : i64]
+  [taken : i64]) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks-with-tail
+    (irt.blocks "use:
+         return %4
+       done:
+         return 0")
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Gep 2 (Global global) (I64 8) (U8))
+        (irt.instr "%7 = add %1, 2 : i64")
+        (ir.CompilerIrInstr.AddrOf 3 taken 0)
+        (irt.instr "%4 = load %2 : i64")
+        (ir.CompilerIrInstr.Call 5 callee (One (Var 3)) (Unit))
+        (irt.instr "%6 = ge %1, 0 : i64")
+        (irt.instr "branch %6, use, done")))))
+
 ;; Both arms of the guard feed the same merge phi, so the nearest common
 ;; dominator of the read's POSITIONS is the defining block itself.
 (define (opt-guard-sink-merge-blocks [global : i64]) : ir.CompilerIrBlockList
@@ -78614,6 +78989,26 @@ return 0" true)
         "guard_sink_merge"
         clean
         (opt-guard-sink-merge-blocks global))]
+    [addr-taken : ir.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_addr_taken"
+        clean
+        (opt-guard-sink-addr-taken-blocks global 2))]
+    [addr-other : ir.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_addr_other"
+        clean
+        (opt-guard-sink-addr-taken-blocks global 4))]
+    [load-taken : ir.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_addr_taken_load"
+        clean
+        (opt-guard-sink-addr-taken-load-blocks global callee 2))]
+    [load-other : ir.CompilerIrBlockList
+      (opt-guard-sink-run
+        "guard_sink_addr_other_load"
+        clean
+        (opt-guard-sink-addr-taken-load-blocks global callee 7))]
     [rotated : ir.CompilerIrBlockList
       (opt-gs-uniform-phi-run
         "guard_sink_uniform_phi"
@@ -78741,6 +79136,42 @@ return 0" true)
             (ir.compiler-ir-label-none))
           (ir.compiler-ir-label-none)))
       (return 10))
+    ;; An address-taken index keeps the gep above the store; another var's
+    ;; address leaves it free to sink under the guard.
+    (unless
+      (=
+        (opt-successor-sink-def-label
+          (ir.compiler-ir-block-list-view addr-taken)
+          6
+          (ir.compiler-ir-label-none))
+        (ir.compiler-ir-label "entry"))
+      (return 15))
+    (unless
+      (=
+        (opt-successor-sink-def-label
+          (ir.compiler-ir-block-list-view addr-other)
+          6
+          (ir.compiler-ir-label-none))
+        (ir.compiler-ir-label "use"))
+      (return 16))
+    ;; A load through an address-taken pointer stays above the call that may
+    ;; rewrite the pointer; the same load through a plain pointer still sinks.
+    (unless
+      (=
+        (opt-successor-sink-def-label
+          (ir.compiler-ir-block-list-view load-taken)
+          4
+          (ir.compiler-ir-label-none))
+        (ir.compiler-ir-label "entry"))
+      (return 17))
+    (unless
+      (=
+        (opt-successor-sink-def-label
+          (ir.compiler-ir-block-list-view load-other)
+          4
+          (ir.compiler-ir-label-none))
+        (ir.compiler-ir-label "use"))
+      (return 18))
     42))
 
 (test

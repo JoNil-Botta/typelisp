@@ -2039,6 +2039,14 @@ constant fact naming such a var, as destination or source.
   LICM once it has found a loop, and `optimize-block-list-for-function-pass`
   before its block walk. `fold` keeps it out of its constant environments and
   its copy environment (#7973).
+- Code motion treats an operand naming such a var as a load of its storage
+  (`opt-addr-taken-operand?`) and a def of one as a store
+  (`opt-addr-taken-write?`). Successor sinking and store address sinking move
+  such a read only past instructions a load may cross: no store, call or def
+  of an address-taken var. Successor sinking never rematerializes a read or a
+  def of one in the target, guard sinking and gep splitting never move or
+  re-evaluate such a read, and load sinking stops a moving load at such a def.
+  Each installs the same set first (#8913).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
 - Stack-only and scalar register plans both use

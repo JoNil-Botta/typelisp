@@ -1796,6 +1796,10 @@
               (set! result (tltest-reach-mark-source-name session result name))])
           (+= index 1))
         result)]
+    ;; Selected imports are retained even when no selected test uses them.
+    ;; Keep their targets and let the fixpoint follow initializer/body deps.
+    [(Import _ (Spec (ModuleItem item) _ _ _ _))
+      (tltest-reach-mark-name-id names item)]
     ;; A top-level declaration macro call stays unexpanded here and is always
     ;; kept (tltest-reachable-runtime-decl?). Its arguments are the caller's
     ;; references: a constant named only by `(gen-slots first ...)` must survive

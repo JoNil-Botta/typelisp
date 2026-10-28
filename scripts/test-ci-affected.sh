@@ -93,6 +93,8 @@ awk -F '\t' '
             if (line ~ /^[[:space:]]*#/) continue
             contents=contents line "\n"
             rest=line
+            # Search roots are supporting inputs, not primary fixture lists.
+            gsub(/--stdlib-root[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/,"",rest)
             while (match(rest, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]+/)) {
                 print substr(rest, RSTART, RLENGTH) "\t" $1
                 rest = substr(rest, RSTART + RLENGTH)
@@ -142,6 +144,15 @@ inventory_inputs() {
     cut -f 1 "$work/inventory-owners.tsv" > "$2/inventories.raw" || return
     sort -u "$2/inventories.raw" > "$2/inventories" || return
     while IFS= read -r affected_inventory; do
+        case "$affected_inventory" in
+            *.fixtures.cases)
+                "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$1/$affected_inventory" > "$2/fixtures.tsv" || return
+                awk -F '\t' -v inventory="$affected_inventory" '
+                    FILENAME == ARGV[1] {if($1 == inventory) owners[$2]=1; next}
+                    {for(gate in owners) print $2 "\t" gate}
+                ' "$work/inventory-owners.tsv" "$2/fixtures.tsv" || return
+                continue ;;
+        esac
         CODEGEN_CASES_WORKDIR="$2" "$ROOT/scripts/verify-codegen-cases.sh" --list "$1/$affected_inventory" >/dev/null || return
         affected_name=$(basename "$affected_inventory" .cases)
         awk -F '\t' -v inventory="$affected_inventory" -v tracked_file="$work/tracked-inputs" -v directory_file="$work/tracked-directories" '
@@ -223,6 +234,27 @@ inventory_inputs() {
 }
 inventory_inputs "$ROOT" "$work/inventory-plans" > "$work/primary.raw" || fail 'primary input extraction failed'
 sort -u "$work/primary.raw" > "$work/primary-inputs.tsv"
+# Pin the checked consumption boundary without running an owning harness.
+. "$ROOT/scripts/lib-fixture-inventory.sh"
+fixture_inventory=$(awk -F '\t' '$1 ~ /\.fixtures\.cases$/ {print $1; exit}' "$work/inventory-owners.tsv")
+[ -n "$fixture_inventory" ] || fail 'no canonical fixture inventory discovered'
+fixture_inventory_load "$fixture_inventory" "$work/fixture-interface.tsv" || fail 'fixture inventory load failed'
+IFS=$TAB read -r fixture_label fixture_source < "$work/fixture-interface.tsv"
+fixture_inventory_require "$work/fixture-interface.tsv" "$fixture_source" || fail 'declared runtime primary rejected'
+if fixture_inventory_require "$work/fixture-interface.tsv" tests/undeclared-runtime-primary.tl 2> "$work/undeclared.err"; then
+    fail 'undeclared runtime primary accepted'
+fi
+grep -Fx 'undeclared runtime primary: tests/undeclared-runtime-primary.tl' "$work/undeclared.err" >/dev/null || fail 'runtime rejection lost its diagnostic'
+for malformed in empty missing-source unsupported; do
+    : > "$work/$malformed.fixtures.cases"
+    case "$malformed" in
+        missing-source) printf 'do none\ncase missing\n' > "$work/$malformed.fixtures.cases" ;;
+        unsupported) printf 'do none\ncase unsupported\nsource %s\neach extra\n' "$fixture_source" > "$work/$malformed.fixtures.cases" ;;
+    esac
+    if "$ROOT/scripts/verify-codegen-cases.sh" --list-fixtures "$work/$malformed.fixtures.cases" > "$work/$malformed.out" 2> "$work/$malformed.err"; then
+        fail "$malformed fixture inventory accepted"
+    fi
+done
 # Functions invoked as conditions cannot rely on errexit. Check early and late
 # translator failures with every other input present, so a later manifest error
 # cannot mask missing in-loop failure propagation. Omit rather than delete files.
@@ -356,7 +388,6 @@ for host in linux windows; do
                 src:stage2-native-integration-corpus | stdlib:stage2-native-integration-corpus) continue ;; # Native manifest validator catalogs compiler/import dependencies by name only.
                 stdlib:stage2-arena-sanitizer-selfhost) continue ;; # Generic instrumented compiler comparison, not a declared primary fixture contract.
                 stdlib/tests:stage0-size-ratchet | stdlib/tests:stage2-arena-sanitizer-selfhost | stdlib/tests:stage2-stdlib-documentation) continue ;; # Excluded fixture trees.
-                tests/integration:ir-observability-golden | tests/integration:stage2-compile-profile-verifier | tests/integration:compiler-arena-debug-native-matrix | tests/integration:stage2-safety-corpus) continue ;; # Search roots/constructed lists: exact fixtures checked below.
                 tests/integration:stage2-inline-typelisp-tests) continue ;; # Broad source-suite discovery is advisory; focused tests remain owner-selected.
                 tests/safety:stage2-native-integration-corpus) continue ;; # Existence-only catalog for manifest dependency validation, not a content consumer.
             esac
@@ -367,7 +398,7 @@ for host in linux windows; do
         has_gate "$work/direct-reader.ids" "$gate"
     done < "$work/script-inputs.tsv"
     # Constructed script inputs and the reported independent source guards.
-    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'tests/integration/recursive_aggregate_return.tl ir-observability-golden' 'tests/integration/recursive_aggregate_return_variants.tl ir-observability-golden' 'tests/integration/fixed_array_result_tailrec.tl ir-observability-golden' 'tests/integration/comptime_type_expr_worklist.tl ir-observability-golden' 'tests/integration/c_abi_win64_nested_aggregate.tl ir-observability-golden' 'tests/integration/c_abi_sysv_register_aggregate_args.tl ir-observability-golden' 'tests/integration/factored_addresses.tl ir-observability-golden' 'tests/integration/stdlib_hash_generated.tl ir-observability-golden' 'tests/integration/nested_tuple_array_projection.tl ir-observability-golden' 'tests/integration/generated_option_result_families.tl ir-observability-golden' 'tests/integration/aggregate_return_no_alloc.tl ir-observability-golden' 'tests/integration/global_aggregate_storage_lifetime.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_threads.tl compiler-arena-debug-native-matrix' 'tests/integration/global_aggregate_storage_boundary.tl compiler-arena-debug-native-matrix' 'tests/integration/macro_import_order_repro.tl stage2-compile-profile-verifier' 'tests/integration/macro_import_order_format_first.tl stage2-compile-profile-verifier' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'tests/safety/global_mut_borrow_deref_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_field_overlap_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_initializer_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_noncall_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_store_location_reject.tl stage2-public-tool-surface' 'tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl stage2-public-tool-surface' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
+    for row in 'tests/spmd/package_callable/src/lib.tl package-native-tlci-dependency-macros' 'tests/spmd/package_consumer/src/main.tl package-native-tlci-dependency-macros' 'stdlib/tests/json_sequence_api.tl stage2-stdlib-selfhost-verifier' 'tests/integration/tail_call_stack_forward.tl stage2-regalloc-backend-asm-shape-gates' 'src/tests/compiler_typed_occurrence_smoke.tl stage2-native-integration-corpus' 'tests/safety/global_mut_borrow_deref_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_field_overlap_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_initializer_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_noncall_location_reject.tl stage2-public-tool-surface' 'tests/safety/global_mut_borrow_store_location_reject.tl stage2-public-tool-surface' 'tests/safety/mut_borrow_forwarded_diagnostic_location_reject.tl stage2-public-tool-surface' 'stdlib/json.tl stage2-docs-pages-build-path' 'stdlib/json.tl stage2-stdlib-documentation' 'stdlib/json.tl stage2-stdlib-modules-and-fixtures' 'stdlib/json.tl stage2-repository-doctests' 'src/build_cli_core.tl stage2-public-tool-surface' 'src/compiler_driver_core.tl stage2-public-tool-surface' 'src/compiler_lower.tl stage2-public-tool-surface' 'src/lsp_frame_core.tl stage2-public-tool-surface' 'src/main.tl cli-help-surface' 'src/compile_cli_core.tl cli-help-surface'; do
         path=${row% *}
         gate=${row##* }
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi

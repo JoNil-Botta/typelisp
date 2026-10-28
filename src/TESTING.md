@@ -527,6 +527,11 @@ hosts, with cold/cached dependencies and explicit disk-root comparisons.
 `package-source-prefix-return-type` rejects an invalid entry-owned function
 before the import on all three routes. Existing package native/surface gates
 retain their exact trusted-prefix, native/source parity and rollback assertions.
+`package-dependency-tlci-frontend-surfaces` also builds a consumer whose
+expanding stdlib import and entry global precede its dependency imports: both
+walks must still reuse a nonempty prefix, typechecking stopping at the cut's
+module marker before the macro walk's prefix ends, with forced-source assembly
+parity.
 
 `package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
 runs separate dependency and consumer objects at opt0/1/2 on both hosts. It
@@ -3140,3 +3145,12 @@ keeps assembly/CLI execution plus an explicit object-eligibility exclusion;
 it must not execute an unadmitted raw image with #8317's placeholder runtime
 symbols. The shared native-link helper links serialized objects with the same
 entry, libraries and flags as its assembly path.
+
+The `legacy_box_get_*_reject` safety fixtures pin the E0207 receiver span for
+quote-only `box-get` and `__tl-box-place` borrows through references, including
+shared scalar, Store, mutable and nested-Box reference-match receivers. The
+public-check matrix checks the diagnostic and `deref` hint at opt0/1/2 for both
+targets. `legacy_box_get_public_deref.tl` and
+`legacy_box_get_owned_template.tl` print `via-ref=[hello]` at all three levels
+on both hosts; `legacy_box_get_owned_places.tl` retains Box fields reached
+through references, nested owned Boxes and public shared/mutable projections.

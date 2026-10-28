@@ -22865,12 +22865,21 @@
   (Ok)
   (Err String))
 
-;; Convert selected source coordinates only at the direct storage-policy
-;; rejection. Legacy views already carry their complete span.
+;; Convert selected coordinates only at direct borrow-policy/type rejections.
+;; Legacy views already carry their complete span.
 (defenum TcBorrowSource
   (No)
   (Selected i64 i64)
   (Spanned ast.AstSourceSpan))
+
+(define (tc-borrow-source-error [source : TcBorrowSource] [message : String]) : String
+  (match source
+    [(TcBorrowSource.Selected line column)
+      (if (and (> line 0) (> column 0))
+        (tc-located-error (ast.ast-source-span line column line column) message)
+        message)]
+    [(TcBorrowSource.Spanned span) (tc-located-error span message)]
+    [(TcBorrowSource.No) message]))
 
 (defenum TcMoveKind
   (Copyable)
@@ -76170,6 +76179,24 @@
               (tc-type-render
                 (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
 
+(define (tc-box-get-reference-borrow-error
+  [expr-bases : i64]
+  [receiver-id : i64]) : String
+  (let
+    [receiver : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases receiver-id)]
+    [message : String
+      (tc-kind-message
+        (BorrowViolation)
+        "typecheck: legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference")]
+    [help : String "use deref for each indirection level, or pass an owned Box"]
+    (tc-caller-origin-operand-error
+      expr-bases
+      (& receiver)
+      (match (tc-expr-id-maybe-span expr-bases receiver-id)
+        [(Some span) (tc-rich-error-with-help span message help)]
+        [(No) (str_cat.str-cat message "; " help)]))))
+
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
     [(TcBorrowPlace lifetime box-ty shared through-ref)
@@ -76357,9 +76384,30 @@
       (let
         [box-expr : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases box-box)]
-        (match (tc-borrow-place-with-access ctx expr-bases env mutable box-expr)
-          [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
-          [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
+        [box-ty : ast.AstType
+          (try
+            (tc-expr
+              ctx
+              env
+              (ast.ast-expr-segment-bases-get expr-bases box-box)))]
+        ;; The legacy bridge projects one owned Box. A place borrow already
+        ;; strips a reference receiver, so peeling its Box here would type
+        ;; two projections while lowering still addresses only one (#8549).
+        (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+          [(or (Ref _ _) (MutRef _ _))
+            (ResultTcBorrowPlace.Err
+              (tc-box-get-reference-borrow-error expr-bases box-box))]
+          [_
+            (match (tc-borrow-place-with-access
+              ctx
+              expr-bases
+              env
+              mutable
+              box-expr)
+              [(ResultTcBorrowPlace.Ok place)
+                (tc-borrow-place-box-get ctx place)]
+              [(ResultTcBorrowPlace.Err message)
+                (ResultTcBorrowPlace.Err message)])]))]
     [(ast.AstExpr.BoxTake receiver-box)
       (tc-borrow-place-deref
         ctx
@@ -76425,16 +76473,7 @@
             [message : String (tc-mut-borrow-by-value-place-message)]
             ;; Only this producer rejects by-value storage. Errors forwarded
             ;; from reference and box checks retain their established spans.
-            (Err
-              (match source
-                [(TcBorrowSource.Selected line column)
-                  (if (and (> line 0) (> column 0))
-                    (tc-located-error
-                      (ast.ast-source-span line column line column)
-                      message)
-                    message)]
-                [(TcBorrowSource.Spanned span) (tc-located-error span message)]
-                [(TcBorrowSource.No) message])))))]
+            (Err (tc-borrow-source-error source message)))))]
     [(StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
@@ -76679,11 +76718,12 @@
 (define (tc-borrow-place-result-type
   [mutable : bool]
   [lifetime : ast.AstBorrowLifetime]
-  [place : TcBorrowPlace]) : ResultTcType
+  [place : TcBorrowPlace]
+  [source : TcBorrowSource]) : ResultTcType
   (match place
     [(TcBorrowPlace inferred referent-ty through-shared _)
       (if (and mutable through-shared)
-        (Err (tc-borrow-through-shared-message))
+        (Err (tc-borrow-source-error source (tc-borrow-through-shared-message)))
         (match lifetime
           [(Inferred)
             (Ok
@@ -76697,9 +76737,11 @@
                   (ast.ast-ty-mut-ref inferred (& referent-ty))
                   (ast.ast-ty-ref inferred (& referent-ty))))
               (Err
-                (tc-kind-message
-                  (LifetimeMismatch)
-                  "typecheck: borrow lifetime mismatch")))]))]))
+                (tc-borrow-source-error
+                  source
+                  (tc-kind-message
+                    (LifetimeMismatch)
+                    "typecheck: borrow lifetime mismatch"))))]))]))
 
 (define (tc-borrow-expr-with-policy
   [ctx : TcContext]
@@ -76720,8 +76762,8 @@
       (if (and mutable (not allow-mut-by-value-borrow))
         (let
           [_ (try (tc-mut-borrow-non-call-place-ok ctx env place-expr source))]
-          (tc-borrow-place-result-type mutable lifetime place))
-        (tc-borrow-place-result-type mutable lifetime place))]
+          (tc-borrow-place-result-type mutable lifetime place source))
+        (tc-borrow-place-result-type mutable lifetime place source))]
     [(Err message)
       ;; A successfully typed place cannot be a temporary. Direct call
       ;; arguments recover temporary borrows from this error; other positions
@@ -84505,11 +84547,21 @@
 
 ;; A `replace!` target that is no storage place, or that is reached only
 ;; through a shared reference (E0215). A target whose typing reports the `&mut`
-;; borrow rule's diagnostic (a `&mut` borrow through a shared reference) keeps
-;; it; a write through a `&mut` held behind a shared reference is the graph's
-;; (`normalize-exclusive-ok`).
+;; borrow rule's direct diagnostic keeps it, including a plain source location.
+;; Other framed errors keep the storage fallback. A write through a `&mut` held
+;; behind a shared reference is the graph's (`normalize-exclusive-ok`).
 (define (tc-replace-storage-place-error [message : String]) : String
-  (if (string.eq message (tc-borrow-through-shared-message))
+  (if (or
+    (string.eq message (tc-borrow-through-shared-message))
+    (and
+      (tc-located-error? message)
+      (let
+        [diagnostic : cdiag.CompilerDiagnostic
+          (tc-located-error-diag (clone message))]
+        (string.eq
+          (cdiag.compiler-diagnostic-message (& diagnostic))
+          (cdiag.compiler-diagnostic-untagged-message
+            (tc-borrow-through-shared-message))))))
     message
     (tc-kind-message
       (Place)
@@ -117703,12 +117755,22 @@
 
 ;; Package imports are flattened at their source import sites, between
 ;; entry-owned module/alias markers. Provenance is the stable discriminator:
-;; scan through the last declaration copied from an admitted dependency.
-;; Only authenticated embedded stdlib source may add semantic declarations;
-;; caller-owned module/import markers carry context, but caller-owned bodies
-;; must reach the ordinary checker.
+;; scan toward the last declaration copied from an admitted dependency, and end
+;; the reusable prefix before the first declaration that still needs source
+;; work. Caller-owned module/import markers carry context and authenticated
+;; embedded stdlib source may add semantic declarations; for the macro walk it
+;; must also need no expansion. Caller-owned bodies, and stdlib source the
+;; expander would change, start the ordinary walks. Typechecking, and any later
+;; macro plan in the same use, reuses no more than the first macro plan hydrated
+;; and stops at the module marker governing that plan's cut, counted among all
+;; module markers. Generated declaration normalization and template
+;; specialization keep markers in order, so declarations they drop cannot shift
+;; expanded source into the prefix.
 (define (tc-dependency-surface-prefix-candidate
   [load-state : (& cload.CompilerLoadSessionState)]
+  [state : TcMacroState]
+  [expr-bases : i64]
+  [macro-walk : bool]
   [decls : (& ast.AstDeclList)]
   [paths : (& ast.AstDeclPathList)]
   [cache-scope : String]
@@ -117716,17 +117778,38 @@
   (let
     [decl-count : i64 (ast.ast-decl-list-len decls)]
     [path-count : i64 (ast.ast-decl-path-list-len paths)]
+    [hydrated : i64
+      (cload.compiler-load-session-state-dependency-surface-macro-skip-count
+        load-state)]
+    [limit : i64
+      (if (> hydrated 0)
+        hydrated
+        decl-count)]
+    [cut-marker : i64
+      (cload.compiler-load-session-state-dependency-surface-macro-cut-marker
+        load-state)]
+    [markers : i64 0]
     [index : i64 0]
     [remaining : i64 surface-count]
+    [stopped : bool false]
     [module : String ""]
     [module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [embedded-modules : sym_i64_env.SymI64Env
       (cload.compiler-load-session-state-embedded-module-ids-shared-view
         (owned_view.compiler-owned-reference-shared-view load-state))]
+    ;; Flattened modules keep one provenance per run of declarations.
+    [last-provenance-id : i64 -1]
+    [dependency : bool false]
+    [stdlib : bool false]
     (if (<= surface-count 0)
       No
       (begin
-        (while (and (> remaining 0) (< index decl-count) (< index path-count))
+        (while (and
+          (> remaining 0)
+          (not stopped)
+          (< index limit)
+          (< index decl-count)
+          (< index path-count))
           (let
             [decl : ast.AstDecl
               (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))]
@@ -117735,30 +117818,68 @@
                 paths
                 index
                 cbi.compiler-builtin-id-fix-empty)]
-            (if (cload.compiler-load-session-state-dependency-surface-provenance?
-              load-state
-              provenance-id)
-              (-= remaining 1)
-              (unless
-                (or
+            (unless
+              (= provenance-id last-provenance-id)
+              (set! last-provenance-id provenance-id)
+              (set!
+                dependency
+                (cload.compiler-load-session-state-dependency-surface-provenance?
+                  load-state
+                  provenance-id))
+              (set!
+                stdlib
+                (cload.compiler-load-stdlib-import?
+                  (ci.intern-str provenance-id))))
+            (cond
+              [(and
+                  (= (+ markers 1) cut-marker)
+                  (match (& decl)
+                    [(Module _) true]
+                    [_ false]))
+                (set! stopped true)]
+              [dependency (-= remaining 1)]
+              [(or
                   (match (& decl)
                     [(Module _) true]
                     [(Import _ (Spec (Module) _ _ _ _)) true]
                     [_ false])
                   (and
-                    (cload.compiler-load-stdlib-import?
-                      (ci.intern-str provenance-id))
-                    (sym_i64_env.sym-i64-contains-id embedded-modules module-id)))
-                (return No)))
-            (match decl
-              [(Module next-module)
-                (set! module (tc-env-key-name-text next-module))
-                (set! module-id next-module)]
-              [_ unit])
-            (+= index 1)))
-        (if (= remaining 0)
-          (Some (tc-prefix-key-start cache-scope) index module module-id)
-          No)))))
+                    stdlib
+                    (sym_i64_env.sym-i64-contains-id embedded-modules module-id)
+                    (or
+                      (not macro-walk)
+                      (macro-surface-source-decl-expanded?
+                        state
+                        expr-bases
+                        (& decl)))))
+                unit]
+              [else (set! stopped true)])
+            (unless
+              stopped
+              (match decl
+                [(Module next-module)
+                  (set! module (tc-env-key-name-text next-module))
+                  (set! module-id next-module)
+                  (+= markers 1)]
+                [_ unit])
+              (+= index 1))))
+        (cond
+          [(or
+              (= index 0)
+              (not
+                (or
+                  stopped
+                  (= remaining 0)
+                  (and (> hydrated 0) (= index hydrated))))
+              (and macro-walk stopped (= markers 0)))
+            No]
+          [else
+            (when
+              (and macro-walk stopped (= cut-marker 0))
+              (cload.compiler-load-session-state-dependency-surface-note-macro-cut!
+                load-state
+                markers))
+            (Some (tc-prefix-key-start cache-scope) index module module-id)])))))
 
 (define (macro-surface-source-decl-expanded?
   [state : TcMacroState]
@@ -117771,32 +117892,6 @@
       (or
         (not (macro-decl-expansion-can-change-program? decl))
         (macro-decl-cannot-fire? state expr-bases decl))]))
-
-;; A dependency fragment authenticates its copied declarations, not source
-;; expressions interleaved before it. Those expressions must reach the macro
-;; walker whenever they can still expand.
-(define (macro-surface-prefix-source-expanded?
-  [load-state : (& load-state cload.CompilerLoadSessionState)]
-  [state : TcMacroState]
-  [expr-bases : i64]
-  [decls : (& decls ast.AstDeclList)]
-  [paths : (& paths ast.AstDeclPathList)]
-  [count : i64]) : bool
-  (for [index (iterator.range 0 count)]
-    (unless
-      (cload.compiler-load-session-state-dependency-surface-provenance?
-        load-state
-        (ast.ast-decl-path-list-provenance-id
-          paths
-          index
-          cbi.compiler-builtin-id-fix-empty))
-      (unless
-        (macro-surface-source-decl-expanded?
-          state
-          expr-bases
-          (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
-        (return false))))
-  true)
 
 (define (macro-surface-prefix-plan
   [load-state : cload.CompilerLoadSessionState]
@@ -117812,6 +117907,9 @@
         (if (surface_facts.surface-typecheck-facts-composite-active?)
           (match (tc-dependency-surface-prefix-candidate
             load-state
+            state
+            expr-bases
+            true
             decls
             paths
             (tc-prefix-default-cache-scope)
@@ -117826,19 +117924,7 @@
           facts.macro-prefix-decl-count)]
       [decl-count : i64 (ast.ast-decl-list-len (& decls))]
       [path-count : i64 (ast.ast-decl-path-list-len (& paths))]
-      (if (and
-        (> count 0)
-        (< count decl-count)
-        (<= count path-count)
-        (or
-          (not (surface_facts.surface-typecheck-facts-composite-active?))
-          (macro-surface-prefix-source-expanded?
-            (& load-state)
-            state
-            expr-bases
-            (& decls)
-            (& paths)
-            count)))
+      (if (and (> count 0) (< count decl-count) (<= count path-count))
         (let
           [prefix-decls : ast.AstDeclList
             (tc-decl-list-take (tc-global-shared-view decls) count)]
@@ -124560,6 +124646,9 @@
       (match (if (surface_facts.surface-typecheck-facts-composite-active?)
         (tc-dependency-surface-prefix-candidate
           load-state
+          (tc-context-macro-state ctx)
+          (tc-context-expr-bases ctx)
+          false
           decls
           paths
           cache-scope

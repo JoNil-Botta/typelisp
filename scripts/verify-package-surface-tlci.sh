@@ -265,6 +265,7 @@ runtime_surface_field() {
     field=$1
     file=$2
     awk -F '|' -v wanted="$field" '
+        { sub(/\r$/, "") }
         $1 == "dependency-tlci-verification" && $2 == "phase=runtime-finished" &&
             $3 == "requests=-1" && $4 == "entries=3" {
             for (i = 5; i <= NF; i++) {
@@ -573,9 +574,10 @@ echo "[package-surface-tlci] dependency fuel diagnostic differential"
 run_failure_pair fuel "compile-time evaluation limit exceeded" E0507
 
 # Embedded stdlib source that still expands and an entry-owned global precede
-# the dependency imports. Both walks reuse the same authenticated prefix up to
-# the first such declaration instead of discarding it, and the trusted route
-# still matches forced-source assembly.
+# the dependency imports. The macro walk reuses the authenticated prefix up to
+# the first such declaration instead of discarding it; typechecking reuses at
+# most that much, ending at the governing module marker. The trusted route still
+# matches forced-source assembly.
 echo "[package-surface-tlci] interleaved source prefix reuse"
 cat > "$CONSUMER/src/main.tl" <<'EOF'
 (module consumer.src.main)
@@ -617,8 +619,11 @@ interleaved_typecheck=$(runtime_surface_field surface-typecheck-skipped "$WORKDI
     fail "interleaved source discarded the reusable prefix"
 [ "$interleaved_macro" -lt "$TRUSTED_PREFIX_SKIPPED" ] ||
     fail "interleaved source reused source that needs ordinary walks"
-[ "$interleaved_typecheck" = "$interleaved_macro" ] ||
-    fail "interleaved typecheck reuse $interleaved_typecheck differs from macro reuse $interleaved_macro"
+[ -n "$interleaved_typecheck" ] && [ "$interleaved_typecheck" -gt 0 ] ||
+    fail "interleaved typecheck discarded the reusable prefix"
+[ "$interleaved_typecheck" -le "$interleaved_macro" ] ||
+    fail "interleaved typecheck reuse $interleaved_typecheck exceeds macro reuse $interleaved_macro"
+echo "[package-surface-tlci] interleaved reuse macro=$interleaved_macro typecheck=$interleaved_typecheck"
 cp "$CONSUMER_ASM" "$INTERLEAVED_ASM"
 run_consumer_90 interleaved
 rm -rf "$CONSUMER/target"

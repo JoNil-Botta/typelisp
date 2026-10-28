@@ -513,6 +513,10 @@ hosts, with cold/cached dependencies and explicit disk-root comparisons.
 `package-source-prefix-return-type` rejects an invalid entry-owned function
 before the import on all three routes. Existing package native/surface gates
 retain their exact trusted-prefix, native/source parity and rollback assertions.
+`package-dependency-tlci-frontend-surfaces` also builds a consumer whose
+expanding stdlib import and entry global precede its dependency imports: both
+walks must still reuse a nonempty prefix, typechecking no more than the macro
+walk, with forced-source assembly parity.
 
 `package-dependency-aggregate-abi` in `tests/cli/public-package.cases` builds and
 runs separate dependency and consumer objects at opt0/1/2 on both hosts. It

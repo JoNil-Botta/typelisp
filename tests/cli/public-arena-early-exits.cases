@@ -48,7 +48,7 @@ stderr contains tests/safety/scratch_body_try_array_error_exit_reject.tl:12:37
 case arena-early-exit-accepted
 run check "{{root}}/tests/integration/arena_early_exits.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
 exit 0
-stdout empty
+stdout contains Type checking passed!
 stderr empty
 run compile "{{root}}/tests/integration/arena_early_exits.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
 exit 0

@@ -209,6 +209,7 @@ src/compiler_lower.tl	stage2-selfhost-compile-manifest,stage2-public-tool-surfac
 src/compiler_lzss.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_module_name.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_optimize.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
+src/compiler_optimize_tests.tl	stage2-public-tool-surface	@compiler	Declared primary source or suite member in the reviewed fixture inventories.
 src/compiler_ownership_cleanup_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_core_tests.tl	stage2-selfhost-compile-manifest	@compiler	Direct tracked input named by its owning verifier or compile manifest.
 src/compiler_ownership_core.tl	stage2-selfhost-compile-manifest,stage2-ownership-model	@compiler	Direct tracked input named by its owning verifier or compile manifest.

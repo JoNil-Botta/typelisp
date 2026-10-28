@@ -9,6 +9,7 @@
   (import compiler_dependency_trace as dependency_trace))
 (import compiler_ast_types as ast)
 (import compiler_abi as cabi)
+(import compiler_symbols as csym)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
 (import lex as lexer)
@@ -12331,6 +12332,8 @@
   [decl-path : String]
   [module : String]
   [spmd-interface : (& CompilerLoadPackageSpmdInterface)]
+  [symbols : (& csym.CompilerSymbols)]
+  [module-id : i64]
   [decl : ast.AstDecl]) : CompilerLoadMaybeDecl
   (match (clone decl)
     [(DefFn decl-meta name params ret _ metadata)
@@ -12348,6 +12351,48 @@
             (& ret)
             (ast.ast-fn-metadata-export (& metadata))
             spmd-interface)))]
+    [(DefDispatch decl-meta name variants)
+      ;; The archive owns the resolver and its cache. Import only its shared
+      ;; signature, using normal symbol resolution for qualified variants too.
+      (match (ast.ast-dispatch-variant-list-get
+        (& variants)
+        0
+        (ast.ast-dispatch-variant-fallback))
+        [(Variant _ variant-name)
+          (let
+            [handle : i64
+              (if (ci.intern-qualified? variant-name)
+                (csym.compiler-symbols-lookup-value-id-or
+                  symbols
+                  variant-name
+                  -1)
+                (csym.compiler-symbols-lookup-value-in-module-id-or
+                  symbols
+                  module-id
+                  variant-name
+                  -1))]
+            (match (csym.compiler-symbols-decl-at-index
+              symbols
+              (csym.compiler-symbol-handle-index handle))
+              [(Ok variant)
+                (match (ast.ast-decl-unwrapped (& variant))
+                  [(DefFn _ _ params ret _ _)
+                    (CompilerLoadSomeDecl
+                      (ast.ast-decl-with-meta
+                        decl-meta
+                        (compiler-load-package-def-fn-extern
+                          package-owner
+                          package-root
+                          stdlib-roots
+                          decl-path
+                          module
+                          name
+                          (& params)
+                          (& ret)
+                          (ast.AstFnExport.No)
+                          spmd-interface)))]
+                  [_ (CompilerLoadNoDecl)])]
+              [(Err _) (CompilerLoadNoDecl)]))])]
     ;; Package macro declarations remain source-backed until #2755 commits
     ;; dependency-native results. Retaining the declaration also ensures the
     ;; catalog registry is consulted only after ordinary import visibility and
@@ -12364,6 +12409,8 @@
           decl-path
           module
           spmd-interface
+          symbols
+          module-id
           inner)
           [(CompilerLoadSomeDecl transformed)
             (CompilerLoadSomeDecl (ast.ast-decl-unsafe transformed))]
@@ -12484,7 +12531,7 @@
     (owned_view.compiler-owned-reference-shared-view paths)
     ""))
 
-(define (compiler-load-package-extern-decls
+(define (compiler-load-package-extern-decls-from
   [package-owner : String]
   [package-root : (& str)]
   [stdlib-roots : (& svec.Vec)]
@@ -12493,6 +12540,7 @@
   [seen : sym_i64_env.SymI64Env]
   [module : String]
   [module-id : i64]
+  [symbols : (& csym.CompilerSymbols)]
   [spmd-interface : (& CompilerLoadPackageSpmdInterface)]) : ResultCompilerLoadWithPaths
   (match (ast.ast-decl-list-step decls)
     [(Nil)
@@ -12531,7 +12579,7 @@
           (match (clone decl)
             [(Module name) name]
             [_ module-id])]
-        (match (compiler-load-package-extern-decls
+        (match (compiler-load-package-extern-decls-from
           (string.copy package-owner)
           (& (string.copy package-root))
           stdlib-roots
@@ -12540,6 +12588,7 @@
           seen
           next-module
           next-module-id
+          symbols
           (&
             (clone
               (owned_view.compiler-owned-reference-shared-view spmd-interface))))
@@ -12551,6 +12600,8 @@
               decl-path
               module
               spmd-interface
+              symbols
+              module-id
               decl)
               [(CompilerLoadSomeDecl transformed)
                 (Ok
@@ -12570,6 +12621,39 @@
               [(CompilerLoadNoDecl)
                 (Ok rest-decls rest-decl-paths rest-modules rest-seen)])]
           [(Err diag) (Err diag)]))]))
+
+(define (compiler-load-package-extern-decls
+  [package-owner : String]
+  [package-root : (& str)]
+  [stdlib-roots : (& svec.Vec)]
+  [decls : (& ast.AstDeclList)]
+  [paths : (& ast.AstDeclPathList)]
+  [seen : sym_i64_env.SymI64Env]
+  [module : String]
+  [module-id : i64]
+  [spmd-interface : (& CompilerLoadPackageSpmdInterface)]) : ResultCompilerLoadWithPaths
+  (match (csym.compiler-symbols-insert-decls
+    (& (csym.compiler-symbols-empty))
+    decls
+    (csym.compiler-symbol-root-module-id))
+    [(Err message)
+      (Err
+        (box
+          (cdiag.compiler-diagnostic-at-start
+            (string.copy package-root)
+            message)))]
+    [(Ok symbols)
+      (compiler-load-package-extern-decls-from
+        package-owner
+        package-root
+        stdlib-roots
+        decls
+        paths
+        seen
+        module
+        module-id
+        (& symbols)
+        spmd-interface)]))
 
 (define (compiler-load-package-entry-for-source [source-path : String]) : ResultCompilerLoadPackageEntry
   (match (compiler-load-discover-manifest (& (string.copy source-path)))

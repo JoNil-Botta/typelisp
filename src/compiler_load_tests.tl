@@ -7,6 +7,7 @@
 (import stdlib.io)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
+(import compiler_symbols as csym)
 (import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
 (import compiler_diagnostic as cdiag)
@@ -2657,6 +2658,8 @@
       "src/main.tl"
       "main"
       (& (Unavailable))
+      (& (csym.compiler-symbols-empty))
+      cbi.compiler-builtin-id-fix-empty
       decl)
       [(CompilerLoadSomeDecl transformed)
         (and
@@ -4111,6 +4114,8 @@
       "C:/dep/src/lib.tl"
       "dep.module"
       (& (Unavailable))
+      (& (csym.compiler-symbols-empty))
+      cbi.compiler-builtin-id-fix-empty
       decl)
       [(CompilerLoadSomeDecl transformed)
         (match transformed

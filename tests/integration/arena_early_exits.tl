@@ -108,7 +108,9 @@
   (:lifetimes r)
   (owner (arena.Arena r)))
 
-(define (inside-return [owner : (arena.Arena source)] [n : i64]) : (in source String)
+(define (inside-return [owner : (arena.Arena source)] [n : i64]) : (in
+    source
+    String)
   (with-arena
     phase
     (in-arena
@@ -191,7 +193,8 @@
     (unless (string.eq (& field) "12345") (return 23))
     (match (reference-try (& early) -1)
       [(RefResult.Ok _) (return 24)]
-      [(RefResult.Err text) (unless (= (string.string-length text) 5) (return 25))])
+      [(RefResult.Err text)
+        (unless (= (string.string-length text) 5) (return 25))])
     (match (reference-try (& shared) 41)
       [(RefResult.Ok n) (unless (= n 42) (return 26))]
       [(RefResult.Err _) (return 27)])

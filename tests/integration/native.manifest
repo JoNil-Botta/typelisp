@@ -24,6 +24,8 @@
 #   is resolved from that compiled input, then the complete stream is compared.
 # suite-members: space-separated smoke drivers the row's source runs.
 mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
+enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner_layout.tl|42|-|-|enum_constructor_owner_defs.tl|-
+enum_constructor_owner_root|all|0,1,2|tests/integration/enum_constructor_owner_root.tl|42|-|-|enum_constructor_owner_defs.tl|-
 global_mut_borrow_field|all|0,1,2|tests/integration/global_mut_borrow_field.tl|5|-|-|-|-
 global_mut_borrow_storage|all|0,1,2|tests/integration/global_mut_borrow_storage.tl|42|-|-|-|-
 nested_mut_borrow_pointer|all|0,1,2|tests/integration/nested_mut_borrow_pointer.tl|5|-|-|-|-

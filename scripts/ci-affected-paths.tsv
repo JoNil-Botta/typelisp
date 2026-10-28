@@ -40,6 +40,7 @@ tests/tlci/platform_corpus_emit.tl	tlci-format-corpus,stage2-codegen-target-pari
 tests/inline/*	stage2-inline-typelisp-tests,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Dedicated inline-suite fixture inputs.
 tests/integration/global_aggregate_storage_*.tl	compiler-arena-debug-native-matrix	@corpus	The arena debug runner constructs these three source paths and checks instrumented global stores.
 tests/integration/macro_import_order_*.tl	stage2-compile-profile-verifier	@corpus	The profile verifier constructs the repro and format-first macro-import-order source paths.
+tests/integration/enum_constructor_owner_*.tl	stage2-codegen-target-parity	@corpus	Direct target-parity fixtures and their shared owner-local struct declarations.
 tests/spmd/package_*	stage2-spmd-package-calls	@corpus	Package-call fixtures have their own executable consumer.
 tests/codegen/math.cases	stage2-math-exp-codegen-verifier,stage2-math-log-codegen-verifier,stage2-math-pow-codegen-verifier,stage2-math-trig-codegen-verifier	@corpus	Exact case file named by the four math gate commands.
 tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-mandelbrot-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Exact case file named by the ISPC contract gates.

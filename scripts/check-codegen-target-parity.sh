@@ -61,6 +61,8 @@ corpus() {
 arithmetic tests/integration/arithmetic.tl
 control_flow tests/integration/control_flow.tl
 enum_match tests/integration/enum_match.tl
+enum_constructor_owner_layout tests/integration/enum_constructor_owner_layout.tl
+enum_constructor_owner_root tests/integration/enum_constructor_owner_root.tl
 fixed_array tests/integration/fixed_array.tl
 fixed_array_result_forward tests/golden/fixed_array_result_forward.tl
 functions tests/integration/functions.tl

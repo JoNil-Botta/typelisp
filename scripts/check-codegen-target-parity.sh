@@ -65,6 +65,7 @@ fixed_array tests/integration/fixed_array.tl
 fixed_array_result_forward tests/golden/fixed_array_result_forward.tl
 functions tests/integration/functions.tl
 lambda_capture_struct_enum tests/integration/lambda_capture_struct_enum.tl
+macro_body_sequence tests/integration/macro_body_sequence.tl
 macro_dotted_global tests/integration/macro_dotted_global.tl
 macro_dotted_global_inside tests/integration/macro_dotted_global_inside.tl
 macro_dotted_global_matrix tests/integration/macro_dotted_global_matrix.tl

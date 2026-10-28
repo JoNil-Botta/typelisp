@@ -1,4 +1,8 @@
 # id|mode|source|expected-code-or-diagnostic-location-or--|stderr-contains-or--
+macro_body_sequence_effect|check-fail|tests/safety/macro_body_sequence_effect.tl|-|first macro body effect
+macro_body_sequence_imported_effect|check-fail|tests/safety/macro_body_sequence_imported_effect.tl|-|second macro body effect
+macro_missing_result_type_reject|check-fail|tests/safety/macro_missing_result_type_reject.tl|-|parse: malformed defmacro
+macro_missing_body_reject|check-fail|tests/safety/macro_missing_body_reject.tl|-|parse: malformed defmacro
 # mode is check-ok, check-fail, run-exit, or run-trap. check-ok-windows and
 # check-fail-windows check for the Windows target on either host, through both
 # the source and the embedded stdlib, and never execute.

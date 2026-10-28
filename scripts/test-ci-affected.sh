@@ -8,6 +8,10 @@ selector="$ROOT/scripts/ci-affected.sh"
 TAB=$(printf '\t')
 fail() { echo "ci-affected self-test: $* (evidence: $work)" >&2; exit 1; }
 has_gate() { grep -Fx "$2" "$1" >/dev/null || fail "missing $2 in $1"; }
+case "$work" in
+    "$ROOT/target/exp/ci-affected-test/run."??????) ;;
+    *) fail "unexpected self-test scratch directory" ;;
+esac
 
 # Exercise Git's actual Windows checkout filter, including the provenance
 # table and byte-compared historical paths. Their LF attributes must win.
@@ -545,4 +549,7 @@ cp "$ROOT/scripts/ci-affected-inputs.tsv" "$repo/scripts/ci-affected-inputs.tsv"
 printf 'tests/unmapped.dat\t-,-\t@corpus\tinvalid empty minimum\n' >> "$repo/scripts/ci-affected-paths.tsv"
 expect_rejected invalid-empty-minimum "$fixture_selector" --base "$base"
 
-echo "ci-affected self-tests passed (Linux/Windows plans and checkout filters, three historical failed-run diffs, Git discovery, worker guards and execution); evidence: $work"
+# The fixture repository's .git must not block clean --experiments after
+# success. Every failure exits above and retains its evidence.
+rm -rf -- "${work:?}"
+echo "ci-affected self-tests passed (Linux/Windows plans and checkout filters, three historical failed-run diffs, Git discovery, worker guards and execution)"

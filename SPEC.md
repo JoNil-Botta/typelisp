@@ -5373,6 +5373,26 @@ guards.
   `(&mut r bytes)` view. Immutable `(& r bytes)`, `(& r str)`, and `String`
   views are read-only.
 
+The following example illustrates the existing descriptor-capture and inline
+projection rules:
+
+```lisp test=run name=set-inline-array-growth exit=42 stdout=""
+(defstruct Row
+  (tag i64)
+  (cells (Array i64 3)))
+
+(define (main) : i64
+  (let
+    [a : (__tl_dyn-array Row) (__tl_make-array Row 1)]
+    (set! (array-ref a 0) (Row 1 (array 10 20 30)))
+    (set!
+      (array-ref (array-ref a 0).cells 2)
+      (begin
+        (__tl_array-push! a (Row 2 (array 40 50 60)))
+        70))
+    (if (= (array-ref (array-ref a 0).cells 2) 70) 42 1)))
+```
+
 #### 5.10.1 `(replace! place replacement)` — move-safe replacement
 
 - `place` must be initialized writable owned storage or storage reached through

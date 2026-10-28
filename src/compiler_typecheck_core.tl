@@ -53475,16 +53475,15 @@
   [expected? : bool]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
   (let
-    [exhausted? : bool (tc-type-env-scoped-identity-exhausted? env)]
     [observed? : bool
       (and
-        (not exhausted?)
+        (not (tc-type-env-scoped-identity-exhausted? env))
         (> tc-semantic-observed-jobs 0)
         (!= (tc-context-semantic-observer ctx).address 0))]
     [_enter : unit
       (when observed? (tc-semantic-observe-enter! ctx env expr-id))]
     [checked : ResultTcType
-      (if exhausted?
+      (if (tc-type-env-scoped-identity-exhausted? env)
         (Err (tc-selected-error typed.TypedError.Exhausted))
         (match (tc-normalize-dotted-local-field-node! ctx env place-id)
           [(Err message) (Err message)]

@@ -258,45 +258,69 @@ cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkou
 
 # Owning scripts are the inventory for fixtures they construct in shell loops.
 # Supported boundary: a path word under src, tests, stdlib or docs, relative to
-# the root or $ROOT, that expands $NAME or ${NAME}. When every name is bound only
-# by literal "for NAME in WORD..." lists in that script, each expansion is a
-# primary contract; search roots and outputs stay supporting. Any other expansion
-# is unresolved, and its probe member must select the gate (checked per host).
+# the root or $ROOT, that expands $NAME or ${NAME}; quotes and backslash-newline
+# join as in sh. A name resolves only when every bare occurrence of it in the
+# script is the variable of a literal "for NAME in WORD..." header in code, so
+# reads, assignments, options, comments and heredoc text leave it unresolved.
+# Each resolved expansion is a primary contract; search roots and outputs stay
+# supporting. Any other expansion is a family: every tracked file it can name
+# must select the gate on each host (checked below).
 constructed_inputs() {
     awk -F '\t' '
-        function load(script,    line, status, physical, pending, joined) {
-            lines = 0; physical = 0; pending = 0
+        function load(script,    line, status, physical, pending, joined, rest, word) {
+            lines = 0; physical = 0; pending = 0; heads = 0; tails = 0
             while ((status = getline line < script) > 0) {
                 sub(/\r$/, "", line)
                 physical++
-                if (pending) line = joined " " line
+                if (heads < tails) {
+                    # Heredoc text is data: it is scanned but cannot bind a name.
+                    word = line
+                    if (tabbed[heads + 1]) sub(/^\t+/, "", word)
+                    if (word == delimiter[heads + 1]) heads++
+                    else { text[++lines] = line; start[lines] = physical; body[lines] = 1 }
+                    continue
+                }
+                if (pending) line = joined line
                 else if (line ~ /^[[:space:]]*#/) continue
                 else start[lines + 1] = physical
                 if (line ~ /\\$/) { sub(/\\$/, "", line); joined = line; pending = 1; continue }
                 pending = 0
-                text[++lines] = line
+                text[++lines] = line; body[lines] = 0
+                rest = line
+                while (match(rest, /<<-?[[:space:]]*\\?["\047]?[A-Za-z_][A-Za-z0-9_]*/)) {
+                    word = substr(rest, RSTART, RLENGTH)
+                    if (RSTART > 1 && substr(rest, RSTART - 1, 1) == "<") { rest = substr(rest, RSTART + RLENGTH); continue }
+                    rest = substr(rest, RSTART + RLENGTH)
+                    tabbed[++tails] = (word ~ /^<<-/)
+                    sub(/^<<-?[[:space:]]*/, "", word); gsub(/[\\"\047]/, "", word)
+                    delimiter[tails] = word
+                }
             }
             if (status < 0) { print "cannot read owning script: " script > "/dev/stderr"; exit 1 }
             close(script)
         }
-        function assigns(line, name,    before) {
-            line = " " line
-            while (match(line, "[^A-Za-z0-9_$.{/-]" name "=")) {
-                before = substr(line, 1, RSTART)
-                line = substr(line, RSTART + RLENGTH)
-                if (before !~ /-v[[:space:]]+$/) return 1 # awk -v binds awk, not shell
+        function code_end(line,    i, character, quote) {
+            # The first unquoted word-start # begins an inline comment.
+            quote = ""
+            for (i = 1; i <= length(line); i++) {
+                character = substr(line, i, 1)
+                if (quote != "") { if (character == quote) quote = ""; else if (character == "\\" && quote == "\"") i++; continue }
+                if (character == "\\") i++
+                else if (character == "\"" || character == "\047") quote = character
+                else if (character == "#" && (i == 1 || substr(line, i - 1, 1) ~ /[[:space:];&|()]/)) return i
             }
-            return 0
+            return i
         }
-        function bind(    i, rest, header, name, list, count, words, j, word) {
-            split("", members); split("", unresolved); split("", bound)
+        function bind(    i, rest, header, name, list, count, words, j, word, line, from, at, previous, following, bare) {
+            split("", members); split("", unresolved); split("", headers)
             for (i = 1; i <= lines; i++) {
-                rest = text[i]
+                if (body[i]) continue
+                rest = substr(text[i], 1, code_end(text[i]) - 1)
                 while (match(rest, /(^|[;&|(]|[[:space:]])for[[:space:]]+[A-Za-z_][A-Za-z0-9_]*([[:space:];]|$)/)) {
                     header = substr(rest, RSTART, RLENGTH)
                     rest = substr(rest, RSTART + RLENGTH)
                     name = header; sub(/^.*for[[:space:]]+/, "", name); sub(/[[:space:];]+$/, "", name)
-                    bound[name] = 1
+                    headers[name]++
                     if (header ~ /;$/ || rest !~ /^[[:space:]]*in([[:space:];]|$)/) { unresolved[name] = 1; continue }
                     list = rest; sub(/^[[:space:]]*in/, "", list)
                     if (match(list, /;|[[:space:]]do([[:space:]]|$)/)) list = substr(list, 1, RSTART - 1)
@@ -309,30 +333,44 @@ constructed_inputs() {
                     }
                 }
             }
-            # Any other binding form leaves the name unresolved in the whole script.
-            for (name in bound) for (i = 1; i <= lines; i++) {
-                rest = " " text[i] " "
-                if (assigns(text[i], name) || rest ~ ("\\$\\{" name ":?=") ||
-                    (match(rest, /[^A-Za-z0-9_](read|getopts|local|export|readonly|declare|typeset)[[:space:]]/) &&
-                     substr(rest, RSTART) ~ ("[[:space:]]" name "([[:space:];&|)=]|$)"))) { unresolved[name] = 1; break }
+            # A shell word that is the bare name (quoted or not, or NAME= or
+            # ${NAME=) may bind it: read targets, assignments, options, comments,
+            # heredoc text. Each such word must be one of the literal headers.
+            for (name in headers) {
+                bare = 0
+                for (i = 1; i <= lines; i++) {
+                    line = text[i]; from = 1
+                    while ((at = index(substr(line, from), name)) > 0) {
+                        at += from - 1; from = at + length(name)
+                        previous = (at > 1 ? substr(line, at - 1, 1) : "")
+                        following = substr(line, from, 2)
+                        if (at > 2 && substr(line, at - 2, 2) == "${") { if (following ~ /^(=|:=)/) bare++; continue }
+                        if (previous != "" && previous !~ /[[:space:]"\047;&|()<>`{]/) continue
+                        if (following != "" && following !~ /^([[:space:]"\047;&|()<>`=]|\+=)/) continue
+                        bare++
+                    }
+                }
+                if (bare != headers[name]) unresolved[name] = 1
             }
         }
-        function scan(script,    i, line, before, tail, position, character, name, segments, kind, template, probe, k, count, items, values, m, j, n, expanded, found) {
+        function scan(script,    i, line, before, tail, position, character, name, segments, kind, template, pattern, part, k, count, items, values, m, j, n, expanded, found) {
             found = ""
             for (i = 1; i <= lines; i++) {
                 line = text[i]
                 gsub(/--stdlib-root[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/, "", line)
                 gsub(/(^|[[:space:]])(-o|--output|--out-dir)[[:space:]]+("[^"]*"|\047[^\047]*\047|[^[:space:]]+)/, " ", line)
-                while (match(line, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/-]*\$/)) {
+                while (match(line, /(src|tests|stdlib|docs)\/[A-Za-z0-9_.\/"\047-]*\$/)) {
                     before = substr(line, 1, RSTART - 1)
                     tail = substr(line, RSTART)
                     line = substr(line, RSTART + RLENGTH - 1)
                     # Paths below scratch, package or copied roots are not repository inputs.
-                    if (before != "" && before !~ /[[:space:]"\047=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT\})"?\/$/) continue
+                    gsub(/["\047]/, "", before)
+                    if (before != "" && before !~ /[[:space:]=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT[^}]*\})\/$/) continue
                     segments = 0; literal[0] = ""; kind = "member"; position = 1
                     while (position <= length(tail)) {
                         character = substr(tail, position, 1)
                         if (character ~ /[A-Za-z0-9_.\/-]/) { literal[segments] = literal[segments] character; position++; continue }
+                        if (character == "\"" || character == "\047") { position++; continue }
                         if (character != "$") break
                         name = ""
                         if (match(substr(tail, position), /^\$\{[A-Za-z_][A-Za-z0-9_]*\}/)) { name = substr(tail, position + 2, RLENGTH - 3); position += RLENGTH }
@@ -342,14 +380,13 @@ constructed_inputs() {
                         reference[++segments] = name; literal[segments] = ""
                         if (name == "" || unresolved[name] || !(name in members)) kind = "family"
                     }
-                    template = literal[0]; probe = literal[0]; expanded = literal[0]
+                    template = literal[0]; part = literal[0]; gsub(/\./, "\\.", part); pattern = "^" part; expanded = literal[0]
                     for (k = 1; k <= segments; k++) {
                         template = template "${" (reference[k] == "" ? "?" : reference[k]) "}" literal[k]
-                        probe = probe "__ci_affected_constructed_probe__" literal[k]
+                        part = literal[k]; gsub(/\./, "\\.", part); pattern = pattern ".*" part
                     }
                     if (kind == "family") {
-                        if (literal[segments] == "") probe = probe ".tl" # Probe a source, as directory probes do.
-                        found = found "family\t" probe "\t" script ":" start[i] "\t" template "\n"
+                        found = found "family\t" pattern "$\t" script ":" start[i] "\t" template "\n"
                         continue
                     }
                     for (k = 1; k <= segments; k++) {
@@ -375,6 +412,31 @@ constructed_inputs() {
             }
         }
     ' "$1"
+}
+# Group the tracked files each family can name by the map rows that match them.
+# Unmapped files select the full table and a direct owner needs no replay; one
+# member per remaining row set is replayed through the real planner per host.
+constructed_family_members() {
+    awk -F '\t' '
+        FILENAME == ARGV[1] {
+            if (/^#/ || $1 == "path" || $2 == "-" || $1 == "@always") next
+            pattern=$1; gsub(/\./, "\\.", pattern); gsub(/\*/, ".*", pattern)
+            patterns[++rows]="^" pattern "$"; gates[rows]="," $2 ","
+            next
+        }
+        FILENAME == ARGV[2] {tracked[++files]=$0; next}
+        {
+            for (f = 1; f <= files; f++) if (tracked[f] ~ $1) {
+                path = tracked[f]
+                if (!(path in signature)) {
+                    signature[path] = ""; owners[path] = ""
+                    for (i = 1; i <= rows; i++) if (path ~ patterns[i]) { signature[path] = signature[path] " " i; owners[path] = owners[path] gates[i] }
+                }
+                if (signature[path] == "" || index(owners[path], ",*,") || index(owners[path], "," $2 ",")) continue
+                if (!seen[FNR, signature[path]]++) print path "\t" $2 "\t" $3 "\t" $4
+            }
+        }
+    ' "$@"
 }
 # Check every declared edge without thousands of recursive planner calls.
 # Allowed map globs contain only literal characters, dots and stars, so this
@@ -409,45 +471,67 @@ cat > "$work/constructed-probe/owner.sh" <<'OWNER'
 # for skipped in "tests/integration/$skipped.tl"; do
 for fixture in alpha \
     'beta'; do
-    compile "$ROOT/tests/integration/$fixture.tl" --stdlib-root "$ROOT/tests/$fixture" -o "tests/out/$fixture.s"
+    compile "$ROOT/tests/integ\
+ration/$fixture.tl" --stdlib-root "$ROOT/tests/$fixture" -o "tests/out/$fixture.s"
 done
 for loose in $LOOSE; do compile "tests/integration/${loose}_case.tl" "$WORK/src/$fixture.tl"; done
-for later in gamma; do awk -v later=1 '{print}' "tests/integration/$later.tl"; done
-for moved in delta; do :; done
-moved=epsilon
-compile "tests/integration/$moved.tl" "stdlib/$$.tl" "stdlib/$fixture/$fixture"
+for quoted in gamma; do :; done
+printf 'delta\n' | while read -r 'quoted'; do compile "${ROOT}"'/tests/integration/'"$quoted".tl; done
+echo ignored # for commented in alpha; do
+cat <<'SCRIPT' > "$WORK/generated.sh"
+for embedded in alpha; do :; done
+SCRIPT
+for named in gamma; do compile "tests/integration/$commented.tl" "tests/integration/$embedded.tl" "stdlib/$$.tl" "stdlib/$fixture/$named-source" "$WORK/x-named-y"; done
 OWNER
 probe_owner="$work/constructed-probe/owner.sh"
 printf 'synthetic-gate\t%s\n' "$probe_owner" > "$work/constructed-probe/scripts.tsv"
 constructed_inputs "$work/constructed-probe/scripts.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
+probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_owner" "$3" "$4"; }
 {
-    printf 'member\ttests/integration/alpha.tl\tsynthetic-gate\t%s:4\ttests/integration/${fixture}.tl\n' "$probe_owner"
-    printf 'member\ttests/integration/beta.tl\tsynthetic-gate\t%s:4\ttests/integration/${fixture}.tl\n' "$probe_owner"
-    printf 'family\ttests/integration/__ci_affected_constructed_probe___case.tl\tsynthetic-gate\t%s:6\ttests/integration/${loose}_case.tl\n' "$probe_owner"
-    printf 'member\ttests/integration/gamma.tl\tsynthetic-gate\t%s:7\ttests/integration/${later}.tl\n' "$probe_owner"
-    printf 'family\ttests/integration/__ci_affected_constructed_probe__.tl\tsynthetic-gate\t%s:10\ttests/integration/${moved}.tl\n' "$probe_owner"
-    printf 'family\tstdlib/__ci_affected_constructed_probe__.tl\tsynthetic-gate\t%s:10\tstdlib/${?}.tl\n' "$probe_owner"
-    for probe_path in alpha/alpha alpha/beta beta/alpha beta/beta; do
-        printf 'member\tstdlib/%s\tsynthetic-gate\t%s:10\tstdlib/${fixture}/${fixture}\n' "$probe_path" "$probe_owner"
-    done
+    probe_row member tests/integration/alpha.tl 4 'tests/integration/${fixture}.tl'
+    probe_row member tests/integration/beta.tl 4 'tests/integration/${fixture}.tl'
+    probe_row family '^tests/integration/.*_case\.tl$' 7 'tests/integration/${loose}_case.tl'
+    probe_row family '^tests/integration/.*\.tl$' 9 'tests/integration/${quoted}.tl'
+    probe_row family '^tests/integration/.*\.tl$' 14 'tests/integration/${commented}.tl'
+    probe_row family '^tests/integration/.*\.tl$' 14 'tests/integration/${embedded}.tl'
+    probe_row family '^stdlib/.*\.tl$' 14 'stdlib/${?}.tl'
+    probe_row member stdlib/alpha/gamma-source 14 'stdlib/${fixture}/${named}-source'
+    probe_row member stdlib/beta/gamma-source 14 'stdlib/${fixture}/${named}-source'
 } > "$work/constructed-probe/expected.tsv"
 cmp "$work/constructed-probe/actual.tsv" "$work/constructed-probe/expected.tsv" || fail 'constructed input discovery left its supported boundary'
 # A member added to a literal list with neither a map owner nor a witness fails.
-printf 'path\trequired\tadvisory\treason\ntests/integration/*\tother-gate\t-\tsynthetic\ntests/integration/beta.tl\tsynthetic-gate\t-\tsynthetic\n' > "$work/constructed-probe/map.tsv"
+printf 'path\trequired\tadvisory\treason\ntests/integration/*\tother-gate\t-\tsynthetic\ntests/integration/beta.tl\tsynthetic-gate\t-\tsynthetic\nstdlib/*\t-\t@stdlib\tsynthetic\n' > "$work/constructed-probe/map.tsv"
 awk -F '\t' '$1 == "member" && $2 ~ /^tests\// {print $2 "\t" $3 "\t" $4}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/members.tsv"
 : > "$work/constructed-probe/directories"
 if check_primary_owners "$work/constructed-probe/map.tsv" "$work/constructed-probe/directories" "$work/constructed-probe/members.tsv" 2> "$work/constructed-probe/owners.err"; then
     fail 'unowned synthetic constructed member passed'
 fi
-{
-    printf 'missing required primary owner: tests/integration/alpha.tl -> synthetic-gate (constructed at %s:4)\n' "$probe_owner"
-    printf 'missing required primary owner: tests/integration/gamma.tl -> synthetic-gate (constructed at %s:7)\n' "$probe_owner"
-} > "$work/constructed-probe/owners.expected"
+printf 'missing required primary owner: tests/integration/alpha.tl -> synthetic-gate (constructed at %s:4)\n' "$probe_owner" > "$work/constructed-probe/owners.expected"
 cmp "$work/constructed-probe/owners.err" "$work/constructed-probe/owners.expected" || fail 'constructed member omission lost its owner diagnostic'
+# A family is checked through its tracked members, not an unmapped stand-in:
+# a_case needs a replay, b_case has a direct owner and stdlib/x.tl is unmapped.
+printf '%s\n' tests/integration/a_case.tl tests/integration/b_case.tl tests/integration/d_case.tl stdlib/x.tl > "$work/constructed-probe/tracked"
+awk -F '\t' '$1 == "family" && ($5 ~ /loose/ || $2 ~ /stdlib/) {print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/families.tsv"
+constructed_family_members "$work/constructed-probe/map.tsv" "$work/constructed-probe/tracked" "$work/constructed-probe/families.tsv" > "$work/constructed-probe/family-members.tsv" || fail 'synthetic family member grouping failed'
+printf 'tests/integration/a_case.tl\tsynthetic-gate\t%s:7\t%s\n' "$probe_owner" 'tests/integration/${loose}_case.tl' > "$work/constructed-probe/family-members.expected"
+cmp "$work/constructed-probe/family-members.tsv" "$work/constructed-probe/family-members.expected" || fail 'constructed family lost a mapped member without its owner'
 
 constructed_inputs "$work/recursive-scripts.tsv" > "$work/constructed.raw" || fail 'constructed input discovery failed'
 awk -F '\t' '$1 == "member" && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed.raw" > "$work/constructed-members.tsv"
-awk -F '\t' '$1 == "family" {script = $4; sub(/:[0-9]+$/, "", script); if (!seen[$3 FS script FS $5]++) print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed.raw" > "$work/constructed-families.tsv"
+awk -F '\t' '$1 == "family" {script = $4; sub(/:[0-9]+$/, "", script); if (!seen[$3 FS script FS $5]++) print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed.raw" > "$work/constructed-families.raw"
+# Reviewed unresolved sites. A new site fails until it resolves, is owned or is
+# recorded here with the inventory that bounds its members.
+while IFS=$TAB read -r pattern gate site template; do
+    case "${site%:*} $template" in
+        'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix}') pattern='^stdlib/.*\.tl$' ;; # Its manifest check admits only stdlib .tl module suffixes.
+    esac
+    case "${site%:*} $template $gate" in
+        'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix} embedded-stdlib-build-payload') continue ;; # The same payload checks run in the required stdlib module gate.
+        'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} embedded-stdlib-tlci-image' | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} tlci-mutation-bootstrap-fixpoint') continue ;; # Payload source-set copies and hashes; stdlib stays an advisory class.
+    esac
+    printf '%s\t%s\t%s\t%s\n' "$pattern" "$gate" "$site" "$template"
+done < "$work/constructed-families.raw" > "$work/constructed-families.tsv"
+constructed_family_members "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-inputs" "$work/constructed-families.tsv" > "$work/constructed-family-members.tsv" || fail 'constructed family member grouping failed'
 check_primary_owners "$ROOT/scripts/ci-affected-paths.tsv" "$work/tracked-directories" "$work/primary-inputs.tsv" "$work/constructed-members.tsv" || fail 'primary inventory ownership is incomplete'
 
 for host in linux windows; do
@@ -544,17 +628,13 @@ for host in linux windows; do
         "$selector" --host "$host" --paths "$work/paths" > "$work/direct-reader.ids"
         has_gate "$work/direct-reader.ids" "$gate"
     done
-    # An unresolved construction must hold for any member: its probe selects the
-    # gate. A new site fails until it resolves, is owned or has a reviewed reason.
+    # Every tracked file an unresolved construction can name selects its gate.
     while IFS=$TAB read -r path gate site template; do
         if ! grep -Fx "$gate" "$work/$host.full" >/dev/null; then continue; fi
-        case "${site%:*} $template $gate" in
-            'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix} embedded-stdlib-build-payload' | 'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} embedded-stdlib-tlci-image' | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} tlci-mutation-bootstrap-fixpoint') continue ;; # Payload-manifest sweeps; stdlib stays an advisory class for these produced-compiler consumers.
-        esac
         printf '%s\n' "$path" > "$work/paths"
         "$selector" --host "$host" --paths "$work/paths" > "$work/constructed-family.ids"
-        grep -Fx "$gate" "$work/constructed-family.ids" >/dev/null || fail "unresolved constructed input: $site $template -> $gate (probe $path)"
-    done < "$work/constructed-families.tsv"
+        grep -Fx "$gate" "$work/constructed-family.ids" >/dev/null || fail "unresolved constructed input: $site $template -> $gate ($path does not select it on $host)"
+    done < "$work/constructed-family-members.tsv"
     for row in 'scripts/codegen-target-dispatch-inventory.tsv stage2-codegen-target-parity'; do
         path=${row% *}
         gate=${row##* }

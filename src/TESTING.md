@@ -2791,18 +2791,43 @@ map and run `--self-test`. Its ownership audit follows invoked owning scripts
 and whole-directory content guards, uses the canonical case translator
 in list mode, expands manifest primaries, and checks Windows checkout bytes.
 Owning scripts are also the inventory for fixtures they build in shell loops.
-The audit checks constructed paths that are root-relative, under `$ROOT` or
-under a reviewed root alias. A path under any other prefix fails unless the
-audit records that prefix as scratch. A reference inside the body of a
-`for NAME in WORD...` loop in code resolves to the union of that name's lists
-when every one is literal and no other bare word in the script or its sourced
-scripts names it, so a member added to such a list is a primary contract that
-needs its map owner. `eval`, computed `read`
-or `export` targets, computed `source` paths and unbalanced loops leave every
-name unresolved, and an unterminated heredoc fails the audit. Any other
-expansion, and any unquoted glob word in such a list, is a family: every
-tracked file it can name must select the gate on each host, or the site needs
-a reviewed reason in the audit.
+The audit reads each owning script and every literal-path script it sources,
+after sh quote removal. It checks constructed paths that are root-relative,
+under `$ROOT` or under a reviewed root alias; a path under any other prefix
+fails unless the audit records that prefix as scratch.
+
+A reference resolves only inside a `for NAME in WORD...` loop of that name,
+when all of these hold:
+
+- every list for the name in the script is literal;
+- no other bare word in the script or its sourced scripts names it;
+- only pure words run between the loop's `do` and the reference: keywords,
+  nested literal `for` headers, and assignments without arithmetic or
+  assigning expansions. Any other command, including a computed command name,
+  leaves it unresolved;
+- the script passes the closed whitelist below.
+
+A resolved reference expands to the union of the name's lists. Each member is
+a primary contract, so a member added to such a list needs its map owner.
+
+The whitelist is closed: a script, or any script it sources, that contains
+one of these forms leaves every reference in it unresolved:
+
+- `eval`, `let` or `alias`;
+- a `read`, `getopts`, `mapfile`, `readarray`, `declare`, `typeset`, `export`,
+  `local`, `readonly` or `trap` whose arguments contain an expansion (`$?`,
+  `$#`, `$$` and `$!` excepted);
+- `printf -v`;
+- an arithmetic assignment, `++` or `--` with an expanded target;
+- a computed `.` or `source` path;
+- an unbalanced loop, or a `for` header that meets another command before its
+  `do`.
+
+The wrappers `command` and `builtin` count as the command they run. An
+unterminated heredoc fails the audit. Anything unresolved, and any unquoted
+glob word in a literal list, is a family: every tracked file it can name must
+select the gate on each host, or the site needs a reviewed reason in the
+audit.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 

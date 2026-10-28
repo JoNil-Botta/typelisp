@@ -1,0 +1,5 @@
+do none
+case repro
+source tests/integration/macro_import_order_repro.tl
+case format_first
+source tests/integration/macro_import_order_format_first.tl

@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`enum_constructor_owner_layout` and its header-less root control retain the
+declaring module's struct identity when imported and local struct names collide.
+Both hosts run opt0/1/2 for register/memory enum constructors, owned/borrowed
+matches, nested field access and struct/tuple/array/box/enum destinations.
+Aliases and full module paths must preserve the imported layout too. Keep their
+target IR parity alongside native execution.
+
 `macro_dotted_global` and its owner-module control preserve definition-site
 global field roots in quoted expression macros, checking and returning 2 at
 opt0/1/2 on both hosts. The matrix retains nested fields, caller shadowing,
@@ -87,6 +94,20 @@ executable-template payload and ordered-event identities together.
 its own blocks before the raw CSE walks. A retired preceding function's facts
 must not be read. Keep the empty-state, generation and repeated-expression
 assertions when changing this fixture's setup.
+
+`sink_addr_taken_ptr_write.tl` is #8913's reproducer and
+`sink_addr_taken_local.tl` its variants: a read of an address-taken local, or a
+copy of one, before a store through its address, a callee store or a
+loop-carried store, used in one arm, and an element address formed from the
+local on both sides of such a store, and a read through its address before a
+direct def. Both run at opt0/1/2 on both hosts. The
+`single-predecessor-successor-sink` smoke keeps the successor-sink IR half:
+such a read, a rematerialized read and a rematerialized def stay above the
+store, and a load stays above a def of an address-taken var; each has a sinking
+control. `guard-first-dominator-sinking`, `gep-split-addr-taken-capture`,
+`store-addr-sink-next-to-store` and `load-sink-to-alu-consumer` pin the same
+rule for guard sinking, gep splitting, store address sinking and load sinking,
+each against a control whose address is not taken.
 
 `stdlib_math_table_payloads.tl` hashes every word of the 15 private math tables
 in little-endian order against independent SHA-256 pins at opt0/1/2. Its length
@@ -2797,6 +2818,26 @@ and whole-directory content guards, uses the canonical case translator
 in list mode, expands manifest primaries, and checks Windows checkout bytes.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
+
+New constructed primary-input lists in owning scripts must use the checked
+fixture inventory interface in `scripts/lib-fixture-inventory.sh`. Store each
+list as an existing-format `*.fixtures.cases` file with `do none`, unique
+`case LABEL` entries and literal repository-relative `source tests/...tl`
+paths. `fixture_inventory_load tests/...fixtures.cases OUTPUT` validates the
+whole inventory through `verify-codegen-cases.sh --list-fixtures` before the
+caller reads its label/tab/source rows; check its status. Consume the source
+column directly, preserving the harness's target, optimization and assertion
+matrix. If a runtime primary can differ from that column, call
+`fixture_inventory_require OUTPUT SOURCE` and check success before use.
+The IR, arena, compile-profile and backend-import loops use this interface.
+The unconditional audit discovers their literal inventory names through the
+existing owning-script traversal and reads the same checked metadata without
+running harnesses or compiling fixtures. Missing, empty, malformed and
+unsupported inventories fail; there is no independent witness list.
+Other constructed paths retain conservative directory-probe ownership or an
+explicit reviewed exemption. This boundary guards honest edits; code review
+enforces the convention. General discovery from arbitrary shell is not
+required, and the hosted full gate table remains the merge authority.
 
 `--tier advisory` prints a broader conservative superset for reviewing other
 affected checks. It includes the required tier, but it is not a requirement to

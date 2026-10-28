@@ -24,6 +24,8 @@
 #   is resolved from that compiled input, then the complete stream is compared.
 # suite-members: space-separated smoke drivers the row's source runs.
 mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
+enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner_layout.tl|42|-|-|enum_constructor_owner_defs.tl|-
+enum_constructor_owner_root|all|0,1,2|tests/integration/enum_constructor_owner_root.tl|42|-|-|enum_constructor_owner_defs.tl|-
 global_mut_borrow_field|all|0,1,2|tests/integration/global_mut_borrow_field.tl|5|-|-|-|-
 global_mut_borrow_storage|all|0,1,2|tests/integration/global_mut_borrow_storage.tl|42|-|-|-|-
 nested_mut_borrow_pointer|all|0,1,2|tests/integration/nested_mut_borrow_pointer.tl|5|-|-|-|-
@@ -187,6 +189,7 @@ implicit_core_prelude|all|-|tests/integration/implicit_core_prelude.tl|42|-|-|-|
 core_macros_headerless_prelude_import|all|-|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-|-
 implicit_scratch_loop|all|-|tests/integration/implicit_scratch_loop.tl|42|-|-|-|-
 macro_forward_order|all|-|tests/integration/macro_forward_order.tl|42|-|-|-|-
+macro_body_sequence|all|0,1,2|tests/integration/macro_body_sequence.tl|42|-|-|macro_body_sequence_dep.tl|-
 macro_replace_hygiene|all|0,1,2|tests/integration/macro_replace_hygiene.tl|42|-|-|stdlib/comptime.tl|-
 macro_dotted_global|all|0,1,2|tests/integration/macro_dotted_global.tl|2|-|-|global_field_macro_dep.tl|-
 macro_dotted_global_inside|all|0,1,2|tests/integration/macro_dotted_global_inside.tl|2|-|-|global_field_macro_dep.tl|-
@@ -402,6 +405,8 @@ licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0
 licm_addr_taken_local|all|0,1,2|tests/integration/licm_addr_taken_local.tl|42|-|-|-|-
 licm_addr_taken_reset|all|0,1,2|tests/integration/licm_addr_taken_reset.tl|42|-|-|-|-
 fold_addr_taken_local|all|0,1,2|tests/integration/fold_addr_taken_local.tl|42|-|-|-|-
+sink_addr_taken_ptr_write|all|0,1,2|tests/integration/sink_addr_taken_ptr_write.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
+sink_addr_taken_local|all|0,1,2|tests/integration/sink_addr_taken_local.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 addr_taken_frame_slots|all|0,1,2|tests/integration/addr_taken_frame_slots.tl|42|-|-|-|-
 addr_taken_frame_join|all|0,1|tests/integration/addr_taken_frame_join.tl|42|-|-|-|-
 bounds_dom_addr_taken_local|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|42|-|0 2 0|stdlib/io.tl stdlib/string.tl|-

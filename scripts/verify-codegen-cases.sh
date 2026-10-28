@@ -108,15 +108,17 @@ cd "$ROOT"
 set -f
 
 usage() {
-    echo "usage: scripts/verify-codegen-cases.sh [--list] [--only CASE-GLOB] FILE.cases..." >&2
+    echo "usage: scripts/verify-codegen-cases.sh [--list | --list-fixtures] [--only CASE-GLOB] FILE.cases..." >&2
     exit 2
 }
 
 CC_LIST=0
+CC_FIXTURES=0
 CC_ONLY='*'
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --list) CC_LIST=1; shift ;;
+        --list-fixtures) CC_LIST=1; CC_FIXTURES=1; shift ;;
         --only) [ "$#" -ge 2 ] || usage; CC_ONLY=$2; shift 2 ;;
         --) shift; break ;;
         -*) usage ;;
@@ -916,7 +918,7 @@ cc_host_is() {
 # Translate one case file to shell. Rows become calls of the a_* functions
 # above; every case becomes one function run once per variant.
 cc_translate() {
-    awk -v file="$1" '
+    awk -v file="$1" -v fixtures="$CC_FIXTURES" -v root="$ROOT" '
     function sq(s) { gsub(/\047/, "\047\\\047\047", s); return "\047" s "\047" }
     function die(msg) { printf "%s:%d: %s\n", file, NR, msg > "/dev/stderr"; bad = 1; exit 1 }
     function words(s, arr) { return split(s, arr, /[ \t]+/) }
@@ -974,6 +976,20 @@ cc_translate() {
     }
     function close_block_step() { if (step_open && step_depth >= depth) close_step() }
     function finish_case(   i, nt, no, nm, ne, t, o, m, e, T, O, M, E, setup) {
+        if (fixtures) {
+            if (cfg["id"] !~ /^[A-Za-z0-9_-]+$/) die("invalid fixture label")
+            s = cfg["source"]
+            if (s !~ /^tests\/[A-Za-z0-9_.\/-]+\.tl$/ || s ~ /(^|\/)\.(\.|)(\/|$)/ || s ~ /\/\//)
+                die("invalid fixture source: " s)
+            if (cfg["do"] != "none") die("fixture inventory requires do none")
+            if (s in fixture_sources) die("duplicate fixture source: " s)
+            fixture_sources[s] = 1
+            path = root "/" s
+            status = (getline unused < path); close(path)
+            if (status < 0) die("missing fixture source: " s)
+            print cfg["id"] "\t" s
+            return
+        }
         if (pending_after != "") die("after without next-line")
         if (depth != 0) die("unclosed if-block in case " cfg["id"])
         close_step()
@@ -1102,6 +1118,8 @@ cc_translate() {
         if (line == "" || line ~ /^#/) next
         sp = index(line, " ")
         if (sp) { kw = substr(line, 1, sp - 1); rest = substr(line, sp + 1) } else { kw = line; rest = "" }
+        if (fixtures && kw != "case" && kw != "source" && !(kw == "do" && rest == "none"))
+            die("unsupported fixture inventory directive: " kw)
         if (kw == "file") {
             nfile++
             flags = "-"
@@ -1132,6 +1150,7 @@ cc_translate() {
     }
     END {
         if (bad) exit 1
+        if (fixtures && ncase == 0) die("empty fixture inventory")
         if (infile) { printf "%s: unterminated file block\n", file > "/dev/stderr"; exit 1 }
         if (ncase > 0) finish_case()
     }
@@ -1153,6 +1172,10 @@ for CC_FILE do
         echo "missing case file: $CC_FILE" >&2
         exit 2
     }
+    if [ "$CC_FIXTURES" -eq 1 ]; then
+        cc_translate "$CC_FILE" || exit 2
+        continue
+    fi
     CC_NAME=$(basename "$CC_FILE" .cases)
     CC_WORK="$CC_WORK_ROOT/$CC_NAME$CC_WORK_SUFFIX"
     CCV_work=$CC_WORK

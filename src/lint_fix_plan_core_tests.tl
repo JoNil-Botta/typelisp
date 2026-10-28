@@ -841,10 +841,16 @@
     (let [x : i64 1] '(begin x x))
     1))
 
-(defmacro (single-body [xs : Expr ...]) : Expr
-  (begin
-    (comptime.expr-list-length xs)
-    (comptime.expr-int 2)))
 "))
       0)
     "lint redundant-begin must keep required begins"))
+
+(test
+  lint-redundant-begin-macro-body
+  (assert
+    (redundant-begin-round-trip-ok?
+      "(defmacro (multi-body [xs : Expr ...]) : Expr\n  (begin\n    (comptime.expr-list-length xs)\n    (comptime.expr-int 42)))\n"
+      1
+      "(defmacro (multi-body [xs : Expr ...]) : Expr\n    (comptime.expr-list-length xs)\n    (comptime.expr-int 42))\n"
+      "(defmacro (multi-body [xs : Expr ...]) : Expr\n  (comptime.expr-list-length xs)\n  (comptime.expr-int 42))")
+    "lint redundant-begin macro body fix round trip"))

@@ -10152,8 +10152,7 @@ form, written as a body form of a position that already takes a body
 sequence, with a machine-applicable fix
 that splices its forms into that body; under `when`, `unless` and `while`,
 whose body forms must each be `unit`, it reports only when the forms the
-splice exposes are syntactically `unit`; a `defmacro` body is not reported
-until the parser accepts the grammar's multi-form macro body, #8717), and
+splice exposes are syntactically `unit`), and
 `--prefer-dotted-field` is a deprecated no-op retained for CLI compatibility
 now that dotted field projection is the only public spelling.
 `--name-case` enables four independently suppressible rules:

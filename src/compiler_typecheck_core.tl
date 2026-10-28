@@ -11318,34 +11318,29 @@
                 (tc-try-incompatibility-message reason)
                 next)]
             [(TcTryQueryCompatible operand-info return-info)
-              (if (and
-                (tc-regions-have-scratch-body?
-                  (tc-type-outer-regions (tc-global-shared-view operand-ty)))
-                (tc-region-taggable-type?
-                  (tc-result-info-err-type (tc-global-shared-view operand-info))))
-                ;; The error exit would carry a scratch-allocated payload out
-                ;; of its form (#8776).
-                (TcSelectedResult.Err
-                  (tc-locate-error-at-expr
-                    (tc-context-expr-bases ctx)
-                    (tc-context-expr-get ctx inner-id)
-                    (tc-scratch-exit-error "try's error exit"))
-                  next)
-                (tc-selected-contextual-result
-                  ctx
-                  env
-                  expected
-                  (tc-selected-try-publish
+              (match (tc-check-try-exit-regions
+                ctx
+                env
+                (tc-context-expr-get ctx inner-id)
+                (tc-type-outer-regions (tc-global-shared-view operand-ty))
+                (tc-result-info-err-type (tc-global-shared-view operand-info)))
+                [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
+                [(ResultTcUnit.Ok)
+                  (tc-selected-contextual-result
                     ctx
                     env
-                    operand-ty
-                    operand
-                    return-ty
-                    operand-info
-                    return-info
-                    syntax
-                    source
-                    next)))])])]))
+                    expected
+                    (tc-selected-try-publish
+                      ctx
+                      env
+                      operand-ty
+                      operand
+                      return-ty
+                      operand-info
+                      return-info
+                      syntax
+                      source
+                      next))])])])]))
 
 (define (tc-selected-try-publish
   [ctx : TcContext]
@@ -75387,6 +75382,70 @@
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
 
+(define (tc-region-escape-error [region : i64]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    "typecheck: region-tagged value cannot escape with-arena '"
+    (tc-lifetime-name-render region)
+    "'"))
+
+;; An early exit crosses every arena introduced after this function's return
+;; marker, including outer arenas around a nested scope. Input-tied arenas and
+;; arenas surrounding a lambda's invocation outlive that return boundary.
+(define (tc-check-early-exit-regions [env : TcTypeEnv] [regions : TcNameIdList]) : ResultTcUnit
+  (let
+    [cursor : TcNameIdList regions]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [region : i64 (tc-name-id-list-head cursor)]
+        (unless
+          (or
+            (tc-program-lifetime-id? region)
+            (tc-lifetime-outlives-binding-id? env region (tc-return-type-id)))
+          (return (Err (tc-region-escape-error region)))))
+      (set! cursor (tc-name-id-list-rest cursor))))
+  Ok)
+
+;; Inline arrays allocate no container, but a nonempty residual still carries
+;; its elements across the reset. Scalar and empty residuals carry no allocation
+;; from the Result-like carrier; its success payload never leaves via try.
+(define (tc-early-exit-allocated-payload? [ty : ast.AstType]) : bool
+  (match (& ty)
+    [(Array elem len)
+      (and (> len 0) (tc-early-exit-allocated-payload? (ast.ty-node-get elem)))]
+    [(or (Region _ inner) (Invalidate _ inner))
+      (tc-early-exit-allocated-payload? (ast.ty-node-get inner))]
+    [_ (tc-region-taggable-type? ty)]))
+
+(define (tc-check-try-exit-regions
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [inner : ast.AstExpr]
+  [carrier-regions : TcNameIdList]
+  [error-ty : ast.AstType]) : ResultTcUnit
+  (let
+    [regions : TcNameIdList
+      (if (tc-early-exit-allocated-payload? (tc-global-shared-view error-ty))
+        (tc-name-id-list-add-all
+          (tc-type-collect-regions error-ty)
+          carrier-regions)
+        (tc-type-collect-regions error-ty))]
+    (if (tc-regions-have-scratch-body? regions)
+      (Err
+        (tc-locate-error-at-expr
+          (tc-context-expr-bases ctx)
+          inner
+          (tc-scratch-exit-error "try's error exit")))
+      (match (tc-check-early-exit-regions env regions)
+        [(ResultTcUnit.Ok) Ok]
+        [(ResultTcUnit.Err message)
+          (Err
+            (tc-rich-escape-at-expr
+              (tc-context-expr-bases ctx)
+              inner
+              message
+              "try's error payload leaves this function"))]))))
+
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (let
     [operand-ty : ast.AstType
@@ -75397,15 +75456,16 @@
       [(Ok return-ty)
         (match (tc-try-query ctx operand-ty return-ty TcTryEarlyExitAllowed)
           [(TcTryQueryCompatible operand-info _)
-            (if (and
-              (tc-regions-have-scratch-body? regions)
-              (tc-region-taggable-type?
-                (tc-result-info-err-type (tc-global-shared-view operand-info))))
-              (Err
-                (tc-locate-error-at-expr
-                  (tc-context-expr-bases ctx)
-                  inner
-                  (tc-scratch-exit-error "try's error exit")))
+            (let
+              [_
+                (try
+                  (tc-check-try-exit-regions
+                    ctx
+                    env
+                    inner
+                    regions
+                    (tc-result-info-err-type
+                      (tc-global-shared-view operand-info))))]
               ;; The Ok payload lives where the operand does, as a match
               ;; arm's binding would.
               (Ok
@@ -75502,21 +75562,34 @@
             "typecheck: return type mismatch")
             [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
             [(ResultTcUnit.Ok)
-              (cond
-                ;; A scratch-allocated value cannot leave its form (#8776).
-                [(and
-                    (tc-type-contains-region-tag?
-                      (tc-global-shared-view value-ty))
-                    (tc-regions-have-scratch-body?
-                      (tc-type-collect-regions (tc-global-shared-view value-ty))))
-                  (TcSelectedResult.Err (tc-scratch-exit-error "return") next)]
-                [(tc-expr-result-uses-active-cleanup-owner? ctx env value)
-                  (TcSelectedResult.Err
-                    (tc-kind-message
-                      (cdiag.CompilerTypecheckKind.ResourceOwnership)
-                      "typecheck: cleanup-required resource would escape with scope")
-                    next)]
-                [else (tc-selected-return child syntax source next)])])])]))
+              (let
+                [regions : TcNameIdList
+                  (if (tc-type-contains-region-tag?
+                    (tc-global-shared-view value-ty))
+                    (tc-type-collect-regions value-ty)
+                    Nil)]
+                (if (tc-regions-have-scratch-body? regions)
+                  (TcSelectedResult.Err (tc-scratch-exit-error "return") next)
+                  (match (tc-check-early-exit-regions env regions)
+                    [(ResultTcUnit.Err message)
+                      (TcSelectedResult.Err
+                        (tc-rich-escape-at-expr
+                          (tc-context-expr-bases ctx)
+                          value
+                          message
+                          "returned value carries a lifetime or arena that cannot cross this boundary")
+                        next)]
+                    [(ResultTcUnit.Ok)
+                      (if (tc-expr-result-uses-active-cleanup-owner?
+                        ctx
+                        env
+                        value)
+                        (TcSelectedResult.Err
+                          (tc-kind-message
+                            (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                            "typecheck: cleanup-required resource would escape with scope")
+                          next)
+                        (tc-selected-return child syntax source next))])))])])]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
   (match (csym.compiler-symbols-owner-name-at-index

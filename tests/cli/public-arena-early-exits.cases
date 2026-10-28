@@ -1,0 +1,20 @@
+# Early exits carry only values that outlive the enclosing return boundary.
+# The safety manifest pins the operand locations; compile rejects on both ABIs.
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+
+case arena-early-exit-reject
+each arena_return_string_reject arena_return_box_reject arena_return_nested_tuple_reject arena_return_outer_reject arena_try_string_reject arena_try_outer_reject arena_try_array_reject arena_try_nested_array_reject
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena
+stderr contains tests/safety/{{each}}.tl:
+stderr contains use with-escape
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena
+stderr contains tests/safety/{{each}}.tl:
+stderr contains use with-escape

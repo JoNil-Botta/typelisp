@@ -1186,3 +1186,5 @@ lambda_identical_capture|all|0,1,2|tests/integration/lambda_identical_capture.tl
 lambda_identical_capture_ref|all|0,1,2|tests/integration/lambda_identical_capture_ref.tl|42|-|-|-|-
 lambda_identical_capture_nested|all|0,1,2|tests/integration/lambda_identical_capture_nested.tl|42|-|-|-|-
 lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_noncapturing.tl|42|-|-|-|-
+
+arena_early_exits|all|0,1,2|tests/integration/arena_early_exits.tl|42|-|-|-|-

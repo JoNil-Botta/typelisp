@@ -541,3 +541,11 @@ tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison	@corpus	Dispatch-
 tests/spmd/dispatch_variant_support.tl	stage2-spmd-simd-comparison	@corpus	Dispatch regression support independently checks CPU selection and every output lane.
 tests/spmd/dispatch_imported_values.tl	stage2-spmd-simd-comparison	@corpus	Qualified and selected variant calls and values run through simd.cases.
 tests/spmd/dispatch_value_provider.tl	stage2-spmd-simd-comparison	@corpus	Imported dispatch variant provider is consumed by the simd.cases value regression.
+tests/safety/arena_return_box_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_nested_tuple_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_nested_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.

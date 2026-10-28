@@ -2471,15 +2471,20 @@ scripts/check-tlci-native-route-size.sh \
   target/tlci-native-route-stress/<host>/evidence.tsv
 ```
 
-The required `stage0-size-ratchet` gate holds #6260's published-stage0 target.
+The required `stage0-size-ratchet` gate enforces the 15,000,000-byte hard limit
+for published stage0 on both hosts (Refs #9440). Smaller remains a goal and size
+improvements are welcome, but they must not block correctness, compilation
+speed, generated-code quality or CI-speed work.
 It measures the converged bootstrap compiler, which comes from the same compile
 and native-link route as the published stage0 (a stripped copy on Linux, the
 linked executable on Windows), against the host's ceiling in
 `scripts/stage0-size-policy.tsv`. That file is an append-only ledger per host:
 the last row is the ceiling, an ordinary `ceiling` row may only lower it, only
 a `raise` row naming its authorizing change may raise it, and no ceiling may
-sit below the 10,000,000-byte target. When a change shrinks the binary well
-under its ceiling the checker prints the lower value to append. Reproduce with:
+sit below its recorded target. Historical rows retain their targets; each
+host's last row must use the current 15,000,000-byte target. When a change
+shrinks the binary well under its ceiling the checker prints the lower value
+to append. Reproduce with:
 
 ```sh
 scripts/check-stage0-size.sh target/bootstrap-fixpoint/stage3 linux

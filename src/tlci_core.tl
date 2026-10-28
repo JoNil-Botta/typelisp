@@ -956,6 +956,17 @@
   ;; what keeps template construction out of machine code. Refs #8274.
   compiler-comptime-host-callback-run-ops)
 
+;; Compare the complete name against one table row without creating a view
+;; header in the process-lifetime string-view arena.
+(define (tlci-host-callback-name-at?
+  [names : (& names str)]
+  [name : (& name str)]
+  [start : i64]
+  [len : i64]) : bool
+  (and
+    (= len (string.string-length name))
+    (string.is-string-prefix-at names name start)))
+
 ;; Keep the source-order ABI names in one literal rather than repeating the
 ;; lookup code for every row. The generated names contain no newlines.
 (defmacro (tlci-host-callback-row-index-rows [name : Expr] [rows : Expr ...]) : i64
@@ -988,9 +999,7 @@
         (let
           [end : i64 (string.index-of-byte (& names) offset (cast 10 : u8))]
           (when
-            (string.eq
-              ,name
-              (string.substring-view (& names) offset (- end offset)))
+            (tlci-host-callback-name-at? (& names) ,name offset (- end offset))
             (set! result row))
           (set! offset (+ end 1))
           (+= row 1)))

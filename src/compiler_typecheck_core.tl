@@ -76179,6 +76179,24 @@
               (tc-type-render
                 (tc-type-strip-region (tc-resolve-type ctx array-ty)))))])]))
 
+(define (tc-box-get-reference-borrow-error
+  [expr-bases : i64]
+  [receiver-id : i64]) : String
+  (let
+    [receiver : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases receiver-id)]
+    [message : String
+      (tc-kind-message
+        (BorrowViolation)
+        "typecheck: legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference")]
+    [help : String "use deref for each indirection level, or pass an owned Box"]
+    (tc-caller-origin-operand-error
+      expr-bases
+      (& receiver)
+      (match (tc-expr-id-maybe-span expr-bases receiver-id)
+        [(Some span) (tc-rich-error-with-help span message help)]
+        [(No) (str_cat.str-cat message "; " help)]))))
+
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
     [(TcBorrowPlace lifetime box-ty shared through-ref)
@@ -76366,9 +76384,30 @@
       (let
         [box-expr : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases box-box)]
-        (match (tc-borrow-place-with-access ctx expr-bases env mutable box-expr)
-          [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
-          [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
+        [box-ty : ast.AstType
+          (try
+            (tc-expr
+              ctx
+              env
+              (ast.ast-expr-segment-bases-get expr-bases box-box)))]
+        ;; The legacy bridge projects one owned Box. A place borrow already
+        ;; strips a reference receiver, so peeling its Box here would type
+        ;; two projections while lowering still addresses only one (#8549).
+        (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+          [(or (Ref _ _) (MutRef _ _))
+            (ResultTcBorrowPlace.Err
+              (tc-box-get-reference-borrow-error expr-bases box-box))]
+          [_
+            (match (tc-borrow-place-with-access
+              ctx
+              expr-bases
+              env
+              mutable
+              box-expr)
+              [(ResultTcBorrowPlace.Ok place)
+                (tc-borrow-place-box-get ctx place)]
+              [(ResultTcBorrowPlace.Err message)
+                (ResultTcBorrowPlace.Err message)])]))]
     [(ast.AstExpr.BoxTake receiver-box)
       (tc-borrow-place-deref
         ctx

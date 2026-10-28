@@ -573,9 +573,17 @@ manifest_settle_chunk() {
     fi
 }
 
-# The chunk file of pool job `chunk-N` (N counts from 1, the file suffix from 0).
+# Set the chunk file of pool job `chunk-N` (the file suffix counts from 0).
+# Keep path formatting in this shell: workers and settlement need the same path
+# several times, and command substitution would fork for each use on Windows.
 manifest_chunk_path() {
-    printf '%s/compile-batch.%04d.txt\n' "$BATCH_CHUNK_DIR" "$(($1 - 1))"
+    _manifest_chunk_number=$(($1 - 1))
+    case $_manifest_chunk_number in
+        ?) _manifest_chunk_number=000$_manifest_chunk_number ;;
+        ??) _manifest_chunk_number=00$_manifest_chunk_number ;;
+        ???) _manifest_chunk_number=0$_manifest_chunk_number ;;
+    esac
+    MANIFEST_CHUNK_PATH="$BATCH_CHUNK_DIR/compile-batch.$_manifest_chunk_number.txt"
 }
 
 # The pool's job callback (see lib-bounded-pool.sh). Timing rows go to a
@@ -596,14 +604,16 @@ bounded_pool_run_job() {
     if ci_timing_enabled; then
         TYPELISP_CI_TIMING_FILE="$MANIFEST_POOL_DIR/timing/$_pool_job.tsv"
     fi
-    manifest_compile_chunk "$(manifest_chunk_path "$_pool_index")" \
+    manifest_chunk_path "$_pool_index"
+    _pool_chunk_path=$MANIFEST_CHUNK_PATH
+    manifest_compile_chunk "$_pool_chunk_path" \
         "$_pool_index" "$batch_chunk_count" "$_pool_cap" || return 1
     if [ -n "$_pool_cap" ] && ! bounded_pool_read_report \
-        "$(manifest_chunk_path "$_pool_index").memory" \
-        "$(cat "$(manifest_chunk_path "$_pool_index").status")" "$_pool_cap" "$HOST_OS"; then
+        "$_pool_chunk_path.memory" \
+        "$(cat "$_pool_chunk_path.status")" "$_pool_cap" "$HOST_OS"; then
         echo "[selfhost-compile] batch compile manifest chunk $_pool_index/$batch_chunk_count $BOUNDED_POOL_REPORT_FAILURE" \
             "(reason=$BOUNDED_POOL_REPORT_REASON, reported-exit=$BOUNDED_POOL_REPORT_EXIT_CODE)" >&2
-        sed 's/^/  /' "$(manifest_chunk_path "$_pool_index").err" >&2 || true
+        sed 's/^/  /' "$_pool_chunk_path.err" >&2 || true
         return 1
     fi
 }
@@ -637,7 +647,8 @@ run_compile_batch() {
     for batch_chunk in "$BATCH_CHUNK_DIR"/compile-batch.*.txt; do
         [ -f "$batch_chunk" ] || fail "batch compile manifest chunk is missing: $batch_chunk"
         _queue_index=$((_queue_index + 1))
-        [ "$batch_chunk" = "$(manifest_chunk_path "$_queue_index")" ] ||
+        manifest_chunk_path "$_queue_index"
+        [ "$batch_chunk" = "$MANIFEST_CHUNK_PATH" ] ||
             fail "batch compile manifest chunks are not numbered contiguously: $batch_chunk"
         printf 'chunk-%s|%s\n' "$_queue_index" "$MANIFEST_POOL_CHUNK_CAP_MIB" >> "$_pool_queue"
     done
@@ -658,7 +669,8 @@ run_compile_batch() {
     while IFS='|' read -r _settle_job _settle_cap; do
         _settle_index=$((_settle_index + 1))
         [ "$MANIFEST_POOL_ENFORCE_CAPS" -eq 1 ] || _settle_cap=
-        manifest_settle_chunk "$(manifest_chunk_path "$_settle_index")" \
+        manifest_chunk_path "$_settle_index"
+        manifest_settle_chunk "$MANIFEST_CHUNK_PATH" \
             "$_settle_index" "$batch_chunk_count" "$_settle_cap"
     done < "$_pool_queue"
     if [ -n "$MANIFEST_POOL_PEAK_LABEL" ]; then
@@ -939,10 +951,18 @@ FAKE
     ci_timing_set_now_ms
     _manifest_matrix_started=$CI_TIMING_NOW_MS
     bounded_completion_fixture_matrix "$HOST_OS"
+    _completion_checks="$MANIFEST_POOL_SELF_TEST_ROOT/checks.tsv"
+    : > "$_completion_checks"
+    set --
+    for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
+        for _completion_case in $BOUNDED_COMPLETION_CASES; do
+            set -- "$@" "$MANIFEST_POOL_SELF_TEST_ROOT/$_completion_host-$_completion_case/worker"
+        done
+    done
+    mkdir -p "$@"
     for _completion_host in $BOUNDED_COMPLETION_HOSTS; do
         for _completion_case in $BOUNDED_COMPLETION_CASES; do
             _completion_dir="$MANIFEST_POOL_SELF_TEST_ROOT/$_completion_host-$_completion_case"
-            mkdir -p "$_completion_dir"
             if ! bounded_completion_worker_fixture manifest "$_completion_dir/worker" "$_completion_host" \
                 "$MANIFEST_POOL_CHUNK_CAP_MIB" "$_completion_case" > "$_completion_dir/worker.log" 2>&1; then
                 cat "$_completion_dir/worker.log" >&2
@@ -967,14 +987,17 @@ FAKE
                     manifest_pool_self_test_fail "$_completion_host/$_completion_case accepted"
                 case $_completion_case in
                     command-*)
-                        grep -Fq "exited $(cat "$_completion_dir/chunk.status") in stage1 mode" "$_completion_dir/reader.log" &&
-                            grep -Fq 'compiler diagnostic' "$_completion_dir/reader.log" ||
-                            manifest_pool_self_test_fail "$_completion_host/$_completion_case lost diagnostics"
+                        bounded_completion_fixture_read "$_completion_dir/chunk.status"
+                        bounded_completion_fixture_expect "$_completion_checks" "$_completion_host/$_completion_case" contains \
+                            "$_completion_dir/reader.log" "exited $BOUNDED_COMPLETION_FIXTURE_TEXT in stage1 mode"
+                        bounded_completion_fixture_expect "$_completion_checks" "$_completion_host/$_completion_case" contains \
+                            "$_completion_dir/reader.log" 'compiler diagnostic'
                         ;;
                 esac
             fi
         done
     done
+    bounded_completion_fixture_check "$_completion_checks" || manifest_pool_self_test_fail 'completion diagnostics'
     ci_timing_set_now_ms
     TYPELISP_CI_TIMING_GATE=$_manifest_cost_gate
     TYPELISP_CI_TIMING_FILE=$_manifest_cost_file

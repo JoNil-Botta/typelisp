@@ -51046,38 +51046,6 @@
     (set! (array-ref items index) -1)
     (compiler-backend-addr-of-forwarding-fill! items (+ index 1))))
 
-(define (compiler-backend-addr-of-forwarding-record!
-  [items : (&mut items (__tl_dyn-array i64))]
-  [use-counts : (& use-counts (__tl_dyn-array i64))]
-  [instr : compiler_ir_types.CompilerIrInstr]) : unit
-  (match instr
-    [(AddrOf dst src _storage-words)
-      (if (and
-        (>= dst 0)
-        (< dst (array-length items))
-        (= (array-ref items dst) (- 0 1))
-        (compiler-backend-var-single-use? use-counts dst))
-        (set! (array-ref items dst) src)
-        unit)]
-    [(Mov dst src _)
-      (match src
-        [(Var src-var)
-          (let
-            [forward-src : i64
-              (if (and (>= src-var 0) (< src-var (array-length items)))
-                (array-ref items src-var)
-                (- 0 1))]
-            (if (and
-              (>= forward-src 0)
-              (>= dst 0)
-              (< dst (array-length items))
-              (= (array-ref items dst) (- 0 1))
-              (compiler-backend-var-single-use? use-counts dst))
-              (set! (array-ref items dst) forward-src)
-              unit))]
-        [_ unit])]
-    [_ unit]))
-
 ;; A candidate's one value use immediately after its definition is dominated
 ;; by that definition, even if coloring reuses the id elsewhere. The global
 ;; recipe is consulted only at that sole use; suppressing other, dead AddrOf
@@ -51099,57 +51067,59 @@
     (for [index (iterator.range 0 instrs.len)]
       (let
         [instr (compiler-backend-global-array-element-shared-view slots index)]
-        (if local-pass
+        [kind : i64 0]
+        [dst : i64 -1]
+        [src : i64 -1]
+        (match (& instr)
+          [(AddrOf d r _)
+            (set! kind 1)
+            (set! dst d)
+            (set! src r)]
+          [(Mov d (Var r) _)
+            (set! kind 2)
+            (set! dst d)
+            (set! src r)]
+          [(Phi _ _ _) (set! kind 3)]
+          [_ unit])
+        (when
+          (and local-pass (>= pending 0))
+          (set! (array-ref probe 0) -2)
+          (set! (array-ref probe 1) pending)
+          (unless
+            (or (= kind 1) (= kind 3))
+            (compiler-backend-count-instr-uses
+              (compiler-backend-i64-array-shared-view probe)
+              instr))
+          (if (= (array-ref probe 0) -3)
+            (set! (array-ref items pending) pending-root)
+            (set! unproven true)))
+        (set! pending -1)
+        (when
+          (and
+            (>= dst 0)
+            (< dst vars)
+            (compiler-backend-var-single-use? use-counts dst))
           (let
-            [kind : i64 0]
-            [dst : i64 -1]
-            [src : i64 -1]
-            (match (& instr)
-              [(AddrOf d r _)
-                (set! kind 1)
-                (set! dst d)
-                (set! src r)]
-              [(Mov d (Var r) _)
-                (set! kind 2)
-                (set! dst d)
-                (set! src r)]
-              [(Phi _ _ _) (set! kind 3)]
-              [_ unit])
+            [root : i64
+              (if (= kind 1)
+                src
+                (if (and (= kind 2) (>= src 0) (< src (array-length items)))
+                  (array-ref items src)
+                  -1))]
             (when
-              (>= pending 0)
-              (set! (array-ref probe 0) -2)
-              (set! (array-ref probe 1) pending)
-              (unless
-                (or (= kind 1) (= kind 3))
-                (compiler-backend-count-instr-uses
-                  (compiler-backend-i64-array-shared-view probe)
-                  instr))
-              (if (= (array-ref probe 0) -3)
-                (set! (array-ref items pending) pending-root)
-                (set! unproven true)))
-            (set! pending -1)
-            (when
-              (and
-                (>= dst 0)
-                (< dst vars)
-                (compiler-backend-var-single-use? use-counts dst))
-              (let
-                [root : i64
-                  (if (= kind 1)
-                    src
-                    (if (and (= kind 2) (>= src 0) (< src (array-length items)))
-                      (array-ref items src)
-                      -1))]
-                (when
-                  (>= root 0)
-                  (when
-                    (= (array-length items) 0)
-                    (set! (deref items) (__tl_make-array i64 vars))
-                    (compiler-backend-addr-of-forwarding-fill! items 0))
+              (>= root 0)
+              (when
+                (= (array-length items) 0)
+                (set! (deref items) (__tl_make-array i64 vars))
+                (compiler-backend-addr-of-forwarding-fill! items 0))
+              (if local-pass
+                (begin
                   (set! pending dst)
-                  (set! pending-root root)))))
-          (compiler-backend-addr-of-forwarding-record! items use-counts instr))))
-    (or unproven (>= pending 0))))
+                  (set! pending-root root))
+                (when
+                  (= (array-ref items dst) -1)
+                  (set! (array-ref items dst) root))))))))
+    (and local-pass (or unproven (>= pending 0)))))
 
 (define (compiler-backend-addr-of-forwarding-record-blocks!
   [items : (&mut items (__tl_dyn-array i64))]

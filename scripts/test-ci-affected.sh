@@ -257,14 +257,15 @@ sort -u "$work/primary-crlf.raw" > "$work/primary-crlf.tsv"
 cmp "$work/primary-inputs.tsv" "$work/primary-crlf.tsv" || fail 'Windows checkout changed primary input ownership'
 
 # Owning scripts are the inventory for fixtures they construct in shell loops.
-# Supported boundary: a path word under src, tests, stdlib or docs, relative to
-# the root or $ROOT, that expands $NAME or ${NAME}; quotes and backslash-newline
-# join as in sh. A name resolves only when every bare occurrence of it in the
-# script is the variable of a literal "for NAME in WORD..." header in code, so
-# reads, assignments, options, comments and heredoc text leave it unresolved.
-# Each resolved expansion is a primary contract; search roots and outputs stay
-# supporting. Any other expansion is a family: every tracked file it can name
-# must select the gate on each host (checked below).
+# Supported boundary: a path word under src, tests, stdlib or docs that expands
+# $NAME or ${NAME}; quotes and backslash-newline join as in sh. It is relative to
+# the root or $ROOT, or under a reviewed prefix: a root alias is audited the
+# same way, scratch is skipped and any other prefix fails. A name resolves only
+# when every bare word naming it in the script is the variable of a literal
+# "for NAME in WORD..." header in code, so reads, assignments, options, comments
+# and heredoc text leave it unresolved. Each resolved expansion is a primary
+# contract; search roots and outputs stay supporting. Any other expansion is a
+# family: every tracked file it can name must select the gate on each host.
 constructed_inputs() {
     awk -F '\t' '
         function load(script,    line, status, physical, pending, joined, rest, word) {
@@ -353,7 +354,7 @@ constructed_inputs() {
                 if (bare != headers[name]) unresolved[name] = 1
             }
         }
-        function scan(script,    i, line, before, tail, position, character, name, segments, kind, template, pattern, part, k, count, items, values, m, j, n, expanded, found) {
+        function scan(script,    i, line, before, prefix, tail, position, character, name, segments, kind, template, pattern, part, k, count, items, values, m, j, n, expanded, found) {
             found = ""
             for (i = 1; i <= lines; i++) {
                 line = text[i]
@@ -363,9 +364,10 @@ constructed_inputs() {
                     before = substr(line, 1, RSTART - 1)
                     tail = substr(line, RSTART)
                     line = substr(line, RSTART + RLENGTH - 1)
-                    # Paths below scratch, package or copied roots are not repository inputs.
                     gsub(/["\047]/, "", before)
-                    if (before != "" && before !~ /[[:space:]=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT[^}]*\})\/$/) continue
+                    prefix = ""
+                    if (before != "" && before !~ /[[:space:]=(:;,|&<>]$/ && before !~ /\$(ROOT|\{ROOT[^}]*\})\/$/ && match(before, /[^[:space:]=(;|&<>]+$/))
+                        prefix = substr(before, RSTART, RLENGTH)
                     segments = 0; literal[0] = ""; kind = "member"; position = 1
                     while (position <= length(tail)) {
                         character = substr(tail, position, 1)
@@ -385,6 +387,14 @@ constructed_inputs() {
                         template = template "${" (reference[k] == "" ? "?" : reference[k]) "}" literal[k]
                         part = literal[k]; gsub(/\./, "\\.", part); pattern = pattern ".*" part
                     }
+                    if (prefix != "") {
+                        used[script, prefix] = 1
+                        if (reviewed[script, prefix] == "scratch") continue
+                        if (reviewed[script, prefix] != "root") {
+                            found = found "prefixed\t" prefix "\t" script ":" start[i] "\t" template "\n"
+                            continue
+                        }
+                    }
                     if (kind == "family") {
                         found = found "family\t" pattern "$\t" script ":" start[i] "\t" template "\n"
                         continue
@@ -400,6 +410,7 @@ constructed_inputs() {
             }
             return found
         }
+        FILENAME == ARGV[2] { reviewed[$1, $2] = $3; next }
         { gate[++pairs] = $1; owner[pairs] = $2 }
         END {
             for (p = 1; p <= pairs; p++) {
@@ -410,7 +421,16 @@ constructed_inputs() {
                     print fields[1] "\t" fields[2] "\t" gate[p] "\t" fields[3] "\t" fields[4]
                 }
             }
+            for (key in reviewed) if (!(key in used)) { split(key, fields, SUBSEP); print "unused\t" fields[2] "\t-\t" fields[1] "\t-" }
         }
+    ' "$1" "$2"
+}
+# Prefixed paths need a reviewed class, and every reviewed prefix still occurs.
+constructed_prefix_gaps() {
+    awk -F '\t' '
+        $1 == "prefixed" { print "constructed path under an unreviewed prefix: " $4 " " $2 $5 " -> " $3 > "/dev/stderr"; failed = 1 }
+        $1 == "unused" { print "reviewed constructed prefix no longer occurs: " $4 " " $2 > "/dev/stderr"; failed = 1 }
+        END { exit failed }
     ' "$1"
 }
 # Group the tracked files each family can name by the map rows that match them.
@@ -482,10 +502,17 @@ cat <<'SCRIPT' > "$WORK/generated.sh"
 for embedded in alpha; do :; done
 SCRIPT
 for named in gamma; do compile "tests/integration/$commented.tl" "tests/integration/$embedded.tl" "stdlib/$$.tl" "stdlib/$fixture/$named-source" "$WORK/x-named-y"; done
+for defaulted in alpha; do :; done; : "${defaulted:=beta}"
+for positional; do :; done
+for globbed in tests/*.tl; do :; done
+for exported in alpha; do :; done; export exported
+compile "${ROOT:?}/tests/integration/$defaulted.tl" "$ROOT"/tests/integration/"$positional".tl "tests/integration/$globbed.tl" "tests/integration/$exported.tl"
+compile "$ALIAS/tests/integration/$fixture.tl" "$OTHER/tests/$fixture.tl"
 OWNER
 probe_owner="$work/constructed-probe/owner.sh"
 printf 'synthetic-gate\t%s\n' "$probe_owner" > "$work/constructed-probe/scripts.tsv"
-constructed_inputs "$work/constructed-probe/scripts.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
+printf '%s\t%s\t%s\n' "$probe_owner" '$WORK/' scratch "$probe_owner" '$ALIAS/' root "$probe_owner" '$UNUSED/' scratch > "$work/constructed-probe/prefixes.tsv"
+constructed_inputs "$work/constructed-probe/scripts.tsv" "$work/constructed-probe/prefixes.tsv" > "$work/constructed-probe/actual.tsv" || fail 'synthetic constructed input discovery failed'
 probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_owner" "$3" "$4"; }
 {
     probe_row member tests/integration/alpha.tl 4 'tests/integration/${fixture}.tl'
@@ -497,11 +524,26 @@ probe_row() { printf '%s\t%s\tsynthetic-gate\t%s:%s\t%s\n' "$1" "$2" "$probe_own
     probe_row family '^stdlib/.*\.tl$' 14 'stdlib/${?}.tl'
     probe_row member stdlib/alpha/gamma-source 14 'stdlib/${fixture}/${named}-source'
     probe_row member stdlib/beta/gamma-source 14 'stdlib/${fixture}/${named}-source'
+    for probe_name in defaulted positional globbed exported; do
+        probe_row family '^tests/integration/.*\.tl$' 19 "tests/integration/\${$probe_name}.tl"
+    done
+    probe_row member tests/integration/alpha.tl 20 'tests/integration/${fixture}.tl'
+    probe_row member tests/integration/beta.tl 20 'tests/integration/${fixture}.tl'
+    probe_row prefixed '$OTHER/' 20 'tests/${fixture}.tl'
+    printf 'unused\t%s\t-\t%s\t-\n' '$UNUSED/' "$probe_owner"
 } > "$work/constructed-probe/expected.tsv"
 cmp "$work/constructed-probe/actual.tsv" "$work/constructed-probe/expected.tsv" || fail 'constructed input discovery left its supported boundary'
+if constructed_prefix_gaps "$work/constructed-probe/actual.tsv" 2> "$work/constructed-probe/prefixes.err"; then
+    fail 'unreviewed synthetic prefix passed'
+fi
+{
+    printf 'constructed path under an unreviewed prefix: %s:20 %s -> synthetic-gate\n' "$probe_owner" '$OTHER/tests/${fixture}.tl'
+    printf 'reviewed constructed prefix no longer occurs: %s %s\n' "$probe_owner" '$UNUSED/'
+} > "$work/constructed-probe/prefixes.expected"
+cmp "$work/constructed-probe/prefixes.err" "$work/constructed-probe/prefixes.expected" || fail 'constructed prefix review lost its diagnostic'
 # A member added to a literal list with neither a map owner nor a witness fails.
 printf 'path\trequired\tadvisory\treason\ntests/integration/*\tother-gate\t-\tsynthetic\ntests/integration/beta.tl\tsynthetic-gate\t-\tsynthetic\nstdlib/*\t-\t@stdlib\tsynthetic\n' > "$work/constructed-probe/map.tsv"
-awk -F '\t' '$1 == "member" && $2 ~ /^tests\// {print $2 "\t" $3 "\t" $4}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/members.tsv"
+awk -F '\t' '$1 == "member" && $2 ~ /^tests\// && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed-probe/actual.tsv" > "$work/constructed-probe/members.tsv"
 : > "$work/constructed-probe/directories"
 if check_primary_owners "$work/constructed-probe/map.tsv" "$work/constructed-probe/directories" "$work/constructed-probe/members.tsv" 2> "$work/constructed-probe/owners.err"; then
     fail 'unowned synthetic constructed member passed'
@@ -516,7 +558,20 @@ constructed_family_members "$work/constructed-probe/map.tsv" "$work/constructed-
 printf 'tests/integration/a_case.tl\tsynthetic-gate\t%s:7\t%s\n' "$probe_owner" 'tests/integration/${loose}_case.tl' > "$work/constructed-probe/family-members.expected"
 cmp "$work/constructed-probe/family-members.tsv" "$work/constructed-probe/family-members.expected" || fail 'constructed family lost a mapped member without its owner'
 
-constructed_inputs "$work/recursive-scripts.tsv" > "$work/constructed.raw" || fail 'constructed input discovery failed'
+# Reviewed prefixes of constructed paths. A root alias is audited like $ROOT;
+# scratch and copied roots are not repository inputs.
+{
+    printf '%s\t%s\troot\n' scripts/build-embedded-stdlib-tlci.sh '$SOURCE_ROOT/' # Defaults to $ROOT.
+    printf '%s\t%s\tscratch\n' scripts/check-compiler-scaling.sh '$WORKDIR/' # Generated scaling sources.
+    printf '%s\t%s\tscratch\n' scripts/verify-compile-profile.sh '$STDLIB_TLCI_MODIFIED_DIR/' # Modified stdlib copy.
+    printf '%s\t%s\tscratch\n' scripts/verify-embedded-stdlib-tlci-resources.sh '$SOURCE_ROOT/' # Copy under WORKDIR.
+    printf '%s\t%s\tscratch\n' scripts/verify-integration.sh '$_t/' # Staging self-test tree.
+    printf '%s\t%s\tscratch\n' scripts/verify-integration.sh '$_tp/' # The same tree, relative to ROOT.
+    printf '%s\t%s\tscratch\n' scripts/verify-stdlib-tlci-identity-differential.sh '$MODIFIED_ROOT/' # Modified stdlib copy.
+    printf '%s\t%s\tscratch\n' scripts/verify-tlci-native-route-stress.sh '$SOURCE_ROOT/' # Copy under WORKDIR.
+} > "$work/constructed-prefixes.tsv"
+constructed_inputs "$work/recursive-scripts.tsv" "$work/constructed-prefixes.tsv" > "$work/constructed.raw" || fail 'constructed input discovery failed'
+constructed_prefix_gaps "$work/constructed.raw" || fail 'constructed path prefixes need review'
 awk -F '\t' '$1 == "member" && !seen[$2 FS $3]++ {print $2 "\t" $3 "\t" $4}' "$work/constructed.raw" > "$work/constructed-members.tsv"
 awk -F '\t' '$1 == "family" {script = $4; sub(/:[0-9]+$/, "", script); if (!seen[$3 FS script FS $5]++) print $2 "\t" $3 "\t" $4 "\t" $5}' "$work/constructed.raw" > "$work/constructed-families.raw"
 # Reviewed unresolved sites. A new site fails until it resolves, is owned or is
@@ -527,7 +582,7 @@ while IFS=$TAB read -r pattern gate site template; do
     esac
     case "${site%:*} $template $gate" in
         'scripts/verify-embedded-stdlib-payload.sh stdlib/${suffix} embedded-stdlib-build-payload') continue ;; # The same payload checks run in the required stdlib module gate.
-        'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} embedded-stdlib-tlci-image' | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} tlci-mutation-bootstrap-fixpoint') continue ;; # Payload source-set copies and hashes; stdlib stays an advisory class.
+        'scripts/build-embedded-stdlib-tlci.sh stdlib/${MODULE_PATH} '* | 'scripts/verify-embedded-stdlib-tlci.sh stdlib/${suffix} '* | 'scripts/check-bootstrap-fixpoint.sh stdlib/${_btms_module_path} '*) continue ;; # Whole-payload source hashes and copies; stdlib stays an advisory class.
     esac
     printf '%s\t%s\t%s\t%s\n' "$pattern" "$gate" "$site" "$template"
 done < "$work/constructed-families.raw" > "$work/constructed-families.tsv"

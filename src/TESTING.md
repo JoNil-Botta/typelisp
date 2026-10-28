@@ -2791,12 +2791,14 @@ map and run `--self-test`. Its ownership audit follows invoked owning scripts
 and whole-directory content guards, uses the canonical case translator
 in list mode, expands manifest primaries, and checks Windows checkout bytes.
 Owning scripts are also the inventory for fixtures they build in shell loops.
-A root-relative or `$ROOT` path whose expanded names are bound only by literal
-`for NAME in WORD...` headers (no other bare word in the script names them)
-yields each member as a primary contract, so a member added to such a list
-needs its map owner. Any other expansion is unresolved: every tracked file it
-can name must select the gate on each host, or the site needs a reviewed
-reason in the audit.
+The audit checks constructed paths that are root-relative, under `$ROOT` or
+under a reviewed root alias. A path under any other prefix fails unless the
+audit records that prefix as scratch. When the expanded names are bound only
+by literal `for NAME in WORD...` headers (no other bare word in the script
+names them), each member is a primary contract, so a member added to such a
+list needs its map owner. Any other expansion is unresolved: every tracked
+file it can name must select the gate on each host, or the site needs a
+reviewed reason in the audit.
 Hosted Linux CI runs this audit unconditionally on every PR as part of
 `stage2-public-tool-surface`, before its compiler-dependent checks.
 

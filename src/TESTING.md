@@ -1,5 +1,12 @@
 # Selfhost compiler testing
 
+`enum_constructor_owner_layout` and its header-less root control retain the
+declaring module's struct identity when imported and local struct names collide.
+Both hosts run opt0/1/2 for register/memory enum constructors, owned/borrowed
+matches, nested field access and struct/tuple/array/box/enum destinations.
+Aliases and full module paths must preserve the imported layout too. Keep their
+target IR parity alongside native execution.
+
 `macro_dotted_global` and its owner-module control preserve definition-site
 global field roots in quoted expression macros, checking and returning 2 at
 opt0/1/2 on both hosts. The matrix retains nested fields, caller shadowing,

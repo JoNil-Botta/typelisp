@@ -53517,11 +53517,7 @@
         [(Err _) unit]))
     (when
       observed?
-      (tc-semantic-observe-expression!
-        ctx
-        env
-        expr-id
-        (clone checked)))
+      (tc-semantic-observe-expression! ctx env expr-id (clone checked)))
     checked))
 
 ;; Ordinary Spanned nodes and compact caller operands use the same transient

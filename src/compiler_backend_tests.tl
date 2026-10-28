@@ -15879,7 +15879,9 @@ f:
           "tl_backtrace_map_begin:"))]
     [bridge-ok : bool
       (asm-ok?
-        (backend.compiler-backend-emit-source-for-target bridge-source (Windows))
+        (backend.compiler-backend-emit-source-for-target
+          bridge-source
+          (Windows))
         (has
           "    .quad __tl$c_entry\n    .quad .L_tl_c_entry_shared_end\n"
           "    .quad tl_bt_six\n    .quad .L_tl_c_entry_end_tl_bt_six\n"

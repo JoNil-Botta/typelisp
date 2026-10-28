@@ -1,0 +1,7 @@
+do none
+case global_aggregate_storage_lifetime
+source tests/integration/global_aggregate_storage_lifetime.tl
+case global_aggregate_storage_threads
+source tests/integration/global_aggregate_storage_threads.tl
+case global_aggregate_storage_boundary
+source tests/integration/global_aggregate_storage_boundary.tl

@@ -2794,12 +2794,17 @@ Owning scripts are also the inventory for fixtures they build in shell loops.
 The audit reads each owning script and every literal-path script it sources,
 after sh quote removal. It checks constructed paths that are root-relative,
 under `$ROOT` or under a reviewed root alias; a path under any other prefix
-fails unless the audit records that prefix as scratch.
+fails unless the audit records that prefix as scratch. `$ROOT` counts only when
+every binding of `ROOT` in the scanned scripts is the canonical
+`ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)`. A relative path counts
+only when no `cd`, `pushd` or `popd` other than `cd "$ROOT"` runs outside a
+subshell. Otherwise the path needs a reviewed `$ROOT/` or `./` prefix. Only
+`${ROOT}`, `${ROOT:-...}`, `${ROOT=...}` and `${ROOT?...}` name the root.
 
 A reference resolves only inside a `for NAME in WORD...` loop of that name,
 when all of these hold:
 
-- every list for the name in the script is literal;
+- every list for the name in the script is literal, with no quoted empty word;
 - no other bare word in the script or its sourced scripts names it;
 - only pure words run between the loop's `do` and the reference: keywords,
   nested literal `for` headers, and assignments whose expansions keep to the
@@ -2807,6 +2812,8 @@ when all of these hold:
   redirection-only command, a `case` and a `for` list that is not literal;
 - nothing earlier in the reference's own command leaves the grammar, and an
   `[[` before it tests only with a unary operator;
+- it is not on a line that continues a quoted word of a command begun on an
+  earlier line;
 - the script passes the closed allowlist below.
 
 A resolved reference expands to the union of the name's lists. Each member is
@@ -2821,9 +2828,10 @@ The expansion grammar is closed. Only these expansions are effect-free:
 
 Any other form may run arithmetic or assign: `$((`, `$[`, a subscript, a
 substring, `${!`, `${NAME@...}` and `${NAME=...}` among them. Inside a loop it
-is impure. In a redirection target or an unquoted heredoc body it leaves the
-whole script unresolved, because those expand before a compound command's
-body runs.
+is impure. In a redirection target, an unquoted heredoc body or a
+double-quoted word that spans lines it leaves the whole script unresolved,
+because those may expand before a compound command's body runs or outside the
+line the audit checks.
 
 The allowlist is closed as well. A script, or any script it sources, leaves
 every reference in it unresolved unless all of these hold:
@@ -2834,7 +2842,9 @@ every reference in it unresolved unless all of these hold:
     `bg`, `fg`, `disown`, `suspend`, `logout`, `times`, `ulimit`, `umask`,
     `type`, `hash`, `help` and `exec`;
   - `.` or `source` with a literal `scripts/...sh` path, which is scanned too;
-  - `printf` without `-v`, and `wait` without `-p`;
+  - `printf` without `-v` and with a first argument that does not start with
+    an expansion, and `wait` without `-p`, without unquoted expansions and with
+    a computed word only last;
   - `read`, `getopts` and `unset` with literal arguments, and `mapfile` or
     `readarray` with literal arguments and no `-C`;
   - `declare`, `typeset`, `local`, `export` and `readonly` with literal
@@ -2845,10 +2855,14 @@ every reference in it unresolved unless all of these hold:
     monitor, braceexpand or noexec, then any positional parameters.
 
   Every other builtin is outside, among them `eval`, `let`, `alias`, `trap`,
-  `shopt`, `enable`, `select` and `coproc`. `command` and `builtin` count as
-  the command they run, and `builtin` needs a literal one.
+  `shopt`, `enable`, `select` and `coproc`. `command`, `builtin` and `time`
+  count as the command they run; their options are read after quote removal,
+  and a computed word in their place leaves the script unresolved.
 - `IFS` is assigned only as a prefix of `read`, and `BASH_ENV` or `ENV` is
   only removed with `env -u`.
+- An operator run that joins a separator and a redirection, such as `;>` or
+  `&&>`, is read as both. `&>` is read the way dash reads it, as `&` followed
+  by `>`.
 - No function shadows a builtin or `command_not_found_handle`, and every
   function body is a brace group.
 - A command name with an expansion has a literal slash, runs in the
@@ -2873,18 +2887,26 @@ every reference in it unresolved unless all of these hold:
 - Code holds no `$'...'` quote, which bash reads and dash rejects.
 
 The environment, `read` input, the script's own arguments and command output
-are inputs. The audit assumes they name no shell builtin and that the hosted
-environment injects no shell code such as `BASH_ENV`, `SHELLOPTS` or `PS4`. A
-static scan cannot see through them, and every real owner runs a compiler
-named that way. An unterminated heredoc fails the audit.
+are inputs, and inputs are data. The audit assumes they name only external
+programs, never a builtin, a script function, an option, shell code or an
+arithmetic expression. It also assumes the hosted environment injects no
+shell code, such as `BASH_ENV`, `SHELLOPTS` or `PS4`. A static scan cannot see
+through these values, and every real owner runs a compiler named that way.
+
+Under the same assumption, commands after a use inside a nested loop cannot
+change the loop variable before the use runs again. Only commands between the
+loop's `do` and the use are checked. An unterminated heredoc fails the audit.
 
 A constructed path word runs to the next shell metacharacter, quoted or not,
 which is how `sh -c` reads a quoted string. The audit fails if a tracked path
 holds a character outside `[A-Za-z0-9._/+-]`, so a word that sh reads further
-names no tracked file. A `$` that sh keeps literal never starts a word and
-stays a `$`, and a backslash that double quotes keep stays as well. A
-constructed path with a `.`, `..` or empty segment fails the audit, because the
-map rows that match its text are not those of the file it names. Anything
+names no tracked file. A `$` that sh keeps literal stays a `$`, and a
+backslash that double quotes keep stays as well. A kept `$` that starts an
+expansion is an unknown segment, because a child shell such as `sh -c` may run
+the word as code. A
+constructed path with a `.`, `..` or empty segment, or a member with a
+trailing slash, fails the audit, because the map rows that match its text are
+not those of the file it names. Anything
 unresolved is a family, and so are an unquoted glob word in a literal list and
 a glob, bracket, brace, `$"..."`, backtick or extglob segment inside a
 constructed path. Every tracked file a family can name must select the gate on

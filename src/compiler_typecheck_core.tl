@@ -36849,22 +36849,26 @@
       (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-lifetime-outlives-binding-persistent-id? env lifetime-id target-id))))
 
+(define (tc-first-shorter-lifetime-id
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]
+  [target-id : i64]) : TcMaybeNameId
+  (let
+    [cursor : TcNameIdList lifetimes]
+    (while (not (tc-name-id-list-empty? cursor))
+      (unless
+        (tc-lifetime-outlives-binding-id? env (tc-name-id-list-head cursor) target-id)
+        (return (Some (tc-name-id-list-head cursor))))
+      (set! cursor (tc-name-id-list-rest cursor))))
+  (No))
+
 (define (tc-reference-lifetimes-outlive-binding-id?
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]
   [target-id : i64]) : bool
-  (let
-    [cursor : TcNameIdList lifetimes]
-    [outlives : bool true]
-    (while (and outlives (not (tc-name-id-list-empty? cursor)))
-      (if (tc-lifetime-outlives-binding-id?
-        env
-        (tc-name-id-list-head cursor)
-        target-id)
-        unit
-        (set! outlives false))
-      (set! cursor (tc-name-id-list-rest cursor)))
-    outlives))
+  (match (tc-first-shorter-lifetime-id env lifetimes target-id)
+    [(No) true]
+    [(Some _) false]))
 
 (define (tc-lifetime-outlives-lifetime-scan-inner-id
   [env : TcTypeEnv]
@@ -75402,18 +75406,12 @@
 ;; marker, including outer arenas around a nested scope. Input-tied arenas and
 ;; arenas surrounding a lambda's invocation outlive that return boundary.
 (define (tc-check-early-exit-regions [env : TcTypeEnv] [regions : TcNameIdList]) : ResultTcUnit
-  (let
-    [cursor : TcNameIdList regions]
-    (while (not (tc-name-id-list-empty? cursor))
-      (let
-        [region : i64 (tc-name-id-list-head cursor)]
-        (unless
-          (or
-            (tc-program-lifetime-id? region)
-            (tc-lifetime-outlives-binding-id? env region (tc-return-type-id)))
-          (return (Err (tc-region-escape-error region)))))
-      (set! cursor (tc-name-id-list-rest cursor))))
-  Ok)
+  (match (tc-first-shorter-lifetime-id
+    env
+    (tc-name-id-list-without-program regions)
+    (tc-return-type-id))
+    [(No) Ok]
+    [(Some region) (Err (tc-region-escape-error region))]))
 
 ;; Inline arrays allocate no container, but a nonempty residual still carries
 ;; its elements across the reset. Scalar and empty residuals carry no allocation
@@ -75435,9 +75433,7 @@
   (let
     [regions : TcNameIdList
       (if (tc-early-exit-allocated-payload? (tc-global-shared-view error-ty))
-        (tc-name-id-list-add-all
-          (tc-type-collect-regions error-ty)
-          carrier-regions)
+        (tc-type-collect-regions-into error-ty carrier-regions)
         (tc-type-collect-regions error-ty))]
     (if (tc-regions-have-scratch-body? regions)
       (Err
@@ -83837,12 +83833,7 @@
     [body-ty : ast.AstType
       (try (tc-begin-list-maybe-expected ctx region-env body expected))]
     (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
-      (Err
-        (str_cat.str-cat
-          (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-          "typecheck: region-tagged value cannot escape with-arena '"
-          (tc-lifetime-name-render region)
-          "'"))
+      (Err (tc-region-escape-error region))
       (Ok body-ty))))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical

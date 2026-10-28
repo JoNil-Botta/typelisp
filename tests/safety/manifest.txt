@@ -2092,6 +2092,10 @@ set_array_field_indirection_before_value_trap|run-trap|tests/safety/set_array_fi
 set_fixed_array_field_value_before_bounds_trap|run-trap|tests/safety/set_fixed_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
 set_slice_field_value_before_bounds_trap|run-trap|tests/safety/set_slice_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
 set_inline_array_bounds_before_value_trap|run-trap|tests/safety/set_inline_array_bounds_before_value_trap.tl|134|array index out of bounds: index=1 length=0
+set_inline_array_value_before_bounds_trap|run-trap|tests/safety/set_inline_array_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_inline_array_field_value_before_bounds_trap|run-trap|tests/safety/set_inline_array_field_value_before_bounds_trap.tl|129|shift count out of range: count=-1 width=64
+set_inline_array_bounds_after_growth_trap|run-trap|tests/safety/set_inline_array_bounds_after_growth_trap.tl|134|array index out of bounds: index=3 length=3
+set_inline_array_field_bounds_after_growth_trap|run-trap|tests/safety/set_inline_array_field_bounds_after_growth_trap.tl|134|array index out of bounds: index=3 length=3
 inline_array_field_store_growth|run-exit|tests/integration/inline_array_field_store_growth.tl|42|-
 
 # A macro operand that fails to typecheck reports its own error when the macro

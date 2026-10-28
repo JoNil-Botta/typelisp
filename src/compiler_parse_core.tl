@@ -12236,6 +12236,12 @@
                       (parse-ast-test-body pools exprs)
                       metadata
                       form-span)))])]))]
+    [(List (slice name & _) _)
+      (parse-ast-error-span-note! dispatch (reader.spanned-sexpr-span name))
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: test name must be a symbol; write `(test my-test ...)`"))]
     [_ (Err (parse-kind-message (MalformedForm) "parse: malformed test"))]))
 
 (define (parse-ast-removed-declaration-message) : String

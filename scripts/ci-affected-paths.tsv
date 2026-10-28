@@ -37,7 +37,7 @@ tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-sto
 tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpus	Exact case file named by the must-use gate.
 tests/codegen/asm-shape.cases	stage2-regalloc-backend-asm-shape-gates	@corpus	Exact case file named by the backend shape gate.
 tests/codegen/native-link.cases	stage2-native-link-generated-programs	@corpus	The Linux native-link runner directly consumes this case file.
-tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus	@corpus	The native integration runner also executes this codegen case file.
+tests/codegen/integration-fixtures.cases	stage2-native-integration-corpus,integration-batch-observability	@corpus	Native integration executes this case file; observability exercises its real entry-helper transcript rows without a compiler build.
 tests/codegen/for-source-macro.cases	stage2-stdlib-modules-and-fixtures	@corpus	The stdlib verifier directly executes the for-source macro cases.
 tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	IR observability consumes golden snapshots and their guarded source fixtures.
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
@@ -141,7 +141,7 @@ tests/integration/lexer.tl	stage2-deterministic-assembly,stage2-selfhost-compile
 tests/integration/many_args.tl	stage2-backend-target-assembly-parity,stage2-deterministic-assembly	@corpus	Direct fixture input in check-backend-target-asm-parity.sh, check-codegen-target-parity.sh, check-deterministic-asm.sh.
 tests/integration/modules_main.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/narrow_div_mod.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
-tests/integration/native.manifest	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh.
+tests/integration/native.manifest	stage2-linux-shared-object-code-model,stage2-opt1-opt2-build-invariance,integration-batch-observability	@corpus	Direct fixture input in verify-linux-shared-object-code-model.sh, verify-integration.sh, check-build-invariance.sh. The real entry-helper caller controls retain the Linux exit-139 row contract.
 tests/integration/nested_eval.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/nested_tuple_array_projection.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/nullary_variant_call.tl	stage2-deterministic-assembly,stage2-selfhost-compile-manifest	@corpus	Direct fixture input in check-deterministic-asm.sh.
@@ -542,3 +542,18 @@ tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison	@corpus	Dispatch-
 tests/spmd/dispatch_variant_support.tl	stage2-spmd-simd-comparison	@corpus	Dispatch regression support independently checks CPU selection and every output lane.
 tests/spmd/dispatch_imported_values.tl	stage2-spmd-simd-comparison	@corpus	Qualified and selected variant calls and values run through simd.cases.
 tests/spmd/dispatch_value_provider.tl	stage2-spmd-simd-comparison	@corpus	Imported dispatch variant provider is consumed by the simd.cases value regression.
+tests/safety/shared_mut_borrow_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/borrow_lifetime_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
+tests/safety/shared_mut_borrow_replace_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_let_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_index_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/borrow_lifetime_replace_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/borrow_lifetime_macro_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic transport contracts.
+tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture preserving pre-existing framed replace diagnostic classification.
+tests/safety/shared_mut_borrow_replace_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace call-argument diagnostic contracts.
+tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace index-call diagnostic contracts.

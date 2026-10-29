@@ -22604,6 +22604,7 @@ entry:
       (backend.compiler-backend-addr-of-forwarding-enable!
         backend-state
         vars
+        (& (ir.compiler-ir-param-seq-empty))
         (owned_view.compiler-owned-shared-view blocks)
         (owned_view.compiler-owned-shared-view use-counts))]
     (match (compiler-backend-test-emit-instrs-text
@@ -23903,6 +23904,74 @@ entry:
       (lacks "    movq -24(%rbp), %rax\n"))))
 
 (test
+  backend-forwarded-address-redefined-slot
+  (for [abi (iterator.range 0 2)]
+    (test.assert-true
+      (asm-ok?
+        (compiler-backend-emit-test-instrs-target
+          (irt.instrs
+            "%2 = addr_of %1
+             %2 = gep %0, 0 : u8
+             %3 = mov 0 : i64
+             return %2")
+          (regalloc.compiler-reg-assignment-table-empty)
+          4
+          (if (= abi 0)
+            (Linux)
+            (Windows)))
+        (has "    movq -24(%rbp), %rax\n")
+        (lacks "    leaq -16(%rbp), %rax\n"))
+      "a reused slot has no function-wide address recipe")))
+
+(test
+  backend-forwarded-address-adjacent-definition
+  (for [abi (iterator.range 0 2)]
+    (test.assert-true
+      (asm-ok?
+        (compiler-backend-emit-test-instrs-target
+          (irt.instrs
+            "%2 = gep %0, 0 : u8
+             %2 = addr_of %1
+             return %2")
+          (regalloc.compiler-reg-assignment-table-empty)
+          4
+          (if (= abi 0)
+            (Linux)
+            (Windows)))
+        (has "    leaq -16(%rbp), %rax\n")
+        (lacks "    movq -24(%rbp), %rax\n"))
+      "the adjacent address definition reaches the only read despite an earlier definition")))
+
+(test
+  backend-forwarded-address-parameter-redefined
+  (let
+    [program-index
+      (compiler-backend-program-index-build
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (ir.compiler-ir-function-seq-empty)
+        (ir.compiler-ir-extern-seq-empty))]
+    [state program-index.backend-state]
+    [params
+      (ir.compiler-ir-param-seq-prepend
+        (ir.CompilerIrParam.Param "p" (ast.AstType.I64) 2)
+        (ir.compiler-ir-param-seq-empty))]
+    [blocks
+      (irt.blocks
+        "entry:
+           %3 = load %2 : i64
+           %2 = addr_of %1")]
+    [_forward : unit
+      (backend.compiler-backend-addr-of-forwarding-enable!
+        state
+        4
+        (& params)
+        (clone blocks)
+        (backend.compiler-backend-function-use-counts 4 (clone blocks)))]
+    (test.assert-true
+      (< (backend.compiler-backend-forwarded-addr-of-src state 2) 0)
+      "a parameter use cannot become a later address definition")))
+
+(test
   backend-forwarded-address-coalesced-copies
   (for [abi (iterator.range 0 2)]
     (let
@@ -23968,6 +24037,7 @@ entry:
       (backend.compiler-backend-addr-of-forwarding-enable!
         state
         6
+        (& (ir.compiler-ir-param-seq-empty))
         (clone blocks)
         (backend.compiler-backend-function-use-counts 6 (clone blocks)))]
     [copies
@@ -42701,11 +42771,9 @@ b_keep:
         (ci.intern-compat-state-capture-active))]
     [function-state : backend.CompilerBackendFunctionState
       (backend.compiler-backend-state-function-state backend-state)]
-    [forwarded : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+    [forwarded : (__tl_dyn-array i64) (__tl_make-array -1 -1 1)]
     [_forward : unit
       (begin
-        (backend.compiler-backend-addr-of-forwarding-fill! (&mut forwarded) 0)
-        (set! (array-ref forwarded 2) 1)
         (backend.compiler-backend-function-state-set-i64-array!
           function-state
           backend.compiler-backend-function-i64-array-addr-of-forwarding-src

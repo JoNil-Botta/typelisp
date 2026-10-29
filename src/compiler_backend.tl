@@ -50600,11 +50600,11 @@
           unit)))))
 
 (define (compiler-backend-count-use
-  [counts : (__tl_dyn-array i64)]
+  [counts : (&mut counts (__tl_dyn-array i64))]
   [_role : compiler_ir_types.CompilerIrOperandRole]
   [value : compiler_ir_types.CompilerIrValue]) : unit
   (match value
-    [(Var id) (compiler-backend-use-count-inc (&mut counts) id)]
+    [(Var id) (compiler-backend-use-count-inc counts id)]
     [_ unit]))
 
 ;; Every use counts, Pack words included, so the single-use fusion peepholes
@@ -50621,7 +50621,7 @@
       (compiler_ir_types.compiler-ir-instr-visit-uses
         instr
         compiler-backend-count-use
-        (compiler-backend-global-shared-view counts))]))
+        (&mut counts))]))
 
 (define (compiler-backend-count-instr-seq-uses
   [counts : (__tl_dyn-array i64)]
@@ -51038,99 +51038,168 @@
   [index : i64]) : unit
   (unless
     (>= index (array-length items))
-    (set! (array-ref items index) (- 0 1))
+    (set! (array-ref items index) -1)
     (compiler-backend-addr-of-forwarding-fill! items (+ index 1))))
 
-(define (compiler-backend-addr-of-forwarding-record!
-  [items : (&mut items (__tl_dyn-array i64))]
-  [use-counts : (& use-counts (__tl_dyn-array i64))]
-  [instr : compiler_ir_types.CompilerIrInstr]) : unit
-  (match instr
-    [(AddrOf dst src _storage-words)
-      (if (and
-        (>= dst 0)
-        (< dst (array-length items))
-        (compiler-backend-var-single-use? use-counts dst))
-        (set! (array-ref items dst) src)
-        unit)]
-    [(Mov dst src _)
-      (match src
-        [(Var src-var)
-          (let
-            [forward-src : i64
-              (if (and (>= src-var 0) (< src-var (array-length items)))
-                (array-ref items src-var)
-                (- 0 1))]
-            (if (and
-              (>= forward-src 0)
-              (>= dst 0)
-              (< dst (array-length items))
-              (compiler-backend-var-single-use? use-counts dst))
-              (set! (array-ref items dst) forward-src)
-              unit))]
-        [_ unit])]
-    [_ unit]))
-
+;; A candidate's one value use immediately after its definition is dominated
+;; by that definition, even if coloring reuses the id elsewhere. The global
+;; recipe is consulted only at that sole use; suppressing other, dead AddrOf
+;; definitions is harmless. Phi inputs belong to predecessor edges, and an
+;; AddrOf storage operand names a home rather than reading its value.
+;; A scratch use counter measures the increment caused by one instruction;
+;; only functions with address candidates allocate it.
 (define (compiler-backend-addr-of-forwarding-record-seq!
   [items : (&mut items (__tl_dyn-array i64))]
   [use-counts : (& use-counts (__tl_dyn-array i64))]
-  [instrs : compiler_ir_types.CompilerIrInstrSeq]) : unit
+  [instrs : (& instrs compiler_ir_types.CompilerIrInstrSeq)]
+  [probe : (&mut probe (__tl_dyn-array i64))]
+  [vars : i64]
+  [local-pass : bool]) : bool
   (let
-    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr) instrs.slots]
-    [count : i64 instrs.len]
-    (for [index (iterator.range 0 count)]
-      (compiler-backend-addr-of-forwarding-record!
-        items
-        use-counts
-        (compiler-backend-global-array-element-shared-view slots index)))
-    unit))
+    [slots : (__tl_dyn-array compiler_ir_types.CompilerIrInstr)
+      (owned_view.compiler-owned-reference-shared-view (& instrs.slots))]
+    [pending : i64 -1]
+    [pending-root : i64 -1]
+    [unproven : bool false]
+    (for [index (iterator.range 0 instrs.len)]
+      (let
+        [instr (compiler-backend-global-array-element-shared-view slots index)]
+        [kind : i64 0]
+        [dst : i64 -1]
+        [src : i64 -1]
+        (match (& instr)
+          [(AddrOf d r _)
+            (set! kind 1)
+            (set! dst d)
+            (set! src r)]
+          [(Mov d (Var r) _)
+            (set! kind 2)
+            (set! dst d)
+            (set! src r)]
+          [(Phi _ _ _) (set! kind 3)]
+          [_ unit])
+        (when
+          (and local-pass (>= pending 0))
+          (let
+            [before : i64 (array-ref probe pending)]
+            (unless
+              (or (= kind 1) (= kind 3))
+              (compiler-backend-count-instr-uses
+                (compiler-backend-i64-array-shared-view probe)
+                instr))
+            (if (not (= (array-ref probe pending) before))
+              (set! (array-ref items pending) pending-root)
+              (set! unproven true))))
+        (set! pending -1)
+        (when
+          (and
+            (>= dst 0)
+            (< dst vars)
+            (compiler-backend-var-single-use? use-counts dst))
+          (let
+            [root : i64
+              (if (= kind 1)
+                src
+                (if (and (>= src 0) (< src (array-length items)))
+                  (array-ref items src)
+                  -1))]
+            (when
+              (>= root 0)
+              (when
+                (= (array-length items) 0)
+                (set! (deref items) (__tl_make-array i64 vars))
+                (set! (deref probe) (__tl_make-array i64 vars))
+                (compiler-backend-addr-of-forwarding-fill! items 0))
+              (if local-pass
+                (begin
+                  (set! pending dst)
+                  (set! pending-root root))
+                (when
+                  (= (array-ref items dst) -1)
+                  (set! (array-ref items dst) root))))))))
+    (or unproven (>= pending 0))))
 
 (define (compiler-backend-addr-of-forwarding-record-blocks!
-  [items : (__tl_dyn-array i64)]
-  [use-counts : (__tl_dyn-array i64)]
-  [blocks : compiler_ir_types.CompilerIrBlockList]) : unit
+  [items : (&mut items (__tl_dyn-array i64))]
+  [use-counts : (& use-counts (__tl_dyn-array i64))]
+  [blocks : (& compiler_ir_types.CompilerIrBlockList)]
+  [probe : (&mut probe (__tl_dyn-array i64))]
+  [vars : i64]
+  [local-pass : bool]) : bool
   (match blocks
     [(Array seq)
-      (compiler-backend-addr-of-forwarding-record-block-seq!
-        items
-        use-counts
-        seq)]))
+      (let
+        [unproven : bool false]
+        (for [b
+          (iterator.range 0 (compiler_ir_types.compiler-ir-block-seq-count seq))]
+          (match (compiler_ir_types.compiler-ir-block-seq-borrow seq b)
+            [(Block _ instrs)
+              (when
+                (compiler-backend-addr-of-forwarding-record-seq!
+                  items
+                  use-counts
+                  instrs
+                  probe
+                  vars
+                  local-pass)
+                (set! unproven true))]))
+        unproven)]))
 
-(define (compiler-backend-addr-of-forwarding-record-block-seq!
-  [items : (__tl_dyn-array i64)]
-  [use-counts : (__tl_dyn-array i64)]
-  [blocks : compiler_ir_types.CompilerIrBlockSeq]) : unit
-  (let
-    [count : i64 (compiler_ir_types.compiler-ir-block-seq-count blocks)]
-    (for [index (iterator.range 0 count)]
-      (match (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
-        [(Block _ instrs)
-          (compiler-backend-addr-of-forwarding-record-seq!
-            (&mut items)
-            use-counts
-            instrs)]))
-    unit))
-
+;; Retain globally unique recipes for nonadjacent and cross-block uses. Most
+;; functions need no such proof, so defer the complete definition walk until
+;; the local pass leaves a candidate unproven.
 (define (compiler-backend-addr-of-forwarding-enable!
   [backend-state : CompilerBackendState]
   [vars : i64]
+  [params : (& params compiler_ir_types.CompilerIrParamSeq)]
   [blocks : compiler_ir_types.CompilerIrBlockList]
   [use-counts : (__tl_dyn-array i64)]) : unit
   (let
-    [items : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    (compiler-backend-addr-of-forwarding-fill! (&mut items) 0)
-    (compiler-backend-addr-of-forwarding-record-blocks!
-      (compiler-backend-global-shared-view items)
-      use-counts
-      blocks)
-    (compiler-backend-function-state-set-i64-array!
-      (compiler-backend-state-function-state backend-state)
-      compiler-backend-function-i64-array-addr-of-forwarding-src
-      items)
-    (compiler-backend-function-state-set-bool!
-      (compiler-backend-state-function-state backend-state)
-      compiler-backend-function-bool-addr-of-forwarding-enabled
-      true)))
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [probe : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [unproven : bool
+      (compiler-backend-addr-of-forwarding-record-blocks!
+        (&mut items)
+        (& use-counts)
+        (& blocks)
+        (&mut probe)
+        vars
+        true)]
+    (if (= (array-length items) 0)
+      (compiler-backend-addr-of-forwarding-disable! backend-state)
+      (begin
+        (when
+          unproven
+          (let
+            [defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
+            (compiler_regalloc.compiler-reg-param-count-defs!
+              params
+              (&mut defs))
+            (compiler_regalloc.compiler-reg-count-block-defs!
+              (& blocks)
+              (&mut defs))
+            (for [v (iterator.range 0 vars)]
+              (when
+                (and (= (array-ref items v) -1) (not (= (array-ref defs v) 1)))
+                (set! (array-ref items v) -2))))
+          (let
+            [_global : bool
+              (compiler-backend-addr-of-forwarding-record-blocks!
+                (&mut items)
+                (& use-counts)
+                (& blocks)
+                (&mut probe)
+                vars
+                false)]
+            unit))
+        (compiler-backend-function-state-set-i64-array!
+          (compiler-backend-state-function-state backend-state)
+          compiler-backend-function-i64-array-addr-of-forwarding-src
+          items)
+        (compiler-backend-function-state-set-bool!
+          (compiler-backend-state-function-state backend-state)
+          compiler-backend-function-bool-addr-of-forwarding-enabled
+          true)))))
 
 (define (compiler-backend-addr-of-forwarding-disable!
   [backend-state : CompilerBackendState]) : unit
@@ -72006,6 +72075,7 @@
               (compiler-backend-addr-of-forwarding-enable!
                 program-index.backend-state
                 emit-vars
+                (& emit-params)
                 (compiler-backend-global-shared-view emit-blocks-list)
                 (compiler-backend-global-shared-view use-counts))]
             [_fuse-need : unit

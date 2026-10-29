@@ -78231,31 +78231,28 @@
     mutable
     (tc-global-shared-view place-expr))
     [(Ok place)
-      (begin
-        ;; An explicit borrow names either the actual local owner, an enclosing
-        ;; with-arena region, or a lifetime from this callable's source
-        ;; signature. Preserve an exact local owner or the innermost arena
-        ;; region before resolving the signature's spelling to its semantic
-        ;; identity.
-        (match lifetime
-          [(Named requested)
-            (match place
-              [(TcBorrowPlace inferred _ _ _)
-                (when
-                  (and
-                    (!= requested inferred)
-                    (not (tc-arena-region-shadows? env requested)))
-                  (set!
-                    lifetime
-                    (Named
-                      (tc-lifetime-subst-apply ctx.lifetime-scope requested))))])]
-          [(Inferred) unit])
-        (if (and mutable (not allow-mut-by-value-borrow))
-          (let
-            [_
-              (try (tc-mut-borrow-non-call-place-ok ctx env place-expr source))]
-            (tc-borrow-place-result-type mutable lifetime place source))
-          (tc-borrow-place-result-type mutable lifetime place source)))]
+      ;; An explicit borrow names either the actual local owner, an enclosing
+      ;; with-arena region, or a lifetime from this callable's source
+      ;; signature. Preserve an exact local owner or the innermost arena
+      ;; region before resolving the signature's spelling to its semantic
+      ;; identity.
+      (match lifetime
+        [(Named requested)
+          (match place
+            [(TcBorrowPlace inferred _ _ _)
+              (when
+                (and
+                  (!= requested inferred)
+                  (not (tc-arena-region-shadows? env requested)))
+                (set!
+                  lifetime
+                  (Named (tc-lifetime-subst-apply ctx.lifetime-scope requested))))])]
+        [(Inferred) unit])
+      (if (and mutable (not allow-mut-by-value-borrow))
+        (let
+          [_ (try (tc-mut-borrow-non-call-place-ok ctx env place-expr source))]
+          (tc-borrow-place-result-type mutable lifetime place source))
+        (tc-borrow-place-result-type mutable lifetime place source))]
     [(Err message)
       ;; A successfully typed place cannot be a temporary. Direct call
       ;; arguments recover temporary borrows from this error; other positions
@@ -127715,12 +127712,11 @@
   [signature : ast.AstFunctionSignature]) : ast.AstType
   (match signature.binders
     [(ast.AstCallableBinders.Resolved _)
-      (begin
-        (set! ctx.source-lifetimes? false)
-        (ast.ast-ty-func
-          (tc-resolve-type-list ctx signature.params)
-          (& (tc-resolve-type ctx (ast.ty-node-get signature.result)))
-          signature.binders))]
+      (set! ctx.source-lifetimes? false)
+      (ast.ast-ty-func
+        (tc-resolve-type-list ctx signature.params)
+        (& (tc-resolve-type ctx (ast.ty-node-get signature.result)))
+        signature.binders)]
     [(ast.AstCallableBinders.Unresolved)
       (match (tc-elide-function-type
         (tc-context-type-bases ctx)

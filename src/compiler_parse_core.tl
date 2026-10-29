@@ -2523,7 +2523,7 @@
     (set! (array-ref control compiler-parse-state-control-cache-table-id) -1)
     (set! (array-ref control compiler-parse-state-control-marker-id) -1)
     (set! (array-ref control compiler-parse-state-control-ready) 0)
-    (set! (array-ref control compiler-parse-state-control-binding-origins) 1)
+    (set! (array-ref control compiler-parse-state-control-binding-origins) 0)
     (set! (array-ref control 8) (compiler-parse-array-data-addr origins))
     (set! (array-ref origins 12) (compiler-parse-array-data-addr control))
     (set! (array-ref origins 13) -1)
@@ -2532,8 +2532,8 @@
 (define (compiler-parse-state-new) : CompilerParseState
   (compiler-parse-state-new-from-owner (__tl_make-array ci.InternCompatState 0)))
 
-;; Binding tokens serve checked semantic facts and lifetime diagnostics. Clients
-;; that do not publish source diagnostics may explicitly disable their capture.
+;; Binding tokens are requested by the checked semantic-facts consumer. The
+;; ordinary parser stores no extra token occurrences for this option.
 (define (compiler-parse-state-set-binding-origins!
   [state : (&mut state CompilerParseState)]
   [enabled : bool]) : unit

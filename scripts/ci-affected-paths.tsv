@@ -24,6 +24,7 @@ tests/integration/arena_scratch_owner_activation.tl	stage2-public-tool-surface	@
 tests/integration/arena_escape_owner_activation.tl	stage2-public-tool-surface	@corpus	Primary scratch activation check/compile agreement control.
 tests/integration/arena_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted arena activation and early-exit public contract.
 tests/integration/arena_tied_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted declared-result early-exit flow contract.
+tests/integration/arena_scoped_store_destroy.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation contract.
 tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
 tests/integration/macro_struct_pattern*.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Macro-produced struct patterns retain constructor ownership and binding modes across native optimization levels and targets.
 tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
@@ -524,6 +525,31 @@ tests/safety/arena_with_arena_wrapper_return_reject.tl	stage2-public-tool-surfac
 tests/safety/arena_return_untied_struct_reject.tl	stage2-public-tool-surface	@corpus	Primary early-exit declared-result flow contract.
 tests/safety/arena_try_untied_wrapper_reject.tl	stage2-public-tool-surface	@corpus	Primary early-exit declared-result flow contract.
 tests/safety/arena_return_lambda_late_activation_reject.tl	stage2-public-tool-surface	@corpus	Primary early-exit declared-result flow contract.
+tests/safety/arena_scoped_store_destroy_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_ctor_destroy_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_nested_destroy_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_store_rewind_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_invalidate_call_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_loop_destroy_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_transitive_owner_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_transitive_rewind_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_chain_scope_destroy_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_chain_invalidate_call_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_loop_store_first_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_store_rewind_declared_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_rewind_kept_after_phase_reject.tl	stage2-public-tool-surface	@corpus	Primary known conservative scoped-store invalidation (#9445).
+tests/safety/arena_scoped_region_sibling_reject.tl	stage2-public-tool-surface	@corpus	Primary known conservative scoped-store invalidation (#9445).
+tests/safety/arena_scoped_loop_unused_reject.tl	stage2-public-tool-surface	@corpus	Primary known conservative scoped-store invalidation (#9445).
+tests/safety/arena_scoped_unrelated_destroy_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
+tests/safety/arena_scoped_with_owner_holds_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_with_owner_holds_read_reject.tl	stage2-public-tool-surface	@corpus	Primary scoped-store invalidation contract.
+tests/safety/arena_scoped_with_owner_destroy_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
+tests/safety/arena_scoped_with_owner_rewind_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
+tests/safety/arena_scoped_rewind_younger_owner_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
+tests/safety/arena_scoped_rewind_younger_holder_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
+tests/safety/arena_scoped_rewind_with_owner_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
+tests/safety/arena_scoped_loop_destroy_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
+tests/safety/arena_scoped_rewind_kept_store_ok.tl	stage2-public-tool-surface	@corpus	Primary accepted scoped-store invalidation control.
 tests/safety/scratch_body_try_array_error_exit_reject.tl	stage2-public-tool-surface	@corpus	Primary nonempty scratch residual confinement contract.
 tests/safety/borrow_temporary_call_arg_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/borrow_temporary_cleanup_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

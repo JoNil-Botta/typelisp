@@ -55,7 +55,9 @@
   (move own.OwnershipSource)
   ;; Field name ids from the binder to the place the move took: a part of the
   ;; used place when only that part moved (`p.inner.handle` for `p.inner`).
-  (moved-fields (__tl_dyn-array i64)))
+  (moved-fields (__tl_dyn-array i64))
+  ;; The typed binder's index (`normalize-binder-index`), or -1.
+  (binder i64))
 
 ;; A non-Copy value taken out of a part the checker cannot name or does not
 ;; own: a dynamic-array element (kind 0) or a place behind a shared (kind 1)
@@ -100,7 +102,9 @@
   ;; -1 otherwise.
   (arena i64)
   (move NormalizeMoveDiagnosticResult)
-  (bound own.OwnershipSource))
+  (bound own.OwnershipSource)
+  ;; The typed binder's index (`normalize-binder-index`), or -1.
+  (binder i64))
 
 ;; An access that conflicts with a live loan, in source terms: the binder, the
 ;; kind of access (0 assign, 1 move, 2 mutable borrow, 3 shared borrow of a
@@ -3555,7 +3559,8 @@
               -1
               -1
               NormalizeMoveDiagnosticResult.No
-              (own.ownership-source-copy source))))])))
+              (own.ownership-source-copy source)
+              -1)))])))
 
 ;; Before storing into owned place `place` of a cleanup-owning type: it must
 ;; be empty, or the store loses the old value's cleanup (exit kind 8, reported
@@ -4294,7 +4299,8 @@
               (&
                 (array-ref
                   state.body.places
-                  (array-ref state.exit-owners found)).source))))))))
+                  (array-ref state.exit-owners found)).source))
+            (normalize-binder-index state (array-ref state.exit-owners found))))))))
 
 (defenum NormalizeObligationDiagnosticResult
   (Some OwnershipObligationDiagnostic)
@@ -11966,6 +11972,20 @@
         (own.ownership-parent (& (array-ref state.body.places current)))))
     current))
 
+;; The typed binder index of the binder whose place is `place`, or -1.
+(define (normalize-binder-index
+  [state : (& state NormalizeState)]
+  [place : i64]) : i64
+  (let
+    [found : i64 -1]
+    [index : i64 0]
+    (while (< index state.binder-count)
+      (when
+        (= (array-ref state.binders index).place place)
+        (set! found (array-ref state.binders index).handle.index))
+      (set! index (+ index 1)))
+    found))
+
 (define (normalize-binder-name [state : (& state NormalizeState)] [place : i64]) : i64
   (let
     [name : i64 -1]
@@ -12668,7 +12688,8 @@
             (normalize-place-fields state place)
             true
             (own.ownership-source-copy (& failure.source))
-            (normalize-place-fields state place)))))
+            (normalize-place-fields state place)
+            (normalize-binder-index state (normalize-place-root state place))))))
     ;; An arena destroy or rewind that ended the value (or a value holding
     ;; it) is named first, as the invalidated binder; then a move.
     (match (normalize-move-search state place block instruction true)
@@ -12767,7 +12788,10 @@
                         state
                         (if (>= moved 0)
                           moved
-                          place)))))))
+                          place))
+                      (normalize-binder-index
+                        state
+                        (normalize-place-root state named)))))))
             (set! move-index (+ move-index 1))))
         (set! move-block (+ move-block 1))))
     NormalizeMoveDiagnosticResult.No))

@@ -1,0 +1,369 @@
+# Ending a first-class arena ends every region the admitted stores of the body
+# carried its values into, so a scoped container cannot outlive the arena it
+# holds, and a region no such store reached stays usable (#9445). The safety
+# manifest pins the read locations; compile agrees on both ABIs.
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+
+case arena-scoped-store-destroy-reject
+run check "{{root}}/tests/safety/arena_scoped_store_destroy_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_store_destroy_reject.tl:18:32
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_store_destroy_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_store_destroy_reject.tl:18:32
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-ctor-destroy-reject
+run check "{{root}}/tests/safety/arena_scoped_ctor_destroy_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_ctor_destroy_reject.tl:17:32
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_ctor_destroy_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_ctor_destroy_reject.tl:17:32
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-nested-destroy-reject
+run check "{{root}}/tests/safety/arena_scoped_nested_destroy_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_nested_destroy_reject.tl:25:36
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_nested_destroy_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_nested_destroy_reject.tl:25:36
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-store-rewind-reject
+run check "{{root}}/tests/safety/arena_scoped_store_rewind_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_store_rewind_reject.tl:20:32
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_store_rewind_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_store_rewind_reject.tl:20:32
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-store-rewind-declared-reject
+run check "{{root}}/tests/safety/arena_scoped_store_rewind_declared_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_store_rewind_declared_reject.tl:22:32
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_store_rewind_declared_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_store_rewind_declared_reject.tl:22:32
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-invalidate-call-reject
+run check "{{root}}/tests/safety/arena_scoped_invalidate_call_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_invalidate_call_reject.tl:21:32
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_invalidate_call_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_invalidate_call_reject.tl:21:32
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-loop-destroy-reject
+run check "{{root}}/tests/safety/arena_scoped_loop_destroy_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains is live where an arena ends inside this loop
+stderr contains tests/safety/arena_scoped_loop_destroy_reject.tl:16:50
+stderr contains end the arena after the loop
+run compile "{{root}}/tests/safety/arena_scoped_loop_destroy_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains is live where an arena ends inside this loop
+stderr contains tests/safety/arena_scoped_loop_destroy_reject.tl:16:50
+stderr contains end the arena after the loop
+
+case arena-scoped-loop-store-first-reject
+run check "{{root}}/tests/safety/arena_scoped_loop_store_first_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_loop_store_first_reject.tl:20:30
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_loop_store_first_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_loop_store_first_reject.tl:20:30
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-transitive-owner-reject
+run check "{{root}}/tests/safety/arena_scoped_transitive_owner_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_transitive_owner_reject.tl:25:36
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_transitive_owner_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_transitive_owner_reject.tl:25:36
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-transitive-rewind-reject
+run check "{{root}}/tests/safety/arena_scoped_transitive_rewind_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_transitive_rewind_reject.tl:27:36
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_transitive_rewind_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_transitive_rewind_reject.tl:27:36
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-chain-scope-destroy-reject
+run check "{{root}}/tests/safety/arena_scoped_chain_scope_destroy_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_chain_scope_destroy_reject.tl:29:32
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_chain_scope_destroy_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_chain_scope_destroy_reject.tl:29:32
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-chain-invalidate-call-reject
+run check "{{root}}/tests/safety/arena_scoped_chain_invalidate_call_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_chain_invalidate_call_reject.tl:31:32
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_chain_invalidate_call_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_chain_invalidate_call_reject.tl:31:32
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-with-owner-holds-reject
+run check "{{root}}/tests/safety/arena_scoped_with_owner_holds_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains a store in this body places values allocated from
+stderr contains tests/safety/arena_scoped_with_owner_holds_reject.tl:22:32
+stderr contains or keep the arena's values out of
+run compile "{{root}}/tests/safety/arena_scoped_with_owner_holds_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains a store in this body places values allocated from
+stderr contains tests/safety/arena_scoped_with_owner_holds_reject.tl:22:32
+stderr contains or keep the arena's values out of
+
+case arena-scoped-with-owner-holds-read-reject
+run check "{{root}}/tests/safety/arena_scoped_with_owner_holds_read_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains a store in this body places values allocated from
+stderr contains tests/safety/arena_scoped_with_owner_holds_read_reject.tl:22:32
+stderr contains or keep the arena's values out of
+run compile "{{root}}/tests/safety/arena_scoped_with_owner_holds_read_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains a store in this body places values allocated from
+stderr contains tests/safety/arena_scoped_with_owner_holds_read_reject.tl:22:32
+stderr contains or keep the arena's values out of
+
+case arena-scoped-rewind-kept-after-phase-reject
+run check "{{root}}/tests/safety/arena_scoped_rewind_kept_after_phase_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_rewind_kept_after_phase_reject.tl:22:36
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_rewind_kept_after_phase_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_rewind_kept_after_phase_reject.tl:22:36
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-region-sibling-reject
+run check "{{root}}/tests/safety/arena_scoped_region_sibling_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_region_sibling_reject.tl:22:36
+stderr contains end the arena after the last use of that region's values
+run compile "{{root}}/tests/safety/arena_scoped_region_sibling_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0208]
+stderr contains after the end of an arena whose values a store in this body places in
+stderr contains tests/safety/arena_scoped_region_sibling_reject.tl:22:36
+stderr contains end the arena after the last use of that region's values
+
+case arena-scoped-loop-unused-reject
+run check "{{root}}/tests/safety/arena_scoped_loop_unused_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains is live where an arena ends inside this loop
+stderr contains tests/safety/arena_scoped_loop_unused_reject.tl:19:50
+stderr contains end the arena after the loop
+run compile "{{root}}/tests/safety/arena_scoped_loop_unused_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0212]
+stderr contains is live where an arena ends inside this loop
+stderr contains tests/safety/arena_scoped_loop_unused_reject.tl:19:50
+stderr contains end the arena after the loop
+
+case arena-scoped-unrelated-destroy-ok
+run check "{{root}}/tests/safety/arena_scoped_unrelated_destroy_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_unrelated_destroy_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-with-owner-destroy-ok
+run check "{{root}}/tests/safety/arena_scoped_with_owner_destroy_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_with_owner_destroy_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-with-owner-rewind-ok
+run check "{{root}}/tests/safety/arena_scoped_with_owner_rewind_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_with_owner_rewind_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-rewind-younger-owner-ok
+run check "{{root}}/tests/safety/arena_scoped_rewind_younger_owner_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_rewind_younger_owner_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-rewind-younger-holder-ok
+run check "{{root}}/tests/safety/arena_scoped_rewind_younger_holder_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_rewind_younger_holder_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-rewind-with-owner-ok
+run check "{{root}}/tests/safety/arena_scoped_rewind_with_owner_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_rewind_with_owner_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-rewind-kept-store-ok
+run check "{{root}}/tests/safety/arena_scoped_rewind_kept_store_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_rewind_kept_store_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-loop-destroy-ok
+run check "{{root}}/tests/safety/arena_scoped_loop_destroy_ok.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/safety/arena_scoped_loop_destroy_ok.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty
+
+case arena-scoped-store-accepted
+run check "{{root}}/tests/integration/arena_scoped_store_destroy.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/integration/arena_scoped_store_destroy.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty

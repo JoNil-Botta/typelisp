@@ -25469,7 +25469,7 @@
         (lower-type-register-resident? ctx clone-ty)]
       [_ (lower-clone-scalar-type? clone-ty)])))
 
-(define (lower-clone-dynarray-advance
+(define (lower-array-loop-advance
   [state : LowerState]
   [index-var : i64]
   [header-label : i64]
@@ -25503,7 +25503,7 @@
     (Var index-var)
     (lower-global-shared-view elem-ty))
     [(Expr dst-gep-state dst-ptr _)
-      (lower-clone-dynarray-advance
+      (lower-array-loop-advance
         (lower-array-elem-store-state
           ctx
           dst-gep-state
@@ -37151,7 +37151,7 @@
     (lower-internal-call-args-at ctx mode state values (& types) 0 origin)
     (Ok state values)))
 
-(define (lower-internal-materialize-result-two
+(define (lower-internal-store-two-words
   [call-value : ir.CompilerIrValue]
   [result-ty : ast.AstType]
   [slots : LowerCAbiSlotList]
@@ -37225,7 +37225,7 @@
                       scalar-ty)
                     storage
                     result-ty))])
-            (lower-internal-materialize-result-two
+            (lower-internal-store-two-words
               call-value
               result-ty
               slots
@@ -41987,24 +41987,6 @@
             resolved)]
         [_ false]))))
 
-(define (lower-make-array-init-advance
-  [state : LowerState]
-  [index-var : i64]
-  [header-label : i64]
-  [exit-label : i64]) : ResultLowerState
-  (match (lower-state-alloc-var state)
-    [(Alloc inc-alloc inc-var)
-      (Ok
-        (lower-state-finish-block
-          (lower-state-emit
-            (lower-state-emit
-              (lower-state-emit
-                inc-alloc
-                (BinOp inc-var Add (Var index-var) (I64 1) (I64)))
-              (Mov index-var (Var inc-var) (I64)))
-            (Jump header-label))
-          exit-label))]))
-
 (define (lower-make-array-store-init-body
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -42021,7 +42003,7 @@
     (Var index-var)
     (lower-global-shared-view elem-ty))
     [(Expr gep-state elem-ptr _)
-      (lower-make-array-init-advance
+      (lower-array-loop-advance
         (lower-array-elem-store-state ctx gep-state elem-ptr init-value elem-ty)
         index-var
         header-label
@@ -42058,7 +42040,7 @@
           (Var index-var)
           (lower-global-shared-view elem-ty))
           [(Expr gep-state elem-ptr _)
-            (lower-make-array-init-advance
+            (lower-array-loop-advance
               (lower-array-elem-store-state
                 ctx
                 gep-state
@@ -73202,45 +73184,6 @@
             idx))
         (set! idx (+ idx 1))])))
 
-(define (lower-internal-param-storage-two
-  [physical : ir.CompilerIrValue]
-  [source-ty : ast.AstType]
-  [slots : LowerCAbiSlotList]
-  [storage : ir.CompilerIrValue]
-  [storage-state : LowerState]) : ResultLowerExpr
-  (match (lower-c-abi-slot-list-ref slots 0)
-    [(Slot first-ty first-offset)
-      (match (lower-emit-word
-        storage-state
-        (lower-global-shared-view physical)
-        0
-        (lower-global-shared-view first-ty))
-        [(Expr first-state first-value _)
-          (match (lower-c-abi-slot-list-ref slots 1)
-            [(Slot second-ty second-offset)
-              (match (lower-emit-word
-                first-state
-                physical
-                1
-                (lower-global-shared-view second-ty))
-                [(Expr second-state second-value _)
-                  (let
-                    [with0 : LowerState
-                      (lower-store-at-offset
-                        second-state
-                        storage
-                        first-offset
-                        first-value
-                        first-ty)]
-                    [with1 : LowerState
-                      (lower-store-at-offset
-                        with0
-                        storage
-                        second-offset
-                        second-value
-                        second-ty)]
-                    (Ok (Expr with1 storage source-ty)))])])])]))
-
 (define (lower-internal-param-storage
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -73274,7 +73217,7 @@
                       scalar-ty)
                     storage
                     source-ty))])
-            (lower-internal-param-storage-two
+            (lower-internal-store-two-words
               physical
               source-ty
               slots

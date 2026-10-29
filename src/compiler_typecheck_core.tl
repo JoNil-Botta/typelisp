@@ -78261,27 +78261,41 @@
   [struct-name : String]
   [pattern-name : String]
   [pattern-name-id : i64]) : ResultTcString
-  (if (tc-name-qualified-id?
-    (tc-context-structural-session ctx)
-    pattern-name-id)
-    (let
-      [qualifier-id : i64 (tc-qualified-name-module-id pattern-name-id)]
-      [base-id : i64 (tc-qualified-name-base-id pattern-name-id)]
-      [target-module-id : i64
-        (tc-qualified-access-target-module-id ctx qualifier-id)]
-      (Ok
-        (csym.compiler-symbol-module-key
-          (tc-env-key-name-text target-module-id)
-          (ci.intern-str base-id))))
-    (match (tc-source-type-name-lookup-from-id ctx pattern-name pattern-name-id)
-      [(Ok lookup-name lookup-id)
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    (cond
+      ;; A macro head names its definition-site constructor, including the
+      ;; root module. Its structural identity is neither an intern-array index
+      ;; nor an unqualified name to rebase onto the scrutinee's module.
+      [(tc-hygiene-global-name-id? session pattern-name-id)
         (Ok
-          (tc-struct-pattern-name-in-scrut-module
-            (tc-context-structural-session ctx)
-            struct-name
-            lookup-name
-            lookup-id))]
-      [(Err message) (Err message)])))
+          (tc-nominal-name-id-display-for-session
+            session
+            (tc-env-name-key-id session pattern-name-id)))]
+      [(tc-name-qualified-id? session pattern-name-id)
+        (let
+          [qualifier-id : i64 (tc-qualified-name-module-id pattern-name-id)]
+          [base-id : i64 (tc-qualified-name-base-id pattern-name-id)]
+          [target-module-id : i64
+            (tc-qualified-access-target-module-id ctx qualifier-id)]
+          (Ok
+            (csym.compiler-symbol-module-key
+              (tc-env-key-name-text-for-session session target-module-id)
+              (tc-env-key-name-text-for-session session base-id))))]
+      [else
+        (match (tc-source-type-name-lookup-from-id
+          ctx
+          pattern-name
+          pattern-name-id)
+          [(Ok lookup-name lookup-id)
+            (Ok
+              (tc-struct-pattern-name-in-scrut-module
+                session
+                struct-name
+                lookup-name
+                lookup-id))]
+          [(Err message) (Err message)])])))
 
 (define (tc-struct-pattern-name-matches?
   [ctx : TcContext]
@@ -79112,7 +79126,9 @@
             (tc-nominal-name-id-display struct-name)
             struct-name
             scrut-ty
-            (ci.intern-str pattern-name)
+            (tc-env-key-name-text-for-session
+              (tc-context-structural-session ctx)
+              pattern-name)
             pattern-name
             (ast.ast-pattern-list-box-shared-view args-box))]
         [(ast.AstPattern.Fields entries-box)

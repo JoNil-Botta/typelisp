@@ -52,5 +52,5 @@ stdout contains Type checking passed!
 stderr empty
 run compile "{{root}}/tests/integration/arena_early_exits.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
 exit 0
-stdout contains Wrote {{dir}}/accepted.s
+stdout contains Wrote {{native-dir}}/accepted.s
 stderr empty

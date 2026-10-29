@@ -3739,16 +3739,27 @@
     (ces.compiler-embedded-stdlib-lookup suffix)
     (CompilerEmbeddedStdlibNoSource)))
 
+;; Whether the embedded stdlib has `suffix`, under the same guard as
+;; `compiler-load-embedded-stdlib-source` but without decoding it.
+(define (compiler-load-embedded-stdlib-contains? [suffix : String]) : bool
+  (if (compiler-load-safe-relative? suffix)
+    (ces.compiler-embedded-stdlib-contains? suffix)
+    false))
+
 (define (compiler-load-embedded-stdlib-path [suffix : String]) : CompilerLoadMaybePath
-  (match (compiler-load-embedded-stdlib-source (string.copy suffix))
-    [(CompilerEmbeddedStdlibSomeSource _)
-      (CompilerLoadSomePath (str_cat.str-cat "stdlib/" suffix))]
-    [(CompilerEmbeddedStdlibNoSource) (CompilerLoadNoPath)]))
+  (if (compiler-load-embedded-stdlib-contains? (string.copy suffix))
+    (CompilerLoadSomePath (str_cat.str-cat "stdlib/" suffix))
+    (CompilerLoadNoPath)))
 
 (define (compiler-load-embedded-stdlib-source-for-path [path : (& str)]) : ces.CompilerEmbeddedStdlibSource
   (if (compiler-load-stdlib-import? path)
     (compiler-load-embedded-stdlib-source (compiler-load-stdlib-suffix path))
     (CompilerEmbeddedStdlibNoSource)))
+
+(define (compiler-load-embedded-stdlib-contains-path? [path : (& str)]) : bool
+  (if (compiler-load-stdlib-import? path)
+    (compiler-load-embedded-stdlib-contains? (compiler-load-stdlib-suffix path))
+    false))
 
 (define (compiler-load-resolve-import-with-roots
   [importer-path : (& str)]
@@ -3960,9 +3971,7 @@
 (define (compiler-load-resolved-source-exists? [path : String]) : bool
   (or
     (io.file-exists? (owned_view.compiler-owned-shared-view path))
-    (match (compiler-load-embedded-stdlib-source-for-path (& path))
-      [(CompilerEmbeddedStdlibSomeSource _) true]
-      [(CompilerEmbeddedStdlibNoSource) false])))
+    (compiler-load-embedded-stdlib-contains-path? (& path))))
 
 (define (compiler-load-import-module-id [module-name : (& module-name str)]) : i64
   (compiler-load-parse-context-name-id module-name))

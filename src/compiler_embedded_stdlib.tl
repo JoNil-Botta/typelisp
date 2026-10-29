@@ -45,6 +45,13 @@
             "tl: compiler_embedded_stdlib.compiler-embedded-stdlib-lookup: invalid embedded stdlib payload\n")
           (CompilerEmbeddedStdlibNoSource)])]))
 
+;; Whether `suffix` names an embedded module, from the payload table alone:
+;; presence checks need no decoded source.
+(define (compiler-embedded-stdlib-contains? [suffix : String]) : bool
+  (match (payload.compiler-embedded-stdlib-payload-lookup suffix)
+    [(CompilerEmbeddedStdlibPayloadNone) false]
+    [(CompilerEmbeddedStdlibPayloadSome _) true]))
+
 ;; Whether `c` ends an atom: whitespace or one of `()[]";`. Most source bytes
 ;; are letters, past `;`, so they take the two-compare branch.
 (define (compiler-embedded-stdlib-delimiter? [c : char]) : bool

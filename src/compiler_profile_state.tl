@@ -10,7 +10,7 @@
 (cfg test (import stdlib.test))
 
 (define compiler-profile-state-metric-capacity : i64
-  (cfg (any compile-profile test) 379 0))
+  (cfg (any compile-profile test) 381 0))
 (define compiler-profile-state-summary-row-capacity : i64
   (cfg (any compile-profile-summary test) 40 0))
 (define compiler-profile-state-summary-scope-capacity : i64
@@ -153,12 +153,11 @@
           : (Ptr i64))))
     `(cast 0 : u64)))
 
-;; Typecheck owns slots 242-373 as one raw metrics view. Lowering's retained
-;; name-cache storage counters use 374-377. Slots 350-360 and 368-369 are also
-;; addressed by the driver/loader lifetime ledger, while typecheck owns the
-;; macro boundary starts in 362-367 and 370-373. Keeping the offset here makes
-;; the driver the only layer that knows how leaf-owned metric families are
-;; packed into CompilerProfileState.
+;; Typecheck owns slots 242-380 as one raw metrics view. Lowering uses
+;; 374-378. The driver load ledger also addresses 350-360, 368-369 and
+;; 379; macro boundary starts occupy 362-367, 370-374 and 380. Phases
+;; reuse the lower counters only after the macro ledger has been emitted.
+;; Centralizing the offset keeps leaf metric families job-owned.
 (defmacro (compiler-profile-state-typecheck-metrics-address [_state : Expr]) : Expr
   (cfg
     (any compile-profile test)
@@ -374,8 +373,8 @@
       (compiler-profile-state-metric-set! left 242 67)
       (compiler-profile-state-metric-set! left 350 71)
       (compiler-profile-state-metric-set! right 350 73)
-      (compiler-profile-state-metric-set! left 373 79)
-      (compiler-profile-state-metric-set! right 373 83)
+      (compiler-profile-state-metric-set! left 380 79)
+      (compiler-profile-state-metric-set! right 380 83)
       (compiler-profile-state-metric-reset-range! right 3 5)
       (test.assert-i64-eq
         (compiler-profile-state-metric-value left 3)
@@ -414,7 +413,7 @@
         (compiler-profile-state-metric-value left 242)
         67
         "first typecheck metric belongs to left owner")
-      (compiler-profile-state-metric-reset-range! right 350 374)
+      (compiler-profile-state-metric-reset-range! right 350 381)
       (test.assert-i64-eq
         (compiler-profile-state-metric-value left 350)
         71
@@ -424,10 +423,10 @@
         0
         "right lifetime reset clears its load metric")
       (test.assert-i64-eq
-        (compiler-profile-state-metric-value left 373)
+        (compiler-profile-state-metric-value left 380)
         79
         "right lifetime reset leaves left final macro metric intact")
       (test.assert-i64-eq
-        (compiler-profile-state-metric-value right 373)
+        (compiler-profile-state-metric-value right 380)
         0
         "right lifetime reset reaches its final macro metric"))))

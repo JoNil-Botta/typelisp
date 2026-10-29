@@ -1479,11 +1479,28 @@
 
 (cfg
   compile-profile
+  (define compiler-driver-load-profile-cache-start-metric : i64
+    379))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-embedded-cache-bytes) : i64
+    (cfg
+      embedded-stdlib-tlci
+      (embedded_tlci.compiler-embedded-stdlib-tlci-cache-bytes)
+      0)))
+
+(cfg
+  compile-profile
   (define (compiler-driver-profile-start-load-lifetime!
     [state : profile_state.CompilerProfileState]
     [pools : compiler_ast_types.AstNodePoolContext]
     [surface-arena : i64]
     [parser-control : i64]) : unit
+    (compiler-driver-profile-set!
+      state
+      compiler-driver-load-profile-cache-start-metric
+      (compiler-driver-profile-embedded-cache-bytes))
     (compiler-driver-profile-set!
       state
       compiler-driver-load-profile-input-bytes-metric
@@ -1640,8 +1657,15 @@
             (compiler-driver-profile-value
               state
               compiler-driver-load-profile-enclosing-start-metric)))]
+      [embedded-cache : i64
+        (-
+          (compiler-driver-profile-embedded-cache-bytes)
+          (compiler-driver-profile-value
+            state
+            compiler-driver-load-profile-cache-start-metric))]
       [named : i64
         (+
+          embedded-cache
           enclosing
           (+
             tokens
@@ -1729,6 +1753,14 @@
             "session"
             cumulative-alloc
             interns
+            peak-delta))
+        (io.print-error
+          (compiler-driver-profile-lifetime-line
+            (owned_view.compiler-owned-shared-view boundary)
+            "embedded-tlci-cache"
+            "process"
+            cumulative-alloc
+            embedded-cache
             peak-delta))
         (io.print-error
           (compiler-driver-profile-lifetime-line

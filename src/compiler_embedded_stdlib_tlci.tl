@@ -5,7 +5,9 @@
 (cfg test (import compiler_embedded_stdlib_tlci_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_tlci_payload as payload))
 (import compiler_embedded_stdlib_tlci_codec as codec)
+(import compiler_embedded_stdlib_tlci_frames as frames)
 (import tlci_loader as loader)
+(cfg compile-profile (import compiler_allocation_profile as allocation_profile))
 
 ;; compiler_ctfe instantiates (hashmap i64 i64); the generated-module import
 ;; needs stdlib.hashmap in this program graph even though full compiler
@@ -54,13 +56,8 @@
   (Ok String String (__tl_dyn-array u8))
   (Unavailable String))
 
-(define (compiler-embedded-stdlib-tlci-compressed-shared-view) : (__tl_dyn-array
-    u8)
-  (unsafe
-    (ptr-read (ptr-addr-of payload.embedded-stdlib-tlci-bytes))))
-
-;; The compiler maps the image lazily on the first embedded-stdlib macro call
-;; and keeps it mapped through that macro-expansion pass. State values are
+;; The compiler maps each native frame lazily on its first macro call and
+;; keeps it mapped through that macro-expansion pass. Per-frame state values are
 ;; 0 = closed, 1 = loaded, and -1 = load failed. The separate cells avoid
 ;; requiring an artificial zero-value TlciLoadedImage enum variant.
 (define compiler-embedded-stdlib-tlci-session-state : (__tl_dyn-array i64)
@@ -119,19 +116,12 @@
       (= compiler-embedded-stdlib-tlci-stress-canary-a 610839776)
       (= compiler-embedded-stdlib-tlci-stress-canary-b 270544960))))
 
-(define (compiler-embedded-stdlib-tlci-session-image-shared-view) : loader.TlciLoadedImage
+(define (compiler-embedded-stdlib-tlci-session-image-shared-view [index : i64]) : loader.TlciLoadedImage
   (unsafe
     (ptr-read
       (ptr-offset
         (__tl_array-data compiler-embedded-stdlib-tlci-session-image)
-        0))))
-
-(define (compiler-embedded-stdlib-tlci-session-error-shared-view) : String
-  (unsafe
-    (ptr-read
-      (ptr-offset
-        (__tl_array-data compiler-embedded-stdlib-tlci-session-error)
-        0))))
+        index))))
 
 ;; R3-P2d. The session is opened LAZILY, from inside whatever the compiler
 ;; happens to be doing when the first embedded-stdlib macro fires, and it is
@@ -150,11 +140,9 @@
 ;;   that is never released cannot reintroduce one, and it needs no
 ;;   head-tracking to keep an overflow segment reachable for a destroy that
 ;;   does not happen (H4).
-;; * The retention is two 8-word arrays, the loader's one-element liveness
-;;   cell, and at most one failure message per process. The payload bytes and
-;;   parse, which are megabytes, are the driver surface's (owned by its surface
-;;   arena) or a copy in the caller's current arena that is dropped with it, so
-;;   this does not move the macro-walk peak.
+;; * Loaded entry records, liveness cells and failure messages live here.
+;;   Executable mappings and their catalog indexes are still released at pass
+;;   close; compressed bytes are static and decoded entry bytes are transient.
 (define compiler-embedded-stdlib-tlci-session-arena-handle : i64
   0)
 
@@ -175,51 +163,121 @@
       (arena.Arena (compiler-embedded-stdlib-tlci-session-arena)))
     (string.substring (& text) 0 (string.string-length text))))
 
-;; The image is embedded through a TLCI-only canonical-Huffman layer over the
-;; proven LZSS matches. The ordinary `.tlci` bytes are restored before the
-;; existing parser and mapper, while the source fallback retains its separate
-;; lazy per-module `include-str-lzss` payloads and decoder.
-;;
-;; One-shot expansion belongs to the caller's current arena. A hydrated
-;; surface or multi-entry compile batch can retain it in its driver-owned
-;; surface arena; that owner must unpublish the bytes before retiring.
-;; 256 MiB is far above the current image while bounding a corrupt static
-;; length before allocation.
+;; TLCH v2 frames share one authenticated index and canonical Huffman model.
+;; Surface bytes may be retained in the driver surface arena; native entries
+;; decode and map independently on demand. The bound applies to the sum of all
+;; frame outputs before allocating any of them.
 (define (compiler-embedded-stdlib-tlci-raw-limit) : i64
   268435456)
 
-;; Uncompressed image length. Zero means "no image in this build" -- the seed
-;; and test payloads are empty rather than compressed -- and every caller
-;; treats that as unavailable before touching the bytes.
+;; Surface image length. Empty seed/test payloads remain unavailable before
+;; any model or frame is read.
 (define (compiler-embedded-stdlib-tlci-length) : i64
-  (let
-    [compressed : (__tl_dyn-array u8)
-      (compiler-embedded-stdlib-tlci-compressed-shared-view)]
-    (if (= (array-length compressed) 0)
-      0
-      (match (codec.compiler-embedded-stdlib-tlci-codec-frame
-        (& compressed)
-        (compiler-embedded-stdlib-tlci-raw-limit))
-        [(Ok raw-len _ _) raw-len]
-        [(Err _)
-          (abort.compiler-abort
-            "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-length: invalid embedded TLCI frame\n")
-          0]))))
+  (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
+    0
+    (tlci.tlci-read-u64
+      (& payload.embedded-stdlib-tlci-bytes)
+      (+ (frames.compiler-embedded-stdlib-tlci-frames-record 0) 24))))
+
+;; The immutable index and model outlive every surface and macro pass. Each
+;; executable mapping still belongs to one pass and is revoked on close.
+(define compiler-embedded-stdlib-tlci-table-owner : i64
+  0)
+(define compiler-embedded-stdlib-tlci-frames : (__tl_dyn-array
+    frames.CompilerEmbeddedStdlibTlciFrames)
+  (__tl_make-array frames.CompilerEmbeddedStdlibTlciFrames 1))
+(define compiler-embedded-stdlib-tlci-tables : (__tl_dyn-array
+    codec.CompilerEmbeddedStdlibTlciHuffmanTable)
+  (__tl_make-array codec.CompilerEmbeddedStdlibTlciHuffmanTable 3))
+(define compiler-embedded-stdlib-tlci-active : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-embedded-stdlib-tlci-active-count : i64
+  0)
+(define compiler-embedded-stdlib-tlci-last-image : i64
+  -1)
+
+(cfg
+  compile-profile
+  (define (compiler-embedded-stdlib-tlci-cache-bytes) : i64
+    (+
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        compiler-embedded-stdlib-tlci-table-owner)
+      (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+        compiler-embedded-stdlib-tlci-session-arena-handle))))
+
+(define (compiler-embedded-stdlib-tlci-frames-ensure!) : bool
+  (if (> compiler-embedded-stdlib-tlci-table-owner 0)
+    true
+    (if (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
+      false
+      (let
+        [catalog : frames.CompilerEmbeddedStdlibTlciFrames
+          (match (frames.compiler-embedded-stdlib-tlci-frames-parse
+            (& payload.embedded-stdlib-tlci-bytes)
+            (compiler-embedded-stdlib-tlci-raw-limit))
+            [(Ok catalog) catalog]
+            [(Err _)
+              (abort.compiler-abort
+                "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-frames-ensure!: invalid embedded TLCI index\n")
+              (frames.CompilerEmbeddedStdlibTlciFrames 0 0 0)])]
+        [owner : i64 (arena.tl_arena_make_small)]
+        (in-arena
+          (unsafe
+            (arena.Arena owner))
+          (for [index (iterator.range 0 3)]
+            (match (codec.compiler-embedded-stdlib-tlci-codec-build-table
+              (& payload.embedded-stdlib-tlci-bytes)
+              (+ 68 (cond [(= index 0) 0] [(= index 1) 257] [else 4353]))
+              (cond [(= index 0) 257] [(= index 1) 4096] [else 16]))
+              [(Ok table)
+                (set!
+                  (array-ref compiler-embedded-stdlib-tlci-tables index)
+                  table)]
+              [(Err _)
+                (abort.compiler-abort
+                  "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-frames-ensure!: invalid embedded TLCI model\n")]))
+          (set!
+            compiler-embedded-stdlib-tlci-session-state
+            (__tl_make-array i64 catalog.count))
+          (set!
+            compiler-embedded-stdlib-tlci-session-image
+            (__tl_make-array loader.TlciLoadedImage catalog.count))
+          (set!
+            compiler-embedded-stdlib-tlci-session-error
+            (__tl_make-array String catalog.count))
+          (set!
+            compiler-embedded-stdlib-tlci-active
+            (__tl_make-array i64 catalog.count)))
+        (set! (array-ref compiler-embedded-stdlib-tlci-frames 0) catalog)
+        (set! compiler-embedded-stdlib-tlci-table-owner owner)
+        true))))
+
+(define (compiler-embedded-stdlib-tlci-decode-frame [index : i64]) : (__tl_dyn-array
+    u8)
+  (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
+    (__tl_make-array u8 0)
+    (match (frames.compiler-embedded-stdlib-tlci-frames-decode
+      (& payload.embedded-stdlib-tlci-bytes)
+      (array-ref compiler-embedded-stdlib-tlci-frames 0)
+      index
+      (& compiler-embedded-stdlib-tlci-tables))
+      [(Ok bytes) bytes]
+      [(Err _)
+        (abort.compiler-abort
+          "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-decode-frame: invalid embedded TLCI frame\n")
+        (__tl_make-array u8 0)])))
 
 (define (compiler-embedded-stdlib-tlci-copy) : (__tl_dyn-array u8)
-  (let
-    [compressed : (__tl_dyn-array u8)
-      (compiler-embedded-stdlib-tlci-compressed-shared-view)]
-    (if (= (array-length compressed) 0)
-      (__tl_make-array u8 0)
-      (match (codec.compiler-embedded-stdlib-tlci-codec-decode
-        (& compressed)
-        (compiler-embedded-stdlib-tlci-raw-limit))
-        [(Ok bytes) bytes]
-        [(Err _)
-          (abort.compiler-abort
-            "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy: invalid embedded TLCI bytes\n")
-          (__tl_make-array u8 0)]))))
+  (if (= (array-length payload.embedded-stdlib-tlci-bytes) 0)
+    (__tl_make-array u8 0)
+    (match (frames.compiler-embedded-stdlib-tlci-frames-expand
+      (& payload.embedded-stdlib-tlci-bytes)
+      (compiler-embedded-stdlib-tlci-raw-limit))
+      [(Ok bytes) bytes]
+      [(Err _)
+        (abort.compiler-abort
+          "tl: compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy: invalid embedded TLCI catalog\n")
+        (__tl_make-array u8 0)])))
 
 ;; Publish the owner only after its immutable bytes are complete. Nested users
 ;; borrow the enclosing owner's bytes and cannot release that owner.
@@ -235,13 +293,6 @@
     (ptr-read
       (ptr-offset (__tl_array-data compiler-embedded-stdlib-tlci-decoded) 0))))
 
-;; Retention shares only the baked-in image bytes. Each native session still
-;; parses, admits, maps, registers and releases its own executable image.
-(define (compiler-embedded-stdlib-tlci-image-bytes) : (__tl_dyn-array u8)
-  (if (= compiler-embedded-stdlib-tlci-decoded-owner 0)
-    (compiler-embedded-stdlib-tlci-copy)
-    (compiler-embedded-stdlib-tlci-decoded-shared-view)))
-
 ;; `owner` must stay alive until forget; an enclosing retained owner takes
 ;; precedence and remains responsible for its own lifetime. Nonpositive handles
 ;; retain nothing and leave the expansion in the caller's arena.
@@ -250,15 +301,15 @@
   (if (> compiler-embedded-stdlib-tlci-decoded-owner 0)
     (compiler-embedded-stdlib-tlci-decoded-shared-view)
     (if (<= owner 0)
-      (compiler-embedded-stdlib-tlci-copy)
+      (compiler-embedded-stdlib-tlci-decode-frame 0)
       (in-arena
         (unsafe
           (arena.Arena owner))
         (let
-          ;; Decoder tables are transient; only its byte result belongs to
-          ;; the retained surface owner.
+          ;; Only decoded bytes belong to the retained surface owner;
+          ;; shared decode tables stay in their process arena.
           [bytes : (__tl_dyn-array u8)
-            (with-scratch (compiler-embedded-stdlib-tlci-copy))]
+            (with-scratch (compiler-embedded-stdlib-tlci-decode-frame 0))]
           (set!
             (array-ref compiler-embedded-stdlib-tlci-decoded 0)
             (owned_view.compiler-owned-shared-view bytes))
@@ -288,107 +339,142 @@
 (define (compiler-embedded-stdlib-tlci-host-table) : tlci.TlciHostCallbackTable
   (compiler-comptime-host-table))
 
-(define (compiler-embedded-stdlib-tlci-session-open!) : bool
+(define (compiler-embedded-stdlib-tlci-session-open! [index : i64]) : bool
   (let
-    [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state 0)]
+    [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state index)]
     (cond
       [(= state 1) true]
       [(= state -1) false]
       [else
-        (if (= (compiler-embedded-stdlib-tlci-length) 0)
-          (begin
-            (set! (array-ref compiler-embedded-stdlib-tlci-session-state 0) -1)
-            (set!
-              (array-ref compiler-embedded-stdlib-tlci-session-error 0)
-              "embedded stdlib tlci is unavailable in the seed/test build")
-            false)
-          ;; The owner is the session's own arena, not the arena that happens
-          ;; to be current on the first embedded-stdlib macro call: this image
-          ;; is retained for the rest of the pass and dispatched from
-          ;; declarations that outlive any macro-walk generation.
-          (let
-            [bytes : (__tl_dyn-array u8)
-              (compiler-embedded-stdlib-tlci-image-bytes)]
-            [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
-            (match (loader.tlci-loader-load-from-bytes-with-host
-              (compiler-embedded-stdlib-tlci-session-arena)
-              (& bytes)
-              (& host))
-              [(Err message)
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-state 0)
-                  -1)
-                (set!
-                  (array-ref compiler-embedded-stdlib-tlci-session-error 0)
-                  (compiler-embedded-stdlib-tlci-session-own-text message))
-                false]
-              [(Ok loaded)
-                (begin
-                  (set!
-                    (array-ref compiler-embedded-stdlib-tlci-session-image 0)
-                    loaded)
-                  (set!
-                    (array-ref compiler-embedded-stdlib-tlci-session-state 0)
-                    1)
-                  (cfg
-                    tlci-native-route-stress
-                    (+=
-                      compiler-embedded-stdlib-tlci-stress-image-generations
-                      1))
-                  true)])))])))
+        (let
+          [bytes : (__tl_dyn-array u8)
+            (compiler-embedded-stdlib-tlci-decode-frame index)]
+          [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
+          (match (loader.tlci-loader-load-from-bytes-with-host
+            (compiler-embedded-stdlib-tlci-session-arena)
+            (& bytes)
+            (& host))
+            [(Err message)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-state index)
+                -1)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-error index)
+                (compiler-embedded-stdlib-tlci-session-own-text message))
+              false]
+            [(Ok loaded)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-image index)
+                loaded)
+              (set!
+                (array-ref compiler-embedded-stdlib-tlci-session-state index)
+                1)
+              (set!
+                (array-ref
+                  compiler-embedded-stdlib-tlci-active
+                  compiler-embedded-stdlib-tlci-active-count)
+                index)
+              (+= compiler-embedded-stdlib-tlci-active-count 1)
+              (cfg
+                tlci-native-route-stress
+                (+= compiler-embedded-stdlib-tlci-stress-image-generations 1))
+              true]))])))
 
 (define (compiler-embedded-stdlib-tlci-catalog-lookup [name : String]) : CompilerEmbeddedStdlibTlciLookup
-  (if (compiler-embedded-stdlib-tlci-session-open!)
+  (if (not (compiler-embedded-stdlib-tlci-frames-ensure!))
+    (Unavailable "embedded stdlib tlci is unavailable in the seed/test build")
     (let
-      [loaded : loader.TlciLoadedImage
-        (compiler-embedded-stdlib-tlci-session-image-shared-view)]
-      (match (loader.tlci-loader-resolve-macro-entry (& loaded) (& name))
-        [(Resolved resolved) (Resolved resolved)]
-        [(Shell resolved) (Shell resolved)]
-        [(Missing) Missing]
-        [(Err message) (Unavailable message)]))
-    (Unavailable (compiler-embedded-stdlib-tlci-session-error-shared-view))))
+      [index : i64
+        (frames.compiler-embedded-stdlib-tlci-frames-find
+          (& payload.embedded-stdlib-tlci-bytes)
+          (array-ref compiler-embedded-stdlib-tlci-frames 0)
+          (& name))]
+      (cond
+        [(< index 0) Missing]
+        [(not (compiler-embedded-stdlib-tlci-session-open! index))
+          (Unavailable
+            (string.copy
+              (& (array-ref compiler-embedded-stdlib-tlci-session-error index))))]
+        [else
+          (set! compiler-embedded-stdlib-tlci-last-image index)
+          (match (loader.tlci-loader-resolve-macro-entry
+            (& (array-ref compiler-embedded-stdlib-tlci-session-image index))
+            (& name))
+            [(Resolved entry) (Resolved entry)]
+            [(Shell entry) (Shell entry)]
+            [(Missing)
+              (Unavailable "embedded stdlib tlci frame identity mismatch")]
+            [(Err message) (Unavailable message)])]))))
 
-;; Dispatch a cataloged entry on the mapped pass session. The caller owns the
-;; comptime host session (operands, fuel, cookie) around this call.
+;; A resolved handle retains the loader generation across intervening lookups.
+(define (compiler-embedded-stdlib-tlci-session-index [generation : i64]) : i64
+  (when
+    (and
+      (>= compiler-embedded-stdlib-tlci-last-image 0)
+      (=
+        (__tl-project-field
+          (array-ref
+            compiler-embedded-stdlib-tlci-session-image
+            compiler-embedded-stdlib-tlci-last-image)
+          macro-index-generation)
+        generation))
+    (return compiler-embedded-stdlib-tlci-last-image))
+  (for [active (iterator.range 0 compiler-embedded-stdlib-tlci-active-count)]
+    (let
+      [index : i64 (array-ref compiler-embedded-stdlib-tlci-active active)]
+      (when
+        (=
+          (__tl-project-field
+            (array-ref compiler-embedded-stdlib-tlci-session-image index)
+            macro-index-generation)
+          generation)
+        (set! compiler-embedded-stdlib-tlci-last-image index)
+        (return index))))
+  -1)
+
 (define (compiler-embedded-stdlib-tlci-session-dispatch
   [resolved : loader.TlciResolvedMacroEntry]
   [session-cookie : i64]) : loader.ResultTlciMacroDispatch
-  (if (= (array-ref compiler-embedded-stdlib-tlci-session-state 0) 1)
-    (let
-      [loaded : loader.TlciLoadedImage
-        (compiler-embedded-stdlib-tlci-session-image-shared-view)]
+  (let
+    [index : i64
+      (compiler-embedded-stdlib-tlci-session-index resolved.catalog-generation)]
+    (if (< index 0)
+      (Err "embedded stdlib tlci session is not loaded")
       (loader.tlci-loader-dispatch-resolved-macro
-        (& loaded)
+        (& (array-ref compiler-embedded-stdlib-tlci-session-image index))
         resolved
         session-cookie
         (& (__tl_make-array i64 0))
-        0))
-    (Err "embedded stdlib tlci session is not loaded")))
+        0))))
 
 (define (compiler-embedded-stdlib-tlci-session-mark-shell!
   [resolved : loader.TlciResolvedMacroEntry]) : loader.ResultTlciLoaderUnit
-  (if (= (array-ref compiler-embedded-stdlib-tlci-session-state 0) 1)
-    (let
-      [loaded : loader.TlciLoadedImage
-        (compiler-embedded-stdlib-tlci-session-image-shared-view)]
-      (loader.tlci-loader-mark-macro-entry-shell! (& loaded) resolved))
-    (Err "embedded stdlib tlci session is not loaded")))
+  (let
+    [index : i64
+      (compiler-embedded-stdlib-tlci-session-index resolved.catalog-generation)]
+    (if (< index 0)
+      (Err "embedded stdlib tlci session is not loaded")
+      (loader.tlci-loader-mark-macro-entry-shell!
+        (& (array-ref compiler-embedded-stdlib-tlci-session-image index))
+        resolved))))
 
 (define (compiler-embedded-stdlib-tlci-session-close!) : unit
-  (let
-    [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state 0)]
-    (set! (array-ref compiler-embedded-stdlib-tlci-session-state 0) 0)
-    (set! (array-ref compiler-embedded-stdlib-tlci-session-error 0) "")
-    (if (= state 1)
-      (begin
-        (match (loader.tlci-loader-release
-          (compiler-embedded-stdlib-tlci-session-image-shared-view))
-          [(or (Ok) (Err _)) unit])
-        (cfg
-          tlci-native-route-stress
-          (+= compiler-embedded-stdlib-tlci-stress-release-generations 1)))
-      unit)))
+  (for [index
+    (iterator.range
+      0
+      (array-length compiler-embedded-stdlib-tlci-session-state))]
+    (when
+      (= (array-ref compiler-embedded-stdlib-tlci-session-state index) 1)
+      (match (loader.tlci-loader-release
+        (compiler-embedded-stdlib-tlci-session-image-shared-view index))
+        [(or (Ok) (Err _)) unit])
+      (cfg
+        tlci-native-route-stress
+        (+= compiler-embedded-stdlib-tlci-stress-release-generations 1)))
+    (set! (array-ref compiler-embedded-stdlib-tlci-session-state index) 0)
+    (set! (array-ref compiler-embedded-stdlib-tlci-session-error index) ""))
+  (set! compiler-embedded-stdlib-tlci-active-count 0)
+  (set! compiler-embedded-stdlib-tlci-last-image -1))
 
 ;; Map the embedded image through the production W^X loader, execute its image
 ;; registration entry, validate every registered macro record, and release the

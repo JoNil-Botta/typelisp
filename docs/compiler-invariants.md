@@ -1309,17 +1309,31 @@ by surface identity order. Exact package-root lint detects uncalled producer
 declarations, while embedded-stdlib and package-surface parity gates exercise
 the real producer entries.
 
-Multi-entry `compile --batch` commands retain the immutable decoded embedded
-image in the batch driver's surface arena. Initialization expands those fixed
-bytes before the first entry's live-allocation baseline; source-only entries
-still use their normal source fallback. The byte slot becomes readable only
-after expansion completes. Decoder scratch storage retires immediately; only
-the byte result escapes into the surface arena. Nested surfaces borrow the
-enclosing owner's bytes. Both assembly and Windows object batches forget their
-owner after successful or failed entry execution, before that owner retires.
-Empty and singleton batches keep their existing lazy path. This retains no
-parsed AST or macro result. Fresh source provenance checks and each native
-session's admission, W^X mapping, registration and release remain independent.
+The embedded TLCI deployment uses independently compressed ordinary images:
+one prelude surface and one native image per macro identity, with one shared
+canonical Huffman model. Its authenticated index fixes all names, bounds,
+lengths and model bytes before lookup or allocation; sorted unique identities
+permit binary search. A requested body is decoded under the total output bound
+and admitted by the ordinary TLCI integrity, platform, ABI and host-import
+checks. Each native image must contain the requested identity. A decoded
+surface is not an executable catalog.
+
+The immutable index and decode tables have a dedicated process-lifetime arena.
+Multi-entry `compile --batch` retains only the decoded prelude surface in the
+batch driver surface arena, before the first entry allocation baseline. Nested
+surfaces borrow that owner, and both successful and failed batches unpublish
+it before retirement. Native frames map independently within each expansion
+pass; cached handles retain their loader generation across intervening frame
+lookups. Pass close releases every mapping, revokes those handles and clears
+terminal-shell and failure state. Fresh source provenance remains mandatory
+for every use. No AST or macro result enters either byte/model cache.
+
+Inspection reconstructs the canonical ordinary catalog by joining independent
+code regions and rebasing their pointer fixups and host-import slots. The
+builder emits that same ordinary catalog separately. Exact reconstruction,
+source mutation, producer provenance, the complete identity census and the
+payload compression bound remain required gates; indexing does not retire any
+of those checks.
 
 The runtime lifetime tests cover repeated checked errors, macro errors, failed
 imports after a successful import, parent restoration, bounded direct-object

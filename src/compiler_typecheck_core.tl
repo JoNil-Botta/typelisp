@@ -127616,6 +127616,19 @@
 (define (tc-synthesized-function-type
   [params : ast.AstTypeList]
   [ret : (& ret ast.AstType)]) : ast.AstType
+  ;; Most generated contracts have no incoming lifetime name. They own no
+  ;; binder, so they need no session, scope identity or substitution.
+  (when
+    (tc-name-id-list-empty?
+      (tc-signature-input-type-list-lifetimes-into
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& params)
+        TcNameIdList.Nil))
+    (return
+      (ast.ast-ty-func
+        params
+        ret
+        (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))))
   (let
     [session : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names

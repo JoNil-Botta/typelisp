@@ -252,6 +252,17 @@ link_native_object() {
         if [ "${TYPELISP_WINDOWS_LINK_REPRO:-}" = 1 ]; then
             repro_arg=/Brepro
         fi
+        # TYPELISP_WINDOWS_LINK_TIMESTAMP=N writes N as the COFF TimeDateStamp
+        # instead of the link time (lld-link /timestamp), with no other change.
+        stamp_arg=
+        case "${TYPELISP_WINDOWS_LINK_TIMESTAMP:-}" in
+            "") ;;
+            *[!0-9]*)
+                echo "[native-link] TYPELISP_WINDOWS_LINK_TIMESTAMP must be a decimal integer" >&2
+                return 2
+                ;;
+            *) stamp_arg=/timestamp:$TYPELISP_WINDOWS_LINK_TIMESTAMP ;;
+        esac
         echo "[native-link] link $label with Windows COFF linker (freestanding: no CRT)" || return $?
         # Freestanding Win32: the backend emits its own entry (_tl_start) plus
         # kernel32-backed shims for the CRT-ABI symbols the runtime/stdlib use plus
@@ -261,6 +272,7 @@ link_native_object() {
         MSYS2_ARG_CONV_EXCL='*' "$TYPELISP_WINDOWS_LINK_POSIX" \
             /NOLOGO \
             ${repro_arg:+"$repro_arg"} \
+            ${stamp_arg:+"$stamp_arg"} \
             "$obj_win" \
             "/OUT:$bin_win" \
             /SUBSYSTEM:CONSOLE \

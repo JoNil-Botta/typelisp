@@ -525,15 +525,16 @@ back against the trusted run context on the producing host, and requires the
 receipt to plan and pass exactly the lane's assignment and its closure. It
 requires one converged compiler across the lanes and records each lane's
 stage0 seed: a seed race between lanes is allowed only with an equal compiler,
-and a different compiler is a determinism defect, never re-run away. Windows
-compares the compiler with its PE COFF TimeDateStamp read as zero, because the
-bootstrap links without `/Brepro` and that field is the link time (#9470
-makes that link deterministic). Only those 4 bytes are masked, at the offset
-each binary's own PE header gives; every other byte, and Linux's whole binary,
-must match. The converged compiler also
-embeds its checkout path (the embedded stdlib image records it), so the lanes
-of one host must share the workspace path: each receipt records it, and the
-aggregator fails when the lanes' paths differ. It then merges the lanes' timing
+and a different compiler is a determinism defect, never re-run away. Both
+hosts compare the raw payload bytes: the bootstrap's Windows links write a
+COFF TimeDateStamp of 0 (`TYPELISP_WINDOWS_LINK_TIMESTAMP` in
+`lib-native-link.sh`) rather than the link time, so independent lanes link
+byte-identical compilers (#9470 covers the other Windows links). Lanes whose
+native toolchains differ (runner image skew) fail with that diagnosis. The
+converged compiler also embeds its checkout path (the embedded stdlib image
+records it), so the lanes of one host must share the workspace path: each
+receipt records it, and the aggregator fails when the lanes' paths differ. It
+then merges the lanes' timing
 into the host's `ci-timing-<host>` artifact: each gate's rows from its owning
 lane in table order, the lanes' ungated rows, and one complete-verification
 row timed as the slowest lane (`partial-verification` rows mark lane runs).

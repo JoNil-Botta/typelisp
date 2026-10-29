@@ -165,7 +165,9 @@ build_lane() {
       done < "$dir/draft/lane/plan.txt"
       printf 'CI verification\tall\tpartial-verification\t%s\t0\t%s\n' "$((5000 + attempt))" "$host"; } > "$inputs/timing.tsv"
     cp "$work/sources" "$dir/draft/source-set.sha256"
-    cica_jq -nS '{as:{sha256:("7"*64),version:"fixture"},ld:{sha256:("7"*64),version:"fixture"},clang:{sha256:("7"*64),version:"fixture"},"lld-link":{sha256:("7"*64),version:"fixture"}}' > "$dir/draft/toolchain.json"
+    tool_version=fixture
+    [ "$variant" != other-toolchain-payload ] || tool_version=fixture-newer-image
+    cica_jq -nS --arg v "$tool_version" '{as:{sha256:("7"*64),version:$v},ld:{sha256:("7"*64),version:$v},clang:{sha256:("7"*64),version:$v},"lld-link":{sha256:("7"*64),version:$v}}' > "$dir/draft/toolchain.json"
     fixture_cli record "$source" "$dir" "$host" stage3 "$source/target/bootstrap-fixpoint/stage2" compile src/main.tl -o "$source/target/bootstrap-fixpoint/stage3.s" --target linux-x86_64 --cfg linux --cfg unix --cfg target-linux --cfg os-linux --cfg compiler-build-identity --cfg embedded-stdlib-tlci --stdlib-root "$source/src" --opt-level 2
     for payload in compiler previous-stage; do
         file=$dir/draft/roles/bootstrap-converged/payload/$payload
@@ -180,11 +182,11 @@ build_lane() {
         fi
     done
     compiler=$dir/draft/roles/bootstrap-converged/payload/compiler
-    # The fixture PE header starts at 64 (e_lfanew), so its COFF
-    # TimeDateStamp is bytes 72-75; coff-before/after change the header
-    # bytes on either side of it (NumberOfSections, PointerToSymbolTable).
+    # The fixture PE header starts at 64 (e_lfanew): timestamp changes its
+    # COFF TimeDateStamp (bytes 72-75), and coff-before/after change one
+    # header byte beside it (NumberOfSections, PointerToSymbolTable).
     case $variant in
-      other-payload | other-seed-payload) printf X | dd of="$compiler" bs=1 seek=100 conv=notrunc 2>/dev/null ;;
+      other-payload | other-seed-payload | other-toolchain-payload) printf X | dd of="$compiler" bs=1 seek=100 conv=notrunc 2>/dev/null ;;
       timestamp) printf '\001\002\003\004' | dd of="$compiler" bs=1 seek=72 conv=notrunc 2>/dev/null ;;
       coff-before) printf '\001' | dd of="$compiler" bs=1 seek=71 conv=notrunc 2>/dev/null ;;
       coff-after) printf '\001' | dd of="$compiler" bs=1 seek=76 conv=notrunc 2>/dev/null ;;
@@ -538,19 +540,21 @@ aggregate_case stage2-mismatch rejected linux success "$work/agg.jobs.json" "$wo
 build_lane linux linux-2 2 other-seed-payload
 aggregate_case seed-race-other-compiler rejected linux success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
     "linux-1=$L/linux-1-a2-base/complete@2" "linux-2=$L/linux-2-a2-other-seed-payload/complete@2"
-build_lane windows windows-2 2 timestamp
-aggregate_case windows-link-timestamp-only pass windows success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
-    "windows-1=$L/windows-1-a2-base/complete@2" "windows-2=$L/windows-2-a2-timestamp/complete@2"
-build_lane windows windows-2 2 other-payload
-aggregate_case windows-stage2-mismatch rejected windows success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
-    "windows-1=$L/windows-1-a2-base/complete@2" "windows-2=$L/windows-2-a2-other-payload/complete@2"
-# Only the 4-byte TimeDateStamp at the binary's own PE offset is masked: one
-# changed byte beside it in the COFF header is a different compiler.
-for variant in coff-before coff-after; do
+# Windows compares raw payload bytes like Linux (the bootstrap links with a
+# fixed TimeDateStamp): a different link time, or one changed COFF header
+# byte on either side of it, is a different compiler.
+for variant in other-payload timestamp coff-before coff-after; do
     build_lane windows windows-2 2 "$variant"
-    aggregate_case "windows-$variant-timestamp" rejected windows success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
+    aggregate_case "windows-stage2-$variant" rejected windows success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
         "windows-1=$L/windows-1-a2-base/complete@2" "windows-2=$L/windows-2-a2-$variant/complete@2"
 done
+# A compiler difference between lanes that ran different native toolchains
+# still fails, diagnosed as runner image skew.
+build_lane linux linux-2 2 other-toolchain-payload
+aggregate_case toolchain-skew rejected linux success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
+    "linux-1=$L/linux-1-a2-base/complete@2" "linux-2=$L/linux-2-a2-other-toolchain-payload/complete@2"
+grep -q 'ran different native toolchains' "$source/target/aggregate/toolchain-skew/stderr" ||
+    cica_fail 'toolchain skew was not diagnosed'
 # The converged compiler embeds the checkout path, so a host's lanes must
 # record one path; a lane that recorded another fails, unmasked.
 case_dir=$L/linux-2-other-checkout

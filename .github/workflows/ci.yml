@@ -129,7 +129,7 @@ jobs:
         if: runner.os == 'Linux' && steps.plan.outputs.instruction_tools == '1'
         uses: ./.github/actions/linux-instruction-count-tools
         with:
-          artifact-suffix: ${{ matrix.lane }}
+          artifact-suffix: ${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
 
       - name: Add Linux swap headroom
         if: runner.os == 'Linux'

@@ -257,12 +257,14 @@ lane_aggregate() {
         [ ! -f "$_la_role" ] || _la_seed=$(jq -c .proof.seed "$_la_role")
         jq -cn --arg lane "$_la_lane" --arg job "$_la_job" --argjson attempt "$_la_attempt" --arg digest "$_la_digest" \
             --argjson seed "$_la_seed" --rawfile owned "$LANE_WORK/owned-$_la_lane" --rawfile planned "$LANE_WORK/planned-$_la_lane" \
-            --rawfile handoffs "$_la_bundle/lane/handoffs.tsv" --rawfile checkout "$_la_bundle/lane/checkout.txt" '
+            --rawfile handoffs "$_la_bundle/lane/handoffs.tsv" --rawfile checkout "$_la_bundle/lane/checkout.txt" \
+            --slurpfile toolchain "$_la_bundle/toolchain.json" '
             ($owned | split("\n") | map(select(length > 0))) as $o |
             ($planned | split("\n") | map(select(length > 0))) as $p |
             {lane: $lane, job: $job, attempt: $attempt, bundle_sha256: $digest, seed: $seed, checkout: ($checkout | rtrimstr("\n")),
+             toolchain: $toolchain[0],
              owned: ($o | length), planned: ($p | length), duplicates: ($p - $o),
-             handoffs: ($handoffs | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: {sha256: .[1], identity_sha256: .[2]}}) | from_entries)}' \
+             handoffs: ($handoffs | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: {sha256: .[1]}}) | from_entries)}' \
             >> "$LANE_WORK/proof-lanes.jsonl"
     done
     # Every host gate passed in its owning lane: the readback proved each
@@ -281,13 +283,16 @@ lane_aggregate() {
     }
     # One converged compiler across lanes, whatever their seeds; a mismatch
     # is a determinism defect, never a reason to retry.
-    jq -e '[.[] | select(.handoffs.converged) | .handoffs.converged.identity_sha256] | length >= 1 and (unique | length) == 1' \
+    jq -e '[.[] | select(.handoffs.converged) | .handoffs.converged.sha256] | length >= 1 and (unique | length) == 1' \
         "$LANE_WORK/proof-lanes.json" > /dev/null || {
-        jq -r '.[] | "[ci-lane]   \(.lane): converged \(.handoffs.converged.identity_sha256 // "none") seed \(.seed.sha256 // "none")"' \
+        jq -r '.[] | "[ci-lane]   \(.lane): converged \(.handoffs.converged.sha256 // "none") seed \(.seed.sha256 // "none") toolchain \(.toolchain | tojson)"' \
             "$LANE_WORK/proof-lanes.json" >&2
+        if jq -e '[.[].toolchain] | unique | length > 1' "$LANE_WORK/proof-lanes.json" > /dev/null; then
+            lane_fail "stage2 identity differs between $_la_host lanes, which ran different native toolchains (runner image skew)"
+        fi
         lane_fail "stage2 identity differs between $_la_host lanes: a determinism defect (do not re-run it away)"
     }
-    jq -e '[.[] | select(.handoffs["compile-profile"]) | .handoffs["compile-profile"].identity_sha256] | (unique | length) <= 1' \
+    jq -e '[.[] | select(.handoffs["compile-profile"]) | .handoffs["compile-profile"].sha256] | (unique | length) <= 1' \
         "$LANE_WORK/proof-lanes.json" > /dev/null ||
         lane_fail "compile-profile compiler identity differs between $_la_host lanes"
     lane_merge_timing "$_la_host" "$LANE_WORK/gates.tsv" "$LANE_WORK/timing-args" > "$_la_out/$_la_host.tsv"
@@ -296,7 +301,7 @@ lane_aggregate() {
         --arg head "$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")" --argjson gates "$(awk 'END { print NR }' "$LANE_WORK/gates.tsv")" \
         --slurpfile lanes "$LANE_WORK/proof-lanes.json" '
         {schema: "typelisp-ci-lane-coverage/1", host: $host, run_id: $run, attempt: $attempt, commit: $commit, tree: $tree, head: $head,
-         gates: $gates, lanes: $lanes[0], checkout: $lanes[0][0].checkout, stage2_identity_sha256: ($lanes[0] | map(select(.handoffs.converged)) | .[0].handoffs.converged.identity_sha256),
+         gates: $gates, lanes: $lanes[0], checkout: $lanes[0][0].checkout, stage2_sha256: ($lanes[0] | map(select(.handoffs.converged)) | .[0].handoffs.converged.sha256),
          seeds: ($lanes[0] | map(.seed.sha256 // empty) | unique), status: "pass"}' > "$_la_out/coverage.json"
     echo "[ci-lane] $_la_host: $(awk 'END { print NR }' "$LANE_WORK/gates.tsv") gates passed in their owning lanes ($(printf '%s ' $_la_lanes)); one converged compiler"
 }

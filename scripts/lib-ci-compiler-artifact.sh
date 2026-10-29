@@ -278,18 +278,6 @@ cica_roles() {
         END { if (bad) exit 1 }
     ' "$1" "$CICA_ROOT/scripts/ci-compiler-artifacts.tsv" || cica_fail 'invalid plan or role inventory'
 }
-# Handoff identity: the exact bytes, except that a Windows PE's COFF header
-# TimeDateStamp (link wall-clock time; the bootstrap links without /Brepro)
-# reads as zero, so independently linked equal compilers compare equal. Only
-# those 4 bytes are masked, at the offset this binary's own e_lfanew (0x3c)
-# gives after its PE signature is validated; every other byte must match.
-# #9470 makes that link deterministic so this mask can go.
-cica_identity_sha() (
-    [ "$CICA_HOST" = windows ] || { cica_sha "$1"; exit; }
-    cica_binary "$1"
-    _stamp=$(($(od -An -tu4 -j60 -N4 "$1" | tr -d ' \r\n') + 8))
-    { head -c "$_stamp" "$1"; printf '\000\000\000\000'; tail -c +"$((_stamp + 5))" "$1"; } | ci_compiler_artifact_sha256_stdin
-)
 cica_files() (
     _fi_base=$1
     cd "$_fi_base"
@@ -573,7 +561,7 @@ cica_lane_handoff() {
     cica_owned_file "$2" 'handoff path file'
     read -r _lh_path < "$2" || true
     cica_owned_file "$_lh_path" "$1 handoff"
-    printf '%s\t%s\t%s\n' "$1" "$(cica_sha "$_lh_path")" "$(cica_identity_sha "$_lh_path")" >> "$CICA_WORK/draft/lane/handoffs.tsv"
+    printf '%s\t%s\n' "$1" "$(cica_sha "$_lh_path")" >> "$CICA_WORK/draft/lane/handoffs.tsv"
 }
 cica_checkout_ok() {
     ci_compiler_artifact_field_safe checkout "$1" || return 1
@@ -664,7 +652,7 @@ cica_lane_verify() {
     [ ! -f "$_lv/timing.tsv" ] || [ "$(sed -n 1p "$_lv/timing.tsv")" = "$(printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost')" ] || cica_fail 'timing header changed'
     { if grep -qxF bootstrap-fixpoint "$_lv/plan.txt"; then printf '%s\n' converged previous-stage; fi
       if grep -qxF stage2-compile-profile-verifier "$_lv/plan.txt"; then printf '%s\n' compile-profile; fi; } | LC_ALL=C sort > "$CICA_SCRATCH/handoffs-expected"
-    awk -F '\t' 'NF != 3 || length($2) != 64 || $2 ~ /[^0-9a-f]/ || length($3) != 64 || $3 ~ /[^0-9a-f]/ || seen[$1]++ { exit 1 } { print $1 }' \
+    awk -F '\t' 'NF != 2 || length($2) != 64 || $2 ~ /[^0-9a-f]/ || seen[$1]++ { exit 1 } { print $1 }' \
       "$_lv/handoffs.tsv" > "$CICA_SCRATCH/handoffs-names" || cica_fail 'malformed handoff receipt'
     LC_ALL=C sort "$CICA_SCRATCH/handoffs-names" > "$CICA_SCRATCH/handoffs-actual"
     cmp -s "$CICA_SCRATCH/handoffs-expected" "$CICA_SCRATCH/handoffs-actual" || cica_fail 'handoff receipt set changed'
@@ -672,8 +660,8 @@ cica_lane_verify() {
         for _lv_pair in converged:compiler previous-stage:previous-stage; do
             _lv_name=${_lv_pair%%:*} _lv_payload=$CICA_WORK/roles/bootstrap-converged/payload/${_lv_pair#*:}
             [ -f "$_lv_payload" ] || cica_fail 'handoff payload missing'
-            awk -F '\t' -v n="$_lv_name" -v h="$(cica_sha "$_lv_payload")" -v i="$(cica_identity_sha "$_lv_payload")" \
-              '$1 == n { found = 1; if ($2 != h || $3 != i) bad = 1 } END { exit found && !bad ? 0 : 1 }' "$_lv/handoffs.tsv" ||
+            awk -F '\t' -v n="$_lv_name" -v h="$(cica_sha "$_lv_payload")" \
+              '$1 == n { found = 1; if ($2 != h) bad = 1 } END { exit found && !bad ? 0 : 1 }' "$_lv/handoffs.tsv" ||
                 cica_fail "$_lv_name handoff differs from its published payload"
         done
     fi

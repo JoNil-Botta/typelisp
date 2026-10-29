@@ -128,6 +128,8 @@
          %3 = mov %1 : i64
          store_ptr %2, 4 : i64
          %5 = mov %0 : i64
+         %6 = cast %0 : i64 to u64
+         %7 = cast %3 : i64 to u64
          return %0")]
     [instrs
       (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry"))
@@ -168,6 +170,19 @@
           [(Var id) (= id 5)]
           [_ false]))
       "a copy of mutable storage is its own read, not the storage")
+    (test.assert-true
+      (and
+        (match (opt.opt-bce-mb-canon-value
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 6)))
+          [(Var id) (= id 6)]
+          [_ false])
+        (match (opt.opt-bce-mb-canon-value
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 7)))
+          [(Var id) (= id 1)]
+          [_ false]))
+      "a reinterpret cast of mutable storage is its own read")
     (test.assert-true
       (and
         (= (opt.opt-bce-version-resolve (& instrs) 0 instrs.len 3 16) 1)

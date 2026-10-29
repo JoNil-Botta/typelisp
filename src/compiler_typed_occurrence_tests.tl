@@ -686,7 +686,10 @@
       (typed-test-type!
         (&mut store)
         (& lease)
-        (ast.ast-ty-func params (& (ast.AstType.I64))))]
+        (ast.ast-ty-func
+          params
+          (& (ast.AstType.I64))
+          (ast.AstCallableBinders.Unresolved)))]
     [local : typed.TypedBinderId
       (typed-test-binder!
         (&mut store)
@@ -926,7 +929,10 @@
     [function-id : i64
       (ast.ast-node-pool-context-type-push
         pools
-        (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.I64))))]
+        (ast.ast-ty-func
+          (ast.ast-type-list-new)
+          (& (ast.AstType.I64))
+          (ast.AstCallableBinders.Unresolved)))]
     [c-function : typed.TypedTypeId
       (typed-test-type!
         (&mut store)
@@ -936,7 +942,10 @@
       (typed-test-type!
         (&mut store)
         (& lease)
-        (ast.ast-ty-func (ast.ast-type-list-new) (& (ast.AstType.I64))))]
+        (ast.ast-ty-func
+          (ast.ast-type-list-new)
+          (& (ast.AstType.I64))
+          (ast.AstCallableBinders.Unresolved)))]
     [unknown : typed.TypedTypeId
       (typed-test-type!
         (&mut store)

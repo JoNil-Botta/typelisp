@@ -943,7 +943,8 @@
                 (ast.ast-type-cons
                   (& (I64))
                   (& (ast.ast-type-cons (& (Bool)) (& (ast.ast-type-list-new)))))
-                (& (String)))))))]
+                (& (String))
+                (ast.AstCallableBinders.Unresolved))))))]
     [ok : bool true]
     (if (compiler-ctfe-eval-string-ok?
       (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-kind") point-ty)
@@ -974,7 +975,7 @@
     (if (compiler-ctfe-eval-string-ok?
       (compiler-ctfe-call1 (ctfe.ctfe-builtin "type-key") str-ref-ty)
       env
-      "ref_r_str")
+      "ref_s1_114_str")
       unit
       (set! ok false))
     (if (compiler-ctfe-eval-string-ok?
@@ -1184,7 +1185,8 @@
     [signature : ast.AstType
       (ast.ast-ty-func
         (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
-        (& (Bool)))]
+        (& (Bool))
+        (ast.AstCallableBinders.Unresolved))]
     [shared-ref : i64
       (ast.ast-node-push
         (TypeLiteral
@@ -1480,7 +1482,11 @@
       (compiler-ctfe-type-expr-roundtrip-one? env (ExprList))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
-        (ast.ast-ty-func-with-pools pools (clone pair) (& (String))))
+        (ast.ast-ty-func-with-pools
+          pools
+          (clone pair)
+          (& (String))
+          (ast.AstCallableBinders.Unresolved)))
       (compiler-ctfe-type-expr-roundtrip-one? env (Tuple (box pair)))
       (compiler-ctfe-type-expr-roundtrip-one?
         env
@@ -1932,7 +1938,8 @@
                 (ast.ast-type-cons
                   (& (I64))
                   (& (ast.ast-type-cons (& (Bool)) (& (ast.ast-type-list-new)))))
-                (& (String)))))))]
+                (& (String))
+                (ast.AstCallableBinders.Unresolved))))))]
     [record-ty : i64
       (ctfe.ctfe-ast-push
         env

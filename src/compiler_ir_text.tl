@@ -267,11 +267,14 @@
             (&mut args)
             (ast.ast-type-list-get (& types) i (ast.ast-type-id-fallback))))
         (Func
-          (box args)
-          (ast.ast-type-list-get
-            (& types)
-            (- count 1)
-            (ast.ast-type-id-fallback))))]
+          (box
+            (ast.AstFunctionSignature
+              args
+              (ast.ast-type-list-get
+                (& types)
+                (- count 1)
+                (ast.ast-type-id-fallback))
+              (ast.AstCallableBinders.Unresolved)))))]
     [(string.eq head "Tuple") (ast.ast-ty-tuple (ir-text-type-list! cur))]
     [(string.eq head "CFunc")
       (let

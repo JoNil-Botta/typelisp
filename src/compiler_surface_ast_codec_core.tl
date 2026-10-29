@@ -8,6 +8,7 @@
 (import stdlib.byte_reader)
 (import stdlib.string)
 (import compiler_ast_types as ast)
+(import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_owned_view as owned_view)
 (import compiler_surface_identity as identity)
@@ -103,7 +104,7 @@
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-ast-write-name!
+  (define (surface-ast-write-ordinary-name!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [context : (&mut context SurfaceAstWriteContext)]
     [name : i64]) : unit
@@ -222,7 +223,7 @@
             (>= signature 0)
             (< signature count)
             (match (ast.ast-node-pool-context-type-get pools signature)
-              [(Func _ _) true]
+              [(Func _) true]
               [_ false]))]
         (unless
           valid
@@ -259,15 +260,102 @@
         (surface-ast-reader-fail! reader "surface ast: truncated string")
         ""))))
 
-(define (surface-ast-read-name! [reader : (&mut reader SurfaceAstReader)]) : i64
+;; Callable identities use explicit records rather than portable arithmetic keys.
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (surface-ast-write-name-at!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [context : (&mut context SurfaceAstWriteContext)]
+    [name : i64]
+    [depth : i64]) : unit
+    (when (>= depth 32) (surface-ast-write-fail! context) (return unit))
+    (match (cis.intern-structural-session-record-for-raw
+      (owned_view.compiler-owned-reference-shared-view
+        (& context.structural-session))
+      name)
+      [(cis.InternMaybeStructuralRecord.Some record)
+        (cond
+          [(= record.kind (ci.intern-structural-kind-callable-lifetime))
+            (match (cis.intern-structural-session-callable-lifetime-record
+              (owned_view.compiler-owned-reference-shared-view
+                (& context.structural-session))
+              name)
+              [(cis.InternMaybeCallableLifetimeRecord.No)
+                (surface-ast-write-fail! context)]
+              [(cis.InternMaybeCallableLifetimeRecord.Some binder)
+                (surface-ast-write-i64! out -3)
+                (surface-ast-write-i64! out 11)
+                (surface-ast-write-name-at!
+                  out
+                  context
+                  binder.scope.value
+                  (+ depth 1))
+                (surface-ast-write-i64! out binder.ordinal)
+                (surface-ast-write-name-at!
+                  out
+                  context
+                  binder.binding-name-id
+                  (+ depth 1))])]
+          [(= record.kind (ci.intern-structural-kind-callable-scope))
+            (surface-ast-write-i64! out -3)
+            (surface-ast-write-i64! out 10)
+            (surface-ast-write-callable-scope! out context name depth)]
+          [else (surface-ast-write-ordinary-name! out context name)])]
+      [(cis.InternMaybeStructuralRecord.No)
+        (surface-ast-write-ordinary-name! out context name)])))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (surface-ast-write-name!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [context : (&mut context SurfaceAstWriteContext)]
+    [name : i64]) : unit
+    (surface-ast-write-name-at! out context name 0)))
+
+(define (surface-ast-read-name-at!
+  [reader : (&mut reader SurfaceAstReader)]
+  [depth : i64]) : i64
+  (when
+    (>= depth 32)
+    (surface-ast-reader-fail!
+      reader
+      "surface ast: callable identity nesting limit")
+    (return 0))
   (let
     [portable : i64 (surface-ast-read-i64! reader)]
     [resolved : i64
-      (identity.surface-identity-resolve-portable-id
-        (owned_view.compiler-owned-reference-shared-view
-          (& reader.structural-session))
-        portable
-        (& reader.identity-remap))]
+      (if (= portable -3)
+        (let
+          [kind : i64 (surface-ast-read-i64! reader)]
+          (cond
+            [(= kind 10) (surface-ast-read-callable-scope! reader depth)]
+            [(= kind 11)
+              (let
+                [scope : i64 (surface-ast-read-name-at! reader (+ depth 1))]
+                [ordinal : i64 (surface-ast-read-i64! reader)]
+                [spelling : i64 (surface-ast-read-name-at! reader (+ depth 1))]
+                [scope-valid : bool
+                  (match (cis.intern-structural-session-record-for-raw
+                    (owned_view.compiler-owned-reference-shared-view
+                      (& reader.structural-session))
+                    scope)
+                    [(cis.InternMaybeStructuralRecord.Some record)
+                      (= record.kind (ci.intern-structural-kind-callable-scope))]
+                    [_ false])]
+                (if (and scope-valid (>= ordinal 0) (>= spelling 0))
+                  (cis.intern-structural-session-callable-lifetime
+                    (owned_view.compiler-owned-reference-shared-view
+                      (& reader.structural-session))
+                    (cis.InternCallableScopeIdentity scope)
+                    ordinal
+                    spelling).value
+                  -1))]
+            [else -1]))
+        (identity.surface-identity-resolve-portable-id
+          (owned_view.compiler-owned-reference-shared-view
+            (& reader.structural-session))
+          portable
+          (& reader.identity-remap)))]
     (if (< resolved 0)
       (begin
         (surface-ast-reader-fail!
@@ -275,6 +363,71 @@
           "surface ast: invalid identity reference")
         0)
       resolved)))
+
+(define (surface-ast-read-name! [reader : (&mut reader SurfaceAstReader)]) : i64
+  (surface-ast-read-name-at! reader 0))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (surface-ast-write-callable-binders!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [context : (&mut context SurfaceAstWriteContext)]
+    [binders : (& ast.AstCallableBinders)]) : unit
+    (match binders
+      [(ast.AstCallableBinders.Unresolved) (surface-ast-write-i64! out 0)]
+      [(ast.AstCallableBinders.Resolved owned)
+        (unless
+          (ast.ast-callable-binders-valid?
+            (cis.intern-structural-session-handle-source-names
+              (owned_view.compiler-owned-reference-shared-view
+                (& context.structural-session)))
+            binders)
+          (surface-ast-write-fail! context))
+        (surface-ast-write-i64! out 1)
+        (surface-ast-write-lifetime-list! out context owned)])))
+
+(define (surface-ast-read-callable-binders!
+  [reader : (&mut reader SurfaceAstReader)]) : ast.AstCallableBinders
+  (match (surface-ast-read-i64! reader)
+    [0 (ast.AstCallableBinders.Unresolved)]
+    [1
+      (let
+        [owned : ast.AstLifetimeList (surface-ast-read-lifetime-list! reader)]
+        [index : i64 0]
+        [owner : i64 -1]
+        (while (< index (ast.ast-lifetime-list-len (& owned)))
+          (let
+            [name : i64 (ast.ast-lifetime-list-get (& owned) index -1)]
+            [previous : i64 0]
+            (while (< previous index)
+              (when
+                (= name (ast.ast-lifetime-list-get (& owned) previous -1))
+                (surface-ast-reader-fail!
+                  reader
+                  "surface ast: duplicate callable binder"))
+              (+= previous 1))
+            (match (cis.intern-structural-session-callable-lifetime-record
+              (owned_view.compiler-owned-reference-shared-view
+                (& reader.structural-session))
+              name)
+              [(cis.InternMaybeCallableLifetimeRecord.Some binder)
+                (when
+                  (and (>= owner 0) (!= owner binder.scope.value))
+                  (surface-ast-reader-fail!
+                    reader
+                    "surface ast: mixed callable binder owners"))
+                (set! owner binder.scope.value)]
+              [_
+                (surface-ast-reader-fail!
+                  reader
+                  "surface ast: invalid callable binder")]))
+          (+= index 1))
+        (ast.AstCallableBinders.Resolved owned))]
+    [_
+      (surface-ast-reader-fail!
+        reader
+        "surface ast: invalid callable binder contract")
+      (ast.AstCallableBinders.Unresolved)]))
 
 (define (surface-ast-read-span! [reader : (&mut reader SurfaceAstReader)]) : ast.AstSourceSpan
   (ast.ast-source-span
@@ -356,10 +509,17 @@
       [(Never) (surface-ast-write-i64! out 16)]
       [(Expr) (surface-ast-write-i64! out 17)]
       [(ExprList) (surface-ast-write-i64! out 18)]
-      [(Func args ret)
-        (surface-ast-write-i64! out 19)
-        (surface-ast-write-type-list! out (& (deref args)))
-        (surface-ast-write-i64! out ret)]
+      [(Func args-signature-box)
+        (let
+          [args-signature
+            (ast.ast-function-signature-view (deref args-signature-box))]
+          (surface-ast-write-i64! out 19)
+          (surface-ast-write-type-list! out (& args-signature.params))
+          (surface-ast-write-i64! out args-signature.result)
+          (surface-ast-write-callable-binders!
+            out
+            context
+            (& args-signature.binders)))]
       [(Tuple items)
         (surface-ast-write-i64! out 20)
         (surface-ast-write-type-list! out (& (deref items)))]
@@ -449,8 +609,11 @@
       [(= tag 18) ExprList]
       [(= tag 19)
         (Func
-          (box (surface-ast-read-type-list! reader))
-          (surface-ast-read-i64! reader))]
+          (box
+            (ast.AstFunctionSignature
+              (surface-ast-read-type-list! reader)
+              (surface-ast-read-i64! reader)
+              (surface-ast-read-callable-binders! reader))))]
       [(= tag 20) (Tuple (box (surface-ast-read-type-list! reader)))]
       [(= tag 21)
         (Array (surface-ast-read-i64! reader) (surface-ast-read-i64! reader))]
@@ -695,3 +858,104 @@
       [else
         (surface-ast-reader-fail! reader "surface ast: invalid reduce operator")
         Sum])))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (surface-ast-write-callable-scope!
+    [out : (&mut out byte_buf_core.ByteBufBuilder)]
+    [context : (&mut context SurfaceAstWriteContext)]
+    [raw : i64]
+    [depth : i64]) : unit
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (cis.InternStructuralSessionHandle context.structural-session.address)]
+      [chain : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+      [cursor : i64 raw]
+      (unless
+        (cis.intern-structural-session-callable-scope-valid-at? session raw 0)
+        (surface-ast-write-fail! context)
+        (return unit))
+      (while (> cursor 0)
+        (ast.ast-lifetime-list-push (&mut chain) cursor)
+        (match (cis.intern-structural-session-record-for-raw session cursor)
+          [(cis.InternMaybeStructuralRecord.Some record)
+            (set!
+              cursor
+              (if (= record.left-id 1)
+                0
+                record.middle-id))]
+          [_
+            (surface-ast-write-fail! context)
+            (return unit)]))
+      (surface-ast-write-i64! out (ast.ast-lifetime-list-len (& chain)))
+      (let
+        [index : i64 (- (ast.ast-lifetime-list-len (& chain)) 1)]
+        (while (>= index 0)
+          (match (cis.intern-structural-session-record-for-raw
+            session
+            (ast.ast-lifetime-list-get (& chain) index -1))
+            [(cis.InternMaybeStructuralRecord.Some record)
+              (surface-ast-write-i64! out record.left-id)
+              (if (= record.left-id 1)
+                (begin
+                  (surface-ast-write-name-at!
+                    out
+                    context
+                    record.middle-id
+                    (+ depth 1))
+                  (surface-ast-write-name-at!
+                    out
+                    context
+                    record.right-id
+                    (+ depth 1)))
+                (surface-ast-write-i64! out record.right-id))]
+            [_ (surface-ast-write-fail! context)])
+          (-= index 1))))))
+
+(define (surface-ast-read-callable-scope!
+  [reader : (&mut reader SurfaceAstReader)]
+  [depth : i64]) : i64
+  (let
+    [count : i64 (surface-ast-read-count! reader)]
+    [scope : i64 0]
+    [index : i64 0]
+    [session : cis.InternStructuralSessionHandle
+      (cis.InternStructuralSessionHandle reader.structural-session.address)]
+    (when
+      (or
+        (<= count 0)
+        (> count (/ (- reader.cursor.end reader.cursor.offset) 16)))
+      (surface-ast-reader-fail!
+        reader
+        "surface ast: malformed callable scope chain")
+      (return -1))
+    (while (and (< index count) (surface-ast-reader-valid? reader))
+      (let
+        [role : i64 (surface-ast-read-i64! reader)]
+        [parent : i64
+          (if (= role 1)
+            (surface-ast-read-name-at! reader (+ depth 1))
+            scope)]
+        [position : i64
+          (if (= role 1)
+            (surface-ast-read-name-at! reader (+ depth 1))
+            (surface-ast-read-i64! reader))]
+        (unless
+          (and
+            (>= role 1)
+            (<= role 3)
+            (>= position 0)
+            (or (!= role 1) (= index 0)))
+          (surface-ast-reader-fail!
+            reader
+            "surface ast: malformed callable scope chain")
+          (return -1))
+        (set!
+          scope
+          (cis.intern-structural-session-callable-scope
+            session
+            role
+            parent
+            position).value))
+      (+= index 1))
+    scope))

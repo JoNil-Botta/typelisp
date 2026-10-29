@@ -1337,46 +1337,58 @@
         n
         (text_buf.append-int (text_buf.append (text_buf.empty) "string_") n)))))
 
-(define (spec-type-list-key-at-with-owner
+(define (spec-type-list-key-at-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : String
   (if (>= index (ast.ast-type-list-len types))
     "nil"
     (str_cat.str-cat
-      (spec-type-key-with-owner
+      (spec-type-key-with-owner-in
+        bound
         owner
         (&
           (spec-owner-type-get
             owner
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       "_"
-      (spec-type-list-key-at-with-owner owner types (+ index 1)))))
+      (spec-type-list-key-at-with-owner-in bound owner types (+ index 1)))))
 
-(define (spec-type-list-key-with-owner
+(define (spec-type-list-key-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [types : (& ast.AstTypeList)]) : String
-  (spec-type-list-key-at-with-owner owner types 0))
+  (spec-type-list-key-at-with-owner-in bound owner types 0))
 
-(define (spec-lifetime-list-key-at-with-owner
+(define (spec-lifetime-list-key-at-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     "nil"
     (str_cat.str-cat
-      (spec_ci.intern-compat-state-str
-        (spec-owner-intern-state owner)
+      (ast.ast-callable-lifetime-key
+        (spec_ci.intern-source-name-session-handle-from-state
+          (& (spec-owner-intern-state owner)))
+        bound
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       "_"
-      (spec-lifetime-list-key-at-with-owner owner lifetimes (+ index 1)))))
+      (spec-lifetime-list-key-at-with-owner-in
+        bound
+        owner
+        lifetimes
+        (+ index 1)))))
 
-(define (spec-lifetime-list-key-with-owner
+(define (spec-lifetime-list-key-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [lifetimes : (& ast.AstLifetimeList)]) : String
-  (spec-lifetime-list-key-at-with-owner owner lifetimes 0))
+  (spec-lifetime-list-key-at-with-owner-in bound owner lifetimes 0))
 
-(define (spec-type-key-with-owner
+(define (spec-type-key-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [ty : (& ast.AstType)]) : String
   (match ty
@@ -1399,76 +1411,139 @@
     [(Never) "never"]
     [(Expr) "Expr"]
     [(ExprList) "ExprList"]
-    [(Func args ret)
-      (str_cat.str-cat
-        "fn_"
-        (spec-type-list-key-with-owner owner (& (deref args)))
-        "_to_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner ret))))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        [inner-bound : ast.AstLifetimeList
+          (ast.ast-callable-key-binders
+            (spec_ci.intern-source-name-session-handle-from-state
+              (& (spec-owner-intern-state owner)))
+            bound
+            (& args-signature.binders))]
+        (str_cat.str-cat
+          "fn_"
+          (spec-int-key
+            (ast.ast-callable-key-binder-count (& args-signature.binders)))
+          "_"
+          (spec-type-list-key-with-owner-in
+            (& inner-bound)
+            owner
+            (& args-signature.params))
+          "_to_"
+          (spec-type-key-with-owner-in
+            (& inner-bound)
+            owner
+            (& (spec-owner-type-get owner args-signature.result)))))]
     [(CFunc signature mode)
       (str_cat.str-cat
         "cfn_"
         (ast.ast-c-function-mode-name mode)
         "_"
-        (spec-type-key-with-owner
+        (spec-type-key-with-owner-in
+          bound
           owner
           (& (spec-owner-type-get owner signature))))]
     [(Tuple elems)
       (str_cat.str-cat
         "tuple_"
-        (spec-type-list-key-with-owner owner (& (deref elems))))]
+        (spec-type-list-key-with-owner-in bound owner (& (deref elems))))]
     [(Array elem count)
       (str_cat.str-cat
         "array_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner elem)))
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner elem)))
         "_"
         (spec-int-key count))]
     [(DynArray elem)
       (str_cat.str-cat
         "dynarray_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner elem))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner elem))))]
     [(Slice elem)
       (str_cat.str-cat
         "slice_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner elem))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner elem))))]
     [(Box elem)
       (str_cat.str-cat
         "box_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner elem))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner elem))))]
     [(Ptr elem)
       (str_cat.str-cat
         "ptr_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner elem))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner elem))))]
     [(MutPtr elem)
       (str_cat.str-cat
         "mutptr_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner elem))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner elem))))]
     [(Ref region inner)
       (str_cat.str-cat
         "ref_"
-        (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) region)
+        (ast.ast-callable-lifetime-key
+          (spec_ci.intern-source-name-session-handle-from-state
+            (& (spec-owner-intern-state owner)))
+          bound
+          region)
         "_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner inner))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner inner))))]
     [(MutRef region inner)
       (str_cat.str-cat
         "mutref_"
-        (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) region)
+        (ast.ast-callable-lifetime-key
+          (spec_ci.intern-source-name-session-handle-from-state
+            (& (spec-owner-intern-state owner)))
+          bound
+          region)
         "_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner inner))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner inner))))]
     [(Region region inner)
       (str_cat.str-cat
         "region_"
-        (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) region)
+        (ast.ast-callable-lifetime-key
+          (spec_ci.intern-source-name-session-handle-from-state
+            (& (spec-owner-intern-state owner)))
+          bound
+          region)
         "_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner inner))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner inner))))]
     [(Invalidate lifetime inner)
       (str_cat.str-cat
         "invalidate_"
-        (spec_ci.intern-compat-state-str
-          (spec-owner-intern-state owner)
+        (ast.ast-callable-lifetime-key
+          (spec_ci.intern-source-name-session-handle-from-state
+            (& (spec-owner-intern-state owner)))
+          bound
           lifetime)
         "_"
-        (spec-type-key-with-owner owner (& (spec-owner-type-get owner inner))))]
+        (spec-type-key-with-owner-in
+          bound
+          owner
+          (& (spec-owner-type-get owner inner))))]
     [(Enum name)
       (str_cat.str-cat
         "enum_"
@@ -1482,7 +1557,7 @@
           (spec-owner-intern-state owner)
           name)
         "_"
-        (spec-lifetime-list-key-with-owner owner (& (deref lifetimes))))]
+        (spec-lifetime-list-key-with-owner-in bound owner (& (deref lifetimes))))]
     [(Struct name)
       (str_cat.str-cat
         "struct_"
@@ -1496,7 +1571,7 @@
           (spec-owner-intern-state owner)
           name)
         "_"
-        (spec-lifetime-list-key-with-owner owner (& (deref lifetimes))))]
+        (spec-lifetime-list-key-with-owner-in bound owner (& (deref lifetimes))))]
     [(Var name)
       (str_cat.str-cat
         "var_"
@@ -1506,7 +1581,7 @@
         "varargs_"
         (spec_ci.intern-compat-state-str (spec-owner-intern-state owner) name)
         "_"
-        (spec-lifetime-list-key-with-owner owner (& (deref lifetimes))))]))
+        (spec-lifetime-list-key-with-owner-in bound owner (& (deref lifetimes))))]))
 
 (define (spec-value-key-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -1637,7 +1712,8 @@
           unit)])
     (spec_ci.intern-compat-state-intern (&mut intern-state) text)))
 
-(define (spec-type-list-structural-key-at-with-owner
+(define (spec-type-list-structural-key-at-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [types : (& types ast.AstTypeList)]
   [index : i64]) : SpecStructuralKey
@@ -1645,26 +1721,33 @@
     (SpecStructuralKey 0)
     (let
       [head : SpecStructuralKey
-        (spec-type-structural-key-with-owner
+        (spec-type-structural-key-with-owner-in
+          bound
           owner
           (&
             (spec-owner-type-get
               owner
               (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))]
       [tail : SpecStructuralKey
-        (spec-type-list-structural-key-at-with-owner owner types (+ index 1))]
+        (spec-type-list-structural-key-at-with-owner-in
+          bound
+          owner
+          types
+          (+ index 1))]
       (spec-structural-node-with-owner
         owner
         -1
         (spec-structural-key-raw head)
         (spec-structural-key-raw tail)))))
 
-(define (spec-type-list-structural-key-with-owner
+(define (spec-type-list-structural-key-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [types : (& ast.AstTypeList)]) : SpecStructuralKey
-  (spec-type-list-structural-key-at-with-owner owner types 0))
+  (spec-type-list-structural-key-at-with-owner-in bound owner types 0))
 
-(define (spec-lifetime-list-structural-key-at-with-owner
+(define (spec-lifetime-list-structural-key-at-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]) : SpecStructuralKey
@@ -1677,11 +1760,14 @@
         (spec-structural-content-atom-with-owner
           owner
           (&
-            (spec_ci.intern-compat-state-str
-              (spec-owner-intern-state owner)
+            (ast.ast-callable-lifetime-key
+              (spec_ci.intern-source-name-session-handle-from-state
+                (& (spec-owner-intern-state owner)))
+              bound
               name-id)))]
       [tail : SpecStructuralKey
-        (spec-lifetime-list-structural-key-at-with-owner
+        (spec-lifetime-list-structural-key-at-with-owner-in
+          bound
           owner
           lifetimes
           (+ index 1))]
@@ -1691,12 +1777,14 @@
         atom
         (spec-structural-key-raw tail)))))
 
-(define (spec-lifetime-list-structural-key-with-owner
+(define (spec-lifetime-list-structural-key-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [lifetimes : (& ast.AstLifetimeList)]) : SpecStructuralKey
-  (spec-lifetime-list-structural-key-at-with-owner owner lifetimes 0))
+  (spec-lifetime-list-structural-key-at-with-owner-in bound owner lifetimes 0))
 
-(define (spec-type-structural-key-with-owner
+(define (spec-type-structural-key-with-owner-in
+  [bound : (& bound ast.AstLifetimeList)]
   [owner : (& owner SpecOwnerContext)]
   [ty : (& ast.AstType)]) : SpecStructuralKey
   (match ty
@@ -1719,23 +1807,41 @@
     [(Never) (spec-structural-node-with-owner owner -116 0 0)]
     [(Expr) (spec-structural-node-with-owner owner -117 0 0)]
     [(ExprList) (spec-structural-node-with-owner owner -118 0 0)]
-    [(Func args ret)
+    [(Func args-signature-box)
       (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        [inner-bound : ast.AstLifetimeList
+          (ast.ast-callable-key-binders
+            (spec_ci.intern-source-name-session-handle-from-state
+              (& (spec-owner-intern-state owner)))
+            bound
+            (& args-signature.binders))]
         [arg-key : SpecStructuralKey
-          (spec-type-list-structural-key-with-owner owner (& (deref args)))]
-        [ret-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-list-structural-key-with-owner-in
+            (& inner-bound)
             owner
-            (& (spec-owner-type-get owner ret)))]
+            (& args-signature.params))]
+        [ret-key : SpecStructuralKey
+          (spec-type-structural-key-with-owner-in
+            (& inner-bound)
+            owner
+            (& (spec-owner-type-get owner args-signature.result)))]
         (spec-structural-node-with-owner
           owner
           -119
-          (spec-structural-key-raw arg-key)
+          (spec-structural-key-raw
+            (spec-structural-node-with-owner
+              owner
+              -140
+              (ast.ast-callable-key-binder-count (& args-signature.binders))
+              (spec-structural-key-raw arg-key)))
           (spec-structural-key-raw ret-key)))]
     [(CFunc signature mode)
       (let
         [signature-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner signature)))]
         (spec-structural-node-with-owner
@@ -1746,7 +1852,10 @@
     [(Tuple elems)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-list-structural-key-with-owner owner (& (deref elems)))]
+          (spec-type-list-structural-key-with-owner-in
+            bound
+            owner
+            (& (deref elems)))]
         (spec-structural-node-with-owner
           owner
           -120
@@ -1755,7 +1864,8 @@
     [(Array elem count)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner elem)))]
         (spec-structural-node-with-owner
@@ -1766,7 +1876,8 @@
     [(DynArray elem)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner elem)))]
         (spec-structural-node-with-owner
@@ -1777,7 +1888,8 @@
     [(Slice elem)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner elem)))]
         (spec-structural-node-with-owner
@@ -1788,7 +1900,8 @@
     [(Box elem)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner elem)))]
         (spec-structural-node-with-owner
@@ -1799,7 +1912,8 @@
     [(Ptr elem)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner elem)))]
         (spec-structural-node-with-owner
@@ -1810,7 +1924,8 @@
     [(MutPtr elem)
       (let
         [elem-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner elem)))]
         (spec-structural-node-with-owner
@@ -1821,7 +1936,8 @@
     [(Ref region inner)
       (let
         [inner-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner inner)))]
         (spec-structural-node-with-owner
@@ -1830,14 +1946,17 @@
           (spec-structural-content-atom-with-owner
             owner
             (&
-              (spec_ci.intern-compat-state-str
-                (spec-owner-intern-state owner)
+              (ast.ast-callable-lifetime-key
+                (spec_ci.intern-source-name-session-handle-from-state
+                  (& (spec-owner-intern-state owner)))
+                bound
                 region)))
           (spec-structural-key-raw inner-key)))]
     [(MutRef region inner)
       (let
         [inner-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner inner)))]
         (spec-structural-node-with-owner
@@ -1846,14 +1965,17 @@
           (spec-structural-content-atom-with-owner
             owner
             (&
-              (spec_ci.intern-compat-state-str
-                (spec-owner-intern-state owner)
+              (ast.ast-callable-lifetime-key
+                (spec_ci.intern-source-name-session-handle-from-state
+                  (& (spec-owner-intern-state owner)))
+                bound
                 region)))
           (spec-structural-key-raw inner-key)))]
     [(Region region inner)
       (let
         [inner-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner inner)))]
         (spec-structural-node-with-owner
@@ -1862,14 +1984,17 @@
           (spec-structural-content-atom-with-owner
             owner
             (&
-              (spec_ci.intern-compat-state-str
-                (spec-owner-intern-state owner)
+              (ast.ast-callable-lifetime-key
+                (spec_ci.intern-source-name-session-handle-from-state
+                  (& (spec-owner-intern-state owner)))
+                bound
                 region)))
           (spec-structural-key-raw inner-key)))]
     [(Invalidate lifetime inner)
       (let
         [inner-key : SpecStructuralKey
-          (spec-type-structural-key-with-owner
+          (spec-type-structural-key-with-owner-in
+            bound
             owner
             (& (spec-owner-type-get owner inner)))]
         (spec-structural-node-with-owner
@@ -1878,8 +2003,10 @@
           (spec-structural-content-atom-with-owner
             owner
             (&
-              (spec_ci.intern-compat-state-str
-                (spec-owner-intern-state owner)
+              (ast.ast-callable-lifetime-key
+                (spec_ci.intern-source-name-session-handle-from-state
+                  (& (spec-owner-intern-state owner)))
+                bound
                 lifetime)))
           (spec-structural-key-raw inner-key)))]
     [(Enum name)
@@ -1896,7 +2023,8 @@
     [(EnumArgs name lifetimes)
       (let
         [lifetime-key : SpecStructuralKey
-          (spec-lifetime-list-structural-key-with-owner
+          (spec-lifetime-list-structural-key-with-owner-in
+            bound
             owner
             (& (deref lifetimes)))]
         (spec-structural-node-with-owner
@@ -1923,7 +2051,8 @@
     [(StructArgs name lifetimes)
       (let
         [lifetime-key : SpecStructuralKey
-          (spec-lifetime-list-structural-key-with-owner
+          (spec-lifetime-list-structural-key-with-owner-in
+            bound
             owner
             (& (deref lifetimes)))]
         (spec-structural-node-with-owner
@@ -1950,7 +2079,8 @@
     [(VarArgs name lifetimes)
       (let
         [lifetime-key : SpecStructuralKey
-          (spec-lifetime-list-structural-key-with-owner
+          (spec-lifetime-list-structural-key-with-owner-in
+            bound
             owner
             (& (deref lifetimes)))]
         (spec-structural-node-with-owner
@@ -1963,6 +2093,88 @@
                 (spec-owner-intern-state owner)
                 name)))
           (spec-structural-key-raw lifetime-key)))]))
+
+(define (spec-type-list-key-at-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : String
+  (spec-type-list-key-at-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    types
+    index))
+
+(define (spec-type-list-key-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [types : (& ast.AstTypeList)]) : String
+  (spec-type-list-key-with-owner-in (& (ast.ast-lifetime-list-new)) owner types))
+
+(define (spec-lifetime-list-key-at-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [index : i64]) : String
+  (spec-lifetime-list-key-at-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    lifetimes
+    index))
+
+(define (spec-lifetime-list-key-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [lifetimes : (& ast.AstLifetimeList)]) : String
+  (spec-lifetime-list-key-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    lifetimes))
+
+(define (spec-type-key-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [ty : (& ast.AstType)]) : String
+  (spec-type-key-with-owner-in (& (ast.ast-lifetime-list-new)) owner ty))
+
+(define (spec-type-list-structural-key-at-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : SpecStructuralKey
+  (spec-type-list-structural-key-at-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    types
+    index))
+
+(define (spec-type-list-structural-key-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [types : (& ast.AstTypeList)]) : SpecStructuralKey
+  (spec-type-list-structural-key-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    types))
+
+(define (spec-lifetime-list-structural-key-at-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [index : i64]) : SpecStructuralKey
+  (spec-lifetime-list-structural-key-at-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    lifetimes
+    index))
+
+(define (spec-lifetime-list-structural-key-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [lifetimes : (& ast.AstLifetimeList)]) : SpecStructuralKey
+  (spec-lifetime-list-structural-key-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    lifetimes))
+
+(define (spec-type-structural-key-with-owner
+  [owner : (& owner SpecOwnerContext)]
+  [ty : (& ast.AstType)]) : SpecStructuralKey
+  (spec-type-structural-key-with-owner-in
+    (& (ast.ast-lifetime-list-new))
+    owner
+    ty))
 
 (define (spec-value-structural-key-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -4292,15 +4504,22 @@
   [ty : ast.AstType]
   [subs : (& subs SpecTypeSubst)]) : ast.AstType
   (match (ast.ast-place-shared-view ty)
-    [(Func args ret)
-      (ast.ast-ty-func-with-pools
-        (spec-owner-pools owner)
-        (spec-substitute-type-list-with-owner owner (& (deref args)) subs)
-        (&
-          (spec-substitute-type-with-owner
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (ast.ast-ty-func-with-pools
+          (spec-owner-pools owner)
+          (spec-substitute-type-list-with-owner
             owner
-            (spec-owner-type-get owner ret)
-            subs)))]
+            (& args-signature.params)
+            subs)
+          (&
+            (spec-substitute-type-with-owner
+              owner
+              (spec-owner-type-get owner args-signature.result)
+              subs))
+          args-signature.binders))]
     [(Tuple elems)
       (Tuple
         (box

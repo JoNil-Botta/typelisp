@@ -387,7 +387,10 @@
       (fixture.typed-test-type!
         (&mut store)
         (& lease)
-        (ast.ast-ty-func params (& (ast.AstType.I64))))]
+        (ast.ast-ty-func
+          params
+          (& (ast.AstType.I64))
+          (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new))))]
     [text : typed.TypedBinderId
       (match (typed.typed-binder-add!
         (&mut store)
@@ -626,12 +629,18 @@
       (fixture.typed-test-type!
         (&mut store)
         (& lease)
-        (ast.ast-ty-func one-params (& (ast.AstType.I64))))]
+        (ast.ast-ty-func
+          one-params
+          (& (ast.AstType.I64))
+          (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new))))]
     [signature : typed.TypedTypeId
       (fixture.typed-test-type!
         (&mut store)
         (& lease)
-        (ast.ast-ty-func two-params (& (ast.AstType.I64))))]
+        (ast.ast-ty-func
+          two-params
+          (& (ast.AstType.I64))
+          (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new))))]
     [text : typed.TypedBinderId
       (match (typed.typed-binder-add!
         (&mut store)

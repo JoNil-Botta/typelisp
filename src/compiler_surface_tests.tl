@@ -469,7 +469,13 @@
       (codec.surface-ast-write-type!
         (&mut out)
         (&mut context)
-        (& (Func (box (ast.ast-type-list-new)) 0)))
+        (&
+          (Func
+            (box
+              (ast.AstFunctionSignature
+                (ast.ast-type-list-new)
+                0
+                (ast.AstCallableBinders.Unresolved))))))
       (codec.surface-ast-write-type!
         (&mut out)
         (&mut context)
@@ -1187,19 +1193,24 @@
         (and
           (ast.ast-c-function-mode-eq? actual-mode mode)
           (match (ast.ast-node-pool-context-type-get pools signature)
-            [(Func args result)
+            [(Func args-signature-box)
               (let
-                [items : ast.AstTypeList (deref args)]
-                (and
-                  (= (ast.ast-type-list-len (& items)) 1)
-                  (match (ast.ast-node-pool-context-type-get
-                    pools
-                    (ast.ast-type-list-get (& items) 0 -1))
-                    [(I64) true]
-                    [_ false])
-                  (match (ast.ast-node-pool-context-type-get pools result)
-                    [(Bool) true]
-                    [_ false])))]
+                [args-signature
+                  (ast.ast-function-signature-view (deref args-signature-box))]
+                (let
+                  [items : ast.AstTypeList args-signature.params]
+                  (and
+                    (= (ast.ast-type-list-len (& items)) 1)
+                    (match (ast.ast-node-pool-context-type-get
+                      pools
+                      (ast.ast-type-list-get (& items) 0 -1))
+                      [(I64) true]
+                      [_ false])
+                    (match (ast.ast-node-pool-context-type-get
+                      pools
+                      args-signature.result)
+                      [(Bool) true]
+                      [_ false]))))]
             [_ false]))]
       [_ false])))
 
@@ -1266,7 +1277,8 @@
               source-pools
               (& (I64))
               (& (ast.ast-type-list-new)))
-            (& (Bool))))]
+            (& (Bool))
+            (ast.AstCallableBinders.Unresolved)))]
       [slice-i64 : ast.AstType
         (ast.ast-ty-slice-with-pools source-pools (& (I64)))]
       [borrowed-slice : ast.AstType
@@ -1785,7 +1797,11 @@
 (cfg
   compiler-surface-selftest
   (define (surface-ast-selftest-main) : i64
-    (if (and (surface-ast-decl-meta-tests-ok?) (surface-ast-tests-ok?))
+    (if (and
+      (surface-ast-decl-meta-tests-ok?)
+      (surface-ast-tests-ok?)
+      (surface-ast-callable-contract-roundtrip-ok?)
+      (surface-ast-callable-contract-invalid-ok?))
       42
       1)))
 
@@ -2191,3 +2207,206 @@
     (if (compiler-surface-hydrate-tests-ok?)
       42
       1)))
+
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-callable-contract-roundtrip-ok?) : bool
+    (let
+      [module : i64 (ci.intern "callable.codec")]
+      [name : i64 (ci.intern "identity")]
+      [spelling : i64 (ci.intern "codec-input")]
+      [count : i64 (surface-ast-intern-id-bound module name spelling)]
+      [state : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state state))]
+      [scope : cis.InternCallableScopeIdentity
+        (cis.intern-structural-session-callable-scope session 1 module name)]
+      [_nested : unit
+        (for [index (iterator.range 0 48)]
+          (set!
+            scope
+            (cis.intern-structural-session-callable-scope
+              session
+              2
+              scope.value
+              index)))]
+      [binder : cis.InternCallableLifetimeIdentity
+        (cis.intern-structural-session-callable-lifetime
+          session
+          scope
+          0
+          spelling)]
+      [owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+      [destination : ci.InternCompatState (ci.intern-compat-state-new)]
+      [remap : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [context : codec.SurfaceAstWriteContext
+        (codec.surface-ast-write-context-new session count count)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (ast.ast-lifetime-list-push (&mut owned) binder.value)
+      (for [index (iterator.range 0 count)]
+        (set!
+          (array-ref remap index)
+          (ci.intern-compat-state-intern
+            (&mut destination)
+            (ci.intern-str index))))
+      (codec.surface-ast-write-type!
+        (&mut out)
+        (&mut context)
+        (&
+          (ast.ast-ty-func
+            (ast.ast-type-list-new)
+            (& (Unit))
+            (ast.AstCallableBinders.Resolved owned))))
+      (codec.surface-ast-write-type!
+        (&mut out)
+        (&mut context)
+        (& (ast.ast-ty-ref binder.value (& (I64)))))
+      (let
+        [other : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state destination))]
+        [bytes : (__tl_dyn-array u8)
+          (byte_buf_core.byte-buf-builder-finish-array (& out))]
+        [reader : codec.SurfaceAstReader
+          (codec.surface-ast-reader-new (& bytes) other remap)]
+        [decoded : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
+        [reference : ast.AstType (codec.surface-ast-read-type! (&mut reader))]
+        [decoded-id : i64
+          (match decoded
+            [(Func boxed)
+              (let
+                [signature : ast.AstFunctionSignature
+                  (ast.ast-function-signature-view (deref boxed))]
+                (match signature.binders
+                  [(ast.AstCallableBinders.Resolved binders)
+                    (if (= (ast.ast-lifetime-list-len (& binders)) 1)
+                      (ast.ast-lifetime-list-get (& binders) 0 -1)
+                      -1)]
+                  [_ -1]))]
+            [_ -1])]
+        [valid : bool
+          (and
+            (codec.surface-ast-write-valid? (& context))
+            (codec.surface-ast-reader-valid? (& reader))
+            (=
+              (codec.surface-ast-reader-offset (& reader))
+              (array-length bytes))
+            (!= decoded-id binder.value)
+            (string.eq
+              (ast.ast-callable-identity-key
+                (cis.intern-structural-session-handle-source-names session)
+                binder.value
+                0)
+              (ast.ast-callable-identity-key
+                (cis.intern-structural-session-handle-source-names other)
+                decoded-id
+                0))
+            (match reference
+              [(Ref lifetime _) (= lifetime decoded-id)]
+              [_ false])
+            (match (cis.intern-structural-session-callable-lifetime-record
+              other
+              decoded-id)
+              [(cis.InternMaybeCallableLifetimeRecord.Some _) true]
+              [_ false])
+            (match (cis.intern-structural-session-callable-lifetime-record
+              session
+              decoded-id)
+              [(cis.InternMaybeCallableLifetimeRecord.No) true]
+              [_ false]))]
+        (ci.intern-compat-state-reset! (&mut destination))
+        (and
+          valid
+          (match (cis.intern-structural-session-callable-lifetime-record
+            other
+            decoded-id)
+            [(cis.InternMaybeCallableLifetimeRecord.No) true]
+            [_ false])
+          (match (cis.intern-structural-session-callable-lifetime-record
+            session
+            binder.value)
+            [(cis.InternMaybeCallableLifetimeRecord.Some _) true]
+            [_ false]))))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (surface-ast-callable-contract-invalid-ok?) : bool
+    (let
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-capture-active-handle))]
+      [_spelling : i64 (ci.intern "codec-malformed")]
+      [count : i64 (ci.intern-capacity)]
+      [remap : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [valid : bool true]
+      (for [index (iterator.range 0 count)]
+        (set! (array-ref remap index) index))
+      ;; Unknown contract tag, ordinary name pretending to bind, duplicate
+      ;; structural identity and mixed owners must all fail the reader.
+      (for [kind (iterator.range 0 4)]
+        (let
+          [out : byte_buf_core.ByteBufBuilder
+            (byte_buf_core.byte-buf-builder-new)]
+          [context : codec.SurfaceAstWriteContext
+            (codec.surface-ast-write-context-new session count count)]
+          [spelling : i64 (ci.intern "codec-malformed")]
+          [scope : cis.InternCallableScopeIdentity
+            (cis.intern-structural-session-callable-scope
+              session
+              1
+              spelling
+              spelling)]
+          [first : cis.InternCallableLifetimeIdentity
+            (cis.intern-structural-session-callable-lifetime
+              session
+              scope
+              0
+              spelling)]
+          [second : cis.InternCallableLifetimeIdentity
+            (cis.intern-structural-session-callable-lifetime
+              session
+              (cis.intern-structural-session-callable-scope
+                session
+                2
+                scope.value
+                7)
+              0
+              spelling)]
+          (codec.surface-ast-write-i64!
+            (&mut out)
+            (if (= kind 0)
+              99
+              1))
+          (unless
+            (= kind 0)
+            (codec.surface-ast-write-i64!
+              (&mut out)
+              (if (= kind 1)
+                1
+                2))
+            (codec.surface-ast-write-name!
+              (&mut out)
+              (&mut context)
+              (if (= kind 1)
+                spelling
+                first.value))
+            (when
+              (>= kind 2)
+              (codec.surface-ast-write-name!
+                (&mut out)
+                (&mut context)
+                (if (= kind 2)
+                  first.value
+                  second.value))))
+          (let
+            [bytes : (__tl_dyn-array u8)
+              (byte_buf_core.byte-buf-builder-finish-array (& out))]
+            [reader : codec.SurfaceAstReader
+              (codec.surface-ast-reader-new (& bytes) session remap)]
+            [_decoded : ast.AstCallableBinders
+              (codec.surface-ast-read-callable-binders! (&mut reader))]
+            (when
+              (codec.surface-ast-reader-valid? (& reader))
+              (set! valid false)))))
+      valid)))

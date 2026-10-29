@@ -97,7 +97,12 @@
     [_function : i64
       (ast.ast-node-pool-context-type-push
         pools
-        (Func (box (ast.ast-type-list-new)) scalar))]
+        (Func
+          (box
+            (ast.AstFunctionSignature
+              (ast.ast-type-list-new)
+              scalar
+              (ast.AstCallableBinders.Unresolved)))))]
     [_pointer : i64
       (ast.ast-node-pool-context-type-push pools (CFunc 1 NonNull))]
     [reader : codec.SurfaceAstReader

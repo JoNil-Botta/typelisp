@@ -13144,13 +13144,21 @@
   [module : (& str)]
   [ty : ast.AstType]) : lower_i64_i64_map.Map
   (match ty
-    [(Func args ret)
-      (lower-used-types-add-type-id
-        session
-        pools
-        (lower-used-types-add-type-list session pools used module (deref args))
-        module
-        ret)]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (lower-used-types-add-type-id
+          session
+          pools
+          (lower-used-types-add-type-list
+            session
+            pools
+            used
+            module
+            args-signature.params)
+          module
+          args-signature.result))]
     [(Tuple elems)
       (lower-used-types-add-type-list session pools used module (deref elems))]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Region _ elem)
@@ -16029,7 +16037,7 @@
       [(Struct name) (lower-inline-layout-size-or ctx (Struct name) 8)]
       [(StructArgs name lifetimes)
         (lower-inline-layout-size-or ctx (StructArgs name lifetimes) 8)]
-      [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (DynArray _) (Box _) (Ptr _)
+      [(or (I64) (U64) (F64) (CFunc _ _) (Func _) (DynArray _) (Box _) (Ptr _)
            (MutPtr _) (String) (Str) (Bytes) (Var _) (VarArgs _ _))
         8])))
 
@@ -16082,7 +16090,7 @@
               3
               1)]
           [(or (Unit) (Never)) 0]
-          [(or (DynArray _) (String) (Str) (Box _) (Ptr _) (MutPtr _) (Func _ _)
+          [(or (DynArray _) (String) (Str) (Box _) (Ptr _) (MutPtr _) (Func _)
                (CFunc _ _))
             1]
           [_
@@ -16275,7 +16283,7 @@
       [(Struct name) (lower-inline-layout-align-or ctx (Struct name) 8)]
       [(StructArgs name lifetimes)
         (lower-inline-layout-align-or ctx (StructArgs name lifetimes) 8)]
-      [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (DynArray _) (Box _) (Ptr _)
+      [(or (I64) (U64) (F64) (CFunc _ _) (Func _) (DynArray _) (Box _) (Ptr _)
            (MutPtr _) (Ref _ _) (MutRef _ _) (String) (Str) (Bytes) (Var _)
            (VarArgs _ _))
         8])))
@@ -18971,16 +18979,19 @@
                 ctx
                 (tc_core.tc-context-type-get ctx elem)
                 stack)]
-            [(Func params ret)
-              (and
-                (lower-supported-reference-type-list-with-stack?
-                  ctx
-                  (deref params)
-                  (lower-global-shared-view stack))
-                (lower-supported-reference-type-with-stack?
-                  ctx
-                  (tc_core.tc-context-type-get ctx ret)
-                  stack))]
+            [(Func params-signature-box)
+              (let
+                [params-signature
+                  (ast.ast-function-signature-view (deref params-signature-box))]
+                (and
+                  (lower-supported-reference-type-list-with-stack?
+                    ctx
+                    params-signature.params
+                    (lower-global-shared-view stack))
+                  (lower-supported-reference-type-with-stack?
+                    ctx
+                    (tc_core.tc-context-type-get ctx params-signature.result)
+                    stack)))]
             [(Struct name)
               (lower-supported-reference-struct-args-with-stack?
                 ctx
@@ -22223,7 +22234,7 @@
 
 (define (lower-function-type? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region ty)
-    [(or (CFunc _ _) (Func _ _)) true]
+    [(or (CFunc _ _) (Func _)) true]
     [_ false]))
 
 (define (lower-atomic-public-symbol? [symbol : (& symbol str)]) : bool
@@ -22516,7 +22527,11 @@
       (let
         [ty : ast.AstType (try (tc_core.tc-expr ctx type-env lambda-expr))]
         (match (tc_core.tc-type-strip-region ty)
-          [(Func _ ret) (Ok (tc_core.tc-context-type-get ctx ret))]
+          [(Func ret-signature-box)
+            (let
+              [ret-signature
+                (ast.ast-function-signature-view (deref ret-signature-box))]
+              (Ok (tc_core.tc-context-type-get ctx ret-signature.result)))]
           [_ (Err "lower: lambda did not typecheck as a function")]))]))
 
 (define (lower-capture-list-contains-name?
@@ -22562,7 +22577,7 @@
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx ty))
     [(or (I64) (U64) (F64) (I32) (U32) (F32) (I16) (U16) (I8) (U8) (Bool) (Char)
-         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (CFunc _ _) (Func _ _)
+         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (CFunc _ _) (Func _)
          (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
          (StructArgs _ _) (String) (DynArray _))
       true]
@@ -22577,7 +22592,7 @@
 
 (define (lower-capture-slot-type [ty : ast.AstType]) : ast.AstType
   (match (tc_core.tc-type-strip-region (lower-global-shared-view ty))
-    [(or (Func _ _) (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
+    [(or (Func _) (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
          (StructArgs _ _) (String) (DynArray _))
       (U64)]
     [_ ty]))
@@ -23807,12 +23822,38 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [params : ast.AstParamList]
-  [maybe-ret : ast.AstMaybeType]
+  [_maybe-ret : ast.AstMaybeType]
   [body : ast.AstExpr]
   [body-box : i64]
   [origin : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (let
+    [signature : ast.AstFunctionSignature
+      (match (tc_core.tc-type-strip-region (lower-global-shared-view expr-ty))
+        [(ast.AstType.Func boxed)
+          (ast.ast-function-signature-view (deref boxed))]
+        [_
+          (return
+            (Err
+              (box
+                (lower-diagnostic "lower: missing checked callable contract"))))])]
+    [scope : tc_core.TcCallableScope
+      (match (tc_core.tc-callable-retain-scope
+        ctx
+        (lower-global-shared-view expr-ty)
+        (cis.intern-structural-session-callable-scope
+          (tc_core.tc-context-structural-session ctx)
+          2
+          ctx.callable-scope.value
+          body-box))
+        [(tc_core.ResultTcCallableScope.Ok retained) retained]
+        [(tc_core.ResultTcCallableScope.Err message)
+          (return (Err (box (lower-diagnostic message))))])]
+    [ctx : tc_core.TcContext scope.context]
+    [params : ast.AstParamList
+      (tc_core.tc-check-fn-params-from-types ctx params signature.params)]
+    [maybe-ret : ast.AstMaybeType
+      (ast.AstMaybeType.Some (tc_core.tc-context-type-get ctx signature.result))]
     [written : tc_core.TcBodyParamWriteFact
       (tc_core.tc-body-param-write-fact
         (tc_core.tc-context-body-state ctx)
@@ -29661,12 +29702,12 @@
             [(Ok fn-ty)
               (match (tc_core.tc-type-strip-region
                 (tc_core.tc-resolve-type ctx (lower-global-shared-view fn-ty)))
-                [(Func _ ret)
-                  (Ok
-                    (tc_core.tc-type-without-regions
-                      (tc_core.tc-resolve-type
-                        ctx
-                        (tc_core.tc-context-type-get ctx ret))))]
+                [(Func ret-signature-box)
+                  (let
+                    [ret-signature
+                      (ast.ast-function-signature-view
+                        (deref ret-signature-box))]
+                    (lower-call-result-type-from-signature ctx ret-signature))]
                 [(Enum _) (Ok (tc_core.tc-type-without-regions fn-ty))]
                 [_ (Err "lower: call result type is not fast-pathable")])]
             [(Err message)
@@ -29704,12 +29745,11 @@
                   maybe-ret
                   body))]
             (match fn-ty
-              [(Func _ ret)
-                (Ok
-                  (tc_core.tc-type-without-regions
-                    (tc_core.tc-resolve-type
-                      ctx
-                      (tc_core.tc-context-type-get ctx ret))))]
+              [(Func ret-signature-box)
+                (let
+                  [ret-signature
+                    (ast.ast-function-signature-view (deref ret-signature-box))]
+                  (lower-call-result-type-from-signature ctx ret-signature))]
               [_ (Err "lower: call result type is not fast-pathable")]))])]
     [_ (Err "lower: call result type is not fast-pathable")]))
 
@@ -30098,7 +30138,7 @@
       [_ unit])
     (let
       [resolved : ast.AstMaybeType
-        (tc_core.tc-let-binding-resolve-maybe-type ctx maybe-ty)]
+        (tc_core.tc-let-binding-resolve-maybe-type ctx type-env maybe-ty)]
       [source-ty : ast.AstType
         (try
           (tc_core.tc-let-binding-plain-type
@@ -32851,13 +32891,18 @@
                 [(Ok fn-ty)
                   (match (tc_core.tc-type-strip-region
                     (tc_core.tc-resolve-type ctx fn-ty))
-                    [(Func _ ret-ty)
+                    [(Func ret-ty-signature-box)
                       (let
+                        [ret-ty-signature
+                          (ast.ast-function-signature-view
+                            (deref ret-ty-signature-box))]
                         [actual-ty : ast.AstType
                           (tc_core.tc-type-without-regions
                             (tc_core.tc-resolve-type
                               ctx
-                              (tc_core.tc-context-type-get ctx ret-ty)))]
+                              (tc_core.tc-context-type-get
+                                ctx
+                                ret-ty-signature.result)))]
                         (if (tc_core.tc-type-eq
                           (lower-global-shared-view actual-ty)
                           expected-resolved)
@@ -35746,9 +35791,12 @@
             mode
             (tc_core.tc-context-type-get ctx inner)
             (ast.AstExternAbi.C))]
-        [(ast.AstType.Func source result-id)
+        [(ast.AstType.Func source-signature-box)
           (let
-            [output : ast.AstType (tc_core.tc-context-type-get ctx result-id)]
+            [source-signature
+              (ast.ast-function-signature-view (deref source-signature-box))]
+            [output : ast.AstType
+              (tc_core.tc-context-type-get ctx source-signature.result)]
             (match (lower-c-abi-return-aggregate-class
               ctx
               mode
@@ -35762,7 +35810,7 @@
                   (if (lower-return-storage-c-params!
                     ctx
                     mode
-                    (deref source)
+                    source-signature.params
                     (&mut physical))
                     (ir.CompilerIrReturnStorage.Some
                       (box
@@ -36181,20 +36229,23 @@
   [mode : CompilerLowerMode]
   [ty : ast.AstType]) : ast.AstType
   (match (& ty)
-    [(Func args ret-id)
+    [(Func args-signature-box)
       (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
         [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
         [leading-sret? : bool
           (match (lower-internal-return-class
             ctx
             mode
-            (tc_core.tc-context-type-get ctx ret-id))
+            (tc_core.tc-context-type-get ctx args-signature.result))
             [(Sret _) true]
             [_ false])]
         [params : ast.AstTypeList (ast.ast-type-list-new)]
         [pointer-id : i64 (ast.ast-node-pool-context-type-push pools (U64))]
         (when leading-sret? (ast.ast-type-list-push (&mut params) pointer-id))
-        (for [index (iterator.range 0 (ast.ast-type-list-len (& (deref args))))]
+        (for [index
+          (iterator.range 0 (ast.ast-type-list-len (& args-signature.params)))]
           (ast.ast-type-list-push
             (&mut params)
             (ast.ast-node-pool-context-type-push
@@ -36205,11 +36256,12 @@
                 (tc_core.tc-context-type-get
                   ctx
                   (ast.ast-type-list-get
-                    (& (deref args))
+                    (& args-signature.params)
                     index
                     (ast.ast-type-id-fallback)))))))
         (let
-          [ret-ty : ast.AstType (tc_core.tc-context-type-get ctx ret-id)]
+          [ret-ty : ast.AstType
+            (tc_core.tc-context-type-get ctx args-signature.result)]
           (when
             (and
               (not leading-sret?)
@@ -36223,7 +36275,8 @@
             (lower-internal-return-physical-type
               ctx
               mode
-              (tc_core.tc-context-type-get ctx ret-id)))))]
+              (tc_core.tc-context-type-get ctx args-signature.result)))
+          args-signature.binders))]
     [_ ty]))
 
 (define (lower-c-abi-register-resident-to-scalar
@@ -37481,16 +37534,22 @@
                     args
                     result-ty
                     origin)]))]
-          [(Func param-types declared-result)
+          [(Func param-types-signature-box)
             (let
+              [param-types-signature
+                (ast.ast-function-signature-view
+                  (deref param-types-signature-box))]
               [call-result-ty : ast.AstType
-                (lower-call-declared-result-type ctx declared-result result-ty)]
+                (lower-call-declared-result-type
+                  ctx
+                  param-types-signature.result
+                  result-ty)]
               (match (lower-direct-call-param-types
                 ctx
                 type-env
                 source-id
                 (lower-global-shared-view args)
-                (tc_core.tc-resolve-type-list ctx (deref param-types)))
+                (tc_core.tc-resolve-type-list ctx param-types-signature.params))
                 [(Ok call-param-types)
                   (if (lower-c-abi-extern-call?
                     ctx
@@ -37644,14 +37703,17 @@
   [args : ast.AstExprList]
   [func-ty : ast.AstType]) : ResultLowerArgs
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
-    [(Func param-types _)
-      (lower-args-as
-        ctx
-        state
-        env
-        type-env
-        args
-        (tc_core.tc-resolve-type-list ctx (deref param-types)))]
+    [(Func param-types-signature-box)
+      (let
+        [param-types-signature
+          (ast.ast-function-signature-view (deref param-types-signature-box))]
+        (lower-args-as
+          ctx
+          state
+          env
+          type-env
+          args
+          (tc_core.tc-resolve-type-list ctx param-types-signature.params)))]
     [_ (lower-args ctx state env type-env args)]))
 
 (define (lower-indirect-call-args-with-writebacks
@@ -37662,14 +37724,17 @@
   [args : ast.AstExprList]
   [func-ty : ast.AstType]) : ResultLowerCallArgs
   (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
-    [(Func param-types _)
-      (lower-call-args-as-needed
-        ctx
-        state
-        env
-        type-env
-        args
-        (tc_core.tc-resolve-type-list ctx (deref param-types)))]
+    [(Func param-types-signature-box)
+      (let
+        [param-types-signature
+          (ast.ast-function-signature-view (deref param-types-signature-box))]
+        (lower-call-args-as-needed
+          ctx
+          state
+          env
+          type-env
+          args
+          (tc_core.tc-resolve-type-list ctx param-types-signature.params)))]
     [_
       (match (lower-args ctx state env type-env args)
         [(Ok args-state values) (Ok args-state values (None))]
@@ -37742,24 +37807,31 @@
       [(ResultLowerCallArgs.Ok args-state values writebacks)
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx func-ty))
-          [(ast.AstType.Func param-types declared-result)
-            (match (lower-internal-call-values
-              ctx
-              args-state
-              (LowerCallTarget.Indirect func-value)
-              values
-              (tc_core.tc-resolve-type-list ctx (deref param-types))
-              (lower-call-declared-result-type ctx declared-result result-ty)
-              origin)
-              [(ResultLowerExpr.Ok lowered)
-                (match lowered
-                  [(LowerExpr.Expr call-state call-value call-ty)
-                    (ResultLowerExpr.Ok
-                      (LowerExpr.Expr
-                        (lower-apply-arg-writebacks ctx call-state writebacks)
-                        call-value
-                        call-ty))])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+          [(ast.AstType.Func param-types-signature-box)
+            (let
+              [param-types-signature
+                (ast.ast-function-signature-view
+                  (deref param-types-signature-box))]
+              (match (lower-internal-call-values
+                ctx
+                args-state
+                (LowerCallTarget.Indirect func-value)
+                values
+                (tc_core.tc-resolve-type-list ctx param-types-signature.params)
+                (lower-call-declared-result-type
+                  ctx
+                  param-types-signature.result
+                  result-ty)
+                origin)
+                [(ResultLowerExpr.Ok lowered)
+                  (match lowered
+                    [(LowerExpr.Expr call-state call-value call-ty)
+                      (ResultLowerExpr.Ok
+                        (LowerExpr.Expr
+                          (lower-apply-arg-writebacks ctx call-state writebacks)
+                          call-value
+                          call-ty))])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
           [_
             (match (lower-call-values
               ctx
@@ -37830,7 +37902,7 @@
         [signature-type : ast.AstType
           (tc_core.tc-context-type-get ctx signature)]
         (match (& signature-type)
-          [(ast.AstType.Func _ _)
+          [(ast.AstType.Func _)
             (lower-indirect-c-abi-call-captured
               ctx
               state
@@ -37848,23 +37920,29 @@
                   ctx
                   origin
                   "lower: invalid C function signature")))]))]
-    [(ast.AstType.Func param-types declared-result)
-      (match (lower-c-abi-args-as
-        ctx
-        state
-        env
-        type-env
-        args
-        (tc_core.tc-resolve-type-list ctx (deref param-types)))
-        [(ResultLowerArgs.Ok args-state values)
-          (lower-c-abi-call-values
-            ctx
-            args-state
-            (LowerCallTarget.Indirect func-value)
-            values
-            (lower-call-declared-result-type ctx declared-result result-ty)
-            origin)]
-        [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)])]
+    [(ast.AstType.Func param-types-signature-box)
+      (let
+        [param-types-signature
+          (ast.ast-function-signature-view (deref param-types-signature-box))]
+        (match (lower-c-abi-args-as
+          ctx
+          state
+          env
+          type-env
+          args
+          (tc_core.tc-resolve-type-list ctx param-types-signature.params))
+          [(ResultLowerArgs.Ok args-state values)
+            (lower-c-abi-call-values
+              ctx
+              args-state
+              (LowerCallTarget.Indirect func-value)
+              values
+              (lower-call-declared-result-type
+                ctx
+                param-types-signature.result
+                result-ty)
+              origin)]
+          [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))]
     [_
       ;; The calling dispatcher already selected the callable.
       (lower-indirect-call-captured
@@ -39399,11 +39477,14 @@
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : LowerMaybeSpmdCall
   (match fn-ty
-    [(Func param-types ret-id)
+    [(Func param-types-signature-box)
       (let
+        [param-types-signature
+          (ast.ast-function-signature-view (deref param-types-signature-box))]
         [params : ast.AstParamList
-          (lower-imported-spmd-params ctx (deref param-types))]
-        [ret : ast.AstType (tc_core.tc-context-type-get ctx ret-id)]
+          (lower-imported-spmd-params ctx param-types-signature.params)]
+        [ret : ast.AstType
+          (tc_core.tc-context-type-get ctx param-types-signature.result)]
         (if (<=
           (lower-spmd-call-args-lanes
             ctx
@@ -50746,11 +50827,14 @@
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]) : i64
   (match fn-ty
-    [(Func param-types ret-id)
+    [(Func param-types-signature-box)
       (let
+        [param-types-signature
+          (ast.ast-function-signature-view (deref param-types-signature-box))]
         [params : ast.AstParamList
-          (lower-imported-spmd-params ctx (deref param-types))]
-        [ret : ast.AstType (tc_core.tc-context-type-get ctx ret-id)]
+          (lower-imported-spmd-params ctx param-types-signature.params)]
+        [ret : ast.AstType
+          (tc_core.tc-context-type-get ctx param-types-signature.result)]
         [arg-lanes : i64
           (lower-spmd-call-args-lanes
             ctx
@@ -61894,7 +61978,8 @@
     [types : ast.AstTypeList
       (ast.ast-type-list-with-capacity (ast.ast-param-list-len params))]
     (lower-spmd-source-param-types-at params 0 (&mut types))
-    (tc_core.tc-type-render (ast.ast-ty-func types ret))))
+    (tc_core.tc-type-render
+      (ast.ast-ty-func types ret (ast.AstCallableBinders.Unresolved)))))
 
 (define (lower-imported-spmd-params-at
   [ctx : tc_core.TcContext]
@@ -63865,108 +63950,113 @@
   [fn-ty : ast.AstType]
   [callables : ast.AstImportedSpmdCallableList]) : ResultLowerExpr
   (match fn-ty
-    [(Func param-types ret-id)
-      (match (lower-expr-result-type-or-check
-        ctx
-        env
-        type-env
-        (lower-state-type-cache state)
-        (lower-state-function-state state)
-        expr)
-        [(Err message) (Err (box (lower-diagnostic-at-expr ctx expr message)))]
-        [(Ok result-ty)
-          (let
-            [params : ast.AstParamList
-              (lower-imported-spmd-params ctx (deref param-types))]
-            [ret : ast.AstType (tc_core.tc-context-type-get ctx ret-id)]
-            [arg-lanes : i64
-              (lower-spmd-call-args-lanes
-                ctx
-                (lower-state-function-state state)
-                (lower-state-mode state)
-                env
-                type-env
-                (lower-global-shared-view index)
-                (lower-masked-vector-lane-locals-from-set lane-locals lanes)
-                args)]
-            (if (= arg-lanes 0)
-              (lower-avx512-uniform-spmd-call
-                ctx
-                state
-                env
-                type-env
-                func
-                args
-                result-ty
-                lanes
-                expr)
-              (match (lower-avx512-spmd-call-args
-                ctx
-                state
-                env
-                type-env
-                lane-locals
-                (lower-global-shared-view index)
-                index-var
-                (lower-global-shared-view active-mask)
-                lanes
-                params
-                args)
-                [(Err message) (Err message)]
-                [(Ok args-state call-args any-varying)
-                  (if (not any-varying)
-                    (Err
-                      (box
-                        (lower-diagnostic-at-expr
+    [(Func param-types-signature-box)
+      (let
+        [param-types-signature
+          (ast.ast-function-signature-view (deref param-types-signature-box))]
+        (match (lower-expr-result-type-or-check
+          ctx
+          env
+          type-env
+          (lower-state-type-cache state)
+          (lower-state-function-state state)
+          expr)
+          [(Err message)
+            (Err (box (lower-diagnostic-at-expr ctx expr message)))]
+          [(Ok result-ty)
+            (let
+              [params : ast.AstParamList
+                (lower-imported-spmd-params ctx param-types-signature.params)]
+              [ret : ast.AstType
+                (tc_core.tc-context-type-get ctx param-types-signature.result)]
+              [arg-lanes : i64
+                (lower-spmd-call-args-lanes
+                  ctx
+                  (lower-state-function-state state)
+                  (lower-state-mode state)
+                  env
+                  type-env
+                  (lower-global-shared-view index)
+                  (lower-masked-vector-lane-locals-from-set lane-locals lanes)
+                  args)]
+              (if (= arg-lanes 0)
+                (lower-avx512-uniform-spmd-call
+                  ctx
+                  state
+                  env
+                  type-env
+                  func
+                  args
+                  result-ty
+                  lanes
+                  expr)
+                (match (lower-avx512-spmd-call-args
+                  ctx
+                  state
+                  env
+                  type-env
+                  lane-locals
+                  (lower-global-shared-view index)
+                  index-var
+                  (lower-global-shared-view active-mask)
+                  lanes
+                  params
+                  args)
+                  [(Err message) (Err message)]
+                  [(Ok args-state call-args any-varying)
+                    (if (not any-varying)
+                      (Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            ctx
+                            expr
+                            "lower: inconsistent imported SPMD helper argument classification")))
+                      (let
+                        [args-code : String
+                          (lower-imported-spmd-call-args-code call-args)]
+                        [signature : String
+                          (lower-spmd-source-signature params ret)]
+                        [requested-index-param : i64
+                          (lower-imported-spmd-index-param ctx index args)]
+                        [imported-interns : ci.InternCompatState
+                          (compiler-lower-state-interns
+                            (lower-state-owner (lower-state-clone args-state)))]
+                        [specialization
+                          (try
+                            (lower-imported-spmd-select
+                              (& imported-interns)
+                              (tc_core.tc-context-pools ctx)
+                              canonical-name
+                              (& callables)
+                              (string.copy signature)
+                              (Avx512)
+                              lanes
+                              args-code
+                              requested-index-param
+                              ret
+                              expr))]
+                        (lower-avx512-emit-spmd-call-active
                           ctx
-                          expr
-                          "lower: inconsistent imported SPMD helper argument classification")))
-                    (let
-                      [args-code : String
-                        (lower-imported-spmd-call-args-code call-args)]
-                      [signature : String
-                        (lower-spmd-source-signature params ret)]
-                      [requested-index-param : i64
-                        (lower-imported-spmd-index-param ctx index args)]
-                      [imported-interns : ci.InternCompatState
-                        (compiler-lower-state-interns
-                          (lower-state-owner (lower-state-clone args-state)))]
-                      [specialization
-                        (try
-                          (lower-imported-spmd-select
+                          args-state
+                          (lower-imported-spmd-ir-symbol
+                            (&mut imported-interns)
+                            specialization)
+                          (Avx512)
+                          active-mask
+                          lanes
+                          call-args
+                          result-ty
+                          (lower-imported-spmd-result-varying?
                             (& imported-interns)
-                            (tc_core.tc-context-pools ctx)
+                            specialization)
+                          expr
+                          (lower-imported-spmd-call-origin
+                            (& imported-interns)
+                            owner
+                            version
                             canonical-name
-                            (& callables)
-                            (string.copy signature)
-                            (Avx512)
-                            lanes
-                            args-code
-                            requested-index-param
-                            ret
-                            expr))]
-                      (lower-avx512-emit-spmd-call-active
-                        ctx
-                        args-state
-                        (lower-imported-spmd-ir-symbol
-                          (&mut imported-interns)
-                          specialization)
-                        (Avx512)
-                        active-mask
-                        lanes
-                        call-args
-                        result-ty
-                        (lower-imported-spmd-result-varying?
-                          (& imported-interns)
-                          specialization)
-                        expr
-                        (lower-imported-spmd-call-origin
-                          (& imported-interns)
-                          owner
-                          version
-                          canonical-name
-                          signature
-                          specialization))))])))])]
+                            signature
+                            specialization))))])))]))]
     [_
       (Err
         (box
@@ -71471,8 +71561,14 @@
     name)
     [(Ok fn-ty)
       (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx fn-ty))
-        [(Func param-types _)
-          (lower-internal-structural-type-list? ctx (deref param-types))]
+        [(Func param-types-signature-box)
+          (let
+            [param-types-signature
+              (ast.ast-function-signature-view
+                (deref param-types-signature-box))]
+            (lower-internal-structural-type-list?
+              ctx
+              param-types-signature.params))]
         [_ false])]
     [(Err _) false]))
 
@@ -71508,11 +71604,15 @@
         [(Ok fn-ty)
           (match (tc_core.tc-type-strip-region
             (tc_core.tc-resolve-type ctx fn-ty))
-            [(Func param-types callee-ret)
-              (lower-tail-call-compatible-return?
-                ctx
-                (tc_core.tc-context-type-get ctx callee-ret)
-                ret-ty)]
+            [(Func param-types-signature-box)
+              (let
+                [param-types-signature
+                  (ast.ast-function-signature-view
+                    (deref param-types-signature-box))]
+                (lower-tail-call-compatible-return?
+                  ctx
+                  (tc_core.tc-context-type-get ctx param-types-signature.result)
+                  ret-ty))]
             [_ false])]
         [(Err _) false])]
     [else false]))
@@ -71532,14 +71632,18 @@
     name)
     [(Ok fn-ty)
       (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx fn-ty))
-        [(Func param-types _)
-          (lower-args-as
-            ctx
-            state
-            env
-            type-env
-            args
-            (tc_core.tc-resolve-type-list ctx (deref param-types)))]
+        [(Func param-types-signature-box)
+          (let
+            [param-types-signature
+              (ast.ast-function-signature-view
+                (deref param-types-signature-box))]
+            (lower-args-as
+              ctx
+              state
+              env
+              type-env
+              args
+              (tc_core.tc-resolve-type-list ctx param-types-signature.params)))]
         [_ (lower-args ctx state env type-env args)])]
     [(Err _) (lower-args ctx state env type-env args)]))
 
@@ -71563,13 +71667,19 @@
     sret-var)
     false
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
-      [(Func param-types callee-ret)
-        (and
-          (not (lower-internal-structural-type-list? ctx (deref param-types)))
-          (lower-tail-call-compatible-return?
-            ctx
-            (tc_core.tc-context-type-get ctx callee-ret)
-            ret-ty))]
+      [(Func param-types-signature-box)
+        (let
+          [param-types-signature
+            (ast.ast-function-signature-view (deref param-types-signature-box))]
+          (and
+            (not
+              (lower-internal-structural-type-list?
+                ctx
+                param-types-signature.params))
+            (lower-tail-call-compatible-return?
+              ctx
+              (tc_core.tc-context-type-get ctx param-types-signature.result)
+              ret-ty)))]
       [_ false])))
 
 (define (lower-tail-call-indirect-expr
@@ -71813,74 +71923,82 @@
       [(tc_core.ResultTcType.Ok fn-ty)
         (match (tc_core.tc-type-strip-region
           (tc_core.tc-resolve-type ctx fn-ty))
-          [(ast.AstType.Func param-types fn-ret)
-            (if (not
-              (lower-tail-call-compatible-return?
-                ctx
-                (tc_core.tc-context-type-get ctx fn-ret)
-                (lower-global-shared-view ret-ty)))
-              ;; The callee's declared return type differs from this function's
-              ;; return type (beyond regions): the value path coerces the call
-              ;; result into the sret slot, so forwarding the slot to the callee
-              ;; -- which would write its OWN-typed result -- is unsound. Keep the
-              ;; materialize+copy path. (Same compatibility rule TCO requires.)
-              (LowerSlotStore.No state)
-              (match (lower-direct-call-param-types
-                ctx
-                type-env
-                name-id
-                (lower-global-shared-view args)
-                (tc_core.tc-resolve-type-list ctx (deref param-types)))
-                [(tc_core.ResultTcTypeList.Ok call-param-types)
-                  (match (lower-call-args-as-needed
+          [(ast.AstType.Func param-types-signature-box)
+            (let
+              [param-types-signature
+                (ast.ast-function-signature-view
+                  (deref param-types-signature-box))]
+              (if (not
+                (lower-tail-call-compatible-return?
+                  ctx
+                  (tc_core.tc-context-type-get ctx param-types-signature.result)
+                  (lower-global-shared-view ret-ty)))
+                ;; The callee's declared return type differs from this function's
+                ;; return type (beyond regions): the value path coerces the call
+                ;; result into the sret slot, so forwarding the slot to the callee
+                ;; -- which would write its OWN-typed result -- is unsound. Keep the
+                ;; materialize+copy path. (Same compatibility rule TCO requires.)
+                (LowerSlotStore.No state)
+                (match (lower-direct-call-param-types
+                  ctx
+                  type-env
+                  name-id
+                  (lower-global-shared-view args)
+                  (tc_core.tc-resolve-type-list
                     ctx
-                    state
-                    env
-                    type-env
-                    args
-                    call-param-types)
-                    [(ResultLowerCallArgs.Ok args-state values writebacks)
-                      (match (lower-slot-dest-value args-state slot)
-                        [(LowerExpr.Expr slot-state slot-value _)
-                          (match (lower-state-alloc-var slot-state)
-                            [(LowerAlloc.Alloc allocated call-var)
-                              (let
-                                [result-ir-ty : ast.AstType
-                                  (lower-one-word-register-storage-type
-                                    ctx
-                                    ret-ty)]
-                                [sret-values : ir.CompilerIrValueSeq
-                                  (lower-value-seq-append-one values slot-value)]
-                                [call-name : i64
-                                  (lower-resolve-call-name-id-with-display
-                                    allocated
-                                    env
-                                    name-id
-                                    name)]
-                                [call-state : LowerState
-                                  (lower-state-emit-at-expr
-                                    ctx
-                                    allocated
-                                    (ir.CompilerIrInstr.Call
-                                      call-var
-                                      call-name
-                                      (ir.compiler-ir-call-args-from-seq
-                                        sret-values)
-                                      result-ir-ty)
-                                    origin)]
-                                [writeback-state : LowerState
-                                  (lower-apply-arg-writebacks
-                                    ctx
-                                    call-state
-                                    writebacks)]
-                                (LowerSlotStore.Stored
-                                  writeback-state
-                                  (ir.CompilerIrValue.Var call-var)))])])]
-                    [(ResultLowerCallArgs.Err message)
-                      (LowerSlotStore.Err message)])]
-                [(tc_core.ResultTcTypeList.Err message)
-                  (LowerSlotStore.Err
-                    (box (lower-diagnostic-at-expr ctx origin message)))]))]
+                    param-types-signature.params))
+                  [(tc_core.ResultTcTypeList.Ok call-param-types)
+                    (match (lower-call-args-as-needed
+                      ctx
+                      state
+                      env
+                      type-env
+                      args
+                      call-param-types)
+                      [(ResultLowerCallArgs.Ok args-state values writebacks)
+                        (match (lower-slot-dest-value args-state slot)
+                          [(LowerExpr.Expr slot-state slot-value _)
+                            (match (lower-state-alloc-var slot-state)
+                              [(LowerAlloc.Alloc allocated call-var)
+                                (let
+                                  [result-ir-ty : ast.AstType
+                                    (lower-one-word-register-storage-type
+                                      ctx
+                                      ret-ty)]
+                                  [sret-values : ir.CompilerIrValueSeq
+                                    (lower-value-seq-append-one
+                                      values
+                                      slot-value)]
+                                  [call-name : i64
+                                    (lower-resolve-call-name-id-with-display
+                                      allocated
+                                      env
+                                      name-id
+                                      name)]
+                                  [call-state : LowerState
+                                    (lower-state-emit-at-expr
+                                      ctx
+                                      allocated
+                                      (ir.CompilerIrInstr.Call
+                                        call-var
+                                        call-name
+                                        (ir.compiler-ir-call-args-from-seq
+                                          sret-values)
+                                        result-ir-ty)
+                                      origin)]
+                                  [writeback-state : LowerState
+                                    (lower-apply-arg-writebacks
+                                      ctx
+                                      call-state
+                                      writebacks)]
+                                  (LowerSlotStore.Stored
+                                    writeback-state
+                                    (ir.CompilerIrValue.Var call-var)))])])]
+                      [(ResultLowerCallArgs.Err message)
+                        (LowerSlotStore.Err message)])]
+                  [(tc_core.ResultTcTypeList.Err message)
+                    (LowerSlotStore.Err
+                      (box (lower-diagnostic-at-expr ctx origin message)))])))]
           [_ (LowerSlotStore.No state)])]
       [(tc_core.ResultTcType.Err _) (LowerSlotStore.No state)])))
 
@@ -72531,14 +72649,17 @@
     ;; function has the caller-owned sret slot to forward to the callee.
     (and (< sret-var 0) (lower-inline-aggregate-abi-copy-needed? ctx ret-ty))
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx func-ty))
-      [(Func param-types _)
-        (lower-tail-call-unsafe-args?
-          ctx
-          state
-          env
-          type-env
-          args
-          (& (tc_core.tc-resolve-type-list ctx (deref param-types))))]
+      [(Func param-types-signature-box)
+        (let
+          [param-types-signature
+            (ast.ast-function-signature-view (deref param-types-signature-box))]
+          (lower-tail-call-unsafe-args?
+            ctx
+            state
+            env
+            type-env
+            args
+            (& (tc_core.tc-resolve-type-list ctx param-types-signature.params))))]
       [_ true])))
 
 (define (lower-tail-call-append-current-sret-arg
@@ -73555,6 +73676,7 @@
                               local-types
                               (tc_core.tc-let-binding-resolve-maybe-type
                                 ctx
+                                local-types
                                 maybe-ty)
                               (lower-context-expr-get ctx init))]
                           (pointer_proof.pointer-proof-input-push-operand!
@@ -73765,7 +73887,8 @@
               (tc_core.tc-context-pools ctx)
               (tc_core.tc-type-list-without-regions
                 (tc_core.tc-param-type-list ctx source-params))
-              resolved)))))))
+              resolved
+              (ast.AstCallableBinders.Unresolved))))))))
 
 (define (lower-param-list-append-sret
   [params : ir.CompilerIrParamSeq]
@@ -76156,13 +76279,17 @@
   [spans : ir.CompilerSourceSpans]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (match (lower-global-shared-view fn-ty)
-    [(Func param-types ret-box)
+    [(Func param-types-signature-box)
       (let
+        [param-types-signature
+          (ast.ast-function-signature-view (deref param-types-signature-box))]
         [ret-ty : ast.AstType
           (tc_core.tc-type-without-regions
-            (tc_core.tc-context-type-get ctx ret-box))]
+            (tc_core.tc-context-type-get ctx param-types-signature.result))]
         [clean-param-types : ast.AstTypeList
-          (lower-dispatch-type-list-without-regions ctx (deref param-types))]
+          (lower-dispatch-type-list-without-regions
+            ctx
+            param-types-signature.params)]
         [ret-class : LowerCAbiAggregate
           (lower-internal-return-class
             ctx
@@ -77033,6 +77160,24 @@
                       ctx
                       (lower-global-shared-view cur-module)
                       cur-module-id)]
+                  [_scope : unit
+                    (match (tc_core.tc-callable-body-context
+                      decl-ctx
+                      cur-local-top-env
+                      name
+                      (& params))
+                      [(tc_core.ResultTcCallableScope.Ok retained)
+                        (set! decl-ctx retained.context)]
+                      [(tc_core.ResultTcCallableScope.Err message)
+                        (return (Err (box (lower-diagnostic message))))])]
+                  [params : ast.AstParamList
+                    (tc_core.tc-check-fn-registered-params
+                      decl-ctx
+                      cur-local-top-env
+                      name
+                      params)]
+                  [ret : ast.AstType
+                    (tc_core.tc-resolve-source-type decl-ctx ret)]
                   [body : ast.AstExpr
                     (lower-context-expr-get decl-ctx body-box)]
                   [logical-id : i64
@@ -77134,7 +77279,8 @@
                                             (tc_core.tc-type-without-regions
                                               (tc_core.tc-resolve-type
                                                 decl-ctx
-                                                ret))))
+                                                ret)))
+                                          (ast.AstCallableBinders.Unresolved))
                                         (C)
                                         (ci.intern-id-value symbol)
                                         (ast.ast-extern-link-input-list-new)
@@ -77710,7 +77856,7 @@
         (lower-debug-pointer-node ctx types name elem)]
       [(or (ast.AstType.Ref _ inner) (ast.AstType.MutRef _ inner))
         (lower-debug-reference-node ctx types name inner)]
-      [(or (ast.AstType.Func _ _) (ast.AstType.CFunc _ _))
+      [(or (ast.AstType.Func _) (ast.AstType.CFunc _ _))
         (lower-debug-node ir.compiler-debug-type-function name 8 8 -1 -1)]
       [(or (ast.AstType.Expr) (ast.AstType.ExprList) (ast.AstType.Var _)
            (ast.AstType.VarArgs _ _) (ast.AstType.Slice _) (ast.AstType.Bytes))
@@ -79777,3 +79923,27 @@
             [_ unit])]
         [_ unit])
       (lower-standalone-result state result))))
+
+;; A quantified result depends on the call's checked substitution. Defer that
+;; query to the shared checker; only a result closed over these binders can be
+;; read directly from the declaration's signature.
+(define (lower-call-result-type-from-signature
+  [ctx : tc_core.TcContext]
+  [signature : ast.AstFunctionSignature]) : tc_core.ResultTcType
+  (let
+    [owned : ast.AstLifetimeList
+      (try (tc_core.tc-callable-owned-lifetimes ctx signature.binders))]
+    [result : ast.AstType (tc_core.tc-context-type-get ctx signature.result)]
+    (unless
+      (ast.ast-lifetime-list-empty? (& owned))
+      (when
+        (tc_core.tc-name-id-list-overlaps?
+          (tc_core.tc-type-collect-regions (lower-global-shared-view result))
+          (tc_core.tc-lifetime-list-to-name-id-list-into
+            owned
+            tc_core.TcNameIdList.Nil))
+        (return
+          (tc_core.ResultTcType.Err
+            "lower: quantified call result requires checking"))))
+    (tc_core.ResultTcType.Ok
+      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx result)))))

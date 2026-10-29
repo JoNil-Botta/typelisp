@@ -676,6 +676,12 @@
 (define (intern-structural-kind-macro-definition) : i64
   9)
 
+(define (intern-structural-kind-callable-scope) : i64
+  10)
+
+(define (intern-structural-kind-callable-lifetime) : i64
+  11)
+
 (define (intern-structural-kind-valid? [kind : i64]) : bool
   (and (> kind 0) (<= kind 255)))
 
@@ -827,6 +833,14 @@
           (and
             (>= (intern-composite-left-id-unchecked raw) 0)
             (= (intern-composite-middle-id-unchecked raw) 0))]
+        [(= kind (intern-structural-kind-callable-lifetime))
+          (and
+            (>= (intern-composite-middle-id-unchecked raw) 0)
+            (=
+              (intern-active-structural-record-kind-or
+                (intern-composite-left-id-unchecked raw)
+                -1)
+              (intern-structural-kind-callable-scope)))]
         [(and macro-names? (= kind (intern-structural-kind-macro-global)))
           (let
             [role : i64 (intern-composite-left-id-unchecked raw)]
@@ -843,7 +857,16 @@
         [source-name-id : i64 (intern-composite-right-id-unchecked raw)]
         (if (intern-renderable-id? source-name-id)
           source-name-id
-          fallback))
+          (if (and
+            (= kind (intern-structural-kind-callable-lifetime))
+            (!=
+              (intern-active-structural-record-kind-or source-name-id -1)
+              (intern-structural-kind-callable-lifetime)))
+            (intern-active-syntax-source-name-id-or
+              source-name-id
+              macro-names?
+              fallback)
+            fallback)))
       fallback)))
 
 (define (intern-active-structural-sync!

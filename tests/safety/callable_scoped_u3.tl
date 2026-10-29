@@ -1,0 +1,5 @@
+(define (use-cb3 [anchor : (& a i64)] [cb : (-> (& outer i64) (& a i64))]) : (& a i64)
+  (let [x : i64 7] (cb (& x))))
+(define (go [p : (& a i64)]) : (& a i64)
+  (use-cb3 p (lambda ([q : (& a i64)]) : (& a i64) q)))
+(define (main) : i64 (let [v : i64 1] (deref (go (& v)))))

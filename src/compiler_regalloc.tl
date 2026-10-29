@@ -1244,7 +1244,7 @@
 (define (compiler-reg-scalar-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
-         (Func _ _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _))
+         (Func _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _))
       true]
     [_ false]))
 
@@ -11204,7 +11204,7 @@
     [(or (I16) (U16)) 3]
     [(F64) 4]
     [(F32) 5]
-    [(or (DynArray _) (String) (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
+    [(or (DynArray _) (String) (Box _) (Ptr _) (MutPtr _) (Func _)) 6]
     [_ 0]))
 
 (define (compiler-reg-invariant-var-type

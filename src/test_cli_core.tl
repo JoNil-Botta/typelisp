@@ -935,7 +935,8 @@
       No)
     (ast.ast-ty-func
       (ast.ast-type-cons (& (I32)) (& (ast.ast-type-list-new)))
-      (& (I64)))))
+      (& (I64))
+      (ast.AstCallableBinders.Unresolved))))
 
 (define (tltest-windows-write-file-decl) : ast.AstDecl
   (ast.ast-decl-extern-id
@@ -961,7 +962,8 @@
                     (& (ast.ast-ty-mut-ptr (& (I32))))
                     (&
                       (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))))))))))
-      (& (I32)))))
+      (& (I32))
+      (ast.AstCallableBinders.Unresolved))))
 
 (define (tltest-windows-get-stderr-handle-expr) : i64
   (ast.ast-expr-call

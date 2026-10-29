@@ -11,6 +11,7 @@
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as spec_id_i64_map)
 (import compiler_intern as spec_ci)
+(cfg test (import compiler_intern_state as cis))
 (import compiler_builtin_ids as cbi)
 (cfg test (import compiler_profile_state as profile_state))
 (cfg test (import stdlib.test))
@@ -159,12 +160,15 @@
     [(Never) "never"]
     [(Expr) "Expr"]
     [(ExprList) "ExprList"]
-    [(Func args ret)
-      (str_cat.str-cat
-        "fn_"
-        (spec-type-list-key (ast.ast-type-list-box-shared-view args))
-        "_to_"
-        (spec-type-key (ast.ty-node-get ret)))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (str_cat.str-cat
+          "fn_"
+          (spec-type-list-key args-signature.params)
+          "_to_"
+          (spec-type-key (ast.ty-node-get args-signature.result))))]
     [(CFunc signature mode)
       (str_cat.str-cat
         "cfn_"
@@ -1106,7 +1110,8 @@
               (ast.ast-type-cons
                 (& (Var cbi.compiler-builtin-id-fix-T))
                 (& (ast.ast-type-list-new)))
-              (& (Var cbi.compiler-builtin-id-fix-T)))
+              (& (Var cbi.compiler-builtin-id-fix-T))
+              (ast.AstCallableBinders.Unresolved))
             subs))
         "fn_i64_nil_to_i64")
       (string.eq
@@ -1949,3 +1954,92 @@
       (test.assert-true
         (compiler-specialize-resource-ok?)
         "resource traversal, sequential substitution, and metadata"))))
+
+(cfg
+  test
+  (test
+    spec-callable-contract-keys
+    (let
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-new-with-capacities 8 8)]
+      [interns : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
+      [module : i64 (spec_ci.intern-compat-state-intern (&mut interns) "")]
+      [first-name : i64
+        (spec_ci.intern-compat-state-intern (&mut interns) "first")]
+      [second-name : i64
+        (spec_ci.intern-compat-state-intern (&mut interns) "second")]
+      [alpha : i64 (spec_ci.intern-compat-state-intern (&mut interns) "alpha")]
+      [beta : i64 (spec_ci.intern-compat-state-intern (&mut interns) "beta")]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (spec_ci.intern-source-name-session-handle-from-state (& interns)))]
+      [first : cis.InternCallableLifetimeIdentity
+        (cis.intern-structural-session-callable-lifetime
+          session
+          (cis.intern-structural-session-callable-scope
+            session
+            1
+            module
+            first-name)
+          0
+          alpha)]
+      [second : cis.InternCallableLifetimeIdentity
+        (cis.intern-structural-session-callable-lifetime
+          session
+          (cis.intern-structural-session-callable-scope
+            session
+            1
+            module
+            second-name)
+          0
+          beta)]
+      [first-owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+      [second-owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+      [_owned : unit
+        (begin
+          (ast.ast-lifetime-list-push (&mut first-owned) first.value)
+          (ast.ast-lifetime-list-push (&mut second-owned) second.value))]
+      [first-ref : ast.AstType
+        (ast.ast-ty-ref-with-pools pools first.value (& (I64)))]
+      [second-ref : ast.AstType
+        (ast.ast-ty-ref-with-pools pools second.value (& (I64)))]
+      [first-params : ast.AstTypeList (ast.ast-type-list-new)]
+      [second-params : ast.AstTypeList (ast.ast-type-list-new)]
+      [_params : unit
+        (begin
+          (ast.ast-type-list-push
+            (&mut first-params)
+            (ast.ast-node-pool-context-type-push pools (clone first-ref)))
+          (ast.ast-type-list-push
+            (&mut second-params)
+            (ast.ast-node-pool-context-type-push pools (clone second-ref))))]
+      [first-type : ast.AstType
+        (ast.ast-ty-func-with-pools
+          pools
+          (clone first-params)
+          (& first-ref)
+          (ast.AstCallableBinders.Resolved first-owned))]
+      [second-type : ast.AstType
+        (ast.ast-ty-func-with-pools
+          pools
+          second-params
+          (& second-ref)
+          (ast.AstCallableBinders.Resolved second-owned))]
+      [fixed : ast.AstType
+        (ast.ast-ty-func-with-pools
+          pools
+          first-params
+          (& first-ref)
+          (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))]
+      [owner : spec.SpecOwnerContext
+        (spec.spec-owner-context-new pools interns)]
+      [first-key : String (spec.spec-type-key-with-owner owner (& first-type))]
+      [second-key : String
+        (spec.spec-type-key-with-owner owner (& second-type))]
+      [fixed-key : String (spec.spec-type-key-with-owner owner (& fixed))]
+      (test.assert-true
+        (string.eq first-key second-key)
+        "specialization keys are alpha-equivalent over owned binders")
+      (test.assert-true
+        (not (string.eq first-key fixed-key))
+        "specialization keys retain a same-spelled fixed lifetime"))))

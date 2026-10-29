@@ -2571,8 +2571,13 @@
     [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
          (String) (Str) (Bytes) (Unit) (Never) (Expr) (ExprList))
       names]
-    [(Func args ret)
-      (lint-type-id-names ret (lint-type-list-names (deref args) names))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (lint-type-id-names
+          args-signature.result
+          (lint-type-list-names args-signature.params names)))]
     [(Tuple items) (lint-type-list-names (deref items) names)]
     [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _)
          (Var name) (VarArgs name _))
@@ -7758,12 +7763,13 @@
   [ty : ast.AstType]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match ty
-    [(Func args ret)
-      (lint-unused-variable-type
-        (ast.ty-node-get ret)
-        (lint-unused-variable-type-list
-          (ast.ast-type-list-box-shared-view args)
-          state))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (lint-unused-variable-type
+          (ast.ty-node-get args-signature.result)
+          (lint-unused-variable-type-list args-signature.params state)))]
     [(or (CFunc signature _) (Array signature _) (DynArray signature)
          (Box signature) (Ptr signature) (MutPtr signature))
       (lint-unused-variable-type (ast.ty-node-get signature) state)]

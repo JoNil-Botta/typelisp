@@ -4056,15 +4056,22 @@
   [infos : (& infos CtfeReflectInfoList)]
   [ty : ast.AstType]) : ast.AstType
   (match (clone ty)
-    [(Func args ret)
-      (ast.ast-ty-func-with-pools
-        pools
-        (ctfe-reflect-resolve-type-list-with-pools pools infos (& (deref args)))
-        (&
-          (ctfe-reflect-resolve-type-with-pools
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (ast.ast-ty-func-with-pools
+          pools
+          (ctfe-reflect-resolve-type-list-with-pools
             pools
             infos
-            (ast.ast-node-pool-context-type-get pools ret))))]
+            (& args-signature.params))
+          (&
+            (ctfe-reflect-resolve-type-with-pools
+              pools
+              infos
+              (ast.ast-node-pool-context-type-get pools args-signature.result)))
+          args-signature.binders))]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (ctfe-reflect-resolve-type-list-with-pools
@@ -4245,13 +4252,17 @@
     (str_cat.str-cat "m" (string.int->string (- 0 n)))
     (string.int->string n)))
 
-(define (ctfe-type-list-key-with-pools
+(define (ctfe-type-list-key-with-pools-in
+  [source-names : ci.InternSourceNameSessionHandle]
+  [bound : (& bound ast.AstLifetimeList)]
   [pools : ast.AstNodePoolContext]
   [infos : (& infos CtfeReflectInfoList)]
   [types : (& ast.AstTypeList)]) : String
-  (ctfe-type-list-key-with-pools-at pools infos types 0))
+  (ctfe-type-list-key-with-pools-at-in source-names bound pools infos types 0))
 
-(define (ctfe-type-list-key-with-pools-at
+(define (ctfe-type-list-key-with-pools-at-in
+  [source-names : ci.InternSourceNameSessionHandle]
+  [bound : (& bound ast.AstLifetimeList)]
   [pools : ast.AstNodePoolContext]
   [infos : (& infos CtfeReflectInfoList)]
   [types : (& types ast.AstTypeList)]
@@ -4259,7 +4270,9 @@
   (if (>= index (ast.ast-type-list-len types))
     "nil"
     (str_cat.str-cat
-      (ctfe-type-key-with-reflections-and-pools
+      (ctfe-type-key-with-reflections-and-pools-in
+        source-names
+        bound
         pools
         infos
         (&
@@ -4267,21 +4280,34 @@
             pools
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       "_"
-      (ctfe-type-list-key-with-pools-at pools infos types (+ index 1)))))
+      (ctfe-type-list-key-with-pools-at-in
+        source-names
+        bound
+        pools
+        infos
+        types
+        (+ index 1)))))
 
-(define (ctfe-lifetime-list-key-at
+(define (ctfe-lifetime-list-key-at-in
+  [source-names : ci.InternSourceNameSessionHandle]
+  [bound : (& bound ast.AstLifetimeList)]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]
   [index : i64]) : String
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     "nil"
     (str_cat.str-cat
-      (ci.intern-str
+      (ast.ast-callable-lifetime-key
+        source-names
+        bound
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       "_"
-      (ctfe-lifetime-list-key-at lifetimes (+ index 1)))))
+      (ctfe-lifetime-list-key-at-in source-names bound lifetimes (+ index 1)))))
 
-(define (ctfe-lifetime-list-key [lifetimes : (& ast.AstLifetimeList)]) : String
-  (ctfe-lifetime-list-key-at lifetimes 0))
+(define (ctfe-lifetime-list-key-in
+  [source-names : ci.InternSourceNameSessionHandle]
+  [bound : (& bound ast.AstLifetimeList)]
+  [lifetimes : (& ast.AstLifetimeList)]) : String
+  (ctfe-lifetime-list-key-at-in source-names bound lifetimes 0))
 
 (define (ctfe-lifetime-list-eq
   [a : (& ast.AstLifetimeList)]
@@ -4290,7 +4316,9 @@
     (owned_view.compiler-owned-reference-shared-view a)
     (owned_view.compiler-owned-reference-shared-view b)))
 
-(define (ctfe-type-key-with-reflections-and-pools
+(define (ctfe-type-key-with-reflections-and-pools-in
+  [source-names : ci.InternSourceNameSessionHandle]
+  [bound : (& bound ast.AstLifetimeList)]
   [pools : ast.AstNodePoolContext]
   [infos : (& infos CtfeReflectInfoList)]
   [ty : (& ast.AstType)]) : String
@@ -4317,32 +4345,59 @@
     [(ExprList) "ExprList"]
     [(Unit) "unit"]
     [(Never) "never"]
-    [(Func args ret)
-      (str_cat.str-cat
-        "fn_"
-        (ctfe-type-list-key-with-pools pools infos (& (deref args)))
-        "_to_"
-        (ctfe-type-key-with-reflections-and-pools
-          pools
-          infos
-          (& (ast.ast-node-pool-context-type-get pools ret))))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        [inner-bound : ast.AstLifetimeList
+          (ast.ast-callable-key-binders
+            source-names
+            bound
+            (& args-signature.binders))]
+        (str_cat.str-cat
+          "fn_"
+          (ctfe-int-key
+            (ast.ast-callable-key-binder-count (& args-signature.binders)))
+          "_"
+          (ctfe-type-list-key-with-pools-in
+            source-names
+            (& inner-bound)
+            pools
+            infos
+            (& args-signature.params))
+          "_to_"
+          (ctfe-type-key-with-reflections-and-pools-in
+            source-names
+            (& inner-bound)
+            pools
+            infos
+            (& (ast.ast-node-pool-context-type-get pools args-signature.result)))))]
     [(CFunc signature mode)
       (str_cat.str-cat
         "cfn_"
         (ast.ast-c-function-mode-name mode)
         "_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools signature))))]
     [(Tuple elems)
       (str_cat.str-cat
         "tuple_"
-        (ctfe-type-list-key-with-pools pools infos (& (deref elems))))]
+        (ctfe-type-list-key-with-pools-in
+          source-names
+          bound
+          pools
+          infos
+          (& (deref elems))))]
     [(Array elem count)
       (str_cat.str-cat
         "array_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools elem)))
@@ -4351,71 +4406,89 @@
     [(DynArray elem)
       (str_cat.str-cat
         "dynarray_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools elem))))]
     [(Slice elem)
       (str_cat.str-cat
         "slice_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools elem))))]
     [(Box elem)
       (str_cat.str-cat
         "box_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools elem))))]
     [(Ptr elem)
       (str_cat.str-cat
         "ptr_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools elem))))]
     [(MutPtr elem)
       (str_cat.str-cat
         "mutptr_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools elem))))]
     [(Ref region inner)
       (str_cat.str-cat
         "ref_"
-        (ci.intern-str region)
+        (ast.ast-callable-lifetime-key source-names bound region)
         "_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools inner))))]
     [(MutRef region inner)
       (str_cat.str-cat
         "mutref_"
-        (ci.intern-str region)
+        (ast.ast-callable-lifetime-key source-names bound region)
         "_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools inner))))]
     [(Region region inner)
       (str_cat.str-cat
         "region_"
-        (ci.intern-str region)
+        (ast.ast-callable-lifetime-key source-names bound region)
         "_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools inner))))]
     [(Invalidate lifetime inner)
       (str_cat.str-cat
         "invalidate_"
-        (ci.intern-str lifetime)
+        (ast.ast-callable-lifetime-key source-names bound lifetime)
         "_"
-        (ctfe-type-key-with-reflections-and-pools
+        (ctfe-type-key-with-reflections-and-pools-in
+          source-names
+          bound
           pools
           infos
           (& (ast.ast-node-pool-context-type-get pools inner))))]
@@ -4426,7 +4499,7 @@
         "enumargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (ctfe-lifetime-list-key (& (deref lifetimes))))]
+        (ctfe-lifetime-list-key-in source-names bound (& (deref lifetimes))))]
     [(Struct name)
       (str_cat.str-cat "struct_" (ast.ast-nominal-name-id-display name))]
     [(StructArgs name lifetimes)
@@ -4434,14 +4507,69 @@
         "structargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
-        (ctfe-lifetime-list-key (& (deref lifetimes))))]
+        (ctfe-lifetime-list-key-in source-names bound (& (deref lifetimes))))]
     [(Var name) (str_cat.str-cat "var_" (ci.intern-str name))]
     [(VarArgs name lifetimes)
       (str_cat.str-cat
         "varargs_"
         (ci.intern-str name)
         "_"
-        (ctfe-lifetime-list-key (& (deref lifetimes))))]))
+        (ctfe-lifetime-list-key-in source-names bound (& (deref lifetimes))))]))
+
+(define (ctfe-type-list-key-with-pools
+  [pools : ast.AstNodePoolContext]
+  [infos : (& infos CtfeReflectInfoList)]
+  [types : (& ast.AstTypeList)]) : String
+  (ctfe-type-list-key-with-pools-in
+    (ci.intern-source-name-session-handle-from-state
+      (& (ci.intern-compat-state-capture-active)))
+    (& (ast.ast-lifetime-list-new))
+    pools
+    infos
+    types))
+
+(define (ctfe-type-list-key-with-pools-at
+  [pools : ast.AstNodePoolContext]
+  [infos : (& infos CtfeReflectInfoList)]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : String
+  (ctfe-type-list-key-with-pools-at-in
+    (ci.intern-source-name-session-handle-from-state
+      (& (ci.intern-compat-state-capture-active)))
+    (& (ast.ast-lifetime-list-new))
+    pools
+    infos
+    types
+    index))
+
+(define (ctfe-lifetime-list-key-at
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]
+  [index : i64]) : String
+  (ctfe-lifetime-list-key-at-in
+    (ci.intern-source-name-session-handle-from-state
+      (& (ci.intern-compat-state-capture-active)))
+    (& (ast.ast-lifetime-list-new))
+    lifetimes
+    index))
+
+(define (ctfe-lifetime-list-key [lifetimes : (& ast.AstLifetimeList)]) : String
+  (ctfe-lifetime-list-key-in
+    (ci.intern-source-name-session-handle-from-state
+      (& (ci.intern-compat-state-capture-active)))
+    (& (ast.ast-lifetime-list-new))
+    lifetimes))
+
+(define (ctfe-type-key-with-reflections-and-pools
+  [pools : ast.AstNodePoolContext]
+  [infos : (& infos CtfeReflectInfoList)]
+  [ty : (& ast.AstType)]) : String
+  (ctfe-type-key-with-reflections-and-pools-in
+    (ci.intern-source-name-session-handle-from-state
+      (& (ci.intern-compat-state-capture-active)))
+    (& (ast.ast-lifetime-list-new))
+    pools
+    infos
+    ty))
 
 (define (ctfe-type-key-with-reflections
   [infos : (& CtfeReflectInfoList)]
@@ -4482,7 +4610,7 @@
     [(Unit) "unit"]
     [(Never) "never"]
     [(CFunc _ _) "c-function"]
-    [(Func _ _) "function"]
+    [(Func _) "function"]
     [(Tuple _) "tuple"]
     [(Array _ _) "array"]
     [(DynArray _) "dyn-array"]
@@ -4710,7 +4838,9 @@
   [ty : (& ast.AstType)]) : String
   (let
     [reflections : CtfeReflectInfoList (ctfe-env-reflections env)]
-    (ctfe-type-key-with-reflections-and-pools
+    (ctfe-type-key-with-reflections-and-pools-in
+      (ctfe-env-source-names env)
+      (& (ast.ast-lifetime-list-new))
       (ctfe-env-pools env)
       reflections
       ty)))
@@ -4833,16 +4963,23 @@
                   (TypeInfoBox (ast.ast-node-pool-context-type-get pools elem)))))
             env)
           (No))]
-      [(Func params ret)
-        (if (ctfe-pattern-variant-name? variant "Function")
-          (ctfe-match-pattern-list
-            args
-            (&
-              (ctfe-value-list2
-                (& (TypeInfoList (deref params)))
-                (& (TypeInfoBox (ast.ast-node-pool-context-type-get pools ret)))))
-            env)
-          (No))]
+      [(Func params-signature-box)
+        (let
+          [params-signature
+            (ast.ast-function-signature-view (deref params-signature-box))]
+          (if (ctfe-pattern-variant-name? variant "Function")
+            (ctfe-match-pattern-list
+              args
+              (&
+                (ctfe-value-list2
+                  (& (TypeInfoList params-signature.params))
+                  (&
+                    (TypeInfoBox
+                      (ast.ast-node-pool-context-type-get
+                        pools
+                        params-signature.result)))))
+              env)
+            (No)))]
       [(Tuple elems)
         (if (ctfe-pattern-variant-name? variant "Tuple")
           (ctfe-match-pattern-list
@@ -5046,7 +5183,7 @@
   [layouts : (& CtfeLayoutInfoList)]
   [ty : (& ast.AstType)]) : i64
   (match ty
-    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (DynArray _) (Box _)
+    [(or (I64) (U64) (F64) (CFunc _ _) (Func _) (Tuple _) (DynArray _) (Box _)
          (Ptr _) (MutPtr _) (String))
       8]
     [(or (I32) (U32) (F32)) 4]
@@ -5089,7 +5226,7 @@
   [layouts : (& CtfeLayoutInfoList)]
   [ty : (& ast.AstType)]) : i64
   (match ty
-    [(or (I64) (U64) (F64) (CFunc _ _) (Func _ _) (Tuple _) (DynArray _) (Box _)
+    [(or (I64) (U64) (F64) (CFunc _ _) (Func _) (Tuple _) (DynArray _) (Box _)
          (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (Enum _) (EnumArgs _ _)
          (String))
       8]
@@ -5449,7 +5586,12 @@
     [(string.eq name "type-key")
       (Ok
         (ctfe-generated-string-value
-          (ctfe-type-key-with-reflections-and-pools pools infos ty)))]
+          (ctfe-type-key-with-reflections-and-pools-in
+            (cis.intern-structural-session-handle-source-names session)
+            (& (ast.ast-lifetime-list-new))
+            pools
+            infos
+            ty)))]
     [(or
         (string.eq name "tuple-element-count")
         (string.eq name "tuple-element-type"))
@@ -5500,20 +5642,27 @@
         (string.eq name "function-return-type")
         (string.eq name "function-param-type"))
       (match ty
-        [(Func params ret)
-          (cond
-            [(string.eq name "function-param-count")
-              (Ok (I64 (ctfe-type-list-count (& (deref params)))))]
-            [(string.eq name "function-return-type")
-              (Ok (Type (ast.ast-node-pool-context-type-get pools ret)))]
-            [else
-              (ctfe-reflection-type-result
-                name
-                (ctfe-type-list-ref-with-pools
-                  (& (deref params))
-                  pools
-                  infos
-                  index))])]
+        [(Func params-signature-box)
+          (let
+            [params-signature
+              (ast.ast-function-signature-view (deref params-signature-box))]
+            (cond
+              [(string.eq name "function-param-count")
+                (Ok (I64 (ctfe-type-list-count (& params-signature.params))))]
+              [(string.eq name "function-return-type")
+                (Ok
+                  (Type
+                    (ast.ast-node-pool-context-type-get
+                      pools
+                      params-signature.result)))]
+              [else
+                (ctfe-reflection-type-result
+                  name
+                  (ctfe-type-list-ref-with-pools
+                    (& params-signature.params)
+                    pools
+                    infos
+                    index))]))]
         [_ (ctfe-reflection-requires name "function type")])]
     [else
       (let
@@ -6923,9 +7072,11 @@
         [(Region _ inner) (ctfe-ty-get env inner)]
         [_ (owned_view.compiler-owned-reference-shared-view value-type)])]
     (match (owned_view.compiler-owned-reference-shared-view signature)
-      [(Func params ret)
+      [(Func params-signature-box)
         (let
-          [param-list : ast.AstTypeList (deref params)]
+          [params-signature
+            (ast.ast-function-signature-view (deref params-signature-box))]
+          [param-list : ast.AstTypeList params-signature.params]
           (if (= (ctfe-type-list-count (& param-list)) 1)
             (let
               [parameter : ast.AstType
@@ -6944,7 +7095,7 @@
                       (& expected-type))
                     (ctfe-type-eq-in-env
                       env
-                      (& (ctfe-ty-get env ret))
+                      (& (ctfe-ty-get env params-signature.result))
                       (& (String))))]
                 [_ false]))
             false))]
@@ -11847,15 +11998,27 @@
     [(Expr) (ctfe-type-syntax-name-id cbi.compiler-builtin-id-fix-Expr env)]
     [(ExprList)
       (ctfe-type-syntax-name-id cbi.compiler-builtin-id-fix-ExprList env)]
-    [(Func args ret)
-      (ctfe-type-syntax-call-id
-        (ctfe-builtin "->")
-        (&
-          (ctfe-func-type-to-expr-list
-            (& (deref args))
-            (& (ctfe-ty-get env ret))
-            env))
-        env)]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (match args-signature.binders
+          [(ast.AstCallableBinders.Resolved _)
+            (ctfe-ast-push
+              env
+              (ast.AstExpr.TypeLiteral
+                (ctfe-ty-push
+                  env
+                  (& (owned_view.compiler-owned-reference-shared-view ty)))))]
+          [(ast.AstCallableBinders.Unresolved)
+            (ctfe-type-syntax-call-id
+              (ctfe-builtin "->")
+              (&
+                (ctfe-func-type-to-expr-list
+                  (& args-signature.params)
+                  (& (ctfe-ty-get env args-signature.result))
+                  env))
+              env)]))]
     [(CFunc signature mode)
       (ctfe-type-syntax-call-id
         (ctfe-builtin "CFunc")
@@ -12149,7 +12312,8 @@
               (ast.ast-ty-func-with-pools
                 (ctfe-env-pools env)
                 (ast.ast-type-list-new)
-                (& ret-ty))
+                (& ret-ty)
+                (ast.AstCallableBinders.Unresolved))
               next-fuel)]
           [(Err diag) (Err diag)])
         (match (ctfe-expr-to-type
@@ -12167,16 +12331,21 @@
               arg-fuel)
               [(Ok tail-fn next-fuel)
                 (match tail-fn
-                  [(Func tail-args ret)
-                    (Ok
-                      (ast.ast-ty-func-with-pools
-                        (ctfe-env-pools env)
-                        (ast.ast-type-cons-with-pools
+                  [(Func tail-args-signature-box)
+                    (let
+                      [tail-args-signature
+                        (ast.ast-function-signature-view
+                          (deref tail-args-signature-box))]
+                      (Ok
+                        (ast.ast-ty-func-with-pools
                           (ctfe-env-pools env)
-                          (& arg-ty)
-                          (& (deref tail-args)))
-                        (& (ctfe-ty-get env ret)))
-                      next-fuel)]
+                          (ast.ast-type-cons-with-pools
+                            (ctfe-env-pools env)
+                            (& arg-ty)
+                            (& tail-args-signature.params))
+                          (& (ctfe-ty-get env tail-args-signature.result))
+                          tail-args-signature.binders)
+                        next-fuel))]
                   [_ (ctfe-type-expr-error origin)])]
               [(Err diag) (Err diag)])]
           [(Err diag) (Err diag)])))))
@@ -12372,18 +12541,27 @@
           [(Err diag) (Err diag)]
           [(Ok shape next-fuel)
             (match shape
-              [(Func params result)
-                (Ok
-                  (CFunc
-                    (ast.ast-node-pool-context-type-push
-                      (ctfe-env-pools env)
-                      (Func params result))
-                    (cond
-                      [(= mode 0) Nullable]
-                      [(= mode 1) NonNull]
-                      [(= mode 2) UnsafeNullable]
-                      [else UnsafeNonNull]))
-                  next-fuel)]
+              [(Func params-signature-box)
+                (let
+                  [params-signature
+                    (ast.ast-function-signature-view
+                      (deref params-signature-box))]
+                  (Ok
+                    (CFunc
+                      (ast.ast-node-pool-context-type-push
+                        (ctfe-env-pools env)
+                        (Func
+                          (box
+                            (ast.AstFunctionSignature
+                              params-signature.params
+                              params-signature.result
+                              params-signature.binders))))
+                      (cond
+                        [(= mode 0) Nullable]
+                        [(= mode 1) NonNull]
+                        [(= mode 2) UnsafeNullable]
+                        [else UnsafeNonNull]))
+                    next-fuel))]
               [_ (ctfe-type-expr-error origin)])])))
     (ctfe-type-expr-error origin)))
 
@@ -12559,23 +12737,31 @@
   [origin : (& ast.AstExpr)]
   [fuel : i64]) : ResultCtfeQuoteType
   (match (clone ty)
-    [(Func args ret)
-      (match (ctfe-quote-type-list
-        (& (deref args))
-        env
-        (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
-        fuel)
-        [(Ok quoted-args args-fuel)
-          (match (ctfe-quote-type (ctfe-ty-get env ret) env origin args-fuel)
-            [(Ok quoted-ret ret-fuel)
-              (Ok
-                (ast.ast-ty-func-with-pools
-                  (ctfe-env-pools env)
-                  quoted-args
-                  (& quoted-ret))
-                ret-fuel)]
-            [(Err diag) (Err diag)])]
-        [(Err diag) (Err diag)])]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (match (ctfe-quote-type-list
+          (& args-signature.params)
+          env
+          (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
+          fuel)
+          [(Ok quoted-args args-fuel)
+            (match (ctfe-quote-type
+              (ctfe-ty-get env args-signature.result)
+              env
+              origin
+              args-fuel)
+              [(Ok quoted-ret ret-fuel)
+                (Ok
+                  (ast.ast-ty-func-with-pools
+                    (ctfe-env-pools env)
+                    quoted-args
+                    (& quoted-ret)
+                    args-signature.binders)
+                  ret-fuel)]
+              [(Err diag) (Err diag)])]
+          [(Err diag) (Err diag)]))]
     [(Tuple elems)
       (match (ctfe-quote-type-list (& (deref elems)) env origin fuel)
         [(Ok quoted next-fuel) (Ok (ast.ast-ty-tuple quoted) next-fuel)]
@@ -14785,20 +14971,51 @@
   [env : (& env CtfeEnv)]
   [a : (& ast.AstTypeList)]
   [b : (& ast.AstTypeList)]) : bool
-  (let
-    [pools : ast.AstNodePoolContext (ctfe-env-pools env)]
-    [seg-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
-    (ast.ast-type-id-list-eq?
-      (owned_view.compiler-owned-reference-shared-view a)
-      (owned_view.compiler-owned-reference-shared-view b)
-      ast.ast-type-seg-ids-eq?
-      seg-bases)))
+  (ast.ast-type-id-list-eq?
+    (owned_view.compiler-owned-reference-shared-view a)
+    (owned_view.compiler-owned-reference-shared-view b)
+    ctfe-type-id-eq-in-env
+    (owned_view.compiler-owned-reference-shared-view env)))
 
 (define (ctfe-type-eq-in-env
   [env : (& env CtfeEnv)]
   [a : (& ast.AstType)]
   [b : (& ast.AstType)]) : bool
-  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) a b))
+  (match a
+    [(Func first-box)
+      (match b
+        [(Func second-box)
+          (let
+            [first : ast.AstFunctionSignature
+              (ast.ast-function-signature-view (deref first-box))]
+            [second : ast.AstFunctionSignature
+              (ast.ast-function-signature-view (deref second-box))]
+            (match (& first.binders)
+              [(ast.AstCallableBinders.Resolved _)
+                (unless
+                  (ast.ast-callable-binders-valid?
+                    (ctfe-env-source-names env)
+                    (& first.binders))
+                  (return false))]
+              [_ unit])
+            (match (& second.binders)
+              [(ast.AstCallableBinders.Resolved _)
+                (unless
+                  (ast.ast-callable-binders-valid?
+                    (ctfe-env-source-names env)
+                    (& second.binders))
+                  (return false))]
+              [_ unit])
+            (string.eq
+              (ctfe-type-info-key-in-env env a)
+              (ctfe-type-info-key-in-env env b)))]
+        [_ false])]
+    [_
+      (ast.ast-type-children-eq?
+        (owned_view.compiler-owned-reference-shared-view a)
+        (owned_view.compiler-owned-reference-shared-view b)
+        ctfe-type-id-eq-in-env
+        (owned_view.compiler-owned-reference-shared-view env))]))
 
 (define (ctfe-type-list-eq [a : (& ast.AstTypeList)] [b : (& ast.AstTypeList)]) : bool
   (let

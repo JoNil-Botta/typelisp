@@ -2022,7 +2022,8 @@
             (ast.ast-ty-func-with-pools
               pools
               (ast.ast-type-list-new)
-              (& external-ty))
+              (& external-ty)
+              (ast.AstCallableBinders.Unresolved))
             (TypeLisp)
             external-name
             (ast.ast-extern-link-input-list-new)

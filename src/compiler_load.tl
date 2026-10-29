@@ -12342,7 +12342,10 @@
             module
             name
             (owned_view.compiler-owned-reference-shared-view spmd-interface))))
-      (ast.ast-ty-func (compiler-load-param-type-list params) ret))))
+      (ast.ast-ty-func
+        (compiler-load-param-type-list params)
+        ret
+        (ast.AstCallableBinders.Unresolved)))))
 
 (define (compiler-load-package-transform-decl
   [package-owner : String]

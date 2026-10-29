@@ -67,6 +67,9 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 20: function types carry their resolved owned lifetime contract; callable
+  ;; identities use explicit scope/binder records in name positions.
+  ;;
   ;; 19: AstPattern tags 8, 9 and 10 add the `(or ...)` pattern and the
   ;; `(fields ...)` pattern with its `Field` entries (a name, then a
   ;; one-item list).
@@ -126,7 +129,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  19)
+  20)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

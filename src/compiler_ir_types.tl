@@ -4177,20 +4177,23 @@
     (begin
       (set! (deref budget) (- (deref budget) 1))
       (match ty
-        [(ast.AstType.Func args result)
-          (and
-            (compiler-ir-return-storage-type-list-valid?
-              bases
-              count
-              (deref args)
-              budget
-              (- depth 1))
-            (compiler-ir-return-storage-type-id-valid?
-              bases
-              count
-              result
-              budget
-              (- depth 1)))]
+        [(ast.AstType.Func args-signature-box)
+          (let
+            [args-signature
+              (ast.ast-function-signature-view (deref args-signature-box))]
+            (and
+              (compiler-ir-return-storage-type-list-valid?
+                bases
+                count
+                args-signature.params
+                budget
+                (- depth 1))
+              (compiler-ir-return-storage-type-id-valid?
+                bases
+                count
+                args-signature.result
+                budget
+                (- depth 1))))]
         [(ast.AstType.Tuple items)
           (compiler-ir-return-storage-type-list-valid?
             bases
@@ -4357,24 +4360,30 @@
           (not (= abi.index (- count 1))))
         "nominal return-storage hidden argument must be last"]
       [else
-        (match abi.source-signature
-          [(ast.AstType.Func _ result-id)
-            (if (ast.ast-type-eq-with-seg-bases?
-              bases
-              (ast.ast-type-segment-bases-get bases result-id)
-              (compiler-ir-global-shared-view abi.output))
-              (if (match (& abi.physical-result)
-                [(ast.AstType.U64) true]
-                [_
-                  (and
-                    (not (compiler-ir-return-storage-c? abi))
-                    (ast.ast-type-eq-with-seg-bases?
-                      bases
-                      abi.physical-result
-                      abi.output))])
-                ""
-                "return-storage physical result does not return its address")
-              "return-storage source result differs from output type")]
+        (match (& abi.source-signature)
+          [(ast.AstType.Func result-id-signature-box)
+            (let
+              [result-id-signature
+                (ast.ast-function-signature-view
+                  (deref result-id-signature-box))]
+              (if (ast.ast-type-eq-with-seg-bases?
+                bases
+                (ast.ast-type-segment-bases-get
+                  bases
+                  result-id-signature.result)
+                (compiler-ir-global-shared-view abi.output))
+                (if (match (& abi.physical-result)
+                  [(ast.AstType.U64) true]
+                  [_
+                    (and
+                      (not (compiler-ir-return-storage-c? abi))
+                      (ast.ast-type-eq-with-seg-bases?
+                        bases
+                        abi.physical-result
+                        abi.output))])
+                  ""
+                  "return-storage physical result does not return its address")
+                "return-storage source result differs from output type"))]
           [_ "return-storage requires a function source signature"])])))
 
 (define (compiler-ir-return-storage-function-error
@@ -6339,14 +6348,22 @@
   [pools : ast.AstNodePoolContext]
   [ty : ast.AstType]) : ast.AstType
   (match (ast.ast-global-shared-view ty)
-    [(Func args ret)
-      (Func
-        (box (compiler-ir-clone-type-list pools (& (deref args))))
-        (ast.ast-node-pool-context-type-push
-          pools
-          (compiler-ir-clone-type
-            pools
-            (ast.ast-node-pool-context-type-get (& pools) ret))))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (Func
+          (box
+            (ast.AstFunctionSignature
+              (compiler-ir-clone-type-list pools (& args-signature.params))
+              (ast.ast-node-pool-context-type-push
+                pools
+                (compiler-ir-clone-type
+                  pools
+                  (ast.ast-node-pool-context-type-get
+                    (& pools)
+                    args-signature.result)))
+              (ast.ast-callable-binders-copy args-signature.binders)))))]
     [(Tuple elems)
       (Tuple (box (compiler-ir-clone-type-list pools (& (deref elems)))))]
     [(Array elem len)
@@ -6802,19 +6819,25 @@
     [(Never) "never"]
     [(Expr) "Expr"]
     [(ExprList) "ExprList"]
-    [(Func args ret)
-      (str_cat.str-cat
-        "(-> "
-        (compiler-ir-type-list-render
-          structural-session
-          type-segment-bases
-          (& (deref args)))
-        " "
-        (compiler-ir-type-render
-          structural-session
-          type-segment-bases
-          (& (ast.ast-type-segment-bases-get type-segment-bases ret)))
-        ")")]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (str_cat.str-cat
+          "(-> "
+          (compiler-ir-type-list-render
+            structural-session
+            type-segment-bases
+            (& args-signature.params))
+          " "
+          (compiler-ir-type-render
+            structural-session
+            type-segment-bases
+            (&
+              (ast.ast-type-segment-bases-get
+                type-segment-bases
+                args-signature.result)))
+          ")"))]
     [(CFunc signature mode)
       (str_cat.str-cat
         "(CFunc "
@@ -9838,15 +9861,23 @@
     [(Never) "never"]
     [(Expr) "Expr"]
     [(ExprList) "ExprList"]
-    [(Func args ret)
-      (str_cat.str-cat
-        "(->"
-        (compiler-ir-type-list-name type-segment-bases (& (deref args)))
-        " "
-        (compiler-ir-type-name
-          type-segment-bases
-          (& (ast.ast-type-segment-bases-get type-segment-bases ret)))
-        ")")]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (str_cat.str-cat
+          "(->"
+          (compiler-ir-type-list-name
+            type-segment-bases
+            (& args-signature.params))
+          " "
+          (compiler-ir-type-name
+            type-segment-bases
+            (&
+              (ast.ast-type-segment-bases-get
+                type-segment-bases
+                args-signature.result)))
+          ")"))]
     [(CFunc signature mode)
       (str_cat.str-cat
         "(CFunc "
@@ -10480,17 +10511,23 @@
               (compiler-ir-representation-index-merge-one-word snapshot key)))]
         [(None) snapshot])]
     (match ty
-      [(Func args ret)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          require-layout
-          (&
-            (compiler-ir-representation-collect-one-type-list
-              type-segment-bases
-              require-layout
-              (& with-nominal)
-              (& (deref args))))
-          (& (ast.ast-type-segment-bases-get type-segment-bases ret)))]
+      [(Func args-signature-box)
+        (let
+          [args-signature
+            (ast.ast-function-signature-view (deref args-signature-box))]
+          (compiler-ir-representation-collect-one-type
+            type-segment-bases
+            require-layout
+            (&
+              (compiler-ir-representation-collect-one-type-list
+                type-segment-bases
+                require-layout
+                (& with-nominal)
+                (& args-signature.params)))
+            (&
+              (ast.ast-type-segment-bases-get
+                type-segment-bases
+                args-signature.result))))]
       [(Tuple items)
         (compiler-ir-representation-collect-one-type-list
           type-segment-bases

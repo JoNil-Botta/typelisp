@@ -728,7 +728,8 @@
     [func-ty : ast.AstType
       (ast.ast-ty-func
         (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
-        (& (Bool)))]
+        (& (Bool))
+        (ast.AstCallableBinders.Unresolved))]
     (tc_core.tc-checked-let-binding-facts-begin! facts false)
     (tc_core.tc-checked-let-binding-facts-set-current-declaration! facts 3)
     (for [index (iterator.range 0 1000)]
@@ -3124,12 +3125,17 @@
   [type-bases : i64]
   [ty : ast.AstType]) : bool
   (match ty
-    [(Func args ret)
-      (if (tc-type-list-needs-resolution-with-bases?
-        type-bases
-        (ast.ast-type-list-box-shared-view args))
-        true
-        (tc-type-needs-resolution-id-with-bases? type-bases ret))]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (if (tc-type-list-needs-resolution-with-bases?
+          type-bases
+          args-signature.params)
+          true
+          (tc-type-needs-resolution-id-with-bases?
+            type-bases
+            args-signature.result)))]
     [(Tuple elems)
       (tc-type-list-needs-resolution-with-bases?
         type-bases
@@ -3538,18 +3544,21 @@
       type-bases
       (tc_core.tc-global-shared-view ty))
       (match (tc_core.tc-global-shared-view ty)
-        [(Func args ret)
-          (ast.ast-ty-func-with-pools
-            pools
-            (tc-resolve-type-list-with-pools
-              ctx
+        [(Func args-signature-box)
+          (let
+            [args-signature
+              (ast.ast-function-signature-view (deref args-signature-box))]
+            (ast.ast-ty-func-with-pools
               pools
-              (ast.ast-type-list-box-shared-view args))
-            (&
-              (tc-resolve-type-with-pools
-                ctx
-                pools
-                (ast.ast-node-pool-context-type-get pools ret))))]
+              (tc-resolve-type-list-with-pools ctx pools args-signature.params)
+              (&
+                (tc-resolve-type-with-pools
+                  ctx
+                  pools
+                  (ast.ast-node-pool-context-type-get
+                    pools
+                    args-signature.result)))
+              args-signature.binders))]
         [(Tuple elems)
           (Tuple
             (box
@@ -4419,7 +4428,12 @@
     [(CFunc signature mode)
       (and
         (= (ast.ast-c-function-mode-key mode) 1)
-        (tc_core.tc-type-eq (ast.ty-node-get signature) (tc_core.tc-fn0 (I64))))]
+        (tc_core.tc-type-eq
+          (ast.ty-node-get signature)
+          (ast.ast-ty-func
+            (ast.ast-type-list-new)
+            (& (I64))
+            (ast.AstCallableBinders.Unresolved))))]
     [_ false]))
 
 (define (tc-type-env-has-c-function-value?
@@ -5208,7 +5222,7 @@
             (match (tc_core.tc-type-env-scoped-sidecar-lookup-id
               deep-sidecar
               fn-id)
-              [(Found (Func _ _) unsafe _ _ _) (and unsafe)]
+              [(Found (Func _) unsafe _ _ _) (and unsafe)]
               [_ false])
             (match (tc-type-env-scoped-stack-marker-lookup
               deep-sidecar.stack
@@ -10049,12 +10063,14 @@
               [nested : ast.AstType
                 (ast.ast-ty-func
                   (clone source)
-                  (& (ast.ast-ty-tuple (clone source))))]
+                  (& (ast.ast-ty-tuple (clone source)))
+                  (ast.AstCallableBinders.Unresolved))]
               [actual : ast.AstType (tc_core.tc-resolve-type ctx nested)]
               [expected : ast.AstType
                 (ast.ast-ty-func
                   (clone resolved)
-                  (& (ast.ast-ty-tuple resolved)))]
+                  (& (ast.ast-ty-tuple resolved))
+                  (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))]
               (test.assert-true
                 (ast.ast-type-eq? actual expected)
                 "function arguments and nested tuples use the same resolution")))))
@@ -16267,3 +16283,457 @@
         (tc_core.tc-job-state-set-semantic-observer!
           (tc_core.tc-context-job-state ctx)
           (tc_core.TcSemanticObserver 0))))))
+
+(cfg
+  test
+  (defmacro (tc-callable-with-test-state [body : unit ...]) : unit
+    `(let
+      [saved-reader? : bool ast.ast-node-pool-reader-explicit?]
+      [saved-reader : ast.AstNodePoolContext
+        (ast.ast-node-pool-reader-context-current)]
+      (ast.ast-node-pool-reader-clear!)
+      (ast_tests.with-test-interns ,@body)
+      (if saved-reader?
+        (ast.ast-node-pool-reader-use! saved-reader)
+        (ast.ast-node-pool-reader-clear!)))))
+
+(cfg
+  test
+  (test
+    tc-callable-structural-marker-key-overflow
+    (tc-callable-with-test-state
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+        [session : cis.InternStructuralSessionHandle
+          (tc_core.tc-context-structural-session ctx)]
+        [scope : cis.InternCallableScopeIdentity
+          (cis.intern-structural-session-callable-scope
+            session
+            1
+            (ci.intern "")
+            (ci.intern "overflow-owner"))]
+        [binder : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            scope
+            0
+            (ci.intern "keep"))]
+        [base : tc_core.TcTypeEnv
+          (tc_core.tc-empty-env-with-job-state
+            (tc_core.tc-context-job-state ctx))]
+        [marked : tc_core.TcTypeEnv
+          (tc_core.tc-bind-runtime-marker-id
+            base
+            (tc_core.tc-signature-lifetime-marker-id)
+            (Var binder.value)
+            Other)]
+        [cached : tc_core.TcTypeEnv
+          (tc_core.tc-env-with-cache-prefix-layer marked 1 true base)]
+        (test.assert-true
+          (>= binder.value 4611686018427387904)
+          "the regression uses an authentic structural binder")
+        (test.assert-true
+          (>= (- -2 (* binder.value 2)) 0)
+          "the former packing overflows into the ordinary-name lane")
+        (test.assert-true
+          (< (tc_core.tc-env-cache-lifetime-marker-key binder.value) -1)
+          "the repaired lifetime key stays negative")
+        (test.assert-true
+          (< (tc_core.tc-env-cache-arena-lifetime-marker-key binder.value) -1)
+          "the repaired arena key stays negative")
+        (test.assert-true
+          (!=
+            (tc_core.tc-env-cache-lifetime-marker-key binder.value)
+            (tc_core.tc-env-cache-arena-lifetime-marker-key binder.value))
+          "marker roles have disjoint lanes")
+        (test.assert-i64-eq
+          (tc_core.tc-env-cache-lifetime-marker-key 7)
+          -16
+          "ordinary lifetime packing is stable")
+        (test.assert-i64-eq
+          (tc_core.tc-env-cache-arena-lifetime-marker-key 7)
+          -17
+          "ordinary arena packing is stable")
+        (test.assert-i64-eq
+          (tc_core.tc-env-cache-lifetime-marker-key 9223372036854775807)
+          -9223372036854775808
+          "the signed upper boundary fits the lifetime lane")
+        (test.assert-i64-eq
+          (tc_core.tc-env-cache-arena-lifetime-marker-key 9223372036854775807)
+          -9223372036854775807
+          "the signed upper boundary fits the arena lane")
+        (test.assert-true
+          (not (tc_core.tc-lifetime-visible-id? base binder.value))
+          "unbound structural lifetimes remain invisible")
+        (test.assert-true
+          (tc_core.tc-lifetime-visible-id? marked binder.value)
+          "the uncached marker establishes visibility")
+        (test.assert-true
+          (tc_core.tc-lifetime-visible-id? cached binder.value)
+          "compaction preserves structural lifetime visibility")
+        (test.assert-i64-eq
+          (tc_core.tc-env-cache-lifetime-marker-lifetime-id
+            (tc_core.tc-signature-lifetime-marker-id)
+            (& (Var binder.value))
+            (tc_core.tc-signature-lifetime-marker-id)
+            (tc_core.tc-region-marker-id)
+            (tc_core.tc-ordinary-arena-owner-marker-id)
+            (tc_core.tc-atomic-arena-owner-marker-id))
+          binder.value
+          "marker payload extraction preserves the exact identity")))))
+
+(cfg
+  test
+  (test
+    tc-callable-owned-alpha-and-free-lifetimes
+    (tc-callable-with-test-state
+      (let
+        [pools : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [ctx : tc_core.TcContext (tc-selected-test-context pools)]
+        [session : cis.InternStructuralSessionHandle
+          (tc_core.tc-context-structural-session ctx)]
+        [first : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            (cis.intern-structural-session-callable-scope
+              session
+              1
+              (ci.intern "")
+              (ci.intern "first"))
+            0
+            (ci.intern "keep"))]
+        [second : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            (cis.intern-structural-session-callable-scope
+              session
+              1
+              (ci.intern "")
+              (ci.intern "second"))
+            0
+            (ci.intern "keep"))]
+        [first-owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+        [second-owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+        (ast.ast-lifetime-list-push (&mut first-owned) first.value)
+        (ast.ast-lifetime-list-push (&mut second-owned) second.value)
+        (let
+          [first-ref : ast.AstType (ast.ast-ty-ref first.value (& (I64)))]
+          [second-ref : ast.AstType (ast.ast-ty-ref second.value (& (I64)))]
+          [first-type : ast.AstType
+            (ast.ast-ty-func
+              (tc_core.tc-type-list1 (tc_core.tc-global-shared-view first-ref))
+              (& first-ref)
+              (ast.AstCallableBinders.Resolved first-owned))]
+          [second-type : ast.AstType
+            (ast.ast-ty-func
+              (tc_core.tc-type-list1 (tc_core.tc-global-shared-view second-ref))
+              (& second-ref)
+              (ast.AstCallableBinders.Resolved second-owned))]
+          [fixed : ast.AstType
+            (ast.ast-ty-func
+              (tc_core.tc-type-list1 (tc_core.tc-global-shared-view first-ref))
+              (& first-ref)
+              (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))]
+          (test.assert-true
+            (tc_core.tc-type-eq
+              (tc_core.tc-global-shared-view first-type)
+              (tc_core.tc-global-shared-view second-type))
+            "owned binder spelling and owner can be alpha-renamed")
+          (test.assert-true
+            (not
+              (tc_core.tc-type-eq
+                (tc_core.tc-global-shared-view first-type)
+                (tc_core.tc-global-shared-view fixed)))
+            "a same-spelled free lifetime is not quantified")
+          (test.assert-true
+            (tc_core.tc-name-id-list-empty?
+              (tc_core.tc-type-collect-reference-lifetimes
+                (tc_core.tc-global-shared-view first-type)))
+            "owned input and output lifetimes are not escaping")
+          (test.assert-true
+            (not
+              (tc_core.tc-name-id-list-empty?
+                (tc_core.tc-type-collect-reference-lifetimes
+                  (tc_core.tc-global-shared-view fixed))))
+            "fixed lifetimes remain free")
+          (test.assert-true
+            (tc_core.tc-type-eq
+              (tc_core.tc-global-shared-view first-type)
+              (tc_core.tc-lifetime-subst-type
+                (tc_core.tc-lifetime-subst-push
+                  tc_core.TcLifetimeSubst.Nil
+                  first.value
+                  second.value)
+                (tc_core.tc-global-shared-view first-type)))
+            "substitution cannot capture a nested owned binder")
+          (test.assert-true
+            (ctfe_support.ctfe-type-eq (& first-type) (& second-type))
+            "comptime equality compares callable contracts modulo bound renaming")
+          (test.assert-true
+            (string.eq
+              (ctfe_support.ctfe-type-key (& first-type))
+              (ctfe_support.ctfe-type-key (& second-type)))
+            "comptime keys use bound lexical indices")
+          (test.assert-true
+            (not
+              (string.eq
+                (ctfe_support.ctfe-type-key (& first-type))
+                (ctfe_support.ctfe-type-key (& fixed))))
+            "comptime keys distinguish fixed and quantified contracts")
+          (let
+            [unicode-name : i64 (ci.intern "λ")]
+            [key : String
+              (ast.ast-callable-identity-key
+                (tc_core.tc-context-source-names ctx)
+                unicode-name
+                0)]
+            (for [index (iterator.range 0 (string.string-length key))]
+              (test.assert-true
+                (< (cast (string.string-ref key index) : i64) 128)
+                "fixed lifetime key components remain ASCII")))
+          (test.assert-true
+            (match (tc_core.tc-callable-owned-lifetimes
+              ctx
+              ast.AstCallableBinders.Unresolved)
+              [(tc_core.ResultTcLifetimeList.Err _) true]
+              [_ false])
+            "missing semantic contracts fail closed"))))))
+
+(cfg
+  test
+  (test
+    tc-callable-malformed-and-interleaved-owners
+    (tc-callable-with-test-state
+      (let
+        [ctx : tc_core.TcContext
+          (tc-selected-test-context (ast.ast-node-pool-context-capture-active))]
+        [session : cis.InternStructuralSessionHandle
+          (tc_core.tc-context-structural-session ctx)]
+        [spelling : i64 (ci.intern "keep")]
+        [first : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            (cis.intern-structural-session-callable-scope
+              session
+              1
+              (ci.intern "")
+              (ci.intern "first"))
+            0
+            spelling)]
+        [second : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            (cis.intern-structural-session-callable-scope
+              session
+              1
+              (ci.intern "")
+              (ci.intern "second"))
+            0
+            spelling)]
+        [invalid : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            (cis.intern-structural-session-callable-scope session 99 0 0)
+            0
+            spelling)]
+        [mixed : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+        [duplicate : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+        [malformed : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+        [other : ci.InternCompatState (ci.intern-compat-state-new)]
+        [other-name : i64 (ci.intern-compat-state-intern (&mut other) "keep")]
+        [other-session : cis.InternStructuralSessionHandle
+          (cis.intern-structural-session-handle-from-source-names
+            (ci.intern-source-name-session-handle-from-state other))]
+        [foreign : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            other-session
+            (cis.intern-structural-session-callable-scope
+              other-session
+              1
+              other-name
+              other-name)
+            0
+            other-name)]
+        [foreign-owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+        (ast.ast-lifetime-list-push (&mut mixed) first.value)
+        (ast.ast-lifetime-list-push (&mut mixed) second.value)
+        (ast.ast-lifetime-list-push (&mut duplicate) first.value)
+        (ast.ast-lifetime-list-push (&mut duplicate) first.value)
+        (ast.ast-lifetime-list-push (&mut malformed) invalid.value)
+        (ast.ast-lifetime-list-push (&mut foreign-owned) foreign.value)
+        (for [contract (iterator.range 0 4)]
+          (let
+            [owned : ast.AstLifetimeList
+              (cond
+                [(= contract 0) (tc_core.tc-global-shared-view mixed)]
+                [(= contract 1) (tc_core.tc-global-shared-view duplicate)]
+                [(= contract 2) (tc_core.tc-global-shared-view malformed)]
+                [else (tc_core.tc-global-shared-view foreign-owned)])]
+            (test.assert-true
+              (match (tc_core.tc-callable-owned-lifetimes
+                ctx
+                (ast.AstCallableBinders.Resolved owned))
+                [(tc_core.ResultTcLifetimeList.Err _) true]
+                [_ false])
+              "mixed, duplicate, malformed and foreign binder sets reject")))
+        (let
+          [installed : ci.InternCompatState
+            (ci.intern-compat-state-capture-active)]
+          [source-names : ci.InternSourceNameSessionHandle
+            (tc_core.tc-context-source-names ctx)]
+          [_swap : unit (ci.intern-compat-state-install! (& other))]
+          [rendered : String
+            (tc_core.tc-type-render-for-source-names
+              source-names
+              (ast.ast-ty-ref first.value (& (I64))))]
+          [foreign-rendered : String
+            (tc_core.tc-lifetime-name-render-for-source-names
+              source-names
+              foreign.value)]
+          [_restore : unit (ci.intern-compat-state-install! (& installed))]
+          (test.assert-true
+            (string.eq rendered "(& keep i64)")
+            "diagnostics use the retained source owner while another job is installed")
+          (test.assert-true
+            (string.eq foreign-rendered "<invalid lifetime>")
+            "foreign identities cannot expose a private numeric spelling"))
+        (ci.intern-compat-state-reset! (&mut other))
+        (test.assert-true
+          (match (cis.intern-structural-session-callable-lifetime-record
+            other-session
+            foreign.value)
+            [(cis.InternMaybeCallableLifetimeRecord.No) true]
+            [_ false])
+          "a retained binder cannot survive its intern owner's reset")
+        (test.assert-true
+          (match (cis.intern-structural-session-callable-lifetime-record
+            session
+            first.value)
+            [(cis.InternMaybeCallableLifetimeRecord.Some _) true]
+            [_ false])
+          "resetting an interleaved owner leaves the first owner's binder valid")))))
+
+(cfg
+  test
+  (test
+    tc-callable-compaction-and-nested-free-lifetime
+    (tc-callable-with-test-state
+      (let
+        [saved : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        [source : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 8 8)]
+        [dest : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-new-with-capacities 8 8)]
+        [ctx : tc_core.TcContext (tc-selected-test-context source)]
+        [session : cis.InternStructuralSessionHandle
+          (tc_core.tc-context-structural-session ctx)]
+        [free : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            (cis.intern-structural-session-callable-scope
+              session
+              1
+              (ci.intern "")
+              (ci.intern "outer"))
+            0
+            (ci.intern "same"))]
+        [bound : cis.InternCallableLifetimeIdentity
+          (cis.intern-structural-session-callable-lifetime
+            session
+            (cis.intern-structural-session-callable-scope session 2 0 7)
+            0
+            (ci.intern "same"))]
+        [owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+        [_owned : unit (ast.ast-lifetime-list-push (&mut owned) bound.value)]
+        [_dead : i64 (ast.ast-node-pool-context-type-push source (Bool))]
+        [free-ref : ast.AstType
+          (ast.ast-ty-ref-with-pools source free.value (& (I64)))]
+        [array-type : ast.AstType
+          (ast.ast-ty-array-with-pools source (& free-ref) 2)]
+        [elements : ast.AstTypeList (ast.ast-type-list-new)]
+        [_elements : unit
+          (ast.ast-type-list-push
+            (&mut elements)
+            (ast.ast-node-pool-context-type-push source array-type))]
+        [result : ast.AstType
+          (ast.ast-ty-box-with-pools source (& (ast.ast-ty-tuple elements)))]
+        [params : ast.AstTypeList (ast.ast-type-list-new)]
+        [old-param : i64
+          (ast.ast-node-pool-context-type-push
+            source
+            (ast.ast-ty-ref-with-pools source bound.value (& (I64))))]
+        [_params : unit (ast.ast-type-list-push (&mut params) old-param)]
+        [contract : ast.AstType
+          (ast.ast-ty-func-with-pools
+            source
+            params
+            (& result)
+            (ast.AstCallableBinders.Resolved owned))]
+        [program : ast.AstProgram
+          (ast.ast-program
+            (ast.ast-decl-cons
+              (&
+                (ast.ast-decl-def-id
+                  (ci.intern "value")
+                  (Some contract)
+                  (ast.ast-node-pool-context-expr-push
+                    source
+                    (Literal (ast.ast-lit-int 42)))))
+              (& (ast.ast-decl-list-new))))]
+        [valid : bool
+          (match (ast.ast-program-compact-with-pools
+            source
+            dest
+            (& program)
+            false)
+            [(AstProgramCompaction compacted pools)
+              (ast.ast-node-pool-context-install! pools)
+              (match compacted
+                [(Program decls)
+                  (match (ast.ast-decl-list-step (deref decls))
+                    [(Cons (Def _ _ (Some (Func boxed)) _) _)
+                      (let
+                        [signature : ast.AstFunctionSignature
+                          (ast.ast-function-signature-view (deref boxed))]
+                        [type : ast.AstType (Func boxed)]
+                        [names : tc_core.TcNameIdList
+                          (tc_core.tc-type-collect-reference-lifetimes
+                            (tc_core.tc-global-shared-view type))]
+                        [alternate : i64 (ci.intern "alternate")]
+                        [substituted : ast.AstType
+                          (tc_core.tc-lifetime-subst-type
+                            (tc_core.tc-lifetime-subst-push
+                              tc_core.TcLifetimeSubst.Nil
+                              free.value
+                              alternate)
+                            type)]
+                        [after : tc_core.TcNameIdList
+                          (tc_core.tc-type-collect-reference-lifetimes
+                            substituted)]
+                        (and
+                          (!=
+                            old-param
+                            (ast.ast-type-list-get (& signature.params) 0 -1))
+                          (match signature.binders
+                            [(ast.AstCallableBinders.Resolved kept)
+                              (and
+                                (= (ast.ast-lifetime-list-len (& kept)) 1)
+                                (=
+                                  (ast.ast-lifetime-list-get (& kept) 0 -1)
+                                  bound.value))]
+                            [_ false])
+                          (tc_core.tc-name-id-list-contains names free.value)
+                          (not
+                            (tc_core.tc-name-id-list-contains names bound.value))
+                          (tc_core.tc-name-id-list-contains after alternate)
+                          (not
+                            (tc_core.tc-name-id-list-contains after free.value))))]
+                    [_ false])])])]
+        (ast.ast-node-pool-context-install! saved)
+        (test.assert-true
+          valid
+          "compaction remaps children and preserves same-spelled owned/free identities under Box, tuple and array")))))

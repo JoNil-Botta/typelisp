@@ -476,7 +476,7 @@
                   (if (or
                     decl.c-abi?
                     (match (& decl.signature)
-                      [(ast.AstType.Func _ _) true]
+                      [(ast.AstType.Func _) true]
                       [_ false]))
                     ;; A foreign declaration can lack a lowered aggregate
                     ;; contract (for example a variadic signature). Its source
@@ -484,10 +484,15 @@
                     (match (ir.compiler-ir-return-storage-foreign-signature
                       bases
                       decl.signature)
-                      [(ast.AstType.Func _ ret-id)
+                      [(ast.AstType.Func ret-id-signature-box)
                         (let
+                          [ret-id-signature
+                            (ast.ast-function-signature-view
+                              (deref ret-id-signature-box))]
                           [ret : ast.AstType
-                            (ast.ast-type-segment-bases-get bases ret-id)]
+                            (ast.ast-type-segment-bases-get
+                              bases
+                              ret-id-signature.result)]
                           (if (ir.compiler-ir-return-storage-type? ret)
                             (ReturnStorageProof.Unavailable)
                             (ReturnStorageProof.Invalid
@@ -574,10 +579,15 @@
             [found : ReturnStorageProof (ReturnStorageProof.Unavailable)]
             [i : i64 0]
             (match (ir.compiler-ir-global-shared-view signature)
-              [(ast.AstType.Func _ result-id)
+              [(ast.AstType.Func result-id-signature-box)
                 (let
+                  [result-id-signature
+                    (ast.ast-function-signature-view
+                      (deref result-id-signature-box))]
                   [source-result : ast.AstType
-                    (ast.ast-type-segment-bases-get bases result-id)]
+                    (ast.ast-type-segment-bases-get
+                      bases
+                      result-id-signature.result)]
                   (if (not (ir.compiler-ir-return-storage-type? source-result))
                     (ReturnStorageProof.Invalid
                       "indirect sret signature does not return an inline aggregate")

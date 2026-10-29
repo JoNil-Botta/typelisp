@@ -36,7 +36,8 @@
         (&
           (ast.ast-ty-func
             (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
-            (& (I64)))))]
+            (& (I64))
+            (ast.AstCallableBinders.Unresolved))))]
     (for [index (iterator.range 0 4)]
       (let
         [mode : ast.AstCFunctionMode (c-function-test-mode index)]

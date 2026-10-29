@@ -221,13 +221,16 @@
     [(Never) "never"]
     [(Expr) "Expr"]
     [(ExprList) "ExprList"]
-    [(Func args ret)
-      (str_cat.str-cat
-        "(->"
-        (repl-type-list-render-spaced (deref args))
-        " "
-        (repl-type-render (ast.ty-node-get ret))
-        ")")]
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (str_cat.str-cat
+          "(->"
+          (repl-type-list-render-spaced args-signature.params)
+          " "
+          (repl-type-render (ast.ty-node-get args-signature.result))
+          ")"))]
     [(CFunc signature mode)
       (str_cat.str-cat
         "(CFunc "

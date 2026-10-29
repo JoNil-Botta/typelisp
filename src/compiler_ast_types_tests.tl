@@ -126,7 +126,8 @@
   [ret : ast.AstType]
   [mode : ast.AstCFunctionMode]) : ast.AstType
   (CFunc
-    (ast.ast-node-pool-reader-type-push (& (ast.ast-ty-func args (& ret))))
+    (ast.ast-node-pool-reader-type-push
+      (& (ast.ast-ty-func args (& ret) (ast.AstCallableBinders.Unresolved))))
     mode))
 
 (define (ast-expr-clause-list-tail [items : ast.AstExprClauseList]) : ast.AstExprClauseList
@@ -765,26 +766,30 @@
       (ast.ast-ty-ref
         (ci.intern-generated-name "r")
         (& (ast.ast-ty-ptr (& (ast.ast-ty-array (& (I64)) 4)))))]
-    [fn-ty : ast.AstType (ast.ast-ty-func arg-tys (& ret-ty))]
+    [fn-ty : ast.AstType
+      (ast.ast-ty-func arg-tys (& ret-ty) (ast.AstCallableBinders.Unresolved))]
     [nested-ty-ok? : bool
       (match (ast.ast-place-shared-view fn-ty)
-        [(Func _ ret)
-          (match (ast.ty-node-get ret)
-            [(Ref region ptr)
-              (and
-                (string.eq (ci.intern-str region) "r")
-                (match (ast.ty-node-get ptr)
-                  [(Ptr array)
-                    (match (ast.ty-node-get array)
-                      [(Array elem count)
-                        (and
-                          (= count 4)
-                          (match (ast.ty-node-get elem)
-                            [(I64) true]
-                            [_ false]))]
-                      [_ false])]
-                  [_ false]))]
-            [_ false])]
+        [(Func ret-signature-box)
+          (let
+            [ret-signature
+              (ast.ast-function-signature-view (deref ret-signature-box))]
+            (match (ast.ty-node-get ret-signature.result)
+              [(Ref region ptr)
+                (and
+                  (string.eq (ci.intern-str region) "r")
+                  (match (ast.ty-node-get ptr)
+                    [(Ptr array)
+                      (match (ast.ty-node-get array)
+                        [(Array elem count)
+                          (and
+                            (= count 4)
+                            (match (ast.ty-node-get elem)
+                              [(I64) true]
+                              [_ false]))]
+                        [_ false])]
+                    [_ false]))]
+              [_ false]))]
         [_ false])]
     [lit : ast.AstLiteral (ast.ast-lit-int 41)]
     [one : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 1)))]

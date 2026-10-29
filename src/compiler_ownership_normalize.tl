@@ -9763,23 +9763,35 @@
             out
             outer
             (+ depth 1))]
-        ;; A function type's lifetimes are its own: nothing outlives through it.
-        [(ast.AstType.Func args ret)
-          (and
-            (normalize-shape-list
-              variances
-              (ast.ast-type-list-box-shared-view args)
-              true
-              out
-              -1
-              (+ depth 1))
-            (normalize-shape-walk
-              variances
-              (ast.ty-node-get ret)
-              true
-              out
-              -1
-              (+ depth 1)))]
+        ;; Only free lifetimes describe a callable value's environment.
+        [(ast.AstType.Func signature-box)
+          (let
+            [signature (ast.ast-function-signature-view (deref signature-box))]
+            (match signature.binders
+              [(ast.AstCallableBinders.Unresolved) false]
+              [(ast.AstCallableBinders.Resolved owned)
+                (let
+                  [nested
+                    (NormalizeShapeOut
+                      (normalize-no-i64s)
+                      (normalize-no-bools)
+                      (normalize-no-i64s))]
+                  (and
+                    (normalize-shape-list
+                      variances
+                      signature.params
+                      true
+                      (&mut nested)
+                      -1
+                      (+ depth 1))
+                    (normalize-shape-walk
+                      variances
+                      (ast.ty-node-get signature.result)
+                      true
+                      (&mut nested)
+                      -1
+                      (+ depth 1))
+                    (normalize-shape-free-callable! out (& nested) (& owned))))]))]
         [(ast.AstType.Array elem _)
           (normalize-shape-walk
             variances
@@ -9897,9 +9909,9 @@
       [(or (ast.AstType.Ref _ _) (ast.AstType.MutRef _ _)
            (ast.AstType.Region _ _) (ast.AstType.Invalidate _ _)
            (ast.AstType.EnumArgs _ _) (ast.AstType.StructArgs _ _)
-           (ast.AstType.VarArgs _ _) (ast.AstType.Tuple _)
-           (ast.AstType.Func _ _) (ast.AstType.Array _ _)
-           (ast.AstType.DynArray _) (ast.AstType.Box _) (ast.AstType.Slice _))
+           (ast.AstType.VarArgs _ _) (ast.AstType.Tuple _) (ast.AstType.Func _)
+           (ast.AstType.Array _ _) (ast.AstType.DynArray _) (ast.AstType.Box _)
+           (ast.AstType.Slice _))
         false]
       [_ true])
     (return (normalize-empty-shape! shapes)))
@@ -10091,10 +10103,12 @@
         (array-ref state.call-sigs.items index))
         [(typed.TypedTypeValueResult.Ok signature)
           (match signature
-            [(ast.AstType.Func params-box ret)
+            [(ast.AstType.Func params-box-signature-box)
               (let
-                [params : ast.AstTypeList
-                  (ast.ast-type-list-box-shared-view params-box)]
+                [params-box-signature
+                  (ast.ast-function-signature-view
+                    (deref params-box-signature-box))]
+                [params : ast.AstTypeList params-box-signature.params]
                 [count : i64 (array-ref state.call-counts.items index)]
                 [first : i64
                   (if (array-ref state.call-indirect.items index)
@@ -10125,7 +10139,7 @@
                       (normalize-shape-add!
                         (&mut shapes)
                         (& state.variances)
-                        (ast.ty-node-get ret)))]
+                        (ast.ty-node-get params-box-signature.result)))]
                   (normalize-i64s-push! (&mut shapes.call-ret-shapes) shape)))]
             [_
               (let
@@ -10464,14 +10478,18 @@
         (let
           [j : i64 0]
           (while (< j (array-length call))
-            (normalize-region-edge!
-              edges
-              (array-ref callee i)
-              (array-ref call j))
-            (normalize-region-edge!
-              edges
-              (array-ref call j)
-              (array-ref callee i))
+            (when
+              (=
+                (array-ref nodes.names.items (array-ref callee i))
+                (array-ref nodes.names.items (array-ref call j)))
+              (normalize-region-edge!
+                edges
+                (array-ref callee i)
+                (array-ref call j))
+              (normalize-region-edge!
+                edges
+                (array-ref call j)
+                (array-ref callee i)))
             (set! j (+ j 1)))))
       (set! i (+ i 1)))))
 
@@ -13468,3 +13486,37 @@
                             diagnostic))]
                       [(NormalizeBorrowDiagnosticResult.No)
                         (OwnershipNormalizeFailure.Core failure)])])]))]))))
+
+;; Append a nested callable's free shape, preserving surviving outer links.
+(define (normalize-shape-free-callable!
+  [out : (&mut out NormalizeShapeOut)]
+  [nested : (& nested NormalizeShapeOut)]
+  [owned : (& owned ast.AstLifetimeList)]) : bool
+  (let
+    [count : i64 (array-length nested.names)]
+    [remap : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [name : i64 (array-ref nested.names index)]
+        [binder : i64 0]
+        [bound? : bool false]
+        (while (< binder (ast.ast-lifetime-list-len owned))
+          (when
+            (= name (ast.ast-lifetime-list-get owned binder -1))
+            (set! bound? true))
+          (+= binder 1))
+        (if bound?
+          (set! (array-ref remap index) -1)
+          (let
+            [outer : i64 (array-ref nested.outers index)]
+            (set! (array-ref remap index) (array-length out.names))
+            (normalize-shape-push!
+              out
+              name
+              (array-ref nested.vars index)
+              (if (and (>= outer 0) (< outer index))
+                (array-ref remap outer)
+                -1)))))
+      (+= index 1))
+    true))

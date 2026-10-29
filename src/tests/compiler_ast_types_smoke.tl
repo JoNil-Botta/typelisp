@@ -4126,9 +4126,11 @@
 ;; The payload storage of an owning variant; empty for every other variant.
 (define (compiler-ast-payload-slots [ty : ast.AstType]) : (__tl_dyn-array i64)
   (match ty
-    [(Func args _)
+    [(Func args-signature-box)
       (let
-        [list : ast.AstTypeList (deref args)]
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        [list : ast.AstTypeList args-signature.params]
         list.slots)]
     [(Tuple args)
       (let
@@ -4185,7 +4187,12 @@
         (compiler-ast-type-clone-same? (Expr))
         (compiler-ast-type-clone-same? (ExprList))
         (compiler-ast-type-clone-same?
-          (Func (box (compiler-ast-type-list-of 21 22)) 23))
+          (Func
+            (box
+              (ast.AstFunctionSignature
+                (compiler-ast-type-list-of 21 22)
+                23
+                (ast.AstCallableBinders.Unresolved)))))
         (compiler-ast-type-clone-same?
           (Tuple (box (compiler-ast-type-list-of 24 25))))
         (compiler-ast-type-clone-same? (Array 26 27))
@@ -4214,7 +4221,12 @@
     (and
       every-shape?
       (compiler-ast-type-copy-owns-payload?
-        (Func (box (compiler-ast-type-list-of 11 12)) 13))
+        (Func
+          (box
+            (ast.AstFunctionSignature
+              (compiler-ast-type-list-of 11 12)
+              13
+              (ast.AstCallableBinders.Unresolved)))))
       (compiler-ast-type-copy-owns-payload?
         (Tuple (box (compiler-ast-type-list-of 14 15))))
       (compiler-ast-type-copy-owns-payload?

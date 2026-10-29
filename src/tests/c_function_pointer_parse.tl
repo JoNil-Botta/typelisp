@@ -20,14 +20,17 @@
               (and
                 (ast.ast-c-function-mode-eq? actual mode)
                 (match (ast.ast-node-pool-reader-type-get signature)
-                  [(Func args result)
+                  [(Func args-signature-box)
                     (let
-                      [params : ast.AstTypeList
-                        (ast.ast-type-list-box-shared-view args)]
+                      [args-signature
+                        (ast.ast-function-signature-view
+                          (deref args-signature-box))]
+                      [params : ast.AstTypeList args-signature.params]
                       (and
                         (= params.len 2)
                         (ast.ast-type-eq?
-                          (ast.ast-node-pool-reader-type-get result)
+                          (ast.ast-node-pool-reader-type-get
+                            args-signature.result)
                           U64)
                         (ast.ast-type-eq?
                           (ast.ast-node-pool-reader-type-get

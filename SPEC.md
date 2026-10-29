@@ -2265,10 +2265,51 @@ lifetime from the owner:
 - An untagged default-arena aggregate gives references to its owned storage the
   reserved lifetime name `program`.
 
-For `(& name place)`, `name` must match the inferred lifetime. In function
-parameter types, lifetime names are signature-local binders for incoming
-references. Multiple parameters using the same name require the same caller
-lifetime.
+For `(& name place)`, `name` must match the inferred lifetime.
+
+**Where a lifetime name is bound.** A lifetime name is bound by the smallest
+signature that contains every mention of it. In a named function or lambda
+signature, a name mentioned in a parameter or result type outside any nested
+`(-> ...)` is signature-local: one caller lifetime per call, shared by all its
+mentions. A by-value storage name alone does not declare an incoming lifetime.
+The reserved `program` lifetime stays fixed, except for the existing
+parameter-name shadowing rule below.
+
+A name mentioned only within one nested `(-> ...)`, including at least one of
+that type's input positions, is owned by that function type. Every elided input
+reference is also owned by its own function type. A value of that type must
+accept every such lifetime; each call or coercion through the value chooses it
+afresh. If sibling callback types share a name mentioned nowhere else, their
+smallest enclosing signature binds one shared lifetime, fixed inside both
+callbacks. A nested output-only name remains bound by the enclosing signature;
+it does not introduce an unconstrained callable-owned output lifetime.
+
+In `let` or lambda annotations and in lambda parameters, a name that resolves
+in the enclosing lexical lifetime scope (an enclosing signature binder, a
+visible local, parameter or region, or `program`) is fixed. Otherwise the same
+smallest-signature rule applies. The whole signature establishes its scope
+before nested types are resolved, so parameter order does not change binding.
+A fixed lifetime is never re-chosen at a call. A callable whose input lifetime
+is fixed cannot be used where that lifetime is owned; a callable with owned
+lifetimes may be instantiated where they are fixed. Copying, annotating,
+passing or storing a callable preserves its contract. Consistently renaming
+owned lifetimes does not change its type; fixed identities retain ordinary
+equality and outlives constraints.
+
+The spelling `(-> (:lifetimes a) ...)` is reserved for possible future binder
+metadata and is rejected. It adds no explicit binder syntax.
+
+```lisp test=check name=callable-scoped-lifetimes
+;; `s` occurs only in f's type: f accepts a borrow of the local text.
+(define (with-temp [f : (-> (& s str) i64)]) : i64
+  (let [text : String "temporary"] (f (& text))))
+
+;; `a` also names items: f receives references with that fixed lifetime.
+(define (each [items : (& a (Slice i64))] [f : (-> (& a i64) unit)]) : unit
+  (f (& (array-ref items 0))))
+
+(define (main) : i64 0)
+```
 
 **Storage outlives its borrows.** Whatever lifetime a reference's type spells,
 a borrow of a local's or a by-value parameter's storage cannot outlive that
@@ -2353,8 +2394,13 @@ and nested function signatures that form part of those contracts. It does not
 apply to fields, enum payloads, globals, local annotations, or nominal lifetime
 argument lists; those positions require an explicit lifetime or `program`.
 
-- Each elided input reference receives a distinct hidden, signature-local
-  lifetime. Two `(& T)` inputs therefore do not imply that their callers share
+Each nested function type applies these elision rules in its own signature
+scope. Explicit-name binding follows section 3.10's smallest-signature rule;
+a name shared by sibling callback types is fixed by their enclosing signature.
+
+- Each elided input reference receives a distinct hidden lifetime owned by
+  that callable. A parent, sibling, or nested signature displaying the same
+  hidden spelling has a different identity. Two `(& T)` inputs therefore do not imply that their callers share
   a lifetime.
 - Explicit and elided input references may coexist. Distinct explicit lifetime
   names count separately; repeated explicit names count once.
@@ -2839,6 +2885,10 @@ A lambda may capture a binding whose type contains an immutable or mutable
 reference when the checker proves the closure value does not escape the
 reference's lifetime. Closures that would escape reject reference captures.
 
+A capturing closure's captured lifetimes are fixed. Calling or coercing the
+closure never re-chooses those lifetimes; only its own input binders may be
+instantiated, under section 3.10.
+
 A closure is **reference-capturing** when any captured binding has a type that
 contains `(& lifetime T)` or `(&mut lifetime T)`. An immutable reference is
 copied into the closure snapshot. A mutable reference is move-only, so capture
@@ -2879,6 +2929,14 @@ enclosing binding outside the lambda and capture that reference.
     [f (lambda () : (& x i64) (& x))]
     (deref (f))))
 ```
+
+A lambda's own input binders are not free escaping lifetimes of the function
+value. A reference captured from an enclosing scope keeps its fixed identity;
+calling the lambda cannot replace it with a shorter argument lifetime. An
+independent named or elided input binder permits separate safe calls with
+different short arguments, but cannot justify a store into an independently
+captured outer region. These binding rules do not relax the capture-fact
+transport restrictions below.
 
 The source function type `(-> args ... ret)` does not encode captured
 lifetimes, call capability, or the Copy class of a concrete environment.
@@ -7034,7 +7092,7 @@ names, and recursive subkeys cannot collide. Conceptually, the rules are:
 - Fixed arrays key as `(array length element-key)`.
 - Compatibility dynamic arrays key as `(dyn-array element-key)`.
 - Borrowed Slice shapes key as `(slice element-key)`.
-- Functions key as `(function param-count param-key... return-key)`.
+- Functions key by their resolved binder contract and `(function param-count param-key... return-key)`, modulo owned-binder renaming. Fixed lifetime identities remain distinct.
 - Nominal structs/enums key as `(nominal kind module-identity type-name)`.
 - Pointer/reference/region keys include mutability and the referenced/pointee
   type key; reference keys also include the canonical region identity.

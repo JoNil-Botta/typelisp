@@ -283,13 +283,16 @@
     [(Never) "never"]
     [(Expr) "Expr"]
     [(ExprList) "ExprList"]
-    [(Func args-box ret)
-      (doc-cat5
-        "(-> "
-        (doc-ast-type-list-source ctx (deref args-box))
-        " "
-        (doc-ast-type-id-source ctx ret)
-        ")")]
+    [(Func args-box-signature-box)
+      (let
+        [args-box-signature
+          (ast.ast-function-signature-view (deref args-box-signature-box))]
+        (doc-cat5
+          "(-> "
+          (doc-ast-type-list-source ctx args-box-signature.params)
+          " "
+          (doc-ast-type-id-source ctx args-box-signature.result)
+          ")"))]
     [(CFunc signature mode)
       (doc-cat5
         "(CFunc "

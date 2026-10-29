@@ -2523,7 +2523,7 @@
     (set! (array-ref control compiler-parse-state-control-cache-table-id) -1)
     (set! (array-ref control compiler-parse-state-control-marker-id) -1)
     (set! (array-ref control compiler-parse-state-control-ready) 0)
-    (set! (array-ref control compiler-parse-state-control-binding-origins) 0)
+    (set! (array-ref control compiler-parse-state-control-binding-origins) 1)
     (set! (array-ref control 8) (compiler-parse-array-data-addr origins))
     (set! (array-ref origins 12) (compiler-parse-array-data-addr control))
     (set! (array-ref origins 13) -1)
@@ -2532,8 +2532,8 @@
 (define (compiler-parse-state-new) : CompilerParseState
   (compiler-parse-state-new-from-owner (__tl_make-array ci.InternCompatState 0)))
 
-;; Binding tokens are requested by the checked semantic-facts consumer. The
-;; ordinary parser stores no extra token occurrences for this option.
+;; Binding tokens serve checked semantic facts and lifetime diagnostics. Clients
+;; that do not publish source diagnostics may explicitly disable their capture.
 (define (compiler-parse-state-set-binding-origins!
   [state : (&mut state CompilerParseState)]
   [enabled : bool]) : unit
@@ -4810,7 +4810,7 @@
             (let
               [signature (try (parse-ast-type dispatch pools signature-node))]
               (match (& signature)
-                [(Func _ _)
+                [(Func _)
                   (Ok
                     (CFunc
                       (ast.ast-node-pool-context-type-push pools signature)
@@ -4864,6 +4864,12 @@
     [(List (slice arg & _))
       (let
         [rest (reader.spanned-sexpr-drop s 1)]
+        (match (reader.sexpr-view arg)
+          [(List (slice (Sym key _) & _))
+            (when (= (ci.intern-syntax-id-value key) (cbi.compiler-builtin-ctfe ":lifetimes"))
+              (return (Err (parse-kind-message (MalformedForm)
+                "parse: (-> (:lifetimes ...) ...) is reserved; callable lifetime binders are inferred by signature scope"))))]
+          [_ unit])
         (match (reader.sexpr-view rest)
           [(List (slice))
             (let
@@ -5043,6 +5049,11 @@
               (cbi.compiler-builtin-ctfe
                 "__typelisp internal resolved enum type"))
             (parse-ast-resolved-nominal-type dispatch pools rest false)]
+          [(=
+              head-id
+              (cbi.compiler-builtin-ctfe
+                "__typelisp internal resolved callable type"))
+            (parse-ast-resolved-callable-type dispatch pools rest)]
           [(= head-id (cbi.compiler-builtin-ctfe ":consume"))
             (Err
               "parse: :consume has been removed; by-value parameters move non-Copy values")]
@@ -5052,7 +5063,13 @@
             (parse-ast-c-function-type dispatch pools rest)]
           [(= tag (compiler-parse-tag-ty-func))
             (match (parse-ast-func-type-parts dispatch pools rest)
-              [(Ok args ret) (Ok (ast.ast-ty-func-with-pools pools args ret))]
+              [(Ok args ret)
+                (Ok
+                  (ast.ast-ty-func-with-pools
+                    pools
+                    args
+                    ret
+                    (ast.AstCallableBinders.Unresolved)))]
               [(Err message) (Err message)])]
           [(= tag (compiler-parse-tag-ty-tuple))
             (let
@@ -5260,7 +5277,11 @@
               (=
                 head-id
                 (cbi.compiler-builtin-ctfe
-                  "__typelisp internal resolved enum type")))
+                  "__typelisp internal resolved enum type"))
+              (=
+                head-id
+                (cbi.compiler-builtin-ctfe
+                  "__typelisp internal resolved callable type")))
             unit]
           [(= tag (compiler-parse-tag-ty-func))
             (compiler-parse-semantic-func-type-list-origins! dispatch rest)]
@@ -11010,7 +11031,8 @@
     (ast.ast-ty-func-with-pools
       pools
       (owned_view.compiler-owned-reference-shared-view param-types)
-      ret)))
+      ret
+      (ast.AstCallableBinders.Unresolved))))
 
 (define (parse-ast-extern-head-post-ret
   [dispatch : sym_i64_env.SymI64Env]
@@ -13440,3 +13462,36 @@
 ;; explicit-state twin; lint ownership is tracked separately by #4699.
 (define (parse-ast-dotted-import-default-alias-id [name-id : i64]) : i64
   (ci.intern-dotted-final-id name-id))
+
+;; Like resolved nominal types, this non-lexer-spellable macro handoff carries
+;; an already checked contract. The parser proves its source-session authority.
+(define (parse-ast-resolved-callable-type
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [rest : reader.SpannedSexpr]) : ResultAstType
+  (match (reader.spanned-sexpr-view rest)
+    [(List (slice binders-node & _) _)
+      (let
+        [owned : ast.AstLifetimeList
+          (try
+            (parse-ast-lifetime-list-result
+              dispatch
+              pools
+              binders-node
+              "parse: malformed internal callable binder list"))]
+        [binders : ast.AstCallableBinders
+          (ast.AstCallableBinders.Resolved owned)]
+        [state : ci.InternCompatState
+          (compiler-parse-dispatch-intern-state dispatch)]
+        [source-names : ci.InternSourceNameSessionHandle
+          (ci.intern-source-name-session-handle-from-state state)]
+        (if (not (ast.ast-callable-binders-valid? source-names (& binders)))
+          (Err "parse: invalid or stale internal callable lifetime contract")
+          (match (parse-ast-func-type-parts
+            dispatch
+            pools
+            (reader.spanned-sexpr-drop rest 1))
+            [(Ok params ret)
+              (Ok (ast.ast-ty-func-with-pools pools params (& ret) binders))]
+            [(Err message) (Err message)])))]
+    [_ (Err "parse: malformed internal callable type")]))

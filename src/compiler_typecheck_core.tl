@@ -9831,7 +9831,12 @@
         [(TcSelectedResult.Err message after)
           (TcSelectedResult.Err message after)]
         [(TcSelectedResult.Ok body-ty occurrence after)
-          (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
+          (if (or
+            (tc-type-contains-region (tc-global-shared-view body-ty) region)
+            (tc-region-shadow-escapes?
+              (tc-push-region env region)
+              (& body-ty)
+              region))
             (tc-selected-unrepresented
               (tc-infer-selected-legacy ctx env expr syntax expected)
               after)
@@ -50154,18 +50159,23 @@
       [_ (ast.ast-lifetime-list-new)])))
 
 ;; Whether the enclosing body declares `(:invalidate lifetime)` on a parameter,
-;; which lets it destroy the owner of that brand.
+;; which lets it destroy the owner of that brand. The marker records each
+;; parameter's declaration spelling, while a resolved owner brand may be that
+;; signature binder's canonical identity; the storage adapter relates the two.
 (define (tc-invalidate-lifetime-declared? [env : TcTypeEnv] [lifetime : i64]) : bool
   (let
     [pairs : ast.AstLifetimeList (tc-invalidate-marker-pairs env)]
+    [source : i64 (tc-storage-lifetime-source-id env lifetime)]
     [index : i64 0]
     [found : bool false]
     (while (and (not found) (< index (ast.ast-lifetime-list-len (& pairs))))
-      (if (=
-        (ast.ast-lifetime-list-get (& pairs) index (ast.ast-lifetime-fallback))
-        lifetime)
-        (set! found true)
-        unit)
+      (let
+        [declared : i64
+          (ast.ast-lifetime-list-get
+            (& pairs)
+            index
+            (ast.ast-lifetime-fallback))]
+        (when (or (= declared lifetime) (= declared source)) (set! found true)))
       (+= index 2))
     found))
 
@@ -76910,6 +76920,34 @@
                 (__tl_make-array id)
                 (TcSelectedSink.Capture store lease bindings))])])]))
 
+;; As at the tail (tc-return-type-mismatch-message), canonical incoming
+;; identities can make an early `return` fail its shape check before the
+;; unchanged return-flow guard. For equal ordinary types, retain that guard's
+;; escape diagnostic and span; otherwise keep the shape check's message.
+(define (tc-return-exit-mismatch-message
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [actual : (& actual ast.AstType)]
+  [expected : (& expected ast.AstType)]
+  [value : (& value ast.AstExpr)]
+  [message : String]) : String
+  (when
+    (tc-type-compatible? (clone (deref expected)) (clone (deref actual)))
+    (match (tc-ensure-region-value-can-flow-into
+      env
+      (clone (deref expected))
+      (clone (deref actual))
+      "return value")
+      [(ResultTcUnit.Err escape)
+        (return
+          (tc-rich-escape-at-expr
+            (tc-context-expr-bases ctx)
+            (clone (deref value))
+            escape
+            "function return type rejects this escaping value"))]
+      [_ unit]))
+  message)
+
 ;; The canonical return checker has always inferred its operand by value.
 ;; Keep that route and its cleanup policy, retaining the result it selected.
 (define (tc-infer-selected-return
@@ -76948,7 +76986,19 @@
             (tc-global-shared-view value-ty)
             return-ty
             "typecheck: return type mismatch")
-            [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
+            [(ResultTcUnit.Err message)
+              (TcSelectedResult.Err
+                (match (tc-current-return-type env)
+                  [(ResultTcType.Ok expected)
+                    (tc-return-exit-mismatch-message
+                      ctx
+                      env
+                      (& value-ty)
+                      (& expected)
+                      (& value)
+                      message)]
+                  [_ message])
+                next)]
             [(ResultTcUnit.Ok)
               (let
                 [regions : TcNameIdList
@@ -85306,6 +85356,27 @@
   [ty : ast.AstType]) : String
   (tc-clone-out-unsupported-message ctx "with-scratch" ty))
 
+;; The storage adapter projects a visible signature identity onto its
+;; declaration spelling, which a with-arena region may shadow. Inside that
+;; body the store and return checks therefore treat the shadowed identity as
+;; the arena region, and so does the result check: the same conservative name
+;; relation as for the raw region.
+(define (tc-region-shadow-escapes?
+  [env : TcTypeEnv]
+  [ty : (& ty ast.AstType)]
+  [region : i64]) : bool
+  (let
+    [cursor : TcNameIdList (tc-type-collect-regions ty)]
+    [found : bool false]
+    (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+      (let
+        [lifetime : i64 (tc-name-id-list-head cursor)]
+        (when
+          (= (tc-storage-lifetime-source-id env lifetime) region)
+          (set! found true)))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    found))
+
 (define (tc-with-region-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -85316,7 +85387,9 @@
     [region-env : TcTypeEnv (tc-push-region env region)]
     [body-ty : ast.AstType
       (try (tc-begin-list-maybe-expected ctx region-env body expected))]
-    (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
+    (if (or
+      (tc-type-contains-region (tc-global-shared-view body-ty) region)
+      (tc-region-shadow-escapes? region-env (& body-ty) region))
       (Err (tc-region-escape-error region))
       (Ok body-ty))))
 
@@ -128787,10 +128860,8 @@
 ;; The storage algorithms predate semantic binder identities. Only an incoming
 ;; identity actually present in this body's lifetime environment may project
 ;; back to its declaration key for their existing same-name relation. A
-;; callback-owned skolem or another callable's identity remains rigid. An inner
-;; with-arena region of the same spelling shadows the declaration key, so the
-;; identity also stays rigid there. This adapter does not infer an outlives
-;; relation or change stored provenance.
+;; callback-owned skolem or another callable's identity remains rigid. This
+;; adapter does not infer an outlives relation or change stored provenance.
 (define (tc-storage-lifetime-source-id [env : TcTypeEnv] [lifetime : i64]) : i64
   (match (cis.intern-structural-session-callable-lifetime-record
     (tc-type-env-structural-session env)
@@ -128798,8 +128869,7 @@
     [(cis.InternMaybeCallableLifetimeRecord.Some binder)
       (if (and
         (not (tc-elaborated-lifetime-hidden? binder.binding-name-id))
-        (tc-lifetime-visible-id? env lifetime)
-        (not (tc-arena-region-shadows? env binder.binding-name-id)))
+        (tc-lifetime-visible-id? env lifetime))
         binder.binding-name-id
         lifetime)]
     [_ lifetime]))

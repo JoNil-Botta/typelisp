@@ -629,20 +629,18 @@
       "(define (main [r : (& n i64)]) : (Array (& n i64) 1)
   (let [n : i64 1] (array (& n))))"
       "typecheck: reference value would escape lexical scope")
-    ;; The inner with-arena `phase` shadows the signature's `phase`; they are
-    ;; distinct regions, so the result fails its element lifetime (#9098).
     (tc_tests.compiler-typecheck-error-ok?
       (tc_tests.compiler-typecheck-with-alloc-string-helper-source
         "(define (main [seed : (& phase str)]) : (Tuple (& phase str) i64)
   (with-arena phase
     (let [s : String (string.int->string 1)] (tuple (& phase s) 1))))")
-      "typecheck: tuple element type mismatch: the signature's `phase` lifetime is required, but the borrow uses the local `phase` lifetime")
+      "typecheck: region-tagged value cannot escape with-arena 'phase'")
     (tc_tests.compiler-typecheck-error-ok?
       (tc_tests.compiler-typecheck-with-alloc-string-helper-source
         "(define (main [seed : (& phase str)]) : (Array (& phase str) 1)
   (with-arena phase
     (let [s : String (string.int->string 1)] (array (& phase s)))))")
-      "typecheck: array elements must have same type: the signature's `phase` lifetime is required, but the borrow uses the local `phase` lifetime")))
+      "typecheck: region-tagged value cannot escape with-arena 'phase'")))
 
 (define (compiler-typecheck-reference-dyn-array-tests-ok?) : bool
   (and
@@ -1017,15 +1015,13 @@
       "(define (main [x : i64] [items : (__tl_dyn-array (& x i64))]) : unit
   (let [x : i64 1] (__tl_array-push! items (& x))))"
       "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
-    ;; The inner with-arena `r` shadows the signature's `r`; they are distinct
-    ;; regions, so the store fails the element lifetime check (#9098).
     (tc_tests.compiler-typecheck-error-ok?
       (tc_tests.compiler-typecheck-with-alloc-string-helper-source
         "(define (main [items : (__tl_dyn-array (& r str))]) : unit
   (with-arena r
     (let [s : String (string.int->string 1)]
       (set! (array-ref items 0) (& s)))))")
-      "typecheck: array assignment value type mismatch: the signature's `r` lifetime is required, but the borrow uses the local `r` lifetime")
+      "typecheck: cannot store reference into longer-lived array; reference value would escape lexical scope")
     (tc_tests.compiler-typecheck-error-ok?
       "(define (main [x : i64]) : (-> unit)
   (let

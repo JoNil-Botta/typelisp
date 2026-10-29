@@ -2402,13 +2402,11 @@ callable_scoped_result_anchor_ok|check-ok|tests/safety/callable_scoped_result_an
 callable_scoped_invariant_same_name_ok|check-ok|tests/safety/callable_scoped_invariant_same_name_ok.tl|-|-
 
 # Refs #9098: an inner with-arena region shadows the signature's same-spelled
-# lifetime in body borrows and annotations, rather than the signature binder.
-callable_scoped_shadow_inner_arena_reject|check-fail|tests/safety/callable_scoped_shadow_inner_arena_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_reject.tl:4:3|error[E0206]: typecheck: tuple element type mismatch: the signature's `phase` lifetime is required, but the borrow uses the local `phase` lifetime
-callable_scoped_shadow_inner_arena_reject_windows|check-fail-windows|tests/safety/callable_scoped_shadow_inner_arena_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_reject.tl:4:3|error[E0206]: typecheck: tuple element type mismatch: the signature's `phase` lifetime is required, but the borrow uses the local `phase` lifetime
-callable_scoped_shadow_inner_arena_annotation_reject|check-fail|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl:2:3|error[E0206]: typecheck: tuple element type mismatch: the signature's `phase` lifetime is required, but the borrow uses the local `phase` lifetime
-callable_scoped_shadow_inner_arena_annotation_reject_windows|check-fail-windows|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl:2:3|error[E0206]: typecheck: tuple element type mismatch: the signature's `phase` lifetime is required, but the borrow uses the local `phase` lifetime
-callable_scoped_shadow_inner_arena_keep_ok|check-ok|tests/safety/callable_scoped_shadow_inner_arena_keep_ok.tl|-|-
-callable_scoped_shadow_inner_arena_keep_ok_windows|check-ok-windows|tests/safety/callable_scoped_shadow_inner_arena_keep_ok.tl|-|-
+# lifetime in body borrows and annotations; a result carrying either escapes.
+callable_scoped_shadow_inner_arena_reject|check-fail|tests/safety/callable_scoped_shadow_inner_arena_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_reject.tl:6:5|error[E0205]: typecheck: region-tagged value cannot escape with-arena 'phase'
+callable_scoped_shadow_inner_arena_reject_windows|check-fail-windows|tests/safety/callable_scoped_shadow_inner_arena_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_reject.tl:6:5|error[E0205]: typecheck: region-tagged value cannot escape with-arena 'phase'
+callable_scoped_shadow_inner_arena_annotation_reject|check-fail|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl:4:5|error[E0205]: typecheck: region-tagged value cannot escape with-arena 'phase'
+callable_scoped_shadow_inner_arena_annotation_reject_windows|check-fail-windows|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl|tests/safety/callable_scoped_shadow_inner_arena_annotation_reject.tl:4:5|error[E0205]: typecheck: region-tagged value cannot escape with-arena 'phase'
 
 # Refs #9098: a name mentioned only in a callback returned by a callback is
 # owned by that innermost callback, whether named or elided.

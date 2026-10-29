@@ -29358,16 +29358,18 @@
               (+= next 1))
             ;; Construction-only handoff; the cache node replaces this slot
             ;; with the covered-bind count after reading the activation flag.
-            (when (and
-              (= name-id region-marker-id)
-              (match (& ty)
-                [(Region _ _) true]
-                [_ false]))
-              (set! (array-ref shadow-flags (- (array-length shadow-flags) 1)) 1))
+            (when
+              (and
+                (= name-id region-marker-id)
+                (match (& ty)
+                  [(Region _ _) true]
+                  [_ false]))
+              (set!
+                (array-ref shadow-flags (- (array-length shadow-flags) 1))
+                1))
             (let
               [marker-lifetime-id : i64
-                (tc-env-cache-lifetime-marker-lifetime-id
-                  name-id
+                (tc-env-cache-lifetime-marker-lifetime-id                  name-id
                   ty
                   signature-marker-id
                   region-marker-id
@@ -29484,16 +29486,18 @@
                   name-id)
                 (+= resolution-next 1))
               (+= next 1))
-            (when (and
-              (= name-id region-marker-id)
-              (match (& ty)
-                [(Region _ _) true]
-                [_ false]))
-              (set! (array-ref shadow-flags (- (array-length shadow-flags) 1)) 1))
+            (when
+              (and
+                (= name-id region-marker-id)
+                (match (& ty)
+                  [(Region _ _) true]
+                  [_ false]))
+              (set!
+                (array-ref shadow-flags (- (array-length shadow-flags) 1))
+                1))
             (let
               [marker-lifetime-id : i64
-                (tc-env-cache-lifetime-marker-lifetime-id
-                  name-id
+                (tc-env-cache-lifetime-marker-lifetime-id                  name-id
                   ty
                   signature-marker-id
                   region-marker-id

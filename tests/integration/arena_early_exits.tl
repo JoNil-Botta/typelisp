@@ -150,50 +150,60 @@
   (right String))
 
 (define (pair-return [owner : (arena.Arena source)]) : (in source TextPair)
-  (in-arena owner
+  (in-arena
+    owner
     (let
       [a (string.append "a" "")]
       [b (string.append "bb" "")]
       (TextPair a b))))
 
 (define (field-pair-return [holder : (& h (Holder r))]) : (in r TextPair)
-  (in-arena (deref holder).owner
+  (in-arena
+    (deref holder).owner
     (let
       [a (string.append "a" "")]
       [b (string.append "bb" "")]
       (TextPair a b))))
 
 (define (enum-return [owner : (arena.Arena source)]) : (in source MaybeText)
-  (in-arena owner
-    (let [a (string.append "abc" "")]
+  (in-arena
+    owner
+    (let
+      [a (string.append "abc" "")]
       (MaybeText.Some a))))
 
-(define (nested-pair-return [owner : (arena.Arena source)] [n : i64]) : (in source TextPair)
-  (in-arena owner
+(define (nested-pair-return [owner : (arena.Arena source)] [n : i64]) : (in
+    source
+    TextPair)
+  (in-arena
+    owner
     (let
       [a (string.append "a" "")]
-      [b (string.append "bb" "")]
-      [length : i64
+      [b (string.append "bb" "")]      [length : i64
         (with-arena phase (string.string-length (string.int->string n)))]
       (if (> length 0)
         (TextPair a b)
         (TextPair (string.append "" "") (string.append "" ""))))))
 
-(define (macro-pair-return [owner : (arena.Arena source)] [n : i64]) : (in source TextPair)
-  (in-arena owner
+(define (macro-pair-return [owner : (arena.Arena source)] [n : i64]) : (in
+    source
+    TextPair)
+  (in-arena
+    owner
     (let
       [a (string.append "a" "")]
-      [b (string.append "bb" "")]
-      (when (> n 0) (return (TextPair a b)))
+      [b (string.append "bb" "")]      (when (> n 0) (return (TextPair a b)))
       (TextPair a b))))
 
 ;; A wide binding list also puts the activation into a cached env window.
-(define (wide-pair-return [owner : (arena.Arena source)] [n : i64]) : (in source TextPair)
-  (in-arena owner
+(define (wide-pair-return [owner : (arena.Arena source)] [n : i64]) : (in
+    source
+    TextPair)
+  (in-arena
+    owner
     (let
       [a (string.append "a" "")]
-      [b (string.append "bb" "")]
-      [p0 : i64 n]
+      [b (string.append "bb" "")]      [p0 : i64 n]
       [p1 : i64 (+ p0 0)]
       [p2 : i64 (+ p1 0)]
       [p3 : i64 (+ p2 0)]
@@ -238,13 +248,12 @@
         (TextPair (string.append "" "") (string.append "" ""))))))
 
 (define (pair-length [pair : (& a TextPair)]) : i64
-  (+ (string.string-length (deref pair).left)
+  (+
+    (string.string-length (deref pair).left)
     (string.string-length (deref pair).right)))
 
-
 (define (main) : i64
-  (unless (= (scalar-return -12345) 6) (return 1))
-  (unless (= (string.string-length (outer-return -12345)) 6) (return 2))
+  (unless (= (scalar-return -12345) 6) (return 1))  (unless (= (string.string-length (outer-return -12345)) 6) (return 2))
   (unless (= (string.string-length (program-return "program")) 7) (return 3))
   (let
     [owner (arena.make)]
@@ -317,11 +326,11 @@
     [wide-pair (wide-pair-return wide-owner 7)]
     [local-owner (arena.make)]
     [local-pair
-      (in-arena local-owner
+      (in-arena
+        local-owner
         (let
           [a (string.append "a" "")]
-          [b (string.append "bb" "")]
-          (TextPair a b)))]
+          [b (string.append "bb" "")]          (TextPair a b)))]
     (unless (= (pair-length (& pair)) 3) (return 31))
     (unless (= (pair-length (& atomic-pair)) 3) (return 32))
     (unless (= (pair-length (& field-pair)) 3) (return 33))
@@ -330,7 +339,8 @@
     (unless (= (pair-length (& macro-tail)) 3) (return 36))
     (unless (= (pair-length (& wide-pair)) 3) (return 37))
     (unless (= (pair-length (& local-pair)) 3) (return 38)))
-  (let [owner (arena.make)]
+  (let
+    [owner (arena.make)]
     (match (enum-return owner)
       [(MaybeText.Some text)
         (unless (= (string.string-length text) 3) (return 39))]

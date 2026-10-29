@@ -514,7 +514,8 @@ budget unchanged). Local runs keep their own worker settings.
 
 Each lane seals a receipt into its compiler stage envelope: its plan, its
 `--gates` request, every planned gate's result (`ci-verify.sh` writes
-`target/ci-verify-results.tsv`), its timing rows and its compilers' hashes. The
+`target/ci-verify-results.tsv`), its timing rows, its checkout path and its
+compilers' hashes. The
 aggregator of each host (the required checks `Test + Integration` and
 `Test + Integration (windows-latest)`, which run whatever happened to the
 lanes) runs `ci-lane.sh aggregate`. It requires every lane job to have
@@ -526,8 +527,13 @@ requires one converged compiler across the lanes and records each lane's
 stage0 seed: a seed race between lanes is allowed only with an equal compiler,
 and a different compiler is a determinism defect, never re-run away. Windows
 compares the compiler with its PE COFF TimeDateStamp read as zero, because the
-bootstrap links without `/Brepro` and that field is the link time; every other
-byte, and Linux's whole binary, must match. It then merges the lanes' timing
+bootstrap links without `/Brepro` and that field is the link time (#9470
+makes that link deterministic). Only those 4 bytes are masked, at the offset
+each binary's own PE header gives; every other byte, and Linux's whole binary,
+must match. The converged compiler also
+embeds its checkout path (the embedded stdlib image records it), so the lanes
+of one host must share the workspace path: each receipt records it, and the
+aggregator fails when the lanes' paths differ. It then merges the lanes' timing
 into the host's `ci-timing-<host>` artifact: each gate's rows from its owning
 lane in table order, the lanes' ungated rows, and one complete-verification
 row timed as the slowest lane (`partial-verification` rows mark lane runs).

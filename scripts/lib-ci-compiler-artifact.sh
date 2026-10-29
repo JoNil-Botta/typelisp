@@ -280,7 +280,10 @@ cica_roles() {
 }
 # Handoff identity: the exact bytes, except that a Windows PE's COFF header
 # TimeDateStamp (link wall-clock time; the bootstrap links without /Brepro)
-# reads as zero, so independently linked equal compilers compare equal.
+# reads as zero, so independently linked equal compilers compare equal. Only
+# those 4 bytes are masked, at the offset this binary's own e_lfanew (0x3c)
+# gives after its PE signature is validated; every other byte must match.
+# #9470 makes that link deterministic so this mask can go.
 cica_identity_sha() (
     [ "$CICA_HOST" = windows ] || { cica_sha "$1"; exit; }
     cica_binary "$1"
@@ -572,6 +575,10 @@ cica_lane_handoff() {
     cica_owned_file "$_lh_path" "$1 handoff"
     printf '%s\t%s\t%s\n' "$1" "$(cica_sha "$_lh_path")" "$(cica_identity_sha "$_lh_path")" >> "$CICA_WORK/draft/lane/handoffs.tsv"
 }
+cica_checkout_ok() {
+    ci_compiler_artifact_field_safe checkout "$1" || return 1
+    case "$1" in /*) return 0 ;; *) return 1 ;; esac
+}
 cica_lane_receipt() {
     _lr=$CICA_WORK/draft/lane
     [ ! -e "$_lr/results.tsv" ] && [ ! -e "$_lr/handoffs.tsv" ] || cica_fail 'duplicate lane receipt'
@@ -584,6 +591,10 @@ cica_lane_receipt() {
         tr -d '\r' < "$2" > "$_lr/timing.tsv"
         [ "$(sed -n 1p "$_lr/timing.tsv")" = "$(printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost')" ] || cica_fail 'timing header changed'
     fi
+    # The converged compiler embeds the checkout path (its stdlib image
+    # records it), so the aggregator requires one path for a host's lanes.
+    cica_checkout_ok "$CICA_ROOT" || cica_fail 'unsafe checkout path'
+    printf '%s\n' "$CICA_ROOT" > "$_lr/checkout.txt"
     : > "$_lr/handoffs.tsv"
     if grep -qxF bootstrap-fixpoint "$_lr/plan.txt"; then
         cica_lane_handoff previous-stage "$CICA_ROOT/target/ci-verify-stage1.path"
@@ -643,10 +654,11 @@ cica_verify_transport() {
 # published compiler payloads.
 cica_lane_verify() {
     _lv=$CICA_WORK/lane
-    { printf '%s\n' handoffs.tsv plan.txt requested.txt results.tsv
+    { printf '%s\n' checkout.txt handoffs.tsv plan.txt requested.txt results.tsv
       if [ "$1" = github ] || [ -f "$_lv/timing.tsv" ]; then printf '%s\n' timing.tsv; fi; } | LC_ALL=C sort > "$CICA_SCRATCH/lane-expected"
     (cd "$_lv" && find . -type f -print) | sed 's|^[.]/||' | LC_ALL=C sort > "$CICA_SCRATCH/lane-actual" || cica_fail 'lane receipt missing'
     cmp -s "$CICA_SCRATCH/lane-expected" "$CICA_SCRATCH/lane-actual" || cica_fail 'lane receipt file set changed'
+    [ "$(wc -l < "$_lv/checkout.txt")" -eq 1 ] && cica_checkout_ok "$(cat "$_lv/checkout.txt")" || cica_fail 'malformed checkout path receipt'
     cica_lane_ids_ok "$_lv" || cica_fail 'unsafe lane plan or request outside the plan'
     cica_lane_results_ok "$_lv"
     [ ! -f "$_lv/timing.tsv" ] || [ "$(sed -n 1p "$_lv/timing.tsv")" = "$(printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost')" ] || cica_fail 'timing header changed'

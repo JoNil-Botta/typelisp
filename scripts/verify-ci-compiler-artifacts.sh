@@ -180,9 +180,14 @@ build_lane() {
         fi
     done
     compiler=$dir/draft/roles/bootstrap-converged/payload/compiler
+    # The fixture PE header starts at 64 (e_lfanew), so its COFF
+    # TimeDateStamp is bytes 72-75; coff-before/after change the header
+    # bytes on either side of it (NumberOfSections, PointerToSymbolTable).
     case $variant in
       other-payload | other-seed-payload) printf X | dd of="$compiler" bs=1 seek=100 conv=notrunc 2>/dev/null ;;
       timestamp) printf '\001\002\003\004' | dd of="$compiler" bs=1 seek=72 conv=notrunc 2>/dev/null ;;
+      coff-before) printf '\001' | dd of="$compiler" bs=1 seek=71 conv=notrunc 2>/dev/null ;;
+      coff-after) printf '\001' | dd of="$compiler" bs=1 seek=76 conv=notrunc 2>/dev/null ;;
     esac
     seed='{"sha256":"4444444444444444444444444444444444444444444444444444444444444444","identity":"5555555555555555555555555555555555555555"}'
     case $variant in
@@ -304,7 +309,8 @@ rebind() {
 }
 CICA_HOST=linux
 for name in identity producer-digest version-commit target cfg opt profile source-set inventory seed partial-fixpoint path-escape absolute-path corrupt-payload untrusted-root attempt-N-minus-1 producer-N-minus-1 producer-head failed-producer artifact-run old-artifact duplicate-artifact expired-artifact extra-payload missing-role partial-publication missing-payload symlink-escape unsafe-extra-file unsafe-extra-tab absent-fixpoint-proof invocation-receipt-substitution \
-    wrong-lane lane-rerun-not-copied lane-failed-gate lane-unplanned-result lane-request-outside-plan lane-handoff-substitution lane-missing-timing lane-missing-receipt; do
+    wrong-lane lane-rerun-not-copied lane-failed-gate lane-unplanned-result lane-request-outside-plan lane-handoff-substitution lane-missing-timing lane-missing-receipt \
+    lane-missing-checkout lane-relative-checkout; do
     case_dir=$source/target/negative-$name
     cp -R "$source/target/lanes/linux-1-a2-base/complete" "$case_dir"
     cp "$work/linux-1.jobs.json" "$work/jobs-$name.json"
@@ -363,6 +369,8 @@ for name in identity producer-digest version-commit target cfg opt profile sourc
       lane-handoff-substitution) lane_edit='$1 == "converged" { $2 = "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }' lane_file=handoffs.tsv ;;
       lane-missing-timing) mv "$case_dir/lane/timing.tsv" "$work/retained-missing-timing.tsv"; rebind_files ;;
       lane-missing-receipt) mv "$case_dir/lane/results.tsv" "$work/retained-missing-results.tsv"; rebind_files ;;
+      lane-missing-checkout) mv "$case_dir/lane/checkout.txt" "$work/retained-missing-checkout.txt"; rebind_files ;;
+      lane-relative-checkout) printf 'relative/checkout\n' > "$case_dir/lane/checkout.txt"; rebind_files ;;
     esac
     if [ -n "$lane_edit" ]; then
         case $lane_edit in '{ print }'*) ;; *) lane_edit="$lane_edit { print }" ;; esac
@@ -467,8 +475,9 @@ out=$source/target/aggregate/linux/out
 [ "$(grep -c '	complete-verification	' "$out/linux.tsv")" = 1 ] && [ "$(grep -c 'partial-verification' "$out/linux.tsv")" = 0 ] &&
     [ "$(grep -c '^bootstrap fixpoint	all	gate	' "$out/linux.tsv")" = 1 ] && [ "$(grep -c '	all	gate	' "$out/linux.tsv")" = 6 ] &&
     grep -q '^CI verification	all	complete-verification	5002	0	linux$' "$out/linux.tsv" || cica_fail 'merged timing differs from the contract'
-cica_jq -e '.status=="pass" and .gates==6 and (.lanes|length)==2 and (.lanes|map(.attempt)|unique)==[2] and
-  (.lanes[]|select(.lane=="linux-1")|.duplicates)==["bootstrap-fixpoint"] and (.seeds|length)==1' "$out/coverage.json" > /dev/null || cica_fail 'coverage proof incomplete'
+cica_jq -e --arg root "$source_real" '.status=="pass" and .gates==6 and (.lanes|length)==2 and (.lanes|map(.attempt)|unique)==[2] and
+  (.lanes[]|select(.lane=="linux-1")|.duplicates)==["bootstrap-fixpoint"] and (.seeds|length)==1 and
+  .checkout==$root and (.lanes|map(.checkout)|unique)==[$root]' "$out/coverage.json" > /dev/null || cica_fail 'coverage proof incomplete'
 record_result aggregate-merged-timing-and-proof pass
 # shellcheck disable=SC2086
 aggregate_case windows pass windows success "$work/agg.jobs.json" "$work/agg.artifacts.json" $base_windows
@@ -535,6 +544,23 @@ aggregate_case windows-link-timestamp-only pass windows success "$work/agg.jobs.
 build_lane windows windows-2 2 other-payload
 aggregate_case windows-stage2-mismatch rejected windows success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
     "windows-1=$L/windows-1-a2-base/complete@2" "windows-2=$L/windows-2-a2-other-payload/complete@2"
+# Only the 4-byte TimeDateStamp at the binary's own PE offset is masked: one
+# changed byte beside it in the COFF header is a different compiler.
+for variant in coff-before coff-after; do
+    build_lane windows windows-2 2 "$variant"
+    aggregate_case "windows-$variant-timestamp" rejected windows success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
+        "windows-1=$L/windows-1-a2-base/complete@2" "windows-2=$L/windows-2-a2-$variant/complete@2"
+done
+# The converged compiler embeds the checkout path, so a host's lanes must
+# record one path; a lane that recorded another fails, unmasked.
+case_dir=$L/linux-2-other-checkout
+cp -R "$L/linux-2-a2-base/complete" "$case_dir"
+printf '/other/checkout\n' > "$case_dir/lane/checkout.txt"
+rebind_files
+aggregate_case checkout-path-differs rejected linux success "$work/agg.jobs.json" "$work/agg.artifacts.json" \
+    "linux-1=$L/linux-1-a2-base/complete@2" "linux-2=$case_dir@2"
+grep -q 'checkout paths differ between linux lanes' "$source/target/aggregate/checkout-path-differs/stderr" ||
+    cica_fail 'checkout path mismatch was not the rejection reason'
 # "Re-run failed jobs": linux-1 ran in attempt 1 and was copied into attempt
 # 2; linux-2 failed in attempt 1 and re-ran. Each binds to its executed
 # attempt. A lane that really re-ran leaves its older envelope stale.

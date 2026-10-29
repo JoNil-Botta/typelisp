@@ -25,9 +25,10 @@ set -eu
 # the attempt that executed the lane job, reads that attempt's envelope back
 # against the trusted context (scripts/ci-compiler-artifact.sh verify), and
 # requires its receipt to plan and pass exactly the lane's assigned gates and
-# their closure. It then requires one converged-compiler identity across the
-# lanes (and one compile-profile compiler where two lanes build it), records
-# each lane's seed, and writes OUT/HOST.tsv, the merged ci-timing artifact with
+# their closure. It then requires one checkout path (the converged compiler
+# embeds it) and one converged-compiler identity across the lanes (and one
+# compile-profile compiler where two lanes build it), records each lane's
+# seed, and writes OUT/HOST.tsv, the merged ci-timing artifact with
 # the complete-verification row, and OUT/coverage.json. Anything else fails.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -256,10 +257,10 @@ lane_aggregate() {
         [ ! -f "$_la_role" ] || _la_seed=$(jq -c .proof.seed "$_la_role")
         jq -cn --arg lane "$_la_lane" --arg job "$_la_job" --argjson attempt "$_la_attempt" --arg digest "$_la_digest" \
             --argjson seed "$_la_seed" --rawfile owned "$LANE_WORK/owned-$_la_lane" --rawfile planned "$LANE_WORK/planned-$_la_lane" \
-            --rawfile handoffs "$_la_bundle/lane/handoffs.tsv" '
+            --rawfile handoffs "$_la_bundle/lane/handoffs.tsv" --rawfile checkout "$_la_bundle/lane/checkout.txt" '
             ($owned | split("\n") | map(select(length > 0))) as $o |
             ($planned | split("\n") | map(select(length > 0))) as $p |
-            {lane: $lane, job: $job, attempt: $attempt, bundle_sha256: $digest, seed: $seed,
+            {lane: $lane, job: $job, attempt: $attempt, bundle_sha256: $digest, seed: $seed, checkout: ($checkout | rtrimstr("\n")),
              owned: ($o | length), planned: ($p | length), duplicates: ($p - $o),
              handoffs: ($handoffs | split("\n") | map(select(length > 0) | split("\t") | {key: .[0], value: {sha256: .[1], identity_sha256: .[2]}}) | from_entries)}' \
             >> "$LANE_WORK/proof-lanes.jsonl"
@@ -272,6 +273,12 @@ lane_aggregate() {
             lane_fail "$_la_id is not in the receipt of its owning lane $_la_owner"
     done < "$LANE_WORK/gates.tsv"
     jq -s '.' "$LANE_WORK/proof-lanes.jsonl" > "$LANE_WORK/proof-lanes.json"
+    # The converged compiler embeds its checkout path, so a host's lanes must
+    # share one; a different path fails here rather than being masked.
+    jq -e '[.[].checkout] | unique | length == 1' "$LANE_WORK/proof-lanes.json" > /dev/null || {
+        jq -r '.[] | "[ci-lane]   \(.lane): checkout \(.checkout)"' "$LANE_WORK/proof-lanes.json" >&2
+        lane_fail "checkout paths differ between $_la_host lanes; lanes on one host must share the workspace path"
+    }
     # One converged compiler across lanes, whatever their seeds; a mismatch
     # is a determinism defect, never a reason to retry.
     jq -e '[.[] | select(.handoffs.converged) | .handoffs.converged.identity_sha256] | length >= 1 and (unique | length) == 1' \
@@ -289,7 +296,7 @@ lane_aggregate() {
         --arg head "$(jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")" --argjson gates "$(awk 'END { print NR }' "$LANE_WORK/gates.tsv")" \
         --slurpfile lanes "$LANE_WORK/proof-lanes.json" '
         {schema: "typelisp-ci-lane-coverage/1", host: $host, run_id: $run, attempt: $attempt, commit: $commit, tree: $tree, head: $head,
-         gates: $gates, lanes: $lanes[0], stage2_identity_sha256: ($lanes[0] | map(select(.handoffs.converged)) | .[0].handoffs.converged.identity_sha256),
+         gates: $gates, lanes: $lanes[0], checkout: $lanes[0][0].checkout, stage2_identity_sha256: ($lanes[0] | map(select(.handoffs.converged)) | .[0].handoffs.converged.identity_sha256),
          seeds: ($lanes[0] | map(.seed.sha256 // empty) | unique), status: "pass"}' > "$_la_out/coverage.json"
     echo "[ci-lane] $_la_host: $(awk 'END { print NR }' "$LANE_WORK/gates.tsv") gates passed in their owning lanes ($(printf '%s ' $_la_lanes)); one converged compiler"
 }

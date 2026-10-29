@@ -245,7 +245,8 @@ grep -Fx "static_payload_bytes${tab}4503" "$work/report" >/dev/null
 # malformed authenticated index, frame range, identity or padding byte.
 . "$ROOT/scripts/lib-stage0-tlch.sh"
 u64() {
-    awk -v value="$1" 'BEGIN { for (i=0;i<8;i++) { printf "%c",value%256; value=int(value/256) } }'
+    # These are binary octets, not locale-dependent Unicode characters.
+    LC_ALL=C awk -v value="$1" 'BEGIN { for (i=0;i<8;i++) { printf "%c",value%256; value=int(value/256) } }'
 }
 stamp_index() {
     index_hash=$(od -An -v -tu1 "$work/v2" | awk '
@@ -274,7 +275,11 @@ reject_v2() {
     grep -F "$1" "$work/err" >/dev/null || { cat "$work/err" >&2; exit 1; }
 }
 write_v2
-[ "$(scan_stage0_tlch "$work/v2")" = '1 528 3 4586' ]
+actual=$(scan_stage0_tlch "$work/v2")
+[ "$actual" = '1 528 3 4586' ] || {
+    echo "TLCH v2 scanner: expected 1 528 3 4586, got $actual" >&2
+    exit 1
+}
 {
     frame 1 1 '\001A'
     frame 2 4 '\365\211\000'

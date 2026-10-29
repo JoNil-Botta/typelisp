@@ -52424,15 +52424,11 @@
   [expected : ast.AstType]
   [message : String]) : ResultTcUnit
   (cond
-    [(or
-        (tc-type-compatible?
-          (tc-global-shared-view expected)
-          (tc-global-shared-view actual))
-        (tc-type-coercible?
-          ctx
-          env
-          (tc-global-shared-view expected)
-          (tc-global-shared-view actual)))
+    [(tc-type-coercible?
+        ctx
+        env
+        (tc-global-shared-view expected)
+        (tc-global-shared-view actual))
       Ok]
     [else
       (let
@@ -67225,7 +67221,7 @@
   [cleanup : ast.AstExpr]
   [resource-ty : ast.AstType]) : ResultTcUnit
   (let
-    [_
+    [cleanup-resource-ty
       (try
         (tc-resource-cleanup-resource-type
           ctx
@@ -67234,21 +67230,38 @@
     [cleanup-ty (try (tc-expr ctx env cleanup))]
     ;; A cleanup is called with this resource. Instantiate its owned contract
     ;; as at an ordinary call instead of comparing an isolated parameter type.
+    [params : ast.AstTypeList
+      (ast.ast-type-cons
+        (& (tc-type-without-regions resource-ty))
+        (& (ast.ast-type-list-new)))]
+    [resource : i64
+      (ast.ast-type-list-get (& params) 0 (ast.ast-type-id-fallback))]
     [expected : ast.AstType
       (ast.ast-ty-func
-        (ast.ast-type-cons
-          (& (tc-type-without-regions resource-ty))
-          (& (ast.ast-type-list-new)))
+        params
         (& (Unit))
         (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))]
-    (tc-expect-in-context
+    (match (tc-expect-in-context
       ctx
       env
       cleanup-ty
       expected
       (tc-kind-message
         (ResourceOwnership)
-        "typecheck: with cleanup function type mismatch"))))
+        "typecheck: with cleanup function type mismatch"))
+      [(ResultTcUnit.Ok) ResultTcUnit.Ok]
+      [(ResultTcUnit.Err message)
+        ;; Preserve the established parameter diagnostic when the isolated
+        ;; types also disagree. A contract-only mismatch remains a rejection.
+        (match (tc-expect
+          cleanup-resource-ty
+          (ast.ty-node-get resource)
+          (tc-kind-message
+            (ResourceOwnership)
+            "typecheck: with cleanup function type mismatch"))
+          [(ResultTcUnit.Err parameter-message)
+            (ResultTcUnit.Err parameter-message)]
+          [(ResultTcUnit.Ok) (ResultTcUnit.Err message)])])))
 
 (define (tc-resource-bindings
   [ctx : TcContext]
@@ -128799,12 +128812,24 @@
     [(Func _)
       (match actual
         [(Func _)
-          (str_cat.str-cat
-            "; required callable {"
-            (tc-diagnostic-callable-contract source expected)
-            "}; source callable {"
-            (tc-diagnostic-callable-contract source actual)
-            "}")]
+          (let
+            [required : String
+              (tc-diagnostic-callable-contract source expected)]
+            [supplied : String (tc-diagnostic-callable-contract source actual)]
+            (if (and
+              (string.eq
+                required
+                "owned lifetimes: none; fixed lifetimes: none")
+              (string.eq
+                supplied
+                "owned lifetimes: none; fixed lifetimes: none"))
+              ""
+              (str_cat.str-cat
+                "; required callable {"
+                required
+                "}; source callable {"
+                supplied
+                "}")))]
         [_ ""])]
     [_ ""]))
 

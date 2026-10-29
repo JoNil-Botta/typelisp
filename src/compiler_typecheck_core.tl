@@ -78232,15 +78232,19 @@
     (tc-global-shared-view place-expr))
     [(Ok place)
       (begin
-        ;; An explicit borrow names either the actual local owner or a lifetime
-        ;; from this callable's source signature. Preserve an exact local owner
-        ;; before resolving the signature's spelling to its semantic identity.
+        ;; An explicit borrow names either the actual local owner, an enclosing
+        ;; with-arena region, or a lifetime from this callable's source
+        ;; signature. Preserve an exact local owner or the innermost arena
+        ;; region before resolving the signature's spelling to its semantic
+        ;; identity.
         (match lifetime
           [(Named requested)
             (match place
               [(TcBorrowPlace inferred _ _ _)
                 (when
-                  (!= requested inferred)
+                  (and
+                    (!= requested inferred)
+                    (not (tc-arena-region-shadows? env requested)))
                   (set!
                     lifetime
                     (Named
@@ -127649,11 +127653,7 @@
             [(cis.InternMaybeCallableLifetimeRecord.No)
               (if (tc-elaborated-lifetime-hidden? name)
                 (TcMaybeNameId.No)
-                (if (and
-                  (> ctx.source-lifetime-env.store 0)
-                  (tc-name-local-bound-before-module-scan-id?
-                    ctx.source-lifetime-env
-                    name))
+                (if (tc-source-lifetime-local? ctx name)
                   (TcMaybeNameId.Some (tc-source-lifetime-id ctx name))
                   (tc-lifetime-subst-lookup ctx.lifetime-scope name)))])]
         (unless
@@ -128058,29 +128058,75 @@
       out)
     lifetimes))
 
+;; A with-arena region is bound only through the active-region marker, never as
+;; an ordinary value, so the scan compares the marker's region with `name`.
+;; Whichever local binding is innermost decides how a body annotation's
+;; spelling resolves; an outer signature binder of the same name is shadowed.
+(defenum TcSourceLifetimeLocal
+  (None)
+  (Value)
+  (Region))
+
+(define (tc-source-lifetime-local-scan [env : TcTypeEnv] [name : i64]) : TcSourceLifetimeLocal
+  (match (tc-type-env-view env)
+    [(Nil) (TcSourceLifetimeLocal.None)]
+    [(Cache _ scan-through _ rest _)
+      (if scan-through
+        (tc-source-lifetime-local-scan rest name)
+        (TcSourceLifetimeLocal.None))]
+    [(Bind key ty rest)
+      (cond
+        [(= key name) (TcSourceLifetimeLocal.Value)]
+        [(and
+            (= key (tc-region-marker-id))
+            (match ty
+              [(or (Var region) (Region region _)) (= region name)]
+              [_ false]))
+          (TcSourceLifetimeLocal.Region)]
+        [else (tc-source-lifetime-local-scan rest name)])]))
+
+(define (tc-arena-region-shadows? [env : TcTypeEnv] [name : i64]) : bool
+  (match (tc-active-region env)
+    [(No) false]
+    [(Some _)
+      (match (tc-source-lifetime-local-scan env name)
+        [(TcSourceLifetimeLocal.Region) true]
+        [_ false])]))
+
+(define (tc-source-lifetime-local [ctx : TcContext] [name : i64]) : TcSourceLifetimeLocal
+  (if (> ctx.source-lifetime-env.store 0)
+    (tc-source-lifetime-local-scan ctx.source-lifetime-env name)
+    (TcSourceLifetimeLocal.None)))
+
+(define (tc-source-lifetime-local? [ctx : TcContext] [name : i64]) : bool
+  (match (tc-source-lifetime-local ctx name)
+    [(TcSourceLifetimeLocal.None) false]
+    [_ true]))
+
 ;; Body annotations name visible local storage; signature elaboration clears
 ;; this transient value environment before establishing its own binders.
 (define (tc-source-lifetime-id [ctx : TcContext] [name : i64]) : i64
-  (if (and
-    (> ctx.source-lifetime-env.store 0)
-    (tc-name-local-bound-before-module-scan-id? ctx.source-lifetime-env name))
-    (match (tc-lookup-id ctx.source-lifetime-env name)
-      [(ResultTcType.Ok ty)
-        (match ty
-          [(or (ast.AstType.Ref lifetime _) (ast.AstType.MutRef lifetime _)
-               (ast.AstType.Region lifetime _))
-            lifetime]
-          [(ast.AstType.StructArgs nominal lifetimes)
-            ;; An arena parameter's name denotes its existing brand in a
-            ;; lifetime annotation, rather than the parameter's stack slot.
-            (if (and
-              (tc-arena-nominal-name-id? nominal)
-              (= (ast.ast-lifetime-list-len (& (deref lifetimes))) 1))
-              (ast.ast-lifetime-list-get (& (deref lifetimes)) 0 name)
-              name)]
-          [_ name])]
-      [_ (tc-lifetime-subst-apply ctx.lifetime-scope name)])
-    (tc-lifetime-subst-apply ctx.lifetime-scope name)))
+  (match (tc-source-lifetime-local ctx name)
+    [(TcSourceLifetimeLocal.None)
+      (tc-lifetime-subst-apply ctx.lifetime-scope name)]
+    [(TcSourceLifetimeLocal.Region) name]
+    [(TcSourceLifetimeLocal.Value)
+      (match (tc-lookup-id ctx.source-lifetime-env name)
+        [(ResultTcType.Ok ty)
+          (match ty
+            [(or (ast.AstType.Ref lifetime _) (ast.AstType.MutRef lifetime _)
+                 (ast.AstType.Region lifetime _))
+              lifetime]
+            [(ast.AstType.StructArgs nominal lifetimes)
+              ;; An arena parameter's name denotes its existing brand in a
+              ;; lifetime annotation, rather than the parameter's stack slot.
+              (if (and
+                (tc-arena-nominal-name-id? nominal)
+                (= (ast.ast-lifetime-list-len (& (deref lifetimes))) 1))
+                (ast.ast-lifetime-list-get (& (deref lifetimes)) 0 name)
+                name)]
+            [_ name])]
+        [_ (tc-lifetime-subst-apply ctx.lifetime-scope name)])]))
 
 ;; Constructors quantify the nominal declaration's explicit lifetime parameters.
 ;; A reserved program field outside that list remains fixed.
@@ -128732,8 +128778,10 @@
 ;; The storage algorithms predate semantic binder identities. Only an incoming
 ;; identity actually present in this body's lifetime environment may project
 ;; back to its declaration key for their existing same-name relation. A
-;; callback-owned skolem or another callable's identity remains rigid. This
-;; adapter does not infer an outlives relation or change stored provenance.
+;; callback-owned skolem or another callable's identity remains rigid. An inner
+;; with-arena region of the same spelling shadows the declaration key, so the
+;; identity also stays rigid there. This adapter does not infer an outlives
+;; relation or change stored provenance.
 (define (tc-storage-lifetime-source-id [env : TcTypeEnv] [lifetime : i64]) : i64
   (match (cis.intern-structural-session-callable-lifetime-record
     (tc-type-env-structural-session env)
@@ -128741,7 +128789,8 @@
     [(cis.InternMaybeCallableLifetimeRecord.Some binder)
       (if (and
         (not (tc-elaborated-lifetime-hidden? binder.binding-name-id))
-        (tc-lifetime-visible-id? env lifetime))
+        (tc-lifetime-visible-id? env lifetime)
+        (not (tc-arena-region-shadows? env binder.binding-name-id)))
         binder.binding-name-id
         lifetime)]
     [_ lifetime]))

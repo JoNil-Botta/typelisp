@@ -2069,18 +2069,18 @@ constant fact naming such a var, as destination or source.
   def of one in the target, guard sinking and gep splitting never move or
   re-evaluate such a read, and load sinking stops a moving load at such a def.
   Each installs the same set first (#8913).
-- BCE versioning and its clone-free hoist, unrolling, fill/copy-call
-  recognition and LFTR refuse, at their entry, a loop that reads or writes a
-  TAINTED value: an address-taken local, or a value whose definition reads a
-  tainted one, transitively and through phis. An `addr_of` result carries no
-  taint, but a load through a tainted pointer does. Every fact these transforms
-  use concerns a value the loop reads or one it was computed from, so with
-  nothing tainted no fact names mutable storage, whichever rule derives it.
-  Branch facts are the one source outside the loop: a rule reads a condition's
-  definition. In a function that branches or switches on a tainted value, every
-  loop is refused, so a definition read for a branch fact is the value that
-  branch tested. Each transform installs the set for its own function before
-  its first gate (#9420).
+- BCE versioning and its clone-free hoist and bound tightening, ubound,
+  unrolling, fill/copy-call recognition and LFTR refuse, at their entry, a
+  loop that reads or writes a TAINTED value: an address-taken local, or a
+  value whose definition reads a tainted one, transitively and through phis.
+  An `addr_of` result carries no taint, but a load through a tainted pointer
+  does. Every fact these transforms use concerns a value the loop reads or one
+  it was computed from, so with nothing tainted no fact names mutable storage,
+  whichever rule derives it. Branch facts are the one source outside the loop:
+  a rule reads a condition's definition. In a function that branches or
+  switches on a tainted value, every loop is refused, so a definition read for
+  a branch fact is the value that branch tested. Each transform installs the
+  set for its own function before its first gate (#9420).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
 - Stack-only and scalar register plans both use

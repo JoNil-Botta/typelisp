@@ -1215,5 +1215,8 @@ bce_addr_taken_snapshot_base|all|0,1,2|tests/integration/bce_addr_taken_snapshot
 bce_addr_taken_snapshot_base_mb|all|0,1,2|tests/integration/bce_addr_taken_snapshot_base_mb.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:43: array index out of bounds: index=8 length=8\n
 bce_addr_taken_snapshot_seed|all|0,1,2|tests/integration/bce_addr_taken_snapshot_seed.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:41: array index out of bounds: index=-1 length=8\n
 bce_addr_taken_fusion|all|0,1,2|tests/integration/bce_addr_taken_fusion.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:25:37: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten|all|0,1,2|tests/integration/bce_addr_taken_tighten.tl|4|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:....
+bce_addr_taken_tighten_raise|all|0,1,2|tests/integration/bce_addr_taken_tighten_raise.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten_lower|all|0,1,2|tests/integration/bce_addr_taken_tighten_lower.tl|4|-|-|stdlib/io.tl stdlib/string.tl|-
 unroll_addr_taken_bound|all|0,1,2|tests/integration/unroll_addr_taken_bound.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 lftr_addr_taken_bound|all|0,1,2|tests/integration/lftr_addr_taken_bound.tl|56|-|-|stdlib/io.tl stdlib/string.tl|-

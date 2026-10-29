@@ -21444,10 +21444,10 @@
 ;;   moving load at a def of one. Each pass reads the set only for the function
 ;;   it rewrites, collecting it in a walk it already makes or only once it has
 ;;   a candidate.
-;; - BCE versioning and its hoist, unrolling, fill/copy-call recognition and
-;;   LFTR refuse a loop that reads or writes a tainted value, one a store can
-;;   change through a pointer, and every loop of a function that branches on
-;;   one (`opt-loop-tainted?`, #9420).
+;; - BCE versioning, its hoist and bound tightening, ubound, unrolling,
+;;   fill/copy-call recognition and LFTR refuse a loop that reads or writes a
+;;   tainted value, one a store can change through a pointer, and every loop of
+;;   a function that branches on one (`opt-loop-tainted?`, #9420).
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
 ;; marked vars, so a loop pays for the few there are rather than for the whole
@@ -21534,21 +21534,22 @@
       [(None) false])))
 
 ;; The loop transforms' address-taken gate (#9420). BCE versioning and its
-;; clone-free hoist, unrolling, fill/copy-call recognition and LFTR prove facts
-;; about the values a loop reads and the values those were computed from. A
-;; store through a pointer can change an address-taken local between where such
-;; a fact holds and where the loop relies on it, so each transform refuses, at
-;; its entry, every loop that reads or writes a TAINTED value: an address-taken
-;; local, or a value whose definition reads a tainted one, transitively (phi
-;; inputs included). An `addr_of` result is an address, which no store changes,
-;; so it carries no taint; a load through a tainted pointer does. A loop with
-;; nothing tainted hands no rule a value that names mutable storage, whichever
-;; rule it is. Branch facts are the one source outside the loop: a rule reads a
-;; condition's definition, and with no branch or switch on a tainted value that
-;; definition is the value the branch tested and names no mutable storage. So a
-;; function with such a branch has every loop refused. Each transform installs
-;; the set for its own function before its first gate; vars a transform adds
-;; come from loops the gate admitted.
+;; clone-free hoist and bound tightening, ubound, unrolling, fill/copy-call
+;; recognition and LFTR prove facts about the values a loop reads and the
+;; values those were computed from. A store through a pointer can change an
+;; address-taken local between where such a fact holds and where the loop
+;; relies on it, so each transform refuses, at its entry, every loop that reads
+;; or writes a TAINTED value: an address-taken local, or a value whose
+;; definition reads a tainted one, transitively (phi inputs included). An
+;; `addr_of` result is an address, which no store changes, so it carries no
+;; taint; a load through a tainted pointer does. A loop with nothing tainted
+;; hands no rule a value that names mutable storage, whichever rule it is.
+;; Branch facts are the one source outside the loop: a rule reads a condition's
+;; definition, and with no branch or switch on a tainted value that definition
+;; is the value the branch tested and names no mutable storage. So a function
+;; with such a branch has every loop refused. Each transform installs the set
+;; for its own function before its first gate; vars a transform adds come from
+;; loops the gate admitted.
 (define opt-loop-taint : (__tl_dyn-array bool)
   (__tl_make-array bool 0))
 
@@ -85245,11 +85246,8 @@
         [body-labels : OptLabelSet (opt-natural-loop-body loop)]
         [body-blocks : ir.CompilerIrBlockList
           (opt-natural-loop-current-body-blocks loop blocks)]
-        (if (or
-          (not
-            (opt-bce-hoist-body-ok?
-              (ir.compiler-ir-block-list-view body-blocks)))
-          (opt-loop-tainted? blocks (opt-label-add body-labels header)))
+        (if (not
+          (opt-bce-hoist-body-ok? (ir.compiler-ir-block-list-view body-blocks)))
           (No)
           (match (opt-cfg-find-block blocks preheader)
             [(No) (No)]
@@ -86098,7 +86096,13 @@
     [(slice loop & rest)
       (let
         [header : i64 (opt-natural-loop-header loop)]
-        (if (opt-label-contains rejected header)
+        ;; The address-taken gate covers both rewriters below, the hoist and
+        ;; the bound tightening, before either runs (#9420).
+        (if (or
+          (opt-label-contains rejected header)
+          (opt-loop-tainted?
+            (& blocks)
+            (opt-label-add (opt-natural-loop-body loop) header)))
           (opt-bce-hoist-loops-scan blocks all-loops rest rejected frame)
           (match (opt-bce-hoist-loop blocks loop frame)
             [(Some next next-frame) (Scan next next-frame true header)]
@@ -86464,8 +86468,9 @@
   [func : ir.CompilerIrFunction]
   [probe : i64]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
       (let
+        [_taint : unit (opt-loop-taint-install! frame (& blocks))]
         [context : OptCfgContext (opt-cfg-context-build blocks)]
         (match (opt-verify-function-with-context func context)
           [(Ok)
@@ -86580,6 +86585,7 @@
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ params _ frame blocks _)
       (let
+        [_taint : unit (opt-loop-taint-install! frame (& blocks))]
         [context : OptCfgContext
           (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
         [single : i64
@@ -97910,6 +97916,35 @@
             b
             a)])]))
 
+;; The address-taken gate for a ubound site (#9420): the natural loop it
+;; heads must read and write no tainted value. A site heading no natural loop
+;; is refused.
+(define (opt-ubound-loop-tainted-from?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [loops : (& loops (Slice OptNaturalLoop))]
+  [header : i64]) : bool
+  (match loops
+    [(slice) true]
+    [(slice loop & rest)
+      (if (= (opt-natural-loop-header loop) header)
+        (opt-loop-tainted?
+          blocks
+          (opt-label-add (opt-natural-loop-body loop) header))
+        (opt-ubound-loop-tainted-from? blocks rest header))]))
+
+(define (opt-ubound-site-tainted?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [header : i64]) : bool
+  (if (= (array-length opt-loop-taint) 0)
+    false
+    (let
+      [loops : opt_natural_loop_vec.Vec (opt-cfg-natural-loops blocks)]
+      (opt-ubound-loop-tainted-from?
+        blocks
+        (opt_natural_loop_vec.view loops)
+        header))))
+
+;; The first site the address-taken gate admits.
 (define (opt-ubound-find-site
   [type-segment-bases : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -97917,7 +97952,10 @@
   [uses : (& uses (__tl_dyn-array i64))]) : OptUboundMaybeSite
   (for [id (iterator.range 0 (opt-cfg-index-block-count index))]
     (match (opt-ubound-site-at type-segment-bases blocks index uses id)
-      [(Some site) (return (Some site))]
+      [(Some site)
+        (unless
+          (opt-ubound-site-tainted? blocks site.header)
+          (return (Some site)))]
       [(No) unit]))
   (No))
 
@@ -98357,6 +98395,7 @@
           (ir.compiler-ir-block-list-view blocks)))
         (Result func false)
         (let
+          [_taint : unit (opt-loop-taint-install! frame (& blocks))]
           [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
           [uses : (__tl_dyn-array i64)
             (opt-collect-blocks-uses-array frame blocks)]

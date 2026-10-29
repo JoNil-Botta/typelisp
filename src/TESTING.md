@@ -118,28 +118,34 @@ control. `guard-first-dominator-sinking`, `gep-split-addr-taken-capture`,
 rule for guard sinking, gep splitting, store address sinking and load sinking,
 each against a control whose address is not taken.
 
-`bce_addr_taken_bound.tl` and `unroll_addr_taken_bound.tl` are #9420's
-bounds-versioning and trip-count reproducers: a `ptr-write!` raises the loop
-bound after the loop starts. `bce_addr_taken_index.tl` writes the checked index
+`bce_addr_taken_bound.tl` and `unroll_addr_taken_bound.tl` are #9420's bounds-
+versioning and trip-count reproducers: a `ptr-write!` raises the loop bound
+after the loop starts. `bce_addr_taken_index.tl` writes the checked index
 through its address; `bce_addr_taken_snapshot_base.tl`, its multi-block twin
 `_base_mb` and `_seed` loop on a snapshot of an address-taken local; and
 `bce_addr_taken_fusion.tl` checks one address-taken index against two slices
-with a store through its address between the checks. All run at opt0/1/2 on
-Linux and Windows. The BCE rows must keep their checked bounds diagnostic, the
-unroll row must return 42, and `lftr_addr_taken_bound.tl` (a store-bearing
-diamond) must return 56. The IR tests in `tests/loop_addr_taken_value.tl` drive
-each transform behind the address-taken gate (BCE versioning and its clone-free
-hoist, unrolling, fill/copy-call recognition and LFTR). They refuse loops on a
-mutable bound, length, index, seed, counter, snapshot, length-slot pointer or
-pointer induction, and on a value computed from one. Controls must still be
-optimized: an unrelated store, an ordinary index or seed, an ordinary length
-slot, a load through an `addr_of` result, and a loop that stores through a
-local's address without reading the local. A function whose entry branch tests
-a tainted value (the overwritten condition itself, or a compare with an
-overwritten copy of the bound) has no loop versioned or recognized as a
-fill/copy call. A constant-trip loop on a mutable length is not unrolled, and a
-loop that only writes an address-taken local counts as touching it. Separate
-tests pin each driver's own set installation.
+with a store through its address between the checks, and
+`bce_addr_taken_tighten.tl` lowers its own loop bound through its address on
+every trip, so it must run four times (exit 4) rather than the initial eight;
+`_tighten_raise` raises the bound until the checked access aborts at index 8,
+and `_tighten_lower` lowers it to two trips (exit 4). These pin both BCE's
+bound tightening and ubound, which rewrites the same loops when tightening
+refuses them. All run at opt0/1/2 on Linux and Windows. The BCE rows must keep
+their checked bounds diagnostic, the unroll row must return 42, the tightening
+row 4, and `lftr_addr_taken_bound.tl` (a store-bearing diamond) must return 56.
+The IR tests in `tests/loop_addr_taken_value.tl` drive each transform behind
+the address-taken gate (BCE versioning and its clone-free hoist and bound
+tightening, ubound, unrolling, fill/copy-call recognition and LFTR). They
+refuse loops on a mutable bound, length, index, seed, counter, snapshot,
+length-slot pointer or pointer induction, and on a value computed from one.
+Controls must still be optimized: an unrelated store, an ordinary index or
+seed, an ordinary length slot, a load through an `addr_of` result, and a loop
+that stores through a local's address without reading the local. A function
+whose entry branch tests a tainted value (the overwritten condition itself, or
+a compare with an overwritten copy of the bound) has no loop versioned or
+recognized as a fill/copy call. A constant-trip loop on a mutable length is not
+unrolled, and a loop that only writes an address-taken local counts as touching
+it. Separate tests pin each driver's own set installation.
 
 `stdlib_math_table_payloads.tl` hashes every word of the 15 private math tables
 in little-endian order against independent SHA-256 pins at opt0/1/2. Its length

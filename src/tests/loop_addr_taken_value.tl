@@ -642,6 +642,109 @@
        return %7
        }")))
 
+;; An outer loop that calls out and runs an inner loop, so BCE's clone-free
+;; bound tightening takes it: `mutable` stores 4 through the bound's address on
+;; every trip, otherwise the store goes to unrelated memory.
+(define (tighten-function [mutable : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @tighten(data=%9:u64) -> i64 vars 32 {
+       entry:
+       %0 = mov 8 : i64\n"
+      (if mutable
+        "%1 = addr_of %0\n"
+        "%1 = mov %9 : u64\n")
+      "jump pre
+       pre:
+       jump header
+       header:
+       %3 = phi [0, pre], [%6, latch] : i64
+       bounds_check %3, 8 message \"tighten\"
+       store_ptr %1, 4 : i64
+       %12 = call helper(%3) : i64
+       jump inner
+       inner:
+       %30 = phi [0, header], [%31, inner_latch] : i64
+       %29 = lt %30, %12 : i64
+       branch %29, inner_latch, latch
+       inner_latch:
+       %31 = add %30, 1 : i64
+       jump inner
+       latch:
+       %6 = add %3, 1 : i64
+       %7 = lt %6, %0 : i64
+       branch %7, header, exit
+       exit:
+       return %6
+       }")))
+
+(test
+  loop-addr-taken-gate-tighten
+  (for [mutable (iterator.range 0 2)]
+    (let
+      [out (transform false (tighten-function (= mutable 1)))]
+      [blocks (opt.opt-function-blocks (& out))]
+      (test.assert-true
+        (=
+          (match (opt.opt-cfg-find-block
+            blocks
+            (ir.compiler-ir-label "header__pred_exit"))
+            [(Some _) true]
+            [(No) false])
+          (= mutable 0))
+        "bound tightening refuses a loop on a mutable bound"))))
+
+;; ubound's accepted loop: a guarded rotation whose latch compares against
+;; the bound %0. `mutable` takes %0's address and stores 2 through it first.
+(define (ubound-function [mutable : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @ubound(n=%0:i64, buf=%1:i64) -> i64 vars 16 {
+       entry:\n"
+      (if mutable
+        "%13 = addr_of %0\nstore_ptr %13, 2 : i64\n"
+        "")
+      "%2 = lt 0, %0 : i64
+       branch %2, pre, exit
+       pre:
+       %3 = gep %1, 1 : i64
+       %4 = load %3 : i64
+       jump head
+       head:
+       %5 = phi [0, pre], [%9, latch] : i64
+       bounds_check %5, %4 message \"head_ok\"
+       %6 = eq %5, 3 : i64
+       branch %6, arm_a, arm_b
+       arm_a:
+       %7 = add %5, 1 : i64
+       jump latch
+       arm_b:
+       %8 = add %5, 5 : i64
+       jump latch
+       latch:
+       %9 = phi [%7, arm_a], [%8, arm_b] : i64
+       %10 = lt %9, %0 : i64
+       branch %10, head, exit
+       exit:
+       %12 = phi [0, entry], [%9, latch] : i64
+       return %12
+       }")))
+
+(test
+  loop-addr-taken-gate-ubound
+  (for [mutable (iterator.range 0 2)]
+    (let
+      [func (ubound-function (= mutable 1))]
+      [_reset (reset!)]
+      [_valid
+        (test.assert-true (valid? (& func)) "the ubound fixture is valid IR")]
+      (test.assert-true
+        (=
+          (match (opt.opt-ubound-function-pass 0 func)
+            [(Result _ changed) changed])
+          (= mutable 0))
+        "ubound refuses a loop on a mutable bound"))))
+
 (test
   loop-addr-taken-gate-value-flow
   (for [mode (iterator.range 0 3)]

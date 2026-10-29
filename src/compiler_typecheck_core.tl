@@ -22761,6 +22761,8 @@
   (target-ids (__tl_dyn-array i64))
   (summary-backed (__tl_dyn-array bool))
   (index-slots (__tl_dyn-array i64))
+  (alias-slots (__tl_dyn-array i64))
+  (alias-previous (__tl_dyn-array i64))
   (record-count i64)
   (intern-table-id i64)
   (intern-generation i64)
@@ -40916,6 +40918,8 @@
     (__tl_make-array i64 0)
     (__tl_make-array bool 0)
     (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
     0
     -1
     -1
@@ -41002,6 +41006,12 @@
               (__tl_make-array bool tc-lazy-import-stub-capacity))
             (set!
               (deref data).index-slots
+              (__tl_make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              (deref data).alias-slots
+              (__tl_make-array i64 tc-lazy-import-stub-capacity))
+            (set!
+              (deref data).alias-previous
               (__tl_make-array i64 tc-lazy-import-stub-capacity))))))))
 
 (define (tc-lazy-import-stub-storage-ensure-for-job! [state : TcJobState]) : unit
@@ -41011,11 +41021,22 @@
 ;; Return either the matching record-index slot or the first empty slot. Slots
 ;; store record index + 1, so reset can clear the index without touching the
 ;; record arrays. Key equality is checked against those existing arrays.
+;; Lookups read the arrays through the state cell instead of copying the
+;; whole state record on every query.
 (define (tc-lazy-import-stub-index-slot-for-data
-  [data : (& data TcLazyImportStateData)]
+  [data : (Ptr TcLazyImportStateData)]
   [importer-module-id : i64]
   [alias-id : i64]) : i64
   (let
+    [index-slots : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).index-slots)]
+    [module-ids : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).module-ids)]
+    [alias-ids : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).alias-ids)]
     [cursor : i64
       (bit-and
         (+ (* importer-module-id 2654435761) (* alias-id 40503))
@@ -41025,7 +41046,7 @@
     [done : bool false]
     (while (and (not done) (< probes tc-lazy-import-stub-capacity))
       (let
-        [entry : i64 (array-ref data.index-slots cursor)]
+        [entry : i64 (array-ref index-slots cursor)]
         (if (= entry 0)
           (begin
             (set! out cursor)
@@ -41033,8 +41054,8 @@
           (let
             [record-index : i64 (- entry 1)]
             (if (and
-              (= (array-ref data.module-ids record-index) importer-module-id)
-              (= (array-ref data.alias-ids record-index) alias-id))
+              (= (array-ref module-ids record-index) importer-module-id)
+              (= (array-ref alias-ids record-index) alias-id))
               (begin
                 (set! out cursor)
                 (set! done true))
@@ -41045,14 +41066,52 @@
                 (+= probes 1)))))))
     out))
 
+;; Alias-only counterpart of the slot above for the alias-wide lookups: a slot
+;; holds the newest record index + 1 for its alias, and alias-previous links
+;; each record to the next older record with the same alias. A table full of
+;; other aliases returns -1; that only happens when the record arrays are
+;; full and none of them has this alias.
+(define (tc-lazy-import-alias-slot-for-data
+  [data : (Ptr TcLazyImportStateData)]
+  [alias-id : i64]) : i64
+  (let
+    [alias-slots : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).alias-slots)]
+    [alias-ids : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).alias-ids)]
+    [cursor : i64
+      (bit-and (* alias-id 40503) (- tc-lazy-import-stub-capacity 1))]
+    [probes : i64 0]
+    [out : i64 -1]
+    [done : bool false]
+    (while (and (not done) (< probes tc-lazy-import-stub-capacity))
+      (let
+        [entry : i64 (array-ref alias-slots cursor)]
+        (if (or (= entry 0) (= (array-ref alias-ids (- entry 1)) alias-id))
+          (begin
+            (set! out cursor)
+            (set! done true))
+          (begin
+            (set!
+              cursor
+              (bit-and (+ cursor 1) (- tc-lazy-import-stub-capacity 1)))
+            (+= probes 1)))))
+    out))
+
 (define (tc-lazy-import-stub-index-reset! [state : TcLazyImportState]) : unit
   (let
     [data : (Ptr TcLazyImportStateData) (tc-lazy-import-state-view state)]
     [slots : (__tl_dyn-array i64)
       (unsafe
         (deref data).index-slots)]
+    [alias-slots : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).alias-slots)]
     (for [slot (iterator.range 0 tc-lazy-import-stub-capacity)]
-      (set! (array-ref slots slot) 0))))
+      (set! (array-ref slots slot) 0)
+      (set! (array-ref alias-slots slot) 0))))
 
 (define (tc-lazy-import-stub-index-record!
   [state : TcLazyImportState]
@@ -41061,21 +41120,40 @@
   [alias-id : i64]
   [target-module-id : i64]) : unit
   (let
-    [data : TcLazyImportStateData (tc-lazy-import-state-data state)]
+    [data : (Ptr TcLazyImportStateData) (tc-lazy-import-state-view state)]
+    [index-slots : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).index-slots)]
+    [alias-slots : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).alias-slots)]
     [slot : i64
-      (tc-lazy-import-stub-index-slot-for-data
-        (& data)
-        importer-module-id
-        alias-id)]
+      (tc-lazy-import-stub-index-slot-for-data data importer-module-id alias-id)]
+    [alias-slot : i64 (tc-lazy-import-alias-slot-for-data data alias-id)]
+    (if (< alias-slot 0)
+      unit
+      (begin
+        (set!
+          (array-ref
+            (unsafe
+              (deref data).alias-previous)
+            record-index)
+          (array-ref alias-slots alias-slot))
+        (set! (array-ref alias-slots alias-slot) (+ record-index 1))))
     (if (< slot 0)
       unit
       (let
-        [entry : i64 (array-ref data.index-slots slot)]
+        [entry : i64 (array-ref index-slots slot)]
         (if (or
           (= entry 0)
           (not (= target-module-id alias-id))
-          (= (array-ref data.target-ids (- entry 1)) alias-id))
-          (set! (array-ref data.index-slots slot) (+ record-index 1))
+          (=
+            (array-ref
+              (unsafe
+                (deref data).target-ids)
+              (- entry 1))
+            alias-id))
+          (set! (array-ref index-slots slot) (+ record-index 1))
           unit)))))
 
 (define (tc-lazy-import-stubs-reset-for-state! [state : TcMacroState]) : unit
@@ -41200,19 +41278,24 @@
   (let
     [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
     [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
-    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [data : (Ptr TcLazyImportStateData) (tc-lazy-import-state-view lazy-state)]
     [slot : i64
-      (tc-lazy-import-stub-index-slot-for-data
-        (& data)
-        importer-module-id
-        alias-id)]
+      (tc-lazy-import-stub-index-slot-for-data data importer-module-id alias-id)]
     (if (< slot 0)
       (No)
       (let
-        [entry : i64 (array-ref data.index-slots slot)]
+        [entry : i64
+          (array-ref
+            (unsafe
+              (deref data).index-slots)
+            slot)]
         (if (= entry 0)
           (No)
-          (Some (array-ref data.target-ids (- entry 1))))))))
+          (Some
+            (array-ref
+              (unsafe
+                (deref data).target-ids)
+              (- entry 1))))))))
 
 (define (tc-lazy-import-stub-target-id-for-state
   [state : TcMacroState]
@@ -41300,27 +41383,31 @@
     [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
     [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
     [data : (Ptr TcLazyImportStateData) (tc-lazy-import-state-view lazy-state)]
-    [index : i64
-      (-
-        (unsafe
-          (deref data).record-count)
-        1)]
+    [target-ids : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).target-ids)]
+    [alias-previous : (__tl_dyn-array i64)
+      (unsafe
+        (deref data).alias-previous)]
+    [slot : i64 (tc-lazy-import-alias-slot-for-data data alias-id)]
+    [entry : i64
+      (if (< slot 0)
+        0
+        (array-ref
+          (unsafe
+            (deref data).alias-slots)
+          slot))]
     [found-key : i64 -1]
     [found-handle : i64 -1]
     [ambiguous : bool false]
-    (while (and (not ambiguous) (>= index 0))
+    ;; Visit this alias's records newest first, as a reverse scan of all
+    ;; records would.
+    (while (and (not ambiguous) (> entry 0))
       (let
-        [stub-alias-id : i64
-          (array-ref
-            (unsafe
-              (deref data).alias-ids)
-            index)]
-        [target-id : i64
-          (array-ref
-            (unsafe
-              (deref data).target-ids)
-            index)]
-        (if (and (= stub-alias-id alias-id) (not (= target-id alias-id)))
+        [index : i64 (- entry 1)]
+        [target-id : i64 (array-ref target-ids index)]
+        (if (= target-id alias-id)
+          unit
           (let
             [key-id : i64
               (csym.compiler-symbol-module-key-id-by-id target-id base-id)]
@@ -41338,9 +41425,8 @@
                 (if (= handle found-handle)
                   unit
                   (set! ambiguous true)))
-              unit))
-          unit)
-        (-= index 1)))
+              unit)))
+        (set! entry (array-ref alias-previous index))))
     (if (and (not ambiguous) (>= found-handle 0))
       (Some found-key)
       (No))))

@@ -50783,6 +50783,11 @@
 ;; installed type pool and symbol count), the structural session, the intern
 ;; tables and the job epoch; all of them key the entry, which keeps only the
 ;; pooled result id. A hit reads that node back from the same pool.
+;;
+;; A lifetime-free signature's contract is empty and cheap to resolve, so it
+;; bypasses the memo. Otherwise the first sighting only records its key, and a
+;; second sighting pools the result: a declaration resolved once, as in small
+;; programs, costs no pool push.
 (define (tc-top-decl-contract-type
   [ctx : TcContext]
   [name : i64]
@@ -50790,6 +50795,15 @@
   [params : ast.AstTypeList]
   [ret : ast.AstType]
   [shadow-program? : bool]) : ast.AstType
+  (when
+    (and
+      (not (tc-type-list-contains-any-region-at? (& params) 0))
+      (tc-type-lifetime-free? (& ret)))
+    (return
+      (ast.ast-ty-func
+        (tc-resolve-source-type-list ctx params)
+        (& (tc-resolve-source-type ctx ret))
+        (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))))
   (let
     [state : TcTypeResolutionCacheState
       (tc-job-state-type-resolution-cache ctx.job-state)]
@@ -50815,36 +50829,60 @@
         (- tc-decl-contract-memo-capacity 1))]
     [entry : (& data TcDeclContractMemoEntry)
       (& (array-ref data.decl-contract-slots slot))]
-    (if (and
-      (= entry.job-epoch data.epoch)
-      (= entry.body body)
-      (= entry.expr-bases expr-bases)
-      (= entry.name name)
-      (= entry.module-id ctx.module-id)
-      (= entry.type-module-id ctx.type-module-id)
-      (= entry.shared ctx.shared)
-      (= entry.program-decls ctx.program-decls)
-      (= entry.type-bases type-bases)
-      (= entry.symbol-decls symbol-decls)
-      (= entry.session-owner session-owner)
-      (= entry.session-generation session-generation)
-      (= entry.intern-owner intern-owner)
-      (= entry.intern-generation intern-generation))
-      (tc-context-type-get ctx entry.result-type)
+    [seen? : bool
+      (and
+        (= entry.job-epoch data.epoch)
+        (= entry.body body)
+        (= entry.expr-bases expr-bases)
+        (= entry.name name)
+        (= entry.module-id ctx.module-id)
+        (= entry.type-module-id ctx.type-module-id)
+        (= entry.shared ctx.shared)
+        (= entry.program-decls ctx.program-decls)
+        (= entry.type-bases type-bases)
+        (= entry.symbol-decls symbol-decls)
+        (= entry.session-owner session-owner)
+        (= entry.session-generation session-generation)
+        (= entry.intern-owner intern-owner)
+        (= entry.intern-generation intern-generation))]
+    (when
+      (and seen? (>= entry.result-type 0))
+      (return (tc-context-type-get ctx entry.result-type)))
+    (let
+      [contract : ast.AstType
+        (tc-callable-signature-type
+          ctx
+          (cis.intern-structural-session-callable-scope
+            session
+            1
+            ctx.module-id
+            name)
+          params
+          ret
+          shadow-program?)]
+      (unless
+        seen?
+        (set!
+          (array-ref data.decl-contract-slots slot)
+          (TcDeclContractMemoEntry
+            body
+            expr-bases
+            name
+            ctx.module-id
+            ctx.type-module-id
+            ctx.shared
+            ctx.program-decls
+            type-bases
+            symbol-decls
+            session-owner
+            session-generation
+            intern-owner
+            intern-generation
+            data.epoch
+            -1))
+        (return contract))
       (let
-        [result : i64
-          (tc-context-type-push-value
-            ctx
-            (tc-callable-signature-type
-              ctx
-              (cis.intern-structural-session-callable-scope
-                session
-                1
-                ctx.module-id
-                name)
-              params
-              ret
-              shadow-program?))]
+        [result : i64 (tc-context-type-push-value ctx contract)]
         (set!
           (array-ref data.decl-contract-slots slot)
           (TcDeclContractMemoEntry

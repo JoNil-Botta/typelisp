@@ -21447,7 +21447,9 @@
 ;; - BCE versioning, unrolling and LFTR never call one invariant
 ;;   (`opt-loop-invariant-var?`): not as a bound, length, index, base, addend,
 ;;   descriptor handle, self-phi input or preheader twin. BCE and unrolling's
-;;   definition-based value proofs do not follow a def of one. Ordinary value
+;;   definition-based value proofs do not follow a def of one, and their copy
+;;   walks stop at a copy of one. Guards name snapshots, never storage
+;;   (`opt-instrs-read-addr-taken?`). Ordinary value
 ;;   snapshots keep their own definitions and remain eligible. Each driver
 ;;   installs the set after finding a candidate or loop; fill/copy-call
 ;;   recognition installs it lazily before using these helpers.
@@ -61621,6 +61623,31 @@
       (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)
       (opt-used-contains defs var))))
 
+;; Guards name snapshots, never storage (#9420): a guard reading an
+;; address-taken local would see that storage where the guard runs, not where
+;; the loop reads its snapshot. Every guard and call rewrite in these passes
+;; refuses one, whichever rule let it through.
+(define (opt-instrs-read-addr-taken?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& opt-function-addr-taken.ids))]
+    (if (= count 0)
+      false
+      (let
+        [uses : opt_i64_i64_map.Map
+          (opt-unroll-uses-before
+            instrs
+            0
+            (ir.compiler-ir-instr-seq-count instrs)
+            (opt_i64_i64_map.with-capacity 8))]
+        (for [index (iterator.range 0 count)]
+          (when
+            (opt-used-contains
+              (& uses)
+              (array-ref opt-function-addr-taken.ids.slots index))
+            (return true)))
+        false))))
+
 (define (opt-unroll-invariant-bound?
   [defs : (& defs opt_i64_i64_map.Map)]
   [bound : (& bound ir.CompilerIrValue)]) : bool
@@ -65726,6 +65753,17 @@
           (ir.CompilerIrInstr.Jump shape.exit-label))
         (Block label (ir.compiler-ir-instr-builder-to-seq builder)))]))
 
+;; The fill/copy-call backstop: the call reads its bound and both pointers,
+;; which must name snapshots, never storage (#9420).
+(define (opt-loop-call-reads-addr-taken?
+  [bound : (& bound ir.CompilerIrValue)]
+  [first : (& first ir.CompilerIrValue)]
+  [second : (& second ir.CompilerIrValue)]) : bool
+  (or
+    (opt-addr-taken-operand? bound)
+    (opt-addr-taken-operand? first)
+    (opt-addr-taken-operand? second)))
+
 (defenum OptFillCallMaybeShapeSite
   (No)
   (Some OptLoopCallShape OptFillCallSite))
@@ -65761,6 +65799,11 @@
                 [(No) (No)]
                 [(Some site)
                   (if (and
+                    (not
+                      (opt-loop-call-reads-addr-taken?
+                        (& shape.bound)
+                        (& site.base)
+                        (& (I64 0))))
                     (opt-loop-call-entry-positive? blocks label shape state)
                     (opt-loop-call-exit-suffix?
                       instrs
@@ -66456,6 +66499,11 @@
                 [(No) (No)]
                 [(Some site)
                   (if (and
+                    (not
+                      (opt-loop-call-reads-addr-taken?
+                        (& shape.bound)
+                        (& site.dst-ptr)
+                        (& site.src-ptr)))
                     (opt-copy-call-count-ok? site.width shape.bound)
                     (opt-loop-call-entry-positive? blocks label shape state)
                     (opt-copy-call-exit-ok? instrs shape site.store-index last)
@@ -68224,6 +68272,28 @@
 
 ;; The loop block keeps its label and its predecessor edges; only its contents
 ;; become the straight-line trip copies ending in a jump to the old exit.
+;; The const-guard backstop: guards name snapshots, never storage (#9420). A
+;; trial emission names exactly what the guard would read; fresh ids start at
+;; `frame`, so only the function's own vars can be marked.
+(define (opt-unroll-const-guard-plan-checked
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [label : i64]
+  [instrs : (& ir.CompilerIrInstrSeq)]
+  [last : i64]
+  [shape : (& shape OptUnrollConstShape)]
+  [frame : i64]) : OptUcePlan
+  (match (opt-unroll-const-guard-plan blocks label instrs last shape)
+    [(No) (No)]
+    [(Some groups skips recs)
+      (let
+        [scratch : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+        [_scratch : unit (set! (array-ref scratch 0) frame)]
+        [trial : OptUceEmit
+          (opt-unroll-const-guard-emit (& groups) (&mut scratch))]
+        (if (opt-instrs-read-addr-taken? (& trial.instrs))
+          (No)
+          (Some groups skips recs)))]))
+
 (define (opt-unroll-const-apply
   [blocks : (& ir.CompilerIrBlockList)]
   [block : (& ir.CompilerIrBlock)]
@@ -68239,7 +68309,13 @@
         [_fill : unit (opt-unroll-remap-fill (&mut remap) 0)]
         [cell : (__tl_dyn-array i64) (__tl_make-array i64 1)]
         [_cell : unit (set! (array-ref cell 0) frame)]
-        (match (opt-unroll-const-guard-plan blocks label (& instrs) last shape)
+        (match (opt-unroll-const-guard-plan-checked
+          blocks
+          label
+          (& instrs)
+          last
+          shape
+          frame)
           [(Some groups skips exit-recs)
             (let
               [pred-label : i64 shape.pred-label]
@@ -71097,6 +71173,10 @@
           [else (Some (* a b))]))]
     [_ (No)]))
 
+;; A walk that substitutes one value for another (this one, and
+;; `opt-bce-version-shift-of` below) stops at an address-taken operand: a copy
+;; of that storage is a read at one point, so the storage itself is not its
+;; value (#9420).
 (define (opt-bce-version-literal-of
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [value : (& value ir.CompilerIrValue)]
@@ -71112,7 +71192,9 @@
           [(Some instr)
             (match instr
               [(Mov _ src ty)
-                (if (opt-affine-64bit-type? ty)
+                (if (and
+                  (opt-affine-64bit-type? ty)
+                  (not (opt-addr-taken-operand? (& src))))
                   (match (& src)
                     [(I64 k) (I64 k)]
                     [(Var _) (opt-bce-version-literal-of blocks src (- fuel 1))]
@@ -72120,11 +72202,15 @@
             [(Some instr)
               (match instr
                 [(Mov _ src ty)
-                  (if (opt-affine-64bit-type? ty)
+                  (if (and
+                    (opt-affine-64bit-type? ty)
+                    (not (opt-addr-taken-operand? (& src))))
                     (opt-bce-version-shift-of blocks src k (- fuel 1))
                     (No))]
                 [(BinOp _ op lhs rhs ty)
-                  (if (not (opt-affine-64bit-type? ty))
+                  (if (or
+                    (not (opt-affine-64bit-type? ty))
+                    (opt-addr-taken-operand? (& lhs)))
                     (No)
                     (match rhs
                       [(I64 c)
@@ -74460,7 +74546,12 @@
         (match unwrapped
           [(No) (No)]
           [(Some all-instrs all-values _)
-            (opt-bce-version-build-guard cell all-instrs (& all-values))]))]))
+            (match (opt-bce-version-build-guard cell all-instrs (& all-values))
+              [(No) (No)]
+              [(Some guard-instrs guard-value)
+                (if (opt-instrs-read-addr-taken? (& guard-instrs))
+                  (No)
+                  (Some guard-instrs guard-value))])]))]))
 
 ;; Append the terminating branch to a freshly built dense guard block.
 (define (opt-bce-version-guard-block
@@ -81836,7 +81927,11 @@
         (let
           [index-id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
           [use-block-id : i64 (opt-global-block-id doms label)]
-          (match (if (< use-block-id 0)
+          ;; Two checks of an address-taken index read its storage twice, so
+          ;; they need not see the same value (#9420).
+          (match (if (or
+            (< use-block-id 0)
+            (opt-addr-taken-operand? (& (ir.CompilerIrValue.Var index-id))))
             (ir.CompilerIrMaybeValue.No)
             (opt-bce-mb-fuse-anchor
               doms

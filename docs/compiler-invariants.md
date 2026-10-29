@@ -2053,8 +2053,12 @@ constant fact naming such a var, as destination or source.
   descriptor handle, self-phi input or preheader twin, also asks
   `opt-loop-invariant-var?`. Bounds versioning and unrolling also refuse to
   derive copy, arithmetic or guard facts from its direct definition, and their
-  copy resolution stops at a copy of one: that copy is the storage read at one
-  point, so two such reads never compare equal. Each
+  copy resolution and value-substituting walks stop at a copy of one: that
+  copy is the storage read at one point, so two such reads never compare
+  equal, and fusion never treats two checks of one as the same index. Guards
+  name snapshots, never storage: a BCE guard, an unroll constant-trip guard or
+  a fill/copy call that would read one is refused, whichever rule produced
+  it. Each
   installs the set for its own function once it finds a candidate or loop. A
   separate value captured before the loop remains invariant (#9420).
 - One scan builds both, and allocates nothing for a function without an

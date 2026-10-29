@@ -121,13 +121,17 @@ each against a control whose address is not taken.
 `bce_addr_taken_bound.tl` and `unroll_addr_taken_bound.tl` are #9420's
 memory-unsafe bounds-versioning and wrong-trip-count reproducers, and
 `bce_addr_taken_index.tl` writes the checked index itself through its address.
-All run at opt0/1/2 on Linux and Windows: the BCE rows must retain the checked
-index-8, length-8 bounds abort, and the unroll row must return 42. The IR tests
+`bce_addr_taken_snapshot_base.tl`, its multi-block twin `_base_mb` and
+`_seed` take a snapshot of an address-taken local before a store through its
+address; the guard must read the snapshot, never the storage. All run at
+opt0/1/2 on Linux and Windows: the BCE rows must retain their checked bounds
+abort, and the unroll row must return 42. The IR tests
 in `tests/loop_addr_taken_value.tl` cover single- and multi-block versioning,
 unrolling, mutable bound/length/index refusals, unrelated-store,
 ordinary-index and captured-value controls, per-function mark installation,
 and definition-based value proofs, including copy resolution that stops at a
-copy of mutable storage. `loop-addr-taken-invariant-leaves` pins
+copy of mutable storage. Every driver case also asserts that a rewrite adds no
+block reading the mode's mutable storage. `loop-addr-taken-invariant-leaves` pins
 each remaining invariance rule (constant-trip base and length, self-phi input,
 preheader twin, descriptor handle, fill/copy base and addend) against an
 ordinary control.

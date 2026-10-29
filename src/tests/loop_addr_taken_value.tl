@@ -68,6 +68,38 @@
        return %7
        }")))
 
+;; The address-taken local each mode makes, or -1.
+(define (mode-storage [mode : i64]) : i64
+  (cond [(or (= mode 1) (= mode 3)) 3] [(= mode 2) 4] [(= mode 4) 12] [else -1]))
+
+;; How many blocks read `var`. Guards name snapshots, never storage, so a
+;; rewrite may not add a block that reads mutable storage.
+(define (blocks-reading
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [var : i64]) : i64
+  (match blocks
+    [(slice) 0]
+    [(slice block & rest)
+      (+
+        (match block
+          [(Block _ instrs)
+            (if (opt.opt-used-contains
+              (&
+                (opt.opt-unroll-uses-before
+                  (& instrs)
+                  0
+                  (ir.compiler-ir-instr-seq-count instrs)
+                  (imap.with-capacity 8)))
+              var)
+              1
+              0)])
+        (blocks-reading rest var))]))
+
+(define (storage-reads [func : (& func ir.CompilerIrFunction)] [var : i64]) : i64
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    (blocks-reading (ir.compiler-ir-block-list-view (& blocks)) var)))
+
 (define (rewritten? [kind : i64] [mode : i64]) : bool
   (let
     [func (loop-function kind mode)]
@@ -85,6 +117,14 @@
       (test.assert-true
         (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
         "the rewritten storage/control fixture is valid IR")]
+    [storage (mode-storage mode)]
+    [_storage
+      (when
+        (>= storage 0)
+        (test.assert-i64-eq
+          (storage-reads (& out) storage)
+          (storage-reads (& func) storage)
+          "a rewrite names the snapshot, never the storage"))]
     (> (opt.opt-function-frame out) 16)))
 
 (test
@@ -183,6 +223,11 @@
           [(Var id) (= id 1)]
           [_ false]))
       "a reinterpret cast of mutable storage is its own read")
+    (test.assert-true
+      (and
+        (= (opt.opt-bce-version-resolve (& instrs) 0 instrs.len 6 16) 6)
+        (= (opt.opt-bce-version-resolve (& instrs) 0 instrs.len 7 16) 1))
+      "single-block resolution stops only at a cast of mutable storage")
     (test.assert-true
       (and
         (= (opt.opt-bce-version-resolve (& instrs) 0 instrs.len 3 16) 1)
@@ -519,4 +564,25 @@
           (& (ir.CompilerIrValue.Var 1))
           9
           (& defs)))
-      "copy-call offsets refuse only a mutable addend")))
+      "copy-call offsets refuse only a mutable addend")
+    ;; The backstops: guards and calls name snapshots, never storage.
+    (test.assert-true
+      (and
+        (opt.opt-instrs-read-addr-taken?
+          (& (irt.instrs "%13 = lt %0, %1 : bool")))
+        (not
+          (opt.opt-instrs-read-addr-taken?
+            (& (irt.instrs "%13 = lt %5, %1 : bool")))))
+      "a guard that reads mutable storage is refused")
+    (test.assert-true
+      (and
+        (opt.opt-loop-call-reads-addr-taken?
+          (& (ir.CompilerIrValue.Var 1))
+          (& (ir.CompilerIrValue.Var 11))
+          (& (ir.CompilerIrValue.I64 0)))
+        (not
+          (opt.opt-loop-call-reads-addr-taken?
+            (& (ir.CompilerIrValue.Var 1))
+            (& (ir.CompilerIrValue.Var 5))
+            (& (ir.CompilerIrValue.I64 0)))))
+      "a fill/copy call that reads mutable storage is refused")))

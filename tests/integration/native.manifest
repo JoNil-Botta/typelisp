@@ -978,6 +978,7 @@ repr_c_explicit_alignment|all|-,0,2|tests/integration/repr_c_explicit_alignment.
 nested_tuple_array_projection|all|-|tests/integration/nested_tuple_array_projection.tl|0|7\n3\n|-|stdlib/io.tl|-
 lambda_capture_lifetime_aggregate|all|-|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|stdlib/string.tl|-
 register_resident_enum|all|-|tests/integration/register_resident_enum.tl|42|-|-|-|-
+gep_large_displacement|all|-|tests/integration/gep_large_displacement.tl|42|-|-|-|-
 register_pair_struct|all|-|tests/integration/register_pair_struct.tl|42|-|-|-|-
 register_group_phi_return|all|-|tests/integration/register_group_phi_return.tl|42|-|-|-|-
 register_group_phi_swap_cycle|all|-|tests/integration/register_group_phi_swap_cycle.tl|42|-|-|-|-

@@ -699,6 +699,12 @@ float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|u
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
 # Early returns and try residuals must obey the arena return boundary.
+# Selecting an arena preserves confinement and brand invariance at stores.
+arena_activation_destroy_store_reject|check-fail|tests/safety/arena_activation_destroy_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_activation_rewind_store_reject|check-fail|tests/safety/arena_activation_rewind_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_activation_input_store_reject|check-fail|tests/safety/arena_activation_input_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_owner_after_activation_store_reject|check-fail|tests/safety/arena_owner_after_activation_store_reject.tl|-|cannot store region-tagged value into struct field
+arena_activation_distinct_owner_store_reject|check-fail|tests/safety/arena_activation_distinct_owner_store_reject.tl|-|cannot store region-tagged value into struct field
 arena_return_box_reject|check-fail|tests/safety/arena_return_box_reject.tl|tests/safety/arena_return_box_reject.tl:2:29|region-tagged value cannot escape with-arena 'phase'
 arena_return_local_owner_reject|check-fail|tests/safety/arena_return_local_owner_reject.tl|tests/safety/arena_return_local_owner_reject.tl:7:29|region-tagged value cannot escape arena owner '
 arena_return_nested_tuple_reject|check-fail|tests/safety/arena_return_nested_tuple_reject.tl|tests/safety/arena_return_nested_tuple_reject.tl:8:15|region-tagged value cannot escape with-arena 'phase'

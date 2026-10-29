@@ -486,6 +486,11 @@ tests/integration/wide_const_hoist.tl	stage2-regalloc-backend-asm-shape-gates	@c
 tests/integration/win64_rbp_eighth_csr.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/arena_bare_operand_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/arena_branded_operand_wrong_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/arena_activation_destroy_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_activation_rewind_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_activation_input_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_owner_after_activation_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_activation_distinct_owner_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
 tests/safety/arena_return_box_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
 tests/safety/arena_return_local_owner_reject.tl	stage2-public-tool-surface	@corpus	Primary local-owner early-exit diagnostic contract.
 tests/safety/arena_return_nested_tuple_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.

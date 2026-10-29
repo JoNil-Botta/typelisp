@@ -32182,7 +32182,8 @@
       (let
         [tuple-expr : ast.AstExpr (lower-context-expr-get ctx tuple-expr-box)]
         (lower-tuple-ref ctx state env type-env tuple-expr index expr-ty))]
-    [(WithRegion _ body) (lower-with-arena ctx state env type-env body)]
+    [(WithRegion region body)
+      (lower-with-arena ctx state env type-env region body)]
     [(WithEscape scratch-box body)
       (let
         [scratch : ast.AstExpr (lower-context-expr-get ctx scratch-box)]
@@ -44621,8 +44622,8 @@
             [(tc_core.ResultTcType.Err error)
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr ctx place error)))])])]
-    [(ast.AstExpr.WithRegion _ body)
-      (lower-with-arena-mode ctx state env type-env body mode)]
+    [(ast.AstExpr.WithRegion region body)
+      (lower-with-arena-mode ctx state env type-env region body mode)]
     [(ast.AstExpr.InArena arena body)
       (lower-in-arena-mode ctx state env type-env arena body mode)]
     [(ast.AstExpr.WithResource payload)
@@ -47534,14 +47535,23 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [region : i64]
   [body : ast.AstExprList]) : ResultLowerExpr
-  (lower-with-arena-mode ctx state env type-env body (LowerResultMode.Value)))
+  (lower-with-arena-mode
+    ctx
+    state
+    env
+    type-env
+    region
+    body
+    (LowerResultMode.Value)))
 
 (define (lower-with-arena-mode
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
+  [region : i64]
   [body : ast.AstExprList]
   [mode : LowerResultMode]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
@@ -47563,7 +47573,7 @@
         [region-type-env : tc_core.TcTypeEnv
           (lower-type-env-push-region-reset
             marked-state
-            type-env
+            (tc_core.tc-push-region type-env region)
             hidden-name-id)]
         [lowered : LowerExpr
           (try

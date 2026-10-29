@@ -38412,50 +38412,72 @@
           (tc-tag-region region projected-ty)]
         [_ projected-ty])]))
 
-;; Region-tagged aggregate flow uses the same lexical owner ordering as
-;; references, but only considers arena owners. A value from an outer region can
-;; flow into an inner target; an inner-region value cannot flow outward.
+;; Arena selection does not make an input lifetime younger. Retain the arena
+;; scope proof for aggregate storage, and order an activated local home at its
+;; owner rather than at the activation. Distinct generated brands stay invariant.
 (define (tc-region-outlives-or-matches-scan
+  [root : TcTypeEnv]
   [env : TcTypeEnv]
   [value-region : i64]
   [target-region : i64]) : bool
-  (if (= value-region target-region)
-    true
-    (match (tc-type-env-view env)
-      [(Nil) false]
-      [(Cache _ scan-through _ rest _)
-        (if scan-through
-          (tc-region-outlives-or-matches-scan rest value-region target-region)
-          false)]
-      [(Bind key ty rest)
-        (if (= key (tc-region-marker-id))
-          (match ty
-            [(Var region)
-              (if (= region value-region)
-                false
-                (if (= region target-region)
-                  true
-                  (tc-region-outlives-or-matches-scan
-                    rest
-                    value-region
-                    target-region)))]
-            [_
-              (tc-region-outlives-or-matches-scan
-                rest
+  (match (tc-type-env-view env)
+    [(Nil) false]
+    [(Cache _ scan-through _ rest _)
+      (and
+        scan-through
+        (tc-region-outlives-or-matches-scan
+          root
+          rest
+          value-region
+          target-region))]
+    [(Bind key ty rest)
+      (if (and
+        (= key (tc-region-marker-id))
+        (match ty
+          [(or (Var region) (Region region _))
+            (or (= region value-region) (= region target-region))]
+          [_ false]))
+        (match ty
+          [(or (Var region) (Region region _))
+            (and
+              (= region target-region)
+              (tc-lifetime-outlives-lifetime-id?
+                root
                 value-region
-                target-region)])
-          (tc-region-outlives-or-matches-scan rest value-region target-region))])))
+                target-region))]
+          [_ false])
+        (tc-region-outlives-or-matches-scan
+          root
+          rest
+          value-region
+          target-region))]))
 
 (define (tc-region-outlives-or-matches
   [env : TcTypeEnv]
   [value-region : i64]
   [target-region : i64]) : bool
-  (begin
-    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
-    (match (tc-type-env-view env)
-      [(Cache _ _ _ rest _)
-        (tc-region-outlives-or-matches-scan rest value-region target-region)]
-      [_ (tc-region-outlives-or-matches-scan env value-region target-region)])))
+  (cond
+    [(= value-region target-region) true]
+    [(and
+        (tc-generated-arena-brand-id? value-region)
+        (tc-generated-arena-brand-id? target-region))
+      false]
+    [else
+      (begin
+        (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
+        (match (tc-type-env-view env)
+          [(Cache _ _ _ rest _)
+            (tc-region-outlives-or-matches-scan
+              env
+              rest
+              value-region
+              target-region)]
+          [_
+            (tc-region-outlives-or-matches-scan
+              env
+              env
+              value-region
+              target-region)]))]))
 
 (define (tc-region-can-flow-into-any
   [env : TcTypeEnv]

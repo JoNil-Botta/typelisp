@@ -296,7 +296,41 @@
     (string.string-length (deref pair).left)
     (string.string-length (deref pair).right)))
 
+;; A scoped value may move into a younger local arena's aggregate. Only the
+;; scalar length leaves that local home, so destroying it afterward is safe.
+(defstruct ScopedTextSlot
+  (text String))
+
+(define (scoped-into-owner) : i64
+  (with-arena
+    region
+    (let
+      [text (string.append "r1" "-text")]
+      [owner (arena.make)]
+      (in-arena
+        owner
+        (let
+          [slot (ScopedTextSlot text)]
+          (string.string-length slot.text))))))
+
+(define (scoped-into-destroyed-owner) : i64
+  (with-arena
+    region
+    (let
+      [text (string.append "r1" "-text")]
+      [owner (arena.make)]
+      [length : i64
+        (in-arena
+          owner
+          (let
+            [slot (ScopedTextSlot text)]
+            (string.string-length slot.text)))]
+      (arena.destroy-safe! owner)
+      length)))
+
 (define (main) : i64
+  (unless (= (scoped-into-owner) 7) (return 43))
+  (unless (= (scoped-into-destroyed-owner) 7) (return 44))
   (unless (= (scalar-return -12345) 6) (return 1))
   (unless (= (string.string-length (outer-return -12345)) 6) (return 2))
   (unless (= (string.string-length (program-return "program")) 7) (return 3))

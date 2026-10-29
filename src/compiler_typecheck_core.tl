@@ -328,6 +328,25 @@
   (job-epoch i64)
   (result bool))
 
+;; A top-level function's resolved contract, keyed by every identity its
+;; derivation reads (see `tc-top-decl-contract-type`). Scalars only.
+(defstruct TcDeclContractMemoEntry
+  (body i64)
+  (expr-bases i64)
+  (name i64)
+  (module-id i64)
+  (type-module-id i64)
+  (shared u64)
+  (program-decls u64)
+  (type-bases i64)
+  (symbol-decls i64)
+  (session-owner i64)
+  (session-generation i64)
+  (intern-owner i64)
+  (intern-generation i64)
+  (job-epoch i64)
+  (result-type i64))
+
 (defstruct TcTypeResolutionCacheStateData
   (owner-arena i64)
   (slots (__tl_dyn-array i64))
@@ -335,6 +354,7 @@
   (type-pool-owner-id i64)
   (type-segment-bases i64)
   (outlives-slots (__tl_dyn-array TcLifetimeOutlivesMemoEntry))
+  (decl-contract-slots (__tl_dyn-array TcDeclContractMemoEntry))
   ;; The lanes of `tc-selected-holds-memo-bind!`, allocated on first use in
   ;; `holds-memo-arena` (0 until then). Their entries hold for one resolution
   ;; stamp, which every file moves, so the file boundary frees them
@@ -884,6 +904,7 @@
         0
         0
         (__tl_make-array TcLifetimeOutlivesMemoEntry 0)
+        (__tl_make-array TcDeclContractMemoEntry 0)
         0
         0))
     (TcTypeResolutionCacheState
@@ -50736,6 +50757,114 @@
       (Err "typecheck: duplicate defdispatch ISA variant")
       (tc-dispatch-variant-signatures ctx name variants No))))
 
+(define tc-decl-contract-memo-capacity : i64
+  4096)
+
+(define (tc-decl-contract-memo-storage-ensure!
+  [state : TcTypeResolutionCacheState]) : unit
+  (let
+    [data : (MutPtr TcTypeResolutionCacheStateData)
+      (tc-type-resolution-cache-state-ptr state)]
+    (unsafe
+      (when
+        (= (array-length (deref data).decl-contract-slots) 0)
+        (in-arena
+          (arena.Arena (deref data).owner-arena)
+          (set!
+            (deref data).decl-contract-slots
+            (__tl_make-array
+              TcDeclContractMemoEntry
+              tc-decl-contract-memo-capacity)))))))
+
+;; Building the top-level environment resolves each declaration's contract once
+;; per module context and phase, so the same declaration recurs. The derivation
+;; reads the declaration (its body id within its expression pool, name and
+;; module), the resolution context (module ids, shared and program context,
+;; installed type pool and symbol count), the structural session, the intern
+;; tables and the job epoch; all of them key the entry, which keeps only the
+;; pooled result id. A hit reads that node back from the same pool.
+(define (tc-top-decl-contract-type
+  [ctx : TcContext]
+  [name : i64]
+  [body : i64]
+  [params : ast.AstTypeList]
+  [ret : ast.AstType]
+  [shadow-program? : bool]) : ast.AstType
+  (let
+    [state : TcTypeResolutionCacheState
+      (tc-job-state-type-resolution-cache ctx.job-state)]
+    [_storage : unit (tc-decl-contract-memo-storage-ensure! state)]
+    [data : TcTypeResolutionCacheStateData
+      (tc-type-resolution-cache-state-data state)]
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    [session-owner : i64 (cis.intern-structural-session-owner session)]
+    [session-generation : i64
+      (cis.intern-structural-session-current-reset-generation session)]
+    [intern-owner : i64 (ci.intern-active-table-id)]
+    [intern-generation : i64 (ci.intern-generation)]
+    [expr-bases : i64 (tc-context-expr-segment-bases ctx)]
+    [type-bases : i64 (tc-context-type-bases ctx)]
+    [symbol-decls : i64
+      (csym.compiler-symbols-decl-count (tc-context-symbols ctx))]
+    [slot : i64
+      (bit-and
+        (bit-xor
+          (bit-xor (* body 2654435761) (shr body 17))
+          (bit-xor (* name 40503) (* ctx.module-id 9973)))
+        (- tc-decl-contract-memo-capacity 1))]
+    [entry : (& data TcDeclContractMemoEntry)
+      (& (array-ref data.decl-contract-slots slot))]
+    (if (and
+      (= entry.job-epoch data.epoch)
+      (= entry.body body)
+      (= entry.expr-bases expr-bases)
+      (= entry.name name)
+      (= entry.module-id ctx.module-id)
+      (= entry.type-module-id ctx.type-module-id)
+      (= entry.shared ctx.shared)
+      (= entry.program-decls ctx.program-decls)
+      (= entry.type-bases type-bases)
+      (= entry.symbol-decls symbol-decls)
+      (= entry.session-owner session-owner)
+      (= entry.session-generation session-generation)
+      (= entry.intern-owner intern-owner)
+      (= entry.intern-generation intern-generation))
+      (tc-context-type-get ctx entry.result-type)
+      (let
+        [result : i64
+          (tc-context-type-push-value
+            ctx
+            (tc-callable-signature-type
+              ctx
+              (cis.intern-structural-session-callable-scope
+                session
+                1
+                ctx.module-id
+                name)
+              params
+              ret
+              shadow-program?))]
+        (set!
+          (array-ref data.decl-contract-slots slot)
+          (TcDeclContractMemoEntry
+            body
+            expr-bases
+            name
+            ctx.module-id
+            ctx.type-module-id
+            ctx.shared
+            ctx.program-decls
+            type-bases
+            symbol-decls
+            session-owner
+            session-generation
+            intern-owner
+            intern-generation
+            data.epoch
+            result))
+        (tc-context-type-get ctx result)))))
+
 (define (tc-top-decl-type [ctx : TcContext] [decl : ast.AstDecl]) : ResultTcType
   (match decl
     [(Def decl-meta _ maybe-ty expr-box)
@@ -50750,7 +50879,7 @@
               [(Literal lit) (Ok (tc-literal-type lit))]
               [(Ann _ ty-id) (Ok (tc-resolve-type ctx (ast.ty-node-get ty-id)))]
               [_ (Err "typecheck: top-level value requires annotation")])]))]
-    [(DefFn decl-meta name params ret _ _)
+    [(DefFn decl-meta name params ret body _)
       (let
         [signature
           (try
@@ -50758,13 +50887,10 @@
         (set! ctx.lifetime-scope TcLifetimeSubst.Nil)
         (set! ctx.source-lifetime-env (TcTypeEnv 0 -1 0))
         (Ok
-          (tc-callable-signature-type
+          (tc-top-decl-contract-type
             ctx
-            (cis.intern-structural-session-callable-scope
-              (tc-context-structural-session ctx)
-              1
-              ctx.module-id
-              name)
+            name
+            body
             (tc-elided-param-type-list (& signature.params))
             signature.ret
             (tc-signature-program-shadow? (& signature.params)))))]

@@ -4866,9 +4866,15 @@
         [rest (reader.spanned-sexpr-drop s 1)]
         (match (reader.sexpr-view arg)
           [(List (slice (Sym key _) & _))
-            (when (= (ci.intern-syntax-id-value key) (cbi.compiler-builtin-ctfe ":lifetimes"))
-              (return (Err (parse-kind-message (MalformedForm)
-                "parse: (-> (:lifetimes ...) ...) is reserved; callable lifetime binders are inferred by signature scope"))))]
+            (when
+              (=
+                (ci.intern-syntax-id-value key)
+                (cbi.compiler-builtin-ctfe ":lifetimes"))
+              (return
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: (-> (:lifetimes ...) ...) is reserved; callable lifetime binders are inferred by signature scope"))))]
           [_ unit])
         (match (reader.sexpr-view rest)
           [(List (slice))
@@ -13472,12 +13478,21 @@
   (match (reader.spanned-sexpr-view rest)
     [(List (slice binders-node & _) _)
       (let
+        [owned-nodes : reader.SpannedSexpr
+          (match (reader.spanned-sexpr-view binders-node)
+            [(List (slice (Sym head _) & _) _)
+              (if (=
+                (ci.intern-syntax-id-value head)
+                (cbi.compiler-builtin-ctfe "array"))
+                (reader.spanned-sexpr-drop binders-node 1)
+                (return (Err "parse: malformed internal callable binder array")))]
+            [_ (return (Err "parse: malformed internal callable binder array"))])]
         [owned : ast.AstLifetimeList
           (try
             (parse-ast-lifetime-list-result
               dispatch
               pools
-              binders-node
+              owned-nodes
               "parse: malformed internal callable binder list"))]
         [binders : ast.AstCallableBinders
           (ast.AstCallableBinders.Resolved owned)]

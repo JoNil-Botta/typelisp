@@ -79938,9 +79938,9 @@
       (ast.ast-lifetime-list-empty? (& owned))
       (when
         (tc_core.tc-name-id-list-overlaps?
-          (tc_core.tc-type-collect-regions (lower-global-shared-view result))
+          (tc_core.tc-type-collect-regions (& result))
           (tc_core.tc-lifetime-list-to-name-id-list-into
-            owned
+            (& owned)
             tc_core.TcNameIdList.Nil))
         (return
           (tc_core.ResultTcType.Err

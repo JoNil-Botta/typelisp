@@ -1,8 +1,16 @@
-(defstruct RefBox (:lifetimes keep) (value (& keep i64)))
+(defstruct RefBox
+  (:lifetimes keep)
+  (value (& keep i64)))
+
 (define (main) : i64
-  (let [inner : i64 1]
-       [cell : (RefBox inner) (RefBox (& inner))]
-       [b : (&mut cell (RefBox inner)) (&mut cell)]
-       [put (lambda ([q : (& inner i64)]) : unit (set! b.value q))]
-    (let [later : i64 2] (put (& later)))
+  (let
+    [inner : i64 1]
+    [cell : (RefBox inner) (RefBox (& inner))]
+    [b : (&mut cell (RefBox inner)) (&mut cell)]
+    [put
+      (lambda ([q : (& inner i64)]) : unit
+        (set! b.value q))]
+    (let
+      [later : i64 2]
+      (put (& later)))
     0))

@@ -16424,50 +16424,43 @@
           [second-ref : ast.AstType (ast.ast-ty-ref second.value (& (I64)))]
           [first-type : ast.AstType
             (ast.ast-ty-func
-              (tc_core.tc-type-list1 (tc_core.tc-global-shared-view first-ref))
+              (tc_core.tc-type-list1 (clone first-ref))
               (& first-ref)
               (ast.AstCallableBinders.Resolved first-owned))]
           [second-type : ast.AstType
             (ast.ast-ty-func
-              (tc_core.tc-type-list1 (tc_core.tc-global-shared-view second-ref))
+              (tc_core.tc-type-list1 (clone second-ref))
               (& second-ref)
               (ast.AstCallableBinders.Resolved second-owned))]
           [fixed : ast.AstType
             (ast.ast-ty-func
-              (tc_core.tc-type-list1 (tc_core.tc-global-shared-view first-ref))
+              (tc_core.tc-type-list1 (clone first-ref))
               (& first-ref)
               (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))]
           (test.assert-true
-            (tc_core.tc-type-eq
-              (tc_core.tc-global-shared-view first-type)
-              (tc_core.tc-global-shared-view second-type))
+            (tc_core.tc-type-eq (clone first-type) (clone second-type))
             "owned binder spelling and owner can be alpha-renamed")
           (test.assert-true
-            (not
-              (tc_core.tc-type-eq
-                (tc_core.tc-global-shared-view first-type)
-                (tc_core.tc-global-shared-view fixed)))
+            (not (tc_core.tc-type-eq (clone first-type) (clone fixed)))
             "a same-spelled free lifetime is not quantified")
           (test.assert-true
             (tc_core.tc-name-id-list-empty?
-              (tc_core.tc-type-collect-reference-lifetimes
-                (tc_core.tc-global-shared-view first-type)))
+              (tc_core.tc-type-collect-reference-lifetimes (& first-type)))
             "owned input and output lifetimes are not escaping")
           (test.assert-true
             (not
               (tc_core.tc-name-id-list-empty?
-                (tc_core.tc-type-collect-reference-lifetimes
-                  (tc_core.tc-global-shared-view fixed))))
+                (tc_core.tc-type-collect-reference-lifetimes (& fixed))))
             "fixed lifetimes remain free")
           (test.assert-true
             (tc_core.tc-type-eq
-              (tc_core.tc-global-shared-view first-type)
+              (clone first-type)
               (tc_core.tc-lifetime-subst-type
                 (tc_core.tc-lifetime-subst-push
                   tc_core.TcLifetimeSubst.Nil
                   first.value
                   second.value)
-                (tc_core.tc-global-shared-view first-type)))
+                (clone first-type)))
             "substitution cannot capture a nested owned binder")
           (test.assert-true
             (ctfe_support.ctfe-type-eq (& first-type) (& second-type))
@@ -16568,10 +16561,10 @@
           (let
             [owned : ast.AstLifetimeList
               (cond
-                [(= contract 0) (tc_core.tc-global-shared-view mixed)]
-                [(= contract 1) (tc_core.tc-global-shared-view duplicate)]
-                [(= contract 2) (tc_core.tc-global-shared-view malformed)]
-                [else (tc_core.tc-global-shared-view foreign-owned)])]
+                [(= contract 0) (clone mixed)]
+                [(= contract 1) (clone duplicate)]
+                [(= contract 2) (clone malformed)]
+                [else (clone foreign-owned)])]
             (test.assert-true
               (match (tc_core.tc-callable-owned-lifetimes
                 ctx
@@ -16701,8 +16694,7 @@
                           (ast.ast-function-signature-view (deref boxed))]
                         [type : ast.AstType (Func boxed)]
                         [names : tc_core.TcNameIdList
-                          (tc_core.tc-type-collect-reference-lifetimes
-                            (tc_core.tc-global-shared-view type))]
+                          (tc_core.tc-type-collect-reference-lifetimes (& type))]
                         [alternate : i64 (ci.intern "alternate")]
                         [substituted : ast.AstType
                           (tc_core.tc-lifetime-subst-type
@@ -16713,7 +16705,7 @@
                             type)]
                         [after : tc_core.TcNameIdList
                           (tc_core.tc-type-collect-reference-lifetimes
-                            substituted)]
+                            (& substituted))]
                         (and
                           (!=
                             old-param

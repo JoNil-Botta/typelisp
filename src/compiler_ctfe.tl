@@ -12003,13 +12003,24 @@
         [args-signature
           (ast.ast-function-signature-view (deref args-signature-box))]
         (match args-signature.binders
-          [(ast.AstCallableBinders.Resolved _)
-            (ctfe-ast-push
-              env
-              (ast.AstExpr.TypeLiteral
-                (ctfe-ty-push
-                  env
-                  (& (owned_view.compiler-owned-reference-shared-view ty)))))]
+          [(ast.AstCallableBinders.Resolved owned)
+            ;; A type unquote needs type syntax, rather than the `(type T)`
+            ;; expression wrapper. The private head carries the same checked
+            ;; signature; an array is syntax data for its owned identity list.
+            (ctfe-type-syntax-call-id
+              (ctfe-builtin "__typelisp internal resolved callable type")
+              (&
+                (ast.ast-expr-cons
+                  (ctfe-ast-push
+                    env
+                    (ast.AstExpr.Array
+                      (ctfe-lifetime-list-to-expr-list (& owned) env)))
+                  (&
+                    (ctfe-func-type-to-expr-list
+                      (& args-signature.params)
+                      (& (ctfe-ty-get env args-signature.result))
+                      env))))
+              env)]
           [(ast.AstCallableBinders.Unresolved)
             (ctfe-type-syntax-call-id
               (ctfe-builtin "->")
@@ -12196,7 +12207,7 @@
         (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
       (match (ctfe-expr-to-type
         (& head-expr)
-        (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
+        (& (clone (deref origin)))
         env
         fuel)
         [(Ok head-ty head-fuel)
@@ -12228,7 +12239,7 @@
         (ctfe-ast-get env (ast.ast-expr-list-get args 0 0))]
       (match (ctfe-expr-to-type
         (& elem-expr)
-        (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
+        (& (clone (deref origin)))
         env
         fuel)
         [(Ok elem-ty next-fuel)
@@ -12264,7 +12275,7 @@
         (ctfe-ast-get env (ast.ast-expr-list-get args 0 0))]
       (match (ctfe-expr-to-type
         (& elem-expr)
-        (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
+        (& (clone (deref origin)))
         env
         fuel)
         [(Ok elem-ty elem-fuel)
@@ -12318,15 +12329,14 @@
           [(Err diag) (Err diag)])
         (match (ctfe-expr-to-type
           (& head-expr)
-          (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
+          (& (clone (deref origin)))
           env
           fuel)
           [(Ok arg-ty arg-fuel)
             (match (ctfe-expr-func-type-at
               args
               (+ index 1)
-              (&
-                (clone (owned_view.compiler-owned-reference-shared-view origin)))
+              (& (clone (deref origin)))
               env
               arg-fuel)
               [(Ok tail-fn next-fuel)
@@ -12510,6 +12520,41 @@
         [_ (ctfe-type-expr-error origin)]))
     (ctfe-type-expr-error origin)))
 
+(define (ctfe-expr-resolved-callable-type
+  [args : (& args ast.AstExprList)]
+  [origin : (& ast.AstExpr)]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfeQuoteType
+  (when (< args.len 2) (return (ctfe-type-expr-error origin)))
+  (match (ctfe-expr-unspan
+    env
+    (ctfe-ast-get env (ast.ast-expr-list-get args 0 0)))
+    [(ast.AstExpr.Array items)
+      (let
+        [owned : ast.AstLifetimeList
+          (try (ctfe-expr-list-to-lifetime-list (& items) env origin))]
+        [binders : ast.AstCallableBinders
+          (ast.AstCallableBinders.Resolved owned)]
+        (unless
+          (ast.ast-callable-binders-valid?
+            (ctfe-env-source-names (& env))
+            (& binders))
+          (return (ctfe-type-expr-error origin)))
+        (match (ctfe-expr-func-type-at args 1 origin env fuel)
+          [(Ok (ast.AstType.Func boxed) next-fuel)
+            (let
+              [signature (ast.ast-function-signature-view (deref boxed))]
+              (Ok
+                (ast.ast-ty-func-with-pools
+                  (ctfe-env-pools env)
+                  signature.params
+                  (& (ctfe-ty-get env signature.result))
+                  binders)
+                next-fuel))]
+          [(Ok _ _) (ctfe-type-expr-error origin)]
+          [(Err diag) (Err diag)]))]
+    [_ (ctfe-type-expr-error origin)]))
+
 (define (ctfe-expr-c-function-type
   [args : (& ast.AstExprList)]
   [origin : (& ast.AstExpr)]
@@ -12535,7 +12580,7 @@
         (ctfe-type-expr-error origin)
         (match (ctfe-expr-to-type
           (& (ctfe-ast-get env (ast.ast-expr-list-get args 1 0)))
-          (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
+          (& (clone (deref origin)))
           env
           fuel)
           [(Err diag) (Err diag)]
@@ -12585,6 +12630,10 @@
                 (ctfe-expr-resolved-nominal-type (& args) origin env fuel true)]
               [(= name (ctfe-internal-resolved-enum-type-marker-id))
                 (ctfe-expr-resolved-nominal-type (& args) origin env fuel false)]
+              [(=
+                  name
+                  (ctfe-builtin "__typelisp internal resolved callable type"))
+                (ctfe-expr-resolved-callable-type (& args) origin env fuel)]
               [(= name (ctfe-builtin "->"))
                 (ctfe-expr-func-type (& args) origin env fuel)]
               [(= name (ctfe-builtin "CFunc"))
@@ -12709,11 +12758,7 @@
         (ctfe-ty-get
           env
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (match (ctfe-quote-type
-        head
-        env
-        (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
-        fuel)
+      (match (ctfe-quote-type head env (& (clone (deref origin))) fuel)
         [(Ok quoted-head head-fuel)
           (match (ctfe-quote-type-list-at
             types
@@ -12744,7 +12789,7 @@
         (match (ctfe-quote-type-list
           (& args-signature.params)
           env
-          (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
+          (& (clone (deref origin)))
           fuel)
           [(Ok quoted-args args-fuel)
             (match (ctfe-quote-type
@@ -12959,11 +13004,7 @@
   (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty comptime?)
-        (match (ctfe-quote-type
-          ty
-          env
-          (& (clone (owned_view.compiler-owned-reference-shared-view origin)))
-          fuel)
+        (match (ctfe-quote-type ty env (& (clone (deref origin))) fuel)
           [(Ok quoted-ty next-fuel)
             (ast.ast-param-list-push
               out

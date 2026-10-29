@@ -501,6 +501,64 @@
       [(Some _ _ _) true]
       [(No) false])))
 
+;; The guard every derivation starts from (`opt-bce-version-derive-start`).
+(define (empty-guard) : opt.OptBceVersionGuardAcc
+  (opt.OptBceVersionGuardAcc.Some
+    (ir.compiler-ir-instr-builder-new)
+    (ir.compiler-ir-value-seq-empty)
+    false))
+
+;; Whether single-block BCE hoists the check of `var`, an index the loop does
+;; not define, against the ordinary length %5; and multi-block BCE below.
+(define (single-block-index-hoisted? [var : i64]) : bool
+  (let
+    [instrs (leaf-instrs)]
+    [defs (imap.with-capacity 1)]
+    [cell (__tl_make-array i64 1)]
+    [_cell (set! (array-ref cell 0) 12)]
+    (match (opt.opt-bce-version-derive-index
+      (clone instrs)
+      0
+      instrs.len
+      (& defs)
+      0
+      0
+      99
+      (& (ir.CompilerIrValue.I64 0))
+      (& (ir.CompilerIrValue.Var 1))
+      (&mut cell)
+      (& (ir.CompilerIrValue.Var var))
+      (& (ir.CompilerIrValue.Var 5))
+      true
+      (opt.opt-bce-version-fan-new)
+      (& (empty-guard)))
+      [(Some _ _ _) true]
+      [(No) false])))
+
+(define (multi-block-index-hoisted? [var : i64]) : bool
+  (let
+    [blocks (leaf-blocks)]
+    [defs (imap.with-capacity 1)]
+    [cell (__tl_make-array i64 1)]
+    [_cell (set! (array-ref cell 0) 12)]
+    (match (opt.opt-bce-mb-derive-index
+      (& blocks)
+      (& blocks)
+      (& defs)
+      0
+      0
+      99
+      true
+      (& (ir.CompilerIrValue.I64 0))
+      (& (ir.CompilerIrValue.Var 1))
+      (&mut cell)
+      (& (ir.CompilerIrValue.Var var))
+      (& (ir.CompilerIrValue.Var 5))
+      (opt.opt-bce-version-fan-new)
+      (& (empty-guard)))
+      [(Some _ _ _) true]
+      [(No) false])))
+
 (test
   loop-addr-taken-invariant-leaves
   (let
@@ -585,4 +643,217 @@
             (& (ir.CompilerIrValue.Var 1))
             (& (ir.CompilerIrValue.Var 5))
             (& (ir.CompilerIrValue.I64 0)))))
-      "a fill/copy call that reads mutable storage is refused")))
+      "a fill/copy call that reads mutable storage is refused")
+    (test.assert-true
+      (and
+        (not (single-block-index-hoisted? 11))
+        (single-block-index-hoisted? 1))
+      "single-block BCE hoists only an ordinary invariant index")
+    (test.assert-true
+      (and (not (multi-block-index-hoisted? 11)) (multi-block-index-hoisted? 1))
+      "multi-block BCE hoists only an ordinary invariant index")))
+
+;; Walks that substitute one value for another stop at a copy of storage: %3
+;; is a snapshot of the address-taken %0, %4 reads its storage and %5 the
+;; snapshot.
+(test
+  loop-addr-taken-value-walks
+  (let
+    [blocks
+      (irt.blocks
+        "entry:
+         %0 = add %1, 2 : i64
+         %2 = addr_of %0
+         %3 = mov %0 : i64
+         %4 = add %0, 1 : i64
+         %5 = add %3, 1 : i64
+         %6 = mov 9 : i64
+         %7 = mov %6 : i64
+         store_ptr %2, 4 : i64
+         return %0")]
+    [_install (opt.opt-function-addr-taken-install! 8 (& blocks))]
+    (test.assert-true
+      (and
+        (match (opt.opt-bce-version-literal-of
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 3))
+          8)
+          [(Var id) (= id 3)]
+          [_ false])
+        (match (opt.opt-bce-version-literal-of
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 7))
+          8)
+          [(I64 k) (= k 9)]
+          [_ false]))
+      "the literal walk keeps a snapshot and folds ordinary copies")
+    (test.assert-true
+      (and
+        (match (opt.opt-bce-version-shift-of
+          (& blocks)
+          (ir.CompilerIrValue.Var 4)
+          -1
+          8)
+          [(No) true]
+          [_ false])
+        (match (opt.opt-bce-version-shift-of
+          (& blocks)
+          (ir.CompilerIrValue.Var 5)
+          -1
+          8)
+          [(Some (Var id)) (= id 3)]
+          [_ false]))
+      "a shifted value names the snapshot, never the storage")
+    ;; A copy is walked only with a nonzero shift, which the refused def of %0
+    ;; would fail anyway; the stop keeps that a local fact.
+    (test.assert-true
+      (match (opt.opt-bce-version-shift-of
+        (& blocks)
+        (ir.CompilerIrValue.Var 3)
+        -2
+        8)
+        [(No) true]
+        [_ false])
+      "a shift of a snapshot does not walk into its storage")))
+
+;; A snapshot %5 of the address-taken %3, then a store through %3's address.
+;; mode 0 indexes from the snapshot (`%5 + i`, `%5 + i + 1`), mode 1 starts
+;; the counter at it. kind 0: self-loop, kind 1: multi-block.
+(define (snapshot-function [kind : i64] [mode : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @snapshot(n=%0:i64, len=%1:i64, data=%2:u64) -> i64 vars 16 {
+       entry:
+       %3 = mov %0 : i64
+       %4 = addr_of %3
+       %5 = mov %3 : i64
+       store_ptr %4, 0 : i64
+       jump loop
+       loop:
+       %6 = phi ["
+      (if (= mode 0)
+        "0"
+        "%5")
+      ", entry], [%9, "
+      (if (= kind 1)
+        "latch"
+        "loop")
+      "] : i64\n"
+      (if (= kind 1)
+        "%10 = lt %6, %0 : bool
+         branch %10, body, done
+         body:\n"
+        "")
+      (if (= mode 0)
+        "%7 = add %5, %6 : i64\n"
+        "%7 = mov %6 : i64\n")
+      "bounds_check %7, %1 message \"snapshot\"
+       %8 = add %7, 1 : i64
+       bounds_check %8, %1 message \"snapshot_next\"\n"
+      (if (= kind 1)
+        "jump latch\nlatch:\n"
+        "")
+      "%9 = add %6, 1 : i64\n"
+      (if (= kind 1)
+        "jump loop\n"
+        "%10 = lt %9, %0 : bool
+         branch %10, loop, done\n")
+      "done:
+       return %6
+       }")))
+
+;; Whether `func` has a block `label` that reads `var`.
+(define (block-reads?
+  [func : (& func ir.CompilerIrFunction)]
+  [label : (& str)]
+  [var : i64]) : bool
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+      [(Some (Block _ instrs))
+        (opt.opt-used-contains
+          (&
+            (opt.opt-unroll-uses-before
+              (& instrs)
+              0
+              (ir.compiler-ir-instr-seq-count instrs)
+              (imap.with-capacity 8)))
+          var)]
+      [(No) false])))
+
+(test
+  loop-addr-taken-guard-reads-snapshot
+  (for [kind (iterator.range 0 2)]
+    (for [mode (iterator.range 0 2)]
+      (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "empty:\nreturn")))
+      (let
+        [func (snapshot-function kind mode)]
+        [_valid
+          (test.assert-true
+            (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+            "the snapshot fixture is valid IR")]
+        [out (opt.opt-bce-version-function (& func))]
+        [_valid-out
+          (test.assert-true
+            (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+            "the versioned snapshot fixture is valid IR")]
+        (test.assert-true
+          (block-reads? (& out) "loop__bce_guard" 5)
+          "the checks hoist into a guard on the snapshot")
+        (test.assert-true
+          (not (block-reads? (& out) "loop__bce_guard" 3))
+          "the guard never reads the snapshot's storage")))))
+
+;; Two checks of the address-taken index %4 against different lengths, with a
+;; store through its address between them. The counter's check versions the
+;; loop, and the fast clone keeps both checks of %4: each reads its storage
+;; where it runs, so one cannot stand for the other.
+(test
+  loop-addr-taken-fusion
+  (let
+    [func
+      (irt.func
+        "function @fusion(n=%0:i64, la=%1:i64, lb=%2:i64, data=%3:u64) -> i64 vars 16 {
+         entry:
+         %4 = mov 0 : i64
+         %5 = addr_of %4
+         jump loop
+         loop:
+         %6 = phi [0, entry], [%7, latch] : i64
+         %8 = lt %6, %0 : bool
+         branch %8, body, done
+         body:
+         bounds_check %6, %1 message \"counter\"
+         bounds_check %4, %1 message \"anchor\"
+         store_ptr %5, 8 : i64
+         bounds_check %4, %2 message \"target\"
+         %9 = gep %3, %4 : i64
+         %10 = load %9 : i64
+         store_ptr %5, 0 : i64
+         jump latch
+         latch:
+         %7 = add %6, 1 : i64
+         jump loop
+         done:
+         return %6
+         }")]
+    [_install
+      (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "empty:\nreturn")))]
+    [_valid
+      (test.assert-true
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+        "the fusion fixture is valid IR")]
+    [out (opt.opt-bce-version-function (& func))]
+    [_valid-out
+      (test.assert-true
+        (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+        "the versioned fusion fixture is valid IR")]
+    [blocks (opt.opt-function-blocks (& out))]
+    (test.assert-i64-eq
+      (match (opt.opt-cfg-find-block
+        blocks
+        (ir.compiler-ir-label "body__bce_fast"))
+        [(Some (Block _ instrs)) (opt.opt-count-bounds-instr-seq (& instrs))]
+        [(No) -1])
+      2
+      "two checks of a mutable index are not fused")))

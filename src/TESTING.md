@@ -123,7 +123,9 @@ memory-unsafe bounds-versioning and wrong-trip-count reproducers, and
 `bce_addr_taken_index.tl` writes the checked index itself through its address.
 `bce_addr_taken_snapshot_base.tl`, its multi-block twin `_base_mb` and
 `_seed` take a snapshot of an address-taken local before a store through its
-address; the guard must read the snapshot, never the storage. All run at
+address; the guard must read the snapshot, never the storage.
+`bce_addr_taken_fusion.tl` checks one address-taken index against two slices
+with a store through its address between the checks. All run at
 opt0/1/2 on Linux and Windows: the BCE rows must retain their checked bounds
 abort, and the unroll row must return 42. The IR tests
 in `tests/loop_addr_taken_value.tl` cover single- and multi-block versioning,
@@ -133,8 +135,14 @@ and definition-based value proofs, including copy resolution that stops at a
 copy of mutable storage. Every driver case also asserts that a rewrite adds no
 block reading the mode's mutable storage. `loop-addr-taken-invariant-leaves` pins
 each remaining invariance rule (constant-trip base and length, self-phi input,
-preheader twin, descriptor handle, fill/copy base and addend) against an
-ordinary control.
+preheader twin, descriptor handle, fill/copy base and addend, and both BCE
+invariant-index rules) against an ordinary control, and tests the guard and
+call backstops directly. Because the backstops also refuse most of what those
+rules would let through, each rule is pinned by a direct call.
+`loop-addr-taken-value-walks` pins the literal and shift walks at a snapshot.
+`loop-addr-taken-guard-reads-snapshot` versions loops whose base or seed is a
+snapshot and asserts that the guard reads the snapshot, never its storage.
+`loop-addr-taken-fusion` keeps both checks of a mutable index across a store.
 `lftr_addr_taken_bound.tl` isolates the same bound hazard in LFTR with a
 store-bearing diamond: opt0/1/2 must return 56 on both hosts. The LFTR IR test
 keeps its unchanged counter when the trip bound is address-taken and retains

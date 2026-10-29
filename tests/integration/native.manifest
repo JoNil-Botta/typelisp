@@ -1209,3 +1209,14 @@ lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_nonca
 legacy_box_get_public_deref|all|0,1,2|tests/integration/legacy_box_get_public_deref.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
 legacy_box_get_owned_template|all|0,1,2|tests/integration/legacy_box_get_owned_template.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
 legacy_box_get_owned_places|all|0,1,2|tests/integration/legacy_box_get_owned_places.tl|42|-|-|-|-
+bce_addr_taken_bound|all|0,1,2|tests/integration/bce_addr_taken_bound.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_index|all|0,1,2|tests/integration/bce_addr_taken_index.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:13:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_base|all|0,1,2|tests/integration/bce_addr_taken_snapshot_base.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:18:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_base_mb|all|0,1,2|tests/integration/bce_addr_taken_snapshot_base_mb.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:43: array index out of bounds: index=8 length=8\n
+bce_addr_taken_snapshot_seed|all|0,1,2|tests/integration/bce_addr_taken_snapshot_seed.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:16:41: array index out of bounds: index=-1 length=8\n
+bce_addr_taken_fusion|all|0,1,2|tests/integration/bce_addr_taken_fusion.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:25:37: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten|all|0,1,2|tests/integration/bce_addr_taken_tighten.tl|4|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:....
+bce_addr_taken_tighten_raise|all|0,1,2|tests/integration/bce_addr_taken_tighten_raise.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:20:41: array index out of bounds: index=8 length=8\n
+bce_addr_taken_tighten_lower|all|0,1,2|tests/integration/bce_addr_taken_tighten_lower.tl|4|-|-|stdlib/io.tl stdlib/string.tl|-
+unroll_addr_taken_bound|all|0,1,2|tests/integration/unroll_addr_taken_bound.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+lftr_addr_taken_bound|all|0,1,2|tests/integration/lftr_addr_taken_bound.tl|56|-|-|stdlib/io.tl stdlib/string.tl|-

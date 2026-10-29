@@ -2275,14 +2275,19 @@ mentions. A by-value storage name alone does not declare an incoming lifetime.
 The reserved `program` lifetime stays fixed, except for the existing
 parameter-name shadowing rule below.
 
-A name mentioned only within one nested `(-> ...)`, including at least one of
-that type's input positions, is owned by that function type. Every elided input
-reference is also owned by its own function type. A value of that type must
-accept every such lifetime; each call or coercion through the value chooses it
-afresh. If sibling callback types share a name mentioned nowhere else, their
-smallest enclosing signature binds one shared lifetime, fixed inside both
-callbacks. A nested output-only name remains bound by the enclosing signature;
-it does not introduce an unconstrained callable-owned output lifetime.
+For a name that does not resolve lexically, take the smallest signature or
+nested `(-> ...)` that contains every mention. If that is a nested function
+type with a mention among its parameter types, that function type owns the
+name. This holds at any depth, including a function type returned by another
+one: in `(-> (-> (& a i64) i64))` the inner type owns `a`, exactly as it owns
+the elided input of `(-> (-> (& i64) i64))`. Every elided input reference is
+also owned by its own function type. A value of that type must accept every
+such lifetime; each call or coercion through the value chooses it afresh. If
+sibling callback types share a name mentioned nowhere else, their smallest
+enclosing signature binds one shared lifetime, fixed inside both callbacks. A
+name that its smallest function type mentions only in its result is bound by
+the nearest enclosing signature that mentions it among its parameter types; it
+never introduces an unconstrained callable-owned output lifetime.
 
 In `let` or lambda annotations and in lambda parameters, a name that resolves
 in the enclosing lexical lifetime scope (an enclosing signature binder, a
@@ -2309,6 +2314,27 @@ metadata and is rejected. It adds no explicit binder syntax.
   (f (& (array-ref items 0))))
 
 (define (main) : i64 0)
+```
+
+```lisp test=check name=callable-scoped-lifetime-positions
+;; `a` occurs only in the callback that `mk` returns, so that callback owns it.
+(define (call-made [mk : (-> (-> (& a i64) i64))]) : i64
+  (let [g : (-> (& z i64) i64) (mk)] [x : i64 1] (g (& x))))
+
+;; `a` is listed and fixed; `c` is unlisted and owned by the field's type.
+(defstruct View
+  (:lifetimes a)
+  (data (& a i64))
+  (check (-> (& c i64) bool)))
+
+(define (use [v : (View k)]) : bool
+  (let [y : i64 2] (and (v.check v.data) (v.check (& y)))))
+
+;; Elision applies inside a function type in a local annotation.
+(define (read [v : (& i64)]) : i64 (deref v))
+
+(define (main) : i64
+  (let [f : (-> (& i64) i64) read] [x : i64 1] (f (& x))))
 ```
 
 **Storage outlives its borrows.** Whatever lifetime a reference's type spells,
@@ -2390,9 +2416,13 @@ is rejected.
 
 Elision applies only to named function declarations, lambdas, and `(-> ...)`
 function types, including references nested in tuples, arrays, boxes, pointers,
-and nested function signatures that form part of those contracts. It does not
-apply to fields, enum payloads, globals, local annotations, or nominal lifetime
-argument lists; those positions require an explicit lifetime or `program`.
+and nested function signatures that form part of those contracts. A reference
+written directly in a field, enum payload, global, local annotation, or nominal
+lifetime argument list is not elided; those positions require an explicit
+lifetime or `program`. A function type written in a local annotation is a
+function signature of its own, so these rules apply inside it:
+`[f : (-> (& i64) i64) read]` is accepted, while `[r : (& i64) (& x)]` is
+rejected.
 
 Each nested function type applies these elision rules in its own signature
 scope. Explicit-name binding follows section 3.10's smallest-signature rule;
@@ -2400,8 +2430,8 @@ a name shared by sibling callback types is fixed by their enclosing signature.
 
 - Each elided input reference receives a distinct hidden lifetime owned by
   that callable. A parent, sibling, or nested signature displaying the same
-  hidden spelling has a different identity. Two `(& T)` inputs therefore do not imply that their callers share
-  a lifetime.
+  hidden spelling has a different identity. Two `(& T)` inputs therefore do
+  not imply that their callers share a lifetime.
 - Explicit and elided input references may coexist. Distinct explicit lifetime
   names count separately; repeated explicit names count once.
 - An elided output reference is assigned the sole distinct input lifetime when
@@ -2462,9 +2492,13 @@ Lifetime metadata has these declaration-site rules:
 - Lifetime names are ordinary identifiers. Duplicate names in one declaration
   are rejected.
 - At most one `(:lifetimes ...)` metadata form may appear on a declaration.
-- A field or enum payload reference lifetime must be one of the declaration's
-  lifetime parameters or the reserved `program` lifetime. Other names are
-  rejected as unknown lifetime parameters.
+- A field or enum payload reference lifetime outside any function type must be
+  one of the declaration's lifetime parameters or the reserved `program`
+  lifetime. Other names are rejected as unknown lifetime parameters.
+- Inside a field's or payload's function type, `(:lifetimes ...)` lists the
+  fixed names: a listed name is the declaration's parameter. An unlisted name
+  follows section 3.10's smallest-signature rule, so a name mentioned only
+  in that function type's inputs is owned by it.
 - `(:lifetimes ...)` is compatible with ordinary default-layout structs and
   enums. It is rejected with `(:repr c)` because safe references are not C ABI
   fields.

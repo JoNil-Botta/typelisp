@@ -127568,13 +127568,26 @@
       (if (tc-name-id-list-contains (tc-type-collect-regions (& ty)) name)
         (let
           [signature (ast.ast-function-signature-view (deref boxed))]
-          ;; A nested output-only name cannot be chosen by that callback's
-          ;; calls. It remains an incoming name of the enclosing signature.
-          (if (tc-name-id-list-contains
-            (tc-type-list-collect-regions (& signature.params) TcNameIdList.Nil)
-            name)
-            1
-            2))
+          ;; A mention among this callback's parameter types makes it, or a
+          ;; deeper callback, the owner. Otherwise every mention is in its
+          ;; result. If one callback there owns them all, as in
+          ;; `(-> (-> (& a i64) i64))`, this is still one branch. A nested
+          ;; output-only name cannot be chosen by that callback's calls. It
+          ;; remains an incoming name of the enclosing signature.
+          (cond
+            [(tc-name-id-list-contains
+                (tc-type-list-collect-regions
+                  (& signature.params)
+                  TcNameIdList.Nil)
+                name)
+              1]
+            [(=
+                (tc-callable-mention-count
+                  name
+                  (ast.ty-node-get signature.result))
+                1)
+              1]
+            [else 2]))
         0)]
     [_
       (let

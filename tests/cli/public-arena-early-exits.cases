@@ -45,6 +45,276 @@ stdout empty
 stderr contains error[E0205]: typecheck: scratch-allocated value cannot leave
 stderr contains tests/safety/scratch_body_try_array_error_exit_reject.tl:12:37
 
+# An early exit's declared result must carry the regions its value keeps.
+case arena-return-untied-input-reject
+run check "{{root}}/tests/safety/arena_return_untied_input_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_input_reject.tl:5:11
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_untied_input_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_input_reject.tl:5:11
+stderr contains function return type rejects this escaping value
+
+case arena-return-untied-when-reject
+run check "{{root}}/tests/safety/arena_return_untied_when_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_when_reject.tl:5:41
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_untied_when_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_when_reject.tl:5:41
+stderr contains function return type rejects this escaping value
+
+case arena-return-untied-match-reject
+run check "{{root}}/tests/safety/arena_return_untied_match_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_match_reject.tl:13:27
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_untied_match_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_match_reject.tl:13:27
+stderr contains function return type rejects this escaping value
+
+case arena-return-untied-brand-reject
+run check "{{root}}/tests/safety/arena_return_untied_brand_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_brand_reject.tl:8:25
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_untied_brand_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_brand_reject.tl:8:25
+stderr contains function return type rejects this escaping value
+
+case arena-return-untied-call-reject
+run check "{{root}}/tests/safety/arena_return_untied_call_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_call_reject.tl:10:25
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_untied_call_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_call_reject.tl:10:25
+stderr contains function return type rejects this escaping value
+
+case arena-return-untied-lambda-reject
+run check "{{root}}/tests/safety/arena_return_untied_lambda_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_lambda_reject.tl:8:17
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_untied_lambda_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_lambda_reject.tl:8:17
+stderr contains function return type rejects this escaping value
+
+case arena-try-untied-input-reject
+run check "{{root}}/tests/safety/arena_try_untied_input_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into try's error exit; region value would escape
+stderr contains tests/safety/arena_try_untied_input_reject.tl:15:39
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_try_untied_input_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into try's error exit; region value would escape
+stderr contains tests/safety/arena_try_untied_input_reject.tl:15:39
+stderr contains function return type rejects this escaping value
+
+# An arena-tagged Copy aggregate: the early exit matches its tail twin.
+case arena-return-untied-copy-reject
+run check "{{root}}/tests/safety/arena_return_untied_copy_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_copy_reject.tl:8:19
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_untied_copy_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_copy_reject.tl:8:19
+stderr contains function return type rejects this escaping value
+
+case arena-tail-untied-copy-reject
+run check "{{root}}/tests/safety/arena_tail_untied_copy_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_tail_untied_copy_reject.tl:8:3
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_tail_untied_copy_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_tail_untied_copy_reject.tl:8:3
+stderr contains function return type rejects this escaping value
+
+# Classification uses the finished body's arena regions; enum parity.
+case arena-return-late-activation-reject
+run check "{{root}}/tests/safety/arena_return_late_activation_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_late_activation_reject.tl:12:19
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_late_activation_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_late_activation_reject.tl:12:19
+stderr contains function return type rejects this escaping value
+
+case arena-return-prior-activation-reject
+run check "{{root}}/tests/safety/arena_return_prior_activation_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_prior_activation_reject.tl:13:19
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_return_prior_activation_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_prior_activation_reject.tl:13:19
+stderr contains function return type rejects this escaping value
+
+case arena-return-untied-enum-reject
+run check "{{root}}/tests/safety/arena_return_untied_enum_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_enum_reject.tl:20:36
+stderr contains propagate an error with `try`
+run compile "{{root}}/tests/safety/arena_return_untied_enum_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_enum_reject.tl:20:36
+stderr contains propagate an error with `try`
+
+case arena-with-arena-enum-return-reject
+run check "{{root}}/tests/safety/arena_with_arena_enum_return_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena 'phase'
+stderr contains tests/safety/arena_with_arena_enum_return_reject.tl:19:36
+stderr contains returned value carries a lifetime or arena that cannot cross this boundary
+run compile "{{root}}/tests/safety/arena_with_arena_enum_return_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena 'phase'
+stderr contains tests/safety/arena_with_arena_enum_return_reject.tl:19:36
+stderr contains returned value carries a lifetime or arena that cannot cross this boundary
+
+# Any constructor built inside an arena activation; a lambda's late activation.
+case arena-return-untied-wrapper-reject
+run check "{{root}}/tests/safety/arena_return_untied_wrapper_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_wrapper_reject.tl:12:35
+stderr contains propagate an error with `try`
+run compile "{{root}}/tests/safety/arena_return_untied_wrapper_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_wrapper_reject.tl:12:35
+stderr contains propagate an error with `try`
+
+case arena-tail-untied-wrapper-reject
+run check "{{root}}/tests/safety/arena_tail_untied_wrapper_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_tail_untied_wrapper_reject.tl:12:3
+stderr contains function return type rejects this escaping value
+run compile "{{root}}/tests/safety/arena_tail_untied_wrapper_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_tail_untied_wrapper_reject.tl:12:3
+stderr contains function return type rejects this escaping value
+
+case arena-with-arena-wrapper-return-reject
+run check "{{root}}/tests/safety/arena_with_arena_wrapper_return_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena 'local'
+stderr contains tests/safety/arena_with_arena_wrapper_return_reject.tl:12:37
+stderr contains returned value carries a lifetime or arena that cannot cross this boundary
+run compile "{{root}}/tests/safety/arena_with_arena_wrapper_return_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena 'local'
+stderr contains tests/safety/arena_with_arena_wrapper_return_reject.tl:12:37
+stderr contains returned value carries a lifetime or arena that cannot cross this boundary
+
+case arena-return-untied-struct-reject
+run check "{{root}}/tests/safety/arena_return_untied_struct_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_struct_reject.tl:11:37
+stderr contains propagate an error with `try`
+run compile "{{root}}/tests/safety/arena_return_untied_struct_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_untied_struct_reject.tl:11:37
+stderr contains propagate an error with `try`
+
+case arena-try-untied-wrapper-reject
+run check "{{root}}/tests/safety/arena_try_untied_wrapper_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into try's error exit; region value would escape
+stderr contains tests/safety/arena_try_untied_wrapper_reject.tl:16:15
+stderr contains propagate an error with `try`
+run compile "{{root}}/tests/safety/arena_try_untied_wrapper_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into try's error exit; region value would escape
+stderr contains tests/safety/arena_try_untied_wrapper_reject.tl:16:15
+stderr contains propagate an error with `try`
+
+case arena-return-lambda-late-activation-reject
+run check "{{root}}/tests/safety/arena_return_lambda_late_activation_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_lambda_late_activation_reject.tl:15:28
+stderr contains propagate an error with `try`
+run compile "{{root}}/tests/safety/arena_return_lambda_late_activation_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into return value; region value would escape
+stderr contains tests/safety/arena_return_lambda_late_activation_reject.tl:15:28
+stderr contains propagate an error with `try`
+
 case arena-activation-store-reject
 each arena_activation_destroy_store_reject arena_activation_rewind_store_reject arena_activation_input_store_reject arena_owner_after_activation_store_reject arena_activation_distinct_owner_store_reject
 run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
@@ -59,7 +329,7 @@ stderr contains error[E0205]: typecheck: cannot store region-tagged value into s
 stderr contains tests/safety/{{each}}.tl:
 
 case arena-early-exit-accepted
-each arena_early_exits arena_scratch_owner_activation arena_escape_owner_activation
+each arena_early_exits arena_tied_early_exits arena_scratch_owner_activation arena_escape_owner_activation
 run check "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
 exit 0
 stdout contains Type checking passed!

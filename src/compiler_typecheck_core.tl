@@ -3415,7 +3415,12 @@
   (receiver-places (__tl_dyn-array bool))
   ;; The forms a `clone` operand reads through (see `tc-infer-selected-read`),
   ;; by expression id, while the operand is inferred.
-  (read-spines (__tl_dyn-array i64)))
+  (read-spines (__tl_dyn-array i64))
+  ;; Early exits whose declared-result flow waits for the body's complete
+  ;; arena regions (`tc-selected-early-exit-flow`): each exit's region count,
+  ;; then every region with its flow bits; and its located diagnostic.
+  (exit-flow-regions (__tl_dyn-array i64))
+  (exit-flow-messages (__tl_dyn-array String)))
 
 ;; A foreign module value's binder and the legacy write diagnostic around the
 ;; operation it names (`tc-move-foreign-global-write-message`).
@@ -3440,7 +3445,9 @@
     ""
     (tc-selected-no-i64s)
     (tc-selected-no-bools)
-    (tc-selected-no-i64s)))
+    (tc-selected-no-i64s)
+    (tc-selected-no-i64s)
+    (__tl_make-array String 0)))
 
 ;; Fresh empty arrays and pushes for the selected producer. `__tl_make-array`
 ;; and `__tl_array-push!` expand to an allocation (and, for a push, a copy
@@ -4656,6 +4663,7 @@
           ctx
           env
           (tc-context-expr-get ctx value-id)
+          value-id
           syntax
           source
           sink))]
@@ -11319,29 +11327,41 @@
                 (tc-try-incompatibility-message reason)
                 next)]
             [(TcTryQueryCompatible operand-info return-info)
-              (match (tc-check-try-exit-regions
-                ctx
-                env
-                (tc-context-expr-get ctx inner-id)
-                (tc-type-outer-regions (tc-global-shared-view operand-ty))
-                (tc-result-info-err-type (tc-global-shared-view operand-info)))
-                [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
-                [(ResultTcUnit.Ok)
-                  (tc-selected-contextual-result
-                    ctx
-                    env
-                    expected
-                    (tc-selected-try-publish
+              (let
+                [exit-regions : TcNameIdList
+                  (tc-try-exit-regions
+                    (tc-type-outer-regions (tc-global-shared-view operand-ty))
+                    (tc-result-info-err-type
+                      (tc-global-shared-view operand-info)))]
+                (match (tc-check-try-exit-regions
+                  ctx
+                  env
+                  (tc-context-expr-get ctx inner-id)
+                  exit-regions)
+                  [(ResultTcUnit.Err message)
+                    (TcSelectedResult.Err message next)]
+                  [(ResultTcUnit.Ok)
+                    (tc-selected-contextual-result
                       ctx
                       env
-                      operand-ty
-                      operand
-                      return-ty
-                      operand-info
-                      return-info
-                      syntax
-                      source
-                      next))])])])]))
+                      expected
+                      (tc-selected-try-publish
+                        ctx
+                        env
+                        operand-ty
+                        operand
+                        return-ty
+                        operand-info
+                        return-info
+                        syntax
+                        source
+                        (tc-selected-early-exit-flow
+                          ctx
+                          env
+                          inner-id
+                          exit-regions
+                          "try's error exit"
+                          next)))]))])])]))
 
 (define (tc-selected-try-publish
   [ctx : TcContext]
@@ -12411,7 +12431,14 @@
                   (TcSelectedLambdaInferred.Done
                     TcSelectedLambdaBody.Unrepresented)]
                 [(TcSelectedOccurrence.Selected id)
-                  (TcSelectedLambdaInferred.Root id return-type noted)])]))])))
+                  ;; Its early exits, judged with the finished body's arena
+                  ;; regions.
+                  (match (tc-selected-exit-flow-failure ctx store (& bindings))
+                    [(TcMaybeString.Some message)
+                      (TcSelectedLambdaInferred.Done
+                        (TcSelectedLambdaBody.Err message))]
+                    [(TcMaybeString.No)
+                      (TcSelectedLambdaInferred.Root id return-type noted)])])]))])))
 
 ;; Once when the body moves (or ends) a capture, mutable when a capture holds
 ;; a mutable reference, shared otherwise.
@@ -38535,10 +38562,20 @@
   [target-ty : ast.AstType]
   [value-ty : ast.AstType]
   [context : String]) : ResultTcUnit
+  (tc-ensure-regions-can-flow-into
+    env
+    target-ty
+    (tc-type-collect-regions value-ty)
+    context))
+
+(define (tc-ensure-regions-can-flow-into
+  [env : TcTypeEnv]
+  [target-ty : ast.AstType]
+  [regions : TcNameIdList]
+  [context : String]) : ResultTcUnit
   (let
     ;; `program` outlives every target, so only shorter regions can escape.
-    [value-regions : TcNameIdList
-      (tc-name-id-list-without-program (tc-type-collect-regions value-ty))]
+    [value-regions : TcNameIdList (tc-name-id-list-without-program regions)]
     (match value-regions
       [(Nil) Ok]
       [_
@@ -38549,12 +38586,14 @@
             (tc-type-contains-any-region target-ty)
             (tc-region-list-can-flow-into env value-regions target-regions))
             Ok
-            (Err
-              (str_cat.str-cat
-                (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-                "typecheck: cannot store region-tagged value into "
-                context
-                "; region value would escape"))))])))
+            (Err (tc-region-store-escape-error context))))])))
+
+(define (tc-region-store-escape-error [context : String]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    "typecheck: cannot store region-tagged value into "
+    context
+    "; region value would escape"))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : ast.AstTypeList]) : ast.AstTypeList
   (let
@@ -75568,6 +75607,145 @@
     [(No) Ok]
     [(Some region) (Err (tc-region-escape-error region))]))
 
+;; Outliving the boundary is not enough: the exit publishes its value as the
+;; declared result, so that type must carry each arena region the value keeps,
+;; as at the tail (#9442). Only regions this body allocates in count; the
+;; reference lifetimes tagging views are the ownership graph's to judge (a
+;; moved view is E0208, a Copy view's read a copy). Which regions those are is
+;; known only once the whole body is walked (a later `in-arena` records its
+;; brand), so the capturing walk records the exit here, with each region's flow
+;; into the declared result and atomic-owner status at this point, and the
+;; body's end judges it as the ownership graph does
+;; (`tc-selected-exit-flow-failure`). Every accepted body passes through such
+;; a walk. Active atomic owners keep a lambda tail's exemption; a named
+;; function's own owners already fail the boundary check.
+(define (tc-selected-early-exit-flow
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [regions : TcNameIdList]
+  [context : String]
+  [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedSink
+    store
+    lease
+    intern
+    bind)
+  (match sink
+    [(TcSelectedSink.Query) TcSelectedSink.Query]
+    [(TcSelectedSink.Capture store lease bindings)
+      (let
+        [value-regions : TcNameIdList (tc-name-id-list-without-program regions)]
+        (when
+          (tc-name-id-list-empty? value-regions)
+          (return (TcSelectedSink.Capture store lease bindings)))
+        (let
+          ;; A declared type without regions collects none, so nothing flows.
+          [target-regions : TcNameIdList
+            (match (tc-current-return-type env)
+              [(Ok ty) (tc-type-collect-regions ty)]
+              [(Err _) Nil])]
+          [entries : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+          [blocked? : bool false]
+          [cursor : TcNameIdList value-regions]
+          (while (not (tc-name-id-list-empty? cursor))
+            (let
+              [region : i64 (tc-name-id-list-head cursor)]
+              [flows? : bool
+                (tc-region-can-flow-into-any env region target-regions)]
+              (unless flows? (set! blocked? true))
+              (tc-selected-i64s-push! (&mut entries) region)
+              (tc-selected-i64s-push!
+                (&mut entries)
+                (+
+                  (if flows?
+                    1
+                    0)
+                  (if (tc-atomic-arena-owner-active-id? env region)
+                    2
+                    0))))
+            (set! cursor (tc-name-id-list-rest cursor)))
+          ;; An exit whose regions all flow cannot fail whatever they are.
+          (when
+            blocked?
+            (tc-selected-i64s-push!
+              (&mut bindings.exit-flow-regions)
+              (/ (array-length entries) 2))
+            (let
+              [index : i64 0]
+              (while (< index (array-length entries))
+                (tc-selected-i64s-push!
+                  (&mut bindings.exit-flow-regions)
+                  (array-ref entries index))
+                (set! index (+ index 1))))
+            (__tl_array-push!
+              bindings.exit-flow-messages
+              (let
+                [message : String (tc-region-store-escape-error context)]
+                (match (if (< expr-id 0)
+                  TcMaybeAstSourceSpan.No
+                  (tc-expr-id-maybe-span (tc-context-expr-bases ctx) expr-id))
+                  [(Some span)
+                    (tc-rich-error-one-secondary
+                      span
+                      message
+                      "declare the result in the arena, as `(in r T)`, propagate an error with `try`, or return an owned clone"
+                      span
+                      "function return type rejects this escaping value")]
+                  [(No) message]))))
+          (TcSelectedSink.Capture store lease bindings)))]))
+
+;; The first recorded early exit (`tc-selected-early-exit-flow`) that carries
+;; an arena region of the finished body into a declared result that cannot
+;; hold it, unless every such region is an active atomic owner.
+(define (tc-selected-exit-flow-failure
+  [ctx : TcContext]
+  [store : (& store typed.TypedStore)]
+  [bindings : (& bindings TcSelectedBindings)]) : TcMaybeString
+  (if (= (array-length bindings.exit-flow-messages) 0)
+    TcMaybeString.No
+    (let
+      [recorded : (__tl_dyn-array i64) (typed.typed-arena-regions-copy store)]
+      [index : i64 0]
+      [exit : i64 0]
+      [found : i64 -1]
+      (while (and
+        (< found 0)
+        (< index (array-length bindings.exit-flow-regions)))
+        (let
+          [count : i64 (array-ref bindings.exit-flow-regions index)]
+          [at : i64 0]
+          [arena? : bool false]
+          [all-atomic? : bool true]
+          [escapes? : bool false]
+          (while (< at count)
+            (let
+              [region : i64
+                (array-ref bindings.exit-flow-regions (+ index 1 (* at 2)))]
+              [bits : i64
+                (array-ref bindings.exit-flow-regions (+ index 2 (* at 2)))]
+              (when
+                (tc-selected-arena-region-in? ctx (& recorded) region)
+                (set! arena? true)
+                (when (= (bit-and bits 2) 0) (set! all-atomic? false))
+                (when (= (bit-and bits 1) 0) (set! escapes? true))))
+            (set! at (+ at 1)))
+          (when (and arena? escapes? (not all-atomic?)) (set! found exit))
+          (set! index (+ index 1 (* count 2)))
+          (set! exit (+ exit 1))))
+      (if (< found 0)
+        TcMaybeString.No
+        (TcMaybeString.Some
+          (string.copy (& (array-ref bindings.exit-flow-messages found))))))))
+
+;; The regions a `try` error exit carries: its payload's, and for an
+;; allocating payload the operand carrier's too.
+(define (tc-try-exit-regions
+  [carrier-regions : TcNameIdList]
+  [error-ty : ast.AstType]) : TcNameIdList
+  (if (tc-early-exit-allocated-payload? (tc-global-shared-view error-ty))
+    (tc-type-collect-regions-into error-ty carrier-regions)
+    (tc-type-collect-regions error-ty)))
+
 ;; Inline arrays allocate no container, but a nonempty residual still carries
 ;; its elements across the reset. Scalar and empty residuals carry no allocation
 ;; from the Result-like carrier; its success payload never leaves via try.
@@ -75583,28 +75761,22 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [inner : ast.AstExpr]
-  [carrier-regions : TcNameIdList]
-  [error-ty : ast.AstType]) : ResultTcUnit
-  (let
-    [regions : TcNameIdList
-      (if (tc-early-exit-allocated-payload? (tc-global-shared-view error-ty))
-        (tc-type-collect-regions-into error-ty carrier-regions)
-        (tc-type-collect-regions error-ty))]
-    (if (tc-regions-have-scratch-body? regions)
-      (Err
-        (tc-locate-error-at-expr
-          (tc-context-expr-bases ctx)
-          inner
-          (tc-scratch-exit-error "try's error exit")))
-      (match (tc-check-early-exit-regions env regions)
-        [(ResultTcUnit.Ok) Ok]
-        [(ResultTcUnit.Err message)
-          (Err
-            (tc-rich-escape-at-expr
-              (tc-context-expr-bases ctx)
-              inner
-              message
-              "try's error payload leaves this function"))]))))
+  [regions : TcNameIdList]) : ResultTcUnit
+  (if (tc-regions-have-scratch-body? regions)
+    (Err
+      (tc-locate-error-at-expr
+        (tc-context-expr-bases ctx)
+        inner
+        (tc-scratch-exit-error "try's error exit")))
+    (match (tc-check-early-exit-regions env regions)
+      [(ResultTcUnit.Ok) Ok]
+      [(ResultTcUnit.Err message)
+        (Err
+          (tc-rich-escape-at-expr
+            (tc-context-expr-bases ctx)
+            inner
+            message
+            "try's error payload leaves this function"))])))
 
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (let
@@ -75623,9 +75795,10 @@
                     ctx
                     env
                     inner
-                    regions
-                    (tc-result-info-err-type
-                      (tc-global-shared-view operand-info))))]
+                    (tc-try-exit-regions
+                      regions
+                      (tc-result-info-err-type
+                        (tc-global-shared-view operand-info)))))]
               ;; The Ok payload lives where the operand does, as a match
               ;; arm's binding would.
               (Ok
@@ -75643,6 +75816,7 @@
       ctx
       env
       value
+      -1
       typed.TypedSyntax.Generated
       (ownership.OwnershipSource "" 0 0 "")
       TcSelectedSink.Query)))
@@ -75692,6 +75866,8 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [value : ast.AstExpr]
+  ;; The operand's id when the capturing walk has one, else -1.
+  [value-id : i64]
   [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
@@ -75749,7 +75925,17 @@
                             (cdiag.CompilerTypecheckKind.ResourceOwnership)
                             "typecheck: cleanup-required resource would escape with scope")
                           next)
-                        (tc-selected-return child syntax source next))])))])])]))
+                        (tc-selected-return
+                          child
+                          syntax
+                          source
+                          (tc-selected-early-exit-flow
+                            ctx
+                            env
+                            value-id
+                            regions
+                            "return value"
+                            next)))])))])])]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
   (match (csym.compiler-symbols-owner-name-at-index
@@ -123953,7 +124139,16 @@
                       (tc-global-shared-view resolved-ret)
                       "typecheck: return type mismatch"))])]
             (tc-body-type-facts-start-consuming! body-state)
-            (match expect-result
+            (match (match expect-result
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
+              [(ResultTcUnit.Ok)
+                ;; Early exits, judged with the finished body's arena regions.
+                (match (tc-selected-exit-flow-failure
+                  ctx
+                  (& store)
+                  (& bindings))
+                  [(TcMaybeString.Some message) (ResultTcUnit.Err message)]
+                  [(TcMaybeString.No) ResultTcUnit.Ok])])
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]
               ;; A view still returned as an owned value is no place the
               ;; graph can take (a call's view result): its region escapes.

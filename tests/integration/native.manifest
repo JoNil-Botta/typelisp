@@ -907,6 +907,7 @@ valid_shift_counts|all|-|tests/integration/valid_shift_counts.tl|42|-|-|-|-
 arena_early_exits|all|0,1,2|tests/integration/arena_early_exits.tl|42|-|-|-|-
 arena_scratch_owner_activation|all|0,1,2|tests/integration/arena_scratch_owner_activation.tl|42|42\n|-|-|-
 arena_escape_owner_activation|all|0,1,2|tests/integration/arena_escape_owner_activation.tl|42|42\n|-|-|-
+arena_tied_early_exits|all|0,1,2|tests/integration/arena_tied_early_exits.tl|42|42\n|-|-|-
 with_arena_builtin_alloc|all|-|tests/integration/with_arena_builtin_alloc.tl|2|-|-|stdlib/string.tl|-
 with_arena_loop|all|-|tests/integration/with_arena_loop.tl|42|-|-|stdlib/string.tl|-
 with_arena_mark_stress|all|-|tests/integration/with_arena_mark_stress.tl|42|-|-|stdlib/string.tl|-

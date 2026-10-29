@@ -982,7 +982,9 @@ distinguish reading a place from transferring its element. The public
 `fixed-array-reference-*` cases pin E0208 and source locations through check and
 compile for both targets at every optimization level. `array_reference_reads.tl`
 runs the corresponding positive paths, Slice borrows, clones and replacement,
-and owned moves in the native matrix. The `array_shared_element_move_reject` and
+and owned moves in the native matrix; `tuple_reference_reads.tl` runs Copy
+reads, views, clones and replacement through `&` and `&mut` tuple receivers.
+The `array_shared_element_move_reject` and
 `slice_shared_element_move_reject` safety rows return a borrowed element under
 the reference's own lifetime.
 

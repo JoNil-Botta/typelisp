@@ -19421,59 +19421,27 @@
     [lowered : LowerExpr (try (lower-expr ctx state env type-env tuple-expr))]
     (match lowered
       [(Expr tuple-state tuple-value tuple-ty)
-        (match (tc_core.tc-type-strip-region
-          (tc_core.tc-resolve-type ctx tuple-ty))
-          [(Tuple elem-tys)
-            (let
-              [info : LowerFieldInfo
-                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
-              (match info
-                [(Info offset field-ty)
-                  (match (lower-gep-byte tuple-state tuple-value offset)
-                    [(Expr ptr-state ptr _)
-                      (Ok
-                        (lower-borrow-place-slot-reference
-                          ctx
-                          ptr-state
-                          ptr
-                          (lower-global-shared-view field-ty)
-                          result-ty
-                          (lower-owned-handle-type? ctx field-ty)))])]))]
-          [(or (Ref _ referent-ty) (MutRef _ referent-ty))
-            (match (tc_core.tc-type-strip-region
-              (tc_core.tc-resolve-type
+        (let
+          [info : LowerFieldInfo
+            (try
+              (lower-tuple-receiver-elem-info
                 ctx
-                (tc_core.tc-context-type-get ctx referent-ty)))
-              [(Tuple elem-tys)
-                (let
-                  [info : LowerFieldInfo
-                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
-                  (match info
-                    [(Info offset field-ty)
-                      (match (lower-gep-byte tuple-state tuple-value offset)
-                        [(Expr ptr-state ptr _)
-                          (Ok
-                            (lower-borrow-place-slot-reference
-                              ctx
-                              ptr-state
-                              ptr
-                              (lower-global-shared-view field-ty)
-                              result-ty
-                              (lower-owned-handle-type? ctx field-ty)))])]))]
-              [_
-                (Err
-                  (box
-                    (lower-diagnostic-at-expr
+                tuple-ty
+                index
+                origin
+                "lower: tuple-ref borrow requires tuple place"))]
+          (match info
+            [(Info offset field-ty)
+              (match (lower-gep-byte tuple-state tuple-value offset)
+                [(Expr ptr-state ptr _)
+                  (Ok
+                    (lower-borrow-place-slot-reference
                       ctx
-                      origin
-                      "lower: tuple-ref borrow requires tuple place")))])]
-          [_
-            (Err
-              (box
-                (lower-diagnostic-at-expr
-                  ctx
-                  origin
-                  "lower: tuple-ref borrow requires tuple place")))])])))
+                      ptr-state
+                      ptr
+                      (lower-global-shared-view field-ty)
+                      result-ty
+                      (lower-owned-handle-type? ctx field-ty)))])]))])))
 
 (define (lower-borrow-array-element-address
   [ctx : tc_core.TcContext]
@@ -34089,9 +34057,30 @@
             origin
             "lower: dynamic array literal requires dynamic-array type")))]))
 
-;; Lower `(tuple-ref t i)`: evaluate the tuple, compute element `i`'s offset, and
-;; load it (returning the unit value for a zero-sized element, which was never
-;; stored). Mirrors `src/lower.rs` `lower_tuple_ref`.
+;; Element `index` of a tuple receiver: an owned tuple, or the referent of a `&`
+;; or `&mut` to one (SPEC section 3.10). Tuples are never register-resident, so
+;; either value is the tuple's storage address and the offset applies to it.
+(define (lower-tuple-receiver-elem-info
+  [ctx : tc_core.TcContext]
+  [receiver-ty : ast.AstType]
+  [index : i64]
+  [origin : ast.AstExpr]
+  [message : String]) : ResultLowerFieldInfo
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx receiver-ty))
+    [(Tuple elem-tys) (lower-tuple-elem-info ctx (deref elem-tys) index 0)]
+    [(or (Ref _ referent-ty) (MutRef _ referent-ty))
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type
+          ctx
+          (tc_core.tc-context-type-get ctx referent-ty)))
+        [(Tuple elem-tys) (lower-tuple-elem-info ctx (deref elem-tys) index 0)]
+        [_ (Err (box (lower-diagnostic-at-expr ctx origin message)))])]
+    [_ (Err (box (lower-diagnostic-at-expr ctx origin message)))]))
+
+;; Lower `(tuple-ref t i)`: evaluate the tuple or tuple reference, compute
+;; element `i`'s offset, and load it (returning the unit value for a zero-sized
+;; element, which was never stored).
 (define (lower-tuple-ref
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -34111,30 +34100,27 @@
           (lower-global-shared-view tuple-expr)))]
     (match lowered
       [(Expr tuple-state tuple-value tuple-ty)
-        (match (tc_core.tc-resolve-type ctx tuple-ty)
-          [(Tuple elem-tys)
-            (let
-              [info : LowerFieldInfo
-                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
-              (match info
-                [(Info offset elem-ty)
-                  (if (> (lower-type-size ctx elem-ty) 0)
-                    (match (lower-load-inline-value-at-offset
-                      ctx
-                      tuple-state
-                      tuple-value
-                      offset
-                      elem-ty)
-                      [(Expr load-state load-value _)
-                        (Ok (Expr load-state load-value result-ty))])
-                    (Ok (Expr tuple-state Unit result-ty)))]))]
-          [_
-            (Err
-              (box
-                (lower-diagnostic-at-expr
+        (let
+          [info : LowerFieldInfo
+            (try
+              (lower-tuple-receiver-elem-info
+                ctx
+                tuple-ty
+                index
+                tuple-expr
+                "lower: tuple-ref requires tuple"))]
+          (match info
+            [(Info offset elem-ty)
+              (if (> (lower-type-size ctx elem-ty) 0)
+                (match (lower-load-inline-value-at-offset
                   ctx
-                  tuple-expr
-                  "lower: tuple-ref requires tuple")))])])))
+                  tuple-state
+                  tuple-value
+                  offset
+                  elem-ty)
+                  [(Expr load-state load-value _)
+                    (Ok (Expr load-state load-value result-ty))])
+                (Ok (Expr tuple-state Unit result-ty)))]))])))
 
 (define (lower-string-ref-byte
   [state : LowerState]

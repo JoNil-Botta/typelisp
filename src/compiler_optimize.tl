@@ -21448,7 +21448,10 @@
 ;;   (`opt-loop-invariant-var?`): not as a bound, length, index, base, addend,
 ;;   descriptor handle, self-phi input or preheader twin. BCE and unrolling's
 ;;   definition-based value proofs do not follow a def of one, and their copy
-;;   walks stop at a copy of one. Guards name snapshots, never storage
+;;   walks stop at a copy of one. Branch facts never decide a BCE entry
+;;   condition on one (`opt-bce-mb-cond-decides?`), BCE's length-slot proof
+;;   refuses a def of one (`opt-bce-len-nonneg?`), and LFTR tests no pointer
+;;   induction whose phi or step is one. Guards name snapshots, never storage
 ;;   (`opt-instrs-read-addr-taken?`). Ordinary value
 ;;   snapshots keep their own definitions and remain eligible. Each driver
 ;;   installs the set after finding a candidate or loop; fill/copy-call
@@ -38395,7 +38398,16 @@
                 (let
                   [step-index : i64
                     (opt-lftr-def-index-seq-from latch-instrs next-var)]
-                  (if (< step-index 0)
+                  ;; The pointer keeps step with the counter only while no
+                  ;; store can change it, so neither its phi nor its step var
+                  ;; may be address-taken (#9420). Its seed is read where the
+                  ;; end value is, before the preheader's terminator.
+                  (if (or
+                    (< step-index 0)
+                    (opt-addr-taken-operand?
+                      (& (ir.CompilerIrValue.Var phi-var)))
+                    (opt-addr-taken-operand?
+                      (& (ir.CompilerIrValue.Var next-var))))
                     (No)
                     (match (ir.compiler-ir-instr-seq-borrow
                       latch-instrs
@@ -72427,7 +72439,7 @@
           (let
             [len
               (compiler-opt-global-array-element-shared-view keys (+ key-at 1))]
-            (opt-ubound-len-nonneg? type-segment-bases blocks len)))]
+            (opt-bce-len-nonneg? type-segment-bases blocks len)))]
       (or
         this-entry
         (opt-bce-version-fan-proves-no-wrap?
@@ -72814,7 +72826,7 @@
           ;; branch condition as a consumer that pays for a hoist.
           (if (and
             (or (> kmax kmin) (not base-shared?))
-            (opt-ubound-len-nonneg? type-segment-bases blocks length))
+            (opt-bce-len-nonneg? type-segment-bases blocks length))
             (opt-bce-version-range-normal-guard
               blocks
               (owned_view.compiler-owned-reference-shared-view bound)
@@ -75348,7 +75360,7 @@
             ;; Merging the once-only pair into one unsigned compare needs the
             ;; bound's sign; the loop's blocks are where a length-slot load is
             ;; recognized.
-            (opt-ubound-len-nonneg? type-segment-bases blocks guard-bound)
+            (opt-bce-len-nonneg? type-segment-bases blocks guard-bound)
             cell
             (& guard-pre)
             down?)
@@ -82866,6 +82878,10 @@
 ;; Whether the branch on `cond-value`, taken `taken?`, decides `lhs <op> rhs`
 ;; true: bounds_dom's verdict on that one I64 fact, operand pairs only (no
 ;; literal rule). The segment bases (0) are never read for an I64 compare.
+;; A query naming an address-taken local is never decided (#9420): the branch
+;; read that storage where it ran, and a store between there and the guard can
+;; change it. Operand pairs only, so a fact naming one can decide no other
+;; query; a snapshot of one keeps its own identity and its facts.
 (define (opt-bce-mb-cond-decides?
   [blocks : (& ir.CompilerIrBlockList)]
   [cond-value : (& ir.CompilerIrValue)]
@@ -82897,16 +82913,20 @@
                   (opt-bce-mb-canon-value blocks lhs)]
                 [query-second : ir.CompilerIrValue
                   (opt-bce-mb-canon-value blocks rhs)]
-                (match (opt-dom-cmp-fact-verdict
-                  0
-                  (& fact)
-                  (opt-dom-cmp-op-mask op)
-                  query-first
-                  query-second
-                  (No)
-                  (& (I64)))
-                  [(Some decided) decided]
-                  [_ false]))]
+                (if (or
+                  (opt-addr-taken-operand? (& query-first))
+                  (opt-addr-taken-operand? (& query-second)))
+                  false
+                  (match (opt-dom-cmp-fact-verdict
+                    0
+                    (& fact)
+                    (opt-dom-cmp-op-mask op)
+                    query-first
+                    query-second
+                    (No)
+                    (& (I64)))
+                    [(Some decided) decided]
+                    [_ false])))]
             [_ false])]
         [(No) false])]
     [_ false]))
@@ -83203,7 +83223,7 @@
         ;; provenance to read.
         (and
           ascending-exact?
-          (opt-ubound-len-nonneg?
+          (opt-bce-len-nonneg?
             (opt-bce-mb-descriptor-type-segment-bases descriptor)
             all-blocks
             limit))
@@ -97432,27 +97452,39 @@
   (match block
     [(Block _ instrs) instrs]))
 
+(define (opt-ubound-len-def
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [var : i64]
+  [own-marks? : bool]) : OptMaybeInstr
+  (if own-marks?
+    (opt-bce-mb-value-def (ir.compiler-ir-block-list-view blocks) var)
+    (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) var)))
+
 ;; A length operand whose value is provably nonnegative: a nonnegative literal,
 ;; or a load out of a container's length slot. The second is the shape the
 ;; lowering emits for every array/vector/string length, and it is where the
 ;; `len >= 0` half of the equivalence comes from.
+;;
+;; `own-marks?`: the caller installed this function's address-taken set (BCE
+;; does), so the proof refuses a def of one like every BCE value walk (#9420):
+;; a store through the length's or the slot pointer's address changes what the
+;; load read. The ubound pass installs no set and keeps the raw lookup.
 (define (opt-ubound-len-nonneg?
   [type-segment-bases : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]
-  [len : (& len ir.CompilerIrValue)]) : bool
+  [len : (& len ir.CompilerIrValue)]
+  [own-marks? : bool]) : bool
   (match len
     [(I64 literal) (>= literal 0)]
     [(Var var)
-      (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) var)
+      (match (opt-ubound-len-def blocks var own-marks?)
         [(No) false]
         [(Some instr)
           (match instr
             [(Load _ source _)
               (match source
                 [(Var slot)
-                  (match (opt-bce-mb-find-def
-                    (ir.compiler-ir-block-list-view blocks)
-                    slot)
+                  (match (opt-ubound-len-def blocks slot own-marks?)
                     [(No) false]
                     [(Some slot-instr)
                       (match slot-instr
@@ -97465,6 +97497,14 @@
                 [_ false])]
             [_ false])])]
     [_ false]))
+
+;; BCE's reading of `opt-ubound-len-nonneg?`: BCE installed the function's
+;; address-taken set, so its proof refuses a def of one (#9420).
+(define (opt-bce-len-nonneg?
+  [type-segment-bases : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [len : (& len ir.CompilerIrValue)]) : bool
+  (opt-ubound-len-nonneg? type-segment-bases blocks len true))
 
 ;; The header's own contribution: `bounds_check iphi, len` as the FIRST
 ;; instruction after the phi prefix (nothing observable may precede the abort
@@ -97687,7 +97727,7 @@
         (not (= exit-label pre-label))
         (not (= exit-label latch-label))
         (= (opt-bool-branch-use-count uses cmp) 1)
-        (opt-ubound-len-nonneg? type-segment-bases blocks len)
+        (opt-ubound-len-nonneg? type-segment-bases blocks len false)
         (opt-ubound-entry-guard?
           type-segment-bases
           index

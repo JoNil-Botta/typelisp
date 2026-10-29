@@ -857,3 +857,373 @@
         [(No) -1])
       2
       "two checks of a mutable index are not fused")))
+
+;; Branches decide `n >= 0` (and, with `both`, `n < bound`) before the
+;; preheader stores -1 through a pointer: through n's own address when
+;; `mutable`, else into unrelated memory. The counter starts at n.
+(define (entry-fact-function [both : bool] [mutable : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @entry_fact(n=%0:i64, bound=%1:i64, len=%2:i64, data=%3:u64) -> i64 vars 16 {
+       entry:\n"
+      (if mutable
+        "%4 = addr_of %0\n"
+        "%4 = mov %3 : u64\n")
+      "%5 = ge %0, 0 : i64\n"
+      (if both
+        "branch %5, entry_lt, done
+         entry_lt:
+         %6 = lt %0, %1 : i64
+         branch %6, pre, done\n"
+        "branch %5, pre, done\n")
+      "pre:
+       store_ptr %4, -1 : i64
+       jump loop
+       loop:
+       %7 = phi [%0, pre], [%8, latch] : i64
+       %9 = lt %7, %1 : i64
+       branch %9, body, done
+       body:
+       bounds_check %7, %2 message \"entry_fact\"
+       jump latch
+       latch:
+       %8 = add %7, 1 : i64
+       jump loop
+       done:
+       return 0
+       }")))
+
+;; The fast clone's checks, or -1 when the loop was not versioned.
+(define (fast-clone-checks [func : (& func ir.CompilerIrFunction)]) : i64
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    (match (opt.opt-cfg-find-block
+      blocks
+      (ir.compiler-ir-label "body__bce_fast"))
+      [(Some (Block _ instrs)) (opt.opt-count-bounds-instr-seq (& instrs))]
+      [(No) -1])))
+
+(test
+  loop-addr-taken-entry-facts
+  (for [both (iterator.range 0 2)]
+    (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "empty:\nreturn")))
+    (let
+      [func (entry-fact-function (= both 1) true)]
+      [_valid
+        (test.assert-true
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+          "the entry-fact fixture is valid IR")]
+      [out (opt.opt-bce-version-function (& func))]
+      [_valid-out
+        (test.assert-true
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& out))))
+          "the versioned entry-fact fixture is valid IR")]
+      (test.assert-true
+        (not (= (fast-clone-checks (& out)) 0))
+        "a branch fact on mutable storage does not drop the index check")
+      (test.assert-i64-eq
+        (storage-reads (& out) 0)
+        (storage-reads (& func) 0)
+        "no guard reads the counter's mutable seed")))
+  (let
+    [func (entry-fact-function true false)]
+    [out (opt.opt-bce-version-function (& func))]
+    [_versioned
+      (test.assert-i64-eq
+        (fast-clone-checks (& out))
+        0
+        "an ordinary seed's branch facts still version the loop")]
+    (test.assert-true
+      (not (block-reads? (& out) "loop__bce_guard" 0))
+      "the guard drops the conjuncts its dominating branches decide"))
+  (let
+    [blocks
+      (irt.blocks
+        "entry:
+         %0 = mov %1 : i64
+         %2 = addr_of %0
+         %3 = ge %0, 0 : i64
+         %4 = lt %5, %0 : i64
+         %6 = ge %5, 0 : i64
+         %7 = lt %8, %5 : i64
+         return %0")]
+    [_install (opt.opt-function-addr-taken-install! 9 (& blocks))]
+    (test.assert-true
+      (and
+        (not
+          (opt.opt-bce-mb-cond-decides?
+            (& blocks)
+            (& (ir.CompilerIrValue.Var 3))
+            true
+            (& (ir.CompilerIrBinOp.Ge))
+            (& (ir.CompilerIrValue.Var 0))
+            (& (ir.CompilerIrValue.I64 0))))
+        (not
+          (opt.opt-bce-mb-cond-decides?
+            (& blocks)
+            (& (ir.CompilerIrValue.Var 4))
+            true
+            (& (ir.CompilerIrBinOp.Lt))
+            (& (ir.CompilerIrValue.Var 5))
+            (& (ir.CompilerIrValue.Var 0)))))
+      "a branch fact never decides a query on mutable storage")
+    (test.assert-true
+      (and
+        (opt.opt-bce-mb-cond-decides?
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 6))
+          true
+          (& (ir.CompilerIrBinOp.Ge))
+          (& (ir.CompilerIrValue.Var 5))
+          (& (ir.CompilerIrValue.I64 0)))
+        (opt.opt-bce-mb-cond-decides?
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 7))
+          true
+          (& (ir.CompilerIrBinOp.Lt))
+          (& (ir.CompilerIrValue.Var 8))
+          (& (ir.CompilerIrValue.Var 5))))
+      "a branch fact still decides the same query on an ordinary local")))
+
+;; LFTR retires the counter %3/%6/%7 and tests the pointer %9 (step %8) in its
+;; place. `which` takes one var's address and stores through it after its
+;; def: 0 none, 1 counter phi, 2 counter step, 3 counter copy, 4 pointer phi,
+;; 5 pointer step, 6 pointer seed.
+(define (lftr-iv-function [which : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @lftr_iv(n=%0:i64, seed=%1:i64, data=%2:u64) -> i64 vars 16 {
+       entry:
+       %12 = add %1, 5 : i64\n"
+      (if (= which 6)
+        "%5 = addr_of %12\nstore_ptr %5, 100 : i64\n"
+        "")
+      "jump loop
+       loop:
+       %3 = phi [0, entry], [%7, body] : i64
+       %9 = phi [%12, entry], [%8, body] : i64\n"
+      (cond
+        [(= which 1) "%5 = addr_of %3\nstore_ptr %5, 100 : i64\n"]
+        [(= which 4) "%5 = addr_of %9\nstore_ptr %5, 100 : i64\n"]
+        [else ""])
+      "%10 = gep %2, %9 : i64
+       jump body
+       body:
+       %6 = add %3, 1 : i64\n"
+      (if (= which 2)
+        "%5 = addr_of %6\nstore_ptr %5, 100 : i64\n"
+        "")
+      "%7 = mov %6 : i64\n"
+      (if (= which 3)
+        "%5 = addr_of %7\nstore_ptr %5, 100 : i64\n"
+        "")
+      "%8 = add %9, 3 : i64\n"
+      (if (= which 5)
+        "%5 = addr_of %8\nstore_ptr %5, 100 : i64\n"
+        "")
+      "%11 = lt %6, %0 : i64
+       branch %11, loop, exit
+       exit:
+       return %9
+       }")))
+
+(test
+  loop-addr-taken-lftr-induction
+  (for [which (iterator.range 0 7)]
+    (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "empty:\nreturn")))
+    (let
+      [func (lftr-iv-function which)]
+      [_valid
+        (test.assert-true
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+          "the LFTR induction fixture is valid IR")]
+      [out
+        (opt.opt-lftr-function
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& func))]
+      (test.assert-i64-eq
+        (opt.opt-function-frame out)
+        (if (or (= which 0) (= which 6))
+          19
+          16)
+        "LFTR keeps its test unless both inductions are free of stores"))))
+
+;; A length loaded from a container's length slot is nonnegative, unless a
+;; store through the slot pointer's address can redirect the load: %4 loads
+;; through the ordinary slot %3, %8 through %6 after a store to %7 = &%6.
+(test
+  loop-addr-taken-length-slot
+  (let
+    [blocks
+      (irt.blocks
+        "entry:
+         %3 = gep %2, 1 : i64
+         %4 = load %3 : i64
+         %6 = gep %2, 1 : i64
+         %7 = addr_of %6
+         store_ptr %7, %1 : u64
+         %8 = load %6 : i64
+         return %4")]
+    [_install (opt.opt-function-addr-taken-install! 9 (& blocks))]
+    (test.assert-true
+      (and
+        (opt.opt-ubound-len-nonneg?
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 4))
+          true)
+        (not
+          (opt.opt-ubound-len-nonneg?
+            (ast.ast-node-pool-reader-type-segment-bases)
+            (& blocks)
+            (& (ir.CompilerIrValue.Var 8))
+            true)))
+      "BCE takes a length-slot load as nonnegative only through ordinary storage")
+    (test.assert-true
+      (opt.opt-ubound-len-nonneg?
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& blocks)
+        (& (ir.CompilerIrValue.Var 8))
+        false)
+      "the ubound pass, which installs no set, keeps the raw lookup")))
+
+;; The inner loop's counter phi %7 (`which` 1) or step %8 (2) has its address
+;; taken after the inner loop, and the next outer trip stores -5 through it
+;; from inside the inner loop; 0 takes an unrelated local's address. kind:
+;; checked self-loop, checked multi-block loop (its step's address cannot be
+;; taken outside), unchecked unroll loop.
+(define (nested-counter-function [kind : i64] [which : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @nested(n=%0:i64, len=%1:i64, m=%2:i64, data=%9:u64) -> i64 vars 32 {
+       entry:
+       %3 = mov %0 : i64
+       %25 = mov 0 : i64
+       jump outer
+       outer:
+       %20 = phi [0, entry], [%21, outer_latch] : i64
+       %22 = phi [%9, entry], [%5, outer_latch] : u64
+       jump loop
+       loop:
+       %7 = phi [0, outer], [%8, "
+      (if (= kind 1)
+        "latch"
+        "loop")
+      "] : i64\n"
+      (if (= kind 1)
+        "%11 = lt %7, %3 : bool
+         branch %11, body, outer_latch
+         body:\n"
+        "")
+      (if (= kind 2)
+        ""
+        "bounds_check %7, %1 message \"nested\"\n")
+      "%26 = gep %9, %7 : i64
+       %27 = load %26 : i64
+       store_ptr %22, -5 : i64\n"
+      (if (= kind 1)
+        "jump latch\nlatch:\n"
+        "")
+      "%8 = add %7, 1 : i64\n"
+      (if (= kind 1)
+        "jump loop\n"
+        "%11 = lt %8, %3 : bool
+         branch %11, loop, outer_latch\n")
+      "outer_latch:\n"
+      (cond
+        [(= which 1) "%5 = addr_of %7\n"]
+        [(= which 2) "%5 = addr_of %8\n"]
+        [else "%5 = addr_of %25\n"])
+      "%21 = add %20, 1 : i64
+       %24 = lt %21, %2 : bool
+       branch %24, outer, done
+       done:
+       return %20
+       }")))
+
+(test
+  loop-addr-taken-counters
+  (for [kind (iterator.range 0 3)]
+    (for [which
+      (iterator.range
+        0
+        (if (= kind 1)
+          2
+          3))]
+      (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "empty:\nreturn")))
+      (let
+        [func (nested-counter-function kind which)]
+        [_valid
+          (test.assert-true
+            (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+            "the nested counter fixture is valid IR")]
+        [out
+          (if (= kind 2)
+            (opt.opt-unroll-function
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (& func))
+            (opt.opt-bce-version-function (& func)))]
+        (test.assert-true
+          (= (> (opt.opt-function-frame out) 32) (= which 0))
+          "a counter whose phi or step is address-taken is not counted")))))
+
+;; A self-loop bounded by a length-slot load: through the ordinary slot the
+;; guard merges `0 <= seed < bound` into one unsigned compare, which needs
+;; `bound >= 0`; through a slot redirected by a store to its address it states
+;; both halves.
+(define (length-slot-function [redirected : bool]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @length_slot(len=%1:i64, data=%2:u64, obj=%3:u64, seed=%4:i64) -> i64 vars 16 {
+       entry:
+       %5 = gep %3, 1 : i64\n"
+      (if redirected
+        "%6 = addr_of %5\nstore_ptr %6, %2 : u64\n"
+        "")
+      "%7 = load %5 : i64
+       jump loop
+       loop:
+       %8 = phi [%4, entry], [%9, loop] : i64
+       bounds_check %8, %1 message \"length_slot\"
+       %10 = gep %2, %8 : i64
+       %11 = load %10 : i64
+       %9 = add %8, 1 : i64
+       %12 = lt %9, %7 : bool
+       branch %12, loop, done
+       done:
+       return %8
+       }")))
+
+;; Whether `func`'s guard block holds an unsigned `<`.
+(define (guard-unsigned-lt? [func : (& func ir.CompilerIrFunction)]) : bool
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    (match (opt.opt-cfg-find-block
+      blocks
+      (ir.compiler-ir-label "loop__bce_guard"))
+      [(Some (Block _ instrs))
+        (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+          (match (ir.compiler-ir-instr-seq-borrow instrs index)
+            [(BinOp _ (Lt) _ _ (U64)) (return true)]
+            [_ unit]))
+        false]
+      [(No) false])))
+
+(test
+  loop-addr-taken-length-slot-guard
+  (for [redirected (iterator.range 0 2)]
+    (opt.opt-function-addr-taken-install! 0 (& (irt.blocks "empty:\nreturn")))
+    (let
+      [func (length-slot-function (= redirected 1))]
+      [_valid
+        (test.assert-true
+          (opt.opt-verify-ok? (& (opt.opt-verify-function (& func))))
+          "the length-slot fixture is valid IR")]
+      [out (opt.opt-bce-version-function (& func))]
+      [_versioned
+        (test.assert-true
+          (block-reads? (& out) "loop__bce_guard" 7)
+          "a length-slot bound versions the loop")]
+      (test.assert-true
+        (= (guard-unsigned-lt? (& out)) (= redirected 0))
+        "only an ordinary length slot proves the bound nonnegative"))))

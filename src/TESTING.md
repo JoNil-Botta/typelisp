@@ -143,6 +143,15 @@ rules would let through, each rule is pinned by a direct call.
 `loop-addr-taken-guard-reads-snapshot` versions loops whose base or seed is a
 snapshot and asserts that the guard reads the snapshot, never its storage.
 `loop-addr-taken-fusion` keeps both checks of a mutable index across a store.
+`loop-addr-taken-entry-facts` keeps the check when only a branch on mutable
+storage decided a loop's entry conditions, still drops them for an ordinary
+seed, and pins the fact query and the guard backstop directly.
+`loop-addr-taken-counters` refuses a counter whose phi or step has its address
+taken outside the loop, and `loop-addr-taken-lftr-induction` keeps LFTR's test
+unless both inductions are free of stores through their own addresses.
+`loop-addr-taken-length-slot` and `-length-slot-guard` refuse a length-slot
+proof through a redirected slot pointer, while the ubound pass, which installs
+no set, keeps its raw lookup.
 `lftr_addr_taken_bound.tl` isolates the same bound hazard in LFTR with a
 store-bearing diamond: opt0/1/2 must return 56 on both hosts. The LFTR IR test
 keeps its unchanged counter when the trip bound is address-taken and retains

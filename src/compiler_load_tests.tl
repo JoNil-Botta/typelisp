@@ -3026,6 +3026,26 @@
     [(CompilerEmbeddedStdlibNoSource) true]
     [(CompilerEmbeddedStdlibSomeSource _) false]))
 
+;; The decode-free presence checks agree with the decoding lookup: present,
+;; missing, an escaping suffix, and the path forms both loader sites pass.
+(define (compiler-load-embedded-stdlib-contains-ok?) : bool
+  (and
+    (load.compiler-load-embedded-stdlib-contains? "string.tl")
+    (not
+      (load.compiler-load-embedded-stdlib-contains? "definitely_missing_xyz.tl"))
+    (not (load.compiler-load-embedded-stdlib-contains? "../string.tl"))
+    (match (load.compiler-load-embedded-stdlib-path "net/ip.tl")
+      [(CompilerLoadSomePath path) (string.eq path "stdlib/net/ip.tl")]
+      [(CompilerLoadNoPath) false])
+    (match (load.compiler-load-embedded-stdlib-path "definitely_missing_xyz.tl")
+      [(CompilerLoadSomePath _) false]
+      [(CompilerLoadNoPath) true])
+    (load.compiler-load-embedded-stdlib-contains-path? "stdlib/string.tl")
+    (not
+      (load.compiler-load-embedded-stdlib-contains-path?
+        "stdlib/definitely_missing_xyz.tl"))
+    (not (load.compiler-load-embedded-stdlib-contains-path? "src/string.tl"))))
+
 ;; A parse error inside an imported file surfaces a diagnostic whose path is the
 ;; imported file (not the importer), preserving imported-file provenance.
 (define (compiler-load-imported-parse-error-path-ok?) : bool
@@ -6144,6 +6164,9 @@
   (unless
     (compiler-load-embedded-stdlib-escape-rejected-ok?)
     (return (io.panic "compiler-load: embedded stdlib escape smoke mismatch")))
+  (unless
+    (compiler-load-embedded-stdlib-contains-ok?)
+    (return (io.panic "compiler-load: embedded stdlib presence smoke mismatch")))
   (unless
     (compiler-load-imported-parse-error-path-ok?)
     (return

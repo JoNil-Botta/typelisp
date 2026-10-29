@@ -568,6 +568,10 @@
   ;; a region tag naming one marks an arena allocation, not a value read
   ;; through a reference of that lifetime.
   (arena-regions (__tl_dyn-array i64))
+  ;; Binders an arena's end reached only because a store of the body placed
+  ;; its values in their region, as binder index/line/column/kind quadruples
+  ;; (`typed-fed-end?`): kind 1 invalidated, kind 2 a `with` owner held.
+  (fed-ends (__tl_dyn-array i64))
   ;; The serial of the lease validated against this store
   ;; (`typed-lease-bound?`): the opening lease, or one bound since.
   (lease-serial u64)
@@ -764,6 +768,7 @@
           0
           0
           0
+          (__tl_make-array i64 0)
           (__tl_make-array i64 0)
           ;; Bound at open: the checks above validated this lease, and the
           ;; store's identity is copied from it.
@@ -1423,6 +1428,47 @@
     (typed-arena-region? (& store) region)
     (__tl_array-push! store.arena-regions region))
   (TypedResult.Ok unit))
+
+;; Records that the arena end at `line`:`column` reached binder `binder`
+;; (its index) only because a store of the body placed that arena's values in
+;; its region, as
+;; `kind` (see `fed-ends`).
+(define (typed-fed-end-note!
+  [store : (&mut store TypedStore)]
+  [lease : (& lease (TypedBodyLease intern))]
+  [binder : i64]
+  [line : i64]
+  [column : i64]
+  [kind : i64]) : TypedResult
+  (try (typed-charge! store lease 4))
+  (__tl_array-push! store.fed-ends binder)
+  (__tl_array-push! store.fed-ends line)
+  (__tl_array-push! store.fed-ends column)
+  (__tl_array-push! store.fed-ends kind)
+  (TypedResult.Ok unit))
+
+(define (typed-fed-end?
+  [store : (& store TypedStore)]
+  [binder : i64]
+  [line : i64]
+  [column : i64]
+  [kind : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and
+      (not found)
+      (>= binder 0)
+      (< (+ index 3) (array-length store.fed-ends)))
+      (when
+        (and
+          (= (array-ref store.fed-ends index) binder)
+          (= (array-ref store.fed-ends (+ index 1)) line)
+          (= (array-ref store.fed-ends (+ index 2)) column)
+          (= (array-ref store.fed-ends (+ index 3)) kind))
+        (set! found true))
+      (set! index (+ index 4)))
+    found))
 
 (define (typed-arena-regions-copy [store : (& store TypedStore)]) : (__tl_dyn-array
     i64)

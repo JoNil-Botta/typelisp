@@ -745,6 +745,45 @@ arena_return_untied_struct_reject|check-fail|tests/safety/arena_return_untied_st
 arena_try_untied_wrapper_reject|check-fail|tests/safety/arena_try_untied_wrapper_reject.tl|tests/safety/arena_try_untied_wrapper_reject.tl:16:15|cannot store region-tagged value into try's error exit
 # A lambda's own later activation still classifies its earlier exit.
 arena_return_lambda_late_activation_reject|check-fail|tests/safety/arena_return_lambda_late_activation_reject.tl|tests/safety/arena_return_lambda_late_activation_reject.tl:15:28|cannot store region-tagged value into return value
+# Ending an arena ends every region the stores the checker admitted carried
+# its values into, through chains of such stores (#9445).
+# A younger scope's container holding the arena's value.
+arena_scoped_store_destroy_reject|check-fail|tests/safety/arena_scoped_store_destroy_reject.tl|tests/safety/arena_scoped_store_destroy_reject.tl:18:32|after the end of an arena whose values a store in this body places in
+arena_scoped_ctor_destroy_reject|check-fail|tests/safety/arena_scoped_ctor_destroy_reject.tl|tests/safety/arena_scoped_ctor_destroy_reject.tl:17:32|after the end of an arena whose values a store in this body places in
+arena_scoped_nested_destroy_reject|check-fail|tests/safety/arena_scoped_nested_destroy_reject.tl|tests/safety/arena_scoped_nested_destroy_reject.tl:25:36|after the end of an arena whose values a store in this body places in
+arena_scoped_store_rewind_reject|check-fail|tests/safety/arena_scoped_store_rewind_reject.tl|tests/safety/arena_scoped_store_rewind_reject.tl:20:32|after the end of an arena whose values a store in this body places in
+arena_scoped_store_rewind_declared_reject|check-fail|tests/safety/arena_scoped_store_rewind_declared_reject.tl|tests/safety/arena_scoped_store_rewind_declared_reject.tl:22:32|after the end of an arena whose values a store in this body places in
+arena_scoped_invalidate_call_reject|check-fail|tests/safety/arena_scoped_invalidate_call_reject.tl|tests/safety/arena_scoped_invalidate_call_reject.tl:21:32|after the end of an arena whose values a store in this body places in
+# A store later in the loop than the end, and one before it.
+arena_scoped_loop_destroy_reject|check-fail|tests/safety/arena_scoped_loop_destroy_reject.tl|tests/safety/arena_scoped_loop_destroy_reject.tl:16:50|is live where an arena ends inside this loop
+arena_scoped_loop_store_first_reject|check-fail|tests/safety/arena_scoped_loop_store_first_reject.tl|tests/safety/arena_scoped_loop_store_first_reject.tl:20:30|after the end of an arena whose values a store in this body places in
+# Through a scoped container into a younger owner's container, then the end,
+# also after the scoped container's binder has left scope.
+arena_scoped_transitive_owner_reject|check-fail|tests/safety/arena_scoped_transitive_owner_reject.tl|tests/safety/arena_scoped_transitive_owner_reject.tl:25:36|after the end of an arena whose values a store in this body places in
+arena_scoped_transitive_rewind_reject|check-fail|tests/safety/arena_scoped_transitive_rewind_reject.tl|tests/safety/arena_scoped_transitive_rewind_reject.tl:27:36|after the end of an arena whose values a store in this body places in
+arena_scoped_chain_scope_destroy_reject|check-fail|tests/safety/arena_scoped_chain_scope_destroy_reject.tl|tests/safety/arena_scoped_chain_scope_destroy_reject.tl:29:32|after the end of an arena whose values a store in this body places in
+arena_scoped_chain_invalidate_call_reject|check-fail|tests/safety/arena_scoped_chain_invalidate_call_reject.tl|tests/safety/arena_scoped_chain_invalidate_call_reject.tl:31:32|after the end of an arena whose values a store in this body places in
+# A younger scope's `with` cleanup owner whose region holds the arena's values.
+arena_scoped_with_owner_holds_reject|check-fail|tests/safety/arena_scoped_with_owner_holds_reject.tl|tests/safety/arena_scoped_with_owner_holds_reject.tl:22:32|a store in this body places values allocated from
+arena_scoped_with_owner_holds_read_reject|check-fail|tests/safety/arena_scoped_with_owner_holds_read_reject.tl|tests/safety/arena_scoped_with_owner_holds_read_reject.tl:22:32|a store in this body places values allocated from
+# Known conservative rejection: a phase's allocations are stored as values
+# of its owner, so the owner's older value stored after the phase is ended too.
+arena_scoped_rewind_kept_after_phase_reject|check-fail|tests/safety/arena_scoped_rewind_kept_after_phase_reject.tl|tests/safety/arena_scoped_rewind_kept_after_phase_reject.tl:22:36|after the end of an arena whose values a store in this body places in
+# Known conservative rejection: a store reaches a region, so every value of
+# that region ends with the arena.
+arena_scoped_region_sibling_reject|check-fail|tests/safety/arena_scoped_region_sibling_reject.tl|tests/safety/arena_scoped_region_sibling_reject.tl:22:36|after the end of an arena whose values a store in this body places in
+# Known conservative rejection: a binder live at an end inside a loop whose
+# region a later store of the loop reaches, though it is not read after.
+arena_scoped_loop_unused_reject|check-fail|tests/safety/arena_scoped_loop_unused_reject.tl|tests/safety/arena_scoped_loop_unused_reject.tl:19:50|is live where an arena ends inside this loop
+# No store places the ended arena's values in these regions.
+arena_scoped_unrelated_destroy_ok|run-exit|tests/safety/arena_scoped_unrelated_destroy_ok.tl|42|-
+arena_scoped_with_owner_destroy_ok|run-exit|tests/safety/arena_scoped_with_owner_destroy_ok.tl|42|-
+arena_scoped_with_owner_rewind_ok|run-exit|tests/safety/arena_scoped_with_owner_rewind_ok.tl|42|-
+arena_scoped_rewind_younger_owner_ok|run-exit|tests/safety/arena_scoped_rewind_younger_owner_ok.tl|42|-
+arena_scoped_rewind_younger_holder_ok|run-exit|tests/safety/arena_scoped_rewind_younger_holder_ok.tl|42|-
+arena_scoped_rewind_with_owner_ok|run-exit|tests/safety/arena_scoped_rewind_with_owner_ok.tl|42|-
+arena_scoped_rewind_kept_store_ok|run-exit|tests/safety/arena_scoped_rewind_kept_store_ok.tl|42|-
+arena_scoped_loop_destroy_ok|run-exit|tests/safety/arena_scoped_loop_destroy_ok.tl|42|-
 
 # A with-escape or with-scratch body allocation cannot outlive the form (#8776).
 scratch_body_with_escape_store_reject|check-fail|tests/safety/scratch_body_with_escape_store_reject.tl|-|cannot store region-tagged value into assignment

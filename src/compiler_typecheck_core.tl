@@ -606,7 +606,12 @@
   ;; is positive an unbound name gets no near-miss scan: the suggestion would be
   ;; thrown away with the error (see `tc-unbound-suggestions-suppress-push!`).
   (unbound-suggestion-suppress-depth i64)
-  (semantic-observer TcSemanticObserver))
+  (semantic-observer TcSemanticObserver)
+  ;; The region flows store admission admitted (`tc-admitted-edge-note!`):
+  ;; `from`/`to` pairs, the checked function body's from `admitted-start`.
+  (admitted-edges (__tl_dyn-array i64))
+  (admitted-count i64)
+  (admitted-start i64))
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
@@ -1407,6 +1412,8 @@
         (__tl_make-array i64 tc-type-env-scoped-dense-lookup-capacity)]
       [dense-epochs : (__tl_dyn-array i64)
         (__tl_make-array i64 tc-type-env-scoped-dense-lookup-capacity)]
+      [admitted-edges : (__tl_dyn-array i64)
+        (__tl_make-array i64 tc-admitted-edges-initial-capacity)]
       [visible-cache : (__tl_dyn-array TcTypeEnvScopedVisibleCache)
         (__tl_make-array TcTypeEnvScopedVisibleCache 1)]
       [outlives-binding-cache : (__tl_dyn-array
@@ -1463,7 +1470,10 @@
               (ptr->int (__tl_array-data outlives-lifetime-cache)))
             : i64)
           0
-          (TcSemanticObserver 0)))
+          (TcSemanticObserver 0)
+          admitted-edges
+          0
+          0))
       state)))
 
 (define (tc-job-state-type-env-scoped-state-init! [job-state : TcJobState]) : TcTypeEnvScopedState
@@ -3420,7 +3430,13 @@
   ;; arena regions (`tc-selected-early-exit-flow`): each exit's region count,
   ;; then every region with its flow bits; and its located diagnostic.
   (exit-flow-regions (__tl_dyn-array i64))
-  (exit-flow-messages (__tl_dyn-array String)))
+  (exit-flow-messages (__tl_dyn-array String))
+  ;; Arena ends inside a loop, re-checked when the loop is inferred
+  ;; (`tc-selected-loop-end-failure`): each end's phase region and brand,
+  ;; owner count and owners, then its live binders' word count and, per binder, its
+  ;; message index, region count and regions.
+  (loop-ends (__tl_dyn-array i64))
+  (loop-end-messages (__tl_dyn-array String)))
 
 ;; A foreign module value's binder and the legacy write diagnostic around the
 ;; operation it names (`tc-move-foreign-global-write-message`).
@@ -3446,6 +3462,8 @@
     (tc-selected-no-i64s)
     (tc-selected-no-bools)
     (tc-selected-no-i64s)
+    (tc-selected-no-i64s)
+    (__tl_make-array String 0)
     (tc-selected-no-i64s)
     (__tl_make-array String 0)))
 
@@ -10115,13 +10133,24 @@
           (tc-selected-unrepresented (ResultTcType.Ok ty) next)])]))
 
 ;; Whether a value of type `ty` holds a region that ends: any region of an
-;; `owners` brand (`tc-type-contains-arena-owner-region?`) or the phase
-;; `region` (-1 for none).
+;; `owners` brand (`tc-type-contains-arena-owner-region?`), the phase
+;; `region` (-1 for none), or a region of `fed` (`tc-admitted-fed-regions`).
 (define (tc-selected-type-ends-region?
   [env : TcTypeEnv]
   [ty : ast.AstType]
   [owners : TcNameIdList]
-  [region : i64]) : bool
+  [region : i64]
+  [fed : TcNameIdList]) : bool
+  (> (tc-selected-type-end-kind env ty owners region fed) 0))
+
+;; How a value of type `ty` holds an ending region: 0 not at all, 1 a region
+;; of the ended owners or phase itself, 2 only a region of `fed`.
+(define (tc-selected-type-end-kind
+  [env : TcTypeEnv]
+  [ty : ast.AstType]
+  [owners : TcNameIdList]
+  [region : i64]
+  [fed : TcNameIdList]) : i64
   (let
     [cursor : TcNameIdList owners]
     [found : bool
@@ -10136,7 +10165,102 @@
           (tc-name-id-list-head cursor))
         (set! found true))
       (set! cursor (tc-name-id-list-rest cursor)))
+    (cond
+      [found 1]
+      [(tc-name-id-list-overlaps? (tc-type-collect-regions ty) fed) 2]
+      [else 0])))
+
+;; Whether `candidate` is a region the end of the `owners` (or of the phase
+;; `region`, -1 for none) ends itself.
+(define (tc-admitted-ended-region?
+  [env : TcTypeEnv]
+  [owners : TcNameIdList]
+  [region : i64]
+  [candidate : i64]) : bool
+  (let
+    [cursor : TcNameIdList owners]
+    [found : bool (and (>= region 0) (= candidate region))]
+    (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+      (when
+        (or
+          (= candidate (tc-name-id-list-head cursor))
+          (tc-arena-region-owned-by-id?
+            env
+            (tc-name-id-list-head cursor)
+            candidate))
+        (set! found true))
+      (set! cursor (tc-name-id-list-rest cursor)))
     found))
+
+;; The regions this body's admitted stores (`tc-admitted-edge-note!`) can have
+;; carried values of the ended `owners` or phase `region` into, closed over
+;; chains of such stores. Lexical outlives does not survive an explicit
+;; invalidation, so the end ends these regions too (#9445). A phase's
+;; allocations are stored as values of its owner's brand `phase-brand`: a
+;; rewind also ends every store of that brand's values recorded after the phase
+;; was taken (`tc-admitted-phase-mark!`), which includes older values stored
+;; then.
+(define (tc-admitted-fed-regions
+  [env : TcTypeEnv]
+  [owners : TcNameIdList]
+  [region : i64]
+  [phase-brand : i64]) : TcNameIdList
+  (if (<= env.abi-pad 0)
+    Nil
+    (let
+      [state : TcTypeEnvScopedState (tc-type-env-scoped-state env)]
+      [edges : (__tl_dyn-array i64) (tc-admitted-edges state)]
+      [start : i64 (tc-admitted-start state)]
+      [count : i64 (tc-admitted-count state)]
+      ;; The phase's mark; without one every store of the brand counts.
+      [mark : i64 count]
+      [_marked : unit
+        (when
+          (>= region 0)
+          (let
+            [at : i64 start]
+            (while (and (= mark count) (< at count))
+              (when
+                (and
+                  (= (array-ref edges (* at 2)) region)
+                  (< (array-ref edges (+ (* at 2) 1)) 0))
+                (set! mark at))
+              (set! at (+ at 1)))
+            (when (= mark count) (set! mark (- start 1)))))]
+      [fed : TcNameIdList Nil]
+      [changed? : bool true]
+      (while changed?
+        (set! changed? false)
+        (let
+          [at : i64 start]
+          (while (< at count)
+            (let
+              [from : i64 (array-ref edges (* at 2))]
+              [to : i64 (array-ref edges (+ (* at 2) 1))]
+              (when
+                (and
+                  (>= to 0)
+                  (not (tc-name-id-list-contains fed to))
+                  (not (tc-admitted-ended-region? env owners region to))
+                  (or
+                    (tc-name-id-list-contains fed from)
+                    (tc-admitted-ended-region? env owners region from)
+                    (and
+                      (> at mark)
+                      (>= region 0)
+                      (>= phase-brand 0)
+                      (= from phase-brand))))
+                (set! fed (tc-name-id-list-add fed to))
+                (set! changed? true)))
+            (set! at (+ at 1)))))
+      fed)))
+
+;; Where the phase of region `region` was taken among the admitted stores: a
+;; `(region, -1)` entry.
+(define (tc-admitted-phase-mark! [env : TcTypeEnv] [region : i64]) : unit
+  (when
+    (> env.abi-pad 0)
+    (tc-admitted-edge-note! (tc-type-env-scoped-state env) region -1)))
 
 ;; A childless or single-child generated occurrence of type `ty`.
 (define (tc-selected-op!
@@ -10174,18 +10298,119 @@
 
 ;; A closure local's environment (its binder's type, see
 ;; `tc-selected-publish-closure`) holds its captures' regions.
+;; A binder `name` live at an arena's end inside a loop, which a store later
+;; in the loop can have filled with that arena's values in an earlier
+;; iteration (`tc-selected-loop-end-failure`).
+(define (tc-selected-loop-end-message
+  [origin-span : TcMaybeAstSourceSpan]
+  [name : String]) : String
+  (let
+    [message : String
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag (ArenaOwnership))
+        "typecheck: `"
+        (string.copy (& name))
+        "` is live where an arena ends inside this loop, and a store later in the loop places that arena's values in `"
+        (string.copy (& name))
+        "`'s region; ending the arena there is rejected conservatively")]
+    (match origin-span
+      [(Some span)
+        (tc-rich-error-one-secondary
+          span
+          message
+          "end the arena after the loop, or make that store before the arena ends"
+          span
+          "this ends the arena inside the loop")]
+      [(No) message])))
+
+;; The first binder an arena end inside the loop left live (`loop-ends` from
+;; `start`) whose region the stores recorded up to the loop's end now reach.
+(define (tc-selected-loop-end-failure
+  [env : TcTypeEnv]
+  [bindings : (& bindings TcSelectedBindings)]
+  [start : i64]) : TcMaybeString
+  (let
+    [index : i64 start]
+    [found : i64 -1]
+    (while (and (< found 0) (< index (array-length bindings.loop-ends)))
+      (let
+        [region : i64 (array-ref bindings.loop-ends index)]
+        [phase-brand : i64 (array-ref bindings.loop-ends (+ index 1))]
+        [owner-count : i64 (array-ref bindings.loop-ends (+ index 2))]
+        [owners : TcNameIdList Nil]
+        [at : i64 0]
+        (while (< at owner-count)
+          (set!
+            owners
+            (tc-name-id-list-add
+              owners
+              (array-ref bindings.loop-ends (+ index 3 at))))
+          (set! at (+ at 1)))
+        (let
+          [live-at : i64 (+ index 3 owner-count)]
+          [live-end : i64 (+ live-at 1 (array-ref bindings.loop-ends live-at))]
+          [fed : TcNameIdList
+            (tc-admitted-fed-regions env owners region phase-brand)]
+          [row : i64 (+ live-at 1)]
+          (while (and (< found 0) (< row live-end))
+            (let
+              [message : i64 (array-ref bindings.loop-ends row)]
+              [count : i64 (array-ref bindings.loop-ends (+ row 1))]
+              [k : i64 0]
+              (while (< k count)
+                (when
+                  (tc-name-id-list-contains
+                    fed
+                    (array-ref bindings.loop-ends (+ row 2 k)))
+                  (set! found message))
+                (set! k (+ k 1)))
+              (set! row (+ row 2 count))))
+          (set! index live-end))))
+    (if (< found 0)
+      TcMaybeString.No
+      (TcMaybeString.Some
+        (string.copy (& (array-ref bindings.loop-end-messages found)))))))
+
+;; The selected loop body, then the re-check of the arena ends inside it.
+(define (tc-selected-loop-end-checked
+  [env : TcTypeEnv]
+  [start : i64]
+  [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
+    store
+    lease
+    intern
+    bind)
+  (match result
+    [(TcSelectedResult.Err message sink) (TcSelectedResult.Err message sink)]
+    [(TcSelectedResult.Ok ty occurrence sink)
+      (match sink
+        [(TcSelectedSink.Query)
+          (TcSelectedResult.Ok ty occurrence TcSelectedSink.Query)]
+        [(TcSelectedSink.Capture store lease bindings)
+          (match (tc-selected-loop-end-failure env (& bindings) start)
+            [(TcMaybeString.Some message)
+              (TcSelectedResult.Err
+                message
+                (TcSelectedSink.Capture store lease bindings))]
+            [(TcMaybeString.No)
+              (TcSelectedResult.Ok
+                ty
+                occurrence
+                (TcSelectedSink.Capture store lease bindings))])])]))
+
 (define (tc-selected-closure-ends-region?
   [store : (&mut store typed.TypedStore)]
   [lease : (& lease (typed.TypedBodyLease intern))]
   [binder : (& binder typed.TypedBinderId)]
   [env : TcTypeEnv]
   [owners : TcNameIdList]
-  [region : i64]) : bool
+  [region : i64]
+  [fed : TcNameIdList]) : bool
   (let
     [ty : ast.AstType (tc-selected-binder-type! store lease binder)]
     (and
       (>= (tc-selected-closure-capability (tc-global-shared-view ty)) 0)
-      (tc-selected-type-ends-region? env ty owners region))))
+      (tc-selected-type-ends-region? env ty owners region fed))))
 
 ;; A thread handle holding the region of one of the atomic arena `owners`.
 (define (tc-selected-atomic-user?
@@ -10236,6 +10461,8 @@
   [env : TcTypeEnv]
   [owners : TcNameIdList]
   [region : i64]
+  ;; For a rewind, the brand of the phase's owner (-1 otherwise).
+  [phase-brand : i64]
   [call : typed.TypedOccurrenceId]
   [result-ty : ast.AstType]
   ;; A safe destroy or rewind (`rewind?`) of the arena named `unheld-arena`
@@ -10282,6 +10509,19 @@
           [index : i64 0]
           [temporary : i64 -1]
           [held : (__tl_dyn-array typed.TypedBinderId) (tc-selected-no-binders)]
+          ;; The regions the stores admitted so far carried its values into.
+          [fed : TcNameIdList
+            (tc-admitted-fed-regions env owners region phase-brand)]
+          ;; Inside a loop a later store may have run in an earlier iteration:
+          ;; the binders this end leaves live are re-checked when the loop is
+          ;; inferred (`tc-selected-loop-end-failure`).
+          [in-loop? : bool (tc-in-loop-target? env)]
+          [live : (__tl_dyn-array i64) (tc-selected-no-i64s)]
+          ;; The arena or phase argument, where main reports an end's checks.
+          [origin-span : TcMaybeAstSourceSpan
+            (tc-expr-maybe-span
+              (tc-context-expr-bases ctx)
+              (tc-global-shared-view origin))]
           (unless
             (and
               (= carrier.sidecar.stack.state-address bindings.scoped-state)
@@ -10344,37 +10584,30 @@
                     ;; arena its value was allocated in (its scoped type
                     ;; drops it), and its cleanup runs at its scope's end:
                     ;; it must not hold that region's values any more.
+                    [unheld-kind : i64
+                      (if (and
+                        (>= unheld-arena 0)
+                        (tc-selected-with-owner-slot? (& carrier) index))
+                        (tc-selected-type-end-kind
+                          env
+                          (tc-selected-binder-type! store lease (& binder))
+                          owners
+                          region
+                          fed)
+                        0)]
                     [_with-owner : unit
                       (when
-                        (and
-                          (>= unheld-arena 0)
-                          (tc-selected-with-owner-slot? (& carrier) index)
-                          (tc-selected-type-ends-region?
-                            env
-                            (tc-selected-binder-type! store lease (& binder))
-                            owners
-                            region))
+                        (> unheld-kind 0)
                         (match (tc-selected-named-binder
                           env
                           (& bindings)
                           unheld-arena)
                           [(TcSelectedBinder.Found arena-binder)
-                            (match (tc-selected-op!
-                              store
-                              lease
-                              ast.AstType.Unit
-                              (typed.TypedOperation.RequireUnheld
-                                (typed.TypedBinderId
-                                  (typed.typed-handle-copy (& binder.handle)))
-                                arena-binder
-                                rewind?)
-                              (tc-selected-no-occurrences)
+                            (let
                               ;; Located at the arena or phase argument, as
                               ;; main reports it, else at the call.
-                              (&
-                                (match (tc-expr-maybe-span
-                                  (tc-context-expr-bases ctx)
-                                  (tc-global-shared-view origin))
+                              [unheld-source : ownership.OwnershipSource
+                                (match origin-span
                                   [(Some span)
                                     (ownership.OwnershipSource
                                       (string.copy (& source.path))
@@ -10384,20 +10617,50 @@
                                         span)
                                       (string.copy (& source.expansion)))]
                                   [(No)
-                                    (ownership.ownership-source-copy (& source))])))
-                              [(TcSelectedPatternResult.Ok id)
-                                (tc-selected-occurrences-push!
-                                  (&mut children)
-                                  id)]
-                              [(TcSelectedPatternResult.Unsupported) unit]
-                              [(TcSelectedPatternResult.Err message)
-                                (return
-                                  (TcSelectedResult.Err
-                                    message
-                                    (TcSelectedSink.Capture
-                                      store
-                                      lease
-                                      bindings)))])]
+                                    (ownership.ownership-source-copy (& source))])]
+                              ;; Its failure then names the store that placed the
+                              ;; arena's values in the owner's region.
+                              (when
+                                (= unheld-kind 2)
+                                (match (typed.typed-fed-end-note!
+                                  store
+                                  lease
+                                  binder.handle.index
+                                  unheld-source.line
+                                  unheld-source.column
+                                  2)
+                                  [(typed.TypedResult.Ok _) unit]
+                                  [(typed.TypedResult.Err error)
+                                    (return
+                                      (tc-selected-failed
+                                        error
+                                        store
+                                        lease
+                                        bindings))]))
+                              (match (tc-selected-op!
+                                store
+                                lease
+                                ast.AstType.Unit
+                                (typed.TypedOperation.RequireUnheld
+                                  (typed.TypedBinderId
+                                    (typed.typed-handle-copy (& binder.handle)))
+                                  arena-binder
+                                  rewind?)
+                                (tc-selected-no-occurrences)
+                                (& unheld-source))
+                                [(TcSelectedPatternResult.Ok id)
+                                  (tc-selected-occurrences-push!
+                                    (&mut children)
+                                    id)]
+                                [(TcSelectedPatternResult.Unsupported) unit]
+                                [(TcSelectedPatternResult.Err message)
+                                  (return
+                                    (TcSelectedResult.Err
+                                      message
+                                      (TcSelectedSink.Capture
+                                        store
+                                        lease
+                                        bindings)))]))]
                           ;; An arena not named by a binder here: the
                           ;; owner cannot have left its scope, so it holds.
                           [(TcSelectedBinder.Unrepresented)
@@ -10410,7 +10673,8 @@
                                     "arena.rewind-safe!"
                                     "arena.destroy-safe!")
                                   (tc-env-key-name-text unheld-arena)
-                                  (tc-env-key-name-text slot.name-id))
+                                  (tc-env-key-name-text slot.name-id)
+                                  (= unheld-kind 2))
                                 (TcSelectedSink.Capture store lease bindings)))]))]
                     [brand? : bool
                       (match (typed.typed-binder-get!
@@ -10427,48 +10691,101 @@
                         [(typed.TypedBinderView.Err error)
                           (return
                             (tc-selected-failed error store lease bindings))])]
-                    (when
-                      (and
-                        (or
-                          (tc-selected-type-ends-region?
-                            env
-                            (owned_view.compiler-owned-reference-shared-view
-                              (& slot.ty))
-                            owners
-                            region)
-                          (tc-selected-closure-ends-region?
+                    (let
+                      [end-kind : i64
+                        (tc-selected-type-end-kind
+                          env
+                          (owned_view.compiler-owned-reference-shared-view
+                            (& slot.ty))
+                          owners
+                          region
+                          fed)]
+                      (when
+                        (and
+                          (or
+                            (> end-kind 0)
+                            (tc-selected-closure-ends-region?
+                              store
+                              lease
+                              (& binder)
+                              env
+                              owners
+                              region
+                              fed))
+                          ;; A thread handle of an atomic owner is required
+                          ;; released instead (`tc-selected-release-checks!`).
+                          (not
+                            (tc-selected-atomic-user?
+                              ctx
+                              env
+                              (owned_view.compiler-owned-reference-shared-view
+                                (& slot.ty))
+                              owners)))
+                        (match (tc-selected-op!
+                          store
+                          lease
+                          ast.AstType.Unit
+                          (typed.TypedOperation.Invalidate
+                            (typed.TypedBinderId
+                              (typed.typed-handle-copy (& binder.handle))))
+                          (tc-selected-no-occurrences)
+                          (& source))
+                          [(TcSelectedPatternResult.Ok id)
+                            (tc-selected-occurrences-push! (&mut children) id)]
+                          [(TcSelectedPatternResult.Unsupported) unit]
+                          [(TcSelectedPatternResult.Err message)
+                            (return
+                              (TcSelectedResult.Err
+                                message
+                                (TcSelectedSink.Capture store lease bindings)))])
+                        ;; Its use then says why the arena's end reached it.
+                        (when
+                          (= end-kind 2)
+                          (match (typed.typed-fed-end-note!
                             store
                             lease
-                            (& binder)
-                            env
-                            owners
-                            region))
-                        ;; A thread handle of an atomic owner is required
-                        ;; released instead (`tc-selected-release-checks!`).
-                        (not
-                          (tc-selected-atomic-user?
-                            ctx
-                            env
-                            (owned_view.compiler-owned-reference-shared-view
-                              (& slot.ty))
-                            owners)))
-                      (match (tc-selected-op!
-                        store
-                        lease
-                        ast.AstType.Unit
-                        (typed.TypedOperation.Invalidate
-                          (typed.TypedBinderId
-                            (typed.typed-handle-copy (& binder.handle))))
-                        (tc-selected-no-occurrences)
-                        (& source))
-                        [(TcSelectedPatternResult.Ok id)
-                          (tc-selected-occurrences-push! (&mut children) id)]
-                        [(TcSelectedPatternResult.Unsupported) unit]
-                        [(TcSelectedPatternResult.Err message)
-                          (return
-                            (TcSelectedResult.Err
-                              message
-                              (TcSelectedSink.Capture store lease bindings)))]))
+                            binder.handle.index
+                            source.line
+                            source.column
+                            1)
+                            [(typed.TypedResult.Ok _) unit]
+                            [(typed.TypedResult.Err error)
+                              (return
+                                (tc-selected-failed error store lease bindings))])))
+                      (when
+                        (and in-loop? (= end-kind 0) (= unheld-kind 0))
+                        (let
+                          [regions : TcNameIdList
+                            (tc-name-id-list-without-program
+                              (tc-type-collect-regions
+                                (tc-selected-binder-type!
+                                  store
+                                  lease
+                                  (& binder))))]
+                          (unless
+                            (or
+                              (tc-name-id-list-empty? regions)
+                              (tc-name-id-list-overlaps? regions fed))
+                            (tc-selected-i64s-push!
+                              (&mut live)
+                              (array-length bindings.loop-end-messages))
+                            (__tl_array-push!
+                              bindings.loop-end-messages
+                              (tc-selected-loop-end-message
+                                origin-span
+                                (tc-env-key-name-text slot.name-id)))
+                            (tc-selected-i64s-push! (&mut live) 0)
+                            (let
+                              [count-at : i64 (- (array-length live) 1)]
+                              [cursor : TcNameIdList regions]
+                              (while (not (tc-name-id-list-empty? cursor))
+                                (tc-selected-i64s-push!
+                                  (&mut live)
+                                  (tc-name-id-list-head cursor))
+                                (set!
+                                  (array-ref live count-at)
+                                  (+ (array-ref live count-at) 1))
+                                (set! cursor (tc-name-id-list-rest cursor))))))))
                     ;; An enclosing `:invalidate` parameter's brand ends.
                     (when
                       brand?
@@ -10487,6 +10804,29 @@
                             (TcSelectedResult.Err
                               message
                               (TcSelectedSink.Capture store lease bindings)))])))])
+              (set! index (+ index 1))))
+          (when
+            (> (array-length live) 0)
+            (tc-selected-i64s-push! (&mut bindings.loop-ends) region)
+            (tc-selected-i64s-push! (&mut bindings.loop-ends) phase-brand)
+            (tc-selected-i64s-push!
+              (&mut bindings.loop-ends)
+              (tc-name-id-list-len owners))
+            (let
+              [cursor : TcNameIdList owners]
+              (while (not (tc-name-id-list-empty? cursor))
+                (tc-selected-i64s-push!
+                  (&mut bindings.loop-ends)
+                  (tc-name-id-list-head cursor))
+                (set! cursor (tc-name-id-list-rest cursor))))
+            (tc-selected-i64s-push!
+              (&mut bindings.loop-ends)
+              (array-length live))
+            (set! index 0)
+            (while (< index (array-length live))
+              (tc-selected-i64s-push!
+                (&mut bindings.loop-ends)
+                (array-ref live index))
               (set! index (+ index 1))))
           (set! index 0)
           (while (< index (array-length ended))
@@ -10589,7 +10929,8 @@
                                 (tc-context-expr-get ctx arg-id)
                                 "an :invalidate call"
                                 (tc-env-key-name-text brand)
-                                (tc-env-key-name-text live-owner))))]
+                                (tc-env-key-name-text live-owner)
+                                false)))]
                         [else (set! brands (tc-name-id-list-add brands brand))]))]
                   [(TcMaybeNameId.No) unit])]
               [(ResultTcType.Err _) unit])]
@@ -10776,6 +11117,7 @@
               ctx
               env
               brands
+              -1
               -1
               call
               ty
@@ -11178,6 +11520,16 @@
         (match (tc-arena-phase-token-owner-active env token)
           [(TcMaybeNameId.Some id) id]
           [(TcMaybeNameId.No) -1]))]
+    ;; The brand the owner's stored values carry (`tc-admitted-fed-regions`).
+    [phase-brand : i64
+      (if (< phase-owner 0)
+        -1
+        (match (tc-lookup-id env phase-owner)
+          [(ResultTcType.Ok owner-ty)
+            (match (tc-arena-branded-region ctx owner-ty)
+              [(TcMaybeNameId.Some brand) brand]
+              [(TcMaybeNameId.No) phase-owner])]
+          [(ResultTcType.Err _) phase-owner]))]
     [atomic-owner : i64
       (if destroy?
         owner
@@ -11221,7 +11573,8 @@
                           [destroy? owner]
                           [(>= phase-owner 0) phase-owner]
                           [else token]))
-                      (tc-env-key-name-text live-owner))
+                      (tc-env-key-name-text live-owner)
+                      false)
                     sink)
                   ;; The owner place or token is consumed (moved) by the call.
                   (match (tc-infer-selected-sequence-child
@@ -11262,6 +11615,7 @@
                                         owner)
                                       TcNameIdList.Nil)
                                     region
+                                    phase-brand
                                     call
                                     ast.AstType.Unit
                                     (cond
@@ -31465,15 +31819,32 @@
           "typecheck: while requires at least one body expression")
         sink)]
     [represented?
-      (tc-infer-selected-begin-checked
-        ctx
-        env
-        body
-        typed.TypedSyntax.Generated
-        ast.AstMaybeType.No
-        true
-        source
-        sink)]
+      (match sink
+        [(TcSelectedSink.Capture store lease bindings)
+          (let
+            [start : i64 (array-length bindings.loop-ends)]
+            (tc-selected-loop-end-checked
+              env
+              start
+              (tc-infer-selected-begin-checked
+                ctx
+                env
+                body
+                typed.TypedSyntax.Generated
+                ast.AstMaybeType.No
+                true
+                source
+                (TcSelectedSink.Capture store lease bindings))))]
+        [(TcSelectedSink.Query)
+          (tc-infer-selected-begin-checked
+            ctx
+            env
+            body
+            typed.TypedSyntax.Generated
+            ast.AstMaybeType.No
+            true
+            source
+            TcSelectedSink.Query)])]
     [else
       (tc-selected-unrepresented
         (tc-selected-project
@@ -35961,6 +36332,8 @@
   [owner-id : i64]) : TcTypeEnv
   (let
     [region-id : i64 (tc-arena-phase-region-id env owner-id token-id)]
+    ;; Later stores of the owner's values may carry the phase's allocations.
+    [_mark : unit (tc-admitted-phase-mark! env region-id)]
     (tc-bind-id
       (tc-bind-id
         (tc-bind-id
@@ -38540,7 +38913,9 @@
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
 
-(define (tc-region-list-can-flow-into
+;; Whether every value region flows into some target region. Each admitted
+;; flow between distinct regions is recorded (`tc-admitted-edge-note!`).
+(define (tc-region-list-admit!
   [env : TcTypeEnv]
   [value-regions : TcNameIdList]
   [target-regions : TcNameIdList]) : bool
@@ -38548,12 +38923,24 @@
     [cursor : TcNameIdList value-regions]
     [can-flow : bool true]
     (while (and can-flow (not (tc-name-id-list-empty? cursor)))
-      (if (tc-region-can-flow-into-any
-        env
-        (tc-name-id-list-head cursor)
-        target-regions)
-        unit
-        (set! can-flow false))
+      (let
+        [from : i64 (tc-name-id-list-head cursor)]
+        [targets : TcNameIdList target-regions]
+        [found : bool false]
+        (while (not (tc-name-id-list-empty? targets))
+          (let
+            [to : i64 (tc-name-id-list-head targets)]
+            (when
+              (tc-region-outlives-or-matches env from to)
+              (set! found true)
+              (when
+                (and
+                  (> env.abi-pad 0)
+                  (!= from to)
+                  (not (tc-program-lifetime-id? to)))
+                (tc-admitted-edge-note! (tc-type-env-scoped-state env) from to))))
+          (set! targets (tc-name-id-list-rest targets)))
+        (unless found (set! can-flow false)))
       (set! cursor (tc-name-id-list-rest cursor)))
     can-flow))
 
@@ -38584,9 +38971,105 @@
             (tc-type-collect-regions (tc-global-shared-view target-ty))]
           (if (and
             (tc-type-contains-any-region target-ty)
-            (tc-region-list-can-flow-into env value-regions target-regions))
+            (tc-region-list-admit! env value-regions target-regions))
             Ok
             (Err (tc-region-store-escape-error context))))])))
+
+;; Store admission records each region flow it admits, a value of region
+;; `from` into a container of region `to`, so that an arena's end can end what
+;; those stores reached (`tc-admitted-fed-regions`, #9445). The pairs live in
+;; the job's scoped state reached through the environment, like the
+;; suggestion depth, and each checked function body sees only its own
+;; (`tc-check-fn-decl-body`).
+(define tc-admitted-edges-initial-capacity : i64
+  64)
+
+(define (tc-admitted-edges [state : TcTypeEnvScopedState]) : (__tl_dyn-array
+    i64)
+  (tc-type-env-scoped-state-field state admitted-edges (__tl_dyn-array i64)))
+
+(define (tc-admitted-count [state : TcTypeEnvScopedState]) : i64
+  (tc-type-env-scoped-state-field state admitted-count i64))
+
+(define (tc-admitted-start [state : TcTypeEnvScopedState]) : i64
+  (tc-type-env-scoped-state-field state admitted-start i64))
+
+(define (tc-admitted-edges-set!
+  [state : TcTypeEnvScopedState]
+  [edges : (__tl_dyn-array i64)]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast state.address : u64) : (Ptr u8))
+          (comptime (offset-of (type TcTypeEnvScopedStateData) admitted-edges)))
+        : (MutPtr (__tl_dyn-array i64)))
+      edges)))
+
+(define (tc-admitted-count-set! [state : TcTypeEnvScopedState] [count : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast state.address : u64) : (Ptr u8))
+          (comptime (offset-of (type TcTypeEnvScopedStateData) admitted-count)))
+        : (MutPtr i64))
+      count)))
+
+(define (tc-admitted-start-set! [state : TcTypeEnvScopedState] [start : i64]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast state.address : u64) : (Ptr u8))
+          (comptime (offset-of (type TcTypeEnvScopedStateData) admitted-start)))
+        : (MutPtr i64))
+      start)))
+
+(define (tc-admitted-edge-note!
+  [state : TcTypeEnvScopedState]
+  [from : i64]
+  [to : i64]) : unit
+  (let
+    [edges : (__tl_dyn-array i64) (tc-admitted-edges state)]
+    [count : i64 (tc-admitted-count state)]
+    [start : i64 (tc-admitted-start state)]
+    [at : i64 (- count 1)]
+    [found : bool false]
+    [marked? : bool false]
+    ;; A store is recorded again after a later phase mark, which a rewind of
+    ;; that phase reads from (`tc-admitted-fed-regions`).
+    (while (and (not found) (not marked?) (>= at start))
+      (cond
+        [(and
+            (= (array-ref edges (* at 2)) from)
+            (= (array-ref edges (+ (* at 2) 1)) to))
+          (set! found true)]
+        [(and (>= to 0) (< (array-ref edges (+ (* at 2) 1)) 0))
+          (set! marked? true)]
+        [else unit])
+      (set! at (- at 1)))
+    (unless
+      found
+      (when
+        (> (* (+ count 1) 2) (array-length edges))
+        (let
+          [grown : (__tl_dyn-array i64)
+            (in-arena
+              (unsafe
+                (arena.Arena
+                  (tc-type-env-scoped-state-field state owner-arena i64)))
+              (__tl_make-array i64 (* 2 (array-length edges))))]
+          [index : i64 0]
+          (while (< index (* count 2))
+            (set! (array-ref grown index) (array-ref edges index))
+            (set! index (+ index 1)))
+          (tc-admitted-edges-set! state grown)))
+      (let
+        [slots : (__tl_dyn-array i64) (tc-admitted-edges state)]
+        (set! (array-ref slots (* count 2)) from)
+        (set! (array-ref slots (+ (* count 2) 1)) to))
+      (tc-admitted-count-set! state (+ count 1)))))
 
 (define (tc-region-store-escape-error [context : String]) : String
   (str_cat.str-cat
@@ -89801,6 +90284,23 @@
 (define (tc-move-origin-label [key : String]) : String
   (str_cat.str-cat "move of `" key "` happened here"))
 
+;; A value invalidated because an arena ended whose values a store of the
+;; body places in its region (`tc-admitted-fed-regions`, #9445).
+(define (tc-move-fed-invalidation-message [name : String]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (MoveViolation))
+    "typecheck: use of `"
+    (string.copy (& name))
+    "` after the end of an arena whose values a store in this body places in `"
+    name
+    "`'s region"))
+
+(define (tc-move-fed-invalidation-label) : String
+  "this ends an arena whose values a store in this body places in that region")
+
+(define (tc-move-fed-invalidation-help) : String
+  "end the arena after the last use of that region's values, or keep the arena's values out of that region")
+
 (define (tc-move-loop-carried-origin-label [name : String]) : String
   (str_cat.str-cat
     "owner value `"
@@ -90111,15 +90611,53 @@
 (define (tc-safe-invalidation-cleanup-owner-help) : String
   "end the `with` scope before invalidating the arena, or allocate the owner in an arena that outlives the scope")
 
+;; A `with` owner in a region a store of the body places the arena's values in
+;; (`tc-admitted-fed-regions`): its cleanup may reach them, so ending the arena
+;; while the owner is live is rejected (#9445).
+(define (tc-safe-invalidation-fed-owner-text
+  [operation : String]
+  [arena : String]
+  [name : String]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (ArenaOwnership))
+    "typecheck: a store in this body places values allocated from `"
+    (string.copy (& arena))
+    "` in the region of `with` cleanup owner `"
+    (string.copy (& name))
+    "`; "
+    operation
+    " of `"
+    arena
+    "` while `"
+    name
+    "` is live is rejected"))
+
+(define (tc-safe-invalidation-fed-owner-help [name : String]) : String
+  (str_cat.str-cat
+    "end `"
+    (string.copy (& name))
+    "`'s `with` scope before ending the arena, or keep the arena's values out of `"
+    name
+    "`'s region"))
+
 (define (tc-move-safe-invalidation-cleanup-owner-message
   [expr-bases : i64]
   [origin : ast.AstExpr]
   [operation : String]
   [arena : String]
-  [name : String]) : String
+  [name : String]
+  ;; Whether only a store placed the arena's values in the owner's region
+  ;; (#9445).
+  [fed? : bool]) : String
   (let
+    [help : String
+      (if fed?
+        (tc-safe-invalidation-fed-owner-help (string.copy (& name)))
+        (tc-safe-invalidation-cleanup-owner-help))]
     [message : String
-      (tc-safe-invalidation-cleanup-owner-text operation arena name)]
+      (if fed?
+        (tc-safe-invalidation-fed-owner-text operation arena name)
+        (tc-safe-invalidation-cleanup-owner-text operation arena name))]
     ;; The invalidating call is located at its arena argument, or at the call's
     ;; own source view when that argument has no span.
     (match (match (match (ast.ast-expr-unspan-with-segment-bases
@@ -90134,11 +90672,7 @@
       [_ TcMaybeAstSourceSpan.No])
       [(Some span) (TcMaybeAstSourceSpan.Some span)]
       [(No) (tc-expr-maybe-span expr-bases origin)])
-      [(Some span)
-        (tc-rich-error-with-help
-          span
-          message
-          (tc-safe-invalidation-cleanup-owner-help))]
+      [(Some span) (tc-rich-error-with-help span message help)]
       [(No) message])))
 
 ;; The brand an `(:invalidate r T)` formal ends at one call: `r` after
@@ -123573,16 +124107,28 @@
                   (tc-move-help)
                   (tc-selected-source-span (& diagnostic.move))
                   (tc-move-loop-carried-origin-label name))
-                (tc-rich-error-one-secondary
-                  primary
-                  (tc-move-use-message (tc-global-shared-view name))
-                  (tc-move-help)
-                  (tc-selected-source-span (& diagnostic.move))
-                  (tc-move-origin-label
-                    (tc-selected-path-text
-                      ctx
-                      diagnostic.name
-                      (& diagnostic.moved-fields))))))))]
+                (if (typed.typed-fed-end?
+                  store
+                  diagnostic.binder
+                  diagnostic.move.line
+                  diagnostic.move.column
+                  1)
+                  (tc-rich-error-one-secondary
+                    primary
+                    (tc-move-fed-invalidation-message name)
+                    (tc-move-fed-invalidation-help)
+                    (tc-selected-source-span (& diagnostic.move))
+                    (tc-move-fed-invalidation-label))
+                  (tc-rich-error-one-secondary
+                    primary
+                    (tc-move-use-message (tc-global-shared-view name))
+                    (tc-move-help)
+                    (tc-selected-source-span (& diagnostic.move))
+                    (tc-move-origin-label
+                      (tc-selected-path-text
+                        ctx
+                        diagnostic.name
+                        (& diagnostic.moved-fields)))))))))]
       ;; A call that may assign a borrowed module value (#7904), with the
       ;; call path the global effect graph witnesses.
       [(ownership_normalize.OwnershipNormalizeFailure.Borrowed core diagnostic)
@@ -123669,6 +124215,12 @@
                     (tc-context-structural-session ctx)
                     diagnostic.arena))
                 name
+                (typed.typed-fed-end?
+                  store
+                  diagnostic.binder
+                  diagnostic.source.line
+                  diagnostic.source.column
+                  2)
                 diagnostic)]
             [(>= diagnostic.exit 6)
               (tc-selected-release-failure
@@ -123697,19 +124249,30 @@
 (define (tc-selected-unheld-failure
   [arena : String]
   [name : String]
+  ;; Whether only a store placed the arena's values in the owner's region
+  ;; (`fed-ends` kind 2).
+  [fed? : bool]
   [diagnostic : ownership_normalize.OwnershipObligationDiagnostic]) : ResultTcUnit
-  (ResultTcUnit.Err
-    (tc-selected-expansion-framed
-      (& diagnostic.source.expansion)
-      (tc-rich-error-with-help
-        (tc-selected-source-span (& diagnostic.source))
-        (tc-safe-invalidation-cleanup-owner-text
-          (if (= diagnostic.exit 10)
-            "arena.rewind-safe!"
-            "arena.destroy-safe!")
-          arena
-          name)
-        (tc-safe-invalidation-cleanup-owner-help)))))
+  (let
+    [operation : String
+      (if (= diagnostic.exit 10)
+        "arena.rewind-safe!"
+        "arena.destroy-safe!")]
+    (ResultTcUnit.Err
+      (tc-selected-expansion-framed
+        (& diagnostic.source.expansion)
+        (if fed?
+          (tc-rich-error-with-help
+            (tc-selected-source-span (& diagnostic.source))
+            (tc-safe-invalidation-fed-owner-text
+              operation
+              arena
+              (string.copy (& name)))
+            (tc-safe-invalidation-fed-owner-help name))
+          (tc-rich-error-with-help
+            (tc-selected-source-span (& diagnostic.source))
+            (tc-safe-invalidation-cleanup-owner-text operation arena name)
+            (tc-safe-invalidation-cleanup-owner-help)))))))
 
 ;; A `with` owner moved out before its scope's cleanup (obligation status 4),
 ;; at the move, in the legacy move checker's wording and labels.
@@ -123823,15 +124386,27 @@
           [(typed.TypedStoreResult.Err error)
             (ResultTcUnit.Err (tc-selected-error error))]
           [(typed.TypedStoreResult.Ok store)
-            (tc-check-fn-decl-body-in-store
-              ctx
-              global-env
-              name
-              params
-              ret
-              body-box
-              store
-              (& lease))])])))
+            ;; The body records its own admitted stores, above any of an
+            ;; enclosing check's (`tc-region-list-admit!`).
+            (let
+              [scoped : TcTypeEnvScopedState
+                (tc-job-state-type-env-scoped-state (tc-context-job-state ctx))]
+              [outer-start : i64 (tc-admitted-start scoped)]
+              [outer-count : i64 (tc-admitted-count scoped)]
+              [_enter : unit (tc-admitted-start-set! scoped outer-count)]
+              [result : ResultTcUnit
+                (tc-check-fn-decl-body-in-store
+                  ctx
+                  global-env
+                  name
+                  params
+                  ret
+                  body-box
+                  store
+                  (& lease))]
+              (tc-admitted-count-set! scoped outer-count)
+              (tc-admitted-start-set! scoped outer-start)
+              result)])])))
 
 ;; The return value's region flow is a type-level check that precedes the
 ;; ownership graph; the certified graph does not replace it. A non-Copy value

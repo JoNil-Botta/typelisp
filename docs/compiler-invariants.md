@@ -2047,6 +2047,11 @@ constant fact naming such a var, as destination or source.
   def of one in the target, guard sinking and gep splitting never move or
   re-evaluate such a read, and load sinking stops a moving load at such a def.
   Each installs the same set first (#8913).
+- Bounds versioning, unrolling and LFTR use these same predicates: a read of
+  one is not invariant. Bounds versioning and unrolling also refuse to derive
+  copy, arithmetic or guard facts from its direct definition. Each installs
+  the set for its own function once it finds a candidate or loop. A separate
+  value captured before the loop remains invariant (#9420).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
 - Stack-only and scalar register plans both use

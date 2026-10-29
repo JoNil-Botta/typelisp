@@ -21444,6 +21444,11 @@
 ;;   moving load at a def of one. Each pass reads the set only for the function
 ;;   it rewrites, collecting it in a walk it already makes or only once it has
 ;;   a candidate.
+;; - BCE versioning, unrolling and LFTR refuse invariant operands naming one.
+;;   BCE and unrolling's definition-based value proofs do not follow a def of
+;;   one. Ordinary value snapshots keep their own definitions and remain
+;;   eligible. Each driver installs the set after finding a candidate or loop;
+;;   fill/copy-call recognition installs it lazily before using these helpers.
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
 ;; marked vars, so a loop pays for the few there are rather than for the whole
@@ -38466,13 +38471,6 @@
     [(or (Lt) (Le)) true]
     [_ false]))
 
-;; The bound is re-used as an operand of the preheader's end-address
-;; arithmetic, so only the scalar forms that arithmetic accepts qualify.
-(define (opt-lftr-bound-value? [value : (& value ir.CompilerIrValue)]) : bool
-  (match value
-    [(or (I64 _) (Var _)) true]
-    [_ false]))
-
 (define (opt-lftr-test-from-instr
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [phi-var : i64]
@@ -38484,8 +38482,7 @@
       (if (and
         (opt-induction-i64-type? ty)
         (opt-lftr-order-op? op)
-        (opt-lftr-bound-value? rhs)
-        (opt-induction-value-base-invariant? loop-defs rhs))
+        (opt-unroll-invariant-bound? loop-defs rhs))
         (if (opt-lftr-value-is-var? lhs phi-var)
           (Some (Test dst ty op rhs false) 0 0)
           ;; form B reads the increment, or the copy hop SSA renaming left
@@ -39155,6 +39152,10 @@
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
+          (opt-licm-addr-taken-install-for-loops!
+            frame
+            (& blocks)
+            (opt_natural_loop_vec.view natural-loops))
           (opt-lftr-apply-loops
             type-segment-bases
             (opt_natural_loop_vec.view natural-loops)
@@ -61500,7 +61501,10 @@
   (if (>= index last)
     (- 0 1)
     (if (= (ir.compiler-ir-instr-array-loop-dst-or slots index (- 0 1)) var)
-      index
+      (if (opt-addr-taken-write?
+        (& (owned_view.compiler-owned-element-view slots index)))
+        (- 0 1)
+        index)
       (opt-unroll-def-index slots (+ index 1) last var))))
 
 (define (opt-unroll-uses-before
@@ -61607,7 +61611,10 @@
   [bound : (& bound ir.CompilerIrValue)]) : bool
   (match bound
     [(I64 _) true]
-    [(Var id) (not (opt-used-contains defs id))]
+    [(Var id)
+      (and
+        (not (opt-addr-taken-operand? bound))
+        (not (opt-used-contains defs id)))]
     [_ false]))
 
 ;; --- a REMAINDER loop the clone can never run ---------------------------------
@@ -61660,7 +61667,7 @@
     true
     (match limit
       [(Var raw)
-        (match (opt-bce-mb-find-def
+        (match (opt-bce-mb-value-def
           (ir.compiler-ir-block-list-view blocks)
           (opt-bce-mb-resolve blocks raw 16))
           [(No) false]
@@ -61694,7 +61701,7 @@
   [cap : i64]) : bool
   (match cond-value
     [(Var var)
-      (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) var)
+      (match (opt-bce-mb-value-def (ir.compiler-ir-block-list-view blocks) var)
         [(No) false]
         [(Some instr)
           (match instr
@@ -61829,7 +61836,7 @@
     [(Var raw)
       (let
         [id : i64 (opt-bce-mb-resolve blocks raw 16)]
-        (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) id)
+        (match (opt-bce-mb-value-def (ir.compiler-ir-block-list-view blocks) id)
           [(No) false]
           [(Some instr)
             (match instr
@@ -62933,7 +62940,7 @@
 (define (opt-unroll-resolved-def
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [var : i64]) : OptMaybeInstr
-  (opt-bce-mb-find-def
+  (opt-bce-mb-value-def
     (ir.compiler-ir-block-list-view blocks)
     (opt-bce-mb-resolve blocks var 16)))
 
@@ -64881,8 +64888,10 @@
 
 ;; A rotated counted self-loop: `B: phis...; body...; branch c B EXIT`.
 (define (opt-loop-call-shape
+  [blocks : (& ir.CompilerIrBlockList)]
   [entry-label : i64]
-  [block : (& block ir.CompilerIrBlock)]) : OptLoopCallMaybeShape
+  [block : (& block ir.CompilerIrBlock)]
+  [state : (&mut state OptLoopCallRewriteState)]) : OptLoopCallMaybeShape
   (match block
     [(Block label instrs)
       (let
@@ -64898,12 +64907,19 @@
                     (= then-label label)
                     (not (= else-label label))
                     (opt-loop-call-fast-clone-label? label))
-                    (opt-loop-call-shape-scan
-                      label
-                      (& instrs)
-                      count
-                      cond-var
-                      else-label)
+                    (begin
+                      (unless
+                        state.addr-taken-ready?
+                        (opt-function-addr-taken-install!
+                          state.next-frame
+                          blocks)
+                        (set! state.addr-taken-ready? true))
+                      (opt-loop-call-shape-scan
+                        label
+                        (& instrs)
+                        count
+                        cond-var
+                        else-label))
                     (No))]
                 [_ (No)])]
             [_ (No)])))]))
@@ -65464,6 +65480,7 @@
 (defstruct OptLoopCallRewriteState
   (next-frame i64)
   (changed? bool)
+  (addr-taken-ready? bool)
   (entry-index OptCfgIndex)
   (entry-defs (__tl_dyn-array OptBoolBranchDef)))
 
@@ -65709,7 +65726,7 @@
   [state : (&mut state OptLoopCallRewriteState)]) : OptFillCallMaybeShapeSite
   (match block
     [(Block label instrs)
-      (match (opt-loop-call-shape entry-label block)
+      (match (opt-loop-call-shape blocks entry-label block state)
         [(No) (No)]
         [(Some shape)
           (let
@@ -65810,6 +65827,7 @@
             [state : OptLoopCallRewriteState
               (OptLoopCallRewriteState
                 frame
+                false
                 false
                 entry-index
                 (__tl_make-array OptBoolBranchDef 0))]
@@ -66394,7 +66412,7 @@
   [state : (&mut state OptLoopCallRewriteState)]) : OptCopyCallMaybeShapeSite
   (match block
     [(Block label instrs)
-      (match (opt-loop-call-shape entry-label block)
+      (match (opt-loop-call-shape blocks entry-label block state)
         [(No) (No)]
         [(Some shape)
           (let
@@ -69335,6 +69353,7 @@
   [require-store? : bool]) : OptFunctionCtxResult
   (match (compiler-opt-global-shared-view func)
     [(Function name params ret-ty frame blocks function-abi)
+      (opt-function-addr-taken-install! frame (& blocks))
       (match (opt-unroll-simd-blocks-scan
         type-segment-bases
         (compiler-opt-global-shared-view blocks)
@@ -69485,6 +69504,9 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (match (& func)
+    [(Function _ _ _ frame blocks _)
+      (opt-function-addr-taken-install! frame (& blocks))])
   (match (opt-verify-gate
     verified?
     (compiler-opt-global-shared-view func)
@@ -71064,7 +71086,9 @@
     [(Var var)
       (if (<= fuel 0)
         (owned_view.compiler-owned-reference-shared-view value)
-        (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) var)
+        (match (opt-bce-mb-value-def
+          (ir.compiler-ir-block-list-view blocks)
+          var)
           [(No) (owned_view.compiler-owned-reference-shared-view value)]
           [(Some instr)
             (match instr
@@ -71262,9 +71286,9 @@
     [(Var raw)
       (let
         [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
-        (if (opt-used-contains defs id)
-          (No)
-          (Some (Var id))))]
+        (if (opt-unroll-invariant-bound? defs (& (ir.CompilerIrValue.Var id)))
+          (Some (Var id))
+          (No)))]
     [_ (No)]))
 
 ;; A same-block derived induction phi: the multi-block recovery over the loop's
@@ -72066,7 +72090,7 @@
             [(No) (No)]
             [(Some sum) (Some (I64 sum))])]
         [(Var var)
-          (match (opt-bce-mb-find-def
+          (match (opt-bce-mb-value-def
             (ir.compiler-ir-block-list-view blocks)
             var)
             [(No) (No)]
@@ -75942,6 +75966,19 @@
             [(Some instr) (Some instr)]
             [(No) (opt-bce-mb-find-def rest var)])])]))
 
+;; Value proofs may not read an address-taken local's direct definition: its
+;; storage can have changed through a pointer since that instruction ran.
+;; Keep the raw lookup for callers that need the defining instruction itself.
+(define (opt-bce-mb-value-def
+  [blocks : (& blocks (Slice ir.CompilerIrBlock))]
+  [var : i64]) : OptMaybeInstr
+  (match (opt-bce-mb-find-def blocks var)
+    [(Some instr)
+      (if (opt-addr-taken-write? (& instr))
+        (No)
+        (Some instr))]
+    [(No) (No)]))
+
 ;; Resolve through Mov copies and 64-bit int reinterpret casts anywhere in
 ;; the loop (the multi-block analogue of `opt-bce-version-resolve`).
 (define (opt-bce-mb-resolve
@@ -75950,7 +75987,7 @@
   [fuel : i64]) : i64
   (if (<= fuel 0)
     var
-    (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) var)
+    (match (opt-bce-mb-value-def (ir.compiler-ir-block-list-view blocks) var)
       [(No) var]
       [(Some instr)
         (match instr
@@ -75981,7 +76018,7 @@
           (Some 1 0)
           (if (<= fuel 0)
             (No)
-            (match (opt-bce-mb-find-def
+            (match (opt-bce-mb-value-def
               (ir.compiler-ir-block-list-view body-blocks)
               id)
               [(No) (No)]
@@ -76499,7 +76536,7 @@
   [offset : (& ir.CompilerIrValue)]) : OptBceMbMaybeCounter
   (let
     [inext : i64 (opt-bce-mb-resolve body-blocks back-raw 16)]
-    (match (opt-bce-mb-find-def
+    (match (opt-bce-mb-value-def
       (ir.compiler-ir-block-list-view body-blocks)
       inext)
       [(No) (No)]
@@ -76581,7 +76618,9 @@
   [k : i64]
   [bottom? : bool]
   [offset : (& ir.CompilerIrValue)]) : OptBceMbMaybeCounter
-  (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view body-blocks) core)
+  (match (opt-bce-mb-value-def
+    (ir.compiler-ir-block-list-view body-blocks)
+    core)
     [(No) (No)]
     [(Some instr)
       (match instr
@@ -76756,7 +76795,7 @@
   [bottom? : bool]) : OptBceMbMaybeCounter
   (if descending?
     (No)
-    (match (opt-bce-mb-find-def
+    (match (opt-bce-mb-value-def
       (ir.compiler-ir-block-list-view body-blocks)
       core)
       [(No) (No)]
@@ -76831,7 +76870,7 @@
   [preheader : i64]
   [cond-var : i64]
   [bottom? : bool]) : OptBceMbMaybeCounter
-  (match (opt-bce-mb-find-def
+  (match (opt-bce-mb-value-def
     (ir.compiler-ir-block-list-view body-blocks)
     cond-var)
     [(No) (No)]
@@ -76942,7 +76981,7 @@
   [step : i64]
   [compared : (& ir.CompilerIrValue)]
   [bottom? : bool]) : OptBceIntervalEnd
-  (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) phi)
+  (match (opt-bce-mb-value-def (ir.compiler-ir-block-list-view blocks) phi)
     [(Some instr)
       (match instr
         [(Phi _ inputs (I64))
@@ -77019,7 +77058,7 @@
           [(or (Div) (SafeDiv)) (= divisor 2)]
           [_ false]))
         (No)
-        (match (opt-bce-mb-find-def
+        (match (opt-bce-mb-value-def
           (ir.compiler-ir-block-list-view blocks)
           (opt-bce-mb-resolve blocks sum 16))
           [(Some sum-instr)
@@ -77082,7 +77121,7 @@
   [preheader : i64]
   [cond-var : i64]
   [bottom? : bool]) : OptBceMbMaybeCounter
-  (match (opt-bce-mb-find-def
+  (match (opt-bce-mb-value-def
     (ir.compiler-ir-block-list-view blocks)
     (opt-bce-mb-resolve blocks cond-var 16))
     [(Some instr)
@@ -77352,7 +77391,7 @@
 (define (opt-bce-mb-counter-exact?
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [inext : i64]) : bool
-  (match (opt-bce-mb-find-def
+  (match (opt-bce-mb-value-def
     (ir.compiler-ir-block-list-view body-blocks)
     inext)
     [(Some instr)
@@ -78343,7 +78382,7 @@
           cell
           (opt-copy-env-push env (OptCopyEntry.Copy var (Var existing)))
           phis)
-        (match (opt-bce-mb-find-def
+        (match (opt-bce-mb-value-def
           (ir.compiler-ir-block-list-view all-blocks)
           var)
           [(No) (No)]
@@ -79531,9 +79570,9 @@
     [(Var raw)
       (let
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-        (if (opt-used-contains defs id)
-          (No)
-          (Some (Var id))))]
+        (if (opt-unroll-invariant-bound? defs (& (ir.CompilerIrValue.Var id)))
+          (Some (Var id))
+          (No)))]
     [_ (No)]))
 
 ;; A CONDITIONALLY ADVANCING BOUNDED PHI, and why its clause stays in the guard.
@@ -79589,7 +79628,7 @@
           [(= id unchanged) true]
           [(<= fuel 0) false]
           [else
-            (match (opt-bce-mb-find-def
+            (match (opt-bce-mb-value-def
               (ir.compiler-ir-block-list-view body-blocks)
               id)
               [(Some instr)
@@ -79671,7 +79710,7 @@
               [(Var back-raw)
                 (let
                   [back-var : i64 (opt-bce-mb-resolve body-blocks back-raw 16)]
-                  (match (opt-bce-mb-find-def
+                  (match (opt-bce-mb-value-def
                     (ir.compiler-ir-block-list-view body-blocks)
                     back-var)
                     [(No) (No)]
@@ -79935,7 +79974,7 @@
   (match (opt-bce-mb-strided-peel body-blocks value 0 fuel)
     [(No) (No)]
     [(Some core total)
-      (match (opt-bce-mb-find-def
+      (match (opt-bce-mb-value-def
         (ir.compiler-ir-block-list-view body-blocks)
         core)
         [(No) (No)]
@@ -80083,7 +80122,7 @@
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
         (if (<= fuel 0)
           (Some id k)
-          (match (opt-bce-mb-find-def
+          (match (opt-bce-mb-value-def
             (ir.compiler-ir-block-list-view body-blocks)
             id)
             [(No) (Some id k)]
@@ -80331,7 +80370,7 @@
   [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeBase
   (if (not (opt-used-contains defs base-id))
     (Some base-id hoists acc)
-    (match (opt-bce-mb-find-def
+    (match (opt-bce-mb-value-def
       (ir.compiler-ir-block-list-view all-blocks)
       base-id)
       [(No) (No)]
@@ -80340,7 +80379,7 @@
           [(Load _ handle-src handle-ty)
             (match handle-src
               [(Var handle-raw)
-                (match (opt-bce-mb-find-def
+                (match (opt-bce-mb-value-def
                   (ir.compiler-ir-block-list-view all-blocks)
                   (opt-bce-mb-resolve body-blocks handle-raw 16))
                   [(No) (No)]
@@ -80440,7 +80479,7 @@
               [(Var raw)
                 (let
                   [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-                  (match (opt-bce-mb-find-def
+                  (match (opt-bce-mb-value-def
                     (ir.compiler-ir-block-list-view all-blocks)
                     id)
                     [(No) (No)]
@@ -80457,7 +80496,7 @@
                                         body-blocks
                                         src-raw
                                         16)]
-                                    (match (opt-bce-mb-find-def
+                                    (match (opt-bce-mb-value-def
                                       (ir.compiler-ir-block-list-view
                                         all-blocks)
                                       src-id)
@@ -80664,7 +80703,7 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [defs : (& defs opt_i64_i64_map.Map)]
   [id : i64]) : ir.CompilerIrMaybeValue
-  (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view body-blocks) id)
+  (match (opt-bce-mb-value-def (ir.compiler-ir-block-list-view body-blocks) id)
     [(No) (No)]
     [(Some instr)
       (match instr
@@ -80804,7 +80843,7 @@
       ;; name.
       (match value
         [(Var raw)
-          (match (opt-bce-mb-find-def
+          (match (opt-bce-mb-value-def
             (ir.compiler-ir-block-list-view body-blocks)
             (opt-bce-mb-resolve body-blocks raw 16))
             [(Some instr)
@@ -80841,7 +80880,7 @@
   [value : ir.CompilerIrValue]) : ir.CompilerIrValue
   (match (& value)
     [(Var var)
-      (match (opt-bce-mb-find-def
+      (match (opt-bce-mb-value-def
         (ir.compiler-ir-block-list-view all-blocks)
         var)
         [(No) value]
@@ -80917,7 +80956,7 @@
     [(Var raw)
       (let
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-        (match (opt-bce-mb-find-def
+        (match (opt-bce-mb-value-def
           (ir.compiler-ir-block-list-view body-blocks)
           id)
           [(No) (No)]
@@ -81087,7 +81126,7 @@
           [(and (>= iphi 0) (not (opt-used-contains defs id)))
             (opt-bce-version-mask-cond cell (& (Var id)) length-value acc)]
           [else
-            (match (opt-bce-mb-find-def
+            (match (opt-bce-mb-value-def
               (ir.compiler-ir-block-list-view body-blocks)
               id)
               [(No) (No)]
@@ -81133,7 +81172,7 @@
                               (opt-bce-mb-strided-peel body-blocks value 0 8))
                               [(No) (No)]
                               [(Some core k0)
-                                (match (opt-bce-mb-find-def
+                                (match (opt-bce-mb-value-def
                                   (ir.compiler-ir-block-list-view body-blocks)
                                   core)
                                   [(No) (No)]
@@ -81676,7 +81715,7 @@
   [word : i64]) : OptLenEqBase
   (match value
     [(Var var)
-      (match (opt-bce-mb-find-def
+      (match (opt-bce-mb-value-def
         (ir.compiler-ir-block-list-view all-blocks)
         var)
         [(Some instr)
@@ -81684,7 +81723,7 @@
             [(Load _ src _)
               (match src
                 [(Var address)
-                  (match (opt-bce-mb-find-def
+                  (match (opt-bce-mb-value-def
                     (ir.compiler-ir-block-list-view all-blocks)
                     address)
                     [(Some gep)
@@ -82274,7 +82313,7 @@
   [cond : (& ir.CompilerIrValue)]) : ir.CompilerIrMaybeValue
   (match cond
     [(Var raw)
-      (match (opt-bce-mb-find-def
+      (match (opt-bce-mb-value-def
         (ir.compiler-ir-block-list-view body-blocks)
         (opt-bce-mb-resolve body-blocks raw 16))
         [(No) (No)]
@@ -82710,7 +82749,7 @@
   [rhs : (& ir.CompilerIrValue)]) : bool
   (match cond-value
     [(Var var)
-      (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) var)
+      (match (opt-bce-mb-value-def (ir.compiler-ir-block-list-view blocks) var)
         [(Some instr)
           (match instr
             [(BinOp _ fact-op fact-lhs fact-rhs fact-ty)
@@ -83520,11 +83559,13 @@
     [(Var raw)
       (let
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-        (match (opt-bce-mb-find-def
-          (ir.compiler-ir-block-list-view body-blocks)
-          id)
-          [(Some _) (No)]
-          [(No) (Some (Var id))]))]
+        (if (opt-addr-taken-operand? (& (ir.CompilerIrValue.Var id)))
+          (No)
+          (match (opt-bce-mb-value-def
+            (ir.compiler-ir-block-list-view body-blocks)
+            id)
+            [(Some _) (No)]
+            [(No) (Some (Var id))])))]
     [_ (No)]))
 
 (define (opt-bce-fold-invariant-verdict
@@ -83627,7 +83668,7 @@
           (owned_view.compiler-owned-reference-shared-view
             (& facts.body-blocks))]
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-        (match (opt-bce-mb-find-def
+        (match (opt-bce-mb-value-def
           (ir.compiler-ir-block-list-view body-blocks)
           id)
           [(No) (Unknown)]
@@ -83961,7 +84002,7 @@
     [(Var v)
       (let
         [resolved : i64 (opt-bce-mb-resolve blocks v 16)]
-        (match (opt-bce-mb-find-def
+        (match (opt-bce-mb-value-def
           (ir.compiler-ir-block-list-view blocks)
           resolved)
           [(No) (Var resolved)]
@@ -84681,7 +84722,7 @@
   [inext : (& inext ir.CompilerIrValue)]) : bool
   (match inext
     [(Var next-id)
-      (match (opt-bce-mb-find-def
+      (match (opt-bce-mb-value-def
         (ir.compiler-ir-block-list-view body-blocks)
         next-id)
         [(No) false]
@@ -84715,7 +84756,7 @@
   [body-blocks : (& body-blocks ir.CompilerIrBlockList)]
   [cond-var : i64]
   [inext : (& ir.CompilerIrValue)]) : bool
-  (match (opt-bce-mb-find-def
+  (match (opt-bce-mb-value-def
     (ir.compiler-ir-block-list-view body-blocks)
     cond-var)
     [(No) false]
@@ -85098,7 +85139,7 @@
   [iphi : i64]) : bool
   (match value
     [(Var id)
-      (match (opt-bce-mb-find-def
+      (match (opt-bce-mb-value-def
         (ir.compiler-ir-block-list-view body-blocks)
         id)
         [(Some instr)
@@ -85135,7 +85176,7 @@
         (= step 1)
         (= delta 0)
         (opt-bce-mb-counter-offset-none? offset))
-        (match (opt-bce-mb-find-def
+        (match (opt-bce-mb-value-def
           (ir.compiler-ir-block-list-view body-blocks)
           cond-var)
           [(Some cmp)
@@ -86111,6 +86152,9 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
+  (match (& func)
+    [(Function _ _ _ frame blocks _)
+      (opt-function-addr-taken-install! frame (& blocks))])
   (match (opt-verify-gate
     verified?
     (compiler-opt-global-shared-view func)
@@ -86184,7 +86228,8 @@
   [func : ir.CompilerIrFunction]
   [probe : i64]) : ir.CompilerIrFunction
   (match (compiler-opt-global-shared-view func)
-    [(Function _ _ _ _ blocks _)
+    [(Function _ _ _ frame blocks _)
+      (opt-function-addr-taken-install! frame (& blocks))
       (let
         [context : OptCfgContext (opt-cfg-context-build blocks)]
         (match (opt-verify-function-with-context func context)
@@ -86299,6 +86344,7 @@
   [func : (& ir.CompilerIrFunction)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ params _ frame blocks _)
+      (opt-function-addr-taken-install! frame (& blocks))
       (let
         [context : OptCfgContext
           (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]

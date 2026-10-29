@@ -1201,3 +1201,6 @@ lambda_identical_noncapturing|all|0,1,2|tests/integration/lambda_identical_nonca
 legacy_box_get_public_deref|all|0,1,2|tests/integration/legacy_box_get_public_deref.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
 legacy_box_get_owned_template|all|0,1,2|tests/integration/legacy_box_get_owned_template.tl|0|via-ref=[hello]\n|-|stdlib/io.tl|-
 legacy_box_get_owned_places|all|0,1,2|tests/integration/legacy_box_get_owned_places.tl|42|-|-|-|-
+bce_addr_taken_bound|all|0,1,2|tests/integration/bce_addr_taken_bound.tl|134|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:12:41: array index out of bounds: index=8 length=8\n
+unroll_addr_taken_bound|all|0,1,2|tests/integration/unroll_addr_taken_bound.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+lftr_addr_taken_bound|all|0,1,2|tests/integration/lftr_addr_taken_bound.tl|56|-|-|stdlib/io.tl stdlib/string.tl|-

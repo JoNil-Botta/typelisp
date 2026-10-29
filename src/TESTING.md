@@ -118,6 +118,20 @@ control. `guard-first-dominator-sinking`, `gep-split-addr-taken-capture`,
 rule for guard sinking, gep splitting, store address sinking and load sinking,
 each against a control whose address is not taken.
 
+`bce_addr_taken_bound.tl` and `unroll_addr_taken_bound.tl` are #9420's
+memory-unsafe bounds-versioning and wrong-trip-count reproducers. Both run at
+opt0/1/2 on Linux and Windows: the first must retain the checked index-8,
+length-8 bounds abort, and the second must return 42. The IR tests in
+`tests/loop_addr_taken_value.tl` cover single- and multi-block versioning,
+unrolling, mutable bound/length refusals, unrelated-store and captured-value
+controls, per-function mark installation, and definition-based value proofs.
+`lftr_addr_taken_bound.tl` isolates the same bound hazard in LFTR with a
+store-bearing diamond: opt0/1/2 must return 56 on both hosts. The LFTR IR test
+keeps its unchanged counter when the trip bound is address-taken and retains
+counter retirement for ordinary and captured-value bounds. Separate IR controls
+pin lazy fill/copy-call setup and the direct mutable-SIMD driver's own setup
+before either reads the shared loop helpers.
+
 `stdlib_math_table_payloads.tl` hashes every word of the 15 private math tables
 in little-endian order against independent SHA-256 pins at opt0/1/2. Its length
 checks cover all 1,290 words and empty/zero/max-word construction; the existing

@@ -59,11 +59,12 @@ stderr contains error[E0205]: typecheck: cannot store region-tagged value into s
 stderr contains tests/safety/{{each}}.tl:
 
 case arena-early-exit-accepted
-run check "{{root}}/tests/integration/arena_early_exits.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+each arena_early_exits arena_scratch_owner_activation arena_escape_owner_activation
+run check "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
 exit 0
 stdout contains Type checking passed!
 stderr empty
-run compile "{{root}}/tests/integration/arena_early_exits.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+run compile "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
 exit 0
 stdout contains Wrote {{native-dir}}/accepted.s
 stderr empty

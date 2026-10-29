@@ -20,6 +20,8 @@ tests/fixtures/ir-*.fixtures.cases	ir-observability-golden,stage2-public-tool-su
 tests/fixtures/arena-global-storage.fixtures.cases	compiler-arena-debug-native-matrix,stage2-public-tool-surface	@corpus	Canonical arena global-storage primaries and unconditional inventory audit.
 tests/fixtures/profile-import-order.fixtures.cases	stage2-compile-profile-verifier,stage2-public-tool-surface	@corpus	Canonical profile import-order primaries and unconditional inventory audit.
 tests/fixtures/backend-source-import.fixtures.cases	stage2-backend-source-import-context,stage2-public-tool-surface	@corpus	Canonical backend-import primaries and unconditional inventory audit.
+tests/integration/arena_scratch_owner_activation.tl	stage2-public-tool-surface	@corpus	Primary scratch activation check/compile agreement control.
+tests/integration/arena_escape_owner_activation.tl	stage2-public-tool-surface	@corpus	Primary scratch activation check/compile agreement control.
 tests/integration/arena_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted arena activation and early-exit public contract.
 tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
 tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.

@@ -47863,7 +47863,12 @@
   [mark-value : ir.CompilerIrValue]
   [body : ast.AstExprList]) : ResultLowerExpr
   (let
-    [body-lowered : LowerExpr (try (lower-begin ctx state env type-env body))]
+    [region-type-env : tc_core.TcTypeEnv
+      (tc_core.tc-push-region
+        type-env
+        (tc_core.tc-scratch-body-region (& body)))]
+    [body-lowered : LowerExpr
+      (try (lower-begin ctx state env region-type-env body))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
         (let
@@ -48028,7 +48033,12 @@
   [enclosing-value : ir.CompilerIrValue]
   [body : ast.AstExprList]) : ResultLowerExpr
   (let
-    [body-lowered : LowerExpr (try (lower-begin ctx state env type-env body))]
+    [region-type-env : tc_core.TcTypeEnv
+      (tc_core.tc-push-region
+        type-env
+        (tc_core.tc-scratch-body-region (& body)))]
+    [body-lowered : LowerExpr
+      (try (lower-begin ctx state env region-type-env body))]
     (match body-lowered
       [(Expr body-state body-value body-ty)
         (let

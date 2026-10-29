@@ -13,7 +13,7 @@
 # command: shell text evaluated in the checkout root; gate_* names a function in
 # ci-verify.sh.
 id	hosts	label	needs	compiler	memory	locks	command
-x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-	-	256	-	echo "forced lane failure: #7767 slice 2 negative test (D-C42 term 8)" >&2; false
+x64-executable-template-registry-coverage	all	x64 executable template registry coverage	-	-	256	-	scripts/check-x64-executable-template-registry.sh
 cross-mode-differential-oracle-self-tests	all	cross-mode differential oracle self-tests	-	-	256	-	scripts/verify-cross-mode-differential.sh --self-test
 linux-resident-memory-limit-helper-self-tests	linux	Linux resident memory limit helper self-tests	-	-	256	-	scripts/verify-linux-memory-limit.sh
 windows-job-object-memory-limit-helper-self-tests	windows	Windows Job Object memory limit helper self-tests	-	-	256	-	powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-memory-limit.ps1

@@ -1,9 +1,8 @@
 ;; Production compiler build input, generated before each self-host stage.
 ;;
-;; The image is an ordinary `.tlci` until the build-time encoder wraps it in the
-;; versioned compiler-owned TLCH deployment envelope. `include-bin` embeds that
-;; envelope byte for byte; `compiler_embedded_stdlib_tlci` expands the exact
-;; ordinary image on demand before the existing parser and mapper see it.
+;; TLCH v2 stores the prelude and independently loadable native entries behind
+;; one authenticated index and shared Huffman model. The runtime decodes only
+;; requested frames; inspection reconstructs the exact ordinary `.tlci` image.
 (include-bin
   embedded-stdlib-tlci-bytes
   "../target/embedded-stdlib-tlci/stdlib.tlci.tlch")

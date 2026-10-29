@@ -423,3 +423,138 @@
               (if same
                 unit
                 (string.tl_oob_abort)))])])))
+
+(import compiler_embedded_stdlib_tlci_frames as frames)
+
+;; Three small synthetic frames exercise the index independently of decoding.
+;; Real TLCI bodies and complete reconstruction are checked by verify-envelope.
+(define (tlci-frames-test-index) : (__tl_dyn-array u8)
+  (let
+    [payload : (__tl_dyn-array u8) (__tl_make-array u8 4586)]
+    [prefix : String (frames.compiler-embedded-stdlib-tlci-frames-prefix)]
+    (for [index (iterator.range 0 (string.string-length prefix))]
+      (set!
+        (array-ref payload index)
+        (cast (string.string-ref prefix index) : u8)))
+    (tlci-codec-test-write-i64-le! (&mut payload) 36 528)
+    (tlci-codec-test-write-i64-le! (&mut payload) 44 4583)
+    (tlci-codec-test-write-i64-le! (&mut payload) 52 3)
+    (for [index (iterator.range 0 3)]
+      (let
+        [record : i64 (+ 4437 (* index 48))]
+        (tlci-codec-test-write-i64-le!
+          (&mut payload)
+          record
+          (+
+            4581
+            (if (= index 2)
+              1
+              0)))
+        (tlci-codec-test-write-i64-le!
+          (&mut payload)
+          (+ record 8)
+          (if (= index 0)
+            0
+            1))
+        (tlci-codec-test-write-i64-le!
+          (&mut payload)
+          (+ record 16)
+          (+ 4583 index))
+        (tlci-codec-test-write-i64-le! (&mut payload) (+ record 24) 176)
+        (tlci-codec-test-write-i64-le! (&mut payload) (+ record 32) 1)))
+    (set! (array-ref payload 4581) (cast 97 : u8))
+    (set! (array-ref payload 4582) (cast 98 : u8))
+    (tlci-codec-test-write-i64-le!
+      (&mut payload)
+      60
+      (frames.compiler-embedded-stdlib-tlci-frames-index-hash (& payload) 4583))
+    payload))
+
+(test
+  compiler-embedded-stdlib-tlci-indexed-lookup
+  (let
+    [payload : (__tl_dyn-array u8) (tlci-frames-test-index)]
+    (match (frames.compiler-embedded-stdlib-tlci-frames-parse (& payload) 1024)
+      [(Err _) (string.tl_oob_abort)]
+      [(Ok catalog)
+        (unless
+          (and
+            (= catalog.count 3)
+            (= catalog.raw-len 528)
+            (=
+              (frames.compiler-embedded-stdlib-tlci-frames-find
+                (& payload)
+                catalog
+                "a")
+              1)
+            (=
+              (frames.compiler-embedded-stdlib-tlci-frames-find
+                (& payload)
+                catalog
+                "b")
+              2)
+            (=
+              (frames.compiler-embedded-stdlib-tlci-frames-find
+                (& payload)
+                catalog
+                "missing")
+              -1))
+          (string.tl_oob_abort))])))
+
+(test
+  compiler-embedded-stdlib-tlci-indexed-malformed
+  (for [case (iterator.range 0 16)]
+    (let
+      [payload : (__tl_dyn-array u8) (tlci-frames-test-index)]
+      (cond
+        [(= case 0) (set! (array-ref payload 0) (cast 0 : u8))]
+        [(= case 1) (tlci-codec-test-write-i64-le! (&mut payload) 44 -1)]
+        [(= case 2)
+          (tlci-codec-test-write-i64-le! (&mut payload) 52 9223372036854775807)]
+        [(= case 3) (tlci-codec-test-write-i64-le! (&mut payload) 52 0)]
+        [(= case 4) (tlci-codec-test-write-i64-le! (&mut payload) 36 527)]
+        [(= case 5) (tlci-codec-test-write-i64-le! (&mut payload) 4437 0)]
+        [(= case 6) (tlci-codec-test-write-i64-le! (&mut payload) 4445 1)]
+        [(= case 7) (tlci-codec-test-write-i64-le! (&mut payload) 4453 4582)]
+        [(= case 8) (tlci-codec-test-write-i64-le! (&mut payload) 4461 175)]
+        [(= case 9) (tlci-codec-test-write-i64-le! (&mut payload) 4469 0)]
+        [(= case 10)
+          (tlci-codec-test-write-i64-le!
+            (&mut payload)
+            4469
+            9223372036854775807)]
+        [(= case 11) (set! (array-ref payload 4585) (cast 1 : u8))]
+        [(= case 12) (set! (array-ref payload 4582) (cast 97 : u8))]
+        [(= case 13)
+          (set! (array-ref payload 4581) (cast 98 : u8))
+          (set! (array-ref payload 4582) (cast 97 : u8))]
+        [(= case 14) (set! (array-ref payload 68) (cast 1 : u8))]
+        [else (set! (array-ref payload 60) (cast 0 : u8))])
+      (when
+        (< case 14)
+        (tlci-codec-test-write-i64-le!
+          (&mut payload)
+          60
+          (frames.compiler-embedded-stdlib-tlci-frames-index-hash
+            (& payload)
+            4583)))
+      (match (frames.compiler-embedded-stdlib-tlci-frames-parse
+        (& payload)
+        1024)
+        [(Err _) unit]
+        [(Ok _) (string.tl_oob_abort)]))))
+
+(test
+  compiler-embedded-stdlib-tlci-indexed-truncations
+  (let
+    [whole : (__tl_dyn-array u8) (tlci-frames-test-index)]
+    (for [length (iterator.range 0 (array-length whole))]
+      (let
+        [payload : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+        (for [index (iterator.range 0 length)]
+          (set! (array-ref payload index) (array-ref whole index)))
+        (match (frames.compiler-embedded-stdlib-tlci-frames-parse
+          (& payload)
+          1024)
+          [(Err _) unit]
+          [(Ok _) (string.tl_oob_abort)])))))

@@ -152,12 +152,6 @@ printf '%s' "$SOURCE_HASH" > "$SOURCE_HASH_FILE"
 }
 
 ENVELOPE="$OUTPUT.tlch"
-(
-    cd "$BUILD_CWD"
-    "$COMPILER" run "$ROOT/tools/embedded-stdlib-tlci/encode-envelope.tl" \
-        --stdlib-root "$SOURCE_ROOT/stdlib" --stdlib-root "$SOURCE_ROOT/src" -- \
-        "$OUTPUT" "$ENVELOPE" >/dev/null
-)
 [ -s "$ENVELOPE" ] || {
     echo "embedded stdlib tlci encoder emitted no envelope: $ENVELOPE" >&2
     exit 1

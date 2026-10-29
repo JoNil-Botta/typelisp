@@ -28,7 +28,7 @@ cd "$ROOT"
 
 # Every compiler-owned compressed stream in the binary must be accounted for
 # here or the stream counts below reject the report. Source fallback modules use
-# independent LZSS frames; the generated TLCI image uses one TLCH envelope.
+# independent LZSS frames; the generated TLCI catalog uses one versioned TLCH envelope.
 EMBEDDED_STDLIB="src/compiler_embedded_stdlib_payload.tl src/compiler_embedded_stdlib_tlci_payload.tl"
 COMPILER_SOURCES="src/*.tl"
 BINARY=
@@ -370,75 +370,10 @@ encoded_payload_bytes=0
     exit 1
 }
 
-# Recover the TLCI-only TLCH envelope. Its fixed header contains little-endian
-# raw and meaningful-bit lengths followed by 4,369 code-length bytes.
-binary_scan_bytes=$(wc -c < "$BINARY" | tr -d ' ')
-set -- $(od -An -v -tu1 "$BINARY" | awk -v binary_size="$binary_scan_bytes" '
-BEGIN {
-    split("95 95 116 121 112 101 108 105 115 112 95 101 109 98 101 100 100 101 100 95 115 116 100 108 105 98 95 116 108 99 104 95 118 49 95 95", prefix)
-    prefix_len = 36
-    mode = "scan"
-    prefix_index = 0
-}
-function reset_scan() {
-    mode = "scan"
-    prefix_index = 0
-}
-function finish_payload() {
-    payload_count += 1
-    raw_total += raw_len
-    bitstream_total += bit_bytes
-    static_total += prefix_len + 16 + 4369 + bit_bytes
-    reset_scan()
-}
-{
-    for (field = 1; field <= NF; field += 1) {
-        byte = $field + 0
-        if (mode == "scan") {
-            if (byte == prefix[prefix_index + 1]) {
-                prefix_index += 1
-            } else if (byte == prefix[1]) {
-                prefix_index = 1
-            } else {
-                prefix_index = 0
-            }
-            if (prefix_index == prefix_len) {
-                mode = "raw"
-                header_index = 0
-                raw_len = 0
-                bit_len = 0
-            }
-        } else if (mode == "raw") {
-            raw_len += byte * (2 ^ (8 * header_index))
-            header_index += 1
-            if (header_index == 8) {
-                mode = "bits"
-                header_index = 0
-            }
-        } else if (mode == "bits") {
-            bit_len += byte * (2 ^ (8 * header_index))
-            header_index += 1
-            if (header_index == 8) {
-                bit_bytes = int(bit_len / 8)
-                if (bit_len % 8 != 0) bit_bytes += 1
-                remaining = 4369 + bit_bytes
-                if (raw_len <= 0 || raw_len > 268435456 || bit_len <= 0 ||
-                    remaining > binary_size) {
-                    reset_scan()
-                } else if (remaining == 0) {
-                    finish_payload()
-                } else {
-                    mode = "body"
-                }
-            }
-        } else if (mode == "body") {
-            remaining -= 1
-            if (remaining == 0) finish_payload()
-        }
-    }
-}
-END { printf "%d %.0f %.0f %.0f\n", payload_count, raw_total, bitstream_total, static_total }
-')
+# Recover both deployment versions without losing declaration-derived counts.
+. "$ROOT/scripts/lib-stage0-tlch.sh"
+tlch_counts=$(scan_stage0_tlch "$BINARY") || exit 1
+set -- $tlch_counts
 tlch_payload_streams=$1
 tlch_raw_bytes=$2
 tlch_bitstream_bytes=$3

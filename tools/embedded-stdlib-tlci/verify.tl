@@ -22,9 +22,8 @@
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
-;; Compare expansion with the builder's ordinary, directly mappable format-v2
-;; artifact. This is intentionally a verifier-only second embedding; shipped
-;; compilers carry only the compressed payload.
+;; Compare complete reconstruction with the builder's ordinary format-v2
+;; artifact. Shipped compilers carry only the indexed compressed payload.
 (include-bin
   embedded-verify-raw-image
   "../../target/embedded-stdlib-tlci/stdlib.tlci")
@@ -181,6 +180,77 @@
             [(Ok) ok]
             [(Err _) false])))]))
 
+(define (embedded-verify-indexed-lifetime-ok?) : bool
+  (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-catalog-lookup
+    "stdlib.core_macros/__tl-box-place")
+    [(Resolved first)
+      (let
+        [second-ok : bool
+          (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-catalog-lookup
+            "stdlib.core_macros/and")
+            [(Resolved second)
+              (!= first.catalog-generation second.catalog-generation)]
+            [_ false])]
+        [pools : compiler_ast_types.AstNodePoolContext
+          (compiler_ast_types.ast-node-pool-context-capture-active)]
+        [operand : i64
+          (embedded-verify-operand-node
+            (compiler_ast_types.ast-node-pool-context-shared-view (& pools)))]
+        [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+          (__tl_make-array
+            (compiler_ctfe.CompilerCtfeValue.Expr operand (Expr)))]
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+          (compiler_ast_types.ast-node-pool-context-shared-view (& pools))
+          operands
+          1
+          32
+          embedded-verify-cookie
+          (compiler_ctfe.ctfe-reflect-info-list-empty))
+        (let
+          [dispatched : bool
+            (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-session-dispatch
+              first
+              embedded-verify-cookie)
+              [(Ok result)
+                (and
+                  (= result.status 0)
+                  (embedded-verify-result-shape-ok? pools operand))]
+              [(Err _) false])]
+          [marked : bool
+            (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-session-mark-shell!
+              first)
+              [(Ok) true]
+              [(Err _) false])]
+          [shell : bool
+            (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-catalog-lookup
+              "stdlib.core_macros/__tl-box-place")
+              [(Shell _) true]
+              [_ false])]
+          (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+          (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-session-close!)
+          (let
+            [revoked : bool
+              (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-session-dispatch
+                first
+                embedded-verify-cookie)
+                [(Err _) true]
+                [(Ok _) false])]
+            [fresh : bool
+              (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-catalog-lookup
+                "stdlib.core_macros/__tl-box-place")
+                [(Resolved next)
+                  (!= next.catalog-generation first.catalog-generation)]
+                [_ false])]
+            [still-revoked : bool
+              (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-session-dispatch
+                first
+                embedded-verify-cookie)
+                [(Err _) true]
+                [(Ok _) false])]
+            (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-session-close!)
+            (and second-ok dispatched marked shell revoked fresh still-revoked))))]
+    [_ false]))
+
 (define (main) : i64
   (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
     [(Err message)
@@ -191,6 +261,7 @@
       (if (= count 166)
         (if (and
           (embedded-verify-payload-exact-and-bounded?)
+          (embedded-verify-indexed-lifetime-ok?)
           (embedded-verify-native-array-length-ok?)
           (embedded-verify-native-array-length-error-ok?
             0

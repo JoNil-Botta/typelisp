@@ -50784,6 +50784,11 @@
 ;; tables and the job epoch; all of them key the entry, which keeps only the
 ;; pooled result id. A hit reads that node back from the same pool.
 ;;
+;; Caller invariant: the key omits the lifetime substitution and the source
+;; lifetime environment because the only caller, `tc-top-decl-type`'s DefFn
+;; arm, resets both (Nil and an empty env) before calling. Any new caller must
+;; establish the same empty context or extend the key.
+;;
 ;; A lifetime-free signature's contract is empty and cheap to resolve, so it
 ;; bypasses the memo. Otherwise the first sighting only records its key, and a
 ;; second sighting pools the result: a declaration resolved once, as in small
@@ -50922,6 +50927,7 @@
         [signature
           (try
             (tc-elide-function-signature (tc-context-type-bases ctx) params ret))]
+        ;; `tc-top-decl-contract-type`'s memo key relies on this reset.
         (set! ctx.lifetime-scope TcLifetimeSubst.Nil)
         (set! ctx.source-lifetime-env (TcTypeEnv 0 -1 0))
         (Ok

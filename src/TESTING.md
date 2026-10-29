@@ -1,5 +1,21 @@
 # Selfhost compiler testing
 
+`macro_struct_pattern` checks positional, named and nested struct patterns from
+expression macros against direct-source controls at opt0/1/2 on both hosts.
+Owned and shared scrutinees retain their field binding modes, including String
+payloads. Imported macro heads keep their definition-site constructor despite a
+same-named caller struct. The safety rows reject arity, head, nested-field,
+unknown/duplicate named-field and unreachable-arm errors with diagnostics;
+the two owner controls reject same-layout structs from another module in both
+directions. Keep the target IR parity entry with the native matrix.
+
+`enum_constructor_owner_layout` and its header-less root control retain the
+declaring module's struct identity when imported and local struct names collide.
+Both hosts run opt0/1/2 for register/memory enum constructors, owned/borrowed
+matches, nested field access and struct/tuple/array/box/enum destinations.
+Aliases and full module paths must preserve the imported layout too. Keep their
+target IR parity alongside native execution.
+
 `macro_dotted_global` and its owner-module control preserve definition-site
 global field roots in quoted expression macros, checking and returning 2 at
 opt0/1/2 on both hosts. The matrix retains nested fields, caller shadowing,
@@ -2464,15 +2480,20 @@ scripts/check-tlci-native-route-size.sh \
   target/tlci-native-route-stress/<host>/evidence.tsv
 ```
 
-The required `stage0-size-ratchet` gate holds #6260's published-stage0 target.
+The required `stage0-size-ratchet` gate enforces the 15,000,000-byte hard limit
+for published stage0 on both hosts (Refs #9440). Smaller remains a goal and size
+improvements are welcome, but they must not block correctness, compilation
+speed, generated-code quality or CI-speed work.
 It measures the converged bootstrap compiler, which comes from the same compile
 and native-link route as the published stage0 (a stripped copy on Linux, the
 linked executable on Windows), against the host's ceiling in
 `scripts/stage0-size-policy.tsv`. That file is an append-only ledger per host:
 the last row is the ceiling, an ordinary `ceiling` row may only lower it, only
 a `raise` row naming its authorizing change may raise it, and no ceiling may
-sit below the 10,000,000-byte target. When a change shrinks the binary well
-under its ceiling the checker prints the lower value to append. Reproduce with:
+sit below its recorded target. Historical rows retain their targets; each
+host's last row must use the current 15,000,000-byte target. When a change
+shrinks the binary well under its ceiling the checker prints the lower value
+to append. Reproduce with:
 
 ```sh
 scripts/check-stage0-size.sh target/bootstrap-fixpoint/stage3 linux

@@ -24,6 +24,8 @@
 #   is resolved from that compiled input, then the complete stream is compared.
 # suite-members: space-separated smoke drivers the row's source runs.
 mut_borrow_field_writeback|all|0,1,2|tests/integration/mut_borrow_field_writeback.tl|42|-|-|-|-
+enum_constructor_owner_layout|all|0,1,2|tests/integration/enum_constructor_owner_layout.tl|42|-|-|enum_constructor_owner_defs.tl|-
+enum_constructor_owner_root|all|0,1,2|tests/integration/enum_constructor_owner_root.tl|42|-|-|enum_constructor_owner_defs.tl|-
 global_mut_borrow_field|all|0,1,2|tests/integration/global_mut_borrow_field.tl|5|-|-|-|-
 global_mut_borrow_storage|all|0,1,2|tests/integration/global_mut_borrow_storage.tl|42|-|-|-|-
 nested_mut_borrow_pointer|all|0,1,2|tests/integration/nested_mut_borrow_pointer.tl|5|-|-|-|-
@@ -40,6 +42,8 @@ packed_narrow_bitwise_fold|all|0,1,2|tests/integration/packed_narrow_bitwise_fol
 while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
 unit_struct_fields|all|0,1,2|tests/integration/unit_struct_fields.tl|42|-|-|-|stage-stdlib
 macro_body_splice|all|0,1,2|tests/integration/macro_body_splice.tl|42|-|-|-|stage-stdlib
+macro_struct_pattern|all|0,1,2|tests/integration/macro_struct_pattern.tl|42|-|-|macro_struct_pattern_defs.tl stdlib/string.tl|stage-stdlib
+macro_struct_pattern_root|all|0,1,2|tests/integration/macro_struct_pattern_root.tl|42|-|-|stdlib/string.tl|stage-stdlib
 ubound_self_call_inbounds|all|0,1,2|tests/integration/ubound_self_loop_call.tl|42|6\n|3 3 2 1 1|stdlib/io.tl stdlib/string.tl|-
 ubound_self_call_first_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|0 1 2 1 0|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=0 length=0\n
 ubound_self_call_mid_abort|all|0,1,2|tests/integration/ubound_self_loop_call.tl|134|-|2 3 2 1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:22:52: array index out of bounds: index=2 length=2\n

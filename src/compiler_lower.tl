@@ -28747,6 +28747,9 @@
   [handle : i64]
   [resolved-scrut-ty : ast.AstType]
   [fields : ast.AstTypeList]) : ast.AstTypeList
+  ;; A variant handle encodes both the enum declaration and the variant index.
+  ;; Construction and matching must resolve payload annotations in the enum's
+  ;; declaring module, using its declaration handle rather than that encoding.
   (let
     [field-ctx : tc_core.TcContext
       (tc_core.tc-context-with-nominal-owner-handle-module
@@ -28774,15 +28777,12 @@
     (match (csym.compiler-registries-variant-fields-indexed symbols handle)
       [(Ok fields)
         (let
-          [field-ctx : tc_core.TcContext
-            (tc_core.tc-context-with-nominal-owner-handle-module ctx handle)]
           [resolved-fields : ast.AstTypeList
-            (tc_core.tc-resolve-type-list
-              field-ctx
-              (lower-enum-constructor-fields-for-result
-                field-ctx
-                (lower-global-shared-view enum-ty)
-                fields))]
+            (lower-variant-payload-fields-for-handle
+              ctx
+              handle
+              (lower-global-shared-view enum-ty)
+              fields)]
           (match (lower-fresh-constructor-args-as
             ctx
             state
@@ -28853,15 +28853,12 @@
     (match (csym.compiler-registries-variant-fields-indexed symbols handle)
       [(Ok fields)
         (let
-          [field-ctx : tc_core.TcContext
-            (tc_core.tc-context-with-nominal-owner-handle-module ctx handle)]
           [resolved-fields : ast.AstTypeList
-            (tc_core.tc-resolve-type-list
-              field-ctx
-              (lower-enum-constructor-fields-for-result
-                field-ctx
-                (lower-global-shared-view enum-ty)
-                fields))]
+            (lower-variant-payload-fields-for-handle
+              ctx
+              handle
+              (lower-global-shared-view enum-ty)
+              fields)]
           (match (if (lower-store-destination-result-slot?
             state
             (lower-global-shared-view dst))
@@ -67609,7 +67606,10 @@
   [scrut-ty : ast.AstType]
   [name : i64]) : bool
   (let
-    [pattern-name : String (tc_core.tc-env-key-name-text name)]
+    [pattern-name : String
+      (tc_core.tc-env-key-name-text-for-session
+        (tc_core.tc-context-structural-session ctx)
+        name)]
     (match (tc_core.tc-type-strip-region (tc_core.tc-resolve-type ctx scrut-ty))
       [(or (Struct struct-name) (StructArgs struct-name _))
         (tc_core.tc-struct-pattern-name-matches?

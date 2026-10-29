@@ -460,8 +460,22 @@ while IFS= read -r path; do
         # Generated build inputs live under target/ and are absent from a fresh
         # checkout, so measuring a downloaded binary must not fail on them. The
         # stream is still counted above; only its expanded size is unknown.
-        case "$path" in
-            target/* | */target/*)
+        # Normalize declaration-relative paths such as src/../target/ first.
+        generated_path=$(printf '%s\n' "$path" | awk '
+            {
+                n = split($0, parts, "/")
+                for (i = 1; i <= n; i++) {
+                    if (parts[i] == "" || parts[i] == ".") continue
+                    if (parts[i] == ".." && depth && stack[depth] != "..") depth--
+                    else stack[++depth] = parts[i]
+                }
+                if (substr($0, 1, 1) == "/") printf "/"
+                for (i = 1; i <= depth; i++) printf "%s%s", (i > 1 ? "/" : ""), stack[i]
+                print ""
+            }
+        ')
+        case "$generated_path" in
+            target/* | "$ROOT"/target/*)
                 printf '%s\t%s\t%s\n' generated_unavailable 0 "$path" \
                     >> "$payloads_tsv"
                 continue

@@ -37192,6 +37192,65 @@
           lifetime-id
           signature-marker-id)))))
 
+;; A visibility query reads the same immutable persistent spine as an outlives
+;; query, so it shares that memo and its invalidation keys. Its entries carry a
+;; target id that no outlives entry can hold (those require non-negative ids).
+(define tc-visible-memo-target : i64
+  -3)
+
+(define (tc-lifetime-visible-persistent-memo-id?
+  [env : TcTypeEnv]
+  [lifetime-id : i64]) : bool
+  (if (< lifetime-id 0)
+    false
+    (let
+      [state : TcTypeResolutionCacheState
+        (tc-type-env-type-resolution-cache-state env)]
+      [_storage : unit (tc-outlives-memo-storage-ensure! state)]
+      [data : TcTypeResolutionCacheStateData
+        (tc-type-resolution-cache-state-data state)]
+      [session : cis.InternStructuralSessionHandle
+        (tc-type-env-structural-session env)]
+      [owner : i64 (cis.intern-structural-session-owner session)]
+      [session-generation : i64
+        (cis.intern-structural-session-current-reset-generation session)]
+      [intern-owner : i64 (ci.intern-active-table-id)]
+      [intern-generation : i64 (ci.intern-generation)]
+      [epoch : i64 (+ tc-type-env-store-epoch 1)]
+      [slot : i64
+        (tc-outlives-memo-slot env.head lifetime-id tc-visible-memo-target)]
+      [entry : (& data TcLifetimeOutlivesMemoEntry)
+        (& (array-ref data.outlives-slots slot))]
+      (if (and
+        (= entry.store-epoch epoch)
+        (= entry.job-epoch data.epoch)
+        (= entry.head env.head)
+        (= entry.store env.store)
+        (= entry.value-lifetime lifetime-id)
+        (= entry.target-lifetime tc-visible-memo-target)
+        (= entry.session-owner owner)
+        (= entry.session-generation session-generation)
+        (= entry.intern-owner intern-owner)
+        (= entry.intern-generation intern-generation))
+        entry.result
+        (let
+          [result : bool (tc-lifetime-visible-persistent-id? env lifetime-id)]
+          (set!
+            (array-ref data.outlives-slots slot)
+            (TcLifetimeOutlivesMemoEntry
+              env.store
+              env.head
+              lifetime-id
+              tc-visible-memo-target
+              owner
+              session-generation
+              intern-owner
+              intern-generation
+              epoch
+              data.epoch
+              result))
+          result)))))
+
 (define (tc-lifetime-visible-id? [env : TcTypeEnv] [lifetime-id : i64]) : bool
   (if (tc-generated-arena-brand-id? lifetime-id)
     true
@@ -37201,7 +37260,7 @@
         lifetime-id)
       (begin
         (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
-        (tc-lifetime-visible-persistent-id? env lifetime-id)))))
+        (tc-lifetime-visible-persistent-memo-id? env lifetime-id)))))
 
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]

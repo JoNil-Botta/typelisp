@@ -71539,13 +71539,38 @@
         (csym.compiler-symbol-handle-kind handle)
         (csym.compiler-symbol-kind-function-define)))))
 
+;; Forwarding the current return slot needs the callee's result to have this
+;; function's result layout. The checker has already admitted the tail call's
+;; value as this function's result, so only layout is in question here, and a
+;; struct or enum's lifetime arguments never change its layout: the same
+;; resolved declaration forwards whatever lifetime identities each side names.
+;; Every other shape keeps the exact type comparison.
+(define (lower-tail-call-same-nominal-layout?
+  [callee : (& callee ast.AstType)]
+  [caller : (& caller ast.AstType)]) : bool
+  (match callee
+    [(StructArgs callee-name _)
+      (match caller
+        [(StructArgs caller-name _) (= callee-name caller-name)]
+        [_ false])]
+    [(EnumArgs callee-name _)
+      (match caller
+        [(EnumArgs caller-name _) (= callee-name caller-name)]
+        [_ false])]
+    [_ false]))
+
 (define (lower-tail-call-compatible-return?
   [ctx : tc_core.TcContext]
   [callee-ret : ast.AstType]
   [ret-ty : ast.AstType]) : bool
-  (tc_core.tc-type-eq
-    (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx callee-ret))
-    (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret-ty))))
+  (let
+    [callee : ast.AstType
+      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx callee-ret))]
+    [caller : ast.AstType
+      (tc_core.tc-type-without-regions (tc_core.tc-resolve-type ctx ret-ty))]
+    (or
+      (lower-tail-call-same-nominal-layout? (& callee) (& caller))
+      (tc_core.tc-type-eq callee caller))))
 
 (define (lower-tail-call-direct-structural-param?
   [ctx : tc_core.TcContext]

@@ -215,16 +215,17 @@ for layout in trailing-comment indented newline-after-open same-line comments-be
     grep -Fx "other_compiler_owned_lzss_declarations${tab}2" "$work/report" >/dev/null
 done
 label=missing-catalog-input
-printf '(include-str-lzss catalog "catalog.tsv")\n' > "$work/catalog.tl"
+# Keep the missing input outside the repository target/ even when TMPDIR is
+# inside it. A target component elsewhere must not make an input generated.
+printf '(include-str-lzss catalog "../stdlib/target/tl-lzss-scanner-missing-catalog.tsv")\n' > "$work/catalog.tl"
 {
     frame 1 1 '\001A'
     frame 2 4 '\365\211\000'
 } > "$work/frame"
-rm "$work/catalog.tsv"
 analyze_reject 'payload not found'
 
 # The same token inventory supplies the unchanged TLCH declaration/path checks.
-printf AAAA > "$work/catalog.tsv"
+printf '(include-str-lzss catalog "catalog.tsv")\n' > "$work/catalog.tl"
 printf X > "$work/image.bin"
 printf ' (\n include-bin image "image.bin.tlch") ; image\n' >> "$work/manifest.tl"
 {
@@ -240,4 +241,8 @@ analyze > "$work/report"
 grep -Fx "tlci_envelope_raw_bytes${tab}1" "$work/report" >/dev/null
 grep -Fx "tlci_envelope_static_bytes${tab}4422" "$work/report" >/dev/null
 grep -Fx "static_payload_bytes${tab}4503" "$work/report" >/dev/null
+if [ "${1:-}" != --target-tmpdir ]; then
+    mkdir "$work/target"
+    TMPDIR="$work/target" "$ROOT/scripts/verify-stage0-lzss-scanner.sh" --target-tmpdir
+fi
 echo 'stage0 LZSS scanner formats and malformed payloads passed'

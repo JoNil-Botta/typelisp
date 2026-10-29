@@ -37606,44 +37606,68 @@
   ;; A named parameter/local shadows the old signature spelling. Preserve
   ;; the existing rank query for that spelling; otherwise the canonical
   ;; signature marker remains the incoming lifetime's representative.
+  ;;
+  ;; The adapter's visibility scan is only needed when its projection can
+  ;; change the answer: a same-spelled local, or spellings that may coincide.
+  ;; A projected declaration key has no binder record, so it projects to
+  ;; itself and the sources computed here are also those of the shadowed ids.
+  (when (= value-lifetime-id target-lifetime-id) (return true))
   (let
-    [value-source : i64 (tc-storage-lifetime-source-id env value-lifetime-id)]
-    [target-source : i64 (tc-storage-lifetime-source-id env target-lifetime-id)]
-    (when
+    [value-key : i64
+      (tc-storage-lifetime-declaration-key env value-lifetime-id)]
+    [target-key : i64
+      (tc-storage-lifetime-declaration-key env target-lifetime-id)]
+    [value-local? : bool
       (and
-        (!= value-source value-lifetime-id)
-        (tc-name-local-bound-before-module-scan-id? env value-source))
+        (!= value-key value-lifetime-id)
+        (tc-name-local-bound-before-module-scan-id? env value-key))]
+    [target-local? : bool
+      (and
+        (!= target-key target-lifetime-id)
+        (tc-name-local-bound-before-module-scan-id? env target-key))]
+    [overlap? : bool
+      (or
+        (= value-lifetime-id target-lifetime-id)
+        (= value-lifetime-id target-key)
+        (= value-key target-lifetime-id)
+        (= value-key target-key))]
+    [value-source : i64
+      (if (or value-local? overlap?)
+        (tc-storage-lifetime-source-from-key env value-lifetime-id value-key)
+        value-lifetime-id)]
+    [target-source : i64
+      (if (or target-local? overlap?)
+        (tc-storage-lifetime-source-from-key env target-lifetime-id target-key)
+        target-lifetime-id)]
+    (when
+      (and value-local? (!= value-source value-lifetime-id))
       (set! value-lifetime-id value-source))
     (when
-      (and
-        (!= target-source target-lifetime-id)
-        (tc-name-local-bound-before-module-scan-id? env target-source))
-      (set! target-lifetime-id target-source)))
-  (if (or
-    (= value-lifetime-id target-lifetime-id)
-    (=
-      (tc-storage-lifetime-source-id env value-lifetime-id)
-      (tc-storage-lifetime-source-id env target-lifetime-id)))
-    true
-    (let
-      [temporary : i64 (tc-call-temporary-lifetime-id)]
-      (cond
-        ;; A borrowed call-argument temporary dies when its call returns, so
-        ;; every other lifetime outlives it and it outlives none of them.
-        [(= target-lifetime-id temporary) true]
-        [(= value-lifetime-id temporary) false]
-        [(tc-type-env-scoped-runtime-active? env)
-          (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
-            (tc-type-env-scoped-runtime-current env)
-            value-lifetime-id
-            target-lifetime-id)]
-        [else
-          (begin
-            (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
-            (tc-lifetime-outlives-lifetime-persistent-id?
-              env
+      (and target-local? (!= target-source target-lifetime-id))
+      (set! target-lifetime-id target-source))
+    (if (or
+      (= value-lifetime-id target-lifetime-id)
+      (= value-source target-source))
+      true
+      (let
+        [temporary : i64 (tc-call-temporary-lifetime-id)]
+        (cond
+          ;; A borrowed call-argument temporary dies when its call returns, so
+          ;; every other lifetime outlives it and it outlives none of them.
+          [(= target-lifetime-id temporary) true]
+          [(= value-lifetime-id temporary) false]
+          [(tc-type-env-scoped-runtime-active? env)
+            (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
+              (tc-type-env-scoped-runtime-current env)
               value-lifetime-id
-              target-lifetime-id))]))))
+              target-lifetime-id)]
+          [else
+            (begin
+              (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
+              (tc-lifetime-outlives-lifetime-persistent-id?
+                env
+                value-lifetime-id
+                target-lifetime-id))])))))
 
 (define (tc-reference-lifetimes-outlive-lifetime-id?
   [env : TcTypeEnv]
@@ -37942,6 +37966,29 @@
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
       (> (tc-lifetime-list-count (deref lifetimes)) 0)]
     [_ false]))
+
+;; Whether a type has no reference, region or nominal lifetime argument at
+;; any depth. Such a callable signature has an empty binder contract: nothing
+;; to elide, classify or substitute, and no scope identity to intern.
+(define (tc-type-lifetime-free? [ty : (& ty ast.AstType)]) : bool
+  (match ty
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (and
+          (not
+            (tc-type-list-contains-any-region-at? (& args-signature.params) 0))
+          (tc-type-lifetime-free? (& (ast.ty-node-get args-signature.result)))))]
+    [(Tuple elems)
+      (not (tc-type-list-contains-any-region-at? (& (deref elems)) 0))]
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
+         (MutPtr elem))
+      (tc-type-lifetime-free? (& (ast.ty-node-get elem)))]
+    [(or (Ref _ _) (MutRef _ _) (Region _ _) (Invalidate _ _)) false]
+    [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
+      (= (tc-lifetime-list-count (deref lifetimes)) 0)]
+    [_ true]))
 
 (define (tc-type-list-contains-reference? [types : ast.AstTypeList]) : bool
   (tc-type-list-contains-reference-at? (& types) 0))
@@ -127766,6 +127813,15 @@
   [params : ast.AstTypeList]
   [ret : ast.AstType]
   [shadow-program? : bool]) : ast.AstType
+  (when
+    (and
+      (not (tc-type-list-contains-any-region-at? (& params) 0))
+      (tc-type-lifetime-free? (& ret)))
+    (return
+      (ast.ast-ty-func
+        (tc-resolve-source-type-list ctx params)
+        (& (tc-resolve-source-type ctx ret))
+        (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))))
   (let
     [scope : TcCallableScope
       (tc-callable-input-scope
@@ -127791,6 +127847,15 @@
         (& (tc-resolve-type ctx (ast.ty-node-get signature.result)))
         signature.binders)]
     [(ast.AstCallableBinders.Unresolved)
+      (when
+        (and
+          (not (tc-type-list-contains-any-region-at? (& signature.params) 0))
+          (tc-type-lifetime-free? (& (ast.ty-node-get signature.result))))
+        (return
+          (ast.ast-ty-func
+            (tc-resolve-source-type-list ctx signature.params)
+            (& (tc-resolve-source-type ctx (ast.ty-node-get signature.result)))
+            (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))))
       (match (tc-elide-function-type
         (tc-context-type-bases ctx)
         signature.params
@@ -128242,40 +128307,51 @@
         [(or (StructArgs _ lifetimes) (EnumArgs _ lifetimes))
           (ast.ast-lifetime-list-box-shared-view lifetimes)]
         [_ (ast.ast-lifetime-list-new)])]
-    [owner : cis.InternCallableScopeIdentity
-      (cis.intern-structural-session-callable-scope
-        (tc-context-structural-session ctx)
-        3
-        0
-        (tc-context-type-push-value
-          ctx
-          (ast.ast-ty-func
-            (tc-global-shared-view params)
-            (& ret)
-            (ast.AstCallableBinders.Unresolved))))]
-    [owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
-    [index : i64 0]
     (set! ctx.lifetime-scope TcLifetimeSubst.Nil)
-    (while (< index (ast.ast-lifetime-list-len (& names)))
-      (let
-        [name : i64 (ast.ast-lifetime-list-get (& names) index -1)]
-        [identity : cis.InternCallableLifetimeIdentity
-          (cis.intern-structural-session-callable-lifetime
-            (tc-context-structural-session ctx)
-            owner
-            index
-            name)]
-        (ast.ast-lifetime-list-push (&mut owned) identity.value)
-        (set!
-          ctx.lifetime-scope
-          (tc-lifetime-subst-push ctx.lifetime-scope name identity.value)))
-      (+= index 1))
-    (ast.ast-ty-func
-      (tc-resolve-type-list
-        ctx
-        (tc-lifetime-subst-type-list ctx.lifetime-scope params))
-      (& (tc-resolve-type ctx (tc-lifetime-subst-type ctx.lifetime-scope ret)))
-      (ast.AstCallableBinders.Resolved owned))))
+    ;; A nominal type without lifetime parameters gives its constructor no
+    ;; binder, so it needs no scope identity.
+    (when
+      (ast.ast-lifetime-list-empty? (& names))
+      (return
+        (ast.ast-ty-func
+          (tc-resolve-type-list ctx params)
+          (& (tc-resolve-type ctx ret))
+          (ast.AstCallableBinders.Resolved (ast.ast-lifetime-list-new)))))
+    (let
+      [owner : cis.InternCallableScopeIdentity
+        (cis.intern-structural-session-callable-scope
+          (tc-context-structural-session ctx)
+          3
+          0
+          (tc-context-type-push-value
+            ctx
+            (ast.ast-ty-func
+              (tc-global-shared-view params)
+              (& ret)
+              (ast.AstCallableBinders.Unresolved))))]
+      [owned : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
+      [index : i64 0]
+      (while (< index (ast.ast-lifetime-list-len (& names)))
+        (let
+          [name : i64 (ast.ast-lifetime-list-get (& names) index -1)]
+          [identity : cis.InternCallableLifetimeIdentity
+            (cis.intern-structural-session-callable-lifetime
+              (tc-context-structural-session ctx)
+              owner
+              index
+              name)]
+          (ast.ast-lifetime-list-push (&mut owned) identity.value)
+          (set!
+            ctx.lifetime-scope
+            (tc-lifetime-subst-push ctx.lifetime-scope name identity.value)))
+        (+= index 1))
+      (ast.ast-ty-func
+        (tc-resolve-type-list
+          ctx
+          (tc-lifetime-subst-type-list ctx.lifetime-scope params))
+        (&
+          (tc-resolve-type ctx (tc-lifetime-subst-type ctx.lifetime-scope ret)))
+        (ast.AstCallableBinders.Resolved owned)))))
 
 ;; A nullary variant's nominal lifetime parameters are declaration syntax, not
 ;; stored references. Resolve those placeholders at the source-value boundary;
@@ -128863,16 +128939,30 @@
 ;; callback-owned skolem or another callable's identity remains rigid. This
 ;; adapter does not infer an outlives relation or change stored provenance.
 (define (tc-storage-lifetime-source-id [env : TcTypeEnv] [lifetime : i64]) : i64
+  (tc-storage-lifetime-source-from-key
+    env
+    lifetime
+    (tc-storage-lifetime-declaration-key env lifetime)))
+
+;; The declaration spelling the adapter would project `lifetime` onto, before
+;; its visibility check; `lifetime` itself when no projection can apply.
+(define (tc-storage-lifetime-declaration-key [env : TcTypeEnv] [lifetime : i64]) : i64
   (match (cis.intern-structural-session-callable-lifetime-record
     (tc-type-env-structural-session env)
     lifetime)
     [(cis.InternMaybeCallableLifetimeRecord.Some binder)
-      (if (and
-        (not (tc-elaborated-lifetime-hidden? binder.binding-name-id))
-        (tc-lifetime-visible-id? env lifetime))
-        binder.binding-name-id
-        lifetime)]
+      (if (tc-elaborated-lifetime-hidden? binder.binding-name-id)
+        lifetime
+        binder.binding-name-id)]
     [_ lifetime]))
+
+(define (tc-storage-lifetime-source-from-key
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [key : i64]) : i64
+  (if (and (!= key lifetime) (tc-lifetime-visible-id? env lifetime))
+    key
+    lifetime))
 
 ;; Diagnostic-only views of the canonical contract. These descriptions never
 ;; participate in compatibility or expose private identity encodings.

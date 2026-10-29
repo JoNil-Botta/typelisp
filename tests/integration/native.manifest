@@ -978,7 +978,7 @@ repr_c_explicit_alignment|all|-,0,2|tests/integration/repr_c_explicit_alignment.
 nested_tuple_array_projection|all|-|tests/integration/nested_tuple_array_projection.tl|0|7\n3\n|-|stdlib/io.tl|-
 lambda_capture_lifetime_aggregate|all|-|tests/integration/lambda_capture_lifetime_aggregate.tl|42|-|-|stdlib/string.tl|-
 register_resident_enum|all|-|tests/integration/register_resident_enum.tl|42|-|-|-|-
-gep_large_displacement|all|-|tests/integration/gep_large_displacement.tl|42|-|-|-|-
+gep_large_displacement|all|0,1,2|tests/integration/gep_large_displacement.tl|42|-|-|-|-
 register_pair_struct|all|-|tests/integration/register_pair_struct.tl|42|-|-|-|-
 register_group_phi_return|all|-|tests/integration/register_group_phi_return.tl|42|-|-|-|-
 register_group_phi_swap_cycle|all|-|tests/integration/register_group_phi_swap_cycle.tl|42|-|-|-|-
@@ -1221,3 +1221,8 @@ bce_addr_taken_tighten_raise|all|0,1,2|tests/integration/bce_addr_taken_tighten_
 bce_addr_taken_tighten_lower|all|0,1,2|tests/integration/bce_addr_taken_tighten_lower.tl|4|-|-|stdlib/io.tl stdlib/string.tl|-
 unroll_addr_taken_bound|all|0,1,2|tests/integration/unroll_addr_taken_bound.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 lftr_addr_taken_bound|all|0,1,2|tests/integration/lftr_addr_taken_bound.tl|56|-|-|stdlib/io.tl stdlib/string.tl|-
+
+byte_le_read_tail_trap|all|0,1,2|tests/integration/byte_le_read_tail_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_read_max_offset_trap|all|0,1,2|tests/integration/byte_le_read_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_set_tail_trap|all|0,1,2|tests/integration/byte_le_set_tail_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+byte_le_set_max_offset_trap|all|0,1,2|tests/integration/byte_le_set_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n

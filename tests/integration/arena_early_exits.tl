@@ -179,7 +179,8 @@
     owner
     (let
       [a (string.append "a" "")]
-      [b (string.append "bb" "")]      [length : i64
+      [b (string.append "bb" "")]
+      [length : i64
         (with-arena phase (string.string-length (string.int->string n)))]
       (if (> length 0)
         (TextPair a b)
@@ -192,7 +193,8 @@
     owner
     (let
       [a (string.append "a" "")]
-      [b (string.append "bb" "")]      (when (> n 0) (return (TextPair a b)))
+      [b (string.append "bb" "")]
+      (when (> n 0) (return (TextPair a b)))
       (TextPair a b))))
 
 ;; A wide binding list also puts the activation into a cached env window.
@@ -203,7 +205,8 @@
     owner
     (let
       [a (string.append "a" "")]
-      [b (string.append "bb" "")]      [p0 : i64 n]
+      [b (string.append "bb" "")]
+      [p0 : i64 n]
       [p1 : i64 (+ p0 0)]
       [p2 : i64 (+ p1 0)]
       [p3 : i64 (+ p2 0)]
@@ -253,7 +256,8 @@
     (string.string-length (deref pair).right)))
 
 (define (main) : i64
-  (unless (= (scalar-return -12345) 6) (return 1))  (unless (= (string.string-length (outer-return -12345)) 6) (return 2))
+  (unless (= (scalar-return -12345) 6) (return 1))
+  (unless (= (string.string-length (outer-return -12345)) 6) (return 2))
   (unless (= (string.string-length (program-return "program")) 7) (return 3))
   (let
     [owner (arena.make)]
@@ -330,7 +334,8 @@
         local-owner
         (let
           [a (string.append "a" "")]
-          [b (string.append "bb" "")]          (TextPair a b)))]
+          [b (string.append "bb" "")]
+          (TextPair a b)))]
     (unless (= (pair-length (& pair)) 3) (return 31))
     (unless (= (pair-length (& atomic-pair)) 3) (return 32))
     (unless (= (pair-length (& field-pair)) 3) (return 33))

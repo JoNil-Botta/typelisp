@@ -1121,6 +1121,115 @@
                     [_ false])))]
             [_ false])]))))
 
+;; A directory checked once answers every kind as `tlci-aux-find` does, and the
+;; check reports what `tlci-aux-find` reports for absent or corrupt sections.
+(define (tlci-test-aux-checked-directory-ok?) : bool
+  (let
+    [identity : (__tl_dyn-array u8) (tlci.tlci-string->bytes "identity")]
+    [sections : (__tl_dyn-array tlci.TlciAuxSection)
+      (__tl_make-array tlci.TlciAuxSection 2)]
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-identity
+        1
+        (clone identity)))
+    (set!
+      (array-ref sections 1)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-frontend-ast
+        3
+        (tlci.tlci-string->bytes "ast")))
+    (and
+      (match (tlci.tlci-aux-checked-directory (& (tlci.tlci-empty-bytes)))
+        [(Missing) true]
+        [_ false])
+      (match (tlci.tlci-aux-pack-rodata (& (tlci.tlci-empty-bytes)) sections)
+        [(Err _) false]
+        [(Ok packed)
+          (match (tlci.tlci-aux-checked-directory (& packed))
+            [(Ok checked)
+              (let
+                [corrupt : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
+                [record : i64 checked.directory.directory-offset]
+                [payload-offset : i64
+                  (tlci.tlci-read-u64 corrupt (+ record 16))]
+                (set! (array-ref corrupt payload-offset) 0)
+                (and
+                  (match (tlci.tlci-aux-checked-find
+                    (& packed)
+                    (& checked)
+                    tlci.tlci-aux-kind-package-identity)
+                    [(Ok version payload)
+                      (and (= version 1) (tlci.tlci-bytes-eq? payload identity))]
+                    [_ false])
+                  (match (tlci.tlci-aux-checked-find
+                    (& packed)
+                    (& checked)
+                    tlci.tlci-aux-kind-frontend-ast)
+                    [(Ok version _) (= version 3)]
+                    [_ false])
+                  (match (tlci.tlci-aux-checked-find
+                    (& packed)
+                    (& checked)
+                    tlci.tlci-aux-kind-frontend-facts)
+                    [(Missing) true]
+                    [_ false])
+                  (match (tlci.tlci-aux-checked-directory (& corrupt))
+                    [(Err message)
+                      (string.eq
+                        message
+                        "tlci: malformed or corrupt auxiliary section directory")]
+                    [_ false])
+                  (match (tlci.tlci-aux-find
+                    corrupt
+                    tlci.tlci-aux-kind-frontend-ast)
+                    [(Err message)
+                      (string.eq
+                        message
+                        "tlci: malformed or corrupt auxiliary section directory")]
+                    [_ false])))]
+            [_ false])]))))
+
+;; The table check is the header check, then the registry check, with the same
+;; messages: a bad header wins over a bad registry, and a good header with a
+;; duplicate name fails only the registry part.
+(define (tlci-test-host-validation-split-ok?) : bool
+  (let
+    [duplicate : tlci.TlciHostCallbackTable
+      (tlci-test-registry-table
+        (__tl_make-array "fuel-check" "fuel-check")
+        (__tl_make-array 1 2)
+        2)]
+    [bad-magic : tlci.TlciHostCallbackTable
+      (tlci.TlciHostCallbackTable
+        0
+        tlci.tlci-host-abi-version
+        tlci.tlci-host-callback-table-size
+        0
+        0
+        0
+        0
+        1
+        (__tl_make-array "fuel-check" "fuel-check")
+        (__tl_make-array 1 2)
+        2)]
+    (and
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-host-callback-header (& duplicate)))
+      (tlci-test-host-abi-rejects?
+        (tlci.tlci-validate-host-callback-registry (& duplicate))
+        "tlci host ABI: duplicate host callback registry name")
+      (tlci-test-host-abi-rejects?
+        (tlci.tlci-validate-host-callback-table (& duplicate))
+        "tlci host ABI: duplicate host callback registry name")
+      (tlci-test-host-abi-rejects?
+        (tlci.tlci-validate-host-callback-table (& bad-magic))
+        "tlci host ABI: bad host callback table magic")
+      (tlci-test-host-abi-accepts?
+        (tlci.tlci-validate-host-callback-registry
+          (& (tlci-test-host-callback-table)))))))
+
 (define (tlci-test-producer-identity-admission-ok?) : bool
   (let
     [current : String "0123456789abcdef0123456789abcdef01234567"]
@@ -1341,6 +1450,8 @@
     [(not (tlci-test-host-platform-admission-ok?)) 19]
     [(not (tlci-test-aux-directory-shapes-ok?)) 20]
     [(not (tlci-test-hash-blocks-ok?)) 21]
+    [(not (tlci-test-aux-checked-directory-ok?)) 22]
+    [(not (tlci-test-host-validation-split-ok?)) 23]
     [else 0]))
 
 (test

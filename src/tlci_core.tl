@@ -304,6 +304,17 @@
   (Ok TlciAuxDirectory)
   (Err String))
 
+;; An aux directory whose records `tlci-aux-checked-directory` has validated,
+;; hashes included, for the rodata it was read from. An owner checks once and
+;; looks every kind up from it (#9449); nothing retains it past that rodata.
+(defstruct TlciAuxCheckedDirectory
+  (directory TlciAuxDirectory))
+
+(defenum ResultTlciAuxCheckedDirectory
+  (Missing)
+  (Ok TlciAuxCheckedDirectory)
+  (Err String))
+
 (defenum ResultTlciAuxBytes
   (Ok (__tl_dyn-array u8))
   (Err String))
@@ -1136,7 +1147,7 @@
               (+= index 1)]))
         error])))
 
-(define (tlci-validate-host-callback-table [table : (& TlciHostCallbackTable)]) : ResultTlciHostAbi
+(define (tlci-validate-host-callback-header [table : (& TlciHostCallbackTable)]) : ResultTlciHostAbi
   (cond
     [(not (= table.magic tlci-host-callback-table-magic))
       (Err "tlci host ABI: bad host callback table magic")]
@@ -1152,12 +1163,21 @@
       (Err "tlci host ABI: host callback table reserved2 must be zero")]
     [(= table.abort-callback 0)
       (Err "tlci host ABI: host abort callback must be nonzero")]
-    [(not (string.eq (tlci-host-callback-registry-error table) ""))
-      (Err
-        (str_cat.str-cat
-          "tlci host ABI: "
-          (tlci-host-callback-registry-error table)))]
     [else (Ok)]))
+
+(define (tlci-validate-host-callback-registry
+  [table : (& TlciHostCallbackTable)]) : ResultTlciHostAbi
+  (let
+    [error : String (tlci-host-callback-registry-error table)]
+    (if (string.eq error "")
+      (Ok)
+      (Err (str_cat.str-cat "tlci host ABI: " error)))))
+
+;; The whole table check: the header, then the import registry.
+(define (tlci-validate-host-callback-table [table : (& TlciHostCallbackTable)]) : ResultTlciHostAbi
+  (match (tlci-validate-host-callback-header table)
+    [(Err message) (Err message)]
+    [(Ok) (tlci-validate-host-callback-registry table)]))
 
 (define (tlci-validate-image-registration
   [registration : TlciImageRegistration]) : ResultTlciHostAbi
@@ -1875,31 +1895,45 @@
           (set! ok false))))
     ok))
 
-(define (tlci-aux-find
-  [rodata : (& rodata (__tl_dyn-array u8))]
-  [wanted-kind : i64]) : ResultTlciAuxLookup
+(define (tlci-aux-checked-directory [rodata : (& rodata (__tl_dyn-array u8))]) : ResultTlciAuxCheckedDirectory
   (match (tlci-aux-directory rodata)
     [(Missing) (Missing)]
     [(Err message) (Err message)]
     [(Ok directory)
-      (if (not (tlci-aux-records-valid? rodata directory))
-        (Err "tlci: malformed or corrupt auxiliary section directory")
-        (begin
-          (for [index (iterator.range 0 directory.count)]
-            (let
-              [record : i64
-                (+ directory.directory-offset (* index tlci-aux-record-size))]
-              [kind : i64 (tlci-read-u64 rodata record)]
-              (when
-                (= kind wanted-kind)
-                (return
-                  (Ok
-                    (tlci-read-u64 rodata (+ record 8))
-                    (tlci-slice-bytes
-                      rodata
-                      (tlci-read-u64 rodata (+ record 16))
-                      (tlci-read-u64 rodata (+ record 24))))))))
-          (Missing)))]))
+      (if (tlci-aux-records-valid? rodata directory)
+        (Ok (TlciAuxCheckedDirectory directory))
+        (Err "tlci: malformed or corrupt auxiliary section directory"))]))
+
+;; The `wanted-kind` section of `rodata`, whose directory `checked` validated.
+(define (tlci-aux-checked-find
+  [rodata : (& rodata (__tl_dyn-array u8))]
+  [checked : (& checked TlciAuxCheckedDirectory)]
+  [wanted-kind : i64]) : ResultTlciAuxLookup
+  (let
+    [directory : TlciAuxDirectory checked.directory]
+    (for [index (iterator.range 0 directory.count)]
+      (let
+        [record : i64
+          (+ directory.directory-offset (* index tlci-aux-record-size))]
+        [kind : i64 (tlci-read-u64 rodata record)]
+        (when
+          (= kind wanted-kind)
+          (return
+            (Ok
+              (tlci-read-u64 rodata (+ record 8))
+              (tlci-slice-bytes
+                rodata
+                (tlci-read-u64 rodata (+ record 16))
+                (tlci-read-u64 rodata (+ record 24))))))))
+    (Missing)))
+
+(define (tlci-aux-find
+  [rodata : (& rodata (__tl_dyn-array u8))]
+  [wanted-kind : i64]) : ResultTlciAuxLookup
+  (match (tlci-aux-checked-directory rodata)
+    [(Missing) (Missing)]
+    [(Err message) (Err message)]
+    [(Ok checked) (tlci-aux-checked-find rodata (& checked) wanted-kind)]))
 
 (define (tlci-package-source-binding-digest-valid? [digest : i64]) : bool
   (and (>= digest 0) (< digest 2147483647)))

@@ -336,9 +336,6 @@
             (payload.embedded-stdlib-tlci-source-hash-shared-view)
             image.rodata)]))))
 
-(define (compiler-embedded-stdlib-tlci-host-table) : tlci.TlciHostCallbackTable
-  (compiler-comptime-host-table))
-
 (define (compiler-embedded-stdlib-tlci-session-open! [index : i64]) : bool
   (let
     [state : i64 (array-ref compiler-embedded-stdlib-tlci-session-state index)]
@@ -349,11 +346,9 @@
         (let
           [bytes : (__tl_dyn-array u8)
             (compiler-embedded-stdlib-tlci-decode-frame index)]
-          [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
-          (match (loader.tlci-loader-load-from-bytes-with-host
+          (match (compiler-comptime-host-load-from-bytes
             (compiler-embedded-stdlib-tlci-session-arena)
-            (& bytes)
-            (& host))
+            (& bytes))
             [(Err message)
               (set!
                 (array-ref compiler-embedded-stdlib-tlci-session-state index)
@@ -487,14 +482,11 @@
     ;; current arena already outlives it and is the honest owner.
     (let
       [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
-      [host : tlci.TlciHostCallbackTable
-        (compiler-embedded-stdlib-tlci-host-table)]
       [loaded
         (try
-          (loader.tlci-loader-load-from-bytes-with-host
+          (compiler-comptime-host-load-from-bytes
             (arena.tl_arena_current)
-            (& bytes)
-            (& host)))]
+            (& bytes)))]
       [count : i64 loaded.macro-entry-count]
       [has-native-sentinel : bool
         (match (loader.tlci-loader-find-macro-entry
@@ -6150,3 +6142,33 @@
       registry.names
       registry.callbacks
       registry.len)))
+
+;; Whether this process has checked the compiled-in import registry. Every
+;; `compiler-comptime-host-table` has the same names (compile-time rows) and
+;; callbacks (this process's addresses), so the registry check -- nonempty,
+;; distinct names and nonzero callbacks -- needs to pass only once (#9449). The
+;; table itself is rebuilt for each load in the caller's arena.
+(define compiler-comptime-host-registry-checked : bool
+  false)
+
+;: `loader.tlci-loader-load-from-bytes-with-host` on a fresh compiled-in host
+;: table: the same checks, in the same order and with the same messages, except
+;: that the registry part runs on the first load only.
+(define (compiler-comptime-host-load-from-bytes
+  [owner-arena : i64]
+  [bytes : (& (__tl_dyn-array u8))]) : loader.ResultTlciLoadedImage
+  (let
+    [host : tlci.TlciHostCallbackTable (compiler-comptime-host-table)]
+    (if compiler-comptime-host-registry-checked
+      (loader.tlci-loader-load-from-bytes-with-checked-registry
+        owner-arena
+        bytes
+        (& host))
+      (match (tlci.tlci-validate-host-callback-table (& host))
+        [(Err message) (Err message)]
+        [(Ok)
+          (set! compiler-comptime-host-registry-checked true)
+          (loader.tlci-loader-load-from-bytes-with-checked-registry
+            owner-arena
+            bytes
+            (& host))]))))

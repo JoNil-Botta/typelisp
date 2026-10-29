@@ -1661,52 +1661,58 @@
       (match (owned_view.compiler-owned-reference-shared-view (& entry.image))
         [(None) Unavailable]
         [(Some image)
-          (match (surface_hydrate.compiler-surface-key (& image.rodata))
+          (match (tlci.tlci-aux-checked-directory (& image.rodata))
             [(or (Missing) (Err _)) Unavailable]
-            [(Ok key)
-              (if (not
-                (compiler-load-dependency-surface-key-current?
-                  (& entry.key)
-                  key
-                  configuration))
-                Unavailable
-                (let
-                  [pool-arena : i64 (ast.ast-node-pool-arena-make)]
-                  [pools : ast.AstNodePoolContext
-                    (in-arena
-                      (unsafe
-                        (arena.Arena pool-arena))
-                      (ast.ast-node-pool-context-new-with-capacities-in-arena
-                        1
-                        1
-                        pool-arena))]
-                  [spmd-callables : tlci.TlciSpmdCallables
-                    (in-arena
-                      (unsafe
-                        (arena.Arena
-                          (ast.ast-node-pool-context-base-arena pools)))
-                      (compiler-load-dependency-surface-copy-spmd-callables
-                        entry.spmd-callables))]
-                  [hydrated : surface_hydrate.ResultCompilerSurfaceHydration
-                    (in-arena
-                      (unsafe
-                        (arena.Arena
-                          (ast.ast-node-pool-context-base-arena pools)))
-                      (surface_hydrate.compiler-surface-hydrate
-                        (& image.rodata)
-                        (& key)
-                        structural-session
-                        pools))]
-                  (match hydrated
-                    [(Ok hydration) (Ready hydration spmd-callables)]
-                    [_
-                      (let
-                        [base-arena : i64
-                          (ast.ast-node-pool-context-base-arena pools)]
-                        (ast.ast-node-pool-context-destroy-storage! pools)
-                        (unsafe
-                          (arena.tl_arena_destroy base-arena))
-                        Unavailable)])))])])]))
+            [(Ok checked)
+              (match (surface_hydrate.compiler-surface-key
+                (& image.rodata)
+                (& checked))
+                [(or (Missing) (Err _)) Unavailable]
+                [(Ok key)
+                  (if (not
+                    (compiler-load-dependency-surface-key-current?
+                      (& entry.key)
+                      key
+                      configuration))
+                    Unavailable
+                    (let
+                      [pool-arena : i64 (ast.ast-node-pool-arena-make)]
+                      [pools : ast.AstNodePoolContext
+                        (in-arena
+                          (unsafe
+                            (arena.Arena pool-arena))
+                          (ast.ast-node-pool-context-new-with-capacities-in-arena
+                            1
+                            1
+                            pool-arena))]
+                      [spmd-callables : tlci.TlciSpmdCallables
+                        (in-arena
+                          (unsafe
+                            (arena.Arena
+                              (ast.ast-node-pool-context-base-arena pools)))
+                          (compiler-load-dependency-surface-copy-spmd-callables
+                            entry.spmd-callables))]
+                      [hydrated : surface_hydrate.ResultCompilerSurfaceHydration
+                        (in-arena
+                          (unsafe
+                            (arena.Arena
+                              (ast.ast-node-pool-context-base-arena pools)))
+                          (surface_hydrate.compiler-surface-hydrate
+                            (& image.rodata)
+                            (& checked)
+                            (& key)
+                            structural-session
+                            pools))]
+                      (match hydrated
+                        [(Ok hydration) (Ready hydration spmd-callables)]
+                        [_
+                          (let
+                            [base-arena : i64
+                              (ast.ast-node-pool-context-base-arena pools)]
+                            (ast.ast-node-pool-context-destroy-storage! pools)
+                            (unsafe
+                              (arena.tl_arena_destroy base-arena))
+                            Unavailable)])))])])])]))
 
 (define (compiler-load-session-state-structural-session
   [state : (& CompilerLoadSessionState)]) : cis.InternStructuralSessionHandle

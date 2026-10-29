@@ -200,10 +200,9 @@
   [_bytes : (__tl_dyn-array u8)]) : load.CompilerLoadDependencyCatalogStatus
   (cfg
     embedded-stdlib-tlci
-    (match (loader.tlci-loader-load-from-bytes-with-host
+    (match (comptime_host.compiler-comptime-host-load-from-bytes
       _owner
-      (& _bytes)
-      (& (comptime_host.compiler-comptime-host-table)))
+      (& _bytes))
       [(Ok loaded)
         (load.CompilerLoadDependencyCatalogStatus.TrustedCode loaded)]
       [(Err message)

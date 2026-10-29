@@ -3239,31 +3239,38 @@
       outer-build
       (build_identity.compiler-build-producer-identity))
       [(ExactMatch)
-        (match (compiler_surface_hydrate.compiler-surface-key (& rodata))
+        (match (tlci.tlci-aux-checked-directory (& rodata))
           [(or (Missing) (Err _)) Missing]
-          [(Ok key)
-            (if (not
-              (compiler-driver-prelude-surface-key-valid?
-                key
-                outer-build
-                expected-source-hash
-                configuration))
-              Missing
-              (match (compiler_surface_hydrate.compiler-surface-hydrate
-                (& rodata)
-                (& key)
-                (compiler_load.compiler-load-session-state-structural-session
-                  (& load-state))
-                pools)
-                [(or (Missing) (KeyMismatch _) (Err _)) Missing]
-                [(Ok hydration)
-                  (let
-                    [ast : surface_ast.SurfaceAstHydration hydration.ast]
-                    [facts : surface_facts.SurfaceTypecheckFacts
-                      hydration.facts]
-                    (if (surface_facts.surface-typecheck-facts-publish! facts)
-                      (Ok ast.decls ast.paths ast.modules ast.seen)
-                      Missing))]))])]
+          [(Ok checked)
+            (match (compiler_surface_hydrate.compiler-surface-key
+              (& rodata)
+              (& checked))
+              [(or (Missing) (Err _)) Missing]
+              [(Ok key)
+                (if (not
+                  (compiler-driver-prelude-surface-key-valid?
+                    key
+                    outer-build
+                    expected-source-hash
+                    configuration))
+                  Missing
+                  (match (compiler_surface_hydrate.compiler-surface-hydrate
+                    (& rodata)
+                    (& checked)
+                    (& key)
+                    (compiler_load.compiler-load-session-state-structural-session
+                      (& load-state))
+                    pools)
+                    [(or (Missing) (KeyMismatch _) (Err _)) Missing]
+                    [(Ok hydration)
+                      (let
+                        [ast : surface_ast.SurfaceAstHydration hydration.ast]
+                        [facts : surface_facts.SurfaceTypecheckFacts
+                          hydration.facts]
+                        (if (surface_facts.surface-typecheck-facts-publish!
+                          facts)
+                          (Ok ast.decls ast.paths ast.modules ast.seen)
+                          Missing))]))])])]
       [_ Missing])))
 
 (cfg

@@ -974,6 +974,18 @@
     [_ (try (tlci.tlci-validate-host-callback-table host-table))]
     (tlci-loader-load-from-bytes-with-registration owner-arena bytes host-table)))
 
+;: As `tlci-loader-load-from-bytes-with-host`, for a host table whose import
+;: registry has already passed `tlci.tlci-validate-host-callback-registry` and
+;: cannot have changed since; only its header is checked again. The compiled-in
+;: registry is the one such table (#9449).
+(define (tlci-loader-load-from-bytes-with-checked-registry
+  [owner-arena : i64]
+  [bytes : (& (__tl_dyn-array u8))]
+  [host-table : (& tlci.TlciHostCallbackTable)]) : ResultTlciLoadedImage
+  (let
+    [_ (try (tlci.tlci-validate-host-callback-header host-table))]
+    (tlci-loader-load-from-bytes-with-registration owner-arena bytes host-table)))
+
 (define (tlci-loader-address-range-contained?
   [addr : i64]
   [len : i64]

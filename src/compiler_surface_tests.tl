@@ -25,6 +25,7 @@
   compiler-surface-selftest
   (import compiler_surface_identity as surface_identity))
 (cfg compiler-surface-selftest (import sym_i64_env))
+(cfg compiler-surface-selftest (import tlci_core as tlci))
 
 (cfg
   compiler-surface-selftest
@@ -2170,11 +2171,8 @@
                 unit
                 (set! ok false))]
             [_ (set! ok false)])
-          (match (surface_hydrate.compiler-surface-hydrate
-            (& (__tl_make-array u8 0))
-            (& payloads.key)
-            structural-session
-            pools)
+          ;; Rodata without an aux directory has nothing to hydrate.
+          (match (tlci.tlci-aux-checked-directory (& (__tl_make-array u8 0)))
             [(Missing) unit]
             [_ (set! ok false)])
           (if (and

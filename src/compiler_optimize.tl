@@ -61544,12 +61544,14 @@
           [(Mov _ src _)
             (match src
               [(Var src-id)
-                (opt-unroll-resolve-copy
-                  instrs
-                  phi-count
-                  last
-                  src-id
-                  (- fuel 1))]
+                (if (opt-addr-taken-operand? (& src))
+                  var
+                  (opt-unroll-resolve-copy
+                    instrs
+                    phi-count
+                    last
+                    src-id
+                    (- fuel 1)))]
               [_ var])]
           [_ var])))))
 
@@ -71182,23 +71184,27 @@
           [(Mov _ src _)
             (match src
               [(Var src-id)
-                (opt-bce-version-resolve
-                  instrs
-                  phi-count
-                  last
-                  src-id
-                  (- fuel 1))]
-              [_ var])]
-          [(Cast _ src from-ty to-ty)
-            (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
-              (match src
-                [(Var src-id)
+                (if (opt-addr-taken-operand? (& src))
+                  var
                   (opt-bce-version-resolve
                     instrs
                     phi-count
                     last
                     src-id
-                    (- fuel 1))]
+                    (- fuel 1)))]
+              [_ var])]
+          [(Cast _ src from-ty to-ty)
+            (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
+              (match src
+                [(Var src-id)
+                  (if (opt-addr-taken-operand? (& src))
+                    var
+                    (opt-bce-version-resolve
+                      instrs
+                      phi-count
+                      last
+                      src-id
+                      (- fuel 1)))]
                 [_ var])
               var)]
           [_ var])))))
@@ -75997,7 +76003,9 @@
     [(No) (No)]))
 
 ;; Resolve through Mov copies and 64-bit int reinterpret casts anywhere in
-;; the loop (the multi-block analogue of `opt-bce-version-resolve`).
+;; the loop (the multi-block analogue of `opt-bce-version-resolve`). A copy of
+;; an address-taken local is that storage read at one point, so resolution
+;; stops at the copy: two such reads must not compare equal (#9420).
 (define (opt-bce-mb-resolve
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [var : i64]
@@ -76010,12 +76018,18 @@
         (match instr
           [(Mov _ src _)
             (match src
-              [(Var src-id) (opt-bce-mb-resolve blocks src-id (- fuel 1))]
+              [(Var src-id)
+                (if (opt-addr-taken-operand? (& src))
+                  var
+                  (opt-bce-mb-resolve blocks src-id (- fuel 1)))]
               [_ var])]
           [(Cast _ src from-ty to-ty)
             (if (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
               (match src
-                [(Var src-id) (opt-bce-mb-resolve blocks src-id (- fuel 1))]
+                [(Var src-id)
+                  (if (opt-addr-taken-operand? (& src))
+                    var
+                    (opt-bce-mb-resolve blocks src-id (- fuel 1)))]
                 [_ var])
               var)]
           [_ var])])))
@@ -84029,7 +84043,7 @@
                 (if (and
                   (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
                   (match (& src)
-                    [(Var _) true]
+                    [(Var _) (not (opt-addr-taken-operand? (& src)))]
                     [_ false]))
                   (opt-bce-mb-canon-value blocks src)
                   (Var resolved))]

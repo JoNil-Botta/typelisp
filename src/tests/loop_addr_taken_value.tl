@@ -127,6 +127,7 @@
          %2 = addr_of %0
          %3 = mov %1 : i64
          store_ptr %2, 4 : i64
+         %5 = mov %0 : i64
          return %0")]
     [instrs
       (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label "entry"))
@@ -156,6 +157,22 @@
       (opt.opt-bce-mb-resolve (& blocks) 3 16)
       1
       "multi-block proofs keep ordinary copies")
+    (test.assert-true
+      (and
+        (= (opt.opt-bce-mb-resolve (& blocks) 5 16) 5)
+        (= (opt.opt-bce-version-resolve (& instrs) 0 instrs.len 5 16) 5)
+        (= (opt.opt-unroll-resolve-copy (& instrs) 0 instrs.len 5 16) 5)
+        (match (opt.opt-bce-mb-canon-value
+          (& blocks)
+          (& (ir.CompilerIrValue.Var 5)))
+          [(Var id) (= id 5)]
+          [_ false]))
+      "a copy of mutable storage is its own read, not the storage")
+    (test.assert-true
+      (and
+        (= (opt.opt-bce-version-resolve (& instrs) 0 instrs.len 3 16) 1)
+        (= (opt.opt-unroll-resolve-copy (& instrs) 0 instrs.len 3 16) 1))
+      "single-block resolution keeps ordinary copies")
     (test.assert-true
       (match (opt.opt-bce-version-invariant-operand
         (& instrs)

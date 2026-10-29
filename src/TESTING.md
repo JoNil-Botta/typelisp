@@ -126,7 +126,8 @@ index-8, length-8 bounds abort, and the unroll row must return 42. The IR tests
 in `tests/loop_addr_taken_value.tl` cover single- and multi-block versioning,
 unrolling, mutable bound/length/index refusals, unrelated-store,
 ordinary-index and captured-value controls, per-function mark installation,
-and definition-based value proofs. `loop-addr-taken-invariant-leaves` pins
+and definition-based value proofs, including copy resolution that stops at a
+copy of mutable storage. `loop-addr-taken-invariant-leaves` pins
 each remaining invariance rule (constant-trip base and length, self-phi input,
 preheader twin, descriptor handle, fill/copy base and addend) against an
 ordinary control.

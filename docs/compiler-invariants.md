@@ -2052,7 +2052,9 @@ constant fact naming such a var, as destination or source.
   that calls a var invariant, whether as a bound, length, index, base, addend,
   descriptor handle, self-phi input or preheader twin, also asks
   `opt-loop-invariant-var?`. Bounds versioning and unrolling also refuse to
-  derive copy, arithmetic or guard facts from its direct definition. Each
+  derive copy, arithmetic or guard facts from its direct definition, and their
+  copy resolution stops at a copy of one: that copy is the storage read at one
+  point, so two such reads never compare equal. Each
   installs the set for its own function once it finds a candidate or loop. A
   separate value captured before the loop remains invariant (#9420).
 - One scan builds both, and allocates nothing for a function without an

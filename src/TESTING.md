@@ -485,7 +485,7 @@ suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the
 bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47).
 
 `compiler-driver-retained-image-owner` in `compiler_driver_smoke_tests.tl`
-checks embedded-image retention, nonpositive and nested owners, forgetting a
+checks embedded-surface retention, nonpositive and nested owners, forgetting a
 borrowed owner, and reuse after the previous owner is destroyed. Run it at
 opt0, opt1 and opt2. The native-route stress and stdlib identity differential
 gates retain their complete native/source batches, mapping lifecycles,
@@ -2420,7 +2420,7 @@ duplicate routes, stale identities, and unequal payload artifacts before the
 expensive bootstrap begins. Checked-in sources are never edited by this gate.
 
 The `verify-embedded-stdlib-tlci.sh` gate separately checks ordinary-image and
-envelope byte determinism and exact envelope expansion, proves that a
+envelope byte determinism and exact ordinary-image reconstruction, proves that a
 source-only mutation changes the image, ratchets source-lowered native-entry
 coverage, and stress-tests the mapped host callback/session bridge on both
 hosts. Unsupported transformer shapes remain explicit registration shells and
@@ -2429,6 +2429,15 @@ identity/arity/variadic/result-kind census from the parsed producer inputs and
 compares it with `tools/embedded-stdlib-tlci/identity-fixtures.tsv`; additions,
 removals, duplicates, or declaration-shape changes therefore require an
 explicit fixture review.
+
+The TLCH v2 index tests reject every proper truncation, overflowing bounds,
+wrong hashes, duplicate or unsorted identities, overlapping bodies and nonzero
+padding. The stage0 scanner independently checks that indexed layout and
+accounts for the complete shared model, index and bitstreams. The embedded
+verifier dispatches a cached entry after loading another frame, checks
+terminal-shell state, then releases/remaps and rejects the stale generation.
+The ordinary LZSS formats, exact payload parity, compression bound and complete
+macro census remain unchanged.
 
 `verify-stdlib-tlci-identity-differential.sh`, invoked by the required
 compile-profile gate, compiles the fixture manifest's witnesses through the
@@ -3195,3 +3204,10 @@ targets. `legacy_box_get_public_deref.tl` and
 `legacy_box_get_owned_template.tl` print `via-ref=[hello]` at all three levels
 on both hosts; `legacy_box_get_owned_places.tl` retains Box fields reached
 through references, nested owned Boxes and public shared/mutable projections.
+
+The compile-profile lifetime ledger attributes immutable TLCI decode tables and
+session bookkeeping to `embedded-tlci-cache` with process lifetime. Each job
+snapshots that owner separately at load and macro boundaries. Planted controls
+remove cache or other-owner attribution, exceed a boundary snapshot, or alter
+reconciliation; every control must fail the same strict ledger checker. Exact
+reconciliation and the 95% named-owner coverage threshold remain unchanged.

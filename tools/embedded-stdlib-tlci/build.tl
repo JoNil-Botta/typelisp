@@ -3,6 +3,7 @@
 ;; interpreted path.
 (import compiler_parse_core)
 (import compiler_tlci_native_producer)
+(import compiler_embedded_stdlib_tlci_frames_encoder as frames_encoder)
 (import tlci_core)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
@@ -291,32 +292,20 @@
     (& (embedded-stdlib-tlci-source-context))
     (tlci_core.tlci-metadata-emit
       (& (tlci_core.tlci-make-metadata "v1" "stdlib" "0.1.0")))
-    build-hash
+    (string.copy (& build-hash))
     windows-target
-    rodata
+    (clone rodata)
     (ast.ast-place-shared-view names)
     captures)
     [(Err message)
       (io.print-error (str_cat.str-cat "embedded stdlib tlci: " message "\n"))
       1]
-    [(Ok bytes)
+    [(Ok _bytes)
       (let
-        [bytes-len : i64 (array-length bytes)]
-        [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
-        (io.write-file output (byte_buf.as-bytes (& contents)))
-        (io.print-format
-          "{}"
-          (str_cat.str-cat
-            "embedded stdlib tlci: wrote "
-            (string.int->string bytes-len)
-            " bytes for "
-            (string.int->string (array-length names))
-            " macro entries ("
-            (string.int->string
-              (array-ref
-                compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
-                0))
-            " native)\n"))
+        [native-count : i64
+          (array-ref
+            compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
+            0)]
         ;; The native entry count is an upper bound on coverage: a native entry
         ;; may still route single arms back to the interpreter. Report the arm
         ;; sites separately so #5596's zero-fallback goal is measurable.
@@ -364,7 +353,39 @@
                 compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-interpreted-arms
                 0))
             "\n"))
-        0)]))
+        (match (frames_encoder.compiler-embedded-stdlib-tlci-frames-build
+          (& (embedded-stdlib-tlci-source-context))
+          (tlci_core.tlci-metadata-emit
+            (& (tlci_core.tlci-make-metadata "v1" "stdlib" "0.1.0")))
+          build-hash
+          windows-target
+          rodata
+          (& names)
+          captures)
+          [(Err message)
+            (io.print-error (str_cat.str-cat message "\n"))
+            1]
+          [(Ok ordinary payload)
+            (let
+              [raw : byte_buf.ByteBuf (byte_buf.from-array ordinary)]
+              [packed : byte_buf.ByteBuf (byte_buf.from-array payload)]
+              (io.write-file
+                (string.copy (& output))
+                (byte_buf.as-bytes (& raw)))
+              (io.write-file
+                (str_cat.str-cat output ".tlch")
+                (byte_buf.as-bytes (& packed)))
+              (io.print-format
+                "{}"
+                (str_cat.str-cat
+                  "embedded stdlib tlci: wrote "
+                  (string.int->string (byte_buf.len (& raw)))
+                  " bytes for "
+                  (string.int->string (array-length names))
+                  " macro entries ("
+                  (string.int->string native-count)
+                  " native)\n"))
+              0)]))]))
 
 (define (main) : i64
   (if (and (!= (io.arg-count) 7) (!= (io.arg-count) 8))

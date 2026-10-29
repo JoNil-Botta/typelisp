@@ -241,8 +241,88 @@ analyze > "$work/report"
 grep -Fx "tlci_envelope_raw_bytes${tab}1" "$work/report" >/dev/null
 grep -Fx "tlci_envelope_static_bytes${tab}4422" "$work/report" >/dev/null
 grep -Fx "static_payload_bytes${tab}4503" "$work/report" >/dev/null
+# Indexed TLCH v2 retains exact complete accounting and fails closed on a
+# malformed authenticated index, frame range, identity or padding byte.
+. "$ROOT/scripts/lib-stage0-tlch.sh"
+u64() {
+    # These are binary octets, not locale-dependent Unicode characters.
+    LC_ALL=C awk -v value="$1" 'BEGIN { for (i=0;i<8;i++) { printf "%c",value%256; value=int(value/256) } }'
+}
+stamp_index() {
+    index_hash=$(od -An -v -tu1 "$work/v2" | awk '
+        BEGIN { h=1; i=0 }
+        { for (f=1;f<=NF && i<4583;f++) { h=(h*131+((i>=60 && i<68)?0:$f))%2147483647; i++ } }
+        END { printf "%.0f",h }')
+    u64 "$index_hash" | dd of="$work/v2" bs=1 seek=60 conv=notrunc 2>/dev/null
+}
+write_v2() {
+    {
+        printf '__typelisp_embedded_stdlib_tlch_v2__'
+        u64 528; u64 4583; u64 3; u64 0
+        dd if=/dev/zero bs=4369 count=1 2>/dev/null
+        u64 4581; u64 0; u64 4583; u64 176; u64 1; u64 0
+        u64 4581; u64 1; u64 4584; u64 176; u64 1; u64 0
+        u64 4582; u64 1; u64 4585; u64 176; u64 1; u64 0
+        printf 'ab\000\000\000'
+    } > "$work/v2"
+    stamp_index
+}
+reject_v2() {
+    if scan_stage0_tlch "$work/v2" > "$work/out" 2> "$work/err"; then
+        echo "TLCH v2 scanner accepted $label" >&2
+        exit 1
+    fi
+    grep -F "$1" "$work/err" >/dev/null || { cat "$work/err" >&2; exit 1; }
+}
+write_v2
+actual=$(scan_stage0_tlch "$work/v2")
+[ "$actual" = '1 528 3 4586' ] || {
+    echo "TLCH v2 scanner: expected 1 528 3 4586, got $actual" >&2
+    exit 1
+}
+{
+    frame 1 1 '\001A'
+    frame 2 4 '\365\211\000'
+    cat "$work/v2"
+} > "$work/frame"
+analyze > "$work/report"
+grep -Fx "tlci_envelope_raw_bytes	528" "$work/report" >/dev/null
+grep -Fx "tlci_envelope_static_bytes	4586" "$work/report" >/dev/null
+grep -Fx "static_payload_bytes	4667" "$work/report" >/dev/null
+label=v2-index-hash
+printf X | dd of="$work/v2" bs=1 seek=4581 conv=notrunc 2>/dev/null
+reject_v2 'index hash mismatch'
+label=v2-unsorted
+write_v2
+printf ba | dd of="$work/v2" bs=1 seek=4581 conv=notrunc 2>/dev/null
+stamp_index
+reject_v2 'unsorted or duplicate'
+label=v2-duplicate
+write_v2
+printf aa | dd of="$work/v2" bs=1 seek=4581 conv=notrunc 2>/dev/null
+stamp_index
+reject_v2 'unsorted or duplicate'
+label=v2-frame-overlap
+write_v2
+u64 4584 | dd of="$work/v2" bs=1 seek=4549 conv=notrunc 2>/dev/null
+stamp_index
+reject_v2 'invalid frame bounds'
+label=v2-name-range
+write_v2
+u64 2 | dd of="$work/v2" bs=1 seek=4541 conv=notrunc 2>/dev/null
+stamp_index
+reject_v2 'invalid frame bounds'
+label=v2-padding
+write_v2
+printf '\001' | dd of="$work/v2" bs=1 seek=4585 conv=notrunc 2>/dev/null
+reject_v2 'nonzero padding'
+label=v2-truncated
+write_v2
+dd if="$work/v2" of="$work/truncated-v2" bs=1 count=4585 2>/dev/null
+cp "$work/truncated-v2" "$work/v2"
+reject_v2 'invalid frame bounds'
 if [ "${1:-}" != --target-tmpdir ]; then
     mkdir "$work/target"
     TMPDIR="$work/target" "$ROOT/scripts/verify-stage0-lzss-scanner.sh" --target-tmpdir
 fi
-echo 'stage0 LZSS scanner formats and malformed payloads passed'
+echo 'stage0 LZSS/TLCH scanner formats and malformed payloads passed'

@@ -25590,7 +25590,7 @@
 (cfg
   (any compile-profile test)
   (define compiler-tc-profile-metric-count : i64
-    133))
+    139))
 
 (cfg
   (any compile-profile test)
@@ -25614,6 +25614,21 @@
     (compiler-tc-macro-lifetime-start-job-owner-bytes-metric)
     (compiler-tc-macro-lifetime-start-scoped-env-bytes-metric)
     (compiler-tc-macro-lifetime-start-intern-bytes-metric)))
+
+(cfg
+  (any compile-profile test)
+  (counters.defslots
+    compiler-tc-macro-lifetime-cache-start
+    138
+    (compiler-tc-macro-lifetime-start-cache-bytes-metric)))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-lifetime-cache-bytes) : i64
+    (cfg
+      embedded-stdlib-tlci
+      (embedded_tlci.compiler-embedded-stdlib-tlci-cache-bytes)
+      0)))
 
 (cfg
   (any compile-profile test)
@@ -94269,6 +94284,10 @@
       [enclosing-handle : i64 (arena.tl_arena_current)]
       (compiler-tc-profile-metric-set!
         metrics-address
+        compiler-tc-macro-lifetime-start-cache-bytes-metric
+        (compiler-tc-macro-lifetime-cache-bytes))
+      (compiler-tc-profile-metric-set!
+        metrics-address
         compiler-tc-macro-lifetime-start-total-metric
         (profile.alloc-total))
       (compiler-tc-profile-metric-set!
@@ -94485,8 +94504,15 @@
             (compiler-tc-profile-metric-value
               metrics-address
               compiler-tc-macro-lifetime-start-enclosing-bytes-metric)))]
+      [embedded-cache : i64
+        (-
+          (compiler-tc-macro-lifetime-cache-bytes)
+          (compiler-tc-profile-metric-value
+            metrics-address
+            compiler-tc-macro-lifetime-start-cache-bytes-metric))]
       [named : i64
         (+
+          embedded-cache
           interns
           (+
             scoped-env
@@ -94598,6 +94624,13 @@
         "retired"
         cumulative-alloc
         retired-generations
+        peak-delta)
+      (compiler-tc-macro-lifetime-emit-row!
+        (tc-global-shared-view boundary)
+        "embedded-tlci-cache"
+        "process"
+        cumulative-alloc
+        embedded-cache
         peak-delta)
       (compiler-tc-macro-lifetime-emit-row!
         boundary
@@ -109637,7 +109670,11 @@
     [catalog : (& catalog MacroTlciResolvedCatalog)]) : bool
     (match catalog
       [(Dependency _) true]
-      [(Embedded _) (embedded_tlci.compiler-embedded-stdlib-tlci-session-open!)])))
+      [(Embedded resolved)
+        (>=
+          (embedded_tlci.compiler-embedded-stdlib-tlci-session-index
+            resolved.catalog-generation)
+          0)])))
 
 (cfg
   embedded-stdlib-tlci
@@ -110072,7 +110109,10 @@
         (compiler-tc-tlci-native-stress-record!
           pools
           resolved.catalog-generation
-          resolved.entry-index
+          (-
+            (embedded_tlci.compiler-embedded-stdlib-tlci-session-index
+              resolved.catalog-generation)
+            1)
           1
           result-kind
           status)

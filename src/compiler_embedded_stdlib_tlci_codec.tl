@@ -323,323 +323,370 @@
                     (+ (array-ref table.first-symbols bits) offset)))))))
         (Err "embedded stdlib tlci envelope: invalid huffman code")))))
 
+(defstruct CompilerEmbeddedStdlibTlciFastState
+  (next-byte i64)
+  (buffer i64)
+  (available i64)
+  (out-index i64))
+
+(define (compiler-embedded-stdlib-tlci-codec-fast!
+  [payload-data : (Ptr u8)]
+  [out-data : (MutPtr u8)]
+  [raw-len : i64]
+  [byte-limit : i64]
+  [main-data : (MutPtr i64)]
+  [distance-data : (MutPtr i64)]
+  [length-data : (MutPtr i64)]
+  [initial : CompilerEmbeddedStdlibTlciFastState]) : CompilerEmbeddedStdlibTlciFastState
+  (let
+    [next-byte : i64 initial.next-byte]
+    [buffer : i64 initial.buffer]
+    [available : i64 initial.available]
+    [out-index : i64 initial.out-index]
+    [fast? : bool true]
+    (while (and fast? (<= out-index (- raw-len 24)) (<= next-byte byte-limit))
+      (when
+        (< available 48)
+        (when
+          (<= available 32)
+          (let
+            [word : i64
+              (cast
+                (unsafe
+                  (ptr-read
+                    (ptr-cast (ptr-offset payload-data next-byte) : (Ptr u32))))
+                : i64)]
+            [swapped : i64
+              (bit-or
+                (bit-or
+                  (shl (bit-and word 255) 24)
+                  (shl (bit-and (shr word 8) 255) 16))
+                (bit-or (shl (bit-and (shr word 16) 255) 8) (shr word 24)))]
+            (set! buffer (bit-or (shl buffer 32) swapped))
+            (+= next-byte 4)
+            (+= available 32)))
+        (when
+          (< available 48)
+          (let
+            [word : i64
+              (cast
+                (unsafe
+                  (ptr-read
+                    (ptr-cast (ptr-offset payload-data next-byte) : (Ptr u16))))
+                : i64)]
+            [swapped : i64 (bit-or (shl (bit-and word 255) 8) (shr word 8))]
+            (set! buffer (bit-or (shl buffer 16) swapped))
+            (+= next-byte 2)
+            (+= available 16))))
+      ;; 48 <= available <= 64 here, so every shift count below
+      ;; is in [0, 48] on the paths that use it.
+      (let
+        [entry : i64
+          (unsafe
+            (ptr-read
+              (ptr-offset
+                main-data
+                (bit-and (shr buffer (bit-and (- available 16) 63)) 65535))))]
+        (cond
+          [(<= entry 0) (set! fast? false)]
+          [(< (bit-and entry 8191) 257)
+            (unsafe
+              (ptr-write!
+                (ptr-offset out-data out-index)
+                (cast (- (bit-and entry 8191) 1) : u8)))
+            (+= out-index 1)
+            (-= available (shr entry 13))]
+          [else
+            (let
+              [after-main : i64 (- available (shr entry 13))]
+              [distance-entry : i64
+                (unsafe
+                  (ptr-read
+                    (ptr-offset
+                      distance-data
+                      (bit-and
+                        (shr buffer (bit-and (- after-main 16) 63))
+                        65535))))]
+              (if (<= distance-entry 0)
+                (set! fast? false)
+                (let
+                  [after-distance : i64 (- after-main (shr distance-entry 13))]
+                  [length-entry : i64
+                    (unsafe
+                      (ptr-read
+                        (ptr-offset
+                          length-data
+                          (bit-and
+                            (shr buffer (bit-and (- after-distance 16) 63))
+                            65535))))]
+                  ;; symbol + 1 is the low field: distance is the
+                  ;; distance symbol + 1, length the symbol + 3.
+                  [distance : i64 (bit-and distance-entry 8191)]
+                  [length : i64 (+ (bit-and length-entry 8191) 2)]
+                  (if (or
+                    (<= length-entry 0)
+                    (> distance out-index)
+                    (> length (- raw-len out-index)))
+                    (set! fast? false)
+                    (begin
+                      (set! available (- after-distance (shr length-entry 13)))
+                      (lzss.compiler-lzss-copy-short-match!
+                        out-data
+                        out-index
+                        distance
+                        length)
+                      (+= out-index length))))))])))
+    (CompilerEmbeddedStdlibTlciFastState next-byte buffer available out-index)))
+
 (define (compiler-embedded-stdlib-tlci-codec-decode-with-tables
   [payload : (& payload (__tl_dyn-array u8))]
   [raw-len : i64]
   [bit-len : i64]
   [bit-start : i64]
-  [main-start : i64]
+  [match-present : bool]
   [main-table : CompilerEmbeddedStdlibTlciHuffmanTable]
   [distance-table : CompilerEmbeddedStdlibTlciHuffmanTable]
   [length-table : CompilerEmbeddedStdlibTlciHuffmanTable]) : CompilerEmbeddedStdlibTlciCodecBytes
-  (let
-    [match-present : bool
-      (> (array-ref payload (+ main-start 256)) (cast 0 : u8))]
-    (cond
-      [(and (= raw-len 0) (!= bit-len 0))
-        (Err "embedded stdlib tlci envelope: nonempty stream for empty output")]
-      [(and
-          (= raw-len 0)
-          (or
-            (> main-table.active 0)
-            (> distance-table.active 0)
-            (> length-table.active 0)))
-        (Err "embedded stdlib tlci envelope: nonempty tables for empty output")]
-      [(and (> raw-len 0) (= main-table.active 0))
-        (Err "embedded stdlib tlci envelope: missing main huffman table")]
-      [(and
-          match-present
-          (or (= distance-table.active 0) (= length-table.active 0)))
-        (Err "embedded stdlib tlci envelope: missing match huffman table")]
-      [(and
-          (not match-present)
-          (or (> distance-table.active 0) (> length-table.active 0)))
-        (Err "embedded stdlib tlci envelope: unexpected match huffman table")]
-      [else
-        ;; The bit reader lives in locals and a symbol whose 16-bit prefix hits
-        ;; its table's direct entry is decoded right here, exactly as the first
-        ;; branch of decode-symbol would; every other symbol -- a longer code,
-        ;; or one within 16 bits of the stream's end -- goes through
-        ;; decode-symbol itself on a reader rebuilt from the locals, so the
-        ;; call, its Result and a reader behind a reference are not paid once
-        ;; per symbol of a multi-megabyte image.
+  (cond
+    [(and (= raw-len 0) (!= bit-len 0))
+      (Err "embedded stdlib tlci envelope: nonempty stream for empty output")]
+    [(and
+        (= raw-len 0)
+        (or
+          (> main-table.active 0)
+          (> distance-table.active 0)
+          (> length-table.active 0)))
+      (Err "embedded stdlib tlci envelope: nonempty tables for empty output")]
+    [(and (> raw-len 0) (= main-table.active 0))
+      (Err "embedded stdlib tlci envelope: missing main huffman table")]
+    [(and
+        match-present
+        (or (= distance-table.active 0) (= length-table.active 0)))
+      (Err "embedded stdlib tlci envelope: missing match huffman table")]
+    [(and
+        (not match-present)
+        (or (> distance-table.active 0) (> length-table.active 0)))
+      (Err "embedded stdlib tlci envelope: unexpected match huffman table")]
+    [else
+      ;; The bit reader lives in locals and a symbol whose 16-bit prefix hits
+      ;; its table's direct entry is decoded right here, exactly as the first
+      ;; branch of decode-symbol would; every other symbol -- a longer code,
+      ;; or one within 16 bits of the stream's end -- goes through
+      ;; decode-symbol itself on a reader rebuilt from the locals, so the
+      ;; call, its Result and a reader behind a reference are not paid once
+      ;; per symbol of a multi-megabyte image.
+      (let
+        [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
+        [out-index : i64 0]
+        [main-lookup : (__tl_dyn-array i64)
+          (owned_view.compiler-owned-shared-view main-table.lookup)]
+        [distance-lookup : (__tl_dyn-array i64)
+          (owned_view.compiler-owned-shared-view distance-table.lookup)]
+        [length-lookup : (__tl_dyn-array i64)
+          (owned_view.compiler-owned-shared-view length-table.lookup)]
+        [fast-limit : i64
+          (- bit-len (compiler-embedded-stdlib-tlci-codec-lookup-bits))]
+        [next-byte : i64 bit-start]
+        [buffer : i64 0]
+        [available : i64 0]
+        [consumed : i64 0]
+        [stage : i64 0]
+        [symbol : i64 0]
+        [distance-symbol : i64 0]
+        ;; Fast phase, while at least 16 bitstream bytes are unread. One
+        ;; refill to 48+ bits then covers a whole token -- a literal, or a
+        ;; match's three codes of at most 16 bits each -- and every direct
+        ;; read is in range: each table holds exactly lookup-size entries
+        ;; and its index is 16 bits. A token that needs anything else (a
+        ;; longer code, or a match the general loop would reject) leaves
+        ;; this loop before consuming a bit, and the general loop below
+        ;; decodes it, errors included.
         (let
-          [out : (__tl_dyn-array u8) (__tl_make-array u8 raw-len)]
-          [out-index : i64 0]
-          [main-lookup : (__tl_dyn-array i64)
-            (owned_view.compiler-owned-shared-view main-table.lookup)]
-          [distance-lookup : (__tl_dyn-array i64)
-            (owned_view.compiler-owned-shared-view distance-table.lookup)]
-          [length-lookup : (__tl_dyn-array i64)
-            (owned_view.compiler-owned-shared-view length-table.lookup)]
-          [fast-limit : i64
-            (- bit-len (compiler-embedded-stdlib-tlci-codec-lookup-bits))]
-          [next-byte : i64 bit-start]
-          [buffer : i64 0]
-          [available : i64 0]
-          [consumed : i64 0]
-          [stage : i64 0]
-          [symbol : i64 0]
-          [distance-symbol : i64 0]
-          ;; Fast phase, while at least 16 bitstream bytes are unread. One
-          ;; refill to 48+ bits then covers a whole token -- a literal, or a
-          ;; match's three codes of at most 16 bits each -- and every direct
-          ;; read is in range: each table holds exactly lookup-size entries
-          ;; and its index is 16 bits. A token that needs anything else (a
-          ;; longer code, or a match the general loop would reject) leaves
-          ;; this loop before consuming a bit, and the general loop below
-          ;; decodes it, errors included.
-          (let
-            [lookup-size : i64
-              (compiler-embedded-stdlib-tlci-codec-lookup-size)]
-            [byte-limit : i64 (- (array-length payload) 16)]
-            [tables-ok? : bool
-              (and
-                (= (array-length main-lookup) lookup-size)
-                (= (array-length distance-lookup) lookup-size)
-                (= (array-length length-lookup) lookup-size))]
-            [fast? : bool false]
-            [payload-view : (__tl_dyn-array u8)
-              (owned_view.compiler-owned-reference-shared-view payload)]
-            [payload-data : (Ptr u8)
-              (unsafe
-                (ptr-cast (__tl_array-data payload-view) : (Ptr u8)))]
-            [out-data : (MutPtr u8)
-              (unsafe
-                (__tl_array-data out))]
-            [main-data : (MutPtr i64)
-              (unsafe
-                (__tl_array-data main-lookup))]
-            [distance-data : (MutPtr i64)
-              (unsafe
-                (__tl_array-data distance-lookup))]
-            [length-data : (MutPtr i64)
-              (unsafe
-                (__tl_array-data length-lookup))]
-            (while (< out-index raw-len)
-              (set! fast? (and tables-ok? (>= next-byte 0)))
-              (while (and fast? (< out-index raw-len) (<= next-byte byte-limit))
-                (when
-                  (< available 48)
-                  (while (<= available 56)
-                    (set!
+          [lookup-size : i64 (compiler-embedded-stdlib-tlci-codec-lookup-size)]
+          [byte-limit : i64 (- (array-length payload) 16)]
+          [tables-ok? : bool
+            (and
+              (= (array-length main-lookup) lookup-size)
+              (= (array-length distance-lookup) lookup-size)
+              (= (array-length length-lookup) lookup-size))]
+          [fast? : bool false]
+          [payload-view : (__tl_dyn-array u8)
+            (owned_view.compiler-owned-reference-shared-view payload)]
+          [payload-data : (Ptr u8)
+            (unsafe
+              (ptr-cast (__tl_array-data payload-view) : (Ptr u8)))]
+          [out-data : (MutPtr u8)
+            (unsafe
+              (__tl_array-data out))]
+          [main-data : (MutPtr i64)
+            (unsafe
+              (__tl_array-data main-lookup))]
+          [distance-data : (MutPtr i64)
+            (unsafe
+              (__tl_array-data distance-lookup))]
+          [length-data : (MutPtr i64)
+            (unsafe
+              (__tl_array-data length-lookup))]
+          (while (< out-index raw-len)
+            (set! fast? (and tables-ok? (>= next-byte 0)))
+            (when
+              fast?
+              (let
+                [fast : CompilerEmbeddedStdlibTlciFastState
+                  (compiler-embedded-stdlib-tlci-codec-fast!
+                    payload-data
+                    out-data
+                    raw-len
+                    byte-limit
+                    main-data
+                    distance-data
+                    length-data
+                    (CompilerEmbeddedStdlibTlciFastState
+                      next-byte
                       buffer
-                      (bit-or
-                        (shl buffer 8)
-                        ;; This refill reads at most eight bytes.
-                        ;; The enclosing guard proves sixteen remain,
-                        ;; so every byte is within the payload.
-                        (cast
-                          (unsafe
-                            (ptr-read (ptr-offset payload-data next-byte)))
-                          : i64)))
-                    (+= next-byte 1)
-                    (+= available 8)))
-                ;; 48 <= available <= 64 here, so every shift count below
-                ;; is in [0, 48] on the paths that use it.
+                      available
+                      out-index))]
+                (set! next-byte fast.next-byte)
+                (set! buffer fast.buffer)
+                (set! available fast.available)
+                (set! out-index fast.out-index)))
+            (set! consumed (- (* (- next-byte bit-start) 8) available))
+            (when
+              (< out-index raw-len)
+              ;; stage 0: main symbol, 1: distance, 2: length
+              (set! symbol (- 0 1))
+              (when
+                (and (<= consumed fast-limit) (> (array-length main-lookup) 0))
+                (while (< available 16)
+                  (set!
+                    buffer
+                    (bit-or
+                      (shl buffer 8)
+                      (cast (array-ref payload next-byte) : i64)))
+                  (+= next-byte 1)
+                  (+= available 8))
                 (let
                   [entry : i64
-                    (unsafe
-                      (ptr-read
-                        (ptr-offset
-                          main-data
-                          (bit-and
-                            (shr buffer (bit-and (- available 16) 63))
-                            65535))))]
-                  (cond
-                    [(<= entry 0) (set! fast? false)]
-                    [(< (bit-and entry 8191) 257)
-                      (unsafe
-                        (ptr-write!
-                          (ptr-offset out-data out-index)
-                          (cast (- (bit-and entry 8191) 1) : u8)))
-                      (+= out-index 1)
-                      (-= available (shr entry 13))]
-                    [else
-                      (let
-                        [after-main : i64 (- available (shr entry 13))]
-                        [distance-entry : i64
-                          (unsafe
-                            (ptr-read
-                              (ptr-offset
-                                distance-data
-                                (bit-and
-                                  (shr buffer (bit-and (- after-main 16) 63))
-                                  65535))))]
-                        (if (<= distance-entry 0)
-                          (set! fast? false)
-                          (let
-                            [after-distance : i64
-                              (- after-main (shr distance-entry 13))]
-                            [length-entry : i64
-                              (unsafe
-                                (ptr-read
-                                  (ptr-offset
-                                    length-data
-                                    (bit-and
-                                      (shr
-                                        buffer
-                                        (bit-and (- after-distance 16) 63))
-                                      65535))))]
-                            ;; symbol + 1 is the low field: distance is the
-                            ;; distance symbol + 1, length the symbol + 3.
-                            [distance : i64 (bit-and distance-entry 8191)]
-                            [length : i64 (+ (bit-and length-entry 8191) 2)]
-                            (if (or
-                              (<= length-entry 0)
-                              (> distance out-index)
-                              (> length (- raw-len out-index)))
-                              (set! fast? false)
-                              (begin
-                                (set!
-                                  available
-                                  (- after-distance (shr length-entry 13)))
-                                (lzss.compiler-lzss-copy-match!
-                                  out-data
-                                  out-index
-                                  distance
-                                  length)
-                                (+= out-index length))))))])))
-              (set! consumed (- (* (- next-byte bit-start) 8) available))
+                    (array-ref
+                      main-lookup
+                      (bit-and (shr buffer (- available 16)) 65535))]
+                  (when
+                    (> entry 0)
+                    (let
+                      [length : i64 (shr entry 13)]
+                      (-= available length)
+                      (+= consumed length)
+                      (set! symbol (- (bit-and entry 8191) 1))))))
               (when
-                (< out-index raw-len)
-                ;; stage 0: main symbol, 1: distance, 2: length
-                (set! symbol (- 0 1))
-                (when
-                  (and
-                    (<= consumed fast-limit)
-                    (> (array-length main-lookup) 0))
-                  (while (< available 16)
-                    (set!
+                (< symbol 0)
+                (let
+                  [reader : CompilerEmbeddedStdlibTlciBitReader
+                    (CompilerEmbeddedStdlibTlciBitReader
+                      next-byte
                       buffer
-                      (bit-or
-                        (shl buffer 8)
-                        (cast (array-ref payload next-byte) : i64)))
-                    (+= next-byte 1)
-                    (+= available 8))
-                  (let
-                    [entry : i64
-                      (array-ref
-                        main-lookup
-                        (bit-and (shr buffer (- available 16)) 65535))]
-                    (when
-                      (> entry 0)
-                      (let
-                        [length : i64 (shr entry 13)]
-                        (-= available length)
-                        (+= consumed length)
-                        (set! symbol (- (bit-and entry 8191) 1))))))
-                (when
-                  (< symbol 0)
-                  (let
-                    [reader : CompilerEmbeddedStdlibTlciBitReader
-                      (CompilerEmbeddedStdlibTlciBitReader
-                        next-byte
-                        buffer
-                        available
-                        consumed)]
-                    [value
-                      (try
-                        (compiler-embedded-stdlib-tlci-codec-decode-symbol
-                          payload
-                          bit-len
-                          (&mut reader)
-                          (& main-table)))]
-                    (set! symbol value)
-                    (set! next-byte reader.next-byte)
-                    (set! buffer reader.buffer)
-                    (set! available reader.available)
-                    (set! consumed reader.consumed)))
-                (if (< symbol 256)
-                  (begin
-                    (set! (array-ref out out-index) (cast symbol : u8))
-                    (+= out-index 1))
-                  (begin
-                    (set! stage 1)
-                    (while (> stage 0)
-                      (let
-                        [lookup : (__tl_dyn-array i64)
-                          (if (= stage 1)
-                            (owned_view.compiler-owned-shared-view
-                              distance-lookup)
-                            (owned_view.compiler-owned-shared-view
-                              length-lookup))]
-                        [value : i64 (- 0 1)]
-                        (when
-                          (and
-                            (<= consumed fast-limit)
-                            (> (array-length lookup) 0))
-                          (while (< available 16)
-                            (set!
-                              buffer
-                              (bit-or
-                                (shl buffer 8)
-                                (cast (array-ref payload next-byte) : i64)))
-                            (+= next-byte 1)
-                            (+= available 8))
-                          (let
-                            [entry : i64
-                              (array-ref
-                                lookup
-                                (bit-and (shr buffer (- available 16)) 65535))]
-                            (when
-                              (> entry 0)
-                              (let
-                                [length : i64 (shr entry 13)]
-                                (-= available length)
-                                (+= consumed length)
-                                (set! value (- (bit-and entry 8191) 1))))))
-                        (when
-                          (< value 0)
-                          (let
-                            [reader : CompilerEmbeddedStdlibTlciBitReader
-                              (CompilerEmbeddedStdlibTlciBitReader
-                                next-byte
-                                buffer
-                                available
-                                consumed)]
-                            [v
-                              (try
-                                (compiler-embedded-stdlib-tlci-codec-decode-symbol
-                                  payload
-                                  bit-len
-                                  (&mut reader)
-                                  (if (= stage 1)
-                                    (& distance-table)
-                                    (& length-table))))]
-                            (set! value v)
-                            (set! next-byte reader.next-byte)
-                            (set! buffer reader.buffer)
-                            (set! available reader.available)
-                            (set! consumed reader.consumed)))
+                      available
+                      consumed)]
+                  [value
+                    (try
+                      (compiler-embedded-stdlib-tlci-codec-decode-symbol
+                        payload
+                        bit-len
+                        (&mut reader)
+                        (& main-table)))]
+                  (set! symbol value)
+                  (set! next-byte reader.next-byte)
+                  (set! buffer reader.buffer)
+                  (set! available reader.available)
+                  (set! consumed reader.consumed)))
+              (if (< symbol 256)
+                (begin
+                  (set! (array-ref out out-index) (cast symbol : u8))
+                  (+= out-index 1))
+                (begin
+                  (set! stage 1)
+                  (while (> stage 0)
+                    (let
+                      [lookup : (__tl_dyn-array i64)
                         (if (= stage 1)
-                          (begin
-                            (set! distance-symbol value)
-                            (set! stage 2))
-                          (let
-                            [distance : i64 (+ distance-symbol 1)]
-                            [length : i64 (+ value 3)]
-                            (set! stage 0)
-                            (cond
-                              [(> distance out-index)
-                                (return
-                                  (Err
-                                    "embedded stdlib tlci envelope: backreference before output"))]
-                              [(> length (- raw-len out-index))
-                                (return
-                                  (Err
-                                    "embedded stdlib tlci envelope: backreference exceeds output"))]
-                              [else
-                                (lzss.compiler-lzss-copy-match!
-                                  (unsafe
-                                    (__tl_array-data out))
-                                  out-index
-                                  distance
-                                  length)
-                                (+= out-index length)]))))))))))
-          (if (!= consumed bit-len)
-            (Err "embedded stdlib tlci envelope: trailing huffman bits")
-            (Ok out)))])))
+                          (owned_view.compiler-owned-shared-view
+                            distance-lookup)
+                          (owned_view.compiler-owned-shared-view length-lookup))]
+                      [value : i64 (- 0 1)]
+                      (when
+                        (and
+                          (<= consumed fast-limit)
+                          (> (array-length lookup) 0))
+                        (while (< available 16)
+                          (set!
+                            buffer
+                            (bit-or
+                              (shl buffer 8)
+                              (cast (array-ref payload next-byte) : i64)))
+                          (+= next-byte 1)
+                          (+= available 8))
+                        (let
+                          [entry : i64
+                            (array-ref
+                              lookup
+                              (bit-and (shr buffer (- available 16)) 65535))]
+                          (when
+                            (> entry 0)
+                            (let
+                              [length : i64 (shr entry 13)]
+                              (-= available length)
+                              (+= consumed length)
+                              (set! value (- (bit-and entry 8191) 1))))))
+                      (when
+                        (< value 0)
+                        (let
+                          [reader : CompilerEmbeddedStdlibTlciBitReader
+                            (CompilerEmbeddedStdlibTlciBitReader
+                              next-byte
+                              buffer
+                              available
+                              consumed)]
+                          [v
+                            (try
+                              (compiler-embedded-stdlib-tlci-codec-decode-symbol
+                                payload
+                                bit-len
+                                (&mut reader)
+                                (if (= stage 1)
+                                  (& distance-table)
+                                  (& length-table))))]
+                          (set! value v)
+                          (set! next-byte reader.next-byte)
+                          (set! buffer reader.buffer)
+                          (set! available reader.available)
+                          (set! consumed reader.consumed)))
+                      (if (= stage 1)
+                        (begin
+                          (set! distance-symbol value)
+                          (set! stage 2))
+                        (let
+                          [distance : i64 (+ distance-symbol 1)]
+                          [length : i64 (+ value 3)]
+                          (set! stage 0)
+                          (cond
+                            [(> distance out-index)
+                              (return
+                                (Err
+                                  "embedded stdlib tlci envelope: backreference before output"))]
+                            [(> length (- raw-len out-index))
+                              (return
+                                (Err
+                                  "embedded stdlib tlci envelope: backreference exceeds output"))]
+                            [else
+                              (lzss.compiler-lzss-copy-match!
+                                (unsafe
+                                  (__tl_array-data out))
+                                out-index
+                                distance
+                                length)
+                              (+= out-index length)]))))))))))
+        (if (!= consumed bit-len)
+          (Err "embedded stdlib tlci envelope: trailing huffman bits")
+          (Ok out)))]))
 
 ;: Decode one complete embedded-image envelope after fail-closed validation.
 (define (compiler-embedded-stdlib-tlci-codec-decode
@@ -681,7 +728,7 @@
           raw-len
           bit-len
           bit-start
-          main-start
+          (> (array-ref payload (+ main-start 256)) (cast 0 : u8))
           main-table
           distance-table
           length-table))]))

@@ -32202,6 +32202,21 @@
 (define (compiler-backend-gep-sib-scale? [scale : i64]) : bool
   (or (= scale 1) (= scale 2) (= scale 4) (= scale 8)))
 
+;; Reuse the emitter's parsed offset and scale. A non-disp32 constant takes
+;; the existing register-index path, just like a dynamic offset.
+(defmacro (compiler-backend-disp32-displacement
+  [offset : Expr]
+  [scale : Expr]
+  [fold-disp : Expr]) : Expr
+  `(match (compiler-backend-value-as-i64 ,offset)
+    [(Some n)
+      (let
+        [disp : i64 (+ (* n ,scale) ,fold-disp)]
+        (if (compiler-backend-imm32? disp)
+          (Some disp)
+          (None)))]
+    [(None) (None)]))
+
 ;; GAP9 disp-aware SIB operand: `D(base,index,scale)`. The displacement is a
 ;; folded gep constant (compiler-backend-gep-fold-next!); 0 keeps the plain
 ;; spelling, and the non-SIB "" contract is unchanged.
@@ -32366,17 +32381,27 @@
             (let
               [disp : i64
                 (* n (compiler-backend-type-size type-segment-bases elem-ty))]
-              (if (if (= disp 0)
-                (string.eq base-reg dst-home)
-                false)
-                (Ok "")
-                (Ok
-                  (str_cat.str-cat
-                    "    leaq "
-                    (compiler-backend-copy-address disp base-reg)
-                    ", "
-                    dst-home
-                    "\n"))))]
+              (if (compiler-backend-imm32? disp)
+                (if (if (= disp 0)
+                  (string.eq base-reg dst-home)
+                  false)
+                  (Ok "")
+                  (Ok
+                    (str_cat.str-cat
+                      "    leaq "
+                      (compiler-backend-copy-address disp base-reg)
+                      ", "
+                      dst-home
+                      "\n")))
+                (compiler-backend-emit-gep-staged
+                  type-segment-bases
+                  assignments
+                  dst
+                  base
+                  offset
+                  elem-ty
+                  gep-disp
+                  backend-state)))]
           [(None)
             ;; GAP6b: variable index, both base and index register-homed with a
             ;; valid SIB scale -> compute the address in ONE leaq off the homes,
@@ -34278,212 +34303,213 @@
   [load-ty : compiler_ast_types.AstType]
   [gep-disp : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-value-as-i64 offset)
-    [(Some n)
-      (let
-        ;; IAG-1: an inline aggregate global's field read is a single
-        ;; `movq g+k(%rip), %r` -- no base register is materialised at all.
-        ;; Probed BEFORE the base scavenge below so a hit costs no pick.
-        [rip : String
-          (compiler-backend-inline-aggregate-gep-operand
-            backend-state
-            type-segment-bases
-            (compiler-backend-global-shared-view base)
-            offset
-            (compiler-backend-global-shared-view elem-ty)
-            gep-disp)]
-        ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
-        ;; displacement); merged for totality.
-        [disp : i64
-          (+
-            (* n (compiler-backend-type-size type-segment-bases elem-ty))
-            gep-disp)]
-        ;; base-reg-in "" -> scavenge our own base (single-load callers); else use
-        ;; the caller-supplied register (the gep-pair shares one base across both
-        ;; loads so the 2nd doesn't reload).
-        ;; M-C2: a register-homed base is used DIRECTLY as the addressing base --
-        ;; the constant-offset form only READS it, so no staging copy or scavenge
-        ;; is needed (emit-load-value then elides the self-move). A dst
-        ;; home equal to the base home is legal: `movq off(%rX), %rX` reads the
-        ;; address before writing, and home equality means the allocator proved
-        ;; the base value dead after this load.
-        [base-home : String
-          (if (string.eq rip "")
-            (compiler-backend-address-base-filter-direct
+  (let
+    [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
+    [displacement : option_i64.Option
+      (compiler-backend-disp32-displacement offset scale gep-disp)]
+    (match displacement
+      [(Some disp)
+        (let
+          ;; IAG-1: an inline aggregate global's field read is a single
+          ;; `movq g+k(%rip), %r` -- no base register is materialised at all.
+          ;; Probed BEFORE the base scavenge below so a hit costs no pick.
+          [rip : String
+            (compiler-backend-inline-aggregate-gep-operand
+              backend-state
+              type-segment-bases
+              (compiler-backend-global-shared-view base)
+              offset
+              (compiler-backend-global-shared-view elem-ty)
+              gep-disp)]
+          ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
+          ;; displacement); merged for totality.
+          ;; base-reg-in "" -> scavenge our own base (single-load callers); else use
+          ;; the caller-supplied register (the gep-pair shares one base across both
+          ;; loads so the 2nd doesn't reload).
+          ;; M-C2: a register-homed base is used DIRECTLY as the addressing base --
+          ;; the constant-offset form only READS it, so no staging copy or scavenge
+          ;; is needed (emit-load-value then elides the self-move). A dst
+          ;; home equal to the base home is legal: `movq off(%rX), %rX` reads the
+          ;; address before writing, and home equality means the allocator proved
+          ;; the base value dead after this load.
+          [base-home : String
+            (if (string.eq rip "")
+              (compiler-backend-address-base-filter-direct
+                (compiler-backend-value-scalar-register
+                  backend-state
+                  assignments
+                  base))
+              "")]
+          [base-reg : String
+            (if (not (string.eq rip ""))
+              ""
+              (if (string.eq base-home "")
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-addr-scavenge-exclude)
+                  0
+                  "%r10"
+                  backend-state)
+                base-home))]
+          [addr : String
+            (if (not (string.eq rip ""))
+              (owned_view.compiler-owned-shared-view rip)
+              (compiler-backend-base-address
+                disp
+                (compiler-backend-global-shared-view base-reg)))]
+          [base-asm
+            (try
+              (if (string.eq rip "")
+                (compiler-backend-emit-load-value
+                  assignments
+                  base
+                  (compiler-backend-global-shared-view base-reg)
+                  backend-state)
+                (ResultCompilerBackend.Ok "")))]
+          (Ok
+            (if (compiler-backend-float-type? load-ty)
+              (str_cat.str-cat
+                base-asm
+                (compiler-backend-emit-load-float-address-to-var
+                  assignments
+                  dst
+                  addr
+                  load-ty
+                  backend-state))
+              (str_cat.str-cat
+                base-asm
+                (compiler-backend-emit-load-scalar-address-to-var
+                  type-segment-bases
+                  assignments
+                  dst
+                  addr
+                  load-ty
+                  (compiler-backend-one-exclude base-reg)
+                  (if (string.eq rip "")
+                    1
+                    0)
+                  ""
+                  backend-state)))))]
+      [(None)
+        ;; Dynamic-index load. For SIB scales, use allocator-owned operand homes
+        ;; directly in the memory operand whenever they exist; copying an already
+        ;; register-allocated index into a scavenged temp can clobber unrelated
+        ;; live-through registers and creates redundant moves. Non-SIB scales still
+        ;; need scratch copies because the fold mutates the base/index registers.
+        (let
+          [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
+          ;; BE-2: a %rbp base at scale 1 reads directly, swapped into the SIB
+          ;; index slot (compiler-backend-gep-index-address).
+          [base-home : String
+            (compiler-backend-address-base-filter-sib
               (compiler-backend-value-scalar-register
                 backend-state
                 assignments
-                base))
-            "")]
-        [base-reg : String
-          (if (not (string.eq rip ""))
-            ""
-            (if (string.eq base-home "")
-              (compiler-backend-scavenge-reg
-                dst
-                (compiler-backend-addr-scavenge-exclude)
-                0
-                "%r10"
-                backend-state)
-              base-home))]
-        [addr : String
-          (if (not (string.eq rip ""))
-            (owned_view.compiler-owned-shared-view rip)
-            (compiler-backend-base-address
-              disp
-              (compiler-backend-global-shared-view base-reg)))]
-        [base-asm
-          (try
-            (if (string.eq rip "")
-              (compiler-backend-emit-load-value
-                assignments
-                base
-                (compiler-backend-global-shared-view base-reg)
-                backend-state)
-              (ResultCompilerBackend.Ok "")))]
-        (Ok
-          (if (compiler-backend-float-type? load-ty)
-            (str_cat.str-cat
-              base-asm
-              (compiler-backend-emit-load-float-address-to-var
-                assignments
-                dst
-                addr
-                load-ty
-                backend-state))
-            (str_cat.str-cat
-              base-asm
-              (compiler-backend-emit-load-scalar-address-to-var
-                type-segment-bases
-                assignments
-                dst
-                addr
-                load-ty
-                (compiler-backend-one-exclude base-reg)
-                (if (string.eq rip "")
-                  1
-                  0)
-                ""
-                backend-state)))))]
-    [(None)
-      ;; Dynamic-index load. For SIB scales, use allocator-owned operand homes
-      ;; directly in the memory operand whenever they exist; copying an already
-      ;; register-allocated index into a scavenged temp can clobber unrelated
-      ;; live-through registers and creates redundant moves. Non-SIB scales still
-      ;; need scratch copies because the fold mutates the base/index registers.
-      (let
-        [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
-        [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
-        ;; BE-2: a %rbp base at scale 1 reads directly, swapped into the SIB
-        ;; index slot (compiler-backend-gep-index-address).
-        [base-home : String
-          (compiler-backend-address-base-filter-sib
+                base)
+              scale)]
+          [offset-home : String
             (compiler-backend-value-scalar-register
               backend-state
               assignments
-              base)
-            scale)]
-        [offset-home : String
-          (compiler-backend-value-scalar-register
-            backend-state
-            assignments
-            offset)]
-        [use-base-home? : bool (and sib-scale? (not (string.eq base-home "")))]
-        ;; A gep-PAIR threads a shared base register in via base-reg-in: the
-        ;; first load must materialize the base there so the second load can
-        ;; reuse it. Single loads can read a register-homed base directly for SIB
-        ;; scales, otherwise they scavenge a mutable fold register.
-        [base-reg : String
-          (if use-base-home?
-            base-home
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-one-exclude
-                (compiler-backend-global-shared-view offset-home))
-              1
-              "%r10"
-              backend-state))]
-        [use-offset-home? : bool
-          (and
-            sib-scale?
-            (not (string.eq offset-home ""))
-            (not (string.eq offset-home base-reg)))]
-        [index-reg : String
-          (if use-offset-home?
-            offset-home
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-scavenge-exclude-regs2
-                (compiler-backend-global-shared-view base-reg)
-                offset-home)
-              7
-              "%r8"
-              backend-state))]
-        [addr : String
-          (compiler-backend-gep-index-address-disp
-            gep-disp
-            base-reg
-            scale
-            index-reg)]
-        [addr-asm : String
-          (if (string.eq addr "")
-            (compiler-backend-gep-index-base-asm-disp
+              offset)]
+          [use-base-home? : bool
+            (and sib-scale? (not (string.eq base-home "")))]
+          ;; A gep-PAIR threads a shared base register in via base-reg-in: the
+          ;; first load must materialize the base there so the second load can
+          ;; reuse it. Single loads can read a register-homed base directly for SIB
+          ;; scales, otherwise they scavenge a mutable fold register.
+          [base-reg : String
+            (if use-base-home?
+              base-home
+              (compiler-backend-scavenge-reg
+                dst
+                (compiler-backend-one-exclude
+                  (compiler-backend-global-shared-view offset-home))
+                1
+                "%r10"
+                backend-state))]
+          [use-offset-home? : bool
+            (and
+              sib-scale?
+              (not (string.eq offset-home ""))
+              (not (string.eq offset-home base-reg)))]
+          [index-reg : String
+            (if use-offset-home?
+              offset-home
+              (compiler-backend-scavenge-reg
+                dst
+                (compiler-backend-scavenge-exclude-regs2
+                  (compiler-backend-global-shared-view base-reg)
+                  offset-home)
+                7
+                "%r8"
+                backend-state))]
+          [addr : String
+            (compiler-backend-gep-index-address-disp
               gep-disp
               base-reg
               scale
-              index-reg)
-            "")]
-        [load-addr : String
-          (if (string.eq addr "")
-            (str_cat.str-cat "(" base-reg ")" "")
-            addr)]
-        [base-asm
-          (try
-            (if use-base-home?
-              (ResultCompilerBackend.Ok "")
-              (compiler-backend-emit-load-value
-                assignments
-                base
-                (compiler-backend-global-shared-view base-reg)
-                backend-state)))]
-        [offset-asm
-          (try
-            (if use-offset-home?
-              (ResultCompilerBackend.Ok "")
-              (compiler-backend-emit-load-value
-                assignments
-                offset
-                (compiler-backend-global-shared-view index-reg)
-                backend-state)))]
-        (Ok
-          (if (compiler-backend-float-type? load-ty)
-            (str_cat.str-cat
-              base-asm
-              offset-asm
-              addr-asm
-              (compiler-backend-emit-load-float-address-to-var
-                assignments
-                dst
-                load-addr
-                load-ty
-                backend-state))
-            (str_cat.str-cat
-              base-asm
-              offset-asm
-              addr-asm
-              (compiler-backend-emit-load-scalar-address-to-var
-                type-segment-bases
-                assignments
-                dst
-                load-addr
-                load-ty
-                (compiler-backend-two-exclude base-reg index-reg)
-                2
-                ""
-                backend-state)))))]))
+              index-reg)]
+          [addr-asm : String
+            (if (string.eq addr "")
+              (compiler-backend-gep-index-base-asm-disp
+                gep-disp
+                base-reg
+                scale
+                index-reg)
+              "")]
+          [load-addr : String
+            (if (string.eq addr "")
+              (str_cat.str-cat "(" base-reg ")" "")
+              addr)]
+          [base-asm
+            (try
+              (if use-base-home?
+                (ResultCompilerBackend.Ok "")
+                (compiler-backend-emit-load-value
+                  assignments
+                  base
+                  (compiler-backend-global-shared-view base-reg)
+                  backend-state)))]
+          [offset-asm
+            (try
+              (if use-offset-home?
+                (ResultCompilerBackend.Ok "")
+                (compiler-backend-emit-load-value
+                  assignments
+                  offset
+                  (compiler-backend-global-shared-view index-reg)
+                  backend-state)))]
+          (Ok
+            (if (compiler-backend-float-type? load-ty)
+              (str_cat.str-cat
+                base-asm
+                offset-asm
+                addr-asm
+                (compiler-backend-emit-load-float-address-to-var
+                  assignments
+                  dst
+                  load-addr
+                  load-ty
+                  backend-state))
+              (str_cat.str-cat
+                base-asm
+                offset-asm
+                addr-asm
+                (compiler-backend-emit-load-scalar-address-to-var
+                  type-segment-bases
+                  assignments
+                  dst
+                  load-addr
+                  load-ty
+                  (compiler-backend-two-exclude base-reg index-reg)
+                  2
+                  ""
+                  backend-state)))))]))
+  ;; Evaluate BODY with the pair-emission flag set (the sibling-reordering load
+  ;; families), restoring the flag's previous value afterwards.
+  )
 
-;; Evaluate BODY with the pair-emission flag set (the sibling-reordering load
-;; families), restoring the flag's previous value afterwards.
 (defmacro (compiler-backend-with-pair-emission
   [function-state : Expr]
   [body : Expr]) : Expr
@@ -34946,123 +34972,129 @@
   [program-index : CompilerBackendProgramIndex]
   [gep-disp : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
-  (match (compiler-backend-value-as-i64 offset)
-    [(Some n)
-      (let
-        ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
-        ;; displacement); merged for totality.
-        [disp : i64
-          (+
-            (* n (compiler-backend-type-size type-segment-bases elem-ty))
-            gep-disp)]
-        [base-home : String
-          (compiler-backend-value-register-home backend-state assignments base)]
-        [value-home : String
-          (compiler-backend-value-register-home backend-state assignments value)]
-        [scav-base : String
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-two-exclude base-home value-home)
-            2
-            "%r10"
-            backend-state)]
-        [base-plan
-          (try
-            (compiler-backend-emit-address-base
+  (let
+    [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
+    [displacement : option_i64.Option
+      (compiler-backend-disp32-displacement offset scale gep-disp)]
+    (match displacement
+      [(Some disp)
+        (let
+          ;; gep-disp is 0 here in practice (only Var-index geps carry a folded
+          ;; displacement); merged for totality.
+          [base-home : String
+            (compiler-backend-value-register-home
+              backend-state
               assignments
-              base
-              scav-base
-              program-index.backend-state))]
-        [base-asm : String base-plan.asm]
-        [addr : String
-          (compiler-backend-copy-address
-            disp
-            (compiler_abi.compiler-abi-register-spelling base-plan.reg))]
-        [store-asm
-          (try
+              base)]
+          [value-home : String
+            (compiler-backend-value-register-home
+              backend-state
+              assignments
+              value)]
+          [scav-base : String
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-two-exclude base-home value-home)
+              2
+              "%r10"
+              backend-state)]
+          [base-plan
+            (try
+              (compiler-backend-emit-address-base
+                assignments
+                base
+                scav-base
+                program-index.backend-state))]
+          [base-asm : String base-plan.asm]
+          [addr : String
+            (compiler-backend-copy-address
+              disp
+              (compiler_abi.compiler-abi-register-spelling base-plan.reg))]
+          [store-asm
+            (try
+              (compiler-backend-emit-store-value-to-address
+                type-segment-bases
+                assignments
+                value
+                store-ty
+                addr
+                program-index
+                (compiler-backend-one-exclude
+                  (compiler_abi.compiler-abi-register-spelling base-plan.reg))
+                1
+                backend-state))]
+          (Ok (str_cat.str-cat base-asm store-asm)))]
+      [(None)
+        (let
+          [value-home : String
+            (compiler-backend-value-scalar-register
+              backend-state
+              assignments
+              value)]
+          ;; BE-2: a %rbp base at scale 1 spells directly, swapped into the SIB
+          ;; index slot (compiler-backend-gep-index-address).
+          [base-home : String
+            (compiler-backend-address-base-filter-sib
+              (compiler-backend-value-scalar-register
+                backend-state
+                assignments
+                base)
+              scale)]
+          [offset-home : String
+            (compiler-backend-value-scalar-register
+              backend-state
+              assignments
+              offset)]
+          ;; M-G (B2, M-C2 for stores): base AND index both register-homed with a
+          ;; SIB-encodable scale -> address them directly (`mov src, (base,idx,s)`),
+          ;; skipping the index staging copy (`movq <idx-home>, %rSCAV`) AND both
+          ;; scavenge picks -- under full occupancy those picks force the
+          ;; emergency save/restore wrap around the store (the vm_run pattern:
+          ;; `movq %r10,-N(%rbp); movq %rsi,%r11; movq %rax,(%rdi,%r11,8);
+          ;; movq -N(%rbp),%r10`). The store writes only memory, so reading the
+          ;; homes directly is always safe (the load side proved this shape in
+          ;; M-C2). Spilled/remat/non-var operands and non-SIB scales keep the
+          ;; staged path below.
+          [direct-addr : String
+            (if (and
+              (not (string.eq base-home ""))
+              (not (string.eq offset-home "")))
+              (compiler-backend-gep-index-address-disp
+                gep-disp
+                base-home
+                scale
+                offset-home)
+              "")]
+          (if (not (string.eq direct-addr ""))
             (compiler-backend-emit-store-value-to-address
               type-segment-bases
               assignments
               value
               store-ty
-              addr
+              direct-addr
               program-index
-              (compiler-backend-one-exclude
-                (compiler_abi.compiler-abi-register-spelling base-plan.reg))
-              1
-              backend-state))]
-        (Ok (str_cat.str-cat base-asm store-asm)))]
-    [(None)
-      (let
-        [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
-        [value-home : String
-          (compiler-backend-value-scalar-register
-            backend-state
-            assignments
-            value)]
-        ;; BE-2: a %rbp base at scale 1 spells directly, swapped into the SIB
-        ;; index slot (compiler-backend-gep-index-address).
-        [base-home : String
-          (compiler-backend-address-base-filter-sib
-            (compiler-backend-value-scalar-register
-              backend-state
+              (compiler-backend-two-exclude base-home offset-home)
+              2
+              backend-state)
+            (compiler-backend-emit-store-to-gep-staged
+              type-segment-bases
               assignments
-              base)
-            scale)]
-        [offset-home : String
-          (compiler-backend-value-scalar-register
-            backend-state
-            assignments
-            offset)]
-        ;; M-G (B2, M-C2 for stores): base AND index both register-homed with a
-        ;; SIB-encodable scale -> address them directly (`mov src, (base,idx,s)`),
-        ;; skipping the index staging copy (`movq <idx-home>, %rSCAV`) AND both
-        ;; scavenge picks -- under full occupancy those picks force the
-        ;; emergency save/restore wrap around the store (the vm_run pattern:
-        ;; `movq %r10,-N(%rbp); movq %rsi,%r11; movq %rax,(%rdi,%r11,8);
-        ;; movq -N(%rbp),%r10`). The store writes only memory, so reading the
-        ;; homes directly is always safe (the load side proved this shape in
-        ;; M-C2). Spilled/remat/non-var operands and non-SIB scales keep the
-        ;; staged path below.
-        [direct-addr : String
-          (if (and
-            (not (string.eq base-home ""))
-            (not (string.eq offset-home "")))
-            (compiler-backend-gep-index-address-disp
-              gep-disp
-              base-home
+              base
+              offset
+              value
+              store-ty
+              program-index
               scale
-              offset-home)
-            "")]
-        (if (not (string.eq direct-addr ""))
-          (compiler-backend-emit-store-value-to-address
-            type-segment-bases
-            assignments
-            value
-            store-ty
-            direct-addr
-            program-index
-            (compiler-backend-two-exclude base-home offset-home)
-            2
-            backend-state)
-          (compiler-backend-emit-store-to-gep-staged
-            type-segment-bases
-            assignments
-            base
-            offset
-            value
-            store-ty
-            program-index
-            scale
-            value-home
-            base-home
-            offset-home
-            gep-disp
-            backend-state)))]))
+              value-home
+              base-home
+              offset-home
+              gep-disp
+              backend-state)))]))
+  ;; The pre-B2 staged dynamic-index store path: scavenge an index scratch (and a
+  ;; fold-base scratch for non-SIB scales), load the offset into it, then store
+  ;; through the composed address. Reached when the base or offset is not
+  ;; register-homed or the scale is not SIB-encodable.
+  )
 
-;; The pre-B2 staged dynamic-index store path: scavenge an index scratch (and a
-;; fold-base scratch for non-SIB scales), load the offset into it, then store
-;; through the composed address. Reached when the base or offset is not
-;; register-homed or the scale is not SIB-encodable.
 (define (compiler-backend-emit-store-to-gep-staged
   [type-segment-bases : i64]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -52696,17 +52728,16 @@
   [gep-disp : i64]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (let
+    [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
+    [displacement : option_i64.Option
+      (compiler-backend-disp32-displacement offset scale gep-disp)]
     [dst-home : String
       (compiler-backend-var-register-home backend-state assignments alu-dst)]
-    (match (compiler-backend-value-as-i64 offset)
-      [(Some n)
+    (match displacement
+      [(Some disp)
         (let
           ;; gep-disp is 0 here in practice (only Var-index geps carry a
           ;; folded displacement); merged for totality.
-          [disp : i64
-            (+
-              (* n (compiler-backend-type-size type-segment-bases elem-ty))
-              gep-disp)]
           [base-home : String
             (compiler-backend-address-base-filter-direct
               (compiler-backend-value-scalar-register
@@ -52748,7 +52779,6 @@
               (str_cat.str-cat "    " mnem "q " addr ", " dst-home "\n"))))]
       [(None)
         (let
-          [scale : i64 (compiler-backend-type-size type-segment-bases elem-ty)]
           [sib-scale? : bool (compiler-backend-gep-sib-scale? scale)]
           [base-home : String
             (compiler-backend-address-base-filter
@@ -55243,7 +55273,7 @@
   ;; string len in %r9 restored-over before its bounds compare -> false OOB
   ;; abort on every mid-band self-host build).
   (match (compiler-backend-value-as-i64 offset)
-    [(Some _)
+    [(Some n)
       (if (< index instrs.len)
         (let
           [maybe-gep (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)]
@@ -55254,8 +55284,21 @@
                 (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
                 (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (compiler-backend-value-as-i64 offset2)
-                  [(Some _)
-                    (if (< after-gep instrs.len)
+                  [(Some n2)
+                    (if (and
+                      (< after-gep instrs.len)
+                      (compiler-backend-imm32?
+                        (*
+                          n
+                          (compiler-backend-type-size
+                            ctx.type-segment-bases
+                            elem-ty)))
+                      (compiler-backend-imm32?
+                        (*
+                          n2
+                          (compiler-backend-type-size
+                            ctx.type-segment-bases
+                            elem-ty2))))
                       (let
                         [maybe-load
                           (compiler_ir_types.compiler-ir-instr-seq-ref
@@ -58892,6 +58935,12 @@
               [(Load load-dst src load-ty)
                 (if (compiler-backend-branch-uses-var? src gep-dst)
                   (if (and
+                    (compiler-backend-imm32?
+                      (*
+                        n
+                        (compiler-backend-type-size
+                          ctx.type-segment-bases
+                          elem-ty)))
                     (compiler-backend-load-compare-type?
                       ctx.type-segment-bases
                       load-ty)

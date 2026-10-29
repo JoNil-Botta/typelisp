@@ -3253,3 +3253,17 @@ snapshots that owner separately at load and macro boundaries. Planted controls
 remove cache or other-owner attribution, exceed a boundary snapshot, or alter
 reconciliation; every control must fail the same strict ledger checker. Exact
 reconciliation and the 95% named-owner coverage threshold remain unchanged.
+
+
+## Large constant pointer displacements
+
+`tests/integration/gep_large_displacement.tl` covers byte offsets at both
+signed-32 boundaries and just outside them, scaled word offsets, and i64
+minimum/maximum offsets. Exported load/store/address functions retain the
+selection shapes; the executable biases raw input pointers so each tested
+access lands on its small live allocation. An exported adjacent-load pair
+checks that its second offset cannot bypass displacement admission. The
+native integration corpus runs all optimization levels on both hosts, and
+the target-parity corpus compares IR at opt0/1/2 for Linux and Windows. Wide
+constants must use register materialization, while representable constants
+may use the x86 signed-32-bit displacement field.

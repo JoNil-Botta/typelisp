@@ -92,6 +92,7 @@ many_args tests/integration/many_args.tl
 register_group_phi_return tests/integration/register_group_phi_return.tl
 register_pair_struct tests/integration/register_pair_struct.tl
 register_resident_enum tests/integration/register_resident_enum.tl
+gep_large_displacement tests/integration/gep_large_displacement.tl
 tail_direct_stack_args tests/integration/tail_direct_stack_args.tl
 tree tests/integration/tree.tl
 tuple_values tests/integration/tuple_values.tl

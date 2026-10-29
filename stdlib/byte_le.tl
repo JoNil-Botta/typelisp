@@ -55,18 +55,16 @@
   (push-u16! out value)
   (push-u16! out (shr value 16)))
 
-;: Append all 64 bits of `value`, least significant byte first.
+;: Append all 64 bits of `value`, least significant byte first: one reserve,
+;: then one in-place store.
 (define (push-u64!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : i64]) : unit
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 0))
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 8))
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 16))
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 24))
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 32))
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 40))
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 48))
-  (byte_buf_core.byte-buf-builder-push out (byte-le-byte value 56)))
+  (byte_buf_core.byte-buf-builder-reserve out 8)
+  (let
+    [index : i64 out.len]
+    (set-u64! (&mut out.slots) index value)
+    (set! out.len (+ index 8))))
 
 ;: Overwrite `bytes[offset..offset+2)` with the low 16 bits of `value`.
 (define (set-u16!
@@ -84,19 +82,21 @@
   (set-u16! bytes offset value)
   (set-u16! bytes (+ offset 2) (shr value 16)))
 
-;: Overwrite `bytes[offset..offset+8)` with all 64 bits of `value`.
+;: Overwrite `bytes[offset..offset+8)` with all 64 bits of `value`. The whole
+;: field is range-checked once and written with one unaligned store; every
+;: supported target (x86-64 Linux and Windows) stores least significant byte
+;: first.
 (define (set-u64!
   [bytes : (&mut bytes (__tl_dyn-array u8))]
   [offset : i64]
   [value : i64]) : unit
-  (set! (array-ref bytes offset) (byte-le-byte value 0))
-  (set! (array-ref bytes (+ offset 1)) (byte-le-byte value 8))
-  (set! (array-ref bytes (+ offset 2)) (byte-le-byte value 16))
-  (set! (array-ref bytes (+ offset 3)) (byte-le-byte value 24))
-  (set! (array-ref bytes (+ offset 4)) (byte-le-byte value 32))
-  (set! (array-ref bytes (+ offset 5)) (byte-le-byte value 40))
-  (set! (array-ref bytes (+ offset 6)) (byte-le-byte value 48))
-  (set! (array-ref bytes (+ offset 7)) (byte-le-byte value 56)))
+  (byte_buf_core.byte-buf-builder-check-range (array-length bytes) offset 8)
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset (__tl_array-data (deref bytes)) offset)
+        : (MutPtr i64))
+      value)))
 
 ;: Read the zero-extended 16-bit value stored at `bytes[offset..offset+2)`.
 (define (read-u16 [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
@@ -106,21 +106,13 @@
 (define (read-u32 [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
   (bit-or (read-u16 bytes offset) (shl (read-u16 bytes (+ offset 2)) 16)))
 
-;: Read the 64-bit pattern stored at `bytes[offset..offset+8)` as an `i64`.
+;: Read the 64-bit pattern stored at `bytes[offset..offset+8)` as an `i64`: one
+;: range check, then one unaligned little-endian load (see `set-u64!`).
 (define (read-u64 [bytes : (& bytes (__tl_dyn-array u8))] [offset : i64]) : i64
-  (bit-or
-    (bit-or
-      (bit-or (byte-le-at bytes offset) (shl (byte-le-at bytes (+ offset 1)) 8))
-      (bit-or
-        (shl (byte-le-at bytes (+ offset 2)) 16)
-        (shl (byte-le-at bytes (+ offset 3)) 24)))
-    (bit-or
-      (bit-or
-        (shl (byte-le-at bytes (+ offset 4)) 32)
-        (shl (byte-le-at bytes (+ offset 5)) 40))
-      (bit-or
-        (shl (byte-le-at bytes (+ offset 6)) 48)
-        (shl (byte-le-at bytes (+ offset 7)) 56)))))
+  (byte_buf_core.byte-buf-builder-check-range (array-length bytes) offset 8)
+  (unsafe
+    (ptr-read
+      (ptr-cast (ptr-offset (__tl_array-data (deref bytes)) offset) : (Ptr i64)))))
 
 (test
   byte-le-push-read-round-trip
@@ -180,3 +172,37 @@
       (read-u64 (& bytes) 8)
       2207613190143
       "u16 and u32 fields compose into one u64")))
+
+(test
+  byte-le-u64-unaligned-across-growth
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 1)]
+    [index : i64 0]
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 170 : u8))
+    (push-u64! (&mut out) 578437695752307201)
+    (push-u64! (&mut out) -9223372036854775807)
+    (let
+      [bytes : (__tl_dyn-array u8)
+        (byte_buf_core.byte-buf-builder-finish-array (& out))]
+      (test.assert-i64-eq (array-length bytes) 17 "two u64 after one byte")
+      (test.assert-i64-eq (cast (array-ref bytes 0) : i64) 170 "prefix byte")
+      (while (< index 8)
+        (test.assert-i64-eq
+          (cast (array-ref bytes (+ index 1)) : i64)
+          (+ index 1)
+          "u64 bytes least significant first at an odd offset")
+        (+= index 1))
+      (test.assert-i64-eq (cast (array-ref bytes 9) : i64) 1 "i64-min+1 low")
+      (test.assert-i64-eq
+        (cast (array-ref bytes 16) : i64)
+        128
+        "sign byte last")
+      (test.assert-i64-eq
+        (read-u64 (& bytes) 1)
+        578437695752307201
+        "unaligned u64 read")
+      (test.assert-i64-eq
+        (read-u64 (& bytes) 9)
+        -9223372036854775807
+        "unaligned negative u64 read"))))

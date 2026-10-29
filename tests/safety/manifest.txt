@@ -1414,6 +1414,8 @@ move_out_of_reference_return_reject|check-fail|tests/safety/move_out_of_referenc
 move_out_of_reference_field_reject|check-fail|tests/safety/move_out_of_reference_field_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
 move_out_of_reference_string_field_reject|check-fail|tests/safety/move_out_of_reference_string_field_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
 move_out_of_reference_tuple_element_reject|check-fail|tests/safety/move_out_of_reference_tuple_element_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_of_reference_tuple_auto_deref_reject|check-fail|tests/safety/move_out_of_reference_tuple_auto_deref_reject.tl|tests/safety/move_out_of_reference_tuple_auto_deref_reject.tl:8:20|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_of_mut_reference_tuple_auto_deref_reject|check-fail|tests/safety/move_out_of_mut_reference_tuple_auto_deref_reject.tl|tests/safety/move_out_of_mut_reference_tuple_auto_deref_reject.tl:5:3|error[E0208]: typecheck: cannot move a `String` out of a mutable reference; `String` is not Copy
 move_out_of_reference_mut_reject|check-fail|tests/safety/move_out_of_reference_mut_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a mutable reference; `Pt` is not Copy
 move_out_of_reference_branch_reject|check-fail|tests/safety/move_out_of_reference_branch_reject.tl|-|help: borrow it with `(& ...)` instead, or use an owned clone
 move_out_of_reference_borrow_ok|run-exit|tests/safety/move_out_of_reference_borrow_ok.tl|42|-

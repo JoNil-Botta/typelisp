@@ -490,55 +490,6 @@
                     (ReturnStorageProof.Invalid
                       "sret callee has no return-storage convention"))]))))])))
 
-(define (contract-equal?
-  [bases : i64]
-  [left : (& left ir.CompilerIrReturnStorageAbi)]
-  [right : (& right ir.CompilerIrReturnStorageAbi)]) : bool
-  (let
-    [left : ir.CompilerIrReturnStorageAbi
-      (owned_view.compiler-owned-reference-shared-view left)]
-    [right : ir.CompilerIrReturnStorageAbi
-      (owned_view.compiler-owned-reference-shared-view right)]
-    [count : i64 (ast.ast-type-list-len left.physical-params)]
-    [i : i64 0]
-    (and
-      (= left.index right.index)
-      (= left.bytes right.bytes)
-      (= left.alignment right.alignment)
-      (string.eq
-        (ir.compiler-ir-return-storage-convention-render left.convention)
-        (ir.compiler-ir-return-storage-convention-render right.convention))
-      (ast.ast-type-eq-with-seg-bases? bases left.output right.output)
-      (ast.ast-type-eq-with-seg-bases?
-        bases
-        left.physical-result
-        right.physical-result)
-      (ast.ast-type-eq-with-seg-bases?
-        bases
-        left.source-signature
-        right.source-signature)
-      (= count (ast.ast-type-list-len right.physical-params))
-      (begin
-        (while (< i count)
-          (unless
-            (ast.ast-type-eq-with-seg-bases?
-              bases
-              (ast.ast-type-segment-bases-get
-                bases
-                (ast.ast-type-list-get
-                  left.physical-params
-                  i
-                  (ast.ast-type-id-fallback)))
-              (ast.ast-type-segment-bases-get
-                bases
-                (ast.ast-type-list-get
-                  right.physical-params
-                  i
-                  (ast.ast-type-id-fallback))))
-            (return false))
-          (set! i (+ i 1)))
-        true))))
-
 (define (storage-equal?
   [bases : i64]
   [left : (& left ir.CompilerIrReturnStorage)]
@@ -551,7 +502,10 @@
     [(ir.CompilerIrReturnStorage.Some a)
       (match right
         [(ir.CompilerIrReturnStorage.Some b)
-          (contract-equal? bases (& (deref a)) (& (deref b)))]
+          (ir.compiler-ir-return-storage-abi-equal?
+            bases
+            (& (deref a))
+            (& (deref b)))]
         [_ false])]))
 
 (define (function-abi-equal?
@@ -566,7 +520,7 @@
     [(ir.CompilerIrFunctionAbi.ReturnStorage a)
       (match right
         [(ir.CompilerIrFunctionAbi.ReturnStorage b)
-          (contract-equal? bases (deref a) (deref b))]
+          (ir.compiler-ir-return-storage-abi-equal? bases (deref a) (deref b))]
         [_ false])]
     [(ir.CompilerIrFunctionAbi.SpmdPrivate a)
       (match right
@@ -641,7 +595,7 @@
                                 (match (ir.compiler-ir-global-shared-view found)
                                   [(ReturnStorageProof.Known previous)
                                     (unless
-                                      (contract-equal?
+                                      (ir.compiler-ir-return-storage-abi-equal?
                                         bases
                                         (deref previous)
                                         (deref abi))

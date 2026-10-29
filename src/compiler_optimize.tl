@@ -132484,7 +132484,7 @@
 ;; `NoRoot` -- so the filter below summarizes the write as an unknown-rooted
 ;; store and empties the whole table. The storage row names exactly which
 ;; global such a write can reach, so those positions are filtered by NAME
-;; instead (opt-load-table-filter-obj-writes) and this walk skips them.
+;; instead (opt-load-table-filter-global-writes) and this walk skips them.
 (define (opt-load-call-arg-global?
   [args : (& args ir.CompilerIrCallArgs)]
   [index : i64]) : bool
@@ -132627,7 +132627,10 @@
 ;; write by opt-load-table-filter-call-writes. A callee whose summary carries the
 ;; UNKNOWN bit is never handed to any of them -- an unknown write can land on a
 ;; cell without a `Store`, which no row records.
-(define (opt-load-entry-survives-cell-writes?
+;; The same filter also accepts a storage-write row: its named globals are
+;; the globals whose own storage may change. The caller selects the cell or
+;; storage index and row; the entry predicate and table walk are identical.
+(define (opt-load-entry-survives-global-writes?
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
   [entry : (& entry OptLoadEntry)]) : bool
@@ -132637,23 +132640,7 @@
       (not (opt-global-mod-ref-mask-may-write? index row entry-global))]
     [(or (Field _ _ _ _) (ScaledField _ _ _ _ _) (Raw _ _ _)) false]))
 
-;; IAG-2's twin of opt-load-entry-survives-cell-writes?, for the storage row.
-;; A `GlobalField` key names a fixed word of a global's own `.comm` storage,
-;; which after IAG-1 is exactly what a `(&mut g)` helper rewrites in place when
-;; it grows the vector; the row says which globals that can happen to. The
-;; other key classes are dropped for the reason the cell filter gives: sound to
-;; keep, not profitable.
-(define (opt-load-entry-survives-obj-writes?
-  [index : (& index opt_i64_i64_map.Map)]
-  [row : i64]
-  [entry : (& entry OptLoadEntry)]) : bool
-  (match (opt-load-entry-key
-    (owned_view.compiler-owned-reference-shared-view entry))
-    [(GlobalField entry-global _ _ _)
-      (not (opt-global-mod-ref-mask-may-write? index row entry-global))]
-    [(or (Field _ _ _ _) (ScaledField _ _ _ _ _) (Raw _ _ _)) false]))
-
-(define (opt-load-table-filter-obj-writes
+(define (opt-load-table-filter-global-writes
   [index : (& index opt_i64_i64_map.Map)]
   [row : i64]
   [table : OptLoadTable]) : OptLoadTable
@@ -132662,22 +132649,8 @@
     [(Cons entry rest)
       (let
         [tail : OptLoadTable
-          (opt-load-table-filter-obj-writes index row (deref rest))]
-        (if (opt-load-entry-survives-obj-writes? index row entry)
-          (Cons entry (box tail))
-          tail))]))
-
-(define (opt-load-table-filter-cell-writes
-  [index : (& index opt_i64_i64_map.Map)]
-  [row : i64]
-  [table : OptLoadTable]) : OptLoadTable
-  (match table
-    [(Nil) (Nil)]
-    [(Cons entry rest)
-      (let
-        [tail : OptLoadTable
-          (opt-load-table-filter-cell-writes index row (deref rest))]
-        (if (opt-load-entry-survives-cell-writes? index row entry)
+          (opt-load-table-filter-global-writes index row (deref rest))]
+        (if (opt-load-entry-survives-global-writes? index row entry)
           (Cons entry (box tail))
           tail))]))
 
@@ -132746,12 +132719,12 @@
         (owned_view.compiler-owned-reference-shared-view table))]
     (cond
       [global-args?
-        (opt-load-table-filter-obj-writes
+        (opt-load-table-filter-global-writes
           obj-index
           obj-row
-          (opt-load-table-filter-cell-writes cell-index row layered))]
+          (opt-load-table-filter-global-writes cell-index row layered))]
       [(opt-call-memory-summary-global? summary)
-        (opt-load-table-filter-cell-writes cell-index row layered)]
+        (opt-load-table-filter-global-writes cell-index row layered)]
       [else layered])))
 
 ;; The row of `table` (the cell or the storage table) a direct call to `name`

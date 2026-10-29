@@ -21444,6 +21444,10 @@
 ;;   moving load at a def of one. Each pass reads the set only for the function
 ;;   it rewrites, collecting it in a walk it already makes or only once it has
 ;;   a candidate.
+;; - BCE versioning and its hoist, unrolling, fill/copy-call recognition and
+;;   LFTR refuse a loop that reads or writes a tainted value, one a store can
+;;   change through a pointer, and every loop of a function that branches on
+;;   one (`opt-loop-tainted?`, #9420).
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
 ;; marked vars, so a loop pays for the few there are rather than for the whole
@@ -21528,6 +21532,196 @@
     (match (opt-instr-def-var instr)
       [(Some dst) (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
       [(None) false])))
+
+;; The loop transforms' address-taken gate (#9420). BCE versioning and its
+;; clone-free hoist, unrolling, fill/copy-call recognition and LFTR prove facts
+;; about the values a loop reads and the values those were computed from. A
+;; store through a pointer can change an address-taken local between where such
+;; a fact holds and where the loop relies on it, so each transform refuses, at
+;; its entry, every loop that reads or writes a TAINTED value: an address-taken
+;; local, or a value whose definition reads a tainted one, transitively (phi
+;; inputs included). An `addr_of` result is an address, which no store changes,
+;; so it carries no taint; a load through a tainted pointer does. A loop with
+;; nothing tainted hands no rule a value that names mutable storage, whichever
+;; rule it is. Branch facts are the one source outside the loop: a rule reads a
+;; condition's definition, and with no branch or switch on a tainted value that
+;; definition is the value the branch tested and names no mutable storage. So a
+;; function with such a branch has every loop refused. Each transform installs
+;; the set for its own function before its first gate; vars a transform adds
+;; come from loops the gate admitted.
+(define opt-loop-taint : (__tl_dyn-array bool)
+  (__tl_make-array bool 0))
+
+;; The installed function branches or switches on a tainted value.
+(define opt-loop-taint-branches? : bool
+  false)
+
+(defstruct OptLoopTaintScan
+  (taint (__tl_dyn-array bool))
+  ;; [0] the instruction reads a tainted value, [1] as a branch condition
+  (hit (__tl_dyn-array bool))
+  ;; [0] a pass tainted a new var, [1] a pass saw a tainted branch condition
+  (changed (__tl_dyn-array bool)))
+
+(define (opt-loop-taint-var?
+  [taint : (& taint (__tl_dyn-array bool))]
+  [var : i64]) : bool
+  (and (>= var 0) (< var (array-length taint)) (array-ref taint var)))
+
+(define (opt-loop-taint-note-use!
+  [taint : (& taint (__tl_dyn-array bool))]
+  [hit : (&mut hit (__tl_dyn-array bool))]
+  [role : ir.CompilerIrOperandRole]
+  [value : ir.CompilerIrValue]) : unit
+  (match value
+    [(Var id)
+      (when
+        (opt-loop-taint-var? taint id)
+        (set! (array-ref hit 0) true)
+        (match role
+          [(Condition) (set! (array-ref hit 1) true)]
+          [_ unit]))]
+    [_ unit]))
+
+;; Whether `instr` reads a tainted value; the use walk gives `addr_of` none.
+(define (opt-loop-taint-reads?
+  [taint : (& taint (__tl_dyn-array bool))]
+  [hit : (&mut hit (__tl_dyn-array bool))]
+  [instr : (& instr ir.CompilerIrInstr)]) : bool
+  (set! (array-ref hit 0) false)
+  (set! (array-ref hit 1) false)
+  (ir.compiler-ir-instr-visit-uses
+    (owned_view.compiler-owned-reference-shared-view instr)
+    opt-loop-taint-note-use!
+    taint
+    hit)
+  (array-ref hit 0))
+
+(define (opt-loop-taint-step!
+  [scan : (&mut scan OptLoopTaintScan)]
+  [instr : (& instr ir.CompilerIrInstr)]) : unit
+  (match (opt-instr-def-var instr)
+    [(Some dst)
+      (when
+        (and
+          (>= dst 0)
+          (< dst (array-length scan.taint))
+          (not (array-ref scan.taint dst))
+          (opt-loop-taint-reads? (& scan.taint) (&mut scan.hit) instr))
+        (set! (array-ref scan.taint dst) true)
+        (set! (array-ref scan.changed 0) true))]
+    [(None)
+      (when
+        (and
+          (opt-loop-taint-reads? (& scan.taint) (&mut scan.hit) instr)
+          (array-ref scan.hit 1))
+        (set! (array-ref scan.changed 1) true))]))
+
+(define (opt-loop-taint-walk!
+  [scan : (&mut scan OptLoopTaintScan)]
+  [remaining : (& remaining (Slice ir.CompilerIrBlock))]) : unit
+  (match remaining
+    [(slice) unit]
+    [(slice block & rest)
+      (match block
+        [(Block _ instrs)
+          (for [index
+            (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+            (let
+              [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+              (opt-loop-taint-step! scan (& instr))))])
+      (opt-loop-taint-walk! scan rest)]))
+
+;; The function's address-taken locals, closed under value flow; empty, and
+;; never walked, for a function with no `addr_of`.
+(define (opt-loop-taint-install!
+  [frame : i64]
+  [blocks : (& ir.CompilerIrBlockList)]) : unit
+  (opt-function-addr-taken-install! frame blocks)
+  (let
+    [count : i64 (opt_dense_i64_vec.len (& opt-function-addr-taken.ids))]
+    (set! opt-loop-taint-branches? false)
+    (if (= count 0)
+      (set! opt-loop-taint (__tl_make-array bool 0))
+      (let
+        [scan : OptLoopTaintScan
+          (OptLoopTaintScan
+            (__tl_make-array bool frame)
+            (__tl_make-array bool 2)
+            (__tl_make-array bool 2))]
+        (for [index (iterator.range 0 count)]
+          (let
+            [id : i64 (array-ref opt-function-addr-taken.ids.slots index)]
+            (when
+              (and (>= id 0) (< id frame))
+              (set! (array-ref scan.taint id) true))))
+        (set! (array-ref scan.changed 0) true)
+        ;; The last pass taints nothing new, so its branch verdict is final.
+        (while (array-ref scan.changed 0)
+          (set! (array-ref scan.changed 0) false)
+          (set! (array-ref scan.changed 1) false)
+          (opt-loop-taint-walk!
+            (&mut scan)
+            (ir.compiler-ir-block-list-view blocks)))
+        (set! opt-loop-taint-branches? (array-ref scan.changed 1))
+        (set! opt-loop-taint scan.taint)))))
+
+(define (opt-loop-taint-install-for-loops!
+  [frame : i64]
+  [blocks : (& ir.CompilerIrBlockList)]
+  [loops : (& loops (Slice OptNaturalLoop))]) : unit
+  (match loops
+    [(slice) unit]
+    [_ (opt-loop-taint-install! frame blocks)]))
+
+;; Whether `instrs` read or write a tainted value, or the function branches on
+;; one.
+(define (opt-loop-instrs-tainted? [instrs : (& instrs ir.CompilerIrInstrSeq)]) : bool
+  (if (= (array-length opt-loop-taint) 0)
+    false
+    (let
+      [hit : (__tl_dyn-array bool) (__tl_make-array bool 2)]
+      (when opt-loop-taint-branches? (return true))
+      (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+        (let
+          [instr (ir.compiler-ir-instr-seq-borrow instrs index)]
+          (when
+            (or
+              (match (opt-instr-def-var (& instr))
+                [(Some dst) (opt-loop-taint-var? (& opt-loop-taint) dst)]
+                [(None) false])
+              (opt-loop-taint-reads? (& opt-loop-taint) (&mut hit) (& instr)))
+            (return true))))
+      false)))
+
+(define (opt-loop-block-tainted? [block : (& block ir.CompilerIrBlock)]) : bool
+  (match block
+    [(Block _ instrs) (opt-loop-instrs-tainted? (& instrs))]))
+
+(define (opt-loop-tainted-from?
+  [remaining : (& remaining (Slice ir.CompilerIrBlock))]
+  [labels : OptLabelSet]) : bool
+  (match remaining
+    [(slice) false]
+    [(slice block & rest)
+      (match block
+        [(Block label instrs)
+          (if (and
+            (opt-label-contains labels label)
+            (opt-loop-instrs-tainted? (& instrs)))
+            true
+            (opt-loop-tainted-from? rest labels))])]))
+
+;; Whether the loop made of `labels` reads or writes a tainted value, or the
+;; function branches on one.
+(define (opt-loop-tainted?
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [labels : OptLabelSet]) : bool
+  (if (= (array-length opt-loop-taint) 0)
+    false
+    (or
+      opt-loop-taint-branches?
+      (opt-loop-tainted-from? (ir.compiler-ir-block-list-view blocks) labels))))
 
 ;; The vars a loop may redefine: its own defs plus every address-taken local.
 (define (opt-licm-loop-defs
@@ -39112,10 +39306,17 @@
             preheader)
             [(No) (Result blocks frame false)]
             [(Some plan)
-              (Result
-                (opt-blocks-build blocks opt-lftr-rewrite-blocks! plan)
-                (opt-lftr-plan-frame (& plan))
-                true)])))]))
+              ;; The address-taken gate refuses a tainted loop (#9420).
+              (if (opt-loop-tainted?
+                (& blocks)
+                (opt-label-add
+                  (opt-natural-loop-body loop)
+                  (opt-natural-loop-header loop)))
+                (Result blocks frame false)
+                (Result
+                  (opt-blocks-build blocks opt-lftr-rewrite-blocks! plan)
+                  (opt-lftr-plan-frame (& plan))
+                  true))])))]))
 
 (define (opt-lftr-apply-loops
   [type-segment-bases : i64]
@@ -39155,6 +39356,10 @@
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
+          (opt-loop-taint-install-for-loops!
+            frame
+            (& blocks)
+            (opt_natural_loop_vec.view natural-loops))
           (opt-lftr-apply-loops
             type-segment-bases
             (opt_natural_loop_vec.view natural-loops)
@@ -61334,6 +61539,11 @@
 (define (opt-unroll-reason-short-trip) : i64
   19)
 
+;; The loop reads or writes a value a store can change through a pointer
+;; (`opt-loop-tainted?`, #9420).
+(define (opt-unroll-reason-addr-taken) : i64
+  20)
+
 (define (opt-unroll-reason-text [reason : i64]) : String
   (cond
     [(= reason (opt-unroll-reason-candidate)) "examined"]
@@ -61355,6 +61565,7 @@
     [(= reason (opt-unroll-reason-dead-clone)) "dead-clone"]
     [(= reason (opt-unroll-reason-short-remainder)) "short-remainder"]
     [(= reason (opt-unroll-reason-short-trip)) "short-trip"]
+    [(= reason (opt-unroll-reason-addr-taken)) "addr-taken"]
     [else "none"]))
 
 (define (opt-unroll-dir-text [dir : i64]) : String
@@ -65465,7 +65676,9 @@
   (next-frame i64)
   (changed? bool)
   (entry-index OptCfgIndex)
-  (entry-defs (__tl_dyn-array OptBoolBranchDef)))
+  (entry-defs (__tl_dyn-array OptBoolBranchDef))
+  ;; the address-taken gate's set is installed for this function (#9420)
+  (taint-ready? bool))
 
 (define (opt-loop-call-alloc-var [state : (&mut state OptLoopCallRewriteState)]) : i64
   (let
@@ -65702,6 +65915,24 @@
 
 ;; `outside` is only built once the cheap structural checks have passed, so the
 ;; whole-function use scan is paid per CANDIDATE block, not per block.
+;; Fill/copy-call recognition's loop shape, behind the address-taken gate: the
+;; gate's set is installed at the function's first candidate (#9420).
+(define (opt-loop-call-admitted-shape
+  [blocks : (& ir.CompilerIrBlockList)]
+  [entry-label : i64]
+  [block : (& block ir.CompilerIrBlock)]
+  [state : (&mut state OptLoopCallRewriteState)]) : OptLoopCallMaybeShape
+  (match (opt-loop-call-shape entry-label block)
+    [(No) (No)]
+    [(Some shape)
+      (unless
+        state.taint-ready?
+        (opt-loop-taint-install! state.next-frame blocks)
+        (set! state.taint-ready? true))
+      (if (opt-loop-block-tainted? block)
+        (No)
+        (Some shape))]))
+
 (define (opt-fill-call-block-match
   [blocks : (& ir.CompilerIrBlockList)]
   [entry-label : i64]
@@ -65709,7 +65940,7 @@
   [state : (&mut state OptLoopCallRewriteState)]) : OptFillCallMaybeShapeSite
   (match block
     [(Block label instrs)
-      (match (opt-loop-call-shape entry-label block)
+      (match (opt-loop-call-admitted-shape blocks entry-label block state)
         [(No) (No)]
         [(Some shape)
           (let
@@ -65812,7 +66043,8 @@
                 frame
                 false
                 entry-index
-                (__tl_make-array OptBoolBranchDef 0))]
+                (__tl_make-array OptBoolBranchDef 0)
+                false)]
             [rewritten : ir.CompilerIrBlockList
               (opt-loop-call-rewrite-blocks
                 try-rewrite
@@ -66394,7 +66626,7 @@
   [state : (&mut state OptLoopCallRewriteState)]) : OptCopyCallMaybeShapeSite
   (match block
     [(Block label instrs)
-      (match (opt-loop-call-shape entry-label block)
+      (match (opt-loop-call-admitted-shape blocks entry-label block state)
         [(No) (No)]
         [(Some shape)
           (let
@@ -69197,7 +69429,15 @@
     [(slice block & rest)
       (match (opt-unroll-const-block-shape blocks entry-label block)
         [(Some const-shape)
-          (opt-unroll-const-apply (& blocks) block (& const-shape) frame)]
+          (if (opt-loop-block-tainted? block)
+            (opt-unroll-blocks-scan
+              type-segment-bases
+              params
+              blocks
+              rest
+              entry-label
+              frame)
+            (opt-unroll-const-apply (& blocks) block (& const-shape) frame))]
         [(No)
           (let
             ;; One `--trace-passes` line per self-loop this step examined; the
@@ -69208,15 +69448,19 @@
             [_trace-begin : unit (opt-unroll-trace-begin!)]
             (match (opt-unroll-block-shape (& blocks) entry-label block)
               [(Some shape)
-                ;; A short-remainder loop is left exactly as it is, and the
-                ;; scan carries on: this invocation's single rewrite slot is
-                ;; better spent on the next candidate than on a guard that
-                ;; cannot pay for itself.
-                (if (opt-unroll-short-remainder? (& blocks) block (& shape))
+                ;; A short-remainder loop, or one the address-taken gate
+                ;; refuses, is left exactly as it is, and the scan carries on:
+                ;; this invocation's single rewrite slot is better spent on the
+                ;; next candidate than on a guard that cannot pay for itself.
+                (if (or
+                  (opt-loop-block-tainted? block)
+                  (opt-unroll-short-remainder? (& blocks) block (& shape)))
                   (let
                     [_note : unit
                       (opt-unroll-trace-note!
-                        (opt-unroll-reason-short-remainder))]
+                        (if (opt-loop-block-tainted? block)
+                          (opt-unroll-reason-addr-taken)
+                          (opt-unroll-reason-short-remainder)))]
                     [_line : unit (opt-unroll-trace-loop! block false)]
                     (opt-unroll-blocks-scan
                       type-segment-bases
@@ -69255,6 +69499,15 @@
       [_ unit]))
   false)
 
+;; The mutable-SIMD entry has no prescan, so it installs the address-taken
+;; gate's set only for a block it would otherwise rewrite (#9420).
+(define (opt-unroll-simd-block-admitted?
+  [frame : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [block : (& block ir.CompilerIrBlock)]) : bool
+  (opt-loop-taint-install! frame blocks)
+  (not (opt-loop-block-tainted? block)))
+
 (define (opt-unroll-simd-blocks-scan
   [type-segment-bases : i64]
   [blocks : ir.CompilerIrBlockList]
@@ -69273,9 +69526,11 @@
         [(Some shape)
           (match block
             [(Block _ instrs)
-              (if (or
-                (not require-store?)
-                (opt-unroll-simd-instrs-have-store? (& instrs)))
+              (if (and
+                (or
+                  (not require-store?)
+                  (opt-unroll-simd-instrs-have-store? (& instrs)))
+                (opt-unroll-simd-block-admitted? frame (& blocks) block))
                 (opt-unroll-simd-apply
                   type-segment-bases
                   (& blocks)
@@ -69490,6 +69745,8 @@
     (compiler-opt-global-shared-view func)
     (compiler-opt-global-shared-view context))
     [(Ok)
+      (match (& func)
+        [(Function _ _ _ frame blocks _) (opt-loop-taint-install! frame blocks)])
       (opt-unroll-function-budget-result
         type-segment-bases
         context
@@ -70495,6 +70752,11 @@
 (define (opt-bce-reason-cursor-partial) : i64
   56)
 
+;; GATE: the loop reads or writes a value a store can change through a
+;; pointer (`opt-loop-tainted?`, #9420).
+(define (opt-bce-reason-addr-taken) : i64
+  60)
+
 ;; VERIFY: the rewrite was built and the post-application verifier refused it,
 ;; which retires the loop for the rest of the invocation.
 (define (opt-bce-reason-verify) : i64
@@ -70533,6 +70795,7 @@
     [(= reason (opt-bce-reason-unsatisfiable)) "guard:unsatisfiable"]
     [(= reason (opt-bce-reason-cursor-unused)) "guard:cursor-unused"]
     [(= reason (opt-bce-reason-cursor-partial)) "guard:cursor-partial"]
+    [(= reason (opt-bce-reason-addr-taken)) "gate:addr-taken"]
     [(= reason (opt-bce-reason-verify)) "verify:rejected"]
     [else "other"]))
 
@@ -75402,10 +75665,13 @@
     [(slice block & rest)
       (match (opt-bce-version-block-shape blocks entry-label block)
         [(Some shape)
-          (if (opt-label-contains rejected shape.loop-label)
+          (if (or
+            (opt-label-contains rejected shape.loop-label)
+            (opt-loop-block-tainted? block))
             ;; Already retired by this invocation's verifier: its line was
             ;; emitted when the rewrite was refused, and re-reporting it once
-            ;; per rescan would count the same loop many times.
+            ;; per rescan would count the same loop many times. Or refused by
+            ;; the address-taken gate (#9420).
             (begin
               (opt-bce-trace-begin! false)
               (opt-bce-version-blocks-scan
@@ -84351,21 +84617,30 @@
           free?
           loop)
           [(Some shape)
-            (match (if (and regions-only? (not shape.region?))
+            (match (cond
               ;; A REGIONS-ONLY phase offered a non-region candidate: the flat
               ;; or the ordinary-nest phase owns this loop and reports it, so
               ;; this step examined nothing.
-              (opt-bce-trace-refuse-result
-                (opt-bce-reason-none)
-                (compiler-opt-global-shared-view blocks)
-                frame)
-              (opt-bce-mb-apply
-                descriptor
-                pred-map
-                doms
-                (& blocks)
-                (compiler-opt-global-shared-view shape)
-                frame))
+              ;; The address-taken gate refuses a tainted loop (#9420).
+              [(or
+                  (and regions-only? (not shape.region?))
+                  (opt-loop-tainted?
+                    (& blocks)
+                    (opt-label-add shape.body-labels shape.header)))
+                (opt-bce-trace-refuse-result
+                  (if (and regions-only? (not shape.region?))
+                    (opt-bce-reason-none)
+                    (opt-bce-reason-addr-taken))
+                  (compiler-opt-global-shared-view blocks)
+                  frame)]
+              [else
+                (opt-bce-mb-apply
+                  descriptor
+                  pred-map
+                  doms
+                  (& blocks)
+                  (compiler-opt-global-shared-view shape)
+                  frame)])
               [(Result next-blocks next-frame changed)
                 (if changed
                   (begin
@@ -84970,8 +85245,11 @@
         [body-labels : OptLabelSet (opt-natural-loop-body loop)]
         [body-blocks : ir.CompilerIrBlockList
           (opt-natural-loop-current-body-blocks loop blocks)]
-        (if (not
-          (opt-bce-hoist-body-ok? (ir.compiler-ir-block-list-view body-blocks)))
+        (if (or
+          (not
+            (opt-bce-hoist-body-ok?
+              (ir.compiler-ir-block-list-view body-blocks)))
+          (opt-loop-tainted? blocks (opt-label-add body-labels header)))
           (No)
           (match (opt-cfg-find-block blocks preheader)
             [(No) (No)]
@@ -86116,6 +86394,8 @@
     (compiler-opt-global-shared-view func)
     (compiler-opt-global-shared-view context))
     [(Ok)
+      (match (& func)
+        [(Function _ _ _ frame blocks _) (opt-loop-taint-install! frame blocks)])
       ;; The clone-free hoist runs LAST, over what the two versioners left: a
       ;; loop they took has a check-free clone already, and a loop they refused
       ;; on size, calls or economics is exactly the shape this reaches.
@@ -87284,19 +87564,26 @@
     [(slice loop & rest)
       (match (opt-unroll-mb-loop-shape blocks entry-label loop)
         [(Some shape)
-          (match (opt-unroll-mb-apply
-            (compiler-opt-global-shared-view blocks)
-            shape
-            frame)
-            [(Result next-blocks next-frame changed)
-              (if changed
-                (Result next-blocks next-frame true)
-                (opt-unroll-mb-loops-scan
-                  blocks
-                  _all-loops
-                  rest
-                  entry-label
-                  frame))])]
+          ;; The address-taken gate refuses a tainted loop (#9420).
+          (if (opt-loop-tainted?
+            (& blocks)
+            (opt-label-add
+              (opt-natural-loop-body loop)
+              (opt-natural-loop-header loop)))
+            (opt-unroll-mb-loops-scan blocks _all-loops rest entry-label frame)
+            (match (opt-unroll-mb-apply
+              (compiler-opt-global-shared-view blocks)
+              shape
+              frame)
+              [(Result next-blocks next-frame changed)
+                (if changed
+                  (Result next-blocks next-frame true)
+                  (opt-unroll-mb-loops-scan
+                    blocks
+                    _all-loops
+                    rest
+                    entry-label
+                    frame))]))]
         [(No)
           (opt-unroll-mb-loops-scan blocks _all-loops rest entry-label frame)])]))
 

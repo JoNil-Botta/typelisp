@@ -1,5 +1,10 @@
 name: Verified Linux instruction-count packages
 description: Reuse authenticated apt archives; always install and check exact versions
+inputs:
+  artifact-suffix:
+    description: Appended to the provenance artifact name for jobs that share an ID (CI lanes)
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -48,7 +53,7 @@ runs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: linux-instruction-tools-${{ github.job }}
+        name: linux-instruction-tools-${{ github.job }}${{ inputs.artifact-suffix != '' && format('-{0}', inputs.artifact-suffix) || '' }}
         path: |
           target/ci-linux-tools/*.txt
           target/ci-linux-tools/*.tsv

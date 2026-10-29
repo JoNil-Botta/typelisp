@@ -10,54 +10,96 @@ concurrency:
 
 permissions:
   contents: read
-  # The self_compile check reads main's reference workflow runs and artifacts.
+  # The self_compile check reads main's reference workflow runs and artifacts;
+  # the aggregators read this run's jobs and lane artifacts.
   actions: read
 
 jobs:
-  # TypeLisp is self-hosted. The single verification flow fetches the published
+  # TypeLisp is self-hosted. Each verification flow fetches the published
   # stage0 (cli.tl), runs the one compiler build of the flow (the
   # stage1->stage2->stage3 bootstrap fixpoint over src/main.tl, with a stage4
-  # fallback when needed), and then runs every gate on the converged compiler.
-  # The gate is fail-closed: Linux and Windows must run every applicable gate.
-  # Do not add skip flags; compiler/runtime capability changes should land first,
-  # then a follow-up PR can use the new capability. Gates run four at a time on
-  # the runners' 4 vCPUs, within 14 GiB of their 16 GiB of memory
+  # fallback when needed), and then runs its gates on the converged compiler.
+  # Each host's gates run in two CI lanes (#7767 slice 2): scripts/ci-lanes.tsv
+  # assigns every gate of scripts/ci-gates.tsv to exactly one lane, and each
+  # lane runs scripts/ci-verify.sh --gates with its own gates, their needs and
+  # its own bootstrap. No compiler passes between jobs. The gate is
+  # fail-closed: Linux and Windows must run every applicable gate. Do not add
+  # skip flags; compiler/runtime capability changes should land first, then a
+  # follow-up PR can use the new capability. Gates run four at a time on the
+  # runners' 4 vCPUs, within 14 GiB of their 16 GiB of memory
   # (scripts/README.md, `memory` and `locks`).
-  ci:
-    name: ${{ matrix.name }}
+  lane:
+    name: CI lane ${{ matrix.lane }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout_minutes }}
     outputs:
-      linux_envelope_sha: ${{ steps.envelope.outputs.linux_envelope_sha }}
-      windows_envelope_sha: ${{ steps.envelope.outputs.windows_envelope_sha }}
+      linux_1: ${{ steps.envelope.outputs.linux_1 }}
+      linux_2: ${{ steps.envelope.outputs.linux_2 }}
+      windows_1: ${{ steps.envelope.outputs.windows_1 }}
+      windows_2: ${{ steps.envelope.outputs.windows_2 }}
     strategy:
       fail-fast: true
       matrix:
+        # Lane names only; scripts/ci-lanes.tsv owns their gates. host_checks
+        # runs the host-wide source and editor checks once per host.
         include:
-          - name: Test + Integration
+          - lane: linux-1
             os: ubuntu-latest
             timeout_minutes: 150
-          - name: Test + Integration (windows-latest)
+            host_checks: true
+          - lane: linux-2
+            os: ubuntu-latest
+            timeout_minutes: 150
+            host_checks: false
+          - lane: windows-1
             os: windows-latest
             timeout_minutes: 120
+            host_checks: false
+          - lane: windows-2
+            os: windows-latest
+            timeout_minutes: 120
+            host_checks: true
     steps:
       - uses: actions/checkout@v4
 
+      # Fails every lane when scripts/ci-lanes.tsv leaves a gate unassigned,
+      # assigns one twice or omits a declared duplicate. Lane linux-1 isolates
+      # build-invariance, so only it gets three pool workers (hosted only).
+      - name: Plan CI lane
+        id: plan
+        shell: bash
+        env:
+          LANE: ${{ matrix.lane }}
+        run: |
+          mkdir -p target
+          scripts/ci-lane.sh setup "$LANE" > target/ci-lane-setup.txt
+          cat target/ci-lane-setup.txt
+          cat target/ci-lane-setup.txt >> "$GITHUB_OUTPUT"
+          printf 'TYPELISP_CI_LANE=%s\n' "$LANE" >> "$GITHUB_ENV"
+          workers=$(sed -n 's/^build_invariance_workers=//p' target/ci-lane-setup.txt)
+          if [ -n "$workers" ]; then
+            printf 'TYPELISP_BUILD_INVARIANCE_WORKERS=%s\n' "$workers" >> "$GITHUB_ENV"
+          fi
+
       - name: Check implementation language allowlist
+        if: matrix.host_checks
         shell: bash
         run: scripts/check-implementation-languages.sh
 
       - name: Check .gitignore covers toolchain output
+        if: matrix.host_checks
         shell: bash
         run: scripts/check-gitignore.sh
 
       - uses: actions/setup-node@v4
+        if: matrix.host_checks
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: tools/vs-code-extension/package-lock.json
 
       - name: VS Code extension smoke
+        if: matrix.host_checks
         shell: bash
         working-directory: tools/vs-code-extension
         run: |
@@ -84,8 +126,10 @@ jobs:
           esac
 
       - name: Install Linux instruction-count tools
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.plan.outputs.instruction_tools == '1'
         uses: ./.github/actions/linux-instruction-count-tools
+        with:
+          artifact-suffix: ${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
 
       - name: Add Linux swap headroom
         if: runner.os == 'Linux'
@@ -131,20 +175,20 @@ jobs:
           printf 'TYPELISP_SDE_BIN=%s\n' "$sde_bin" >> "$GITHUB_ENV"
 
       - name: Compiler artifact envelope fail-closed fixtures
-        # The full suite is host-independent (both binary headers, planted
-        # MSYS binary markers and LF/CRLF checkouts). Windows verifies actual
-        # producer bytes in its own readback job, without thousands of forks.
-        if: runner.os == 'Linux'
+        # The full suite, including the lane aggregator's, is host-independent
+        # (both binary headers, planted MSYS binary markers and LF/CRLF
+        # checkouts). Each Windows aggregator verifies actual producer bytes.
+        if: runner.os == 'Linux' && matrix.host_checks
         shell: bash
         run: |
           fixture_root="$PWD/target/exp/ci-compiler-artifact-fixtures"
-          scripts/run-memory-bounded.sh --limit-mib 512 --timeout-seconds 120 \
+          scripts/run-memory-bounded.sh --limit-mib 512 --timeout-seconds 180 \
             --report target/ci-compiler-artifact-fixtures.memory -- \
             sh scripts/verify-ci-compiler-artifacts.sh "$fixture_root"
           cp "$fixture_root/self-test.json" target/ci-compiler-artifact-fixtures.json
 
       - name: Upload compiler envelope fixture evidence
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os == 'Linux' && matrix.host_checks
         uses: actions/upload-artifact@v4
         with:
           name: compiler-stage-envelope-fixtures-r${{ github.run_id }}-a${{ github.run_attempt }}
@@ -159,17 +203,26 @@ jobs:
         env:
           TYPELISP_CI_TIMING: '1'
           TYPELISP_CI_COMPILER_ENVELOPES: '1'
-        run: scripts/ci-verify.sh --jobs 4 --memory-mib 14336
+          LANE_GATES: ${{ steps.plan.outputs.gates }}
+        run: scripts/ci-verify.sh --gates "$LANE_GATES" --jobs 4 --memory-mib 14336
 
+      # The lane receipt: this lane's plan, every gate's result and timing rows
+      # and its compilers' hashes, sealed with its stage envelope.
       - name: Seal completed compiler stage envelope
         id: envelope
         shell: bash
-        run: scripts/ci-compiler-artifact.sh seal "$PWD" "$PWD/target/ci-stage-envelope" "$RUNNER_OS" >> "$GITHUB_OUTPUT"
+        run: |
+          host=$(printf '%s' "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
+          scripts/ci-compiler-artifact.sh seal "$PWD" "$PWD/target/ci-stage-envelope" "$RUNNER_OS" \
+            "$PWD/target/ci-verify-results.tsv" "$PWD/target/ci-timing/$host.tsv" > target/ci-stage-envelope.output
+          cat target/ci-stage-envelope.output
+          printf '%s=%s\n' "$(printf '%s' "$TYPELISP_CI_LANE" | tr - _)" \
+            "$(sed -n 's/^envelope_sha=//p' target/ci-stage-envelope.output)" >> "$GITHUB_OUTPUT"
 
       - name: Upload completed compiler stage envelope
         uses: actions/upload-artifact@v4
         with:
-          name: ci-stage-envelope-${{ runner.os }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          name: ci-stage-envelope-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: target/ci-stage-envelope/complete/
           if-no-files-found: error
           retention-days: 90
@@ -178,42 +231,26 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-stage-envelope-incomplete-${{ runner.os }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          name: ci-stage-envelope-incomplete-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: target/ci-stage-envelope/draft/
           if-no-files-found: warn
 
-
-      - name: Exercise SDE fallback on native AVX-512 hosts
-        shell: bash
-        run: |
-          export TYPELISP_BIN=$(cat target/ci-verify-stage2.path)
-          # Hosts without native AVX-512 already exercised SDE in every gate.
-          sde_native_isas=$(sh scripts/detect-simd-isa.sh)
-          if printf '%s\n' "$sde_native_isas" | tr -d '\r' | grep -qx avx512; then
-            export TYPELISP_AVX512_EXECUTION=sde
-            export TYPELISP_CROSS_MODE_PREVIOUS_COMPILER=$(cat target/ci-verify-stage1.path)
-            scripts/run-memory-bounded.sh --limit-mib 8192 \
-              --report target/sde-fallback.memory -- bash -e -c '
-                scripts/verify-spmd-simd.sh
-                scripts/verify-codegen-cases.sh tests/spmd/gang-width.cases
-                scripts/verify-spmd-package-calls.sh
-                scripts/verify-cross-mode-differential.sh
-              '
-          fi
-
+      # The host's ci-timing artifact is the aggregator's merge of the lanes.
       - name: Upload CI timing artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-timing-${{ runner.os }}
+          name: ci-timing-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: target/ci-timing/*.tsv
           if-no-files-found: error
 
+      # Evidence uploads run in every lane; each uploads only what the gates
+      # scripts/ci-lanes.tsv gave that lane produced.
       - name: Upload C comparison provenance
         if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: c-comparison-provenance
+          name: c-comparison-provenance-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: |
             target/instruction-count-check/measure/c-provenance.json
             target/instruction-count-check/measure/summary.tsv
@@ -223,26 +260,26 @@ jobs:
             target/instruction-count-heavy/measure/summary.tsv
             target/instruction-count-heavy/current.tsv
             target/instruction-count-heavy/diff.txt
-          if-no-files-found: warn
+          if-no-files-found: ignore
           retention-days: 90
 
       - name: Upload root build memory evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: root-build-memory-${{ runner.os }}
+          name: root-build-memory-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: |
             target/selfhost-build-run.memory
             target/opt2-cli-regression/build.memory
             target/opt2-cli-regression/build.stdout
             target/opt2-cli-regression/build.stderr
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Upload backend memory evidence
         if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
-          name: backend-memory-${{ runner.os }}
+          name: backend-memory-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: |
             target/build-invariance/backend-memory/*.memory
             target/build-invariance/backend-memory/*.stdout
@@ -254,21 +291,21 @@ jobs:
             target/build-invariance/batches/**/cases*.txt
             target/build-invariance/batches/**/entries.*.txt
             target/build-invariance/batches/**/aliases.*.txt
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Upload TLCI native route stress evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: tlci-native-route-stress-${{ runner.os }}
+          name: tlci-native-route-stress-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: target/tlci-native-route-stress/**
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Upload embedded stdlib TLCI resource evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: embedded-stdlib-tlci-resources-${{ runner.os }}
+          name: embedded-stdlib-tlci-resources-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
           path: |
             target/embedded-stdlib-tlci-resources/*/*.tsv
             target/embedded-stdlib-tlci-resources/*/reproduce.txt
@@ -279,16 +316,26 @@ jobs:
             target/embedded-stdlib-tlci-resources/*/representative-expansion.tl
             target/embedded-stdlib-tlci-resources/*/native.s
             target/embedded-stdlib-tlci-resources/*/source.s
-          if-no-files-found: warn
+          if-no-files-found: ignore
+
+      # The stage2-sde-fallback gate's peak (#9460), for its reservation.
+      - name: Upload SDE fallback memory evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sde-fallback-memory-${{ matrix.lane }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/sde-fallback.memory
+          if-no-files-found: ignore
 
       # self_compile has no checked row (#9307, perf/README.md). The
       # linux-self-compile-measurement gate measured the tested merge T; this
       # gates the PR's own cost M(T) - M(B) against main's CI-owned reference for
       # the tested base B, after verifying its provenance and identity, or
-      # measures B in place on this runner when there is none. It runs last
-      # because that fallback switches the checkout.
+      # measures B in place on this runner when there is none. It runs last in
+      # the lane that ran the measurement because that fallback switches the
+      # checkout.
       - name: Check self_compile own cost against main
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && steps.plan.outputs.self_compile == '1'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -296,9 +343,10 @@ jobs:
           TYPELISP_SELF_COMPILE_PR_HEAD: ${{ github.event.pull_request.head.sha }}
         run: scripts/self-compile.sh check
 
-      # The ledger on main attributes each merge to this record.
+      # The ledger on main attributes each merge to this record and to this
+      # lane's job (SC_CI_JOB_NAME in scripts/lib-self-compile.sh).
       - name: Upload self_compile measurement
-        if: always() && runner.os == 'Linux'
+        if: always() && runner.os == 'Linux' && steps.plan.outputs.self_compile == '1'
         uses: actions/upload-artifact@v4
         with:
           name: self-compile-measurement
@@ -307,49 +355,90 @@ jobs:
           retention-days: 90
           overwrite: true
 
-  # Validation only: no compiler/test gate consumes the transported envelope.
-  # The two existing required-check names and their complete flows stay intact.
-  stage-envelope-readback:
-    name: Compiler stage envelope readback (${{ matrix.host }})
-    needs: ci
+  # The required checks keep their names. Each host's aggregator runs whatever
+  # happened to the lanes, so a failed, cancelled or skipped lane makes it fail
+  # rather than be skipped. It passes only when every lane job succeeded and
+  # scripts/ci-lane.sh aggregate proves, for this run and the attempt that
+  # executed each lane, that every host gate passed in its owning lane, reads
+  # each lane's envelope back on its host (this replaces the separate
+  # readback jobs) and finds one converged compiler across the lanes. It then
+  # writes the host's merged ci-timing artifact.
+  aggregate:
+    name: ${{ matrix.name }}
+    needs: lane
+    if: always()
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 5
-    # Verify the materialized source bytes on the producing host: unqualified
-    # text paths can be CRLF on Windows, despite identical Git tree identity.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
-          - host: Linux
+          - name: Test + Integration
+            host: Linux
+            host_id: linux
             os: ubuntu-latest
-          - host: Windows
+          - name: Test + Integration (windows-latest)
+            host: Windows
+            host_id: windows
             os: windows-latest
     steps:
+      - name: Require every lane job to succeed
+        shell: bash
+        env:
+          LANES_RESULT: ${{ needs.lane.result }}
+        run: |
+          echo "CI lane jobs: $LANES_RESULT"
+          [ "$LANES_RESULT" = success ]
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
+
+      # Every attempt's envelopes: a lane copied by "Re-run failed jobs" is
+      # bound to the attempt that executed it.
       - uses: actions/download-artifact@v4
         with:
-          name: ci-stage-envelope-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}
-          path: target/envelope-readback/${{ matrix.host }}
-      - name: Verify trusted producer context and transported bundle
+          pattern: ci-stage-envelope-${{ matrix.host_id }}-*-r${{ github.run_id }}-a*
+          path: target/ci-lane-envelopes
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+
+      - name: Prove lane coverage and identity
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          LINUX_ENVELOPE_SHA: ${{ needs.ci.outputs.linux_envelope_sha }}
-          WINDOWS_ENVELOPE_SHA: ${{ needs.ci.outputs.windows_envelope_sha }}
+          HOST_ID: ${{ matrix.host_id }}
+          LANES_RESULT: ${{ needs.lane.result }}
+          LINUX_1: ${{ needs.lane.outputs.linux_1 }}
+          LINUX_2: ${{ needs.lane.outputs.linux_2 }}
+          WINDOWS_1: ${{ needs.lane.outputs.windows_1 }}
+          WINDOWS_2: ${{ needs.lane.outputs.windows_2 }}
         run: |
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs?per_page=100" > target/envelope-readback/jobs.json
-          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" > target/envelope-readback/artifacts.json
-          case "$RUNNER_OS" in
-            Linux) envelope_sha=$LINUX_ENVELOPE_SHA ;;
-            Windows) envelope_sha=$WINDOWS_ENVELOPE_SHA ;;
-            *) exit 1 ;;
-          esac
-          scripts/ci-compiler-artifact.sh verify "$PWD" "$PWD/target/envelope-readback/$RUNNER_OS" "$RUNNER_OS" "$envelope_sha" target/envelope-readback/jobs.json target/envelope-readback/artifacts.json > "target/envelope-readback/$RUNNER_OS.result.json"
-      - uses: actions/upload-artifact@v4
-        if: always()
+          out=target/ci-lane-aggregate
+          mkdir -p "$out" target/ci-timing
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?filter=all&per_page=100" \
+            --jq '.jobs[]' | jq -s '{jobs: .}' > "$out/jobs.json"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+            --jq '.artifacts[]' | jq -s '{artifacts: .}' > "$out/artifacts.json"
+          printf 'linux-1\t%s\nlinux-2\t%s\nwindows-1\t%s\nwindows-2\t%s\n' \
+            "$LINUX_1" "$LINUX_2" "$WINDOWS_1" "$WINDOWS_2" > "$out/digests.tsv"
+          scripts/ci-lane.sh aggregate "$HOST_ID" "$LANES_RESULT" "$PWD/target/ci-lane-envelopes" \
+            "$out/jobs.json" "$out/artifacts.json" "$out/digests.tsv" "$PWD/$out/proof"
+          cp "$out/proof/$HOST_ID.tsv" "target/ci-timing/$HOST_ID.tsv"
+          echo
+          echo "CI verification passed"
+
+      - name: Upload CI timing artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: compiler-stage-envelope-readback-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}
-          path: target/envelope-readback/*.json
+          name: ci-timing-${{ matrix.host }}
+          path: target/ci-timing/*.tsv
           if-no-files-found: error
+
+      - name: Upload lane coverage proof
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-lane-coverage-${{ matrix.host }}-r${{ github.run_id }}-a${{ github.run_attempt }}
+          path: target/ci-lane-aggregate/
+          if-no-files-found: warn

@@ -35,7 +35,7 @@ tests/safety/set_inline_array_value_before_bounds_trap.tl	stage2-native-integrat
 tests/safety/set_inline_array_field_value_before_bounds_trap.tl	stage2-native-integration-corpus	@corpus	Inner inline-array field value/bounds ordering also runs in the native opt0/1/2 matrix.
 tests/safety/set_inline_array_bounds_after_growth_trap.tl	stage2-native-integration-corpus	@corpus	Captured inner bounds after outer growth also run in the native opt0/1/2 matrix.
 tests/safety/set_inline_array_field_bounds_after_growth_trap.tl	stage2-native-integration-corpus	@corpus	Captured inner field bounds after outer growth also run in the native opt0/1/2 matrix.
-tests/spmd/*	stage2-spmd-simd-comparison,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	SPMD comparison data and direct source guards for its executable fixtures.
+tests/spmd/*	stage2-spmd-simd-comparison,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-sde-fallback	@corpus	SPMD comparison data and direct source guards for its executable fixtures.
 tests/public-tools/*	stage2-public-tool-surface,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The public-tool runner consumes the LSP and REPL corpora and their source fixtures.
 tests/apps/*	stage2-app-workflow-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The application runner consumes scenario manifests, packages, case files and sources.
 tests/tlci/corpus/*	tlci-format-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	The TLCI runner consumes its recorded container corpus and source fixtures.
@@ -46,7 +46,7 @@ tests/inline/*	stage2-inline-typelisp-tests,stage2-codegen-target-parity,compile
 tests/integration/global_aggregate_storage_*.tl	compiler-arena-debug-native-matrix	@corpus	The arena debug runner constructs these three source paths and checks instrumented global stores.
 tests/integration/macro_import_order_*.tl	stage2-compile-profile-verifier	@corpus	The profile verifier constructs the repro and format-first macro-import-order source paths.
 tests/integration/enum_constructor_owner_*.tl	stage2-codegen-target-parity	@corpus	Direct target-parity fixtures and their shared owner-local struct declarations.
-tests/spmd/package_*	stage2-spmd-package-calls	@corpus	Package-call fixtures have their own executable consumer.
+tests/spmd/package_*	stage2-spmd-package-calls,stage2-sde-fallback	@corpus	Package-call fixtures have their own executable consumer.
 tests/codegen/math.cases	stage2-math-exp-codegen-verifier,stage2-math-log-codegen-verifier,stage2-math-pow-codegen-verifier,stage2-math-trig-codegen-verifier	@corpus	Exact case file named by the four math gate commands.
 tests/codegen/ispc.cases	ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-mandelbrot-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Exact case file named by the ISPC contract gates.
 tests/codegen/must-use-abi.cases	stage2-must-use-metadata-and-abi-codegen	@corpus	Exact case file named by the must-use gate.
@@ -58,7 +58,7 @@ tests/golden/*	ir-observability-golden,stage2-codegen-target-parity,compiler-sta
 tests/codegen/crypto-sha.cases	stage2-git-sha-1-fixed-round-wipe-asm-shape-gate,stage2-sha-256-fixed-round-wipe-asm-shape-gate,stage2-sha-512-wipe-asm-shape-gate	@corpus	Exact case file named by the SHA shape gates.
 tests/codegen/crypto-secret.cases	stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	@corpus	Exact case file named by the secret-wipe gate.
 tests/codegen/by-value-aggregate-abi.cases	stage2-by-value-aggregate-abi-shape-gate	@corpus	Exact case file named by the aggregate ABI gate.
-tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast	@corpus	Exact case file named by the lane and broadcast gates.
+tests/spmd/gang-width.cases	stage2-spmd-lane-identity,stage2-spmd-broadcast,stage2-sde-fallback	@corpus	Exact case file named by the lane and broadcast gates.
 tests/cli/public-*.cases	stage2-public-tool-surface	@corpus	Public command transcripts discovered by the public-tool runner.
 tests/cli/selfhost-surface.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact command-surface corpus named by the CLI smoke runner.
 tests/cli/selfhost-build-run.cases	stage2-cli-build-run-and-chooser-smoke	@corpus	Exact build/run corpus named by the CLI smoke runner.
@@ -91,7 +91,7 @@ src/tests/compiler_typecheck_smoke.tl	stage2-compile-profile-verifier,stage2-nat
 src/tests/comptime_host_smoke.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/doc_test_smoke.tl	stage2-compile-profile-verifier,stage2-native-integration-corpus	@compiler	Direct fixture input in verify-compile-profile.sh.
 src/tests/scan_storage_growth.tl	stage2-compile-profile-verifier	@compiler	Direct fixture input in verify-compile-profile.sh.
-tests/cross-mode/corpus.tsv	stage2-cross-mode-semantic-abi-differential	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
+tests/cross-mode/corpus.tsv	stage2-cross-mode-semantic-abi-differential,stage2-sde-fallback	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
 tests/fixtures/backend_source_import_str_cat.tl	stage2-backend-source-import-context,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant,stage2-native-integration-corpus	@corpus	Direct fixture input in verify-backend-source-import-context.sh.
 tests/fixtures/win64-seh/savereg-oracle.expected	win64-seh-unwind-verifier	@corpus	Direct fixture input in verify-win64-seh-unwind.sh.
 tests/fixtures/win64-seh/driver.s.in	win64-seh-unwind-verifier	@corpus	Native Windows register canaries and virtual-unwind caller for Platform bridges and Internal frames.
@@ -127,7 +127,7 @@ tests/integration/comptime_type_expr_worklist.tl	ir-observability-golden	@corpus
 tests/integration/comptime_type_specialization.tl	stage2-compile-profile-verifier	@corpus	Direct fixture input in verify-compile-profile.sh.
 tests/integration/cond.tl	stage2-prelude-macro-mutation-guard	@corpus	Direct fixture input in verify-prelude-mutation.sh.
 tests/integration/control_flow.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-codegen-target-parity.sh, check-deterministic-asm.sh.
-tests/integration/cross_mode_internal_color.tl	stage2-cross-mode-semantic-abi-differential	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
+tests/integration/cross_mode_internal_color.tl	stage2-cross-mode-semantic-abi-differential,stage2-sde-fallback	@corpus	Direct fixture input in verify-cross-mode-differential.sh.
 tests/integration/enum_match.tl	stage2-deterministic-assembly,stage2-windows-coff-batch-plan	@corpus	Direct fixture input in check-codegen-target-parity.sh, check-deterministic-asm.sh, verify-compile-batch-windows-coff.sh.
 tests/integration/enum_string_payload.tl	stage2-deterministic-assembly	@corpus	Direct fixture input in check-deterministic-asm.sh.
 tests/integration/factored_addresses.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
@@ -173,17 +173,17 @@ tests/integration/register_group_phi_return.tl	stage2-backend-target-assembly-pa
 tests/integration/register_group_try.tl	stage2-windows-coff-batch-plan	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
 tests/integration/register_resident_enum.tl	stage2-backend-target-assembly-parity	@corpus	Direct fixture input in check-backend-target-asm-parity.sh, check-codegen-target-parity.sh.
 tests/integration/replace_fixed_array_elements.tl	stage2-windows-coff-batch-plan	@corpus	Direct fixture input in verify-compile-batch-windows-coff.sh.
-tests/integration/spmd_compact_scalar.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_foreach.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_gather_read.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_inline_helper_composition.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_loop_carried_copy_shape.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_reduce_scalar.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_scan_scalar.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_shuffle_reduce.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_shuffle_simd.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_shuffle_types.tl	stage2-spmd-simd-comparison	@corpus	Direct fixture input in verify-spmd-simd.sh.
-tests/integration/spmd_uniform_index_write.tl	stage2-spmd-simd-comparison,stage2-safety-corpus	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_compact_scalar.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_foreach.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_gather_read.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_inline_helper_composition.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_loop_carried_copy_shape.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_reduce_scalar.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_scan_scalar.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_shuffle_reduce.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_shuffle_simd.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_shuffle_types.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
+tests/integration/spmd_uniform_index_write.tl	stage2-spmd-simd-comparison,stage2-safety-corpus,stage2-sde-fallback	@corpus	Direct fixture input in verify-spmd-simd.sh.
 tests/integration/stdlib_hash_generated.tl	ir-observability-golden	@corpus	Direct fixture input in verify-ir-observability.sh.
 tests/integration/winsock_capability_measure.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
 tests/integration/winsock_capability.tl	no-libc-dependency-guard	@corpus	Direct fixture input in verify-no-libc.sh.
@@ -454,18 +454,18 @@ tests/integration/source_selected_generated_export.tl	stage2-cli-build-run-and-c
 tests/integration/source_selected_generated_macro_dep.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/source_selected_generated_shadow.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/source_selected_generated_user.tl	stage2-cli-build-run-and-chooser-smoke	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_compact_destination_oob_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_compact_overflow_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_gather_lane_offset_oob.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_gather_oob.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_scan_negative_start_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_scan_short_output_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_shuffle_abort_nested.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_shuffle_lane1_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_shuffle_negative_trap.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_shuffle_tail_computed_selector.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_shuffle_tail_oob.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/integration/spmd_shuffle_tail_selector.tl	stage2-spmd-simd-comparison	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_compact_destination_oob_trap.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_compact_overflow_trap.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_gather_lane_offset_oob.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_gather_oob.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_scan_negative_start_trap.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_scan_short_output_trap.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_abort_nested.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_lane1_trap.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_negative_trap.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_tail_computed_selector.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_tail_oob.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/integration/spmd_shuffle_tail_selector.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/static_scalar_array_globals.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/stdlib_math_ieee.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/integration/string_literal_eq.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
@@ -548,15 +548,15 @@ tests/safety/shift_count_trap.tl	stage2-native-integration-corpus	@corpus	Declar
 tests/safety/spmd_unmasked_scatter_index_reject.tl	ispc-mandelbrot-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/with_owner_destroy_use_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/with_owner_rewind_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/broadcast_lane0_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/broadcast_lane0_u32.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/broadcast_lane0_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/broadcast_lane1_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/broadcast_lane1_u32.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/broadcast_lane1_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/lane_identity_2d.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/lane_identity_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
-tests/spmd/lane_identity_reduce_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane0_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane0_u32.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane0_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane1_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane1_u32.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/broadcast_lane1_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/lane_identity_2d.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/lane_identity_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/spmd/lane_identity_reduce_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 src/build_cli_core.tl	stage2-public-tool-surface	@compiler	The public-tool runner invokes a structural guard that directly reads this source.
 src/lsp_frame_core.tl	stage2-public-tool-surface	@compiler	The public-tool runner invokes a structural guard that directly reads this source.
 tests/safety/global_mut_borrow_deref_location_reject.tl	stage2-public-tool-surface	@corpus	Declared primary fixture in the composed public-check CLI location contracts.
@@ -586,12 +586,12 @@ tests/integration/macro_dotted_root_write_borrow.tl	stage2-public-tool-surface,s
 tests/safety/macro_dotted_global_borrow_reject.tl	stage2-public-tool-surface	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
 tests/safety/macro_dotted_global_write_reject.tl	stage2-public-tool-surface	@corpus	Primary macro hygiene fixture in public-check and, for header-less roots, CLI build/run.
 tests/cli/public-dispatch-library.cases	stage2-public-tool-surface,stage2-codegen-target-parity	@corpus	Ordinary dispatch variant library exports and mode diagnostics run in the public CLI corpus.
-tests/spmd/dispatch_distinct_direct.tl	stage2-spmd-simd-comparison	@corpus	Distinct ordinary dispatch variants run at every optimization and backend mode in simd.cases.
-tests/spmd/dispatch_shared_direct.tl	stage2-spmd-simd-comparison	@corpus	Shared ordinary dispatch variant calls and values run through simd.cases.
-tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison	@corpus	Dispatch-only control pins ISA selection and absence of an unreferenced ordinary body.
-tests/spmd/dispatch_variant_support.tl	stage2-spmd-simd-comparison	@corpus	Dispatch regression support independently checks CPU selection and every output lane.
-tests/spmd/dispatch_imported_values.tl	stage2-spmd-simd-comparison	@corpus	Qualified and selected variant calls and values run through simd.cases.
-tests/spmd/dispatch_value_provider.tl	stage2-spmd-simd-comparison	@corpus	Imported dispatch variant provider is consumed by the simd.cases value regression.
+tests/spmd/dispatch_distinct_direct.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Distinct ordinary dispatch variants run at every optimization and backend mode in simd.cases.
+tests/spmd/dispatch_shared_direct.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Shared ordinary dispatch variant calls and values run through simd.cases.
+tests/spmd/dispatch_shared_only.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Dispatch-only control pins ISA selection and absence of an unreferenced ordinary body.
+tests/spmd/dispatch_variant_support.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Dispatch regression support independently checks CPU selection and every output lane.
+tests/spmd/dispatch_imported_values.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Qualified and selected variant calls and values run through simd.cases.
+tests/spmd/dispatch_value_provider.tl	stage2-spmd-simd-comparison,stage2-sde-fallback	@corpus	Imported dispatch variant provider is consumed by the simd.cases value regression.
 tests/safety/shared_mut_borrow_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
 tests/safety/borrow_lifetime_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.
 tests/safety/shared_mut_borrow_initializer_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check borrow diagnostic location contracts.

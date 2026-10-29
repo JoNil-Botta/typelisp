@@ -32,6 +32,10 @@ cd "$ROOT"
 # assemble_and_link.
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
+# Windows stage links write a COFF TimeDateStamp of 0 instead of the link time,
+# so independent CI lanes build byte-identical compilers (#7767 slice 2). Not
+# exported: only this script's own links change; #9470 covers the others.
+TYPELISP_WINDOWS_LINK_TIMESTAMP=0
 . "$ROOT/scripts/lib-bootstrap-fixpoint-control.sh"
 . "$ROOT/scripts/lib-build-provenance.sh"
 . "$ROOT/scripts/lib-ci-timing.sh"

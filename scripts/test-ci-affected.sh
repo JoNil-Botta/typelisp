@@ -377,7 +377,7 @@ for host in linux windows; do
             src/main.tl:*) continue ;; # Produced CLI workload: bootstrap plus advisory compiler consumers.
             src/sym_i64_env.tl:stage2-opt1-opt2-build-invariance) continue ;; # Staged supporting module, not a primary comparison fixture.
             src/compiler_embedded_stdlib_payload.tl:embedded-stdlib-tlci-bounded-resource-report | src/compiler_embedded_stdlib_payload.tl:embedded-stdlib-tlci-resource-verifier-self-tests | src/compiler_embedded_stdlib_payload.tl:embedded-stdlib-tlci-image | src/compiler_embedded_stdlib_payload.tl:stage2-compile-profile-verifier | src/compiler_embedded_stdlib_payload.tl:stage2-stdlib-modules-and-fixtures | src/compiler_embedded_stdlib_payload.tl:tlci-mutation-bootstrap-fixpoint) continue ;; # Nested image builder reads staged compiler support; payload's standalone guard remains required.
-            stdlib/cpu.tl:stage2-spmd-runtime-dispatch) continue ;; # Imported ISA-detector support; timestamp invalidates its artifact, no direct fixture contract.
+            stdlib/cpu.tl:stage2-spmd-runtime-dispatch | stdlib/cpu.tl:stage2-sde-fallback) continue ;; # Imported ISA-detector support; timestamp invalidates its artifact, no direct fixture contract.
             src/tests/compiler_codegen_smoke_suite.tl:stage2-opt1-opt2-build-invariance) continue ;; # Nested pool self-test uses this name as synthetic job data, not as compiled source.
         esac
         if ! grep -Fx "$path" "$work/tracked-inputs" >/dev/null; then

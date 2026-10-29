@@ -748,10 +748,17 @@ sc_fetch_pr_record() {
     sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$_sfpr_id/jobs?filter=all&per_page=100" \
         "$_sfpr_dest/api/jobs.json" ||
         { SC_LEDGER_INFRA="listing jobs of CI run $_sfpr_id failed"; _sfpr_problem "API error listing jobs of run $_sfpr_id"; return 1; }
-    _sfpr_job=$(sc_job_latest "$_sfpr_dest/api/jobs.json" "$SC_CI_JOB_NAME")
+    _sfpr_job_name=$SC_CI_JOB_NAME
+    _sfpr_job=$(sc_job_latest "$_sfpr_dest/api/jobs.json" "$_sfpr_job_name")
+    # Only a run with no CI lane jobs at all predates the lanes.
+    if [ -z "$_sfpr_job" ] &&
+        jq -e '[.jobs[] | select(.name | startswith("CI lane "))] | length == 0' "$_sfpr_dest/api/jobs.json" > /dev/null; then
+        _sfpr_job_name=$SC_CI_LEGACY_JOB_NAME
+        _sfpr_job=$(sc_job_latest "$_sfpr_dest/api/jobs.json" "$_sfpr_job_name")
+    fi
     _sfpr_attempt=$(printf '%s' "$_sfpr_job" | cut -f1)
     [ "$(printf '%s' "$_sfpr_job" | cut -f2-3)" = "$(printf 'completed\tsuccess')" ] ||
-        { _sfpr_problem "CI run $_sfpr_id: '$SC_CI_JOB_NAME' did not succeed in its latest attempt"; return 1; }
+        { _sfpr_problem "CI run $_sfpr_id: '$_sfpr_job_name' did not succeed in its latest attempt"; return 1; }
     sc_api "repos/$GITHUB_REPOSITORY/actions/runs/$_sfpr_id/artifacts?name=$SC_MEASUREMENT_ARTIFACT&per_page=100" \
         "$_sfpr_dest/api/artifacts.json" ||
         { SC_LEDGER_INFRA="listing artifacts of CI run $_sfpr_id failed"; _sfpr_problem "API error listing artifacts of run $_sfpr_id"; return 1; }

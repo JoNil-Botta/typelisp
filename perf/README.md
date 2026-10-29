@@ -340,8 +340,10 @@ before a record becomes complete.
 Disposable output directories must remain inside the checkout's `target/`;
 the scripts validate that boundary before clearing a previous output.
 
-The required Linux job uploads `c-comparison-provenance` on success or failure,
-with both suites' records, summaries, checked rows and numerical diffs. Its
+The required CI lane that runs the Linux instruction-count gates
+(`scripts/ci-lanes.tsv`; today `CI lane linux-2`) uploads
+`c-comparison-provenance-<lane>-r<run>-a<attempt>` on success or failure, with
+both suites' records, summaries, checked rows and numerical diffs. Its
 recorded repository, workflow, run ID, attempt, job and commit identify the
 producer. The artifact is retained for 90 days. No host environment variable
 is passed to the measured process: its environment remains `env -i LC_ALL=C`.
@@ -349,9 +351,9 @@ is passed to the measured process: its environment remains `env -i LC_ALL=C`.
 `<baseline>.provenance.json` describes the producer of the checked C rows.
 The initial schema-1 sidecars explicitly mark historical provenance unknown;
 they make no claim about which tools produced the existing values. To
-establish provenance, run the complete required Linux job for an identified
-commit, retaining the `c-comparison-provenance` artifact and successful gate
-logs. Verify that **every checked C row in each suite matches exactly** and
+establish provenance, run the complete required CI for an identified
+commit, retaining that lane's `c-comparison-provenance-<lane>-r<run>-a<attempt>`
+artifact and successful gate logs. Verify that **every checked C row in each suite matches exactly** and
 that output parity and required case coverage passed. Copy that suite's
 complete measured record into its sidecar in a reviewed, record-only PR;
 include the run/attempt, job and direct artifact URL in that PR. Preserve all
@@ -533,13 +535,18 @@ with phases `body`, `dce_escape`, `compact`, `clone`, and `restore`.
 
 Pull-request CI uploads one `ci-timing-Linux` and one `ci-timing-Windows`
 artifact per run (`target/ci-timing/<host>.tsv`, written by `ci-verify.sh` when
-`TYPELISP_CI_TIMING=1`). They record every gate's wall time and finer rows such
-as the four build-invariance selfhost compiles
+`TYPELISP_CI_TIMING=1`). Each host's required-check aggregator merges them
+from its two CI lanes (`scripts/README.md`, CI lanes): each gate's rows come
+from the lane that owns it, and the complete-verification row is the slowest
+lane's verification time. Each lane also uploads its own rows as
+`ci-timing-<lane>-r<run>-a<attempt>`. They record every gate's wall time and
+finer rows such as the four build-invariance selfhost compiles
 (`opt1-built:selfhost_main_opt1`, `opt2-built:selfhost_main_opt2`, ...). They
 are evidence for performance work; CI applies no wall-clock budget to them.
 Linux also retains build-invariance's authoritative corpus, both producers'
-case/entry/alias plans, pool queue and chunk metrics in the existing
-`backend-memory-Linux` artifact. Its `provenance.txt` identifies the source,
+case/entry/alias plans, pool queue and chunk metrics in the
+`backend-memory-linux-1-r<run>-a<attempt>` artifact of the lane that runs
+build-invariance. Its `provenance.txt` identifies the source,
 compiler binaries, common invocation flags and worker count. Those are the
 same plans the local gate validates and executes; there is no artifact cache
 in the comparison gate.

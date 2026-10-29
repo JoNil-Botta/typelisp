@@ -455,11 +455,12 @@
   ;; thread users left, or a live thread handle holding its region when it was
   ;; joined. No child, and the result is unit.
   (RequireReleased TypedBinderId TypedBinderId)
-  ;; Before a safe destroy (false) or rewind (true) of the arena the second
-  ;; binder names, the first, a `with` cleanup owner holding values of that
-  ;; arena, must no longer hold them (its scope-exit cleanup would read freed
-  ;; storage). No child, and the result is unit.
-  (RequireUnheld TypedBinderId TypedBinderId bool))
+  ;; Before an end of the arena the second binder names (0 a safe destroy, 1
+  ;; a safe rewind, 2 a call passing it to an `:invalidate` parameter), the
+  ;; first, a `with` cleanup owner holding values of that arena, must no
+  ;; longer hold them (its scope-exit cleanup would read freed storage). No
+  ;; child, and the result is unit.
+  (RequireUnheld TypedBinderId TypedBinderId i64))
 
 (defstruct TypedOccurrence
   (serial u64)

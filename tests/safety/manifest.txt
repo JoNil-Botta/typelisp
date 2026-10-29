@@ -1213,6 +1213,25 @@ with_owner_destroy_shadowed_reject|check-fail|tests/safety/with_owner_destroy_sh
 with_owner_rewind_reject|check-fail|tests/safety/with_owner_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot invalidate `scratch` while `with` cleanup owner `owner` holds values from it
 with_owner_destroy_moved_reject|check-fail|tests/safety/with_owner_destroy_moved_reject.tl|-|error[E0211]: typecheck: cleanup owner `owner` moved before with scope exit
 with_owner_other_arena_destroy_ok|run-exit|tests/safety/with_owner_other_arena_destroy_ok.tl|42|-
+with_owner_destroy_unannotated_reject|check-fail|tests/safety/with_owner_destroy_unannotated_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+# An `:invalidate` call ends its arguments' arenas through the same end
+# operator as a safe destroy or rewind (#9476), so a live `with` owner holding
+# one of them is the same error, named by its owner local.
+with_owner_invalidate_call_reject|check-fail|tests/safety/with_owner_invalidate_call_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+with_owner_invalidate_call_second_brand_reject|check-fail|tests/safety/with_owner_invalidate_call_second_brand_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `second` while `with` cleanup owner `w` holds values from it
+with_owner_invalidate_call_place_reject|check-fail|tests/safety/with_owner_invalidate_call_place_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot invalidate `o` while `with` cleanup owner `w` holds values from it
+# Known open (#9476 d6/d9/d11, deferred to #9445 / D-C47 S4): an owner in a
+# younger scope holding a value fed from the ended arena is not seen by any end
+# kind until admission records that edge. S4 turns this row into check-fail.
+with_owner_scope_fed_invalidate_known_open|check-ok|tests/safety/with_owner_scope_fed_invalidate_known_open.tl|-|-
+# Known open (#9479, deferred to D-C47 S2): a branded `in-arena` allocates in
+# the brand, not the owner's live phase, so a rewind does not see the owner.
+with_owner_rewind_unannotated_known_open|check-ok|tests/safety/with_owner_rewind_unannotated_known_open.tl|-|-
+# Every end kind runs typing's in-arena self-check before the end operator: an
+# end inside its own arena is that error even while a `with` owner holds it.
+with_owner_end_inside_arena_destroy_reject|check-fail|tests/safety/with_owner_end_inside_arena_destroy_reject.tl|-|error[E0212]: typecheck: arena.destroy-safe! cannot run inside the arena it destroys
+with_owner_end_inside_arena_rewind_reject|check-fail|tests/safety/with_owner_end_inside_arena_rewind_reject.tl|-|error[E0212]: typecheck: arena.rewind-safe! cannot run inside the arena it rewinds
+with_owner_end_inside_arena_invalidate_call_reject|check-fail|tests/safety/with_owner_end_inside_arena_invalidate_call_reject.tl|-|error[E0212]: typecheck: an :invalidate call cannot run inside the arena it destroys
 arena_branded_destroy_owner_field_reuse_reject|check-fail|tests/safety/arena_branded_destroy_owner_field_reuse_reject.tl|-|use of moved value `state`
 arena_branded_destroy_value_use_reject|check-fail|tests/safety/arena_branded_destroy_value_use_reject.tl|-|use of moved value `text`
 arena_branded_destroy_nested_field_use_reject|check-fail|tests/safety/arena_branded_destroy_nested_field_use_reject.tl|-|use of moved value `payload`

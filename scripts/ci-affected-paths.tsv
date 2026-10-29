@@ -24,6 +24,7 @@ tests/integration/arena_scratch_owner_activation.tl	stage2-public-tool-surface	@
 tests/integration/arena_escape_owner_activation.tl	stage2-public-tool-surface	@corpus	Primary scratch activation check/compile agreement control.
 tests/integration/arena_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted arena activation and early-exit public contract.
 tests/integration/arena_tied_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted declared-result early-exit flow contract.
+tests/integration/arena_invalidate_with_owner.tl	stage2-public-tool-surface	@corpus	Primary accepted end-operator check/compile contract.
 tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
 tests/integration/macro_struct_pattern*.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Macro-produced struct patterns retain constructor ownership and binding modes across native optimization levels and targets.
 tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
@@ -548,6 +549,13 @@ tests/safety/shift_count_trap.tl	stage2-native-integration-corpus	@corpus	Declar
 tests/safety/spmd_unmasked_scatter_index_reject.tl	ispc-mandelbrot-corpus-contract,ispc-perfbench-gathers-corpus-contract,ispc-perfbench-loads-corpus-contract,ispc-perfbench-stores-corpus-contract,ispc-point-transform-corpus-contract	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/with_owner_destroy_use_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/with_owner_rewind_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/with_owner_destroy_unannotated_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
+tests/safety/with_owner_invalidate_call_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
+tests/safety/with_owner_invalidate_call_second_brand_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
+tests/safety/with_owner_invalidate_call_place_reject.tl	stage2-public-tool-surface	@corpus	Primary end-operator check/compile contract.
+tests/safety/with_owner_end_inside_arena_destroy_reject.tl	stage2-public-tool-surface	@corpus	Primary in-arena self-check before the end operator.
+tests/safety/with_owner_end_inside_arena_rewind_reject.tl	stage2-public-tool-surface	@corpus	Primary in-arena self-check before the end operator.
+tests/safety/with_owner_end_inside_arena_invalidate_call_reject.tl	stage2-public-tool-surface	@corpus	Primary in-arena self-check before the end operator.
 tests/spmd/broadcast_lane0_i64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/spmd/broadcast_lane0_u32.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/spmd/broadcast_lane0_u64.tl	stage2-spmd-broadcast,stage2-spmd-lane-identity,stage2-sde-fallback	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

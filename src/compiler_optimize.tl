@@ -21444,11 +21444,13 @@
 ;;   moving load at a def of one. Each pass reads the set only for the function
 ;;   it rewrites, collecting it in a walk it already makes or only once it has
 ;;   a candidate.
-;; - BCE versioning, unrolling and LFTR refuse invariant operands naming one.
-;;   BCE and unrolling's definition-based value proofs do not follow a def of
-;;   one. Ordinary value snapshots keep their own definitions and remain
-;;   eligible. Each driver installs the set after finding a candidate or loop;
-;;   fill/copy-call recognition installs it lazily before using these helpers.
+;; - BCE versioning, unrolling and LFTR never call one invariant
+;;   (`opt-loop-invariant-var?`): not as a bound, length, index, base, addend,
+;;   descriptor handle, self-phi input or preheader twin. BCE and unrolling's
+;;   definition-based value proofs do not follow a def of one. Ordinary value
+;;   snapshots keep their own definitions and remain eligible. Each driver
+;;   installs the set after finding a candidate or loop; fill/copy-call
+;;   recognition installs it lazily before using these helpers.
 ;; Every reader runs after its own pass installed the set for the function it
 ;; rewrites, so a set left from another function is never read. `ids` lists the
 ;; marked vars, so a loop pays for the few there are rather than for the whole
@@ -61606,15 +61608,23 @@
             [(No) (No)]))]
       [_ (No)])))
 
+;; A var the loop does not define is invariant only if no pointer can change
+;; its storage either: absence from `defs` says nothing about an address-taken
+;; local (#9420).
+(define (opt-loop-invariant-var?
+  [defs : (& defs opt_i64_i64_map.Map)]
+  [var : i64]) : bool
+  (not
+    (or
+      (opt-addr-taken-var? (& opt-function-addr-taken.marks) var)
+      (opt-used-contains defs var))))
+
 (define (opt-unroll-invariant-bound?
   [defs : (& defs opt_i64_i64_map.Map)]
   [bound : (& bound ir.CompilerIrValue)]) : bool
   (match bound
     [(I64 _) true]
-    [(Var id)
-      (and
-        (not (opt-addr-taken-operand? bound))
-        (not (opt-used-contains defs id)))]
+    [(Var id) (opt-loop-invariant-var? defs id)]
     [_ false]))
 
 ;; --- a REMAINDER loop the clone can never run ---------------------------------
@@ -65356,7 +65366,7 @@
     [_ (not (opt-dce-binop-traps? op rhs ty))]))
 
 ;; Locate `ptr-var`'s defining `gep base, iphi` and check the base is
-;; loop-invariant (defined outside the block).
+;; loop-invariant (defined outside the block, address not taken).
 (define (opt-fill-call-gep-of
   [instrs : (& ir.CompilerIrInstrSeq)]
   [index : i64]
@@ -65373,15 +65383,16 @@
             [(Var offset-var)
               (if (and
                 (= offset-var iphi)
-                (not
-                  (let
-                    [set
-                      (opt-unroll-block-defs
-                        (& instrs.slots)
-                        0
-                        last
-                        (opt_i64_i64_map.with-capacity 32))]
-                    (opt-used-contains set (opt-loop-call-value-var base)))))
+                (let
+                  [set
+                    (opt-unroll-block-defs
+                      (& instrs.slots)
+                      0
+                      last
+                      (opt_i64_i64_map.with-capacity 32))]
+                  (opt-loop-invariant-var?
+                    (& set)
+                    (opt-loop-call-value-var base))))
                 (Some
                   (OptFillCallSite
                     index
@@ -66149,7 +66160,9 @@
                   (opt_i64_i64_map.with-capacity 32))]
               (and
                 (= (opt-copy-call-elem-width (& elem-ty)) width)
-                (not (opt-used-contains defs (opt-loop-call-value-var base)))
+                (opt-loop-invariant-var?
+                  (& defs)
+                  (opt-loop-call-value-var base))
                 (opt-copy-call-index-tracks?
                   instrs
                   0
@@ -66215,7 +66228,7 @@
     [(Var v)
       (and
         (= v iphi)
-        (not (opt-used-contains defs (opt-loop-call-value-var other-side))))]
+        (opt-loop-invariant-var? defs (opt-loop-call-value-var other-side)))]
     [_ false]))
 
 ;; Same rule as `opt-fill-call-escape-ok?` -- only `inext` (materialised as
@@ -67369,9 +67382,9 @@
 
 ;; Decompose a check index into `base + scale*counter + offset`. Counter
 ;; reads resolve to the counter phi (through same-block Mov copies); any
-;; other var with no definition in the loop block is a loop-invariant base;
-;; anything else (a phi, a load, a non-i64 op, a non-Add/Sub/Mul op)
-;; rejects.
+;; other var with no definition in the loop block and no address taken is a
+;; loop-invariant base; anything else (a phi, a load, a non-i64 op, a
+;; non-Add/Sub/Mul op) rejects.
 (define (opt-unroll-const-guard-affine
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [phi-count : i64]
@@ -67392,7 +67405,9 @@
               [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
               [def-index : i64 (opt-unroll-def-index (& slots) 0 last id)]
               (if (< def-index 0)
-                (Some id 0 0)
+                (if (opt-addr-taken-operand? (& (ir.CompilerIrValue.Var id)))
+                  (No)
+                  (Some id 0 0))
                 (match (array-ref slots def-index)
                   [(Mov _ src _)
                     (match src
@@ -67426,7 +67441,7 @@
 
 ;; The check's length operand resolved through Mov copies and reinterpret
 ;; casts to its root value: an i64 literal, or an invariant var (no
-;; definition in the loop block). Anything body-defined rejects.
+;; definition in the loop block, no address taken). Anything else rejects.
 (define (opt-unroll-const-guard-length-root
   [instrs : ir.CompilerIrInstrSeq]
   [phi-count : i64]
@@ -67443,7 +67458,9 @@
           [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
           [def-index : i64 (opt-unroll-def-index (& slots) 0 last id)]
           (if (< def-index 0)
-            (Some (Var id))
+            (if (opt-addr-taken-operand? (& (ir.CompilerIrValue.Var id)))
+              (No)
+              (Some (Var id)))
             (match (owned_view.compiler-owned-element-view slots def-index)
               [(Mov _ src _)
                 (match (& src)
@@ -71286,7 +71303,7 @@
     [(Var raw)
       (let
         [id : i64 (opt-bce-version-resolve instrs phi-count last raw 16)]
-        (if (opt-unroll-invariant-bound? defs (& (ir.CompilerIrValue.Var id)))
+        (if (opt-loop-invariant-var? defs id)
           (Some (Var id))
           (No)))]
     [_ (No)]))
@@ -73933,7 +73950,7 @@
             length-value
             cell
             acc)
-          (if (not (opt-used-contains defs id))
+          (if (opt-loop-invariant-var? defs id)
             ;; loop-invariant index: exactly its own range check, hoisted, as
             ;; the ONE unsigned conjunct that check performs -- see the
             ;; multiblock rule at opt-bce-mb-derive-index for why the sign
@@ -79570,7 +79587,7 @@
     [(Var raw)
       (let
         [id : i64 (opt-bce-mb-resolve body-blocks raw 16)]
-        (if (opt-unroll-invariant-bound? defs (& (ir.CompilerIrValue.Var id)))
+        (if (opt-loop-invariant-var? defs id)
           (Some (Var id))
           (No)))]
     [_ (No)]))
@@ -80368,7 +80385,7 @@
   [hoists : OptBceMbHoists]
   [cell : (&mut cell (__tl_dyn-array i64))]
   [acc : OptBceVersionGuardAcc]) : OptBceMbMaybeBase
-  (if (not (opt-used-contains defs base-id))
+  (if (opt-loop-invariant-var? defs base-id)
     (Some base-id hoists acc)
     (match (opt-bce-mb-value-def
       (ir.compiler-ir-block-list-view all-blocks)
@@ -80656,7 +80673,7 @@
             (cond
               ;; the phi's own value, carried around the cycle
               [(= id phi-id) (No)]
-              [(opt-used-contains defs id)
+              [(not (opt-loop-invariant-var? defs id))
                 (set! (array-ref ok 0) false)
                 (No)]
               [else (Some (Var id))]))]
@@ -80745,7 +80762,7 @@
           [(BinOp dst other-op other-lhs other-rhs _)
             (if (and
               (opt-binop-eq op (& other-op))
-              (not (opt-used-contains defs dst))
+              (opt-loop-invariant-var? defs dst)
               (opt-bce-mb-mask-value-eq? body-blocks defs lhs (& other-lhs))
               (opt-bce-mb-mask-value-eq? body-blocks defs rhs (& other-rhs)))
               (Some (Var dst))
@@ -81123,7 +81140,7 @@
           ;; loop already inside a fast clone is refused outright
           ;; (opt-bce-mb-label-in-clone?), which is where such a walk lives once
           ;; the enclosing region versions.
-          [(and (>= iphi 0) (not (opt-used-contains defs id)))
+          [(and (>= iphi 0) (opt-loop-invariant-var? defs id))
             (opt-bce-version-mask-cond cell (& (Var id)) length-value acc)]
           [else
             (match (opt-bce-mb-value-def

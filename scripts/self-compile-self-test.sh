@@ -1336,6 +1336,14 @@ st_e2e() {
         "$ST_E2E/lanes-jobs.json" | st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100"
     st_eq "e2e ledger rejects lane-shaped CI whose measurement lane failed" \
         "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lanes-failed | cut -d' ' -f1-2)" "1 attribution-failure"
+    # A lane-shaped run without the measurement lane never falls back to the
+    # aggregator that shares the legacy job's name.
+    st_e2e_ledger_set lanes-missing - 116000050100
+    ST_API=$ST_E2E/lanes-missing-api
+    jq -c --arg lane "$SC_CI_JOB_NAME" '.jobs |= map(select(.name != $lane and .run_attempt == 1) | .conclusion = "success")' "$ST_E2E/lanes-jobs.json" |
+        st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100"
+    st_eq "e2e ledger rejects lane-shaped CI without the measurement lane" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lanes-missing | cut -d' ' -f1-2)" "1 attribution-failure"
     # A PR whose last CI predates the lanes has only the legacy Linux job.
     st_e2e_ledger_set legacy-job - 116000050100
     ST_API=$ST_E2E/legacy-job-api

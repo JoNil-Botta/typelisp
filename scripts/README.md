@@ -86,7 +86,8 @@ run. Every main push refreshes an absent version/image key, and ordinary cache
 eviction needs no special recovery. Initial cross-PR reach is verified after
 this population path lands, before closing #9305.
 
-Each invocation uploads `linux-instruction-tools-<job>` with package identities,
+Each invocation uploads `linux-instruction-tools-<job>` (CI lanes append
+`-<lane>-r<run>-a<attempt>`) with package identities,
 source URIs, trusted-index hashes, cache result and `timing.tsv`. Resolution,
 index refresh when needed, cache verification, apt package acquisition and
 installation have separate rows. Acquisition includes apt planning; apt's

@@ -750,7 +750,9 @@ sc_fetch_pr_record() {
         { SC_LEDGER_INFRA="listing jobs of CI run $_sfpr_id failed"; _sfpr_problem "API error listing jobs of run $_sfpr_id"; return 1; }
     _sfpr_job_name=$SC_CI_JOB_NAME
     _sfpr_job=$(sc_job_latest "$_sfpr_dest/api/jobs.json" "$_sfpr_job_name")
-    if [ -z "$_sfpr_job" ]; then
+    # Only a run with no CI lane jobs at all predates the lanes.
+    if [ -z "$_sfpr_job" ] &&
+        jq -e '[.jobs[] | select(.name | startswith("CI lane "))] | length == 0' "$_sfpr_dest/api/jobs.json" > /dev/null; then
         _sfpr_job_name=$SC_CI_LEGACY_JOB_NAME
         _sfpr_job=$(sc_job_latest "$_sfpr_dest/api/jobs.json" "$_sfpr_job_name")
     fi

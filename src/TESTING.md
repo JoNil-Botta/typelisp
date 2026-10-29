@@ -3011,12 +3011,15 @@ while the caps of all running jobs fit 12288 MiB,
 so no two 8 GiB jobs overlap; a job whose cap does not fit waits while later
 jobs that fit run. The existing outer CI scheduler still owns the complete
 verification graph. Chunk metrics and the chunk log lines carry every chunk's
-peak. Locally, use one worker for the shared 8 GiB test allowance; the hosted
-two-worker resource topology is separate from that local allowance.
+peak. Locally, use one worker for the shared 8 GiB test allowance. Hosted CI
+runs build-invariance with three workers in its isolated lane (`linux-1`,
+`scripts/README.md` CI lanes), where no other gate runs beside the pool; the
+per-chunk caps and the 12288 MiB pool budget are the same.
 
 Linux CI retains the authoritative corpus, both producers' complete case,
 entry and alias plans, queue records, chunk metrics and `provenance.txt` in
-its existing `backend-memory-Linux` artifact. The provenance records source
+the `backend-memory-<lane>-r<run>-a<attempt>` artifact of the lane that runs
+build-invariance (`linux-1`). The provenance records source
 and compiler identities and the common target, cfgs, backend and ordered roots,
 so a coverage audit can interpret every requested optimization and comparison
 from the same records the local gate executes.

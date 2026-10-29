@@ -340,8 +340,10 @@ before a record becomes complete.
 Disposable output directories must remain inside the checkout's `target/`;
 the scripts validate that boundary before clearing a previous output.
 
-The required Linux job uploads `c-comparison-provenance` on success or failure,
-with both suites' records, summaries, checked rows and numerical diffs. Its
+The required CI lane that runs the Linux instruction-count gates
+(`scripts/ci-lanes.tsv`; today `CI lane linux-2`) uploads
+`c-comparison-provenance-<lane>-r<run>-a<attempt>` on success or failure, with
+both suites' records, summaries, checked rows and numerical diffs. Its
 recorded repository, workflow, run ID, attempt, job and commit identify the
 producer. The artifact is retained for 90 days. No host environment variable
 is passed to the measured process: its environment remains `env -i LC_ALL=C`.
@@ -349,9 +351,9 @@ is passed to the measured process: its environment remains `env -i LC_ALL=C`.
 `<baseline>.provenance.json` describes the producer of the checked C rows.
 The initial schema-1 sidecars explicitly mark historical provenance unknown;
 they make no claim about which tools produced the existing values. To
-establish provenance, run the complete required Linux job for an identified
-commit, retaining the `c-comparison-provenance` artifact and successful gate
-logs. Verify that **every checked C row in each suite matches exactly** and
+establish provenance, run the complete required CI for an identified
+commit, retaining that lane's `c-comparison-provenance-<lane>-r<run>-a<attempt>`
+artifact and successful gate logs. Verify that **every checked C row in each suite matches exactly** and
 that output parity and required case coverage passed. Copy that suite's
 complete measured record into its sidecar in a reviewed, record-only PR;
 include the run/attempt, job and direct artifact URL in that PR. Preserve all

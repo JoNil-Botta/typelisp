@@ -144,6 +144,104 @@
     [value : i64 (with-scratch (try (empty-array)))]
     (Empty.Ok value)))
 
+;; Owned values allocated in an input arena can move into aggregate fields.
+(defstruct TextPair
+  (left String)
+  (right String))
+
+(define (pair-return [owner : (arena.Arena source)]) : (in source TextPair)
+  (in-arena owner
+    (let
+      [a (string.append "a" "")]
+      [b (string.append "bb" "")]
+      (TextPair a b))))
+
+(define (field-pair-return [holder : (& h (Holder r))]) : (in r TextPair)
+  (in-arena (deref holder).owner
+    (let
+      [a (string.append "a" "")]
+      [b (string.append "bb" "")]
+      (TextPair a b))))
+
+(define (enum-return [owner : (arena.Arena source)]) : (in source MaybeText)
+  (in-arena owner
+    (let [a (string.append "abc" "")]
+      (MaybeText.Some a))))
+
+(define (nested-pair-return [owner : (arena.Arena source)] [n : i64]) : (in source TextPair)
+  (in-arena owner
+    (let
+      [a (string.append "a" "")]
+      [b (string.append "bb" "")]
+      [length : i64
+        (with-arena phase (string.string-length (string.int->string n)))]
+      (if (> length 0)
+        (TextPair a b)
+        (TextPair (string.append "" "") (string.append "" ""))))))
+
+(define (macro-pair-return [owner : (arena.Arena source)] [n : i64]) : (in source TextPair)
+  (in-arena owner
+    (let
+      [a (string.append "a" "")]
+      [b (string.append "bb" "")]
+      (when (> n 0) (return (TextPair a b)))
+      (TextPair a b))))
+
+;; A wide binding list also puts the activation into a cached env window.
+(define (wide-pair-return [owner : (arena.Arena source)] [n : i64]) : (in source TextPair)
+  (in-arena owner
+    (let
+      [a (string.append "a" "")]
+      [b (string.append "bb" "")]
+      [p0 : i64 n]
+      [p1 : i64 (+ p0 0)]
+      [p2 : i64 (+ p1 0)]
+      [p3 : i64 (+ p2 0)]
+      [p4 : i64 (+ p3 0)]
+      [p5 : i64 (+ p4 0)]
+      [p6 : i64 (+ p5 0)]
+      [p7 : i64 (+ p6 0)]
+      [p8 : i64 (+ p7 0)]
+      [p9 : i64 (+ p8 0)]
+      [p10 : i64 (+ p9 0)]
+      [p11 : i64 (+ p10 0)]
+      [p12 : i64 (+ p11 0)]
+      [p13 : i64 (+ p12 0)]
+      [p14 : i64 (+ p13 0)]
+      [p15 : i64 (+ p14 0)]
+      [p16 : i64 (+ p15 0)]
+      [p17 : i64 (+ p16 0)]
+      [p18 : i64 (+ p17 0)]
+      [p19 : i64 (+ p18 0)]
+      [p20 : i64 (+ p19 0)]
+      [p21 : i64 (+ p20 0)]
+      [p22 : i64 (+ p21 0)]
+      [p23 : i64 (+ p22 0)]
+      [p24 : i64 (+ p23 0)]
+      [p25 : i64 (+ p24 0)]
+      [p26 : i64 (+ p25 0)]
+      [p27 : i64 (+ p26 0)]
+      [p28 : i64 (+ p27 0)]
+      [p29 : i64 (+ p28 0)]
+      [p30 : i64 (+ p29 0)]
+      [p31 : i64 (+ p30 0)]
+      [p32 : i64 (+ p31 0)]
+      [p33 : i64 (+ p32 0)]
+      [p34 : i64 (+ p33 0)]
+      [p35 : i64 (+ p34 0)]
+      [p36 : i64 (+ p35 0)]
+      [p37 : i64 (+ p36 0)]
+      [p38 : i64 (+ p37 0)]
+      [p39 : i64 (+ p38 0)]
+      (if (= p39 n)
+        (TextPair a b)
+        (TextPair (string.append "" "") (string.append "" ""))))))
+
+(define (pair-length [pair : (& a TextPair)]) : i64
+  (+ (string.string-length (deref pair).left)
+    (string.string-length (deref pair).right)))
+
+
 (define (main) : i64
   (unless (= (scalar-return -12345) 6) (return 1))
   (unless (= (string.string-length (outer-return -12345)) 6) (return 2))
@@ -202,4 +300,39 @@
   (match (scratch-empty-try)
     [(Empty.Ok _) (return 28)]
     [(Empty.Err items) (unless (= (array-length items) 0) (return 29))])
+  (let
+    [pair-owner (arena.make)]
+    [pair (pair-return pair-owner)]
+    [atomic-owner (arena.make-atomic)]
+    [atomic-pair (pair-return atomic-owner)]
+    [holder (Holder (arena.make))]
+    [field-pair (field-pair-return (& holder))]
+    [nested-owner (arena.make)]
+    [nested-pair (nested-pair-return nested-owner 7)]
+    [early-owner (arena.make)]
+    [macro-early (macro-pair-return early-owner 7)]
+    [tail-owner (arena.make)]
+    [macro-tail (macro-pair-return tail-owner -1)]
+    [wide-owner (arena.make)]
+    [wide-pair (wide-pair-return wide-owner 7)]
+    [local-owner (arena.make)]
+    [local-pair
+      (in-arena local-owner
+        (let
+          [a (string.append "a" "")]
+          [b (string.append "bb" "")]
+          (TextPair a b)))]
+    (unless (= (pair-length (& pair)) 3) (return 31))
+    (unless (= (pair-length (& atomic-pair)) 3) (return 32))
+    (unless (= (pair-length (& field-pair)) 3) (return 33))
+    (unless (= (pair-length (& nested-pair)) 3) (return 34))
+    (unless (= (pair-length (& macro-early)) 3) (return 35))
+    (unless (= (pair-length (& macro-tail)) 3) (return 36))
+    (unless (= (pair-length (& wide-pair)) 3) (return 37))
+    (unless (= (pair-length (& local-pair)) 3) (return 38)))
+  (let [owner (arena.make)]
+    (match (enum-return owner)
+      [(MaybeText.Some text)
+        (unless (= (string.string-length text) 3) (return 39))]
+      [(MaybeText.None) (return 40)]))
   42)

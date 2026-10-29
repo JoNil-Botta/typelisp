@@ -132,6 +132,7 @@
   (shadow-flags (__tl_dyn-array i64))
   (scan-through bool)
   (partial bool)
+  (has-region-activation bool)
   (rest i64)
   (below i64))
 
@@ -29355,6 +29356,14 @@
                   name-id)
                 (+= resolution-next 1))
               (+= next 1))
+            ;; Construction-only handoff; the cache node replaces this slot
+            ;; with the covered-bind count after reading the activation flag.
+            (when (and
+              (= name-id region-marker-id)
+              (match (& ty)
+                [(Region _ _) true]
+                [_ false]))
+              (set! (array-ref shadow-flags (- (array-length shadow-flags) 1)) 1))
             (let
               [marker-lifetime-id : i64
                 (tc-env-cache-lifetime-marker-lifetime-id
@@ -29475,6 +29484,12 @@
                   name-id)
                 (+= resolution-next 1))
               (+= next 1))
+            (when (and
+              (= name-id region-marker-id)
+              (match (& ty)
+                [(Region _ _) true]
+                [_ false]))
+              (set! (array-ref shadow-flags (- (array-length shadow-flags) 1)) 1))
             (let
               [marker-lifetime-id : i64
                 (tc-env-cache-lifetime-marker-lifetime-id
@@ -29940,6 +29955,8 @@
           (&mut unsafe-flags)
           (&mut shadow-flags)
           true)]
+      [has-region-activation : bool
+        (not (= (array-ref shadow-flags (- capacity 1)) 0))]
       [node : TcTypeEnv
         (begin
           (set! (array-ref shadow-flags (- capacity 1)) count)
@@ -29956,6 +29973,7 @@
               shadow-flags
               scan-through
               false
+              has-region-activation
               env.head
               env.head)))]
       (if scan-through
@@ -30005,6 +30023,8 @@
           (&mut unsafe-flags)
           (&mut shadow-flags)
           true)]
+      [has-region-activation : bool
+        (not (= (array-ref shadow-flags (- capacity 1)) 0))]
       [node : TcTypeEnv
         (begin
           (set! (array-ref shadow-flags (- capacity 1)) count)
@@ -30021,6 +30041,7 @@
               shadow-flags
               scan-through
               true
+              has-region-activation
               env.head
               below.head)))]
       (if scan-through
@@ -121064,16 +121085,15 @@
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
     [(TcTypeEnvView.Cache cache-ptr _ partial rest below)
-      ;; A cache's `ids` hold the lifetime-marker key of every marker binding
-      ;; it covers whose type is a non-negative `Var` (`tc-env-cache-fill`,
-      ;; `tc-env-cache-fill-prefix`; never removed): the whole spine below it,
-      ;; or a partial layer's binds down to `below`. Without the key no bind it
-      ;; covers marks `region`, so the scan resumes past them.
+      ;; Lifetime relevance keys cover only fresh scopes. A cache containing
+      ;; an activation must also scan its spine for arena classification,
+      ;; without treating that activation as a lifetime introduction.
       (let
         [cache : TcTypeEnvCache (tc-type-env-cache-at cache-ptr)]
         [ids : tc_i64_i64_map.Map cache.ids]
         (if (and
           (>= region 0)
+          (not cache.has-region-activation)
           (not
             (tc_i64_i64_map.contains?
               (& ids)
@@ -121086,7 +121106,8 @@
       (if (and
         (= key (tc-region-marker-id))
         (match ty
-          [(ast.AstType.Var name) (= name region)]
+          [(or (ast.AstType.Var name) (ast.AstType.Region name _))
+            (= name region)]
           [_ false]))
         true
         (tc-selected-region-marker? rest region))]))

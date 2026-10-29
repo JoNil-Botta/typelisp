@@ -132,6 +132,7 @@
   (shadow-flags (__tl_dyn-array i64))
   (scan-through bool)
   (partial bool)
+  (has-region-activation bool)
   (rest i64)
   (below i64))
 
@@ -11318,34 +11319,29 @@
                 (tc-try-incompatibility-message reason)
                 next)]
             [(TcTryQueryCompatible operand-info return-info)
-              (if (and
-                (tc-regions-have-scratch-body?
-                  (tc-type-outer-regions (tc-global-shared-view operand-ty)))
-                (tc-region-taggable-type?
-                  (tc-result-info-err-type (tc-global-shared-view operand-info))))
-                ;; The error exit would carry a scratch-allocated payload out
-                ;; of its form (#8776).
-                (TcSelectedResult.Err
-                  (tc-locate-error-at-expr
-                    (tc-context-expr-bases ctx)
-                    (tc-context-expr-get ctx inner-id)
-                    (tc-scratch-exit-error "try's error exit"))
-                  next)
-                (tc-selected-contextual-result
-                  ctx
-                  env
-                  expected
-                  (tc-selected-try-publish
+              (match (tc-check-try-exit-regions
+                ctx
+                env
+                (tc-context-expr-get ctx inner-id)
+                (tc-type-outer-regions (tc-global-shared-view operand-ty))
+                (tc-result-info-err-type (tc-global-shared-view operand-info)))
+                [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
+                [(ResultTcUnit.Ok)
+                  (tc-selected-contextual-result
                     ctx
                     env
-                    operand-ty
-                    operand
-                    return-ty
-                    operand-info
-                    return-info
-                    syntax
-                    source
-                    next)))])])]))
+                    expected
+                    (tc-selected-try-publish
+                      ctx
+                      env
+                      operand-ty
+                      operand
+                      return-ty
+                      operand-info
+                      return-info
+                      syntax
+                      source
+                      next))])])])]))
 
 (define (tc-selected-try-publish
   [ctx : TcContext]
@@ -26458,7 +26454,7 @@
     (or
       (tc-diag-string-prefix?
         (& text)
-        "typecheck: region-tagged value cannot escape with-arena '")
+        "typecheck: region-tagged value cannot escape ")
       (tc-diag-string-prefix?
         (& text)
         "typecheck: cannot store region-tagged value into ")
@@ -28514,7 +28510,7 @@
   (match (tc-type-env-scoped-carrier-marker-type
     (tc-global-shared-view carrier)
     (tc-region-marker-id))
-    [(Some (Var region)) (Some region)]
+    [(or (Some (Var region)) (Some (Region region _))) (Some region)]
     [(Some _) (tc-active-region carrier.env)]
     [(No) (No)]))
 
@@ -29377,6 +29373,17 @@
                   name-id)
                 (+= resolution-next 1))
               (+= next 1))
+            ;; Construction-only handoff; the cache node replaces this slot
+            ;; with the covered-bind count after reading the activation flag.
+            (when
+              (and
+                (= name-id region-marker-id)
+                (match (& ty)
+                  [(Region _ _) true]
+                  [_ false]))
+              (set!
+                (array-ref shadow-flags (- (array-length shadow-flags) 1))
+                1))
             (let
               [marker-lifetime-id : i64
                 (tc-env-cache-lifetime-marker-lifetime-id
@@ -29497,6 +29504,15 @@
                   name-id)
                 (+= resolution-next 1))
               (+= next 1))
+            (when
+              (and
+                (= name-id region-marker-id)
+                (match (& ty)
+                  [(Region _ _) true]
+                  [_ false]))
+              (set!
+                (array-ref shadow-flags (- (array-length shadow-flags) 1))
+                1))
             (let
               [marker-lifetime-id : i64
                 (tc-env-cache-lifetime-marker-lifetime-id
@@ -29962,6 +29978,8 @@
           (&mut unsafe-flags)
           (&mut shadow-flags)
           true)]
+      [has-region-activation : bool
+        (not (= (array-ref shadow-flags (- capacity 1)) 0))]
       [node : TcTypeEnv
         (begin
           (set! (array-ref shadow-flags (- capacity 1)) count)
@@ -29978,6 +29996,7 @@
               shadow-flags
               scan-through
               false
+              has-region-activation
               env.head
               env.head)))]
       (if scan-through
@@ -30027,6 +30046,8 @@
           (&mut unsafe-flags)
           (&mut shadow-flags)
           true)]
+      [has-region-activation : bool
+        (not (= (array-ref shadow-flags (- capacity 1)) 0))]
       [node : TcTypeEnv
         (begin
           (set! (array-ref shadow-flags (- capacity 1)) count)
@@ -30043,6 +30064,7 @@
               shadow-flags
               scan-through
               true
+              has-region-activation
               env.head
               below.head)))]
       (if scan-through
@@ -35441,7 +35463,7 @@
     [(Bind key ty rest)
       (if (= key (tc-region-marker-id))
         (match ty
-          [(Var region) (Some region)]
+          [(or (Var region) (Region region _)) (Some region)]
           [_ (tc-active-region-scan rest)])
         (tc-active-region-scan rest))]))
 
@@ -35452,7 +35474,7 @@
     (begin
       (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (match (tc-env-marker-type env (tc-region-marker-id))
-        [(Some (Var region)) (Some region)]
+        [(or (Some (Var region)) (Some (Region region _))) (Some region)]
         [(Some _) (tc-active-region-scan env)]
         [(No) (No)]))))
 
@@ -36871,22 +36893,29 @@
       (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
       (tc-lifetime-outlives-binding-persistent-id? env lifetime-id target-id))))
 
+(define (tc-first-shorter-lifetime-id
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]
+  [target-id : i64]) : TcMaybeNameId
+  (let
+    [cursor : TcNameIdList lifetimes]
+    (while (not (tc-name-id-list-empty? cursor))
+      (unless
+        (tc-lifetime-outlives-binding-id?
+          env
+          (tc-name-id-list-head cursor)
+          target-id)
+        (return (Some (tc-name-id-list-head cursor))))
+      (set! cursor (tc-name-id-list-rest cursor))))
+  (No))
+
 (define (tc-reference-lifetimes-outlive-binding-id?
   [env : TcTypeEnv]
   [lifetimes : TcNameIdList]
   [target-id : i64]) : bool
-  (let
-    [cursor : TcNameIdList lifetimes]
-    [outlives : bool true]
-    (while (and outlives (not (tc-name-id-list-empty? cursor)))
-      (if (tc-lifetime-outlives-binding-id?
-        env
-        (tc-name-id-list-head cursor)
-        target-id)
-        unit
-        (set! outlives false))
-      (set! cursor (tc-name-id-list-rest cursor)))
-    outlives))
+  (match (tc-first-shorter-lifetime-id env lifetimes target-id)
+    [(No) true]
+    [(Some _) false]))
 
 (define (tc-lifetime-outlives-lifetime-scan-inner-id
   [env : TcTypeEnv]
@@ -38400,50 +38429,72 @@
           (tc-tag-region region projected-ty)]
         [_ projected-ty])]))
 
-;; Region-tagged aggregate flow uses the same lexical owner ordering as
-;; references, but only considers arena owners. A value from an outer region can
-;; flow into an inner target; an inner-region value cannot flow outward.
+;; Arena selection does not make an input lifetime younger. Retain the arena
+;; scope proof for aggregate storage, and order an activated local home at its
+;; owner rather than at the activation. Distinct generated brands stay invariant.
 (define (tc-region-outlives-or-matches-scan
+  [root : TcTypeEnv]
   [env : TcTypeEnv]
   [value-region : i64]
   [target-region : i64]) : bool
-  (if (= value-region target-region)
-    true
-    (match (tc-type-env-view env)
-      [(Nil) false]
-      [(Cache _ scan-through _ rest _)
-        (if scan-through
-          (tc-region-outlives-or-matches-scan rest value-region target-region)
-          false)]
-      [(Bind key ty rest)
-        (if (= key (tc-region-marker-id))
-          (match ty
-            [(Var region)
-              (if (= region value-region)
-                false
-                (if (= region target-region)
-                  true
-                  (tc-region-outlives-or-matches-scan
-                    rest
-                    value-region
-                    target-region)))]
-            [_
-              (tc-region-outlives-or-matches-scan
-                rest
+  (match (tc-type-env-view env)
+    [(Nil) false]
+    [(Cache _ scan-through _ rest _)
+      (and
+        scan-through
+        (tc-region-outlives-or-matches-scan
+          root
+          rest
+          value-region
+          target-region))]
+    [(Bind key ty rest)
+      (if (and
+        (= key (tc-region-marker-id))
+        (match ty
+          [(or (Var region) (Region region _))
+            (or (= region value-region) (= region target-region))]
+          [_ false]))
+        (match ty
+          [(or (Var region) (Region region _))
+            (and
+              (= region target-region)
+              (tc-lifetime-outlives-lifetime-id?
+                root
                 value-region
-                target-region)])
-          (tc-region-outlives-or-matches-scan rest value-region target-region))])))
+                target-region))]
+          [_ false])
+        (tc-region-outlives-or-matches-scan
+          root
+          rest
+          value-region
+          target-region))]))
 
 (define (tc-region-outlives-or-matches
   [env : TcTypeEnv]
   [value-region : i64]
   [target-region : i64]) : bool
-  (begin
-    (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
-    (match (tc-type-env-view env)
-      [(Cache _ _ _ rest _)
-        (tc-region-outlives-or-matches-scan rest value-region target-region)]
-      [_ (tc-region-outlives-or-matches-scan env value-region target-region)])))
+  (cond
+    [(= value-region target-region) true]
+    [(and
+        (tc-generated-arena-brand-id? value-region)
+        (tc-generated-arena-brand-id? target-region))
+      false]
+    [else
+      (begin
+        (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
+        (match (tc-type-env-view env)
+          [(Cache _ _ _ rest _)
+            (tc-region-outlives-or-matches-scan
+              env
+              rest
+              value-region
+              target-region)]
+          [_
+            (tc-region-outlives-or-matches-scan
+              env
+              env
+              value-region
+              target-region)]))]))
 
 (define (tc-region-can-flow-into-any
   [env : TcTypeEnv]
@@ -75497,6 +75548,64 @@
       (set! cursor (tc-name-id-list-rest cursor)))
     found))
 
+(define (tc-region-escape-error [region : i64]) : String
+  (str_cat.str-cat
+    (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+    (if (tc-generated-arena-brand-id? region)
+      "typecheck: region-tagged value cannot escape arena owner '"
+      "typecheck: region-tagged value cannot escape with-arena '")
+    (tc-lifetime-name-render region)
+    "'"))
+
+;; An early exit crosses every arena introduced after this function's return
+;; marker, including outer arenas around a nested scope. Input-tied arenas and
+;; arenas surrounding a lambda's invocation outlive that return boundary.
+(define (tc-check-early-exit-regions [env : TcTypeEnv] [regions : TcNameIdList]) : ResultTcUnit
+  (match (tc-first-shorter-lifetime-id
+    env
+    (tc-name-id-list-without-program regions)
+    (tc-return-type-id))
+    [(No) Ok]
+    [(Some region) (Err (tc-region-escape-error region))]))
+
+;; Inline arrays allocate no container, but a nonempty residual still carries
+;; its elements across the reset. Scalar and empty residuals carry no allocation
+;; from the Result-like carrier; its success payload never leaves via try.
+(define (tc-early-exit-allocated-payload? [ty : ast.AstType]) : bool
+  (match (& ty)
+    [(Array elem len)
+      (and (> len 0) (tc-early-exit-allocated-payload? (ast.ty-node-get elem)))]
+    [(or (Region _ inner) (Invalidate _ inner))
+      (tc-early-exit-allocated-payload? (ast.ty-node-get inner))]
+    [_ (tc-region-taggable-type? ty)]))
+
+(define (tc-check-try-exit-regions
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [inner : ast.AstExpr]
+  [carrier-regions : TcNameIdList]
+  [error-ty : ast.AstType]) : ResultTcUnit
+  (let
+    [regions : TcNameIdList
+      (if (tc-early-exit-allocated-payload? (tc-global-shared-view error-ty))
+        (tc-type-collect-regions-into error-ty carrier-regions)
+        (tc-type-collect-regions error-ty))]
+    (if (tc-regions-have-scratch-body? regions)
+      (Err
+        (tc-locate-error-at-expr
+          (tc-context-expr-bases ctx)
+          inner
+          (tc-scratch-exit-error "try's error exit")))
+      (match (tc-check-early-exit-regions env regions)
+        [(ResultTcUnit.Ok) Ok]
+        [(ResultTcUnit.Err message)
+          (Err
+            (tc-rich-escape-at-expr
+              (tc-context-expr-bases ctx)
+              inner
+              message
+              "try's error payload leaves this function"))]))))
+
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (let
     [operand-ty : ast.AstType
@@ -75507,15 +75616,16 @@
       [(Ok return-ty)
         (match (tc-try-query ctx operand-ty return-ty TcTryEarlyExitAllowed)
           [(TcTryQueryCompatible operand-info _)
-            (if (and
-              (tc-regions-have-scratch-body? regions)
-              (tc-region-taggable-type?
-                (tc-result-info-err-type (tc-global-shared-view operand-info))))
-              (Err
-                (tc-locate-error-at-expr
-                  (tc-context-expr-bases ctx)
-                  inner
-                  (tc-scratch-exit-error "try's error exit")))
+            (let
+              [_
+                (try
+                  (tc-check-try-exit-regions
+                    ctx
+                    env
+                    inner
+                    regions
+                    (tc-result-info-err-type
+                      (tc-global-shared-view operand-info))))]
               ;; The Ok payload lives where the operand does, as a match
               ;; arm's binding would.
               (Ok
@@ -75612,21 +75722,34 @@
             "typecheck: return type mismatch")
             [(ResultTcUnit.Err message) (TcSelectedResult.Err message next)]
             [(ResultTcUnit.Ok)
-              (cond
-                ;; A scratch-allocated value cannot leave its form (#8776).
-                [(and
-                    (tc-type-contains-region-tag?
-                      (tc-global-shared-view value-ty))
-                    (tc-regions-have-scratch-body?
-                      (tc-type-collect-regions (tc-global-shared-view value-ty))))
-                  (TcSelectedResult.Err (tc-scratch-exit-error "return") next)]
-                [(tc-expr-result-uses-active-cleanup-owner? ctx env value)
-                  (TcSelectedResult.Err
-                    (tc-kind-message
-                      (cdiag.CompilerTypecheckKind.ResourceOwnership)
-                      "typecheck: cleanup-required resource would escape with scope")
-                    next)]
-                [else (tc-selected-return child syntax source next)])])])]))
+              (let
+                [regions : TcNameIdList
+                  (if (tc-type-contains-region-tag?
+                    (tc-global-shared-view value-ty))
+                    (tc-type-collect-regions value-ty)
+                    Nil)]
+                (if (tc-regions-have-scratch-body? regions)
+                  (TcSelectedResult.Err (tc-scratch-exit-error "return") next)
+                  (match (tc-check-early-exit-regions env regions)
+                    [(ResultTcUnit.Err message)
+                      (TcSelectedResult.Err
+                        (tc-rich-escape-at-expr
+                          (tc-context-expr-bases ctx)
+                          value
+                          message
+                          "returned value carries a lifetime or arena that cannot cross this boundary")
+                        next)]
+                    [(ResultTcUnit.Ok)
+                      (if (tc-expr-result-uses-active-cleanup-owner?
+                        ctx
+                        env
+                        value)
+                        (TcSelectedResult.Err
+                          (tc-kind-message
+                            (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                            "typecheck: cleanup-required resource would escape with scope")
+                          next)
+                        (tc-selected-return child syntax source next))])))])])]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
   (match (csym.compiler-symbols-owner-name-at-index
@@ -83920,12 +84043,7 @@
     [body-ty : ast.AstType
       (try (tc-begin-list-maybe-expected ctx region-env body expected))]
     (if (tc-type-contains-region (tc-global-shared-view body-ty) region)
-      (Err
-        (str_cat.str-cat
-          (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-          "typecheck: region-tagged value cannot escape with-arena '"
-          (tc-lifetime-name-render region)
-          "'"))
+      (Err (tc-region-escape-error region))
       (Ok body-ty))))
 
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
@@ -84066,7 +84184,17 @@
   [arena : ast.AstExpr]
   [arena-ty : ast.AstType]) : TcTypeEnv
   (match (tc-in-arena-region ctx env arena arena-ty)
-    [(Some region) (tc-push-region env region)]
+    [(Some region)
+      ;; Selecting an existing arena does not introduce its lifetime. Var
+      ;; markers belong to fresh with-arena/scratch scopes; Region markers
+      ;; only change the active allocation target, retaining its older owner.
+      (let
+        [marker : ast.AstType ast.AstType.Unit]
+        (tc-bind-runtime-marker-id
+          env
+          (tc-region-marker-id)
+          (ast.ast-ty-region region (& marker))
+          TcTypeEnvScopedMarkerKind.Region))]
     [(No) env]))
 
 (define (tc-in-arena-body-result
@@ -113099,8 +113227,29 @@
     [(InArena arena-box body)
       (let
         [narena (try (macro-expand-node ctx env decls depth arena-box))]
-        [nbody (try (macro-expand-exprs ctx env decls depth body))]
-        (Ok (ast.ast-expr-in-arena narena nbody)))]
+        [arena-ty-result : ResultTcType (tc-expr-id ctx env narena)]
+        [_publish : unit (tc-context-publish-newer-pools! ctx)]
+        (match arena-ty-result
+          [(Ok arena-ty)
+            (let
+              [body-env : TcTypeEnv
+                (tc-in-arena-body-env
+                  ctx
+                  env
+                  (tc-context-expr-get ctx narena)
+                  arena-ty)]
+              ;; Macro operands (for example when's return) are checked in
+              ;; the same allocation target as the eventual selected body.
+              [_publish : unit (tc-context-publish-newer-pools! ctx)]
+              [nbody (try (macro-expand-exprs ctx body-env decls depth body))]
+              (Ok (ast.ast-expr-in-arena narena nbody)))]
+          [(Err message)
+            (Err
+              (box
+                (tc-expr-diag
+                  (tc-context-expr-bases ctx)
+                  (tc-context-expr-get ctx narena)
+                  message)))]))]
     [(ArrayRef array-box index-box)
       (let
         [narray (try (macro-expand-node ctx env decls depth array-box))]
@@ -121106,16 +121255,15 @@
   (match (tc-type-env-view env)
     [(TcTypeEnvView.Nil) false]
     [(TcTypeEnvView.Cache cache-ptr _ partial rest below)
-      ;; A cache's `ids` hold the lifetime-marker key of every marker binding
-      ;; it covers whose type is a non-negative `Var` (`tc-env-cache-fill`,
-      ;; `tc-env-cache-fill-prefix`; never removed): the whole spine below it,
-      ;; or a partial layer's binds down to `below`. Without the key no bind it
-      ;; covers marks `region`, so the scan resumes past them.
+      ;; Lifetime relevance keys cover only fresh scopes. A cache containing
+      ;; an activation must also scan its spine for arena classification,
+      ;; without treating that activation as a lifetime introduction.
       (let
         [cache : TcTypeEnvCache (tc-type-env-cache-at cache-ptr)]
         [ids : tc_i64_i64_map.Map cache.ids]
         (if (and
           (>= region 0)
+          (not cache.has-region-activation)
           (not
             (tc_i64_i64_map.contains?
               (& ids)
@@ -121128,7 +121276,8 @@
       (if (and
         (= key (tc-region-marker-id))
         (match ty
-          [(ast.AstType.Var name) (= name region)]
+          [(or (ast.AstType.Var name) (ast.AstType.Region name _))
+            (= name region)]
           [_ false]))
         true
         (tc-selected-region-marker? rest region))]))

@@ -1,0 +1,70 @@
+# Early exits carry only values that outlive the enclosing return boundary.
+# The safety manifest pins the operand locations; compile rejects on both ABIs.
+do none
+target linux-x86_64 windows-x86_64
+opt 0 1 2
+
+case arena-early-exit-reject
+each arena_return_string_reject arena_return_box_reject arena_return_nested_tuple_reject arena_return_outer_reject arena_return_shadowed_input_reject arena_try_string_reject arena_try_outer_reject arena_try_array_reject arena_try_nested_array_reject
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena
+stderr contains tests/safety/{{each}}.tl:
+stderr contains use with-escape
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape with-arena
+stderr contains tests/safety/{{each}}.tl:
+stderr contains use with-escape
+
+case arena-owner-early-exit-reject
+run check "{{root}}/tests/safety/arena_return_local_owner_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape arena owner
+stderr contains tests/safety/arena_return_local_owner_reject.tl:7:29
+stderr contains return an owned clone
+run compile "{{root}}/tests/safety/arena_return_local_owner_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: region-tagged value cannot escape arena owner
+stderr contains tests/safety/arena_return_local_owner_reject.tl:7:29
+stderr contains return an owned clone
+
+case scratch-array-early-exit-reject
+run check "{{root}}/tests/safety/scratch_body_try_array_error_exit_reject.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: scratch-allocated value cannot leave
+stderr contains tests/safety/scratch_body_try_array_error_exit_reject.tl:12:37
+run compile "{{root}}/tests/safety/scratch_body_try_array_error_exit_reject.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: scratch-allocated value cannot leave
+stderr contains tests/safety/scratch_body_try_array_error_exit_reject.tl:12:37
+
+case arena-activation-store-reject
+each arena_activation_destroy_store_reject arena_activation_rewind_store_reject arena_activation_input_store_reject arena_owner_after_activation_store_reject arena_activation_distinct_owner_store_reject
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into struct field
+stderr contains tests/safety/{{each}}.tl:
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0205]: typecheck: cannot store region-tagged value into struct field
+stderr contains tests/safety/{{each}}.tl:
+
+case arena-early-exit-accepted
+each arena_early_exits arena_scratch_owner_activation arena_escape_owner_activation
+run check "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 0
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+exit 0
+stdout contains Wrote {{native-dir}}/accepted.s
+stderr empty

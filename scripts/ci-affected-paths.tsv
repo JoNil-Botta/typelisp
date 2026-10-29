@@ -20,6 +20,9 @@ tests/fixtures/ir-*.fixtures.cases	ir-observability-golden,stage2-public-tool-su
 tests/fixtures/arena-global-storage.fixtures.cases	compiler-arena-debug-native-matrix,stage2-public-tool-surface	@corpus	Canonical arena global-storage primaries and unconditional inventory audit.
 tests/fixtures/profile-import-order.fixtures.cases	stage2-compile-profile-verifier,stage2-public-tool-surface	@corpus	Canonical profile import-order primaries and unconditional inventory audit.
 tests/fixtures/backend-source-import.fixtures.cases	stage2-backend-source-import-context,stage2-public-tool-surface	@corpus	Canonical backend-import primaries and unconditional inventory audit.
+tests/integration/arena_scratch_owner_activation.tl	stage2-public-tool-surface	@corpus	Primary scratch activation check/compile agreement control.
+tests/integration/arena_escape_owner_activation.tl	stage2-public-tool-surface	@corpus	Primary scratch activation check/compile agreement control.
+tests/integration/arena_early_exits.tl	stage2-public-tool-surface	@corpus	Primary accepted arena activation and early-exit public contract.
 tests/integration/*	stage2-native-integration-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Native integration inputs and direct source guards for their executable fixtures.
 tests/integration/macro_struct_pattern*.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Macro-produced struct patterns retain constructor ownership and binding modes across native optimization levels and targets.
 tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
@@ -486,6 +489,22 @@ tests/integration/wide_const_hoist.tl	stage2-regalloc-backend-asm-shape-gates	@c
 tests/integration/win64_rbp_eighth_csr.tl	stage2-regalloc-backend-asm-shape-gates	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/arena_bare_operand_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/arena_branded_operand_wrong_brand_reject.tl	stage2-public-tool-surface	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
+tests/safety/arena_activation_destroy_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_activation_rewind_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_activation_input_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_owner_after_activation_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_activation_distinct_owner_store_reject.tl	stage2-public-tool-surface	@corpus	Primary arena activation store confinement contract.
+tests/safety/arena_return_box_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_local_owner_reject.tl	stage2-public-tool-surface	@corpus	Primary local-owner early-exit diagnostic contract.
+tests/safety/arena_return_nested_tuple_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_return_shadowed_input_reject.tl	stage2-public-tool-surface	@corpus	Primary input-lifetime shadow confinement contract.
+tests/safety/arena_try_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_nested_array_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_outer_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/arena_try_string_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check/compile early-exit arena confinement contracts.
+tests/safety/scratch_body_try_array_error_exit_reject.tl	stage2-public-tool-surface	@corpus	Primary nonempty scratch residual confinement contract.
 tests/safety/borrow_temporary_call_arg_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/borrow_temporary_cleanup_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.
 tests/safety/borrowed_pattern_copy_binding_ok.tl	stage2-native-integration-corpus	@corpus	Declared primary source or suite member in the reviewed fixture inventories.

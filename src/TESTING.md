@@ -2915,7 +2915,11 @@ available the test also verifies them against the recorded historical diffs.
 
 Pull requests get Linux and Windows coverage from `scripts/ci-verify.sh`
 (wired in [`../.github/workflows/ci.yml`](../.github/workflows/ci.yml)). Each
-host bootstraps the full `src/main.tl` CLI as described under
+host's gates run in two CI lanes that `scripts/ci-lanes.tsv` assigns; each lane
+runs `ci-verify.sh --gates` with its gates and their needs, and the host's
+required check passes only when every gate passed in its owning lane
+(`scripts/README.md`, CI lanes). Each lane bootstraps the full `src/main.tl`
+CLI as described under
 [Stage0 and the bootstrap](#stage0-and-the-bootstrap); all downstream gates
 receive the converged compiler, and the previous bootstrap generation is
 retained for the cross-mode differential. The separate TLCI mutation bootstrap
@@ -2945,6 +2949,10 @@ text. Local runs remain uninstrumented unless the same environment variable is
 set. A successful flow ends with exactly one
 `CI verification / all / complete-verification` row measured from timing
 initialization through the last required gate; duplicate writes fail closed.
+A `--gates` subset instead ends with a `partial-verification` row. In CI, each
+host's aggregator merges its lanes' rows into `ci-timing-<host>`: each gate's
+rows from its owning lane, and one complete-verification row that is the
+slowest lane's partial-verification time.
 The artifacts are evidence for performance work; no wall-clock budget or trend
 check reads them in CI.
 

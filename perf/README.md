@@ -533,13 +533,18 @@ with phases `body`, `dce_escape`, `compact`, `clone`, and `restore`.
 
 Pull-request CI uploads one `ci-timing-Linux` and one `ci-timing-Windows`
 artifact per run (`target/ci-timing/<host>.tsv`, written by `ci-verify.sh` when
-`TYPELISP_CI_TIMING=1`). They record every gate's wall time and finer rows such
-as the four build-invariance selfhost compiles
+`TYPELISP_CI_TIMING=1`). Each host's required-check aggregator merges them
+from its two CI lanes (`scripts/README.md`, CI lanes): each gate's rows come
+from the lane that owns it, and the complete-verification row is the slowest
+lane's verification time. Each lane also uploads its own rows as
+`ci-timing-<lane>-r<run>-a<attempt>`. They record every gate's wall time and
+finer rows such as the four build-invariance selfhost compiles
 (`opt1-built:selfhost_main_opt1`, `opt2-built:selfhost_main_opt2`, ...). They
 are evidence for performance work; CI applies no wall-clock budget to them.
 Linux also retains build-invariance's authoritative corpus, both producers'
-case/entry/alias plans, pool queue and chunk metrics in the existing
-`backend-memory-Linux` artifact. Its `provenance.txt` identifies the source,
+case/entry/alias plans, pool queue and chunk metrics in the
+`backend-memory-linux-1-r<run>-a<attempt>` artifact of the lane that runs
+build-invariance. Its `provenance.txt` identifies the source,
 compiler binaries, common invocation flags and worker count. Those are the
 same plans the local gate validates and executes; there is no artifact cache
 in the comparison gate.

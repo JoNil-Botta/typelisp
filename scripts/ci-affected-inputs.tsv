@@ -105,6 +105,7 @@ stage2-spmd-simd-comparison	compiler,stdlib,corpus	Consumes compiler behavior or
 stage2-cross-mode-semantic-abi-differential	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-spmd-lane-identity	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-spmd-broadcast	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
+stage2-sde-fallback	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-docs-pages-build-path	compiler,stdlib,corpus,docs	Also validates documented examples or renders and validates documentation pages.
 stage2-cli-host-action-smoke	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.
 stage2-stdlib-documentation	compiler,stdlib,corpus	Consumes compiler behavior or embedded stdlib through the canonical produced compiler or bootstrap.

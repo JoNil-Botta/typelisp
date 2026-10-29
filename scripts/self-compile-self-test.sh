@@ -1314,6 +1314,35 @@ st_e2e() {
         "$SC_CI_JOB_NAME" "$SC_CI_JOB_NAME" |
         st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100"
     st_eq "e2e ledger attributes a PR whose CI job ran twice" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e8)" "0 ok yes clean 1"
+    # Lane-shaped CI (#7767 slice 2): the measurement lane ran in attempt 1
+    # and was copied into attempt 2, which re-ran another lane and both
+    # required-check aggregators. The record binds to the lane's attempt.
+    st_e2e_ledger_set lanes - 116000050100
+    ST_API=$ST_E2E/lanes-api
+    jq -n --arg lane "$SC_CI_JOB_NAME" --arg aggregate "$SC_CI_LEGACY_JOB_NAME" '
+        def job(n; a; c; s; e; r): {name: n, run_attempt: a, status: "completed", conclusion: c, started_at: s, completed_at: e, runner_name: r};
+        {jobs: [job($lane; 1; "success"; "t1"; "t2"; "r"), job("CI lane windows-1"; 1; "failure"; "t1"; "t3"; "w"),
+                job($aggregate; 1; "failure"; "t3"; "t4"; "a"), job($lane; 2; "success"; "t1"; "t2"; "r"),
+                job("CI lane windows-1"; 2; "success"; "t5"; "t6"; "w2"), job($aggregate; 2; "success"; "t7"; "t8"; "a2")]}' \
+        > "$ST_E2E/lanes-jobs.json"
+    st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100" < "$ST_E2E/lanes-jobs.json"
+    st_eq "e2e ledger attributes lane-shaped CI to the measurement lane's executed attempt" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lanes)" "0 ok yes clean 1"
+    # The same record is not attributed when the measurement lane's latest
+    # executed attempt failed, whatever the aggregators did.
+    st_e2e_ledger_set lanes-failed - 116000050100
+    ST_API=$ST_E2E/lanes-failed-api
+    jq -c '.jobs |= map(if .name == "'"$SC_CI_JOB_NAME"'" and .run_attempt == 2 then .conclusion = "failure" | .started_at = "t9" else . end)' \
+        "$ST_E2E/lanes-jobs.json" | st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100"
+    st_eq "e2e ledger rejects lane-shaped CI whose measurement lane failed" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 lanes-failed | cut -d' ' -f1-2)" "1 attribution-failure"
+    # A PR whose last CI predates the lanes has only the legacy Linux job.
+    st_e2e_ledger_set legacy-job - 116000050100
+    ST_API=$ST_E2E/legacy-job-api
+    printf '{"jobs": [{"name": "%s", "run_attempt": 1, "status": "completed", "conclusion": "success", "started_at": "t1", "completed_at": "t2", "runner_name": "r"}]}\n' \
+        "$SC_CI_LEGACY_JOB_NAME" | st_api_put "repos/$ST_REPO/actions/runs/7050/jobs?filter=all&per_page=100"
+    st_eq "e2e ledger attributes a pre-lane CI run to its Linux job" \
+        "$(st_e2e_ledger c0 "$ST_SET_C0" 900 legacy-job)" "0 ok yes clean 1"
     st_e2e_ledger_set e6 - 116000050100 "key.kernel=6.8.0-1036-azure key.as=GNU-assembler-2.41"
     st_eq "e2e ledger accepts agreeing same-commit measurements" "$(st_e2e_ledger c0 "$ST_SET_C0" 900 e6)" "0 ok yes clean 1"
 

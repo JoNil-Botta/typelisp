@@ -1,7 +1,9 @@
 #!/usr/bin/env sh
 # Canonical #6883 provenance primitives from #6909 (before #8118), extended
 # as one versioned same-run envelope. POSIX shell and existing jq/coreutils.
-# No transported compiler is consumed in D-C27 slice 1.
+# Schema 4 (#7767 slice 2) binds each CI lane: its job, its gate plan and a
+# sealed receipt of that plan's results. No transported compiler is consumed;
+# the lane aggregator compares the lanes' independently built compilers.
 
 ci_compiler_artifact_error() {
     echo "[ci-compiler-artifact] $*" >&2
@@ -147,13 +149,23 @@ cica_json() {
     cica_jq -S . "$1" > "$CICA_SCRATCH/json-check"
     cmp -s "$1" "$CICA_SCRATCH/json-check" || cica_fail 'noncanonical or duplicate JSON fields'
 }
+# A CI lane is HOST-N (scripts/ci-lanes.tsv) and its job is "CI lane HOST-N".
+# A producer reads its lane from TYPELISP_CI_LANE and its attempt from Actions.
+# A verifier passes the lane it expects and the attempt in which that lane's
+# job actually ran (scripts/ci-lane.sh), so a "Re-run failed jobs" copy binds
+# to the attempt that executed it.
+cica_lane_valid() {
+    case "$1" in "$CICA_HOST"-[1-9]) return 0 ;; *) return 1 ;; esac
+}
 cica_context() (
     _commit=$(git -C "$CICA_ROOT" rev-parse HEAD)
     _tree=$(git -C "$CICA_ROOT" rev-parse 'HEAD^{tree}')
     if [ "$1" = local ]; then
         [ "${GITHUB_ACTIONS:-}" != true ] || cica_fail 'local mode forbidden in CI'
-        cica_jq -nS --arg c "$_commit" --arg t "$_tree" --arg h "$CICA_HOST" \
-          '{scope:"local",repository:"local",run_id:"local",attempt:0,commit:$c,tree:$t,head:$c,workflow_ref:"local",workflow_sha:$c,host:$h}'
+        _lane=${2:-${TYPELISP_CI_LANE:-local}}
+        [ "$_lane" = local ] || cica_lane_valid "$_lane" || cica_fail 'invalid local lane'
+        cica_jq -nS --arg c "$_commit" --arg t "$_tree" --arg h "$CICA_HOST" --arg l "$_lane" \
+          '{scope:"local",repository:"local",run_id:"local",attempt:0,commit:$c,tree:$t,head:$c,workflow_ref:"local",workflow_sha:$c,host:$h,lane:$l,job:"local"}'
         exit
     fi
     [ "${GITHUB_ACTIONS:-}" = true ] && [ "${GITHUB_EVENT_NAME:-}" = pull_request ] || cica_fail 'required PR workflow context missing'
@@ -165,10 +177,15 @@ cica_context() (
       '($a|test("^[1-9][0-9]*$")) and ($s|test("^[0-9a-f]{40}$"))' >/dev/null || cica_fail 'run attempt/workflow SHA missing'
     case "$GITHUB_WORKFLOW_REF" in "$GITHUB_REPOSITORY"/.github/workflows/ci.yml@*) ;; *) cica_fail 'wrong workflow' ;; esac
     cica_jq -e --arg r "$GITHUB_REPOSITORY" '.repository.full_name==$r and (.pull_request.head.sha|test("^[0-9a-f]{40}$"))' "$GITHUB_EVENT_PATH" >/dev/null || cica_fail 'event repository/head mismatch'
+    _lane=${2:-${TYPELISP_CI_LANE:-}}
+    cica_lane_valid "$_lane" || cica_fail 'missing or wrong-host CI lane'
+    _attempt=${3:-$GITHUB_RUN_ATTEMPT}
+    case "$_attempt" in '' | 0* | *[!0-9]*) cica_fail 'invalid lane attempt' ;; esac
+    [ "$_attempt" -le "$GITHUB_RUN_ATTEMPT" ] || cica_fail 'lane attempt is later than this run attempt'
     cica_jq -nS --arg c "$_commit" --arg t "$_tree" --arg h "$CICA_HOST" --arg r "$GITHUB_REPOSITORY" \
-      --arg id "$GITHUB_RUN_ID" --argjson a "$GITHUB_RUN_ATTEMPT" --arg w "$GITHUB_WORKFLOW_REF" --arg s "$GITHUB_WORKFLOW_SHA" \
-      --arg head "$(cica_jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")" \
-      '{scope:"github",repository:$r,run_id:$id,attempt:$a,commit:$c,tree:$t,head:$head,workflow_ref:$w,workflow_sha:$s,host:$h}'
+      --arg id "$GITHUB_RUN_ID" --argjson a "$_attempt" --arg w "$GITHUB_WORKFLOW_REF" --arg s "$GITHUB_WORKFLOW_SHA" \
+      --arg head "$(cica_jq -r .pull_request.head.sha "$GITHUB_EVENT_PATH")" --arg l "$_lane" \
+      '{scope:"github",repository:$r,run_id:$id,attempt:$a,commit:$c,tree:$t,head:$head,workflow_ref:$w,workflow_sha:$s,host:$h,lane:$l,job:("CI lane "+$l)}'
 )
 cica_state() {
     cica_file "$CICA_ROOT" "${CICA_WORK#"$CICA_ROOT"/}/draft/context.json" regular >/dev/null
@@ -212,6 +229,7 @@ cica_hash_map() (
 cica_inventory() {
     cica_hash_map <<'PATHS'
 scripts/ci-gates.tsv
+scripts/ci-lanes.tsv
 scripts/ci-compiler-artifacts.tsv
 scripts/expand-integration-manifest.awk
 tests/integration/native.manifest
@@ -232,6 +250,7 @@ scripts/lib-linux-memory-limit.sh
 scripts/run-bounded-process.ps1
 scripts/ci-compiler-artifact.sh
 scripts/lib-ci-compiler-artifact.sh
+scripts/ci-lane.sh
 PATHS
 }
 
@@ -246,7 +265,28 @@ cica_corpus() {
     awk -v host=linux -f "$CICA_ROOT/scripts/expand-integration-manifest.awk" "$CICA_ROOT/tests/integration/native.manifest" > "$CICA_SCRATCH/expanded"
     awk -F'|' 'NF>=2 {print "integration_" $1 "|" $2 "|2"; next} {exit 1}' "$CICA_SCRATCH/expanded"
 }
-cica_roles() { printf '%s\n' bootstrap-converged; [ "$CICA_HOST" != linux ] || printf '%s\n' build-invariance-opt1-reference; }
+# cica_roles PLAN: the roles (scripts/ci-compiler-artifacts.tsv) whose
+# producer gate is in this plan, one gate ID per line, on this host.
+cica_roles() {
+    awk -F '\t' -v host="$CICA_HOST" '
+        { sub(/\r$/, "") }
+        FNR == NR { if ($0 !~ /^[a-z][a-z0-9-]*$/) exit 1; plan[$0] = 1; next }
+        /^#/ { next }
+        NF != 6 || $1 != 4 || ($2 != "bootstrap-converged" && $2 != "build-invariance-opt1-reference") ||
+            ($3 != "all" && $3 != "linux" && $3 != "windows") { bad = 1; exit 1 }
+        ($3 == "all" || $3 == host) && ($4 in plan) { print $2 }
+        END { if (bad) exit 1 }
+    ' "$1" "$CICA_ROOT/scripts/ci-compiler-artifacts.tsv" || cica_fail 'invalid plan or role inventory'
+}
+# Handoff identity: the exact bytes, except that a Windows PE's COFF header
+# TimeDateStamp (link wall-clock time; the bootstrap links without /Brepro)
+# reads as zero, so independently linked equal compilers compare equal.
+cica_identity_sha() (
+    [ "$CICA_HOST" = windows ] || { cica_sha "$1"; exit; }
+    cica_binary "$1"
+    _stamp=$(($(od -An -tu4 -j60 -N4 "$1" | tr -d ' \r\n') + 8))
+    { head -c "$_stamp" "$1"; printf '\000\000\000\000'; tail -c +"$((_stamp + 5))" "$1"; } | ci_compiler_artifact_sha256_stdin
+)
 cica_files() (
     _fi_base=$1
     cd "$_fi_base"
@@ -400,7 +440,7 @@ FIELDS
 cica_publish() {
     _role=$1; shift
     cica_state
-    cica_roles > "$CICA_SCRATCH/expected-roles"
+    cica_roles "$CICA_WORK/draft/lane/plan.txt" > "$CICA_SCRATCH/expected-roles"
     grep -qxF "$_role" "$CICA_SCRATCH/expected-roles" || cica_fail 'wrong host role'
     _started=$(date +%s%3N)
     _draft=$CICA_WORK/draft _dir=$CICA_WORK/draft/roles/$_role.publishing
@@ -480,14 +520,20 @@ cica_publish() {
     cica_jq -nS --arg role "$_role" --arg key "$(cica_key_json "$CICA_SCRATCH/fields.json")" --argjson ms "$(($(date +%s%3N)-_started))" \
       --slurpfile c "$_draft/context.json" --slurpfile f "$CICA_SCRATCH/fields.json" --slurpfile files "$CICA_SCRATCH/files.json" \
       --slurpfile p "$CICA_SCRATCH/proof.json" --slurpfile i "$CICA_SCRATCH/inventory.json" \
-      '{schema:3,contract:"ci-compiler-artifact",role:$role,context:$c[0],fields:$f[0],provenance_key:$key,files:$files[0],proof:$p[0],inventory:$i[0],packaging_ms:$ms}' > "$_dir/manifest.json"
+      '{schema:4,contract:"ci-compiler-artifact",role:$role,context:$c[0],fields:$f[0],provenance_key:$key,files:$files[0],proof:$p[0],inventory:$i[0],packaging_ms:$ms}' > "$_dir/manifest.json"
     mv "$_dir" "$_draft/roles/$_role"
     printf '[ci-compiler-artifact] snapshot %s %sms\n' "$_role" "$(($(date +%s%3N)-_started))" >&2
 }
+# cica_init SCOPE PLAN [REQUEST]: PLAN is ci-verify.sh's plan (gate IDs
+# first) and REQUEST its --gates selection, empty for the whole host table.
 cica_init() {
     [ ! -e "$CICA_WORK" ] || cica_fail 'envelope root is not fresh'
-    mkdir -p "$CICA_WORK/draft"
+    cica_owned_file "${2:-}" plan
+    mkdir -p "$CICA_WORK/draft/lane"
     cica_context "$1" > "$CICA_WORK/draft/context.json"
+    cut -f 1 "$2" | tr -d '\r' > "$CICA_WORK/draft/lane/plan.txt"
+    printf '%s\n' "${3:-}" | tr ',' '\n' | sed '/^$/d' | LC_ALL=C sort -u > "$CICA_WORK/draft/lane/requested.txt"
+    [ -s "$CICA_WORK/draft/lane/plan.txt" ] && cica_lane_ids_ok "$CICA_WORK/draft/lane" || cica_fail 'unsafe or empty lane plan'
     cica_sources > "$CICA_WORK/draft/source-set.sha256"
     case "$CICA_HOST" in linux) _tools='as ld' ;; windows) _tools='clang lld-link' ;; esac
     for _tool in $_tools; do
@@ -498,11 +544,62 @@ cica_init() {
     done > "$CICA_SCRATCH/tools"
     cica_jq -sS from_entries "$CICA_SCRATCH/tools" > "$CICA_WORK/draft/toolchain.json"
 }
+# The lane receipt: the plan and request recorded at init, every planned
+# gate's result (each must have passed), the timing rows and the produced
+# compilers' hashes. Its files enter the bundle index like every other file.
+cica_lane_ids_ok() {
+    awk '!/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/ { exit 1 }' "$1/plan.txt" "$1/requested.txt" &&
+        LC_ALL=C sort "$1/plan.txt" > "$CICA_SCRATCH/plan-sorted" &&
+        [ -z "$(LC_ALL=C sort -u "$1/plan.txt" | cmp - "$CICA_SCRATCH/plan-sorted" 2>&1)" ] &&
+        [ -z "$(LC_ALL=C comm -23 "$1/requested.txt" "$CICA_SCRATCH/plan-sorted")" ]
+}
+cica_lane_results_ok() {
+    awk -F '\t' '
+        FNR == NR { plan[++n] = $0; next }
+        FNR == 1 { if ($0 != "id\tstatus\telapsed_s") exit 1; next }
+        { k++; if (NF != 3 || $1 != plan[k] || $2 != "0" || $3 !~ /^[0-9]+$/) exit 1 }
+        END { if (k != n) exit 1 }' "$1/plan.txt" "$1/results.tsv" || cica_fail 'lane receipt does not prove every planned gate passed'
+}
+cica_owned_file() {
+    case "$1" in
+        "$CICA_ROOT"/target/*) cica_file "$CICA_ROOT" "${1#"$CICA_ROOT"/}" regular >/dev/null ;;
+        *) cica_fail "$2 must be a regular file inside owned target/" ;;
+    esac
+}
+cica_lane_handoff() {
+    cica_owned_file "$2" 'handoff path file'
+    read -r _lh_path < "$2" || true
+    cica_owned_file "$_lh_path" "$1 handoff"
+    printf '%s\t%s\t%s\n' "$1" "$(cica_sha "$_lh_path")" "$(cica_identity_sha "$_lh_path")" >> "$CICA_WORK/draft/lane/handoffs.tsv"
+}
+cica_lane_receipt() {
+    _lr=$CICA_WORK/draft/lane
+    [ ! -e "$_lr/results.tsv" ] && [ ! -e "$_lr/handoffs.tsv" ] || cica_fail 'duplicate lane receipt'
+    [ -s "$_lr/plan.txt" ] && cica_lane_ids_ok "$_lr" || cica_fail 'unsafe or empty lane plan'
+    cica_owned_file "$1" results
+    tr -d '\r' < "$1" > "$_lr/results.tsv"
+    cica_lane_results_ok "$_lr"
+    if [ "$2" != - ]; then
+        cica_owned_file "$2" timing
+        tr -d '\r' < "$2" > "$_lr/timing.tsv"
+        [ "$(sed -n 1p "$_lr/timing.tsv")" = "$(printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost')" ] || cica_fail 'timing header changed'
+    fi
+    : > "$_lr/handoffs.tsv"
+    if grep -qxF bootstrap-fixpoint "$_lr/plan.txt"; then
+        cica_lane_handoff previous-stage "$CICA_ROOT/target/ci-verify-stage1.path"
+        cica_lane_handoff converged "$CICA_ROOT/target/ci-verify-stage2.path"
+    fi
+    if grep -qxF stage2-compile-profile-verifier "$_lr/plan.txt"; then
+        cica_lane_handoff compile-profile "$CICA_ROOT/target/ci-verify-compile-profile-cli.path"
+    fi
+}
+# cica_seal RESULTS TIMING|-: seal after ci-verify.sh returned success.
 cica_seal() {
     cica_state
     _started=$(date +%s%3N)
     _d=$CICA_WORK/draft
-    cica_roles | LC_ALL=C sort > "$CICA_SCRATCH/roles"
+    cica_lane_receipt "$1" "$2"
+    cica_roles "$_d/lane/plan.txt" | LC_ALL=C sort > "$CICA_SCRATCH/roles"
     find "$_d/roles" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | LC_ALL=C sort > "$CICA_SCRATCH/actual-roles"
     cmp -s "$CICA_SCRATCH/roles" "$CICA_SCRATCH/actual-roles" || cica_fail 'missing/extra/partial roles'
     while IFS= read -r _role; do
@@ -515,37 +612,78 @@ cica_seal() {
     cica_file "$CICA_ROOT" "${CICA_WORK#"$CICA_ROOT"/}/complete" >/dev/null
     [ ! -e "$_d/bundle.json" ] && [ ! -e "$CICA_WORK/complete" ] || cica_fail 'duplicate bundle publication'
     cica_jq -nS --slurpfile c "$_d/context.json" --slurpfile r "$CICA_SCRATCH/roles.json" --slurpfile f "$CICA_SCRATCH/files.json" \
-      '{schema:3,contract:"ci-compiler-artifact",context:$c[0],roles:$r[0],files:$f[0]}' > "$_d/bundle.json"
+      '{schema:4,contract:"ci-compiler-artifact",context:$c[0],roles:$r[0],files:$f[0]}' > "$_d/bundle.json"
     _digest=$(cica_sha "$_d/bundle.json")
     mv "$_d" "$CICA_WORK/complete"
     printf '[ci-compiler-artifact] seal %sms\n' "$(($(date +%s%3N)-_started))" >&2
-    printf '%s_envelope_sha=%s\n' "$CICA_HOST" "$_digest"
+    printf 'envelope_sha=%s\n' "$_digest"
 }
 
+# JOBS lists every attempt's jobs of the run. The lane job's latest executed
+# instance must be the context's attempt: a later attempt's instance counts
+# only as a "Re-run failed jobs" copy (same start, completion and runner).
 cica_verify_transport() {
     cica_jq -en --slurpfile c "$CICA_SCRATCH/context.json" --slurpfile jobs "$1" --slurpfile arts "$2" '
+      def executed(j):
+        if (j|length) > 1 and j[-1].started_at != null and j[-1].started_at == j[-2].started_at and
+           j[-1].completed_at == j[-2].completed_at and j[-1].runner_name == j[-2].runner_name
+        then executed(j[:-1]) else j[-1] end;
       $c[0] as $c |
-      (if $c.host=="linux" then "Test + Integration" else "Test + Integration (windows-latest)" end) as $name |
-      [$jobs[0].jobs[]|select(.name==$name)] as $js |
-      ("ci-stage-envelope-"+(if $c.host=="linux" then "Linux" else "Windows" end)+"-r"+$c.run_id+"-a"+($c.attempt|tostring)) as $artifact |
+      ([$jobs[0].jobs[]|select(.name==$c.job)]|sort_by(.run_attempt)) as $js |
+      ("ci-stage-envelope-"+$c.lane+"-r"+$c.run_id+"-a"+($c.attempt|tostring)) as $artifact |
       [$arts[0].artifacts[]|select(.name==$artifact and .expired==false)] as $as |
-      ($js|length)==1 and ($as|length)==1 and
-      ($js[0] as $j | $as[0] as $a |
+      ($js|length)>=1 and ([$js[].run_attempt]|unique|length)==($js|length) and ($as|length)==1 and
+      (executed($js) as $j | $as[0] as $a |
         $j.run_id==($c.run_id|tonumber) and $j.run_attempt==$c.attempt and $j.head_sha==$c.head and $j.status=="completed" and $j.conclusion=="success" and
         $a.workflow_run.id==($c.run_id|tonumber) and $a.workflow_run.head_sha==$c.head and ($a.digest|test("^sha256:[0-9a-f]{64}$")) and
         ($a.created_at|fromdateiso8601)>=($j.started_at|fromdateiso8601) and ($a.created_at|fromdateiso8601)<=($j.completed_at|fromdateiso8601))' >/dev/null || cica_fail 'producer/artifact attempt binding failed'
 }
+# The sealed lane receipt: exact file set, a valid plan and request, every
+# planned gate passed, the timing header, and handoff hashes that equal the
+# published compiler payloads.
+cica_lane_verify() {
+    _lv=$CICA_WORK/lane
+    { printf '%s\n' handoffs.tsv plan.txt requested.txt results.tsv
+      if [ "$1" = github ] || [ -f "$_lv/timing.tsv" ]; then printf '%s\n' timing.tsv; fi; } | LC_ALL=C sort > "$CICA_SCRATCH/lane-expected"
+    (cd "$_lv" && find . -type f -print) | sed 's|^[.]/||' | LC_ALL=C sort > "$CICA_SCRATCH/lane-actual" || cica_fail 'lane receipt missing'
+    cmp -s "$CICA_SCRATCH/lane-expected" "$CICA_SCRATCH/lane-actual" || cica_fail 'lane receipt file set changed'
+    cica_lane_ids_ok "$_lv" || cica_fail 'unsafe lane plan or request outside the plan'
+    cica_lane_results_ok "$_lv"
+    [ ! -f "$_lv/timing.tsv" ] || [ "$(sed -n 1p "$_lv/timing.tsv")" = "$(printf 'gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost')" ] || cica_fail 'timing header changed'
+    { if grep -qxF bootstrap-fixpoint "$_lv/plan.txt"; then printf '%s\n' converged previous-stage; fi
+      if grep -qxF stage2-compile-profile-verifier "$_lv/plan.txt"; then printf '%s\n' compile-profile; fi; } | LC_ALL=C sort > "$CICA_SCRATCH/handoffs-expected"
+    awk -F '\t' 'NF != 3 || length($2) != 64 || $2 ~ /[^0-9a-f]/ || length($3) != 64 || $3 ~ /[^0-9a-f]/ || seen[$1]++ { exit 1 } { print $1 }' \
+      "$_lv/handoffs.tsv" > "$CICA_SCRATCH/handoffs-names" || cica_fail 'malformed handoff receipt'
+    LC_ALL=C sort "$CICA_SCRATCH/handoffs-names" > "$CICA_SCRATCH/handoffs-actual"
+    cmp -s "$CICA_SCRATCH/handoffs-expected" "$CICA_SCRATCH/handoffs-actual" || cica_fail 'handoff receipt set changed'
+    if grep -qxF bootstrap-fixpoint "$_lv/plan.txt"; then
+        for _lv_pair in converged:compiler previous-stage:previous-stage; do
+            _lv_name=${_lv_pair%%:*} _lv_payload=$CICA_WORK/roles/bootstrap-converged/payload/${_lv_pair#*:}
+            [ -f "$_lv_payload" ] || cica_fail 'handoff payload missing'
+            awk -F '\t' -v n="$_lv_name" -v h="$(cica_sha "$_lv_payload")" -v i="$(cica_identity_sha "$_lv_payload")" \
+              '$1 == n { found = 1; if ($2 != h || $3 != i) bad = 1 } END { exit found && !bad ? 0 : 1 }' "$_lv/handoffs.tsv" ||
+                cica_fail "$_lv_name handoff differs from its published payload"
+        done
+    fi
+}
+# cica_verify DIGEST MODE [JOBS ARTIFACTS LANE ATTEMPT]
 cica_verify() {
     _readback_started=$(date +%s%3N)
     _expected=$1 _mode=$2; shift 2
     case "$_expected" in '' | *[!0-9a-f]*) cica_fail 'trusted bundle digest missing' ;; esac
     [ "${#_expected}" -eq 64 ] && [ "$(cica_sha "$CICA_WORK/bundle.json")" = "$_expected" ] || cica_fail 'bundle differs from producer job output'
-    cica_context "$_mode" > "$CICA_SCRATCH/context.json"
+    if [ "$_mode" = github ]; then
+        [ "$#" -eq 4 ] || cica_fail 'github readback needs jobs, artifacts, lane and attempt'
+        cica_context github "$3" "$4" > "$CICA_SCRATCH/context.json"
+    else
+        cica_context local > "$CICA_SCRATCH/context.json"
+    fi
     cica_json "$CICA_WORK/bundle.json"
-    cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" '.schema==3 and .contract=="ci-compiler-artifact" and .context==$c[0]' "$CICA_WORK/bundle.json" >/dev/null || cica_fail 'trusted workflow context mismatch'
+    cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" '.schema==4 and .contract=="ci-compiler-artifact" and .context==$c[0]' "$CICA_WORK/bundle.json" >/dev/null || cica_fail 'trusted workflow context mismatch'
     cica_files "$CICA_WORK" > "$CICA_SCRATCH/files.json"
     cica_jq -e --slurpfile f "$CICA_SCRATCH/files.json" '.files==$f[0]' "$CICA_WORK/bundle.json" >/dev/null || cica_fail 'missing/extra/corrupt bundle files'
-    cica_roles | LC_ALL=C sort > "$CICA_SCRATCH/roles"
+    cica_lane_verify "$_mode"
+    cica_roles "$CICA_WORK/lane/plan.txt" | LC_ALL=C sort > "$CICA_SCRATCH/roles"
     cica_jq -r '.roles|keys[]' "$CICA_WORK/bundle.json" | LC_ALL=C sort > "$CICA_SCRATCH/actual-roles"
     cmp -s "$CICA_SCRATCH/roles" "$CICA_SCRATCH/actual-roles" || cica_fail 'missing/extra roles'
     cica_sources > "$CICA_SCRATCH/source-set.sha256"
@@ -560,7 +698,7 @@ cica_verify() {
         cmp -s "$CICA_SCRATCH/source-set.sha256" "$_base/source-set.sha256" || cica_fail 'source-set substitution'
         cica_jq -e --slurpfile c "$CICA_SCRATCH/context.json" --slurpfile i "$CICA_SCRATCH/inventory.json" \
           --arg r "$_role" --arg h "$CICA_HOST" --arg s "$(cica_sha "$CICA_SCRATCH/source-set.sha256")" '
-          .schema==3 and .contract=="ci-compiler-artifact" and .role==$r and .context==$c[0] and .inventory==$i[0] and
+          .schema==4 and .contract=="ci-compiler-artifact" and .role==$r and .context==$c[0] and .inventory==$i[0] and
           .fields.producer_identity==$c[0].tree and (.fields.producer_sha256|test("^[0-9a-f]{64}$")) and .proof.input_producer_sha256==.fields.producer_sha256 and
           .fields.host==$h and .fields.target==$h+"-x86_64" and .fields.cwd=="{root}" and .fields.source_roots=="src,stdlib,tests" and
           .fields.source_set_sha256==$s and .fields.profile=="none" and
@@ -614,7 +752,7 @@ cica_verify() {
         fi
     done < "$CICA_SCRATCH/roles"
     [ "$_mode" != github ] || cica_verify_transport "$1" "$2"
-    cica_jq -nS --arg h "$CICA_HOST" --arg d "$_expected" --argjson ms "$(($(date +%s%3N)-_readback_started))" --slurpfile c "$CICA_SCRATCH/context.json" '{schema:3,host:$h,context:$c[0],bundle_sha256:$d,readback_ms:$ms,status:"ok"}'
+    cica_jq -nS --arg h "$CICA_HOST" --arg d "$_expected" --argjson ms "$(($(date +%s%3N)-_readback_started))" --slurpfile c "$CICA_SCRATCH/context.json" '{schema:4,host:$h,lane:$c[0].lane,context:$c[0],bundle_sha256:$d,readback_ms:$ms,status:"ok"}'
 }
 ci_compiler_artifact() (
     set -eu
@@ -630,12 +768,12 @@ ci_compiler_artifact() (
     cica_file "$CICA_ROOT" target/exp >/dev/null
     CICA_SCRATCH=$(mktemp -d "$CICA_ROOT/target/exp/ci-compiler-envelope.XXXXXX")
     case "$_operation" in
-      init) cica_init github ;;
-      init-local) cica_init local ;;
+      init) cica_init github "$@" ;;
+      init-local) cica_init local "$@" ;;
       record) cica_record "$@" ;;
       publish) cica_publish "$@" ;;
-      seal) cica_seal ;;
-      verify) cica_verify "$1" github "$2" "$3" ;;
+      seal) [ "$#" -eq 2 ] || cica_fail 'seal needs results and timing (or -)'; cica_seal "$@" ;;
+      verify) [ "$#" -eq 5 ] || cica_fail 'verify needs digest, jobs, artifacts, lane and attempt'; cica_verify "$1" github "$2" "$3" "$4" "$5" ;;
       verify-local) cica_verify "$1" local ;;
       *) cica_fail 'unknown envelope operation' ;;
     esac

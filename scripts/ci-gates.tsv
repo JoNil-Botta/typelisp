@@ -117,6 +117,7 @@ stage2-spmd-simd-comparison	all	stage2 SPMD SIMD comparison	bootstrap-fixpoint	s
 stage2-cross-mode-semantic-abi-differential	all	stage2 cross-mode semantic/ABI differential	bootstrap-fixpoint,stage2-compile-profile-verifier,stage2-windows-coff-batch-plan@windows,stage2-native-integration-corpus,stage2-spmd-simd-comparison	stage2	256	-	env TYPELISP_CROSS_MODE_PREVIOUS_COMPILER="$STAGE1_BIN" scripts/verify-cross-mode-differential.sh
 stage2-spmd-lane-identity	all	stage2 SPMD lane identity	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'lane-identity-*' tests/spmd/gang-width.cases
 stage2-spmd-broadcast	all	stage2 SPMD broadcast	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'broadcast-*' tests/spmd/gang-width.cases
+stage2-sde-fallback	all	stage2 forced-SDE AVX-512 fallback	bootstrap-fixpoint,stage2-cross-mode-semantic-abi-differential,stage2-spmd-simd-comparison,stage2-spmd-package-calls,stage2-spmd-lane-identity,stage2-spmd-broadcast	stage2	768	spmd-package	gate_sde_fallback
 stage2-docs-pages-build-path	all	stage2 docs Pages build path	bootstrap-fixpoint	stage2	1280	-	env DOC_SITE_OUT="$ROOT/target/ci-verify-docs-pages-site" scripts/verify-doc-site.sh
 stage2-cli-host-action-smoke	linux	stage2 CLI host-action smoke	bootstrap-fixpoint	stage2	4352	-	scripts/check-stage1-wrapper.sh
 stage2-stdlib-documentation	linux	stage2 stdlib documentation	bootstrap-fixpoint	stage2	768	-	scripts/verify-stdlib-docs.sh

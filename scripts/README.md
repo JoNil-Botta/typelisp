@@ -8,10 +8,14 @@ prefix alone does not determine whether a script is required by CI.
 
 The workflow files are authoritative:
 
-- `.github/workflows/ci.yml` runs `check-implementation-languages.sh` and
-  `check-gitignore.sh`, then `ci-verify.sh`, and uploads the `ci-timing-<host>`
-  artifact. On Linux it then runs `self-compile.sh check`, which gates the PR's
-  own `self_compile` cost against main (`perf/README.md`).
+- `.github/workflows/ci.yml` runs each host's gates in two CI lane jobs
+  (`ci-lanes.tsv`, [CI lanes](#ci-lanes)): every lane runs
+  `ci-verify.sh --gates` with the gates it owns, and one lane per host also
+  runs `check-implementation-languages.sh` and `check-gitignore.sh`. The lane
+  that runs `linux-self-compile-measurement` then runs `self-compile.sh check`,
+  which gates the PR's own `self_compile` cost against main (`perf/README.md`).
+  The per-host aggregators keep the required-check names, prove every gate
+  passed in its owning lane, and upload the `ci-timing-<host>` artifact.
 - `.github/workflows/self-compile-reference.yml` runs on every push to main:
   `ci-verify.sh --gates linux-self-compile-measurement` publishes the commit's
   `self_compile` reference, and `self-compile.sh ledger` accounts for the merge.
@@ -111,11 +115,19 @@ still report unavailable execution explicitly. CLI transcript `if-isa` checks
 and runtime-dispatch selection continue to test the actual native host,
 including the CLI's unsupported-host diagnostics.
 
-On native AVX-512 CI hosts, the workflow additionally executes the SPMD,
-lane/broadcast and package corpus under SDE and checks the cross-mode oracle
-against those observations. Hosts without native support already use SDE in
-the canonical gates. Thus both operating systems exercise the fallback on
-every required run, while native dispatch and execution coverage is retained.
+On native AVX-512 hosts, the `stage2-sde-fallback` gate (#9460) additionally
+executes the SPMD, lane/broadcast and package corpus under SDE and checks the
+cross-mode oracle against those observations: the same four commands with
+`TYPELISP_AVX512_EXECUTION=sde`, under an 8192 MiB cap whose report is
+`target/sde-fallback.memory`. It needs those suites' ordinary gates, so it
+overwrites their native observations only after they were consumed, and it
+holds the `spmd-package` lock. Hosts without native support already use SDE in
+the canonical gates; there the gate passes as not applicable only after
+proving that the ordinary route for AVX-512 is SDE, and a failed ISA detection
+fails it. Thus both operating systems exercise the fallback on every required
+run, while native dispatch and execution coverage is retained. A local run
+without `TYPELISP_SDE_BIN` reports the forced-SDE suites as unavailable, as the
+other harnesses report unavailable execution; `CI=true` requires them.
 
 To validate the emulator route even on an AVX-512 host, run the existing corpus:
 
@@ -474,10 +486,62 @@ Before moving or deleting a script:
    every changed live reference.
 5. Run `check-implementation-languages.sh` and `git diff --check`.
 
+## CI lanes
+
+Required CI runs each host's gates in two lane jobs, `CI lane linux-1`,
+`CI lane linux-2`, `CI lane windows-1` and `CI lane windows-2` (#7767 slice 2,
+council decision D-C42). `ci-lanes.tsv` is the one assignment: every gate of
+`ci-gates.tsv`, on each host it runs on, has exactly one owning lane. A lane
+runs `ci-verify.sh --gates` with the gates it owns, which adds their needs:
+the scheduler, its memory admission, locks and dependency closure are the same
+as in a local full run, which is unchanged. Each lane bootstraps its own
+compiler from the published stage0; no compiler passes between jobs. A gate
+that a lane runs only because its owned gates need it is a duplicate, and
+`ci-lanes.tsv` must declare it (`OWNER+LANE`); today only `bootstrap-fixpoint`
+runs in both lanes of each host.
+
+`ci-lane.sh check` fails when a gate is unassigned, assigned twice, unknown or
+assigned to a host it does not run on, when a duplicate is undeclared or a
+declaration is stale, when a host has more than two lanes, or when
+`SC_CI_JOB_NAME` (`lib-self-compile.sh`) does not name the lane that runs
+`linux-self-compile-measurement`. Every lane and aggregator runs it, so a new
+`ci-gates.tsv` row needs a lane before CI can pass. `ci-lane.sh setup LANE`
+gives the workflow a lane's gates and needs. Lane `linux-1` holds only
+build-invariance, its bootstrap and the opt2-CLI regression that needs it, so
+no other gate can run beside the build-invariance pool there: in that hosted
+lane only, `TYPELISP_BUILD_INVARIANCE_WORKERS=3` (per-chunk caps and the pool
+budget unchanged). Local runs keep their own worker settings.
+
+Each lane seals a receipt into its compiler stage envelope: its plan, its
+`--gates` request, every planned gate's result (`ci-verify.sh` writes
+`target/ci-verify-results.tsv`), its timing rows and its compilers' hashes. The
+aggregator of each host (the required checks `Test + Integration` and
+`Test + Integration (windows-latest)`, which run whatever happened to the
+lanes) runs `ci-lane.sh aggregate`. It requires every lane job to have
+succeeded, binds each lane to the attempt that executed its job (a
+"Re-run failed jobs" copy keeps the attempt that ran it), reads its envelope
+back against the trusted run context on the producing host, and requires the
+receipt to plan and pass exactly the lane's assignment and its closure. It
+requires one converged compiler across the lanes and records each lane's
+stage0 seed: a seed race between lanes is allowed only with an equal compiler,
+and a different compiler is a determinism defect, never re-run away. Windows
+compares the compiler with its PE COFF TimeDateStamp read as zero, because the
+bootstrap links without `/Brepro` and that field is the link time; every other
+byte, and Linux's whole binary, must match. It then merges the lanes' timing
+into the host's `ci-timing-<host>` artifact: each gate's rows from its owning
+lane in table order, the lanes' ungated rows, and one complete-verification
+row timed as the slowest lane (`partial-verification` rows mark lane runs).
+
+The assignment follows the D-C42 scheduler replay of measured gate times
+(`ci-verify.sh --jobs 4 --memory-mib 14336`, validated against hosted runs).
+Rebalance by editing `ci-lanes.tsv`; keep a lane's duplicates small, because
+each duplicated gate costs runner time in every run.
+
 ## Same-run compiler stage envelopes (D-C27 slice 1)
 
 `ci-compiler-artifact.sh` restores #6883's canonical provenance namespace
-(#6909, removed in #8118). The envelope is version 3; its provenance key keeps
+(#6909, removed in #8118). The envelope is version 4 (version 3 plus the CI
+lane: its job, plan and receipt, [CI lanes](#ci-lanes)); its provenance key keeps
 #6883's schema-1 field order, LF framing and normalized `{root}` paths. There
 is no new producer identity: `lib-build-provenance.sh` still defines the commit
 stamp and `HEAD^{tree}` producer identity. A golden-vector fixture checks the
@@ -496,25 +560,26 @@ are bound separately. Relevant environment values are hashed, not disclosed.
 Seed and independent fixpoint/parity proofs retain their distinct roles.
 
 Publication uses fresh owned directories and rename commit points. A final
-bundle index binds every file and role. Its digest travels through distinct
-Linux/Windows producer job outputs, independently of artifact contents. The
-separate readback job checks that digest, trusted checkout/event/workflow/run
-and attempt, successful producer job metadata, artifact creation window and
-content/provenance keys. An attempt cannot reuse the previous attempt's
-bundle, even if its source tree is identical. Missing or partial data fails.
-Readback is a small two-host matrix: each host verifies its own exact checkout
+bundle index binds every file and role. A lane publishes each role whose
+producer gate is in its plan. Its digest travels through a distinct producer
+job output per lane, independently of artifact contents. The host's aggregator
+checks that digest, trusted checkout/event/workflow/run, the lane and the
+attempt that executed the lane's job, successful producer job metadata,
+artifact creation window and content/provenance keys. A later attempt can use
+an earlier attempt's bundle only when its lane job is a copy of the one that
+produced it; a lane that re-ran must supply its own. Missing or partial data
+fails. Each aggregator runs on its host and verifies its own exact checkout
 bytes, including text paths that Git can materialize as CRLF on Windows. This
-avoids a separate normalized-source identity. The workflow has four jobs total;
-both readback jobs and their setup cost count toward the runner-minute budget.
-The complete fixture suite runs on Linux, including static Windows envelopes,
-both coreutils digest markers and planted LF/CRLF checkouts. Real Windows
+avoids a separate normalized-source identity. The workflow has six jobs: four
+lanes and two aggregators, whose setup cost counts toward the runner-minute
+budget. The complete fixture suite runs on Linux, including static Windows
+envelopes, both coreutils digest markers, planted LF/CRLF checkouts and the
+aggregator's assignment, coverage, attempt and identity cases. Real Windows
 publication and readback validate that host's bytes and native tool behavior.
 
-No compiler or gate consumes a transported envelope yet. All existing path-file
-handoffs, compiler choices, gate dependencies, comparisons, limits and required
-check names remain. Removing this opt-in publication/readback removes the
-slice without changing compilation. The small readback job must also pass
-before council disposition; it changes no branch-protection settings.
+No compiler or gate consumes a transported envelope. All existing path-file
+handoffs, compiler choices, gate dependencies, comparisons and limits remain;
+the lanes' compilers are compared, not shared.
 Transport does not preserve executable permission bits, so readback is static:
 it verifies bytes and ELF/PE target headers and never runs a downloaded binary.
 A future consumer must restore its declared executable mode only after checking

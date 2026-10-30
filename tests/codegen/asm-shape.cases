@@ -1754,3 +1754,33 @@ opt 0
 in fn main
 # Root plus expected scalar (16 bytes), then descriptor (16 bytes).
 count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+# Lifetime arguments preserve the enum's packed representation at capture.
+case lambda-capture-lifetime-enum-packed
+source tests/integration/lambda_capture_lifetime_enum.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn main
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-lifetime-enum-one-word
+source tests/integration/lambda_capture_lifetime_enum_variants.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_lambda_capture_lifetime_enum_variants_case_one_word
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-lifetime-enum-nested
+source tests/integration/lambda_capture_lifetime_enum_variants.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_lambda_capture_lifetime_enum_variants_case_nested
+# Environment and descriptor; the containing Holder has its own 24-byte copy.
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-lifetime-enum-memory
+source tests/integration/lambda_capture_lifetime_enum_variants.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn _tl_lambda_capture_lifetime_enum_variants_case_memory
+count = 1 ^[[:space:]]+call tl_substring$

@@ -30,6 +30,7 @@ tests/integration/macro_struct_pattern*.tl	stage2-native-integration-corpus,stag
 tests/integration/internal_abi_six_positions.tl	stage2-native-integration-corpus,stage2-codegen-target-parity	@corpus	Internal argument windows, C export bridges, callback and package boundaries run at every native optimization level.
 tests/integration/runtime_atomic_raw_pointer.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Raw atomic C entries and ordinary Internal bodies retain independent call and assembly coverage.
 tests/integration/lambda_capture_atomic_arena_*.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Captured atomic Arena roots retain allocation and destruction behavior plus both-target capture shapes.
+tests/integration/lambda_capture_lifetime_enum*.tl	stage2-native-integration-corpus,stage2-regalloc-backend-asm-shape-gates	@corpus	Lifetime enum capture keeps packed one/two-word and nested values while retaining memory snapshots.
 benchmarks/internal_abi_six_positions/baseline.c	stage2-native-integration-corpus	@corpus	C interposer and preserved-register canaries for the six-position native ABI fixture.
 tests/safety/*	stage2-safety-corpus,stage2-codegen-target-parity,compiler-state-schema-boundary,zero-cons-fixture-and-embedded-source-invariant	@corpus	Safety sources and pins, with direct source guards for executable fixtures.
 tests/safety/legacy_box_get_*_reject.tl	stage2-public-tool-surface	-	The public-check matrix directly consumes the legacy BoxGet receiver diagnostic fixtures.

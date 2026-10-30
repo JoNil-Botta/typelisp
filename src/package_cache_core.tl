@@ -55,7 +55,8 @@
     (for [i (iterator.range 0 n)]
       (let
         [c : char (string.string-ref commit i)]
-        (when (not (or (and (>= c '0') (<= c '9')) (and (>= c 'a') (<= c 'f'))))
+        (when
+          (not (or (and (>= c '0') (<= c '9')) (and (>= c 'a') (<= c 'f'))))
           (return false))))
     true))
 

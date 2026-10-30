@@ -135,10 +135,11 @@
 
 (define (package-lock-commit-admitted? [commit : String]) : bool
   (match (package_lock_core.package-lock-parse
-    (& (str_cat.str-cat
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"remote\") (url \"u\") (pin (branch \"main\")) (commit \""
-      commit
-      "\"))))")))
+    (&
+      (str_cat.str-cat
+        "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"remote\") (url \"u\") (pin (branch \"main\")) (commit \""
+        commit
+        "\"))))")))
     [(Ok _) true]
     [(Err _) false]))
 
@@ -146,11 +147,14 @@
   package-lock-canonical-commits
   (if (and
     (package-lock-commit-admitted? "0123456789abcdef0123456789abcdef01234567")
-    (package-lock-commit-admitted? "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    (package-lock-commit-admitted?
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     (not (package-lock-commit-admitted? ""))
     (not (package-lock-commit-admitted? "abc123"))
-    (not (package-lock-commit-admitted? "0123456789ABCDEF0123456789abcdef01234567"))
-    (not (package-lock-commit-admitted? "g123456789abcdef0123456789abcdef01234567")))
+    (not
+      (package-lock-commit-admitted? "0123456789ABCDEF0123456789abcdef01234567"))
+    (not
+      (package-lock-commit-admitted? "g123456789abcdef0123456789abcdef01234567")))
     unit
     (io.panic "package-lock: canonical commit admission mismatch")))
 

@@ -1601,9 +1601,7 @@
                     (owned_view.compiler-owned-shared-view root)
                     (build-git-checkout-ref dep))))]
             (let
-              [_
-                (try
-                  (build-resolve-git-head (string.copy (& alias)) root))]
+              [_ (try (build-resolve-git-head (string.copy (& alias)) root))]
               (if (io.file-exists? manifest-path)
                 (Ok (build-github-dep-relative-root alias))
                 (Err

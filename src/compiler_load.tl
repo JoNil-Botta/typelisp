@@ -15252,12 +15252,16 @@
         [(List (slice (Sym alias _) source) _)
           (match (reader.spanned-sexpr-view source)
             [(List (slice (Sym head _) (Str _ _) pin) _)
-              (when (string.eq (compiler-load-symbol-text head) "github")
+              (when
+                (string.eq (compiler-load-symbol-text head) "github")
                 (match (reader.spanned-sexpr-view pin)
                   [(List (slice (Sym kind _) (Str value _)) span)
-                    (when (and
-                      (string.eq (compiler-load-symbol-text kind) "rev")
-                      (not (package_cache_core.package-cache-canonical-commit? (& (ci.intern-id-str value)))))
+                    (when
+                      (and
+                        (string.eq (compiler-load-symbol-text kind) "rev")
+                        (not
+                          (package_cache_core.package-cache-canonical-commit?
+                            (& (ci.intern-id-str value)))))
                       (return
                         (Err
                           (box
@@ -15282,8 +15286,13 @@
     [(List (slice field & _) _)
       (match (reader.spanned-sexpr-view field)
         [(List (slice (Sym name _) & entries) _)
-          (when (string.eq (compiler-load-symbol-text name) "dependencies")
-            (return (compiler-load-manifest-validate-rev-entries path entries manifest)))]
+          (when
+            (string.eq (compiler-load-symbol-text name) "dependencies")
+            (return
+              (compiler-load-manifest-validate-rev-entries
+                path
+                entries
+                manifest)))]
         [_ unit])
       (compiler-load-manifest-validate-rev-fields
         path

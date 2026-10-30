@@ -128211,30 +128211,81 @@
 ;; Renaming one side's owned binders onto the other's is only sound when no
 ;; renamed identity already occurs free on the other side: inside `f`'s body,
 ;; `(-> (& b i64) (& a i64))` keeps `f`'s binder `a` free, and is not the type
-;; of `f` itself. Free names exclude the signature's own binders and any nested
-;; callable's owned binders.
+;; of `f` itself. A nested callable that owns the identity binds it there.
+(define (tc-type-mentions-free-lifetime?
+  [ty : (& ty ast.AstType)]
+  [lifetime : i64]) : bool
+  (match ty
+    [(Func args-signature-box)
+      (let
+        [args-signature
+          (ast.ast-function-signature-view (deref args-signature-box))]
+        (if (match args-signature.binders
+          [(ast.AstCallableBinders.Resolved owned)
+            (tc-lifetime-list-contains-at? (& owned) lifetime 0)]
+          [_ false])
+          false
+          (or
+            (tc-type-list-mentions-free-lifetime-at?
+              (& args-signature.params)
+              lifetime
+              0)
+            (tc-type-mentions-free-lifetime?
+              (& (ast.ty-node-get args-signature.result))
+              lifetime))))]
+    [(Tuple elems)
+      (tc-type-list-mentions-free-lifetime-at? (& (deref elems)) lifetime 0)]
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
+         (MutPtr elem))
+      (tc-type-mentions-free-lifetime? (& (ast.ty-node-get elem)) lifetime)]
+    [(or (Ref name inner) (MutRef name inner) (Region name inner)
+         (Invalidate name inner))
+      (or
+        (= name lifetime)
+        (tc-type-mentions-free-lifetime? (& (ast.ty-node-get inner)) lifetime))]
+    [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
+      (tc-lifetime-list-contains-at? (& (deref lifetimes)) lifetime 0)]
+    [_ false]))
+
+(define (tc-type-list-mentions-free-lifetime-at?
+  [types : (& types ast.AstTypeList)]
+  [lifetime : i64]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len types))
+    false
+    (or
+      (tc-type-mentions-free-lifetime?
+        (&
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+        lifetime)
+      (tc-type-list-mentions-free-lifetime-at? types lifetime (+ index 1)))))
+
 (define (tc-callable-binders-captured?
   [owned : (& owned ast.AstLifetimeList)]
   [signature : (& signature ast.AstFunctionSignature)]) : bool
-  (when (ast.ast-lifetime-list-empty? owned) (return false))
   (let
-    [free : TcNameIdList
-      (tc-name-id-list-difference
-        (tc-type-collect-regions-into
-          (& (ast.ty-node-get signature.result))
-          (tc-type-list-collect-regions (& signature.params) TcNameIdList.Nil))
-        (match signature.binders
-          [(ast.AstCallableBinders.Resolved bound)
-            (tc-lifetime-list-to-name-id-list-into (& bound) TcNameIdList.Nil)]
-          [_ TcNameIdList.Nil]))]
     [index : i64 0]
     [captured : bool false]
     (while (and (not captured) (< index (ast.ast-lifetime-list-len owned)))
-      (when
-        (tc-name-id-list-contains
-          free
-          (ast.ast-lifetime-list-get owned index -1))
-        (set! captured true))
+      (let
+        [lifetime : i64 (ast.ast-lifetime-list-get owned index -1)]
+        (when
+          (and
+            (not
+              (match signature.binders
+                [(ast.AstCallableBinders.Resolved bound)
+                  (tc-lifetime-list-contains-at? (& bound) lifetime 0)]
+                [_ false]))
+            (or
+              (tc-type-list-mentions-free-lifetime-at?
+                (& signature.params)
+                lifetime
+                0)
+              (tc-type-mentions-free-lifetime?
+                (& (ast.ty-node-get signature.result))
+                lifetime)))
+          (set! captured true)))
       (+= index 1))
     captured))
 

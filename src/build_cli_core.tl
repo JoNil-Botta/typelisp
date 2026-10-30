@@ -393,10 +393,8 @@
 (define (build-invalid-manifest-message
   [diag : compiler_diagnostic.CompilerDiagnostic]) : String
   (str_cat.str-cat
-    "invalid package manifest '"
-    (compiler_diagnostic.compiler-diagnostic-path diag)
-    "': "
-    (compiler_diagnostic.compiler-diagnostic-message diag)))
+    "invalid package manifest: "
+    (compiler_diagnostic.compiler-diagnostic-render (& diag))))
 
 (define (build-unknown-profile [value : String]) : String
   (str_cat.str-cat

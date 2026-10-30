@@ -22647,7 +22647,7 @@
           value
           (tc_core.tc-nominal-name-id-display name)
           ty))]
-    [(Enum name)
+    [(or (Enum name) (EnumArgs name _))
       (if (lower-type-register-resident? ctx ty)
         (Ok (Expr state value ty))
         (lower-capture-snapshot-enum-value
@@ -22659,16 +22659,6 @@
           name
           (tc_core.tc-nominal-name-id-display name)
           ty))]
-    [(EnumArgs name _)
-      (lower-capture-snapshot-enum-value
-        ctx
-        state
-        env
-        type-env
-        value
-        name
-        (tc_core.tc-nominal-name-id-display name)
-        ty)]
     [_ (Ok (Expr state value ty))]))
 
 (define (lower-capture-snapshot-string-value

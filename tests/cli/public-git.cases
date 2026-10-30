@@ -206,8 +206,8 @@ contains (pin ({{each}} "stable"))
 contains (commit "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
 
 case gp7
-each sha1 sha256
-sh case "{{each}}" in sha1) CCV_rev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;; sha256) CCV_rev=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ;; esac
+each h40 h64
+sh case "{{each}}" in h40) CCV_rev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;; h64) CCV_rev=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ;; esac
 sh mkdir -p "{{dir}}/bin"
 run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
 stderr empty
@@ -303,8 +303,8 @@ test ! -f "{{dir}}/r/typelisp.lock"
 
 
 case ga
-each sha1 sha256
-sh case "{{each}}" in sha1) CCV_rev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;; sha256) CCV_rev=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ;; esac
+each h40 h64
+sh case "{{each}}" in h40) CCV_rev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;; h64) CCV_rev=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ;; esac
 sh mkdir -p "{{dir}}/bin"
 run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
 stderr empty

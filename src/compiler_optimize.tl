@@ -11146,6 +11146,66 @@
   (entry-label i64)
   (doms OptDomInfo))
 
+(cfg
+  test
+  (define opt-verify-boundary-label : i64
+    -1))
+
+(cfg
+  test
+  (define (opt-verify-boundary-set! [label : i64]) : unit
+    (set! opt-verify-boundary-label label)))
+
+;; Labels live in the IR label owner, so names survive round-arena resets.
+;; Restore the integer identity around nested inliner trials. Ordinary builds
+;; discard this complete attribution path.
+(defmacro (opt-verify-at [_name : Expr] [body : Expr]) : Expr
+  `(cfg
+    test
+    (let
+      [previous-label : i64 opt-verify-boundary-label]
+      [_name-install : unit
+        (opt-verify-boundary-set! (ir.compiler-ir-label (& ,_name)))]
+      [result ,body]
+      (opt-verify-boundary-set! previous-label)
+      result)
+    ,body))
+
+(cfg
+  test
+  (define opt-verify-test-post? : bool
+    false))
+
+(defmacro (opt-verify-post [_name : Expr] [body : Expr]) : Expr
+  `(opt-verify-at
+    (if (< opt-verify-boundary-label 0)
+      (string.copy (& ,_name))
+      (ir.compiler-ir-label-text opt-verify-boundary-label))
+    (cfg
+      test
+      (let
+        [previous-post? : bool opt-verify-test-post?]
+        [_post-install : unit (set! opt-verify-test-post? true)]
+        [result ,body]
+        (set! opt-verify-test-post? previous-post?)
+        result)
+      ,body)))
+
+(defmacro (opt-verify-test-result
+  [_func : Expr]
+  [_context : Expr]
+  [body : Expr]) : Expr
+  `(cfg
+    test
+    (let
+      [result ,body]
+      (match (& result)
+        [(ResultCompilerOptimizeVerify.Ok)
+          (opt-verify-test-output! ,_func ,_context)]
+        [_ unit])
+      result)
+    ,body))
+
 (define (opt-cfg-context-build [blocks : ir.CompilerIrBlockList]) : OptCfgContext
   (let
     [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
@@ -11296,7 +11356,7 @@
   [func : ir.CompilerIrFunction]
   [context : OptCfgContext]
   [plan : OptBlockRewriteResult]) : OptFunctionRewriteResult
-  (match (opt-function-rewrite-verdict (& func) plan)
+  (match (opt-verify-post pass (opt-function-rewrite-verdict (& func) plan))
     [(Kept next next-context) (Result next next-context true)]
     [(Rejected reason)
       (opt-rewrite-ice! (opt-rewrite-ice-message pass (& func) reason))
@@ -11370,7 +11430,9 @@
         (let
           [next : ir.CompilerIrFunction
             (opt-function-with-frame-blocks func frame blocks)]
-          (match (opt-verify-function (& next))
+          (match (opt-verify-post
+            "opt-function-pass-commit"
+            (opt-verify-function (& next)))
             [(Ok) (Result next true)]
             [(Err _) (Result func false)])))]))
 
@@ -11512,7 +11574,7 @@
 ;; catch-all (aggregate C-ABI store-result calls, vector and predicated stores,
 ;; TailCallIndirect) answer `None`.
 (define (opt-instr-def-var [instr : (& ir.CompilerIrInstr)]) : option_i64.Option
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     ;; Pack/Word define their dst like any scalar op. Without these arms
     ;; the verifier saw every use of a register-group word as use-before-def
     ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
@@ -11531,7 +11593,7 @@
          (TotalEnumBranch _ _ _) (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
       (None)]
     [(SpmdCall payload-box)
-      (match (deref payload-box).result
+      (match (& (deref payload-box).result)
         [(Unit) (None)]
         [(Value dst _ _) (Some dst)])]
     [(VectorBinOp payload-box)
@@ -11759,28 +11821,35 @@
 ;; bounds check. One walk therefore produces both facts, and the index doubles
 ;; as the membership set. `Duplicate` carries no index because the verifier
 ;; rejects the function before any use query runs.
+;; Zero is undefined; a positive entry is the defining block id plus one.
+;; Positions retain zero for parameters/phis and the original SSA position
+;; for ordinary definitions. These tables belong to one verification only.
+(defstruct OptVerifyDefs
+  (blocks (__tl_dyn-array i64))
+  (positions (__tl_dyn-array i64)))
+
 (defenum OptVarDefsIndex
   (Duplicate)
-  (Index (__tl_dyn-array OptMaybeVarDef)))
+  (Index OptVerifyDefs))
 
 (define (opt-var-defs-checked-add!
-  [items : (&mut items (__tl_dyn-array OptMaybeVarDef))]
+  [items : (&mut items OptVerifyDefs)]
   [var : i64]
   [block-id : i64]
   [pos : i64]) : bool
-  (if (or (< var 0) (>= var (array-length items)))
+  (if (or
+    (< var 0)
+    (>= var (array-length items.blocks))
+    (!= (array-ref items.blocks var) 0))
     false
-    (match (array-ref items var)
-      [(Some _) false]
-      [(No)
-        (set!
-          (array-ref items var)
-          (OptMaybeVarDef.Some (Def var block-id pos)))
-        true])))
+    (begin
+      (set! (array-ref items.blocks var) (+ block-id 1))
+      (set! (array-ref items.positions var) pos)
+      true)))
 
 (define (opt-var-defs-checked-params-from!
   [params : (& ir.CompilerIrParamSeq)]
-  [items : (&mut items (__tl_dyn-array OptMaybeVarDef))]) : bool
+  [items : (&mut items OptVerifyDefs)]) : bool
   (for [position (iterator.range 0 params.len)]
     (match (ir.compiler-ir-param-seq-borrow params position)
       [(Param _ _ var)
@@ -11790,7 +11859,7 @@
 
 (define (opt-var-defs-checked-params!
   [params : (& ir.CompilerIrParamSeq)]
-  [items : (&mut items (__tl_dyn-array OptMaybeVarDef))]) : bool
+  [items : (&mut items OptVerifyDefs)]) : bool
   (opt-var-defs-checked-params-from! params items))
 
 (define (opt-var-defs-checked-instr-seq-from!
@@ -11798,7 +11867,7 @@
   [block-id : i64]
   [index : i64]
   [pos : i64]
-  [items : (&mut items (__tl_dyn-array OptMaybeVarDef))]) : bool
+  [items : (&mut items OptVerifyDefs)]) : bool
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [i : i64 index]
@@ -11823,7 +11892,7 @@
 (define (opt-var-defs-checked-blocks!
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [block-id : i64]
-  [items : (&mut items (__tl_dyn-array OptMaybeVarDef))]) : bool
+  [items : (&mut items OptVerifyDefs)]) : bool
   (match blocks
     [(slice) true]
     [(slice block & rest)
@@ -11840,8 +11909,8 @@
   (if (< vars 0)
     (Duplicate)
     (let
-      [items : (__tl_dyn-array OptMaybeVarDef)
-        (__tl_make-array OptMaybeVarDef vars)]
+      [items : OptVerifyDefs
+        (OptVerifyDefs (__tl_make-array i64 vars) (__tl_make-array i64 vars))]
       (if (and
         (opt-var-defs-checked-params! params (&mut items))
         (opt-var-defs-checked-blocks!
@@ -11850,6 +11919,15 @@
           (&mut items)))
         (Index items)
         (Duplicate)))))
+
+(define (opt-verify-def-lookup [defs : (& defs OptVerifyDefs)] [var : i64]) : OptMaybeVarDef
+  (if (or
+    (< var 0)
+    (>= var (array-length defs.blocks))
+    (= (array-ref defs.blocks var) 0))
+    (No)
+    (Some
+      (Def var (- (array-ref defs.blocks var) 1) (array-ref defs.positions var)))))
 
 (define (opt-var-def-lookup
   [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
@@ -11860,29 +11938,52 @@
 
 ;; Block labels are unique -- every entry point into this family checks that
 ;; first -- so id equality decides label equality without a `string.eq`.
+(define (opt-verify-use-result [code : i64]) : ResultCompilerOptimizeVerify
+  (cond
+    [(= code 0) (Ok)]
+    [(= code 1) (Err "optimizer verify: use before definition")]
+    [(= code 2) (Err "optimizer verify: use is not dominated by definition")]
+    [else
+      (Err
+        "optimizer verify: runtime-global marker used as an instruction value")]))
+
+;; Keep a scalar first-error code while folding operands. Materialize the
+;; Result only once instead of copying an owned error/string carrier per use.
+(define (opt-verify-var-use-code
+  [defs : (& defs OptVerifyDefs)]
+  [doms : (& OptDomInfo)]
+  [var : i64]
+  [use-block : i64]
+  [use-pos : i64]) : i64
+  (when
+    (or
+      (< var 0)
+      (>= var (array-length defs.blocks))
+      (= (array-ref defs.blocks var) 0))
+    (return 1))
+  (let
+    [def-block : i64 (- (array-ref defs.blocks var) 1)]
+    (cond
+      [(not (opt-dom-info-dominates-id? doms def-block use-block)) 2]
+      [(and (= def-block use-block) (>= (array-ref defs.positions var) use-pos))
+        1]
+      [else 0])))
+
 (define (opt-verify-var-use
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
+  [defs : (& OptVerifyDefs)]
+  [doms : (& OptDomInfo)]
   [var : i64]
   [use-block : i64]
   [use-pos : i64]) : ResultCompilerOptimizeVerify
-  (match (opt-var-def-lookup defs var)
-    [(No) (Err "optimizer verify: use before definition")]
-    [(Some def)
-      (match def
-        [(Def _ def-block def-pos)
-          (if (not (opt-dom-info-dominates-id? doms def-block use-block))
-            (Err "optimizer verify: use is not dominated by definition")
-            (if (and (= def-block use-block) (>= def-pos use-pos))
-              (Err "optimizer verify: use before definition")
-              (Ok)))])]))
+  (opt-verify-use-result
+    (opt-verify-var-use-code defs doms var use-block use-pos)))
 
 (define (opt-verify-var-use-on-edge
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [var : i64]
   [pred-label : i64]) : ResultCompilerOptimizeVerify
-  (match (opt-var-def-lookup defs var)
+  (match (opt-verify-def-lookup defs var)
     [(No) (Err "optimizer verify: use before definition")]
     [(Some def)
       (match def
@@ -11897,7 +11998,7 @@
             (Err "optimizer verify: use is not dominated by definition"))])]))
 
 (define (opt-verify-value-use
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [value : (& ir.CompilerIrValue)]
   [use-block : i64]
@@ -11910,7 +12011,7 @@
     [_ (Ok)]))
 
 (define (opt-verify-call-args-array-uses
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [values : (& (__tl_dyn-array ir.CompilerIrValue))]
   [use-block : i64]
@@ -11938,10 +12039,10 @@
 ;; Resolve the definition against the actual body, not the CFG's cached block
 ;; values: passes may retain a topology context while replacing instructions.
 (define (opt-verify-definition
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [body : (& body ir.CompilerIrBlockList)]
   [var : i64]) : OptMaybeInstr
-  (match (opt-var-def-lookup defs var)
+  (match (opt-verify-def-lookup defs var)
     [(Some (Def _ block pos))
       (match body
         [(Array seq)
@@ -11988,14 +12089,14 @@
 ;; of a join must prove storage; bounded recursion refuses ungrounded cycles.
 ;; Callee/result ABI and extent checks are separate obligations of #7738.
 (define (opt-verify-sret-storage-pointer?
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [value : (& value ir.CompilerIrValue)]
   [fuel : i64]) : bool
   (when (<= fuel 0) (return false))
   (match value
     [(Var var)
-      (when (or (< var 0) (>= var (array-length defs))) (return false))
+      (when (or (< var 0) (>= var (array-length defs.blocks))) (return false))
       (when (opt-addr-taken-var? (& proof.marks) var) (return false))
       (when
         (!= (array-ref proof.memo var) 0)
@@ -12091,7 +12192,7 @@
     [_ false]))
 
 (define (opt-verify-call-args-uses
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [args : (& ir.CompilerIrCallArgs)]
@@ -12125,13 +12226,15 @@
                 (= (array-length proof.memo) 0)
                 (set!
                   proof.marks
-                  (opt-addr-taken-vars (array-length defs) proof.body))
-                (set! proof.memo (__tl_make-array i64 (array-length defs))))
+                  (opt-addr-taken-vars (array-length defs.blocks) proof.body))
+                (set!
+                  proof.memo
+                  (__tl_make-array i64 (array-length defs.blocks))))
               (if (opt-verify-sret-storage-pointer?
                 defs
                 proof
                 (& (Var var))
-                (array-length defs))
+                (array-length defs.blocks))
                 (Ok)
                 (Err
                   "optimizer verify: sret argument must address inline output storage")))]
@@ -12153,7 +12256,7 @@
     [_ (Ok)]))
 
 (define (opt-verify-phi-input-uses
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [inputs : (& inputs ir.CompilerIrPhiInputSeq)]) : ResultCompilerOptimizeVerify
   (for [index (iterator.range 0 inputs.len)]
@@ -12175,32 +12278,36 @@
     b))
 
 (define (opt-verify-use
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
+  [defs : (& OptVerifyDefs)]
+  [doms : (& OptDomInfo)]
   [use-block : i64]
   [use-pos : i64]
   [_role : ir.CompilerIrOperandRole]
-  [result : ResultCompilerOptimizeVerify]
-  [value : ir.CompilerIrValue]) : ResultCompilerOptimizeVerify
-  (opt-verify-two
-    (& result)
-    (opt-verify-value-use defs doms (& value) use-block use-pos)))
+  [code : i64]
+  [value : ir.CompilerIrValue]) : i64
+  (if (!= code 0)
+    code
+    (match value
+      [(Var var) (opt-verify-var-use-code defs doms var use-block use-pos)]
+      [(RuntimeGlobal _) 3]
+      [_ 0])))
 
 ;; The first failing operand of `instr`, in operand order.
 (define (opt-verify-uses
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
-  [doms : (& doms OptDomInfo)]
+  [defs : (& OptVerifyDefs)]
+  [doms : (& OptDomInfo)]
   [use-block : i64]
   [use-pos : i64]
   [instr : (& ir.CompilerIrInstr)]) : ResultCompilerOptimizeVerify
-  (ir.compiler-ir-instr-fold-uses
-    (owned_view.compiler-owned-reference-shared-view instr)
-    (ResultCompilerOptimizeVerify.Ok)
-    opt-verify-use
-    defs
-    doms
-    use-block
-    use-pos))
+  (opt-verify-use-result
+    (ir.compiler-ir-instr-fold-uses
+      (owned_view.compiler-owned-reference-shared-view instr)
+      (cast 0 : i64)
+      opt-verify-use
+      defs
+      doms
+      use-block
+      use-pos)))
 
 (define (opt-owned-handle-type? [ty : (& ast.AstType)]) : bool
   (match ty
@@ -12208,57 +12315,73 @@
     [_ false]))
 
 (define (opt-verify-instr-uses
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
   [pos : i64]
   [instr : (& ir.CompilerIrInstr)]) : ResultCompilerOptimizeVerify
-  (match (owned_view.compiler-owned-reference-shared-view instr)
+  (match instr
     [(AddrOf _ src _) (opt-verify-var-use defs doms src block-id pos)]
     [(StoreOwned ptr value ty)
-      (if (not (opt-owned-handle-type? (& ty)))
+      (if (not (opt-owned-handle-type? ty))
         (Err "optimizer verify: store_owned requires DynArray or String")
         (opt-verify-two
-          (& (opt-verify-value-use defs doms (& ptr) block-id pos))
-          (opt-verify-value-use defs doms (& value) block-id pos)))]
+          (& (opt-verify-value-use defs doms ptr block-id pos))
+          (opt-verify-value-use defs doms value block-id pos)))]
     [(or (Syscall _ args) (TailCall _ args _))
       (opt-verify-two
         (& (opt-verify-no-sret-call-args args))
-        (opt-verify-call-args-uses defs doms proof (& args) block-id pos))]
+        (opt-verify-call-args-uses defs doms proof args block-id pos))]
     [(Call _ _ args ty)
       (opt-verify-two
-        (& (opt-verify-call-sret-result args (& ty)))
-        (opt-verify-call-args-uses defs doms proof (& args) block-id pos))]
+        (& (opt-verify-call-sret-result args ty))
+        (opt-verify-call-args-uses defs doms proof args block-id pos))]
     [(or (CallIndirect _ func args ty) (CallIndirectC _ func args ty))
       (opt-verify-two
-        (& (opt-verify-value-use defs doms (& func) block-id pos))
+        (& (opt-verify-value-use defs doms func block-id pos))
         (opt-verify-two
-          (& (opt-verify-call-sret-result args (& ty)))
-          (opt-verify-call-args-uses defs doms proof (& args) block-id pos)))]
-    [(CallCAbiStoreResult (box (fields base args)))
-      (opt-verify-two
-        (& (opt-verify-value-use defs doms (& base) block-id pos))
+          (& (opt-verify-call-sret-result args ty))
+          (opt-verify-call-args-uses defs doms proof args block-id pos)))]
+    [(CallCAbiStoreResult payload-box)
+      (let
+        [payload : ir.CompilerIrInstrCallCAbiStoreResultPayload
+          (owned_view.compiler-owned-reference-shared-view
+            (& (deref payload-box)))]
         (opt-verify-two
-          (& (opt-verify-no-sret-call-args args))
-          (opt-verify-call-args-uses defs doms proof (& args) block-id pos)))]
-    [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
-      (opt-verify-two
-        (& (opt-verify-value-use defs doms (& base) block-id pos))
-        (opt-verify-two
-          (&
-            (opt-verify-value-use
+          (& (opt-verify-value-use defs doms (& payload.base) block-id pos))
+          (opt-verify-two
+            (& (opt-verify-no-sret-call-args (& payload.args)))
+            (opt-verify-call-args-uses
               defs
               doms
-              (& (owned_view.compiler-owned-shared-view func))
+              proof
+              (& payload.args)
               block-id
-              pos))
+              pos))))]
+    [(CallIndirectCAbiStoreResult payload-box)
+      (let
+        [payload : ir.CompilerIrInstrCallIndirectCAbiStoreResultPayload
+          (owned_view.compiler-owned-reference-shared-view
+            (& (deref payload-box)))]
+        (opt-verify-two
+          (& (opt-verify-value-use defs doms (& payload.base) block-id pos))
           (opt-verify-two
-            (& (opt-verify-no-sret-call-args args))
-            (opt-verify-call-args-uses defs doms proof (& args) block-id pos))))]
+            (& (opt-verify-value-use defs doms (& payload.callee) block-id pos))
+            (opt-verify-two
+              (& (opt-verify-no-sret-call-args (& payload.args)))
+              (opt-verify-call-args-uses
+                defs
+                doms
+                proof
+                (& payload.args)
+                block-id
+                pos)))))]
     [(SpmdCall payload-box)
       (let
-        [payload : ir.CompilerIrInstrSpmdCallPayload (deref payload-box)]
+        [payload : ir.CompilerIrInstrSpmdCallPayload
+          (owned_view.compiler-owned-reference-shared-view
+            (& (deref payload-box)))]
         [descriptor-error : String
           (ir.compiler-ir-spmd-call-descriptor-error payload)]
         (if (> (string.string-length descriptor-error) 0)
@@ -12267,14 +12390,14 @@
     [(Phi _ inputs _) (opt-verify-phi-input-uses defs doms inputs)]
     [(TailCallIndirect func args _)
       (opt-verify-two
-        (& (opt-verify-value-use defs doms (& func) block-id pos))
+        (& (opt-verify-value-use defs doms func block-id pos))
         (opt-verify-two
           (& (opt-verify-no-sret-call-args args))
-          (opt-verify-call-args-uses defs doms proof (& args) block-id pos)))]
+          (opt-verify-call-args-uses defs doms proof args block-id pos)))]
     [_ (opt-verify-uses defs doms block-id pos instr)]))
 
 (define (opt-verify-instr-seq-uses-from
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
@@ -12470,7 +12593,7 @@
             (opt-verify-phi-predecessors-by-label pred-map rest))])]))
 
 (define (opt-verify-block-uses
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -12494,7 +12617,7 @@
             (opt-verify-block-uses defs doms proof rest (+ block-id 1)))])]))
 
 (define (opt-verify-instr-seq-uses-contextual
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [block-id : i64]
@@ -12523,7 +12646,7 @@
   (Ok))
 
 (define (opt-verify-block-uses-contextual
-  [defs : (& defs (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& defs OptVerifyDefs)]
   [doms : (& doms OptDomInfo)]
   [proof : (&mut proof (OptSretStorageProof body))]
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -12578,7 +12701,7 @@
 ;; exactly this function; final IR that fails that proof is not checked here at
 ;; all, so this entry point takes the facts rather than re-deriving them.
 (define (opt-verify-final-function-body-with-defs
-  [defs : (& (__tl_dyn-array OptMaybeVarDef))]
+  [defs : (& OptVerifyDefs)]
   [func : (& func ir.CompilerIrFunction)]
   [context : (& OptCfgContext)]) : ResultCompilerOptimizeVerify
   (match func
@@ -12614,17 +12737,229 @@
         (Err "optimizer verify: unknown successor label")]
       [else (Ok)])))
 
+;; Test-only defects are applied to actual pass outputs. The full verifier
+;; remains the oracle and each named output is probed once per matrix run.
+(cfg
+  test
+  (define opt-verify-test-active? : bool
+    false))
+(cfg
+  test
+  (define opt-verify-test-passes : (__tl_dyn-array i64)
+    (__tl_make-array i64 128)))
+(cfg
+  test
+  (define opt-verify-test-pass-count : i64
+    0))
+
+(cfg
+  test
+  (define (opt-verify-test-start!) : unit
+    (set! opt-verify-test-pass-count 0)
+    (set! opt-verify-test-active? true)))
+
+(cfg
+  test
+  (define (opt-verify-test-stop!) : unit
+    (set! opt-verify-test-active? false)))
+
+(cfg
+  test
+  (define (opt-verify-test-stage!
+    [state : (& state OptPassState)]
+    [name : (& str)]) : unit
+    (unless opt-verify-test-active? (return unit))
+    (let
+      [key : String (str_cat.str-cat "output." (string.copy name))]
+      (when (opt-verify-test-seen? (& key)) (return unit))
+      (let
+        [func (& state.func)]
+        (unless (opt-verify-ok? (& (opt-verify-function func))) (return unit))
+        (let
+          [context : OptCfgContext
+            (opt-cfg-context-build (opt-function-blocks func))]
+          (opt-verify-test-pass! (& context) (& key) func))))))
+
+(cfg
+  test
+  (define (opt-verify-test-output!
+    [func : (& ir.CompilerIrFunction)]
+    [context : (& OptCfgContext)]) : unit
+    (when
+      (and opt-verify-test-active? opt-verify-test-post?)
+      (opt-verify-test-pass!
+        context
+        (&
+          (if (< opt-verify-boundary-label 0)
+            "standalone"
+            (ir.compiler-ir-label-text opt-verify-boundary-label)))
+        func))))
+
+(cfg
+  test
+  (define (opt-verify-test-seen? [name : (& str)]) : bool
+    (let
+      [label : i64 (ir.compiler-ir-label name)]
+      (for [i (iterator.range 0 opt-verify-test-pass-count)]
+        (when (= (array-ref opt-verify-test-passes i) label) (return true)))
+      false)))
+
+(cfg
+  test
+  (define (opt-verify-test-results-equal?
+    [a : ResultCompilerOptimizeVerify]
+    [b : ResultCompilerOptimizeVerify]) : bool
+    (match a
+      [(Ok)
+        (match b
+          [(Ok) true]
+          [_ false])]
+      [(Err reason)
+        (match b
+          [(Err other) (string.eq reason other)]
+          [_ false])])))
+
+(cfg
+  test
+  (define (opt-verify-test-unused-label [index : (& OptCfgIndex)]) : i64
+    (let
+      [serial : i64 0]
+      (while true
+        (let
+          [label : i64
+            (ir.compiler-ir-label
+              (&
+                (str_cat.str-cat
+                  "__verify_mutation_"
+                  (string.int->string serial))))]
+          (match (opt-cfg-index-id index label)
+            [(None) (return label)]
+            [_ (+= serial 1)]))))
+    (ir.compiler-ir-label-none)))
+
+(cfg
+  test
+  (define (opt-verify-test-defined-var [func : (& func ir.CompilerIrFunction)]) : i64
+    (match func
+      [(Function _ params _ vars blocks _)
+        (match (opt-var-defs-index-checked (& params) vars blocks)
+          [(Index defs)
+            (for [var (iterator.range 0 vars)]
+              (when (> (array-ref defs.blocks var) 0) (return var)))]
+          [_ unit])
+        vars])))
+
+(cfg
+  test
+  (define (opt-verify-test-mutant
+    [func : (& func ir.CompilerIrFunction)]
+    [context : (& context OptCfgContext)]
+    [kind : i64]) : ir.CompilerIrFunction
+    (let
+      [seq : ir.CompilerIrBlockSeq
+        (ir.compiler-ir-block-list-seq (opt-function-blocks func))]
+      [builder : ir.CompilerIrBlockBuilder
+        (ir.compiler-ir-block-builder-with-capacity (+ seq.len 1))]
+      [instrs : ir.CompilerIrInstrBuilder
+        (ir.compiler-ir-instr-builder-with-capacity 2)]
+      [fresh : i64 (opt-verify-test-unused-label (& context.index))]
+      [label : i64
+        (if (and (= kind 0) (> seq.len 0))
+          (opt-cfg-index-label (& context.index) 0)
+          fresh)]
+      (for [i (iterator.range 0 seq.len)]
+        (ir.compiler-ir-block-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-block-seq-ref seq i)))
+      (cond
+        [(= kind 0)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut instrs)
+            (if (= seq.len 0)
+              (Jump (- fresh 1))
+              (Return (No))))]
+        [(= kind 1)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut instrs)
+            (Mov (opt-verify-test-defined-var func) (I64 0) (I64)))
+          (ir.compiler-ir-instr-builder-push! (&mut instrs) (Return (No)))]
+        [(or (= kind 3) (= kind 4))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut instrs)
+            (StorePtr
+              (if (= kind 3)
+                (RuntimeGlobal 2)
+                (Var (opt-function-frame func)))
+              (if (= kind 3)
+                (Var (opt-function-frame func))
+                (RuntimeGlobal 2))
+              (I64)))
+          (ir.compiler-ir-instr-builder-push! (&mut instrs) (Return (No)))]
+        [else
+          (ir.compiler-ir-instr-builder-push!
+            (&mut instrs)
+            (Return (Some (Var (opt-function-frame func)))))])
+      (ir.compiler-ir-block-builder-push!
+        (&mut builder)
+        (Block label (ir.compiler-ir-instr-builder-to-seq instrs)))
+      (opt-function-with-frame-blocks
+        func
+        (opt-function-frame func)
+        (ir.compiler-ir-block-builder-to-list builder)))))
+
+(cfg
+  test
+  (define (opt-verify-test-pass!
+    [context : (& context OptCfgContext)]
+    [name : (& str)]
+    [func : (& ir.CompilerIrFunction)]) : unit
+    (unless opt-verify-test-active? (return unit))
+    (when (opt-verify-test-seen? name) (return unit))
+    (set! opt-verify-test-active? false)
+    (for [kind (iterator.range 0 5)]
+      (let
+        [mutant : ir.CompilerIrFunction
+          (opt-verify-test-mutant func context kind)]
+        [verdict : ResultCompilerOptimizeVerify
+          (opt-verify-function (& mutant))]
+        [expected : String
+          (cond
+            [(= kind 0)
+              (if (= (opt-cfg-index-block-count (& context.index)) 0)
+                "optimizer verify: unknown successor label"
+                "optimizer verify: duplicate block label")]
+            [(= kind 1) "optimizer verify: duplicate var definition"]
+            [(= kind 3)
+              "optimizer verify: runtime-global marker used as an instruction value"]
+            [else "optimizer verify: use before definition"])]
+        (test.assert-true
+          (match verdict
+            [(Err reason) (string.eq reason expected)]
+            [_ false])
+          (str_cat.str-cat "full-verifier pass mutation: " (string.copy name)))))
+    (test.assert-true
+      (< opt-verify-test-pass-count (array-length opt-verify-test-passes))
+      "coverage capacity")
+    (set!
+      (array-ref opt-verify-test-passes opt-verify-test-pass-count)
+      (ir.compiler-ir-label name))
+    (+= opt-verify-test-pass-count 1)
+    (set! opt-verify-test-active? true)))
+
 (define (opt-verify-function-with-context
   [func : (& func ir.CompilerIrFunction)]
   [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
-  (let
-    [func : ir.CompilerIrFunction
-      (owned_view.compiler-owned-reference-shared-view func)]
-    [_ (try (opt-verify-structure context))]
-    [_ (try (opt-verify-function-body-with-context (& func) context))]
-    [catalog : ir.CompilerIrReturnStorageIndex
-      (ir.compiler-ir-return-storage-index-empty)]
-    (opt-verify-return-storage-function (& func) (& catalog))))
+  (opt-verify-test-result
+    func
+    context
+    (let
+      [func : ir.CompilerIrFunction
+        (owned_view.compiler-owned-reference-shared-view func)]
+      [_ (try (opt-verify-structure context))]
+      [_ (try (opt-verify-function-body-with-context (& func) context))]
+      [catalog : ir.CompilerIrReturnStorageIndex
+        (ir.compiler-ir-return-storage-index-empty)]
+      (opt-verify-return-storage-function (& func) (& catalog)))))
 
 ;; Pipeline-level verification consolidation: the opt2 pipeline verifies the
 ;; SSA function once per iteration before the loop-pass cluster and threads
@@ -12766,10 +13101,23 @@
 (define (opt-return-storage-instr-needs-proof? [instr : ir.CompilerIrInstr]) : bool
   (match (& instr)
     [(ir.CompilerIrInstr.AddrOf _ _ words) (not (= words 0))]
-    [_
-      (match (return_storage.marked-pointer instr)
-        [(ir.CompilerIrMaybeValue.Some _) true]
-        [(ir.CompilerIrMaybeValue.No) false])]))
+    [(or (ir.CompilerIrInstr.Call
+           _
+           _
+           (ir.CompilerIrCallArgs.Sret values index)
+           _)
+         (ir.CompilerIrInstr.CallIndirect
+           _
+           _
+           (ir.CompilerIrCallArgs.Sret values index)
+           _)
+         (ir.CompilerIrInstr.CallIndirectC
+           _
+           _
+           (ir.CompilerIrCallArgs.Sret values index)
+           _))
+      (and (>= index 0) (< index (array-length values)))]
+    [_ false]))
 
 (define (opt-verify-return-storage-function-with-bases
   [bases : i64]
@@ -12842,14 +13190,38 @@
                                     i
                                     "invalid or overlapping inline storage extent")))]
                             [_ unit])
-                          (match (return_storage.instruction-proof
-                            bases
-                            catalog
-                            facts
-                            instr)
-                            [(return_storage.ReturnStorageProof.Invalid message)
-                              (return
-                                (opt-return-storage-error name label i message))]
+                          ;; Every other instruction has no marked pointer
+                          ;; and instruction-proof returns Unavailable.
+                          (match (& instr)
+                            [(or (ir.CompilerIrInstr.Call
+                                   _
+                                   _
+                                   (ir.CompilerIrCallArgs.Sret _ _)
+                                   _)
+                                 (ir.CompilerIrInstr.CallIndirect
+                                   _
+                                   _
+                                   (ir.CompilerIrCallArgs.Sret _ _)
+                                   _)
+                                 (ir.CompilerIrInstr.CallIndirectC
+                                   _
+                                   _
+                                   (ir.CompilerIrCallArgs.Sret _ _)
+                                   _))
+                              (match (return_storage.instruction-proof
+                                bases
+                                catalog
+                                facts
+                                (& instr))
+                                [(return_storage.ReturnStorageProof.Invalid
+                                    message)
+                                  (return
+                                    (opt-return-storage-error
+                                      name
+                                      label
+                                      i
+                                      message))]
+                                [_ unit])]
                             [_ unit])
                           (when
                             (>= hidden 0)
@@ -18765,7 +19137,9 @@
                   ;; exists, so under the `cfg test` capture the rejected
                   ;; rewrite is what comes back; the message names only the
                   ;; function.
-                  (match (opt-verify-function-with-context next next-context)
+                  (match (opt-verify-post
+                    "preheaders"
+                    (opt-verify-function-with-context next next-context))
                     [(Ok) (Result next next-context)]
                     [(Err reason)
                       (opt-preheader-trace-verify-rejected!)
@@ -20806,7 +21180,9 @@
                 function-abi)]
             [next-context : OptCfgContext (opt-cfg-context-build kept-blocks)]
             (when homed? (opt-round-regions-resume-work! regions))
-            (match (opt-verify-function-with-context next next-context)
+            (match (opt-verify-post
+              "rotate_ssa"
+              (opt-verify-function-with-context next next-context))
               [(Ok)
                 (when homed? (opt-round-regions-commit! regions))
                 (Some next next-context)]
@@ -31229,7 +31605,9 @@
                       [(Result result _) result])]
                   [candidate : ir.CompilerIrFunction
                     (Function name params ret-ty frame dced function-abi)]
-                  (match (opt-verify-function (& candidate))
+                  (match (opt-verify-post
+                    "opt-licm-unswitch-final"
+                    (opt-verify-function (& candidate)))
                     [(Ok) candidate]
                     [(Err _) func]))]))])]))
 
@@ -69705,7 +70083,9 @@
                 ;; it to the next round.
                 [next-context : OptCfgContext
                   (opt-cfg-context-build next-blocks)]
-                (match (opt-verify-function-with-context next next-context)
+                (match (opt-verify-post
+                  "unroll"
+                  (opt-verify-function-with-context next next-context))
                   [(Ok)
                     (opt-unroll-function-budget-result
                       type-segment-bases
@@ -86156,7 +86536,9 @@
                     function-abi)]
                 [next-context : OptCfgContext
                   (opt-cfg-context-build next-blocks)]
-                (match (opt-verify-function-with-context next next-context)
+                (match (opt-verify-post
+                  "bce_hoist"
+                  (opt-verify-function-with-context next next-context))
                   [(Ok)
                     (opt-bce-hoist-function-budget-result
                       next-context
@@ -86186,7 +86568,9 @@
   [context : (& context OptCfgContext)]) : ResultCompilerOptimizeVerify
   (if (= reject-probe applied)
     (Err "optimizer verify: forced versioning rejection")
-    (opt-verify-function-with-context func context)))
+    (opt-verify-post
+      "bce_version"
+      (opt-verify-function-with-context func context))))
 
 ;; Budgeted multi-application, like the unroller: the single-block scan runs
 ;; first each round and spends from its own budget; when it finds nothing, the
@@ -89624,7 +90008,7 @@
                 (array-ref cell 0)
                 next-blocks
                 function-abi)]
-            (match (opt-verify-function (& next))
+            (match (opt-verify-post "gep_split" (opt-verify-function (& next)))
               [(Ok) next]
               [(Err _) func]))))]))
 
@@ -90840,7 +91224,9 @@
                   (array-ref cell 0)
                   next-blocks
                   function-abi)]
-              (match (opt-verify-function (& next))
+              (match (opt-verify-post
+                "opt-cmp-dup-function-with-budget"
+                (opt-verify-function (& next)))
                 [(Ok) next]
                 [(Err _) (owned_view.compiler-owned-reference-shared-view func)])))))]))
 
@@ -92810,7 +93196,9 @@
               [(Result _ _ _ unchanged)
                 (and unchanged (= (array-ref frame-cell 0) frame))])
               (Result next next-context)
-              (match (opt-verify-function-with-context next next-context)
+              (match (opt-verify-post
+                "successor_sink"
+                (opt-verify-function-with-context next next-context))
                 [(Ok) (Result next next-context)]
                 [(Err _) (Result func context)])))])]))
 
@@ -94835,7 +95223,9 @@
                         function-abi)]
                     [_refresh : unit
                       (opt-cfg-index-refresh-blocks! (& context.index) next)]
-                    (match (opt-verify-function-with-context candidate context)
+                    (match (opt-verify-post
+                      "guard_sink"
+                      (opt-verify-function-with-context candidate context))
                       [(Ok) (Result candidate context)]
                       [(Err _)
                         (opt-cfg-index-refresh-blocks! (& context.index) blocks)
@@ -101344,7 +101734,8 @@
 (defmacro (opt-stage [pass : Expr] [next : Expr]) : Expr
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
-    [state : OptPassState ,next]
+    [state : OptPassState (opt-verify-at ,pass ,next)]
+    (cfg test (opt-verify-test-stage! (& state) (& ,pass)))
     (opt-pass-observe state ,pass)
     (opt-pass-note state ,pass start-ms)
     state))
@@ -101353,7 +101744,8 @@
 (defmacro (opt-stage-unobserved [pass : Expr] [next : Expr]) : Expr
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
-    [state : OptPassState ,next]
+    [state : OptPassState (opt-verify-at ,pass ,next)]
+    (cfg test (opt-verify-test-stage! (& state) (& ,pass)))
     (opt-pass-note state ,pass start-ms)
     state))
 
@@ -101380,6 +101772,7 @@
     ,start-ms))
 
 (define (opt-pass-observed [state : OptPassState] [pass : String]) : OptPassState
+  (cfg test (opt-verify-test-stage! (& state) (& pass)))
   (opt-pass-observe state pass)
   state)
 
@@ -103764,7 +104157,9 @@
                 function-abi)]
             (if (opt-function-eq type-segment-bases func forwarded)
               (Result func false)
-              (match (opt-verify-function (& forwarded))
+              (match (opt-verify-post
+                "opt-dce-late-unblock-decided-joins"
+                (opt-verify-function (& forwarded)))
                 [(Err _) (Result func false)]
                 [(Ok)
                   (match (opt-thread-const-branch-function-with-context-result

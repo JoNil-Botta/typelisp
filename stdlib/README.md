@@ -87,7 +87,8 @@ renders them into one reference page per module
 (`typelisp run tools/doc-site/doc_site.tl --stdlib-root stdlib --stdlib-root src -- target/site`;
 `scripts/verify-doc-site.sh` builds and link-checks the site the way CI does),
 so this section only maps the modules by area. Import a module with
-`(import stdlib.<name>)`, or `(import stdlib.net.<name>)` for `net/`.
+`(import stdlib.<name>)`, or a nested identity such as
+`(import stdlib.net.ip)` or `(import stdlib.compress.deflate)`.
 
 - Language support: `runtime`, `core_macros`, `comptime`, `clone`, `eq`,
   `hash`, `option`, `result`, `iterator`, `test`, `profile`, `ffi`, `cpu`.
@@ -101,6 +102,9 @@ so this section only maps the modules by area. Import a module with
   (bounded cursor with a sticky error and a work limit), `leb128` (LEB128
   variable-length integers), `base64` (strict bounded RFC 4648 standard-alphabet
   bytes with length planning and caller-owned decode/encode forms).
+- Raw compression: `compress/deflate` implements bounded incremental RFC 1951
+  decoding over borrowed input and caller-owned output chunks, plus a bounded
+  one-shot wrapper. See [the API and bounds](../docs/deflate.md).
 - Memory and concurrency: `arena`, `atomic`, `thread`, `sync`,
   `concurrency_registry`.
 - Numbers, time and randomness: `math` (see
@@ -299,6 +303,7 @@ borrowed process runtime wrappers likewise copy at their owned boundary.
 | `ByteReader` helpers in `byte_reader.tl` | `new` shares the caller's private dynamic-buffer storage without copying it. Reads, `consume!`, `skip!`, and `fail!` only update the reader's scalar cursor, work counter, and first-failure record; the reader's own failure messages are static strings, so nothing allocates. |
 | `leb128.tl` | `decode-unsigned`, `decode-signed`, `unsigned-size`, and `signed-size` read the caller's private dynamic-buffer bytes or a scalar and allocate nothing. `push-unsigned!` and `push-signed!` append the minimal encoding through `byte_buf_core.byte-buf-builder-push` and allocate only when the builder grows in the active arena. |
 | `base64.tl` | Every planner and codec takes a nonnegative `max-output-bytes` as its last argument and rejects excess output before allocation or mutation. `encoded-length-count`, `encoded-length`, and `decoded-length` use checked scalar arithmetic without allocating; decoding rejects oversized input lengths before scanning, then validates canonical syntax and the exact output limit. `encode` and `decode` allocate one exact active-arena `ByteBuf`. `encode-into` and `decode-into` allocate nothing: after validating limits, syntax, destination capacity, and non-overlap, they write from offset zero into caller-owned backing storage. Every failure preserves its length and physical bytes. |
+| `compress/deflate.tl` | `decoder-new` validates limits and initial work before initializing fixed inline tables and allocating at most 32 KiB of history backing bytes in the active arena. `step!` allocates nothing and retains no chunk borrow; it reuses that workspace across blocks and suspensions. `decode` uses the same engine and grows its output only within the caller's bound. Retired geometric backing arrays remain in the owning arena until it is dropped; their combined capacity is less than three times `max-output`. |
 | `net/http_types.tl`, `net/http_head_codec.tl`, `net/http_trailer.tl`, and `net/http_trailer_policy.tl` | Checked protocol tokens, retained field bytes, ordered header/trailer-name storage, policy entries, incremental parser buffering, response-head/trailer results, and serialized request heads allocate in the active arena. Head parsing copies only the bounded head prefix; trailer parsing retains only approved name/value bytes plus reusable current-line scratch. Both stop before a coalesced suffix and never rescan completed lines. Field-line range validation, header lookup, syntax/framing inspection, trailer-policy lookup/list validation, sensitivity checks, and body-plan selection are otherwise non-allocating over retained bytes. Policy construction copies normalized approved names in deterministic insertion order. Request serialization validates all fields and the complete bounded output length before allocating its final `ByteBuf`; framing fields are emitted once in canonical form. |
 | `net/ip.tl` | Address construction, byte access, equality, ordering, hashing, and strict borrowed-text parsing are non-allocating. IPv4 and IPv6 formatting use bounded stack scratch storage, then allocate exactly the returned active-arena `String` backing bytes and handle; no growable intermediate buffer is allocated. |
 | `net/tls_wire.tl` | The record and handshake readers own their buffers and fill them in place: once they have grown to the largest record and message, reading records, reassembling messages and returning each message's exact bytes as a borrowed view allocate nothing. Record headers, handshake message headers, extension blocks and every list are checked against the protocol maximum and `TlsWireLimits` before anything is copied. Typed decoders validate a whole list before allocating its exact array and copy each opaque field into its own `ByteBuf`; encoders append to the caller's `ByteBuf`, filling length prefixes in place. |

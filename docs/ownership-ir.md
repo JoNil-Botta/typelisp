@@ -49,9 +49,9 @@ the environment pointer, a runtime `quote`), 154 a literal index into an array
 or tuple literal (only the selected element's loans flow out), 155 a runtime
 quasiquote over its unquoted `Expr` and spliced `ExprList` operands. C
 variadic extern calls are checked against their signature expanded to the
-call's arity. `RequireUnheld` (typed operation; normalizer exits 9/10) checks
+call's arity. `RequireUnheld` (typed operation; normalizer exits 9-11) checks
 that a `with` cleanup owner allocated in an arena no longer holds that arena's
-values when the arena is destroyed or rewound.
+values when the arena is destroyed, rewound or ended by an `:invalidate` call.
 
 **Soundness fixes over the legacy checker** (each with a `tests/safety` row):
 moving an owner out of an element read through a borrowed array (the
@@ -725,8 +725,12 @@ publishes arena bodies to the ownership core:
   scope holding its region joined (empty); a handle is not invalidated by the
   destroy, so the release check reports it.
 - A `with` owner allocated in an arena may hold none of that arena's values
-  when the arena is destroyed or rewound (`RequireUnheld`, exits 9 and 10): a
-  later cleanup of the owner would read freed storage.
+  when the arena is destroyed, rewound or ended by an `:invalidate` call
+  (`RequireUnheld`, exits 9-11): a later cleanup of the owner would read freed
+  storage. Every end recognized by the builtin dispatch goes through one
+  typing operator, `tc-selected-end`. A macro-expanded name of the safe
+  primitives (#9041) and a function-value alias of them (#9490) are
+  pre-existing bypasses.
 
 ### Threads in the selected route (#8449)
 

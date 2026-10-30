@@ -10225,25 +10225,198 @@
         (& (array-ref carrier.sidecar.stack.slots index))]
       (tc-cleanup-owner-marker-for? marker.name-id marker.ty slot.name-id))))
 
-;; The occurrences ending arena regions after `call` (its type `result-ty`):
-;; an Invalidate for every binder in scope whose type holds an ended region
-;; (`tc-selected-type-ends-region?`; every scoped slot, so a shadowed binder
-;; counts too), then an EndBrand for every enclosing `:invalidate` parameter
-;; whose brand is among `owners`. A unit call is followed by them in one unit
-;; sequence; a call yielding a value is held in a temporary read after them.
-(define (tc-selected-end-regions
+;; The source spelling of an end of `kind` (`tc-selected-end`).
+(define (tc-end-kind-operation [kind : i64]) : String
+  (cond
+    [(= kind 1) "arena.rewind-safe!"]
+    [(= kind 2) "an :invalidate call"]
+    [else "arena.destroy-safe!"]))
+
+;; Item `position` of `items`, or -1 past its end.
+(define (tc-selected-end-nth [items : TcNameIdList] [position : i64]) : i64
+  (let
+    [cursor : TcNameIdList items]
+    [index : i64 0]
+    (while (and (< index position) (not (tc-name-id-list-empty? cursor)))
+      (set! cursor (tc-name-id-list-rest cursor))
+      (set! index (+ index 1)))
+    (tc-name-id-list-head cursor)))
+
+;; Which ended arena a value of type `held` holds values of: its position in
+;; `owners`, or the length of `owners` for a rewind's phase `region`; -1 for
+;; none (`tc-selected-type-ends-region?`).
+(define (tc-selected-end-held-position
+  [env : TcTypeEnv]
+  [held : ast.AstType]
+  [owners : TcNameIdList]
+  [region : i64]) : i64
+  (let
+    [cursor : TcNameIdList owners]
+    [index : i64 0]
+    (while (not (tc-name-id-list-empty? cursor))
+      (when
+        (tc-type-contains-arena-owner-region?
+          env
+          (tc-global-shared-view held)
+          (tc-name-id-list-head cursor))
+        (return index))
+      (set! cursor (tc-name-id-list-rest cursor))
+      (set! index (+ index 1)))
+    (if (and
+      (>= region 0)
+      (tc-type-contains-region (tc-global-shared-view held) region))
+      index
+      -1)))
+
+;; The variable an end's argument `origin-id` spells (`o` in `(release o)`),
+;; or -1: none for a rewind (its phase token is not the arena), for no
+;; argument, or for an argument that is not a variable (`state.arena`).
+(define (tc-selected-end-spelled-arena
+  [ctx : TcContext]
+  [kind : i64]
+  [origin-id : i64]) : i64
+  (if (or (= kind 1) (< origin-id 0))
+    -1
+    (let
+      [origin : ast.AstExpr (tc-context-expr-get ctx origin-id)]
+      (tc-expr-var-name-id
+        (tc-context-expr-segment-bases ctx)
+        (tc-global-shared-view origin)))))
+
+;; The binder naming an ended arena: the local `spelled` (the end's argument,
+;; -1 for none), else the local named `arena` (a bare owner or a phase token),
+;; else the innermost local of that brand. An owner destroyed through a place
+;; holding it (`state.arena`) is named by its brand.
+(define (tc-selected-end-arena-binder
   [ctx : TcContext]
   [env : TcTypeEnv]
+  [bindings : (& bindings TcSelectedBindings)]
+  [spelled : i64]
+  [arena : i64]) : TcSelectedBinder
+  (match (if (< spelled 0)
+    TcSelectedBinder.Unrepresented
+    (tc-selected-named-binder env bindings spelled))
+    [(TcSelectedBinder.Found found) (TcSelectedBinder.Found found)]
+    [(TcSelectedBinder.Unrepresented)
+      (match (tc-selected-named-binder env bindings arena)
+        [(TcSelectedBinder.Found found) (TcSelectedBinder.Found found)]
+        [(TcSelectedBinder.Unrepresented)
+          (tc-selected-brand-owner-binder ctx env bindings arena)])]))
+
+;; E0212 for `with` cleanup owner `holder` holding values of `arena` at an end
+;; of `kind`, located at the arena's argument `origin-id` (-1 for none). An
+;; argument that is a variable names the arena as the source spells it; any
+;; other argument (a projected place such as `state.arena`) falls back to
+;; `arena` itself, a generated brand for an unannotated owner. A rewind names
+;; its phase's owner.
+(define (tc-selected-end-held-message
+  [ctx : TcContext]
+  [kind : i64]
+  [arena : i64]
+  [origin-id : i64]
+  [holder : i64]) : String
+  (let
+    [origin : ast.AstExpr
+      (if (< origin-id 0)
+        (ast.AstExpr.Var -1)
+        (tc-context-expr-get ctx origin-id))]
+    [spelled : i64 (tc-selected-end-spelled-arena ctx kind origin-id)]
+    (tc-move-safe-invalidation-cleanup-owner-message
+      (tc-context-expr-bases ctx)
+      origin
+      (tc-end-kind-operation kind)
+      (tc-env-key-name-text
+        (if (>= spelled 0)
+          spelled
+          arena))
+      (tc-env-key-name-text holder))))
+
+;; The legacy pre-check of an end (`tc-move-live-cleanup-owner-in-region`): a
+;; live `with` cleanup owner whose scoped binding carries an ended region.
+(define (tc-selected-end-live-owner
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [kind : i64]
   [owners : TcNameIdList]
   [region : i64]
+  [phase-arena : i64]
+  [origins : TcNameIdList]) : ResultTcUnit
+  (let
+    [cursor : TcNameIdList owners]
+    [at : TcNameIdList origins]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [live : i64
+          (tc-move-live-cleanup-owner-in-region
+            (tc-global-shared-view env)
+            (tc-name-id-list-head cursor)
+            -1)]
+        (when
+          (>= live 0)
+          (return
+            (ResultTcUnit.Err
+              (tc-selected-end-held-message
+                ctx
+                kind
+                (tc-name-id-list-head cursor)
+                (tc-name-id-list-head at)
+                live))))
+        (set! cursor (tc-name-id-list-rest cursor))
+        (set! at (tc-name-id-list-rest at))))
+    (let
+      [live : i64
+        (if (< region 0)
+          -1
+          (tc-move-live-cleanup-owner-in-region
+            (tc-global-shared-view env)
+            -1
+            region))]
+      (if (< live 0)
+        ResultTcUnit.Ok
+        (ResultTcUnit.Err
+          (tc-selected-end-held-message
+            ctx
+            kind
+            phase-arena
+            (tc-name-id-list-head origins)
+            live))))))
+
+;; The end operator (D-C47): every end recognized by the builtin dispatch goes
+;; through this operator. Those are a safe destroy or rewind (`ArenaForm`) and
+;; a call passing `:invalidate` arguments. Two pre-existing bypasses are not
+;; recognized ends: a hygienic or macro-expanded name of the safe primitives
+;; (#9041) and a function-value alias of them (#9490).
+;;
+;; Each end publishes its occurrences here, after `call` (its type
+;; `result-ty`). No live `with` cleanup owner may hold an ended region: the
+;; legacy pre-check, then a `RequireUnheld` of the arena for every `with` owner
+;; whose binder holds one. Then an Invalidate for every binder in scope whose
+;; type holds an ended region (`tc-selected-type-ends-region?`; every scoped
+;; slot, so a shadowed binder counts too), and an EndBrand for every enclosing
+;; `:invalidate` parameter whose brand is among `owners`. A unit call is
+;; followed by them in one unit sequence; a call yielding a value is held in a
+;; temporary read after them. Typing has already rejected an end inside its
+;; own arena (`tc-active-region-owned-by-arena-id?`, the in-arena self-check
+;; every end kind runs first). An atomic owner's release checks
+;; (`tc-selected-release-checks!`) are sequenced before the end by its caller.
+;; A new kind of end must call that predicate in its typing, the release
+;; checks and this operator, never a check of its own.
+(define (tc-selected-end
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  ;; 0 a safe destroy, 1 a safe rewind, 2 an `:invalidate` call.
+  [kind : i64]
+  ;; The owners whose every region ends: the destroyed owner, or the call's
+  ;; `:invalidate` argument brands.
+  [owners : TcNameIdList]
+  ;; A rewind's phase region and the phase's owner or token (-1 otherwise).
+  [region : i64]
+  [phase-arena : i64]
+  ;; The argument of each of `owners` in order, or a rewind's phase argument:
+  ;; where a held arena is reported, and how the source names it.
+  [origins : TcNameIdList]
   [call : typed.TypedOccurrenceId]
   [result-ty : ast.AstType]
-  ;; A safe destroy or rewind (`rewind?`) of the arena named `unheld-arena`
-  ;; (-1 otherwise; `origin` is its argument): a `with` cleanup owner holding
-  ;; the ended region must no longer hold it (`RequireUnheld`).
-  [unheld-arena : i64]
-  [rewind? : bool]
-  [origin : ast.AstExpr]
   [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [sink : (TcSelectedSink store lease intern bind)]) : (TcSelectedResult
@@ -10251,6 +10424,16 @@
     lease
     intern
     bind)
+  (match (tc-selected-end-live-owner
+    ctx
+    env
+    kind
+    owners
+    region
+    phase-arena
+    origins)
+    [(ResultTcUnit.Err message) (return (TcSelectedResult.Err message sink))]
+    [(ResultTcUnit.Ok) unit])
   (match sink
     [(TcSelectedSink.Query)
       (tc-selected-unrepresented
@@ -10344,74 +10527,84 @@
                     ;; arena its value was allocated in (its scoped type
                     ;; drops it), and its cleanup runs at its scope's end:
                     ;; it must not hold that region's values any more.
+                    [held : i64
+                      (if (tc-selected-with-owner-slot? (& carrier) index)
+                        (tc-selected-end-held-position
+                          env
+                          (tc-selected-binder-type! store lease (& binder))
+                          owners
+                          region)
+                        -1)]
                     [_with-owner : unit
                       (when
-                        (and
-                          (>= unheld-arena 0)
-                          (tc-selected-with-owner-slot? (& carrier) index)
-                          (tc-selected-type-ends-region?
+                        (>= held 0)
+                        (let
+                          [arena : i64
+                            (if (< held (tc-name-id-list-len owners))
+                              (tc-selected-end-nth owners held)
+                              phase-arena)]
+                          [origin-id : i64 (tc-selected-end-nth origins held)]
+                          (match (tc-selected-end-arena-binder
+                            ctx
                             env
-                            (tc-selected-binder-type! store lease (& binder))
-                            owners
-                            region))
-                        (match (tc-selected-named-binder
-                          env
-                          (& bindings)
-                          unheld-arena)
-                          [(TcSelectedBinder.Found arena-binder)
-                            (match (tc-selected-op!
-                              store
-                              lease
-                              ast.AstType.Unit
-                              (typed.TypedOperation.RequireUnheld
-                                (typed.TypedBinderId
-                                  (typed.typed-handle-copy (& binder.handle)))
-                                arena-binder
-                                rewind?)
-                              (tc-selected-no-occurrences)
-                              ;; Located at the arena or phase argument, as
-                              ;; main reports it, else at the call.
-                              (&
-                                (match (tc-expr-maybe-span
-                                  (tc-context-expr-bases ctx)
-                                  (tc-global-shared-view origin))
-                                  [(Some span)
-                                    (ownership.OwnershipSource
-                                      (string.copy (& source.path))
-                                      (tc-selected-span-line source.line span)
-                                      (tc-selected-span-column
-                                        source.column
-                                        span)
-                                      (string.copy (& source.expansion)))]
-                                  [(No)
-                                    (ownership.ownership-source-copy (& source))])))
-                              [(TcSelectedPatternResult.Ok id)
-                                (tc-selected-occurrences-push!
-                                  (&mut children)
-                                  id)]
-                              [(TcSelectedPatternResult.Unsupported) unit]
-                              [(TcSelectedPatternResult.Err message)
-                                (return
-                                  (TcSelectedResult.Err
-                                    message
-                                    (TcSelectedSink.Capture
-                                      store
-                                      lease
-                                      bindings)))])]
-                          ;; An arena not named by a binder here: the
-                          ;; owner cannot have left its scope, so it holds.
-                          [(TcSelectedBinder.Unrepresented)
-                            (return
-                              (TcSelectedResult.Err
-                                (tc-move-safe-invalidation-cleanup-owner-message
-                                  (tc-context-expr-bases ctx)
-                                  (tc-global-shared-view origin)
-                                  (if rewind?
-                                    "arena.rewind-safe!"
-                                    "arena.destroy-safe!")
-                                  (tc-env-key-name-text unheld-arena)
-                                  (tc-env-key-name-text slot.name-id))
-                                (TcSelectedSink.Capture store lease bindings)))]))]
+                            (& bindings)
+                            (tc-selected-end-spelled-arena ctx kind origin-id)
+                            arena)
+                            [(TcSelectedBinder.Found arena-binder)
+                              (match (tc-selected-op!
+                                store
+                                lease
+                                ast.AstType.Unit
+                                (typed.TypedOperation.RequireUnheld
+                                  (typed.TypedBinderId
+                                    (typed.typed-handle-copy (& binder.handle)))
+                                  arena-binder
+                                  kind)
+                                (tc-selected-no-occurrences)
+                                ;; Located at the arena or phase argument, as
+                                ;; main reports it, else at the call.
+                                (&
+                                  (match (if (< origin-id 0)
+                                    TcMaybeAstSourceSpan.No
+                                    (tc-expr-id-maybe-span
+                                      (tc-context-expr-bases ctx)
+                                      origin-id))
+                                    [(Some span)
+                                      (ownership.OwnershipSource
+                                        (string.copy (& source.path))
+                                        (tc-selected-span-line source.line span)
+                                        (tc-selected-span-column
+                                          source.column
+                                          span)
+                                        (string.copy (& source.expansion)))]
+                                    [(No)
+                                      (ownership.ownership-source-copy
+                                        (& source))])))
+                                [(TcSelectedPatternResult.Ok id)
+                                  (tc-selected-occurrences-push!
+                                    (&mut children)
+                                    id)]
+                                [(TcSelectedPatternResult.Unsupported) unit]
+                                [(TcSelectedPatternResult.Err message)
+                                  (return
+                                    (TcSelectedResult.Err
+                                      message
+                                      (TcSelectedSink.Capture
+                                        store
+                                        lease
+                                        bindings)))])]
+                            ;; An arena no binder here names: the owner
+                            ;; cannot have left its scope, so it holds.
+                            [(TcSelectedBinder.Unrepresented)
+                              (return
+                                (TcSelectedResult.Err
+                                  (tc-selected-end-held-message
+                                    ctx
+                                    kind
+                                    arena
+                                    origin-id
+                                    slot.name-id)
+                                  (TcSelectedSink.Capture store lease bindings)))])))]
                     [brand? : bool
                       (match (typed.typed-binder-get!
                         store
@@ -10547,12 +10740,12 @@
 
 ;; The brands a call's `:invalidate` arguments end (mirrors
 ;; `tc-move-check-invalidate-call-effects`): `tc-invalidate-call-brand` of each
-;; argument's checked type. A live `with` owner holding a brand is the legacy
-;; error; an atomic owner's thread users are checked at the call
-;; (`tc-selected-with-release-checks`).
-(defenum TcSelectedBrands
-  (Ok TcNameIdList)
-  (Err String))
+;; argument's checked type, and each one's argument. The end operator checks
+;; the `with` owners holding them (`tc-selected-end`); an atomic owner's thread
+;; users are checked at the call (`tc-selected-with-release-checks`).
+(defstruct TcSelectedBrands
+  (brands TcNameIdList)
+  (args TcNameIdList))
 
 (define (tc-selected-invalidate-call-brands
   [ctx : TcContext]
@@ -10562,6 +10755,7 @@
   (let
     [index : i64 0]
     [brands : TcNameIdList TcNameIdList.Nil]
+    [ended : TcNameIdList TcNameIdList.Nil]
     (while (and (< index (ast.ast-type-list-len params)) (< index args.len))
       (let
         [formal : ast.AstType
@@ -10574,28 +10768,13 @@
               [(ResultTcType.Ok actual)
                 (match (tc-invalidate-call-brand ctx env formal actual)
                   [(TcMaybeNameId.Some brand)
-                    (let
-                      [live-owner : i64
-                        (tc-move-live-cleanup-owner-in-region
-                          (tc-global-shared-view env)
-                          brand
-                          -1)]
-                      (cond
-                        [(>= live-owner 0)
-                          (return
-                            (TcSelectedBrands.Err
-                              (tc-move-safe-invalidation-cleanup-owner-message
-                                (tc-context-expr-bases ctx)
-                                (tc-context-expr-get ctx arg-id)
-                                "an :invalidate call"
-                                (tc-env-key-name-text brand)
-                                (tc-env-key-name-text live-owner))))]
-                        [else (set! brands (tc-name-id-list-add brands brand))]))]
+                    (set! brands (tc-name-id-list-cons brands brand))
+                    (set! ended (tc-name-id-list-cons ended arg-id))]
                   [(TcMaybeNameId.No) unit])]
               [(ResultTcType.Err _) unit])]
           [(TcMaybeNameId.No) unit])
         (set! index (+ index 1))))
-    (TcSelectedBrands.Ok brands)))
+    (TcSelectedBrands brands ended)))
 
 ;; The atomic arena owners whose regions a channel send's message carries
 ;; (none for any other call).
@@ -10752,11 +10931,12 @@
                 (TcSelectedSink.Capture store lease bindings))))])]))
 
 ;; A published call followed by the region ends of its `:invalidate`
-;; arguments' `brands`.
+;; arguments' `brands` (`args` their arguments).
 (define (tc-selected-with-region-ends
   [ctx : TcContext]
   [env : TcTypeEnv]
   [brands : TcNameIdList]
+  [args : TcNameIdList]
   [syntax : typed.TypedSyntax]
   [source : ownership.OwnershipSource]
   [result : (TcSelectedResult store lease intern bind)]) : (TcSelectedResult
@@ -10772,16 +10952,16 @@
       [(TcSelectedResult.Ok ty occurrence after)
         (match occurrence
           [(TcSelectedOccurrence.Selected call)
-            (tc-selected-end-regions
+            (tc-selected-end
               ctx
               env
+              2
               brands
               -1
+              -1
+              args
               call
               ty
-              -1
-              false
-              (ast.AstExpr.Var -1)
               syntax
               source
               after)]
@@ -10971,12 +11151,7 @@
       (tc-selected-no-occurrences)]
     (if (or (< owner 0) (not (tc-atomic-arena-owner-active-id? env owner)))
       (TcSelectedReleaseChecks.Ok checks)
-      (match (match (tc-selected-named-binder env bindings owner)
-        [(TcSelectedBinder.Found found) (TcSelectedBinder.Found found)]
-        ;; An owner destroyed through a place holding it (`state.arena`) is
-        ;; named by its arena's brand: the owner local of that brand.
-        [(TcSelectedBinder.Unrepresented)
-          (tc-selected-brand-owner-binder ctx env bindings owner)])
+      (match (tc-selected-end-arena-binder ctx env bindings -1 owner)
         [(TcSelectedBinder.Unrepresented) TcSelectedReleaseChecks.Unrepresented]
         [(TcSelectedBinder.Found owner-binder)
           (let
@@ -11188,99 +11363,78 @@
       [(and (not destroy?) (< region 0))
         (tc-selected-unrepresented (ResultTcType.Ok ty) sink)]
       [else
-        (let
-          [live-owner : i64
-            (tc-move-live-cleanup-owner-in-region
-              (tc-global-shared-view env)
-              owner
-              region)]
-          (match (tc-selected-release-gate
-            ctx
-            env
-            atomic-owner
-            (tc-global-shared-view ty)
-            (ownership.ownership-source-copy (& source))
-            sink)
-            [(TcSelectedGated.Done result) result]
-            ;; An atomic owner's thread users must be gone first.
-            [(TcSelectedGated.Ok checks sink)
-              (tc-selected-after-checks
-                checks
-                (tc-global-shared-view syntax)
-                (ownership.ownership-source-copy (& source))
-                (if (>= live-owner 0)
-                  (TcSelectedResult.Err
-                    (tc-move-safe-invalidation-cleanup-owner-message
-                      (tc-context-expr-bases ctx)
-                      (tc-global-shared-view arg)
-                      (if destroy?
-                        "arena.destroy-safe!"
-                        "arena.rewind-safe!")
-                      (tc-env-key-name-text
-                        (cond
-                          [destroy? owner]
-                          [(>= phase-owner 0) phase-owner]
-                          [else token]))
-                      (tc-env-key-name-text live-owner))
-                    sink)
-                  ;; The owner place or token is consumed (moved) by the call.
-                  (match (tc-infer-selected-sequence-child
-                    ctx
-                    env
-                    arg-id
-                    ast.AstMaybeType.No
-                    (tc-global-shared-view source)
-                    true
-                    sink)
-                    [(TcSelectedResult.Err message next)
-                      (TcSelectedResult.Err message next)]
-                    [(TcSelectedResult.Ok _ operand next)
-                      (match operand
-                        [(TcSelectedOccurrence.Unrepresented)
-                          (tc-selected-unrepresented (ResultTcType.Ok ty) next)]
-                        [(TcSelectedOccurrence.Selected child)
-                          (match (tc-selected-publish-call
-                            (ResultTcType.Ok (tc-global-shared-view ty))
-                            (typed.TypedCallKind.Declared key)
-                            fn-ty
-                            typed.TypedSyntax.Generated
-                            (tc-global-shared-view source)
-                            (__tl_make-array child)
-                            true
-                            next)
-                            [(TcSelectedResult.Err message after)
-                              (TcSelectedResult.Err message after)]
-                            [(TcSelectedResult.Ok _ called after)
-                              (match called
-                                [(TcSelectedOccurrence.Selected call)
-                                  (match (tc-selected-end-regions
-                                    ctx
-                                    env
-                                    (if (>= owner 0)
-                                      (tc-name-id-list-add
-                                        TcNameIdList.Nil
-                                        owner)
-                                      TcNameIdList.Nil)
-                                    region
-                                    call
-                                    ast.AstType.Unit
-                                    (cond
-                                      [destroy? owner]
-                                      [(>= phase-owner 0) phase-owner]
-                                      [else token])
-                                    (not destroy?)
-                                    (tc-global-shared-view arg)
-                                    syntax
-                                    source
-                                    after)
-                                    [(TcSelectedResult.Err message done)
-                                      (TcSelectedResult.Err message done)]
-                                    [(TcSelectedResult.Ok _ occurrence done)
-                                      (TcSelectedResult.Ok ty occurrence done)])]
-                                [(TcSelectedOccurrence.Unrepresented)
-                                  (tc-selected-unrepresented
-                                    (ResultTcType.Ok ty)
-                                    after)])])])])))]))])))
+        (match (tc-selected-release-gate
+          ctx
+          env
+          atomic-owner
+          (tc-global-shared-view ty)
+          (ownership.ownership-source-copy (& source))
+          sink)
+          [(TcSelectedGated.Done result) result]
+          ;; An atomic owner's thread users must be gone first.
+          [(TcSelectedGated.Ok checks sink)
+            (tc-selected-after-checks
+              checks
+              (tc-global-shared-view syntax)
+              (ownership.ownership-source-copy (& source))
+              ;; The owner place or token is consumed (moved) by the call.
+              (match (tc-infer-selected-sequence-child
+                ctx
+                env
+                arg-id
+                ast.AstMaybeType.No
+                (tc-global-shared-view source)
+                true
+                sink)
+                [(TcSelectedResult.Err message next)
+                  (TcSelectedResult.Err message next)]
+                [(TcSelectedResult.Ok _ operand next)
+                  (match operand
+                    [(TcSelectedOccurrence.Unrepresented)
+                      (tc-selected-unrepresented (ResultTcType.Ok ty) next)]
+                    [(TcSelectedOccurrence.Selected child)
+                      (match (tc-selected-publish-call
+                        (ResultTcType.Ok (tc-global-shared-view ty))
+                        (typed.TypedCallKind.Declared key)
+                        fn-ty
+                        typed.TypedSyntax.Generated
+                        (tc-global-shared-view source)
+                        (__tl_make-array child)
+                        true
+                        next)
+                        [(TcSelectedResult.Err message after)
+                          (TcSelectedResult.Err message after)]
+                        [(TcSelectedResult.Ok _ called after)
+                          (match called
+                            [(TcSelectedOccurrence.Selected call)
+                              (match (tc-selected-end
+                                ctx
+                                env
+                                (if destroy?
+                                  0
+                                  1)
+                                (if (>= owner 0)
+                                  (tc-name-id-list-add TcNameIdList.Nil owner)
+                                  TcNameIdList.Nil)
+                                region
+                                (cond
+                                  [destroy? -1]
+                                  [(>= phase-owner 0) phase-owner]
+                                  [else token])
+                                (tc-name-id-list-add TcNameIdList.Nil arg-id)
+                                call
+                                ast.AstType.Unit
+                                syntax
+                                source
+                                after)
+                                [(TcSelectedResult.Err message done)
+                                  (TcSelectedResult.Err message done)]
+                                [(TcSelectedResult.Ok _ occurrence done)
+                                  (TcSelectedResult.Ok ty occurrence done)])]
+                            [(TcSelectedOccurrence.Unrepresented)
+                              (tc-selected-unrepresented
+                                (ResultTcType.Ok ty)
+                                after)])])])]))])])))
 
 ;; --- Try (#8449) --------------------------------------------------------------
 ;;
@@ -18037,83 +18191,81 @@
                           [(ResultTcUnit.Err message)
                             (TcSelectedResult.Err message next)]
                           [(ResultTcUnit.Ok)
-                            (match (if (ast.ast-lifetime-list-empty?
-                              (& lifetimes))
-                              (TcSelectedBrands.Ok TcNameIdList.Nil)
-                              (tc-selected-invalidate-call-brands
+                            (let
+                              [ended : TcSelectedBrands
+                                (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                                  (TcSelectedBrands
+                                    TcNameIdList.Nil
+                                    TcNameIdList.Nil)
+                                  (tc-selected-invalidate-call-brands
+                                    ctx
+                                    env
+                                    (& args)
+                                    (& params)))]
+                              (tc-selected-contextual-result
                                 ctx
                                 env
-                                (& args)
-                                (& params)))
-                              [(TcSelectedBrands.Err message)
-                                (TcSelectedResult.Err message next)]
-                              [(TcSelectedBrands.Ok brands)
-                                (tc-selected-contextual-result
-                                  ctx
+                                expected
+                                (tc-selected-with-thread-users
                                   env
-                                  expected
-                                  (tc-selected-with-thread-users
+                                  (tc-selected-sent-owners
+                                    ctx
                                     env
-                                    (tc-selected-sent-owners
-                                      ctx
-                                      env
-                                      (tc-global-shared-view func)
-                                      (& args))
+                                    (tc-global-shared-view func)
+                                    (& args))
+                                  syntax
+                                  (ownership.ownership-source-copy (& source))
+                                  (tc-selected-with-release-checks
+                                    ctx
+                                    env
+                                    ended.brands
                                     syntax
                                     (ownership.ownership-source-copy (& source))
-                                    (tc-selected-with-release-checks
+                                    (tc-selected-with-region-ends
                                       ctx
                                       env
-                                      brands
+                                      ended.brands
+                                      ended.args
                                       syntax
-                                      (ownership.ownership-source-copy
-                                        (& source))
-                                      (tc-selected-with-region-ends
-                                        ctx
-                                        env
-                                        brands
-                                        syntax
-                                        (tc-global-shared-view source)
-                                        (tc-selected-publish-call
-                                          (ResultTcType.Ok
-                                            (tc-tag-active-region env ret))
-                                          ;; Key -1 names a constructor (no declaration),
-                                          ;; -2 a call through a function value.
-                                          (cond
-                                            [(= key -1)
-                                              typed.TypedCallKind.Construct]
-                                            [(= key -2)
-                                              (typed.TypedCallKind.Indirect
-                                                (tc-selected-effect-callee-id
-                                                  ctx
-                                                  env
-                                                  func-id))]
-                                            [(tc-selected-discharge-call?
+                                      (tc-global-shared-view source)
+                                      (tc-selected-publish-call
+                                        (ResultTcType.Ok
+                                          (tc-tag-active-region env ret))
+                                        ;; Key -1 names a constructor (no declaration),
+                                        ;; -2 a call through a function value.
+                                        (cond
+                                          [(= key -1)
+                                            typed.TypedCallKind.Construct]
+                                          [(= key -2)
+                                            (typed.TypedCallKind.Indirect
+                                              (tc-selected-effect-callee-id
                                                 ctx
-                                                (tc-global-shared-view func)
-                                                (& params))
-                                              (typed.TypedCallKind.Discharge
-                                                key)]
-                                            [else
-                                              (typed.TypedCallKind.Declared key)])
-                                          (tc-call-published-signature
-                                            shadow
-                                            (tc-global-shared-view fn-ty))
-                                          syntax
-                                          source
-                                          (tc-selected-with-callee
-                                            selected
-                                            (& callee))
-                                          (and
-                                            represented?
-                                            (or
-                                              (!= key -2)
-                                              (match (& callee)
-                                                [(TcSelectedOccurrence.Selected
-                                                    _)
-                                                  true]
-                                                [_ false])))
-                                          next)))))])])])]))]
+                                                env
+                                                func-id))]
+                                          [(tc-selected-discharge-call?
+                                              ctx
+                                              (tc-global-shared-view func)
+                                              (& params))
+                                            (typed.TypedCallKind.Discharge key)]
+                                          [else
+                                            (typed.TypedCallKind.Declared key)])
+                                        (tc-call-published-signature
+                                          shadow
+                                          (tc-global-shared-view fn-ty))
+                                        syntax
+                                        source
+                                        (tc-selected-with-callee
+                                          selected
+                                          (& callee))
+                                        (and
+                                          represented?
+                                          (or
+                                            (!= key -2)
+                                            (match (& callee)
+                                              [(TcSelectedOccurrence.Selected _)
+                                                true]
+                                              [_ false])))
+                                        next))))))])])]))]
             [_
               (TcSelectedResult.Err
                 "typecheck: call target is not a function"
@@ -65275,7 +65427,7 @@
                               next-env
                               name
                               ;; The binder keeps the region of an arena the
-                              ;; value lives in (`tc-selected-end-regions`).
+                              ;; value lives in (`tc-selected-end`).
                               (if (tc-type-contains-region-tag?
                                 (tc-global-shared-view init-ty))
                                 (tc-global-shared-view init-ty)
@@ -90091,9 +90243,9 @@
     (tc-move-live-cleanup-owner-in-region-scan env env owner region -1 (Unit))
     -1))
 
-;; A `with` cleanup owner `name` holding values of `arena` at its safe destroy
-;; or rewind (`operation`), the producer's and the graph's (exits 9 and 10)
-;; wording.
+;; A `with` cleanup owner `name` holding values of `arena` at its end
+;; (`operation`: a safe destroy or rewind, or an `:invalidate` call), the
+;; producer's and the graph's (exits 9-11) wording.
 (define (tc-safe-invalidation-cleanup-owner-text
   [operation : String]
   [arena : String]
@@ -123208,6 +123360,8 @@
     [(ownership_normalize.OwnershipNormalizeFailure.Obligation diagnostic)
       (cond
         [(= diagnostic.exit 8) (tc-selected-overwrite-failure diagnostic)]
+        ;; Exits 9-11: a `with` owner holding values of an ended arena.
+        [(>= diagnostic.exit 9) (tc-selected-unheld-failure "" "" diagnostic)]
         [(>= diagnostic.exit 6) (tc-selected-release-failure "" "" diagnostic)]
         [else (tc-selected-obligation-failure "" diagnostic)])]
     [(ownership_normalize.OwnershipNormalizeFailure.Escaped diagnostic)
@@ -123659,8 +123813,8 @@
             [(= diagnostic.exit 8) (tc-selected-overwrite-failure diagnostic)]
             [(= diagnostic.status 4)
               (tc-selected-with-owner-moved-failure ctx name diagnostic)]
-            ;; A `with` owner still holding values of a destroyed (9) or
-            ;; rewound (10) arena.
+            ;; A `with` owner still holding values of an arena a safe destroy
+            ;; (9), a safe rewind (10) or an `:invalidate` call (11) ends.
             [(>= diagnostic.exit 9)
               (tc-selected-unheld-failure
                 (if (< diagnostic.arena 0)
@@ -123692,8 +123846,9 @@
         (ResultTcUnit.Err
           "typecheck: ownership failure changed during rendering")])))
 
-;; A `with` cleanup owner holding values of arena `arena` at its safe destroy
-;; or rewind, in the legacy arena checker's wording.
+;; A `with` cleanup owner holding values of arena `arena` at its end (exit 9 a
+;; safe destroy, 10 a safe rewind, 11 an `:invalidate` call), in the legacy
+;; arena checker's wording.
 (define (tc-selected-unheld-failure
   [arena : String]
   [name : String]
@@ -123704,9 +123859,7 @@
       (tc-rich-error-with-help
         (tc-selected-source-span (& diagnostic.source))
         (tc-safe-invalidation-cleanup-owner-text
-          (if (= diagnostic.exit 10)
-            "arena.rewind-safe!"
-            "arena.destroy-safe!")
+          (tc-end-kind-operation (- diagnostic.exit 9))
           arena
           name)
         (tc-safe-invalidation-cleanup-owner-help)))))

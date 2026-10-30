@@ -96,8 +96,8 @@
   ;; end of its function), or -1 for a cleanup obligation.
   (lifetime i64)
   ;; At an atomic arena's release (exit 6: the owner, `name`, has thread
-  ;; users; exit 7: thread handle `name` is live), the arena owner's name;
-  ;; -1 otherwise.
+  ;; users; exit 7: thread handle `name` is live) or a `with` owner's unheld
+  ;; check (exits 9-11), the arena owner's name; -1 otherwise.
   (arena i64)
   (move NormalizeMoveDiagnosticResult)
   (bound own.OwnershipSource))
@@ -1358,8 +1358,8 @@
   ;; is: the owner's thread-users marker, or a thread handle, is empty.
   (RequireReleased typed.TypedBinderId typed.TypedBinderId)
   ;; The `with` owner (first) no longer holds values of the arena the second
-  ;; binder names before its destroy (false) or rewind (true).
-  (RequireUnheld typed.TypedBinderId typed.TypedBinderId bool))
+  ;; binder names before its end (0 destroy, 1 rewind, 2 `:invalidate` call).
+  (RequireUnheld typed.TypedBinderId typed.TypedBinderId i64))
 
 (defenum NormalizeOperationResult
   (Ok NormalizeOperation)
@@ -1480,12 +1480,12 @@
         (NormalizeOperation.RequireReleased
           (typed.TypedBinderId (normalize-handle-copy checked.handle))
           (typed.TypedBinderId (normalize-handle-copy owner.handle))))]
-    [(typed.TypedOperation.RequireUnheld checked arena rewind?)
+    [(typed.TypedOperation.RequireUnheld checked arena kind)
       (NormalizeOperationResult.Ok
         (NormalizeOperation.RequireUnheld
           (typed.TypedBinderId (normalize-handle-copy checked.handle))
           (typed.TypedBinderId (normalize-handle-copy arena.handle))
-          rewind?))]
+          kind))]
     [(typed.TypedOperation.Assign id)
       (NormalizeOperationResult.Ok
         (NormalizeOperation.Assign
@@ -8381,8 +8381,9 @@
                 (normalize-place-id (& state) marker))
               (& node.source)))
           (normalize-value! state block node.type (& node.source)))]
-      ;; Exit 9 (destroy) or 10 (rewind): the owner must be empty here.
-      [(NormalizeOperation.RequireUnheld checked binder rewind?)
+      ;; Exit 9 (destroy), 10 (rewind) or 11 (an `:invalidate` call): the
+      ;; owner must be empty here.
+      [(NormalizeOperation.RequireUnheld checked binder kind)
         (let
           [owner : i64
             (try
@@ -8407,9 +8408,7 @@
               owner
               owner
               0
-              (if rewind?
-                10
-                9)
+              (+ 9 kind)
               (own.OwnershipOperation.RequireEmpty
                 (normalize-place-id (& state) owner))
               (& node.source)))

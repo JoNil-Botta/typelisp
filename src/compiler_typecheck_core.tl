@@ -8422,7 +8422,18 @@
                   arm-env
                   (tc-global-shared-view got)
                   (tc-global-shared-view want))
-                  [(TcInferredTypeMatch.Compatible _) (ResultTcType.Ok want)]
+                  [(TcInferredTypeMatch.Compatible actual)
+                    (let
+                      [previous : ast.AstType
+                        (if (= index 0)
+                          (tc-global-shared-view want)
+                          (tc-global-shared-view merged))]
+                      (tc-contextual-join-type
+                        ctx
+                        env
+                        (tc-global-shared-view want)
+                        previous
+                        actual))]
                   [(TcInferredTypeMatch.Mismatch _)
                     (ResultTcType.Err
                       "typecheck: match arm result type mismatch")])]
@@ -10348,7 +10359,7 @@
       (let
         [live : i64
           (tc-move-live-cleanup-owner-in-region
-            (tc-global-shared-view env)
+            env
             (tc-name-id-list-head cursor)
             -1)]
         (when
@@ -10367,10 +10378,7 @@
       [live : i64
         (if (< region 0)
           -1
-          (tc-move-live-cleanup-owner-in-region
-            (tc-global-shared-view env)
-            -1
-            region))]
+          (tc-move-live-cleanup-owner-in-region env -1 region))]
       (if (< live 0)
         ResultTcUnit.Ok
         (ResultTcUnit.Err
@@ -11337,8 +11345,10 @@
               env
               (tc-global-shared-view arg)
               owner-ty)
-              [(TcMaybeNameId.Some id) id]
-              [(TcMaybeNameId.No) -1])]
+              [(or (TcArenaDestroyOwnerId.Bare id)
+                   (TcArenaDestroyOwnerId.Branded id))
+                id]
+              [(TcArenaDestroyOwnerId.No) -1])]
           [(ResultTcType.Err _) -1])
         -1)]
     [region : i64
@@ -36255,10 +36265,97 @@
       [(Some (Var region)) region]
       [_ owner])))
 
-(define (tc-active-region-owned-by-arena-id? [env : TcTypeEnv] [owner : i64]) : bool
-  (match (tc-active-region env)
-    [(Some region) (tc-arena-region-owned-by-id? env owner region)]
-    [(No) false]))
+;; An end must not invalidate an enclosing activation hidden by a mark or a
+;; different arena. Only a bare destroy resolved from the current binding may
+;; stop there. Brand ids and phase-owner ids do not name that binding.
+;; 1 is a matching activation, -1 the verified binding boundary, 0 unrelated.
+(define (tc-arena-activation-entry
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner : i64]
+  [bare-binding? : bool]
+  [key : i64]
+  [ty : ast.AstType]) : i64
+  (if (= key (tc-region-marker-id))
+    (match ty
+      [(or (Var region) (Region region _))
+        (if (tc-arena-region-owned-by-id? env owner region)
+          1
+          0)]
+      [_ 0])
+    (if (and bare-binding? (= key owner) (tc-arena-type? ctx ty))
+      -1
+      0)))
+
+(define (tc-arena-activation-persistent?
+  [ctx : TcContext]
+  [root : TcTypeEnv]
+  [env : TcTypeEnv]
+  [owner : i64]
+  [bare-binding? : bool]) : bool
+  (match (tc-type-env-marker-step env)
+    [(Done) false]
+    [(Cache rest)
+      (tc-arena-activation-persistent? ctx root rest owner bare-binding?)]
+    [(Bind key ty rest)
+      (let
+        [entry : i64
+          (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
+        (if (= entry 0)
+          (tc-arena-activation-persistent? ctx root rest owner bare-binding?)
+          (> entry 0)))]))
+
+(define (tc-arena-activation-scoped?
+  [ctx : TcContext]
+  [root : TcTypeEnv]
+  [persistent : TcTypeEnv]
+  [cursor : TcTypeEnvScopedMarkerCursor]
+  [owner : i64]
+  [bare-binding? : bool]) : bool
+  (match (tc-type-env-scoped-marker-step cursor)
+    [(Done)
+      (tc-arena-activation-persistent?
+        ctx
+        root
+        (tc-type-env-marker-start persistent)
+        owner
+        bare-binding?)]
+    [(Bind key ty rest)
+      (let
+        [entry : i64
+          (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
+        (if (= entry 0)
+          (tc-arena-activation-scoped?
+            ctx
+            root
+            persistent
+            rest
+            owner
+            bare-binding?)
+          (> entry 0)))]))
+
+(define (tc-active-region-owned-by-arena-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner : i64]
+  [bare-binding? : bool]) : bool
+  (if (tc-type-env-scoped-runtime-active? env)
+    (let
+      [carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-runtime-current env)]
+      (tc-arena-activation-scoped?
+        ctx
+        env
+        (tc-type-env-scoped-carrier-persistent (tc-global-shared-view carrier))
+        (tc-type-env-scoped-carrier-marker-cursor carrier)
+        owner
+        bare-binding?))
+    (tc-arena-activation-persistent?
+      ctx
+      env
+      (tc-type-env-marker-start env)
+      owner
+      bare-binding?)))
 
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
@@ -37385,7 +37482,7 @@
   [env : TcTypeEnv]
   [value-ty : ast.AstType]) : ResultTcUnit
   (let
-    [lifetimes : TcNameIdList (tc-type-collect-regions value-ty)]
+    [lifetimes : TcNameIdList (tc-type-collect-regions (& value-ty))]
     (if (tc-reference-lifetimes-visible? env lifetimes)
       Ok
       (Err
@@ -37409,7 +37506,7 @@
 (define (tc-ensure-reference-type-does-not-escape-names
   [ty : ast.AstType]
   [names : TcNameIdList]) : ResultTcUnit
-  (if (tc-name-id-list-overlaps? (tc-type-collect-regions ty) names)
+  (if (tc-name-id-list-overlaps? (tc-type-collect-regions (& ty)) names)
     (Err
       (tc-kind-message
         (RegionEscape)
@@ -37441,8 +37538,8 @@
     [(Invalidate _ inner) (ast.ty-node-get inner)]
     [_ ty]))
 
-(define (tc-type-list-contains-region-tag? [types : ast.AstTypeList]) : bool
-  (tc-type-list-contains-region-tag-at? (& types) 0))
+(define (tc-type-list-contains-region-tag? [types : (& types ast.AstTypeList)]) : bool
+  (tc-type-list-contains-region-tag-at? types 0))
 
 (define (tc-type-list-contains-region-tag-at?
   [types : (& types ast.AstTypeList)]
@@ -37450,29 +37547,27 @@
   (if (>= index (ast.ast-type-list-len types))
     false
     (if (tc-type-contains-region-tag?
-      (ast.ty-node-get
-        (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+      (&
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       true
       (tc-type-list-contains-region-tag-at? types (+ index 1)))))
 
-(define (tc-type-contains-region-tag? [ty : ast.AstType]) : bool
+(define (tc-type-contains-region-tag? [ty : (& ty ast.AstType)]) : bool
   (match ty
     [(Func args ret)
-      (if (tc-type-list-contains-region-tag?
-        (ast.ast-type-list-box-shared-view args))
+      (if (tc-type-list-contains-region-tag? args)
         true
-        (tc-type-contains-region-tag? (ast.ty-node-get ret)))]
-    [(Tuple elems)
-      (tc-type-list-contains-region-tag?
-        (ast.ast-type-list-box-shared-view elems))]
+        (tc-type-contains-region-tag? (& (ast.ty-node-get ret))))]
+    [(Tuple elems) (tc-type-list-contains-region-tag? elems)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem) (Ref _ elem) (MutRef _ elem) (Invalidate _ elem))
-      (tc-type-contains-region-tag? (ast.ty-node-get elem))]
+      (tc-type-contains-region-tag? (& (ast.ty-node-get elem)))]
     [(Region _ _) true]
     [_ false]))
 
 (define (tc-type-list-without-regions [types : ast.AstTypeList]) : ast.AstTypeList
-  (if (tc-type-list-contains-region-tag? (tc-global-shared-view types))
+  (if (tc-type-list-contains-region-tag? (& types))
     (tc-type-list-without-regions-at (& types) 0)
     types))
 
@@ -37489,7 +37584,7 @@
       (& (tc-type-list-without-regions-at types (+ index 1))))))
 
 (define (tc-type-without-regions [ty : ast.AstType]) : ast.AstType
-  (if (tc-type-contains-region-tag? (tc-global-shared-view ty))
+  (if (tc-type-contains-region-tag? (& ty))
     (match (tc-global-shared-view ty)
       [(Func args ret)
         (ast.ast-ty-func
@@ -38458,9 +38553,9 @@
     Ok))
 
 (define (tc-type-list-collect-regions
-  [types : ast.AstTypeList]
+  [types : (& types ast.AstTypeList)]
   [out : TcNameIdList]) : TcNameIdList
-  (tc-type-list-collect-regions-at (& types) out 0))
+  (tc-type-list-collect-regions-at types out 0))
 
 (define (tc-type-list-collect-regions-at
   [types : (& types ast.AstTypeList)]
@@ -38471,36 +38566,34 @@
     (tc-type-list-collect-regions-at
       types
       (tc-type-collect-regions-into
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+        (&
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
         out)
       (+ index 1))))
 
-(define (tc-type-collect-regions-into [ty : ast.AstType] [out : TcNameIdList]) : TcNameIdList
+(define (tc-type-collect-regions-into
+  [ty : (& ty ast.AstType)]
+  [out : TcNameIdList]) : TcNameIdList
   (match ty
     [(Func args ret)
       (tc-type-collect-regions-into
-        (ast.ty-node-get ret)
-        (tc-type-list-collect-regions
-          (ast.ast-type-list-box-shared-view args)
-          out))]
-    [(Tuple elems)
-      (tc-type-list-collect-regions
-        (ast.ast-type-list-box-shared-view elems)
-        out)]
+        (& (ast.ty-node-get ret))
+        (tc-type-list-collect-regions args out))]
+    [(Tuple elems) (tc-type-list-collect-regions elems out)]
     [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Ptr elem)
          (MutPtr elem))
-      (tc-type-collect-regions-into (ast.ty-node-get elem) out)]
+      (tc-type-collect-regions-into (& (ast.ty-node-get elem)) out)]
     [(or (Ref name inner) (MutRef name inner) (Region name inner)
          (Invalidate name inner))
       (tc-type-collect-regions-into
-        (ast.ty-node-get inner)
+        (& (ast.ty-node-get inner))
         (tc-name-id-list-add out name))]
     [(or (EnumArgs _ lifetimes) (StructArgs _ lifetimes) (VarArgs _ lifetimes))
-      (tc-lifetime-list-to-name-id-list-into (deref lifetimes) out)]
+      (tc-lifetime-list-to-name-id-list-into lifetimes out)]
     [_ out]))
 
-(define (tc-type-collect-regions [ty : ast.AstType]) : TcNameIdList
+(define (tc-type-collect-regions [ty : (& ty ast.AstType)]) : TcNameIdList
   (tc-type-collect-regions-into ty Nil))
 
 (define (tc-region-list-contains-arena-owner?
@@ -38521,7 +38614,10 @@
   [env : TcTypeEnv]
   [ty : ast.AstType]
   [owner : i64]) : bool
-  (tc-region-list-contains-arena-owner? env (tc-type-collect-regions ty) owner))
+  (tc-region-list-contains-arena-owner?
+    env
+    (tc-type-collect-regions (& ty))
+    owner))
 
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -38539,7 +38635,7 @@
 (define (tc-type-regions-all-atomic-arena-owners?
   [env : TcTypeEnv]
   [ty : ast.AstType]) : bool
-  (tc-region-list-all-atomic-arena-owners? env (tc-type-collect-regions ty)))
+  (tc-region-list-all-atomic-arena-owners? env (tc-type-collect-regions (& ty))))
 
 (define (tc-type-outer-region [ty : ast.AstType]) : TcMaybeNameId
   (match ty
@@ -38717,7 +38813,7 @@
   (tc-ensure-regions-can-flow-into
     env
     target-ty
-    (tc-type-collect-regions value-ty)
+    (tc-type-collect-regions (& value-ty))
     context))
 
 (define (tc-ensure-regions-can-flow-into
@@ -38733,7 +38829,7 @@
       [_
         (let
           [target-regions : TcNameIdList
-            (tc-type-collect-regions (tc-global-shared-view target-ty))]
+            (tc-type-collect-regions (& target-ty))]
           (if (and
             (tc-type-contains-any-region target-ty)
             (tc-region-list-can-flow-into env value-regions target-regions))
@@ -47753,10 +47849,8 @@
     [(tc-never-type? (tc-global-shared-view b)) (Ok a)]
     [(tc-type-eq (tc-global-shared-view a) (tc-global-shared-view b))
       (let
-        [a-regions : TcNameIdList
-          (tc-type-collect-regions (tc-global-shared-view a))]
-        [b-regions : TcNameIdList
-          (tc-type-collect-regions (tc-global-shared-view b))]
+        [a-regions : TcNameIdList (tc-type-collect-regions (& a))]
+        [b-regions : TcNameIdList (tc-type-collect-regions (& b))]
         (if (tc-name-id-list-eq a-regions b-regions)
           (Ok a)
           (match a-regions
@@ -51854,9 +51948,93 @@
   [actual : ast.AstType]) : ast.AstType
   ;; Preserve active allocation-owner tags, but let a successful checker-only
   ;; lifetime coercion expose the required shorter reference/nominal lifetime.
-  (if (tc-type-contains-region-tag? (tc-global-shared-view actual))
+  (if (tc-type-contains-region-tag? (& actual))
     actual
     expected))
+
+;; A context supplies a type, not permission to forget either branch's arena
+;; dependencies. Keep an actual carrier and all reachable regions at heap
+;; joins. Region-free joins forward the existing expected type without data.
+(define (tc-contextual-join-value-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
+  (match (tc-global-shared-view ty)
+    [(Region _ _)
+      (let
+        [value : ast.AstType
+          (tc-selected-strip-regions (tc-global-shared-view ty))]
+        ;; A plain Copy read keeps no container view. The existing ownership
+        ;; classifier excludes intrinsic references, including nominal fields;
+        ;; stripping only outer tags keeps payload types/lifetimes intact.
+        (if (and
+          (tc-type-copyable? ctx (tc-global-shared-view value))
+          (tc-selected-value-type-supported? ctx (tc-global-shared-view value)))
+          value
+          ty))]
+    [_ ty]))
+
+;; Both branch arguments are local places. Keep the
+;; negative guard at the call site, so an ordinary join constructs its result
+;; directly without entering the provenance helper's frame.
+(defmacro (tc-contextual-join-type
+  [ctx : Expr]
+  [env : Expr]
+  [expected : Expr]
+  [a : Expr]
+  [b : Expr]) : Expr
+  `(if (or
+    (tc-type-contains-region-tag? (& ,a))
+    (tc-type-contains-region-tag? (& ,b)))
+    (tc-contextual-join-region-type
+      ,ctx
+      ,env
+      ,expected
+      (tc-contextual-join-value-type ,ctx (tc-global-shared-view ,a))
+      (tc-contextual-join-value-type ,ctx (tc-global-shared-view ,b)))
+    (ResultTcType.Ok ,expected)))
+
+(define (tc-contextual-join-region-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [a : ast.AstType]
+  [b : ast.AstType]) : ResultTcType
+  (if (or
+    (tc-type-contains-region-tag? (& a))
+    (tc-type-contains-region-tag? (& b)))
+    (let
+      [carrier : ast.AstType
+        (tc-contextual-result-type
+          (tc-contextual-result-type
+            (tc-global-shared-view expected)
+            (tc-global-shared-view a))
+          (tc-global-shared-view b))]
+      [regions : TcNameIdList
+        (tc-name-id-list-add-all
+          (tc-type-collect-regions (& a))
+          (tc-type-collect-regions (& b)))]
+      (if (tc-region-taggable-type? (tc-global-shared-view carrier))
+        (Ok
+          (tc-tag-regions
+            (tc-name-id-list-difference
+              regions
+              (tc-type-collect-regions (& carrier)))
+            carrier))
+        (let
+          [merged
+            (try
+              (tc-merge-branch-type
+                ctx
+                env
+                (tc-contextual-result-type (tc-global-shared-view expected) a)
+                (tc-contextual-result-type expected b)))]
+          (if (tc-name-id-list-all-in?
+            regions
+            (tc-type-collect-regions (& merged)))
+            (Ok merged)
+            (Err
+              (tc-kind-message
+                (TypeMismatch)
+                "typecheck: branch result cannot retain every arena region"))))))
+    (Ok expected)))
 
 (define (tc-float-literal-non-finite-message [ty-name : String]) : String
   (str_cat.str-cat
@@ -53249,7 +53427,12 @@
                               env
                               (tc-global-shared-view want)
                               (tc-global-shared-view else-ty)))
-                            (ResultTcType.Ok want)
+                            (tc-contextual-join-type
+                              ctx
+                              env
+                              want
+                              then-ty
+                              else-ty)
                             (tc-merge-branch-type
                               ctx
                               env
@@ -57161,7 +57344,7 @@
 ;; after). tc-resolve-type resolves aliases structurally, so lifetimes hidden
 ;; behind an alias are still seen.
 (define (tc-lifetime-subst-formal-inert? [ctx : TcContext] [want : ast.AstType]) : bool
-  (match (tc-type-collect-regions-into (tc-resolve-type ctx want) Nil)
+  (match (tc-type-collect-regions-into (& (tc-resolve-type ctx want)) Nil)
     [(Nil) true]
     [_ false]))
 
@@ -57606,7 +57789,7 @@
   [ret : ast.AstType]
   [lifetimes : (& lifetimes ast.AstLifetimeList)]) : bool
   (and
-    (tc-name-id-list-empty? (tc-type-collect-regions-into ret Nil))
+    (tc-name-id-list-empty? (tc-type-collect-regions-into (& ret) Nil))
     (=
       (tc-call-scoped-reference-param-count ctx params 0 0)
       (ast.ast-lifetime-list-len lifetimes))))
@@ -57858,7 +58041,7 @@
                   "typecheck: an :invalidate argument must be a branded local arena owner or a value the caller itself invalidates"]
                 [(tc-name-id-list-contains seen brand)
                   "typecheck: a call cannot invalidate the same arena through two arguments"]
-                [(tc-active-region-owned-by-arena-id? env brand)
+                [(tc-active-region-owned-by-arena-id? ctx env brand false)
                   "typecheck: an :invalidate call cannot run inside the arena it destroys"]
                 [(tc-type-contains-arena-owner-region?
                     env
@@ -59487,7 +59670,7 @@
 (define (tc-type-atomic-arena-owner-regions
   [env : TcTypeEnv]
   [ty : ast.AstType]) : TcNameIdList
-  (tc-region-list-atomic-arena-owners env (tc-type-collect-regions ty) Nil))
+  (tc-region-list-atomic-arena-owners env (tc-type-collect-regions (& ty)) Nil))
 
 (define (tc-thread-safe-spawn-capture-message
   [spawn-name : String]
@@ -60839,7 +61022,11 @@
               [(Some _)
                 (match (tc-arena-phase-token-owner-active env pid)
                   [(Some owner)
-                    (if (tc-active-region-owned-by-arena-id? env owner)
+                    (if (tc-active-region-owned-by-arena-id?
+                      ctx
+                      env
+                      owner
+                      false)
                       (Err
                         (tc-locate-error-at-expr
                           (tc-context-expr-bases ctx)
@@ -60882,11 +61069,16 @@
 ;; the exact place consumed by the move checker, while a branded Arena's
 ;; lifetime is the stable owner identity used for region and atomic-user
 ;; invalidation. Legacy bare owners retain the direct-local name-marker path.
+(defenum TcArenaDestroyOwnerId
+  (No)
+  (Bare i64)
+  (Branded i64))
+
 (define (tc-destroy-safe-owner-place-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [owner-expr : ast.AstExpr]
-  [owner-ty : ast.AstType]) : TcMaybeNameId
+  [owner-ty : ast.AstType]) : TcArenaDestroyOwnerId
   (let
     [root : i64
       (tc-move-direct-root-place (tc-context-expr-bases ctx) owner-expr)]
@@ -60895,7 +61087,7 @@
       (match (tc-arena-branded-region ctx owner-ty)
         [(Some brand)
           (if (tc-invalidate-brand-destroyable? env brand)
-            (Some brand)
+            (Branded brand)
             (No))]
         [(No)
           (if (and
@@ -60903,7 +61095,7 @@
             (or
               (tc-ordinary-arena-owner-active-id? env root)
               (tc-atomic-arena-owner-active-id? env root)))
-            (Some root)
+            (Bare root)
             (No))]))))
 
 (define (tc-destroy-safe-call
@@ -60932,15 +61124,19 @@
               (ArenaOwnership)
               "typecheck: arena.destroy-safe! arena must be Arena")))))
     (let
-      [owner-id : TcMaybeNameId
+      [owner-id : TcArenaDestroyOwnerId
         (tc-destroy-safe-owner-place-id
           ctx
           env
           (tc-global-shared-view owner-expr)
           owner-ty)]
+      [bare-binding? : bool
+        (match owner-id
+          [(Bare _) true]
+          [_ false])]
       (match owner-id
-        [(Some oid)
-          (if (tc-active-region-owned-by-arena-id? env oid)
+        [(or (Bare oid) (Branded oid))
+          (if (tc-active-region-owned-by-arena-id? ctx env oid bare-binding?)
             (Err
               (tc-locate-error-at-expr
                 (tc-context-expr-bases ctx)
@@ -63131,7 +63327,7 @@
   [init-ty : ast.AstType]) : ast.AstType
   (match maybe-ty
     [(Some want)
-      (if (tc-type-contains-region-tag? (tc-global-shared-view init-ty))
+      (if (tc-type-contains-region-tag? (& init-ty))
         init-ty
         want)]
     [(No) init-ty]))
@@ -64350,7 +64546,7 @@
           [(not
               (tc-reference-lifetimes-visible?
                 env
-                (tc-type-collect-regions (tc-global-shared-view ty))))
+                (tc-type-collect-regions (& ty))))
             (ast.AstMaybeType.Some (tc-selected-strip-regions ty))]
           [(match (& maybe-want)
               [(ast.AstMaybeType.Some _) true]
@@ -65428,8 +65624,7 @@
                               name
                               ;; The binder keeps the region of an arena the
                               ;; value lives in (`tc-selected-end`).
-                              (if (tc-type-contains-region-tag?
-                                (tc-global-shared-view init-ty))
+                              (if (tc-type-contains-region-tag? (& init-ty))
                                 (tc-global-shared-view init-ty)
                                 (tc-global-shared-view binding-ty))
                               init-ty
@@ -75794,7 +75989,7 @@
           ;; A declared type without regions collects none, so nothing flows.
           [target-regions : TcNameIdList
             (match (tc-current-return-type env)
-              [(Ok ty) (tc-type-collect-regions ty)]
+              [(Ok ty) (tc-type-collect-regions (& ty))]
               [(Err _) Nil])]
           [entries : (__tl_dyn-array i64) (tc-selected-no-i64s)]
           [blocked? : bool false]
@@ -75895,8 +76090,8 @@
   [carrier-regions : TcNameIdList]
   [error-ty : ast.AstType]) : TcNameIdList
   (if (tc-early-exit-allocated-payload? (tc-global-shared-view error-ty))
-    (tc-type-collect-regions-into error-ty carrier-regions)
-    (tc-type-collect-regions error-ty)))
+    (tc-type-collect-regions-into (& error-ty) carrier-regions)
+    (tc-type-collect-regions (& error-ty))))
 
 ;; Inline arrays allocate no container, but a nonempty residual still carries
 ;; its elements across the reset. Scalar and empty residuals carry no allocation
@@ -76052,9 +76247,8 @@
             [(ResultTcUnit.Ok)
               (let
                 [regions : TcNameIdList
-                  (if (tc-type-contains-region-tag?
-                    (tc-global-shared-view value-ty))
-                    (tc-type-collect-regions value-ty)
+                  (if (tc-type-contains-region-tag? (& value-ty))
+                    (tc-type-collect-regions (& value-ty))
                     Nil)]
                 (if (tc-regions-have-scratch-body? regions)
                   (TcSelectedResult.Err (tc-scratch-exit-error "return") next)
@@ -77612,7 +77806,7 @@
               (ast.ast-type-list-get params cursor (ast.ast-type-id-fallback)))))
           [(ast.AstType.MutRef _ referent)
             (if (tc-name-id-list-contains
-              (tc-type-collect-regions (ast.ty-node-get referent))
+              (tc-type-collect-regions (& (ast.ty-node-get referent)))
               lifetime)
               (set! found true)
               unit)]
@@ -77662,9 +77856,7 @@
                   (begin
                     (unless
                       ret-lifetimes-ready
-                      (set!
-                        ret-lifetimes
-                        (tc-type-collect-regions (tc-global-shared-view ret)))
+                      (set! ret-lifetimes (tc-type-collect-regions (& ret)))
                       (set! ret-lifetimes-ready true))
                     ret-lifetimes)
                   lifetime)
@@ -79844,7 +80036,8 @@
                       arm-env
                       got
                       (tc-global-shared-view expected))
-                      [(Compatible _) (Ok expected)]
+                      [(Compatible actual)
+                        (Ok (tc-contextual-result-type expected actual))]
                       [(Mismatch actual)
                         (Err
                           (tc-type-mismatch-message-in-context
@@ -79887,6 +80080,7 @@
         env
         scrut-ty
         arms-ref
+        (tc-global-shared-view expected)
         expected
         0))))
 
@@ -79896,11 +80090,12 @@
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [expected : ast.AstType]
+  [merged : ast.AstType]
   [index : i64]) : ResultTcType
   (if (>= index arms.len)
-    (Ok expected)
+    (Ok merged)
     (let
-      [_
+      [actual
         (try
           (tc-match-arm-type-with-expected
             ctx
@@ -79908,12 +80103,21 @@
             (tc-global-shared-view scrut-ty)
             (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
             (tc-global-shared-view expected)))]
+      [next
+        (try
+          (tc-contextual-join-type
+            ctx
+            env
+            (tc-global-shared-view expected)
+            merged
+            actual))]
       (tc-check-match-arm-types-with-expected-at
         ctx
         env
         scrut-ty
         arms
         expected
+        next
         (+ index 1)))))
 
 (define (tc-match-rest-types-at
@@ -84422,7 +84626,7 @@
 
 (define (tc-type-regions-all-scratch? [ty : ast.AstType]) : bool
   (let
-    [cursor : TcNameIdList (tc-type-collect-regions ty)]
+    [cursor : TcNameIdList (tc-type-collect-regions (& ty))]
     [all-scratch : bool true]
     (while (and all-scratch (not (tc-name-id-list-empty? cursor)))
       (if (tc-scratch-region-id? (tc-name-id-list-head cursor))

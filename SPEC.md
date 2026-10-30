@@ -4045,7 +4045,7 @@ Example:
   SHA-256); abbreviations and ref names require `tag` or `branch` instead.
   It normalizes to
   a git remote URL with a pin fragment such as
-  `https://github.com/owner/repo.git#rev=commit`.
+  `https://github.com/owner/repo.git#rev=0123456789abcdef0123456789abcdef01234567`.
 - Dependency aliases use the same character rules as package names: ASCII
   letters, digits, `-`, and `_`. Duplicate aliases are rejected.
 - Relative dependency paths are resolved relative to the manifest directory;

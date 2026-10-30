@@ -167,11 +167,29 @@
         (let
           [id : x64.CompilerX64ExecutableTemplateId
             (x64_selection.compiler-x64-template-id-list-ref (& ids) at)]
+          [gate : catalog.CompilerX64ExecutableTemplateGate
+            (catalog.compiler-x64-template-registry-gate id)]
           [row : x64_evidence.CompilerX64ExecutableTemplate
             (x64_evidence.compiler-x64-template-registry-row id)]
           [parsed-events : x64_events.CompilerX64TemplateEventSeq
             (x64_events.compiler-x64-template-events row.events)]
           [event-at : i64 0]
+          (test.assert-i64-eq
+            (x64.compiler-x64-template-enum-tag gate.target)
+            (x64.compiler-x64-template-enum-tag row.target)
+            "emission gate target matches detailed evidence")
+          (test.assert-i64-eq
+            (x64.compiler-x64-template-enum-tag gate.render-kind)
+            (x64.compiler-x64-template-enum-tag row.render-kind)
+            "emission gate render kind matches detailed evidence")
+          (test.assert-i64-eq
+            gate.expected-rendered-size
+            row.expected-rendered-size
+            "emission gate size matches detailed evidence")
+          (test.assert-i64-eq
+            gate.expected-rendered-hash
+            row.expected-rendered-hash
+            "emission gate hash matches detailed evidence")
           (+= event-count row.event-count)
           (+= event-bytes (string.string-length (& row.events)))
           (if (>= row.expected-rendered-size 0)

@@ -1,8 +1,6 @@
 ;; compiler_x64_executable_template_catalog.tl - Reviewed x86-64 template rows.
 (import stdlib.iterator)
 (import compiler_x64_executable_template as x64)
-(import compiler_lzss as lzss)
-(import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.io)
 (import stdlib.string)
@@ -14,47 +12,11 @@
   (expected-rendered-size i64)
   (expected-rendered-hash i64))
 
-(include-str-lzss
-  compiler-x64-template-catalog-packed
-  "compiler_x64_executable_template_catalog.tsv")
-
-;; Far above the catalog, while a corrupt length header cannot request an
-;; unbounded allocation.
-(define compiler-x64-template-catalog-limit : i64
-  1048576)
-
-(define (compiler-x64-template-catalog-decode) : String
-  (match (lzss.compiler-lzss-decode
-    (& compiler-x64-template-catalog-packed)
-    compiler-x64-template-catalog-limit)
-    [(lzss.CompilerLzssBytes.Ok bytes)
-      (unsafe
-        (string-from-bytes
-          (ptr-cast (__tl_array-data bytes) : (Ptr u8))
-          (array-length bytes)))]
-    [(lzss.CompilerLzssBytes.Err _)
-      (io.panic "x64 executable template: invalid compressed catalog")]))
-
-;; The catalog ships compressed and is decoded on first use, into an arena of
-;; its own that lives for the process: only native emission reads it, and a
-;; job's scratch arena may be reset under a cached view.
-(define compiler-x64-template-catalog-arena : i64
-  0)
-(define compiler-x64-template-catalog-text : String
-  "")
+;; Gate lookups read the authoritative catalog directly. Keeping it as plain
+;; text avoids a process-wide decode and arena just to inspect a few fields.
+(include-str compiler-x64-template-catalog-text "compiler_x64_executable_template_catalog.tsv")
 
 (define (compiler-x64-template-catalog-data-shared-view) : String
-  (when
-    (= compiler-x64-template-catalog-arena 0)
-    (let
-      [home : i64 (arena.tl_arena_make)]
-      [text : String
-        (in-arena
-          (unsafe
-            (arena.Arena home))
-          (compiler-x64-template-catalog-decode))]
-      (set! compiler-x64-template-catalog-text text)
-      (set! compiler-x64-template-catalog-arena home)))
   (unsafe
     (ptr-read (ptr-addr-of compiler-x64-template-catalog-text))))
 

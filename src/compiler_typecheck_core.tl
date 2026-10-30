@@ -10378,10 +10378,7 @@
       [live : i64
         (if (< region 0)
           -1
-          (tc-move-live-cleanup-owner-in-region
-            env
-            -1
-            region))]
+          (tc-move-live-cleanup-owner-in-region env -1 region))]
       (if (< live 0)
         ResultTcUnit.Ok
         (ResultTcUnit.Err
@@ -36279,9 +36276,13 @@
   (if (= key (tc-region-marker-id))
     (match ty
       [(or (Var region) (Region region _))
-        (if (tc-arena-region-owned-by-id? env owner region) 1 0)]
+        (if (tc-arena-region-owned-by-id? env owner region)
+          1
+          0)]
       [_ 0])
-    (if (and (= key owner) (tc-arena-type? ctx ty)) -1 0)))
+    (if (and (= key owner) (tc-arena-type? ctx ty))
+      -1
+      0)))
 
 (define (tc-arena-activation-persistent?
   [ctx : TcContext]
@@ -36324,7 +36325,8 @@
   [owner : i64]) : bool
   (if (tc-type-env-scoped-runtime-active? env)
     (let
-      [carrier : TcTypeEnvScopedCarrier (tc-type-env-scoped-runtime-current env)]
+      [carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-runtime-current env)]
       (tc-arena-activation-scoped?
         ctx
         env
@@ -37518,8 +37520,7 @@
     [(Invalidate _ inner) (ast.ty-node-get inner)]
     [_ ty]))
 
-(define (tc-type-list-contains-region-tag?
-  [types : (& types ast.AstTypeList)]) : bool
+(define (tc-type-list-contains-region-tag? [types : (& types ast.AstTypeList)]) : bool
   (tc-type-list-contains-region-tag-at? types 0))
 
 (define (tc-type-list-contains-region-tag-at?
@@ -37528,8 +37529,9 @@
   (if (>= index (ast.ast-type-list-len types))
     false
     (if (tc-type-contains-region-tag?
-      (& (ast.ty-node-get
-        (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (&
+        (ast.ty-node-get
+          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
       true
       (tc-type-list-contains-region-tag-at? types (+ index 1)))))
 
@@ -38546,8 +38548,9 @@
     (tc-type-list-collect-regions-at
       types
       (tc-type-collect-regions-into
-        (& (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
+        (&
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
         out)
       (+ index 1))))
 
@@ -38593,7 +38596,10 @@
   [env : TcTypeEnv]
   [ty : ast.AstType]
   [owner : i64]) : bool
-  (tc-region-list-contains-arena-owner? env (tc-type-collect-regions (& ty)) owner))
+  (tc-region-list-contains-arena-owner?
+    env
+    (tc-type-collect-regions (& ty))
+    owner))
 
 (define (tc-region-list-all-atomic-arena-owners?
   [env : TcTypeEnv]
@@ -47825,10 +47831,8 @@
     [(tc-never-type? (tc-global-shared-view b)) (Ok a)]
     [(tc-type-eq (tc-global-shared-view a) (tc-global-shared-view b))
       (let
-        [a-regions : TcNameIdList
-          (tc-type-collect-regions (& a))]
-        [b-regions : TcNameIdList
-          (tc-type-collect-regions (& b))]
+        [a-regions : TcNameIdList (tc-type-collect-regions (& a))]
+        [b-regions : TcNameIdList (tc-type-collect-regions (& b))]
         (if (tc-name-id-list-eq a-regions b-regions)
           (Ok a)
           (match a-regions
@@ -51933,13 +51937,12 @@
 ;; A context supplies a type, not permission to forget either branch's arena
 ;; dependencies. Keep an actual carrier and all reachable regions at heap
 ;; joins. Region-free joins forward the existing expected type without data.
-(define (tc-contextual-join-value-type
-  [ctx : TcContext]
-  [ty : ast.AstType]) : ast.AstType
+(define (tc-contextual-join-value-type [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
   (match (tc-global-shared-view ty)
     [(Region _ _)
       (let
-        [value : ast.AstType (tc-selected-strip-regions (tc-global-shared-view ty))]
+        [value : ast.AstType
+          (tc-selected-strip-regions (tc-global-shared-view ty))]
         ;; A plain Copy read keeps no container view. The existing ownership
         ;; classifier excludes intrinsic references, including nominal fields;
         ;; stripping only outer tags keeps payload types/lifetimes intact.
@@ -52003,9 +52006,7 @@
               (tc-merge-branch-type
                 ctx
                 env
-                (tc-contextual-result-type
-                  (tc-global-shared-view expected)
-                  a)
+                (tc-contextual-result-type (tc-global-shared-view expected) a)
                 (tc-contextual-result-type expected b)))]
           (if (tc-name-id-list-all-in?
             regions
@@ -65592,8 +65593,7 @@
                               name
                               ;; The binder keeps the region of an arena the
                               ;; value lives in (`tc-selected-end`).
-                              (if (tc-type-contains-region-tag?
-                                (& init-ty))
+                              (if (tc-type-contains-region-tag? (& init-ty))
                                 (tc-global-shared-view init-ty)
                                 (tc-global-shared-view binding-ty))
                               init-ty
@@ -76216,8 +76216,7 @@
             [(ResultTcUnit.Ok)
               (let
                 [regions : TcNameIdList
-                  (if (tc-type-contains-region-tag?
-                    (& value-ty))
+                  (if (tc-type-contains-region-tag? (& value-ty))
                     (tc-type-collect-regions (& value-ty))
                     Nil)]
                 (if (tc-regions-have-scratch-body? regions)
@@ -77826,9 +77825,7 @@
                   (begin
                     (unless
                       ret-lifetimes-ready
-                      (set!
-                        ret-lifetimes
-                        (tc-type-collect-regions (& ret)))
+                      (set! ret-lifetimes (tc-type-collect-regions (& ret)))
                       (set! ret-lifetimes-ready true))
                     ret-lifetimes)
                   lifetime)

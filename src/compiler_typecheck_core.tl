@@ -8422,7 +8422,15 @@
                   arm-env
                   (tc-global-shared-view got)
                   (tc-global-shared-view want))
-                  [(TcInferredTypeMatch.Compatible _) (ResultTcType.Ok want)]
+                  [(TcInferredTypeMatch.Compatible actual)
+                    (tc-contextual-join-type
+                      ctx
+                      env
+                      (tc-global-shared-view want)
+                      (if (= index 0)
+                        want
+                        (tc-global-shared-view merged))
+                      actual)]
                   [(TcInferredTypeMatch.Mismatch _)
                     (ResultTcType.Err
                       "typecheck: match arm result type mismatch")])]
@@ -36255,10 +36263,76 @@
       [(Some (Var region)) region]
       [_ owner])))
 
-(define (tc-active-region-owned-by-arena-id? [env : TcTypeEnv] [owner : i64]) : bool
-  (match (tc-active-region env)
-    [(Some region) (tc-arena-region-owned-by-id? env owner region)]
-    [(No) false]))
+;; An end must not invalidate an enclosing activation hidden by a mark or a
+;; different arena. A bare owner stops at its actual binding: older same-name
+;; markers belong to an outer owner. A Var-brand metadata bind is not a stop.
+;; 1 is a matching activation, -1 the owner boundary, 0 an unrelated entry.
+(define (tc-arena-activation-entry
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner : i64]
+  [key : i64]
+  [ty : ast.AstType]) : i64
+  (if (= key (tc-region-marker-id))
+    (match ty
+      [(or (Var region) (Region region _))
+        (if (tc-arena-region-owned-by-id? env owner region) 1 0)]
+      [_ 0])
+    (if (and (= key owner) (tc-arena-type? ctx ty)) -1 0)))
+
+(define (tc-arena-activation-persistent?
+  [ctx : TcContext]
+  [root : TcTypeEnv]
+  [env : TcTypeEnv]
+  [owner : i64]) : bool
+  (match (tc-type-env-marker-step env)
+    [(Done) false]
+    [(Cache rest) (tc-arena-activation-persistent? ctx root rest owner)]
+    [(Bind key ty rest)
+      (let
+        [entry : i64 (tc-arena-activation-entry ctx root owner key ty)]
+        (if (= entry 0)
+          (tc-arena-activation-persistent? ctx root rest owner)
+          (> entry 0)))]))
+
+(define (tc-arena-activation-scoped?
+  [ctx : TcContext]
+  [root : TcTypeEnv]
+  [persistent : TcTypeEnv]
+  [cursor : TcTypeEnvScopedMarkerCursor]
+  [owner : i64]) : bool
+  (match (tc-type-env-scoped-marker-step cursor)
+    [(Done)
+      (tc-arena-activation-persistent?
+        ctx
+        root
+        (tc-type-env-marker-start persistent)
+        owner)]
+    [(Bind key ty rest)
+      (let
+        [entry : i64 (tc-arena-activation-entry ctx root owner key ty)]
+        (if (= entry 0)
+          (tc-arena-activation-scoped? ctx root persistent rest owner)
+          (> entry 0)))]))
+
+(define (tc-active-region-owned-by-arena-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [owner : i64]) : bool
+  (if (tc-type-env-scoped-runtime-active? env)
+    (let
+      [carrier : TcTypeEnvScopedCarrier (tc-type-env-scoped-runtime-current env)]
+      (tc-arena-activation-scoped?
+        ctx
+        env
+        (tc-type-env-scoped-carrier-persistent (tc-global-shared-view carrier))
+        (tc-type-env-scoped-carrier-marker-cursor carrier)
+        owner))
+    (tc-arena-activation-persistent?
+      ctx
+      env
+      (tc-type-env-marker-start env)
+      owner)))
 
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
@@ -51858,6 +51932,90 @@
     actual
     expected))
 
+;; A context supplies a type, not permission to forget either branch's arena
+;; dependencies. Keep an actual carrier and all reachable regions at heap
+;; joins. Region-free joins forward the existing expected type without data.
+(define (tc-contextual-join-value-type
+  [ctx : TcContext]
+  [ty : ast.AstType]) : ast.AstType
+  (match (tc-global-shared-view ty)
+    [(Region _ _)
+      (let
+        [value : ast.AstType (tc-selected-strip-regions (tc-global-shared-view ty))]
+        ;; A plain Copy read keeps no container view. The existing ownership
+        ;; classifier excludes intrinsic references, including nominal fields;
+        ;; stripping only outer tags keeps payload types/lifetimes intact.
+        (if (and
+          (tc-type-copyable? ctx (tc-global-shared-view value))
+          (tc-selected-value-type-supported? ctx (tc-global-shared-view value)))
+          value
+          ty))]
+    [_ ty]))
+
+(define (tc-contextual-join-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [a : ast.AstType]
+  [b : ast.AstType]) : ResultTcType
+  (if (or
+    (tc-type-contains-region-tag? (tc-global-shared-view a))
+    (tc-type-contains-region-tag? (tc-global-shared-view b)))
+    (tc-contextual-join-region-type
+      ctx
+      env
+      expected
+      (tc-contextual-join-value-type ctx a)
+      (tc-contextual-join-value-type ctx b))
+    (Ok expected)))
+
+(define (tc-contextual-join-region-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expected : ast.AstType]
+  [a : ast.AstType]
+  [b : ast.AstType]) : ResultTcType
+  (if (or
+    (tc-type-contains-region-tag? (tc-global-shared-view a))
+    (tc-type-contains-region-tag? (tc-global-shared-view b)))
+    (let
+      [carrier : ast.AstType
+        (tc-contextual-result-type
+          (tc-contextual-result-type
+            (tc-global-shared-view expected)
+            (tc-global-shared-view a))
+          (tc-global-shared-view b))]
+      [regions : TcNameIdList
+        (tc-name-id-list-add-all
+          (tc-type-collect-regions (tc-global-shared-view a))
+          (tc-type-collect-regions (tc-global-shared-view b)))]
+      (if (tc-region-taggable-type? (tc-global-shared-view carrier))
+        (Ok
+          (tc-tag-regions
+            (tc-name-id-list-difference
+              regions
+              (tc-type-collect-regions (tc-global-shared-view carrier)))
+            carrier))
+        (let
+          [merged
+            (try
+              (tc-merge-branch-type
+                ctx
+                env
+                (tc-contextual-result-type
+                  (tc-global-shared-view expected)
+                  a)
+                (tc-contextual-result-type expected b)))]
+          (if (tc-name-id-list-all-in?
+            regions
+            (tc-type-collect-regions (tc-global-shared-view merged)))
+            (Ok merged)
+            (Err
+              (tc-kind-message
+                (TypeMismatch)
+                "typecheck: branch result cannot retain every arena region"))))))
+    (Ok expected)))
+
 (define (tc-float-literal-non-finite-message [ty-name : String]) : String
   (str_cat.str-cat
     (cdiag.compiler-diagnostic-typecheck-tag (TypeMismatch))
@@ -53249,7 +53407,12 @@
                               env
                               (tc-global-shared-view want)
                               (tc-global-shared-view else-ty)))
-                            (ResultTcType.Ok want)
+                            (tc-contextual-join-type
+                              ctx
+                              env
+                              want
+                              (tc-global-shared-view then-ty)
+                              (tc-global-shared-view else-ty))
                             (tc-merge-branch-type
                               ctx
                               env
@@ -57858,7 +58021,7 @@
                   "typecheck: an :invalidate argument must be a branded local arena owner or a value the caller itself invalidates"]
                 [(tc-name-id-list-contains seen brand)
                   "typecheck: a call cannot invalidate the same arena through two arguments"]
-                [(tc-active-region-owned-by-arena-id? env brand)
+                [(tc-active-region-owned-by-arena-id? ctx env brand)
                   "typecheck: an :invalidate call cannot run inside the arena it destroys"]
                 [(tc-type-contains-arena-owner-region?
                     env
@@ -60839,7 +61002,7 @@
               [(Some _)
                 (match (tc-arena-phase-token-owner-active env pid)
                   [(Some owner)
-                    (if (tc-active-region-owned-by-arena-id? env owner)
+                    (if (tc-active-region-owned-by-arena-id? ctx env owner)
                       (Err
                         (tc-locate-error-at-expr
                           (tc-context-expr-bases ctx)
@@ -60940,7 +61103,7 @@
           owner-ty)]
       (match owner-id
         [(Some oid)
-          (if (tc-active-region-owned-by-arena-id? env oid)
+          (if (tc-active-region-owned-by-arena-id? ctx env oid)
             (Err
               (tc-locate-error-at-expr
                 (tc-context-expr-bases ctx)
@@ -79844,7 +80007,8 @@
                       arm-env
                       got
                       (tc-global-shared-view expected))
-                      [(Compatible _) (Ok expected)]
+                      [(Compatible actual)
+                        (Ok (tc-contextual-result-type expected actual))]
                       [(Mismatch actual)
                         (Err
                           (tc-type-mismatch-message-in-context
@@ -79887,6 +80051,7 @@
         env
         scrut-ty
         arms-ref
+        (tc-global-shared-view expected)
         expected
         0))))
 
@@ -79896,11 +80061,12 @@
   [scrut-ty : ast.AstType]
   [arms : (& arms ast.AstMatchArmList)]
   [expected : ast.AstType]
+  [merged : ast.AstType]
   [index : i64]) : ResultTcType
   (if (>= index arms.len)
-    (Ok expected)
+    (Ok merged)
     (let
-      [_
+      [actual
         (try
           (tc-match-arm-type-with-expected
             ctx
@@ -79908,12 +80074,21 @@
             (tc-global-shared-view scrut-ty)
             (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
             (tc-global-shared-view expected)))]
+      [next
+        (try
+          (tc-contextual-join-type
+            ctx
+            env
+            (tc-global-shared-view expected)
+            merged
+            actual))]
       (tc-check-match-arm-types-with-expected-at
         ctx
         env
         scrut-ty
         arms
         expected
+        next
         (+ index 1)))))
 
 (define (tc-match-rest-types-at

@@ -21969,8 +21969,9 @@
 ;; or writes a TAINTED value: an address-taken local, or a value whose
 ;; definition reads a tainted one, transitively (phi inputs included). An
 ;; `addr_of` result is an address, which no store changes, so it carries no
-;; taint; a load through a tainted pointer does. A loop with nothing tainted
-;; hands no rule a value that names mutable storage, whichever rule it is.
+;; taint; a load through a tainted pointer does. The loop gate protects reads
+;; and definitions in that region. Gep offset also checks every affected base,
+;; including outside-loop uses, before reading it in a preheader.
 ;; Branch facts are the one source outside the loop: a rule reads a condition's
 ;; definition, and with no branch or switch on a tainted value that definition
 ;; is the value the branch tested and names no mutable storage. So a function
@@ -88824,7 +88825,8 @@
             cand-var)])]))
 
 ;; Correctness filter: the derived base is emitted in the preheader, so every
-;; Gep that indexes on a candidate must name a base the loop does not define.
+;; Gep that indexes on a candidate must name a base the loop does not define
+;; and that is outside the taint closure, including uses after the loop.
 (define (opt-gep-offset-drop-variant-bases-instrs!
   [instrs : (& ir.CompilerIrInstrSeq)]
   [def-block : (& def-block (__tl_dyn-array i64))]
@@ -88843,7 +88845,9 @@
                 (= (array-ref cand idx) 1))
                 (match base
                   [(Var b)
-                    (if (opt-gep-offset-var-in-loop? b def-block body)
+                    (if (or
+                      (opt-gep-offset-var-in-loop? b def-block body)
+                      (opt-loop-taint-var? (& opt-loop-taint) b))
                       (set! (array-ref cand idx) 0)
                       unit)]
                   [_ (set! (array-ref cand idx) 0)])

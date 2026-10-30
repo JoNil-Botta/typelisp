@@ -754,3 +754,109 @@
           (test.assert-true
             (= before after)
             "the post-synthesis gate agrees with a freshly computed closure"))])))
+
+;; An exit Gep can share the loop's candidate index. Its base must stay stable
+;; until that outside use, because the derived Gep reads it in the preheader.
+(define (outside-gep-function [mode : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (cat.str-cat
+      "function @gep_outside(n=%0:i64, start=%1:i64, p=%2:u64, q=%4:u64) -> i64 vars 24 {
+     entry:
+     %13 = mov %2 : u64
+     %14 = mov %4 : u64\n"
+      (cond
+        [(= mode 2) "%3 = addr_of %13\n"]
+        [(= mode 1) "%3 = addr_of %14\n"]
+        [else "%3 = mov %4 : u64\n"])
+      "%21 = gt %0, 0 : i64
+     branch %21, pre, done
+     pre:
+     jump loop
+     loop:
+     %5 = phi [0, pre], [%6, loop] : i64
+     %9 = add %1, %5 : i64
+     store_ptr %3, %4 : u64
+     %6 = add %5, 1 : i64
+     %7 = lt %6, %0 : i64
+     branch %7, loop, exit
+     exit:
+     %10 = gep %13, %9 : i64
+     %11 = load %10 : i64
+     return %11
+     done:
+     return 0
+     }")))
+
+(define (outside-gep-region-clean? [func : (& ir.CompilerIrFunction)]) : bool
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    [_install (opt.opt-loop-taint-install! 24 (& blocks))]
+    [loops
+      (opt.opt-cfg-natural-loops-with-context
+        (opt.opt-bool-branch-clone-blocks (& blocks))
+        (&
+          (opt.opt-cfg-context-build
+            (opt.opt-bool-branch-clone-blocks (& blocks)))))]
+    [loop (& (array-ref loops.slots 0))]
+    (not
+      (opt.opt-loop-tainted?
+        (& blocks)
+        (opt.opt-label-add
+          (opt.opt-natural-loop-body loop)
+          (opt.opt-natural-loop-header loop))))))
+
+(define (outside-gep-count-blocks
+  [blocks : (& (Slice ir.CompilerIrBlock))]
+  [derived? : bool]) : i64
+  (match blocks
+    [(slice) 0]
+    [(slice (Block _ instrs) & rest)
+      (let
+        [count : i64 0]
+        (for [i (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+          (when
+            (match (ir.compiler-ir-instr-seq-borrow instrs i)
+              [(Gep dst (Var 13) _ _)
+                (if derived?
+                  (!= dst 10)
+                  (= dst 10))]
+              [_ false])
+            (+= count 1)))
+        (+ count (outside-gep-count-blocks rest derived?)))]))
+
+(define (outside-gep-count [func : (& ir.CompilerIrFunction)] [derived? : bool]) : i64
+  (let
+    [blocks (opt.opt-function-blocks func)]
+    (outside-gep-count-blocks (ir.compiler-ir-block-list-view blocks) derived?)))
+
+(test
+  value-gate-gep-outside-loop-base
+  (for [mode (iterator.range 0 3)]
+    (reset!)
+    (let
+      [func (outside-gep-function mode)]
+      [_valid (valid! (& func))]
+      [_clean
+        (test.assert-true
+          (outside-gep-region-clean? (& func))
+          "the loop region itself is clean in all three cases")]
+      [out (loop-run true func)]
+      (valid! (& out))
+      (test.assert-i64-eq
+        (opt.opt-function-frame (& out))
+        (if (= mode 2)
+          24
+          25)
+        "only a tainted outside base refuses the candidate")
+      (test.assert-i64-eq
+        (outside-gep-count (& out) true)
+        (if (= mode 2)
+          0
+          1)
+        "a mutable outside base must not be read in the preheader")
+      (test.assert-i64-eq
+        (outside-gep-count (& out) false)
+        (if (= mode 2)
+          1
+          0)
+        "the exit keeps reading the current mutable base"))))

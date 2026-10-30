@@ -3281,3 +3281,8 @@ pin scalar operand/result gates, stale divisor and multiplier facts, original an
 resolved pure-call arguments, seeded arguments/results, cache result admission,
 and direct writes to address-taken storage as availability barriers. Private
 fact/rewrite tests install their own closure; do not rely on another test's set.
+
+The outside-loop Gep fixture keeps the loop region clean while its pointer store
+changes an address-taken base read by an exit Gep. Candidate base validation must
+refuse that hoist. Clean and unrelated-storage controls still split, and removing
+only the base-taint check must fail the mutable-base assertion.

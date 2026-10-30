@@ -11176,6 +11176,11 @@
   (define opt-verify-test-post? : bool
     false))
 
+(cfg
+  test
+  (define (opt-verify-test-post-set! [value : bool]) : unit
+    (set! opt-verify-test-post? value)))
+
 (defmacro (opt-verify-post [_name : Expr] [body : Expr]) : Expr
   `(opt-verify-at
     (if (< opt-verify-boundary-label 0)
@@ -11185,9 +11190,9 @@
       test
       (let
         [previous-post? : bool opt-verify-test-post?]
-        [_post-install : unit (set! opt-verify-test-post? true)]
+        [_post-install : unit (opt-verify-test-post-set! true)]
         [result ,body]
-        (set! opt-verify-test-post? previous-post?)
+        (opt-verify-test-post-set! previous-post?)
         result)
       ,body)))
 
@@ -11379,10 +11384,14 @@
     [original ,func]
     [original-context ,context]
     (if ,candidate?
-      (match (opt-verify-gate
-        ,verified?
-        (compiler-opt-global-shared-view original)
-        (compiler-opt-global-shared-view original-context))
+      (match (opt-verify-at
+        (str_cat.str-cat "entry." ,pass)
+        (opt-verify-post
+          (str_cat.str-cat "entry." ,pass)
+          (opt-verify-gate
+            ,verified?
+            (compiler-opt-global-shared-view original)
+            (compiler-opt-global-shared-view original-context))))
         [(ResultCompilerOptimizeVerify.Ok)
           (opt-function-rewrite-commit-verified
             ,pass
@@ -12762,23 +12771,6 @@
   test
   (define (opt-verify-test-stop!) : unit
     (set! opt-verify-test-active? false)))
-
-(cfg
-  test
-  (define (opt-verify-test-stage!
-    [state : (& state OptPassState)]
-    [name : (& str)]) : unit
-    (unless opt-verify-test-active? (return unit))
-    (let
-      [key : String (str_cat.str-cat "output." (string.copy name))]
-      (when (opt-verify-test-seen? (& key)) (return unit))
-      (let
-        [func (& state.func)]
-        (unless (opt-verify-ok? (& (opt-verify-function func))) (return unit))
-        (let
-          [context : OptCfgContext
-            (opt-cfg-context-build (opt-function-blocks func))]
-          (opt-verify-test-pass! (& context) (& key) func))))))
 
 (cfg
   test
@@ -16191,10 +16183,14 @@
             renamed
             outs
             sites)]
-        (opt-function-ctx-commit
-          fallback
-          context
-          (& (Result next-blocks next-frame true))))]))
+        (opt-verify-at
+          "ssa"
+          (opt-verify-post
+            "ssa"
+            (opt-function-ctx-commit
+              fallback
+              context
+              (& (Result next-blocks next-frame true))))))]))
 
 ;; True when the entry block has an explicit CFG predecessor (e.g. the
 ;; tail-recursion-to-loop back edge jumps to the function entry block).
@@ -17342,10 +17338,14 @@
   ;; `verified?`: every cluster pass post-verifies its own rewrite (falling
   ;; back to its verified input on rejection), so a verified cluster input
   ;; reaches this pass still verified and the entry verify is skipped.
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (owned_view.compiler-owned-reference-shared-view context))
+  (match (opt-verify-at
+    "entry.global_gvn"
+    (opt-verify-post
+      "entry.global_gvn"
+      (opt-verify-gate
+        verified?
+        (compiler-opt-global-shared-view func)
+        (owned_view.compiler-owned-reference-shared-view context))))
     [(Ok)
       (match func
         [(Function name params ret-ty frame blocks function-abi)
@@ -19086,10 +19086,14 @@
   (let
     [_trace-function : unit
       (opt-preheader-trace-function! (opt-function-name (& func)))]
-    (match (opt-verify-gate
-      verified?
-      (compiler-opt-global-shared-view func)
-      (compiler-opt-global-shared-view context))
+    (match (opt-verify-at
+      "entry.preheaders"
+      (opt-verify-post
+        "entry.preheaders"
+        (opt-verify-gate
+          verified?
+          (compiler-opt-global-shared-view func)
+          (compiler-opt-global-shared-view context))))
       [(Ok)
         (match (match (& func)
           [(Function _ _ _ _ blocks _)
@@ -21311,10 +21315,14 @@
   ;; `context` must be valid for `func`'s blocks (its entry verify reuses it).
   (match (compiler-opt-global-shared-view func)
     [(Function _ _ _ _ blocks _)
-      (match (opt-verify-gate
-        verified?
-        (compiler-opt-global-shared-view func)
-        (compiler-opt-global-shared-view context))
+      (match (opt-verify-at
+        "entry.rotate_ssa"
+        (opt-verify-post
+          "entry.rotate_ssa"
+          (opt-verify-gate
+            verified?
+            (compiler-opt-global-shared-view func)
+            (compiler-opt-global-shared-view context))))
         [(Ok)
           (opt-rotate-ssa-rounds
             func
@@ -47592,9 +47600,11 @@
     [(Function _ _ _ frame blocks _)
       (match (opt-cfg-straighten-forwarding-blocks blocks frame)
         [(Result next-blocks changed)
-          (match (opt-function-pass-commit
-            (owned_view.compiler-owned-reference-shared-view func)
-            (& (Result next-blocks frame changed)))
+          (match (opt-verify-at
+            "cfg_straighten"
+            (opt-function-pass-commit
+              (owned_view.compiler-owned-reference-shared-view func)
+              (& (Result next-blocks frame changed))))
             [(Result next next-changed?)
               (Result
                 (compiler-opt-debug-observe-function
@@ -49663,15 +49673,17 @@
             (ir.compiler-ir-block-builder-to-list rewritten-out)]
           (match rewrite
             [(Result _ changed)
-              (opt-function-pass-commit
-                func
-                (&
-                  (Result
-                    (if changed
-                      (opt-cfg-reachable-block-order (& rewritten))
-                      rewritten)
-                    frame
-                    changed)))])))]))
+              (opt-verify-at
+                "switch"
+                (opt-function-pass-commit
+                  func
+                  (&
+                    (Result
+                      (if changed
+                        (opt-cfg-reachable-block-order (& rewritten))
+                        rewritten)
+                      frame
+                      changed))))])))]))
 
 ;; --- classifier compare chain -> one bitmask test (bit_test) -----------------
 ;;
@@ -50793,20 +50805,22 @@
           [planned : i64 (opt-bit-test-plans-count plans)]
           (if (= planned 0)
             (Result func false)
-            (opt-function-pass-commit
-              func
-              (&
-                (Result
-                  (opt-cfg-reachable-block-order
-                    (&
-                      (opt-blocks-build
-                        blocks
-                        opt-bit-test-rewrite-blocks!
-                        blocks
-                        plans
-                        frame)))
-                  (+ frame (* planned (opt-bit-test-plan-vars)))
-                  true))))))]))
+            (opt-verify-at
+              "bit_test"
+              (opt-function-pass-commit
+                func
+                (&
+                  (Result
+                    (opt-cfg-reachable-block-order
+                      (&
+                        (opt-blocks-build
+                          blocks
+                          opt-bit-test-rewrite-blocks!
+                          blocks
+                          plans
+                          frame)))
+                    (+ frame (* planned (opt-bit-test-plan-vars)))
+                    true)))))))]))
 
 (define (optimize-function-max-iterations) : i64
   2)
@@ -58514,7 +58528,13 @@
         (if (or
           (not use.on?)
           (not
-            (opt-verify-ok? (& (opt-verify-function-with-context func context)))))
+            (opt-verify-ok?
+              (&
+                (opt-verify-at
+                  "entry.len_eq"
+                  (opt-verify-post
+                    "entry.len_eq"
+                    (opt-verify-function-with-context func context)))))))
           func
           (match (opt-bounds-dom-blocks-with-context-result
             type-segment-bases
@@ -70016,7 +70036,11 @@
             context
             true
             func)
-          (match (opt-verify-function-with-context func context)
+          (match (opt-verify-at
+            "entry.unroll"
+            (opt-verify-post
+              "entry.unroll"
+              (opt-verify-function-with-context func context)))
             [(Ok)
               (opt-unroll-function-verified-with-context-result
                 type-segment-bases
@@ -70121,10 +70145,14 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
+  (match (opt-verify-at
+    "entry.unroll_verified"
+    (opt-verify-post
+      "entry.unroll_verified"
+      (opt-verify-gate
+        verified?
+        (compiler-opt-global-shared-view func)
+        (compiler-opt-global-shared-view context))))
     [(Ok)
       (match (& func)
         [(Function _ _ _ frame blocks _) (opt-loop-taint-install! frame blocks)])
@@ -86777,10 +86805,14 @@
   [context : OptCfgContext]
   [verified? : bool]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-gate
-    verified?
-    (compiler-opt-global-shared-view func)
-    (compiler-opt-global-shared-view context))
+  (match (opt-verify-at
+    "entry.bce_version"
+    (opt-verify-post
+      "entry.bce_version"
+      (opt-verify-gate
+        verified?
+        (compiler-opt-global-shared-view func)
+        (compiler-opt-global-shared-view context))))
     [(Ok)
       (match (& func)
         [(Function _ _ _ frame blocks _) (opt-loop-taint-install! frame blocks)])
@@ -93155,7 +93187,11 @@
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
   ;; The check itself is still a full verify: this pass is NOT covered by the
   ;; `loop-cluster-verified?` invariant and skipping it crashes the self-compile.
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-at
+    "entry.successor_sink"
+    (opt-verify-post
+      "entry.successor_sink"
+      (opt-verify-function-with-context func context)))
     [(Err _) (Result func context)]
     [(Ok)
       (match (compiler-opt-global-shared-view func)
@@ -93480,7 +93516,9 @@
         (Result func false)
         (match (opt-uniform-phi-rounds blocks (opt-uniform-phi-round-max) false)
           [(Result next folded)
-            (opt-function-pass-commit func (& (Result next frame folded)))]))]))
+            (opt-verify-at
+              "uniform_phi"
+              (opt-function-pass-commit func (& (Result next frame folded))))]))]))
 
 ;; A rotation retires the header's top test, mints a landing block and clones
 ;; the guard into the preheader and the latch, so it never leaves both the block
@@ -95189,7 +95227,11 @@
   [cells : (& OptGlobalCellSummary)]
   [context : OptCfgContext]
   [func : ir.CompilerIrFunction]) : OptFunctionCtxResult
-  (match (opt-verify-function-with-context func context)
+  (match (opt-verify-at
+    "entry.guard_sink"
+    (opt-verify-post
+      "entry.guard_sink"
+      (opt-verify-function-with-context func context)))
     [(Err _) (Result func context)]
     [(Ok)
       (match (compiler-opt-global-shared-view func)
@@ -95768,13 +95810,15 @@
                           unit))
                       (if (not changed)
                         (Result func false)
-                        (opt-function-pass-commit
-                          func
-                          (&
-                            (Result
-                              (opt-cfg-simplify-blocks (& blocks))
-                              (array-ref frame-cell 0)
-                              true)))))))))]))]))
+                        (opt-verify-at
+                          "if_convert"
+                          (opt-function-pass-commit
+                            func
+                            (&
+                              (Result
+                                (opt-cfg-simplify-blocks (& blocks))
+                                (array-ref frame-cell 0)
+                                true))))))))))]))]))
 
 ;; --- G1a: constructor destination forwarding (SRET<-tmp) --------------------
 ;;
@@ -98753,27 +98797,29 @@
         ;; The entry copy shares the source check's recognized copy-0 spelling,
         ;; preserving its location without constructing a constant suffix.
         [seed-ok : i64 (opt-ubound-fresh-label blocks site.ok "__u0" 0)]
-        (opt-function-pass-commit
-          (owned_view.compiler-owned-reference-shared-view func)
-          (&
-            (Result
-              (opt-cfg-reachable-block-order
-                (&
-                  (opt-blocks-build
-                    blocks
-                    opt-ubound-rewrite-blocks!
-                    (owned_view.compiler-owned-reference-shared-view site)
-                    phi-count
-                    lo-label
-                    join-label
-                    chk-label
-                    trap-label
-                    seed-ok
-                    frame
-                    (+ frame 1)
-                    (+ frame 2))))
-              (+ frame (opt-ubound-plan-vars))
-              true))))]))
+        (opt-verify-at
+          "ubound"
+          (opt-function-pass-commit
+            (owned_view.compiler-owned-reference-shared-view func)
+            (&
+              (Result
+                (opt-cfg-reachable-block-order
+                  (&
+                    (opt-blocks-build
+                      blocks
+                      opt-ubound-rewrite-blocks!
+                      (owned_view.compiler-owned-reference-shared-view site)
+                      phi-count
+                      lo-label
+                      join-label
+                      chk-label
+                      trap-label
+                      seed-ok
+                      frame
+                      (+ frame 1)
+                      (+ frame 2))))
+                (+ frame (opt-ubound-plan-vars))
+                true)))))]))
 
 (define (opt-ubound-function-pass
   [type-segment-bases : i64]
@@ -101735,7 +101781,6 @@
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [state : OptPassState (opt-verify-at ,pass ,next)]
-    (cfg test (opt-verify-test-stage! (& state) (& ,pass)))
     (opt-pass-observe state ,pass)
     (opt-pass-note state ,pass start-ms)
     state))
@@ -101745,7 +101790,6 @@
   `(let
     [start-ms : i64 (cfg compile-profile (profile.now-ms) 0)]
     [state : OptPassState (opt-verify-at ,pass ,next)]
-    (cfg test (opt-verify-test-stage! (& state) (& ,pass)))
     (opt-pass-note state ,pass start-ms)
     state))
 
@@ -101772,7 +101816,6 @@
     ,start-ms))
 
 (define (opt-pass-observed [state : OptPassState] [pass : String]) : OptPassState
-  (cfg test (opt-verify-test-stage! (& state) (& pass)))
   (opt-pass-observe state pass)
   state)
 
@@ -102272,7 +102315,13 @@
     [s
       (opt-stage
         "bounds_dom"
-        (if (opt-verify-ok? (& (opt-verify-function-with-context ssa s.ctx)))
+        (if (opt-verify-ok?
+          (&
+            (opt-verify-at
+              "entry.bounds_dom"
+              (opt-verify-post
+                "entry.bounds_dom"
+                (opt-verify-function-with-context ssa s.ctx)))))
           (match (opt-bounds-dom-blocks-with-context-result
             type-segment-bases
             (opt-pass-ctx s)
@@ -102443,7 +102492,12 @@
     ;; internal error.
     [verified? : bool
       (opt-verify-ok?
-        (& (opt-verify-function-with-context (& s.func) (& s.ctx))))]
+        (&
+          (opt-verify-at
+            "entry.loop_cluster"
+            (opt-verify-post
+              "entry.loop_cluster"
+              (opt-verify-function-with-context (& s.func) (& s.ctx))))))]
     [s
       (opt-stage
         "preheaders"
@@ -140871,7 +140925,12 @@
             ;; var across a dominance edge.
             (not
               (opt-verify-ok?
-                (& (opt-verify-function-with-context func context)))))
+                (&
+                  (opt-verify-at
+                    "entry.guard_dedup"
+                    (opt-verify-post
+                      "entry.guard_dedup"
+                      (opt-verify-function-with-context func context)))))))
             func
             (let
               ;; (1) MF-3's hoist, verbatim. It moves whole `gep ; load` pairs

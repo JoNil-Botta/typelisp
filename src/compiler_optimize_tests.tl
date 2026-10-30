@@ -84849,34 +84849,180 @@ return 0" true)
     (compiler-optimize-licm-field-pipeline-self-test)
     42
     "compiler-optimize-licm-field-pipeline-self-test")
+  ;; A four-arm chain forces the shared switch commit; the smaller classifier
+  ;; fixtures intentionally prefer bit_test and never reach this boundary.
+  (let
+    [func
+      (irt.func
+        "function @verify_switch(tag=%0:i64) -> i64 vars 5 {
+entry:
+%1 = eq %0, 0 : i64
+branch %1, a, c1
+c1:
+%2 = eq %0, 1 : i64
+branch %2, b, c2
+c2:
+%3 = eq %0, 2 : i64
+branch %3, c, c3
+c3:
+%4 = eq %0, 3 : i64
+branch %4, d, e
+a:
+return 0
+b:
+return 1
+c:
+return 2
+d:
+return 3
+e:
+return 4
+}")]
+    (match (opt.opt-switch-form-function-pass func)
+      [(Result _ changed?) (test.assert-true changed? "switch boundary ran")]))
+  ;; The public unroller can receive an unverified input independently of the
+  ;; outer driver. Its false gate must still run the original full check.
+  (let
+    [func
+      (irt.func "function @verify_unroll() -> unit vars 0 {
+entry:
+return
+}")]
+    [context (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+    [_result
+      (opt.opt-unroll-function-verified-with-context-result
+        (ast.ast-node-pool-reader-type-segment-bases)
+        context
+        false
+        func)]
+    unit)
   (opt.opt-verify-test-stop!)
   (let
-    [expected : (Array String 21)
+    [expected : (Array String 60)
       (array
-        "preheaders"
-        "rotate_ssa"
-        "scratch_reset"
-        "licm"
-        "induction"
-        "flag_exit"
-        "bce_version"
-        "unroll"
-        "lftr"
-        "output.post_lftr_licm"
-        "gep_offset"
+        "entry.bounds_dom"
+        "entry.loop_cluster"
+        "entry.successor_sink"
+        "entry.rotate_ssa"
+        "entry.guard_sink"
+        "entry.licm_unswitch"
+        "ubound"
+        "ssa"
+        "entry.guard_dedup"
+        "cfg_straighten"
         "successor_sink"
-        "guard_sink"
-        "bool_branch"
-        "bool_branch_late"
+        "opt-cmp-dup-function-with-budget"
+        "opt-dce-late-unblock-decided-joins"
         "thread_branch"
-        "phi_cmp_fold"
-        "bounds_group"
-        "copy_call"
+        "entry.thread_branch"
+        "rotate_ssa"
+        "bce_hoist"
+        "preheaders"
+        "entry.phi_cmp_fold"
+        "licm"
+        "entry.global_gvn"
+        "entry.licm"
+        "licm_unswitch"
+        "opt-licm-unswitch-final"
+        "entry.induction"
+        "induction"
+        "entry.lftr"
+        "lftr"
+        "entry.unroll"
+        "unroll"
+        "post_lftr_licm"
+        "entry.bce_version"
+        "bce_version"
+        "entry.bool_branch_chain"
+        "bool_branch_late"
+        "entry.gep_offset"
+        "gep_offset"
+        "entry.flag_exit"
+        "flag_exit"
+        "gep_split"
+        "entry.preheaders"
+        "entry.bool_branch"
+        "bool_branch"
+        "bool_branch_chain"
+        "if_convert"
+        "entry.scratch_reset"
+        "scratch_reset"
+        "entry.loop_call"
         "fill_call"
-        "output.global_gvn")]
+        "loop_call"
+        "copy_call"
+        "guard_sink"
+        "entry.len_eq"
+        "bit_test"
+        "entry.bounds_group"
+        "bounds_group"
+        "phi_cmp_fold"
+        "uniform_phi"
+        "switch"
+        "entry.unroll_verified")]
     (for [i (iterator.range 0 (array-length expected))]
       (test.assert-true
         (opt.opt-verify-test-seen? (& (array-ref expected i)))
         (str_cat.str-cat
           "missing planted-defect pass coverage: "
           (clone (array-ref expected i)))))))
+
+;; Goldens captured with the base full verifier on 0bc228b76. Each case checks
+;; the complete first diagnostic, including the two faults in the final rows.
+(test
+  full-verifier-changed-branches
+  (let
+    [cases : (Array String 20)
+      (array
+        "function @branch() -> unit vars 0 {\nentry:\n return\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0\nreturn\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage -1\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = alloc i64\n%2 = addr_of %1 storage 2\nreturn\n}"
+        "function @branch() -> unit vars 4 {\nentry:\n %0 = alloc i64\n%1 = alloc i64\n%2 = addr_of %1 storage 2\n%3 = addr_of %1 storage 1\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = call make() : u64\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage 1\n%2 = call make([sret arg 0] %1) : u64\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage 1\n%2 = call* @make([sret arg 0] %1) : u64\nreturn\n}"
+        "function @branch() -> unit vars 3 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage 1\n%2 = call_c* @make([sret arg 0] %1) : u64\nreturn\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = mov 0 : u64\n%1 = call make([sret arg 0] %0) : u64\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = call make([sret arg 0] 0) : u64\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = mov 0 : i64\n%0 = mov 1 : i64\nreturn\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %1 = mov 0 : i64\nreturn\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return %0\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return 0\n}"
+        "function @branch(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n return\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = mov %1 : i64\n%0 = mov 1 : i64\nreturn\n}"
+        "function @branch() -> unit vars 2 {\nentry:\n %0 = alloc i64\n%1 = addr_of %0 storage -1\nreturn %2\n}"
+        "function @branch(output=%0:u64) -> u64 vars 2 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\n %1 = mov %2 : i64\nreturn 0\n}"
+        "function @branch() -> unit vars 1 {\nentry:\n %0 = call_c* @make() : u64\nreturn\n}")]
+    [expected : (Array String 20)
+      (array
+        "Ok"
+        "Ok"
+        "function @branch: block entry instruction 1: optimizer verify: invalid or overlapping inline storage extent"
+        "Ok"
+        "function @branch: block entry instruction 2: optimizer verify: invalid or overlapping inline storage extent"
+        "Ok"
+        "Ok"
+        "Ok"
+        "Ok"
+        "optimizer verify: sret argument must address inline output storage"
+        "optimizer verify: sret argument must be a pointer variable"
+        "optimizer verify: duplicate var definition"
+        "optimizer verify: duplicate var definition"
+        "Ok"
+        "function @branch: block entry instruction 0: optimizer verify: return-storage definition returns a different address"
+        "function @branch: block entry instruction 0: optimizer verify: return-storage definition omits its result"
+        "optimizer verify: duplicate var definition"
+        "optimizer verify: use before definition"
+        "optimizer verify: use before definition"
+        "Ok")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [func (irt.func (clone (array-ref cases i)))]
+        [actual : String
+          (match (opt.opt-verify-function (& func))
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq actual (array-ref expected i))
+          (str_cat.str-cat "full-verifier branch " (string.int->string i)))))))

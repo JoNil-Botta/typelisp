@@ -635,3 +635,122 @@
             (opt.opt-pure-call-sites-empty? (& out))
             (and (= mode 1) (!= form 0)))
           "every original argument position is checked before seeding")))))
+
+(test
+  value-gate-no-candidate-keeps-next-function-fresh
+  (let
+    [old (div-function true)]
+    [old-blocks (opt.opt-function-blocks old)]
+    [_old (opt.opt-loop-taint-install! 8 (& old-blocks))]
+    [no-mul
+      (opt.opt-const-global-mul-shift-final
+        (& (constants))
+        (scalar-function false 0))]
+    (test.assert-i64-eq
+      (count (& no-mul) 0)
+      1
+      "no Mul leaves the function unchanged")
+    (let
+      [clean
+        (opt.opt-const-global-mul-shift-final
+          (& (constants))
+          (mul-function false))]
+      (test.assert-i64-eq
+        (count (& clean) 2)
+        1
+        "next Mul candidate installs its own set"))
+    (opt.opt-loop-taint-install! 8 (& old-blocks))
+    (let
+      [func
+        (irt.func
+          "function @no_loop(p=%0:u64, x=%1:i64) -> i64 vars 8 {
+         entry:
+         %2 = addr_of %1
+         %3 = gep %0, 0 : i64
+         %4 = load %3 : i64
+         return %4
+         }")]
+      [out (loop-run true func)]
+      (valid! (& out))
+      (test.assert-i64-eq
+        (opt.opt-function-frame (& out))
+        8
+        "no loop adds no support"))
+    (let
+      [clean (loop-run true (gep-function 0 false))]
+      (test.assert-i64-eq
+        (opt.opt-function-frame (& clean))
+        25
+        "the next loop candidate installs its own set"))))
+
+;; The mutation audit adds `%22 = mov %20` to the synthesized preheader and
+;; changes the Add to read %22. %20 is mutable storage; %22 needs a fresh closure.
+(define (refresh-function) : ir.CompilerIrFunction
+  (irt.func
+    "function @refresh(n=%0:i64, start=%1:i64, p=%2:u64) -> i64 vars 24 {
+     entry:
+     %20 = mov 9 : i64
+     %3 = addr_of %20
+     %21 = gt %0, 0 : i64
+     branch %21, refresh_loop, refresh_exit
+     refresh_loop:
+     %5 = phi [0, entry], [%6, refresh_body] : i64
+     %7 = lt %5, %0 : i64
+     branch %7, refresh_body, refresh_exit
+     refresh_body:
+     %9 = add %1, %5 : i64
+     %10 = gep %2, %9 : i64
+     %11 = load %10 : i64
+     store_ptr %3, 4 : i64
+     %6 = add %5, 1 : i64
+     jump refresh_loop
+     refresh_exit:
+     return 0
+     }"))
+
+(test
+  value-gate-preheader-closure-is-current
+  (reset!)
+  (let
+    [func (refresh-function)]
+    [_valid (valid! (& func))]
+    [blocks (opt.opt-function-blocks func)]
+    [context
+      (opt.opt-cfg-context-build (opt.opt-bool-branch-clone-blocks (& blocks)))]
+    (match (opt.opt-gep-offset-prepare-preheaders
+      (ast.ast-node-pool-reader-type-segment-bases)
+      blocks
+      context
+      24
+      8
+      false)
+      [(Result staged staged-context changed)
+        (test.assert-true changed "the fixture synthesizes a preheader")
+        (let
+          [loops
+            (opt.opt-cfg-natural-loops-with-context
+              (opt.opt-bool-branch-clone-blocks (& staged))
+              (& staged-context))]
+          [loop (& (array-ref loops.slots 0))]
+          [labels
+            (opt.opt-label-add
+              (opt.opt-natural-loop-body loop)
+              (opt.opt-natural-loop-header loop))]
+          [before
+            (opt.opt-loop-tainted?
+              (& staged)
+              (opt.opt-label-add
+                (opt.opt-natural-loop-body loop)
+                (opt.opt-natural-loop-header loop)))]
+          [_verify
+            (valid!
+              (&
+                (opt.opt-function-with-frame-blocks
+                  (& func)
+                  24
+                  (opt.opt-bool-branch-clone-blocks (& staged)))))]
+          [_fresh (opt.opt-loop-taint-install! 24 (& staged))]
+          [after (opt.opt-loop-tainted? (& staged) labels)]
+          (test.assert-true
+            (= before after)
+            "the post-synthesis gate agrees with a freshly computed closure"))])))

@@ -88700,7 +88700,11 @@
   [remaining : i64]
   [changed : bool]) : OptGepOffsetPreheaderResult
   (if (<= remaining 0)
-    (Result blocks context changed)
+    (begin
+      ;; A successful staging round had a natural loop. Refresh on the budget
+      ;; exit too, so planning never consumes the pre-synthesis closure.
+      (when changed (opt-loop-taint-install! frame (& blocks)))
+      (Result blocks context changed))
     (let
       [uses : (__tl_dyn-array i64) (opt-gep-offset-effective-uses blocks frame)]
       [gep-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
@@ -88729,6 +88733,12 @@
           (opt-cfg-natural-loops-with-context
             (compiler-opt-global-shared-view blocks)
             context)]
+        ;; No natural loops means no synthesis or offset rewrite. Each changed
+        ;; staging round refreshes before its next gate, including new phi flow.
+        (opt-loop-taint-install-for-loops!
+          frame
+          (& blocks)
+          (opt_natural_loop_vec.view natural-loops))
         (opt-gep-offset-synthesize-first-candidate
           (opt_natural_loop_vec.view natural-loops)
           (compiler-opt-global-shared-view blocks)
@@ -89543,7 +89553,6 @@
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
-      (opt-loop-taint-install! frame (& blocks))
       (opt-loop-function-rewrite
         "gep_offset"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -121119,6 +121128,16 @@
             (opt-const-global-mul-shift-instr constants copies counts instr)))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
+;; The raw matcher rewrites only i64/u64 Mul. Without one, neither its
+;; candidate tables nor the function's taint closure can enable a rewrite.
+(define (opt-const-global-mul-shift-candidate-op? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(BinOp _ (Mul) _ _ ty)
+      (match ty
+        [(or (I64) (U64)) true]
+        [_ false])]
+    [_ false]))
+
 (define (opt-const-global-mul-shift-final
   [constants : (& opt_i64_i64_map.Map)]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
@@ -121126,6 +121145,9 @@
     func
     (match func
       [(Function name params ret-ty frame blocks function-abi)
+        (unless
+          (opt-blocks-any? blocks opt-const-global-mul-shift-candidate-op?)
+          (return (Function name params ret-ty frame blocks function-abi)))
         (when
           (opt-value-function-branches-tainted? frame (& blocks))
           (return (Function name params ret-ty frame blocks function-abi)))

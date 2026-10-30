@@ -21956,8 +21956,9 @@
       [(None) false])))
 
 ;; The value-fact and loop transforms' address-taken gate (#9420). Div/rem
-;; safety, global multiply-to-shift and pure-call dedupe gate whole functions:
-;; their fact/copy/availability tables span all blocks (including inline sites).
+;; safety, global multiply-to-shift and pure-call dedupe gate each rewrite and
+;; the facts it consumes; their function-wide tables admit no tainted copies,
+;; arguments or result slots (including seeded sites after inlining).
 ;; Gep offset splitting and induction gate natural loops, including preheader
 ;; preparation, using the same closure and branch rule below. BCE versioning and its
 ;; clone-free hoist and bound tightening, ubound, unrolling, fill/copy-call
@@ -22125,21 +22126,23 @@
   (match block
     [(Block _ instrs) (opt-loop-instrs-tainted? (& instrs))]))
 
-;; Whole-function region for passes whose fact tables span all blocks.
-(define (opt-value-blocks-tainted?
-  [remaining : (& remaining (Slice ir.CompilerIrBlock))]) : bool
-  (match remaining
-    [(slice) false]
-    [(slice block & rest)
-      (or (opt-loop-block-tainted? block) (opt-value-blocks-tainted? rest))]))
+;; Value facts may name only untainted values. This also applies to a fact's
+;; destination and to a cached result, not just a rewritten operation's inputs.
+;; The branch rule covers premises supplied by conditions outside the rewrite.
+(define (opt-value-tainted? [value : (& ir.CompilerIrValue)]) : bool
+  (or
+    opt-loop-taint-branches?
+    (match value
+      [(Var id) (opt-loop-taint-var? (& opt-loop-taint) id)]
+      [_ false])))
 
-(define (opt-value-function-tainted?
+;; Install this function's closure before any fact/rewrite gate. Only the
+;; inherited tainted-branch rule refuses every rewrite in the function.
+(define (opt-value-function-branches-tainted?
   [frame : i64]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
   (opt-loop-taint-install! frame blocks)
-  (and
-    (> (array-length opt-loop-taint) 0)
-    (opt-value-blocks-tainted? (ir.compiler-ir-block-list-view blocks))))
+  opt-loop-taint-branches?)
 
 (define (opt-loop-tainted-from?
   [remaining : (& remaining (Slice ir.CompilerIrBlock))]
@@ -59113,6 +59116,16 @@
   [instr : ir.CompilerIrInstr]) : ir.CompilerIrInstr
   (match (compiler-opt-global-shared-view instr)
     [(BinOp dst op lhs rhs ty)
+      (when
+        (and
+          (match (& op)
+            [(or (Div) (Mod)) true]
+            [_ false])
+          (or
+            (opt-value-tainted? (& lhs))
+            (opt-value-tainted? (& rhs))
+            (opt-value-tainted? (& (ir.CompilerIrValue.Var dst)))))
+        (return instr))
       (BinOp
         dst
         (opt-divrem-rewrite-op type-segment-bases facts op (& lhs) (& rhs) ty)
@@ -59346,7 +59359,7 @@
     ;; No Div/Mod op anywhere: every rewrite is identity, so the pass output
     ;; equals the input; skip the SSA facts build and the per-block copies.
     blocks
-    (if (opt-value-function-tainted? frame (& blocks))
+    (if (opt-value-function-branches-tainted? frame (& blocks))
       blocks
       (let
         [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
@@ -121051,7 +121064,9 @@
     [(None) unit])
   (match instr
     [(Mov dst (Global name) _)
-      (opt_i64_i64_map.insert-ref! copies dst (ir.compiler-ir-symbol-id name))]
+      (unless
+        (opt-value-tainted? (& (ir.CompilerIrValue.Var dst)))
+        (opt_i64_i64_map.insert-ref! copies dst (ir.compiler-ir-symbol-id name)))]
     [_ unit]))
 
 (define (opt-const-global-mul-shift-count-params!
@@ -121091,11 +121106,17 @@
     (for [index (iterator.range 0 count)]
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
-        (opt-const-global-mul-shift-instr
-          constants
-          copies
-          counts
-          (ir.compiler-ir-instr-seq-ref instrs index))))
+        (let
+          [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+          (if (match (& instr)
+            [(BinOp dst (Mul) lhs rhs _)
+              (or
+                (opt-value-tainted? (& lhs))
+                (opt-value-tainted? (& rhs))
+                (opt-value-tainted? (& (ir.CompilerIrValue.Var dst))))]
+            [_ false])
+            instr
+            (opt-const-global-mul-shift-instr constants copies counts instr)))))
     (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (define (opt-const-global-mul-shift-final
@@ -121106,7 +121127,7 @@
     (match func
       [(Function name params ret-ty frame blocks function-abi)
         (when
-          (opt-value-function-tainted? frame (& blocks))
+          (opt-value-function-branches-tainted? frame (& blocks))
           (return (Function name params ret-ty frame blocks function-abi)))
         (let
           [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
@@ -134407,6 +134428,17 @@
         (opt-pure-call-sites-collect call-memory rest next))]))
 
 ;; `cur` with the site whose result var is `dst` consed on, when there is one.
+(define (opt-pure-call-args-tainted? [args : (& ir.CompilerIrCallArgs)]) : bool
+  (match args
+    [(Nil) false]
+    [(One x) (opt-value-tainted? (& x))]
+    [(Two x y) (or (opt-value-tainted? (& x)) (opt-value-tainted? (& y)))]
+    [(Array xs)
+      (for [index (iterator.range 0 (array-length xs))]
+        (when (opt-value-tainted? (& (array-ref xs index))) (return true)))
+      false]
+    [(Sret _ _) true]))
+
 (define (opt-pure-call-sites-seed
   [sites : OptPureCallTable]
   [dst : i64]
@@ -134415,7 +134447,11 @@
     [(Nil) cur]
     [(Cons entry rest)
       (if (= entry.dst dst)
-        (Cons (OptPureCallEntry entry.name entry.args entry.dst) (box cur))
+        (if (or
+          (opt-value-tainted? (& (ir.CompilerIrValue.Var entry.dst)))
+          (opt-pure-call-args-tainted? (& entry.args)))
+          cur
+          (Cons (OptPureCallEntry entry.name entry.args entry.dst) (box cur)))
         (opt-pure-call-sites-seed (deref rest) dst cur))]))
 
 ;; Summary 0 is "writes nothing"; a callee without a row (an extern, a runtime
@@ -134451,10 +134487,14 @@
   [defs : (& defs (__tl_dyn-array i64))]
   [env : (& env opt_i64_i64_map.Map)]
   [value : (& ir.CompilerIrValue)]) : bool
+  (when (opt-value-tainted? value) (return false))
   (match (opt-pure-call-resolve
     env
     (owned_view.compiler-owned-reference-shared-view value))
-    [(Var id) (opt-pure-call-single-def? defs id)]
+    [(Var id)
+      (and
+        (not (opt-value-tainted? (& (ir.CompilerIrValue.Var id))))
+        (opt-pure-call-single-def? defs id))]
     [_ true]))
 
 (define (opt-pure-call-array-args-stable?
@@ -134694,18 +134734,26 @@
     (for [index (iterator.range 0 count)]
       (let
         [instr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (when (opt-addr-taken-write? (& instr)) (set! cur (Nil)))
         (match (compiler-opt-global-shared-view instr)
           [(Mov dst src _)
-            (if (opt-pure-call-single-def? defs dst)
+            (if (and
+              (opt-pure-call-single-def? defs dst)
+              (not (opt-value-tainted? (& (ir.CompilerIrValue.Var dst))))
+              (not (opt-value-tainted? (& src))))
               (match (opt-pure-call-resolve env src)
                 [(Var root)
-                  (if (opt-pure-call-single-def? defs root)
+                  (if (and
+                    (opt-pure-call-single-def? defs root)
+                    (not (opt-value-tainted? (& (ir.CompilerIrValue.Var root)))))
                     (opt_i64_i64_map.insert-ref! (&mut env) dst root)
                     unit)]
                 [_ unit])
               unit)
             ;; an inlined pure site's result lands here
-            (if (opt-pure-call-single-def? defs dst)
+            (if (and
+              (opt-pure-call-single-def? defs dst)
+              (not (opt-value-tainted? (& (ir.CompilerIrValue.Var dst)))))
               (set!
                 cur
                 (opt-pure-call-sites-seed
@@ -134716,7 +134764,9 @@
             (ir.compiler-ir-instr-builder-push! (&mut builder) instr)]
           [(Phi dst _ _)
             ;; ...or here, as the continuation's merge of its returns
-            (if (opt-pure-call-single-def? defs dst)
+            (if (and
+              (opt-pure-call-single-def? defs dst)
+              (not (opt-value-tainted? (& (ir.CompilerIrValue.Var dst)))))
               (set!
                 cur
                 (opt-pure-call-sites-seed
@@ -134729,11 +134779,16 @@
             (if (opt-pure-call-callee-pure? call-memory name)
               (if (and
                 (opt-pure-call-scalar-type? ty)
-                (opt-pure-call-single-def? defs dst)
+                (and
+                  (opt-pure-call-single-def? defs dst)
+                  (not (opt-value-tainted? (& (ir.CompilerIrValue.Var dst)))))
                 (opt-pure-call-args-stable? defs env args))
                 (let
                   [found : i64 (opt-pure-call-table-find cur env name (& args))]
-                  (if (>= found 0)
+                  (if (and
+                    (>= found 0)
+                    (not
+                      (opt-value-tainted? (& (ir.CompilerIrValue.Var found)))))
                     (begin
                       (opt_i64_i64_map.insert-ref! (&mut env) dst found)
                       (set! (array-ref changed 0) (+ (array-ref changed 0) 1))
@@ -135747,7 +135802,9 @@
         func
         (let
           [_taint : unit
-            (when (opt-value-function-tainted? frame (& blocks)) (return func))]
+            (when
+              (opt-value-function-branches-tainted? frame (& blocks))
+              (return func))]
           [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
           [count : i64 (array-length index.labels)]
           [exits : (__tl_dyn-array OptPureCallTable)

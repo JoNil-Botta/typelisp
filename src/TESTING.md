@@ -3275,3 +3275,9 @@ controls, tainted snapshots, unrelated storage, tainted outside branches and
 fresh per-entry installation. The corresponding `divrem_addr_taken`,
 `mul_shift_addr_taken`, `pure_call_addr_taken`, `gep_offset_addr_taken` and
 `induction_addr_taken` native rows run at opt0/1/2 on Linux and Windows.
+
+The #9420 value tests also keep clean rewrites in mixed functions, and separately
+pin scalar operand/result gates, stale divisor and multiplier facts, original and
+resolved pure-call arguments, seeded arguments/results, cache result admission,
+and direct writes to address-taken storage as availability barriers. Private
+fact/rewrite tests install their own closure; do not rely on another test's set.

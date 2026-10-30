@@ -349,3 +349,258 @@
         (test.assert-true
           (> (opt.opt-function-frame (& out)) 24)
           "loop pass clears stale function taint")))))
+
+;; The other storage object must not turn off unrelated rewrites.
+(test
+  value-gate-mixed-function
+  (reset!)
+  (let
+    [func
+      (irt.func
+        "function @mixed(n=%0:i64) -> i64 vars 16 {
+       entry:
+       %1 = mov 5 : i64
+       %2 = addr_of %1
+       %3 = mov @wide_power : i64
+       %4 = mul %0, %3 : i64
+       %5 = div %0, 2 : i64
+       %6 = call sink(%0) : i64
+       %7 = call sink(%0) : i64
+       %8 = add %4, %5 : i64
+       %9 = add %6, %7 : i64
+       %10 = add %8, %9 : i64
+       return %10
+       }")]
+    [_valid (valid! (& func))]
+    [mul (opt.opt-const-global-mul-shift-final (& (constants)) func)]
+    [div (div-run mul)]
+    [out (opt.opt-pure-call-dedupe-function (& (call-memory)) (& div))]
+    (valid! (& out))
+    (test.assert-i64-eq
+      (count (& out) 2)
+      1
+      "unrelated storage keeps multiply rewrite")
+    (test.assert-i64-eq
+      (count (& out) 1)
+      1
+      "unrelated storage keeps division rewrite")
+    (test.assert-i64-eq
+      (count (& out) 3)
+      1
+      "unrelated storage keeps call dedupe")))
+
+;; Even a clean divisor cannot make a mutable operand/result a value fact.
+(define (scalar-function [mul? : bool] [mode : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (cat.str-cat
+      "function @scalar(n=%0:i64) -> i64 vars 8 {
+     entry:
+     %1 = mov @wide_power : i64
+     %3 = "
+      (if mul?
+        "mul %0, %1"
+        "div %0, 2")
+      " : i64\n"
+      (cond
+        [(= mode 1) "%2 = addr_of %0\n"]
+        [(= mode 2) "%2 = addr_of %3\n"]
+        [else ""])
+      "return %3
+     }")))
+
+(test
+  value-gate-scalar-operands-and-destination
+  (for [kind (iterator.range 0 2)]
+    (for [mode (iterator.range 0 3)]
+      (reset!)
+      (let
+        [func (scalar-function (= kind 1) mode)]
+        [_valid (valid! (& func))]
+        [out
+          (if (= kind 1)
+            (opt.opt-const-global-mul-shift-final (& (constants)) func)
+            (div-run func))]
+        (valid! (& out))
+        (test.assert-i64-eq
+          (count
+            (& out)
+            (if (= kind 1)
+              2
+              1))
+          (if (= mode 0)
+            1
+            0)
+          "only untainted scalar reads and results rewrite")))))
+
+;; A raw rewrite must not consume stale divisor facts, even independently of
+;; the branch-rule backstop at the function entry.
+(test
+  value-gate-divrem-stale-fact-operand
+  (let
+    [func (scalar-function false 1)]
+    [blocks (opt.opt-function-blocks func)]
+    [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+    [facts : opt.OptDivRemFacts
+      (Cons
+        (opt.OptDivRemFact.Fact
+          0
+          (ast.AstType.I64)
+          (opt.OptDivRemFactKind.NonZero))
+        (box
+          (Cons
+            (opt.OptDivRemFact.Fact
+              0
+              (ast.AstType.I64)
+              (opt.OptDivRemFactKind.NotNegOne))
+            (box (Nil)))))]
+    [out
+      (opt.opt-divrem-rewrite-instr
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (& facts)
+        (irt.instr "%3 = div 10, %0 : i64"))]
+    (test.assert-true
+      (match out
+        [(BinOp _ (Div) _ _ _) true]
+        [_ false])
+      "stale nonzero facts cannot justify an unchecked storage read")))
+
+(test
+  value-gate-mul-copy-fact-and-stale-rhs
+  (let
+    [func (mul-function true)]
+    [blocks (opt.opt-function-blocks func)]
+    [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+    [copies (imap.with-capacity 1)]
+    [counts (imap.with-capacity 1)]
+    [mov (irt.instr "%1 = mov @wide_power : i64")]
+    (opt.opt-const-global-mul-shift-note! (&mut copies) (&mut counts) mov)
+    (test.assert-i64-eq
+      (imap.len (& copies))
+      0
+      "mutable global copy is not a constant fact")
+    ;; Deliberately inject a stale fact to test the rewrite boundary as well.
+    (match (irt.instr "%1 = mov @wide_power : i64")
+      [(Mov _ (Global name) _)
+        (imap.insert-ref! (&mut copies) 1 (ir.compiler-ir-symbol-id name))]
+      [_ unit])
+    (let
+      [out
+        (opt.opt-const-global-mul-shift-seq
+          (& (constants))
+          (& copies)
+          (& counts)
+          (irt.instrs "%3 = mul %0, %1 : i64"))]
+      (test.assert-true
+        (match (ir.compiler-ir-instr-seq-borrow out 0)
+          [(BinOp _ (Mul) _ _ _) true]
+          [_ false])
+        "a stale multiplier fact cannot bypass the RHS gate"))))
+
+(define (fact-function [mode : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (cat.str-cat
+      "function @fact(a=%0:i64, b=%1:i64) -> i64 vars 8 {
+     entry:
+     %3 = mov 77 : i64\n"
+      (cond
+        [(= mode 1) "%2 = addr_of %0\n"]
+        [(= mode 2) "%2 = addr_of %1\n"]
+        [(= mode 3) "%2 = addr_of %3\n"]
+        [else ""])
+      "return %3
+     }")))
+
+(test
+  value-gate-pure-original-and-resolved-root
+  (for [mode (iterator.range 0 3)]
+    (let
+      [func (fact-function mode)]
+      [blocks (opt.opt-function-blocks func)]
+      [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+      [defs : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [env (imap.with-capacity 1)]
+      (for [id (iterator.range 0 8)]
+        (set! (array-ref defs id) 1))
+      ;; Old copy knowledge must not hide a mutable original or root.
+      (imap.insert-ref! (&mut env) 0 1)
+      (test.assert-true
+        (=
+          (opt.opt-pure-call-value-stable?
+            (& defs)
+            (& env)
+            (& (ir.CompilerIrValue.Var 0)))
+          (= mode 0))
+        "both the original argument and its resolved root must be values"))))
+
+(define (sink-symbol) : i64
+  (match (irt.instr "%3 = call sink(%0) : i64")
+    [(Call _ name _ _) name]
+    [_ -1]))
+
+(test
+  value-gate-pure-seeded-arguments-and-result
+  (for [mode (iterator.range 0 4)]
+    (let
+      [func (fact-function mode)]
+      [blocks (opt.opt-function-blocks func)]
+      [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+      [sites : opt.OptPureCallTable
+        (Cons
+          (opt.OptPureCallEntry
+            (sink-symbol)
+            (ir.CompilerIrCallArgs.One (Var 0))
+            3)
+          (box (Nil)))]
+      [out (opt.opt-pure-call-sites-seed sites 3 (Nil))]
+      (test.assert-true
+        (= (opt.opt-pure-call-sites-empty? (& out)) (or (= mode 1) (= mode 3)))
+        "seeded pre-inline arguments/results obey their own admission gate"))))
+
+(test
+  value-gate-pure-result-not-recorded
+  (for [mode (iterator.range 0 2)]
+    (let
+      [func
+        (fact-function
+          (if (= mode 1)
+            3
+            0))]
+      [blocks (opt.opt-function-blocks func)]
+      [_install (opt.opt-loop-taint-install! 8 (& blocks))]
+      [defs : (__tl_dyn-array i64) (__tl_make-array i64 8)]
+      [env (imap.with-capacity 1)]
+      [changed : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      (for [id (iterator.range 0 8)]
+        (set! (array-ref defs id) 1))
+      (match (opt.opt-pure-call-block
+        (& (call-memory))
+        (& defs)
+        (& (Nil))
+        (&mut env)
+        (Nil)
+        (& (irt.instrs "%3 = call sink(%0) : i64"))
+        (&mut changed))
+        [(Out _ table)
+          (test.assert-true
+            (= (opt.opt-pure-call-sites-empty? (& table)) (= mode 1))
+            "a cache entry never names mutable result storage")]))))
+
+;; Inline-tier pre-SSA input deliberately redefines the storage local.
+(test
+  value-gate-pure-direct-storage-write-is-barrier
+  (let
+    [func
+      (irt.func
+        "function @write_storage(x=%0:i64) -> i64 vars 8 {
+       entry:
+       %1 = addr_of %0
+       %2 = call sink(%1) : i64
+       %0 = mov 3 : i64
+       %3 = call sink(%1) : i64
+       return %3
+       }")]
+    [out (opt.opt-pure-call-dedupe-function (& (call-memory)) (& func))]
+    (test.assert-i64-eq
+      (count (& out) 3)
+      2
+      "a direct storage write invalidates availability through its address")))

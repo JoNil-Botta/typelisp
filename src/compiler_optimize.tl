@@ -3222,7 +3222,7 @@
         vars
         (__tl_make-array bool 0)
         (opt_dense_i64_vec.new))]
-    (opt-blocks-visit blocks opt-function-addr-taken-scan-instr! (&mut scan))
+    (opt-function-addr-taken-scan-blocks! (&mut scan) blocks)
     scan.marks))
 
 (define (opt-addr-taken-var?
@@ -21909,6 +21909,23 @@
     [(AddrOf _ src _) (opt-function-addr-taken-scan-note! scan src)]
     [_ unit]))
 
+;; Standalone collection only needs the AddrOf tag and source. Borrowing each
+;; instruction avoids the generic visitor's value transfer on the no-address
+;; path; integrated pass walks still use scan-instr! above.
+(define (opt-function-addr-taken-scan-blocks!
+  [scan : (&mut scan OptFunctionAddrTakenScan)]
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
+  (match blocks
+    [(Array seq)
+      (for [block-index (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-borrow seq block-index)
+          [(Block _ instrs)
+            (for [index
+              (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+              (match (ir.compiler-ir-instr-seq-borrow instrs index)
+                [(AddrOf _ src _) (opt-function-addr-taken-scan-note! scan src)]
+                [_ unit]))]))]))
+
 (define (opt-function-addr-taken-scan-new [frame : i64]) : OptFunctionAddrTakenScan
   (OptFunctionAddrTakenScan
     frame
@@ -21925,10 +21942,7 @@
   [blocks : (& ir.CompilerIrBlockList)]) : unit
   (let
     [scan : OptFunctionAddrTakenScan (opt-function-addr-taken-scan-new frame)]
-    (opt-blocks-visit
-      (owned_view.compiler-owned-reference-shared-view blocks)
-      opt-function-addr-taken-scan-instr!
-      (&mut scan))
+    (opt-function-addr-taken-scan-blocks! (&mut scan) blocks)
     (opt-function-addr-taken-install-scan! scan)))
 
 (define (opt-licm-addr-taken-install-for-loops!
@@ -21944,9 +21958,11 @@
 ;; storage, as a `Global` operand reads its cell; a def of one writes that
 ;; storage, as a store through its address would.
 (define (opt-addr-taken-operand? [value : (& value ir.CompilerIrValue)]) : bool
-  (match value
-    [(Var id) (opt-addr-taken-var? (& opt-function-addr-taken.marks) id)]
-    [_ false]))
+  (and
+    (> (array-length opt-function-addr-taken.marks) 0)
+    (match value
+      [(Var id) (opt-addr-taken-var? (& opt-function-addr-taken.marks) id)]
+      [_ false])))
 
 (define (opt-addr-taken-write? [instr : (& instr ir.CompilerIrInstr)]) : bool
   (and

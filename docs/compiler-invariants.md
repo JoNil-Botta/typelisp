@@ -2068,7 +2068,10 @@ constant fact naming such a var, as destination or source.
   of an address-taken var. Successor sinking never rematerializes a read or a
   def of one in the target, guard sinking and gep splitting never move or
   re-evaluate such a read, and load sinking stops a moving load at such a def.
-  Each installs the same set first (#8913).
+  The passes install the function's set or, for gep splitting, collect local
+  marks over the whole function before filtering candidates (#8913). Standalone
+  collectors borrow instructions and keep functions without `addr_of`
+  allocation-free; integrated pass walks collect the same marks in place (#9436).
 - BCE versioning and its clone-free hoist and bound tightening, ubound,
   unrolling, fill/copy-call recognition and LFTR refuse, at their entry, a
   loop that reads or writes a TAINTED value: an address-taken local, or a

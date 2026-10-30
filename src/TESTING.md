@@ -118,6 +118,11 @@ control. `guard-first-dominator-sinking`, `gep-split-addr-taken-capture`,
 rule for guard sinking, gep splitting, store address sinking and load sinking,
 each against a control whose address is not taken.
 
+`borrowed-address-collector-matches-visitor` compares the standalone borrowed
+collector with the original visitor on empty sets, late-block addresses,
+duplicates, encounter order and frame bounds. Keep that differential control
+alongside the #8913/#9420 gate and stale-state mutants when changing collection.
+
 `bce_addr_taken_bound.tl` and `unroll_addr_taken_bound.tl` are #9420's bounds-
 versioning and trip-count reproducers: a `ptr-write!` raises the loop bound
 after the loop starts. `bce_addr_taken_index.tl` writes the checked index

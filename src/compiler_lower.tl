@@ -22636,7 +22636,7 @@
         ty)]
     ;; A register-resident aggregate is word-class POD held in a register;
     ;; its capture snapshot is the value itself (nothing on the heap to copy).
-    [(Struct name)
+    [(or (Struct name) (StructArgs name _))
       (if (lower-type-register-resident? ctx ty)
         (Ok (Expr state value ty))
         (lower-capture-snapshot-struct-value
@@ -22647,15 +22647,6 @@
           value
           (tc_core.tc-nominal-name-id-display name)
           ty))]
-    [(StructArgs name _)
-      (lower-capture-snapshot-struct-value
-        ctx
-        state
-        env
-        type-env
-        value
-        (tc_core.tc-nominal-name-id-display name)
-        ty)]
     [(Enum name)
       (if (lower-type-register-resident? ctx ty)
         (Ok (Expr state value ty))

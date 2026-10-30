@@ -1736,3 +1736,21 @@ in fn _tl_tail_call_stack_forward_jump
 count = 1 ^[[:space:]]+jmp _tl_tail_call_stack_forward_weighted$
 in fn _tl_tail_call_stack_forward_forward_wide
 count = 1 ^[[:space:]]+call _tl_tail_call_stack_forward_make_wide$
+
+# Branded Arena is already the root word: capture it without a struct snapshot.
+# Native opt0/1/2 rows in native.manifest also cover both operations.
+case lambda-capture-atomic-arena-alloc
+source tests/integration/lambda_capture_atomic_arena_alloc.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn main
+# Environment (8 bytes) and descriptor (16 bytes), with no third allocation.
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$
+
+case lambda-capture-atomic-arena-destroy
+source tests/integration/lambda_capture_atomic_arena_destroy.tl
+target linux-x86_64 windows-x86_64
+opt 0
+in fn main
+# Root plus expected scalar (16 bytes), then descriptor (16 bytes).
+count = 2 ^[[:space:]]+call \.L_tl_alloc(8|16)$

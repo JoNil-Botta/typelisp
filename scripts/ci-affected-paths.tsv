@@ -619,3 +619,4 @@ tests/safety/shared_mut_borrow_replace_macro_location_control_reject.tl	stage2-p
 tests/safety/shared_mut_borrow_replace_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace call-argument diagnostic contracts.
 tests/safety/shared_mut_borrow_replace_index_call_location_reject.tl	stage2-public-tool-surface	@corpus	Primary fixture in public-check replace index-call diagnostic contracts.
 tests/cli/public-git.cases	stage2-public-tool-surface	@corpus	Canonical Git revision admission and staged checkout/lock/offline cache transcript.
+scripts/shared-view-baseline.tsv	shared-view-count-ratchet	@compiler	Direct limit input read by the shared-view count gate; this change lowers the limit.

@@ -2293,7 +2293,7 @@
               (codec.surface-ast-reader-offset (& reader))
               (array-length bytes))
             (!= decoded-id binder.value)
-            (string.eq
+            (surface_identity.surface-identity-string-eq?
               (ast.ast-callable-identity-key
                 (cis.intern-structural-session-handle-source-names session)
                 binder.value

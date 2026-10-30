@@ -4327,6 +4327,112 @@
         [(Some region) (= region inner-region)]
         [_ false]))))
 
+(define (tc-arena-phase-cache-pair?
+  [env : tc_core.TcTypeEnv]
+  [token : i64]
+  [owner : i64]
+  [region : i64]) : bool
+  (and
+    (match (tc_core.tc-arena-phase-token-owner-active env token)
+      [(Some actual) (= actual owner)]
+      [_ false])
+    (match (tc_core.tc-arena-phase-token-region-active env token)
+      [(Some actual) (= actual region)]
+      [_ false])))
+
+(define (tc-arena-phase-cache-boundaries?) : bool
+  (let
+    [owner : i64 (ci.intern "phase-cache-boundary-owner")]
+    [token : i64 (ci.intern "phase-cache-boundary-token")]
+    [other : i64 (ci.intern "phase-cache-boundary-other")]
+    [base : tc_core.TcTypeEnv (tc_core.tc-empty-env)]
+    [region : i64 (tc_core.tc-arena-phase-region-id base owner token)]
+    [owner-marker : i64
+      (tc_core.tc-arena-phase-token-owner-marker-id base token)]
+    [region-marker : i64
+      (tc_core.tc-arena-phase-token-region-marker-id base token)]
+    ;; Sweep automatic compaction through every marker/binding boundary and
+    ;; past the partial-layer collapse, retaining the original snapshot.
+    (for [count
+      (iterator.range
+        0
+        (+
+          (*
+            (tc_core.tc-local-cache-threshold)
+            (+ (tc_core.tc-local-cache-partial-layer-cap) 1))
+          4))]
+      (let
+        [prefix : tc_core.TcTypeEnv (tc-type-env-bind-many base count)]
+        [marked : tc_core.TcTypeEnv
+          (tc_core.tc-bind-arena-phase-token prefix token owner)]
+        [bound : tc_core.TcTypeEnv (tc_core.tc-bind-id marked token (I64))]
+        (unless
+          (tc-arena-phase-cache-pair? bound token owner region)
+          (return false))))
+    ;; An explicit transparent cache at either adjacent marker boundary must
+    ;; behave like the raw spine. Opaque caches and intervening bindings stop it.
+    (for [split (iterator.range 0 2)]
+      (let
+        [owner-env : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id base owner-marker (Var owner))]
+        [region-env : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id
+            (if (= split 0)
+              (tc_core.tc-env-with-local-cache owner-env)
+              owner-env)
+            region-marker
+            (Var region))]
+        [marked : tc_core.TcTypeEnv
+          (if (= split 1)
+            (tc_core.tc-env-with-local-cache region-env)
+            region-env)]
+        [bound : tc_core.TcTypeEnv (tc_core.tc-bind-id marked token (I64))]
+        [inner : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id
+            (tc_core.tc-bind-arena-phase-token bound token other)
+            token
+            (I64))]
+        [inner-region : i64 (tc_core.tc-arena-phase-region-id base other token)]
+        [shadow : tc_core.TcTypeEnv (tc_core.tc-bind-id bound token (Bool))]
+        [opaque : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id (tc_core.tc-env-with-cache marked) token (I64))]
+        [interposed : tc_core.TcTypeEnv
+          (tc_core.tc-bind-id
+            (tc_core.tc-env-with-local-cache
+              (tc_core.tc-bind-id marked other (I64)))
+            token
+            (I64))]
+        (unless
+          (and
+            (tc-arena-phase-cache-pair? bound token owner region)
+            (tc-arena-phase-cache-pair? inner token other inner-region)
+            (match (tc_core.tc-arena-phase-token-region-active shadow token)
+              [(No) true]
+              [_ false])
+            (match (tc_core.tc-arena-phase-token-owner-active shadow token)
+              [(No) true]
+              [_ false])
+            (match (tc_core.tc-arena-phase-token-region-active opaque token)
+              [(No) true]
+              [_ false])
+            (match (tc_core.tc-arena-phase-token-owner-active opaque token)
+              [(No) true]
+              [_ false])
+            (match (tc_core.tc-arena-phase-token-region-active interposed token)
+              [(No) true]
+              [_ false])
+            (match (tc_core.tc-arena-phase-token-owner-active interposed token)
+              [(No) true]
+              [_ false]))
+          (return false))))
+    true))
+
+(test
+  tc-arena-phase-token-cache-boundaries
+  (if (tc-arena-phase-cache-boundaries?)
+    unit
+    (io.panic "typecheck: direct phase token lost at a local cache boundary")))
+
 (define (tc-type-env-local-cache-deep-scan-smoke?) : bool
   (let
     [global-id : i64 (ci.intern "global")]

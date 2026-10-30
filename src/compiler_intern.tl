@@ -1269,6 +1269,15 @@
 (define intern-generated-map-hash-slots : (__tl_dyn-array i64)
   (__tl_make-array i64 intern-generated-map-capacity))
 
+;; Reverse membership belongs to the generated map, including through captured
+;; and installed state aliases. Source ids and opaque generated names have no
+;; bit; only insertion into the canonical map sets one.
+(define (intern-generated-canonical-word-count) : i64
+  (shr (+ (intern-capacity) 63) 6))
+
+(define intern-generated-canonical-words : (__tl_dyn-array i64)
+  (__tl_make-array i64 (intern-generated-canonical-word-count)))
+
 ;; Reset empties the two maps above in proportion to what was inserted since the
 ;; previous reset, not at full capacity (#8520). Each map's inserts log the slot
 ;; they fill in that map's segment of a dirty log: a count cell, then up to
@@ -1350,6 +1359,52 @@
         (set! dirty-index (+ dirty-index 1))))
     (intern-map-cell-write! ,log dirty-base (cast 0 : i32))))
 
+(defmacro (intern-generated-canonical-mark! [words : Expr] [id : Expr]) : unit
+  `(let
+    [canonical-id : i64 ,id]
+    [canonical-word : i64 (shr canonical-id 6)]
+    (intern-map-cell-write!
+      ,words
+      canonical-word
+      (bit-or
+        (array-ref ,words canonical-word)
+        (shl 1 (bit-and canonical-id 63))))))
+
+;; Clear membership before the map's identities disappear. Dirty slots, rather
+;; than copied id cursors, cover writes made through every alias of this map.
+(defmacro (intern-generated-map-dirty-clear!
+  [slots : Expr]
+  [log : Expr]
+  [words : Expr]) : unit
+  `(let
+    [canonical-base : i64 (intern-map-dirty-generated-base)]
+    [canonical-count : i64 (cast (array-ref ,log canonical-base) : i64)]
+    [canonical-index : i64 0]
+    (if (> canonical-count (intern-map-dirty-limit))
+      (while (< canonical-index (array-length ,words))
+        (intern-map-cell-write! ,words canonical-index 0)
+        (+= canonical-index 1))
+      (while (< canonical-index canonical-count)
+        (let
+          [canonical-slot : i64
+            (cast
+              (array-ref ,log (+ canonical-base (+ canonical-index 1)))
+              : i64)]
+          [canonical-stored : InternSlotId (array-ref ,slots canonical-slot)]
+          (unless
+            (intern-id-slot-empty? canonical-stored)
+            (let
+              [canonical-id : i64 (intern-id-slot-decode canonical-stored)]
+              [canonical-word : i64 (shr canonical-id 6)]
+              (intern-map-cell-write!
+                ,words
+                canonical-word
+                (bit-and
+                  (array-ref ,words canonical-word)
+                  (bit-xor -1 (shl 1 (bit-and canonical-id 63))))))))
+        (+= canonical-index 1)))
+    (intern-map-dirty-clear! ,slots ,log canonical-base)))
+
 (define intern-map-ready : bool
   false)
 (define intern-reset-generation : i64
@@ -1381,6 +1436,7 @@
     (map-hash-slots (__tl_dyn-array i64))
     (generated-map-id-slots (__tl_dyn-array InternSlotId))
     (generated-map-hash-slots (__tl_dyn-array i64))
+    (generated-canonical-words (__tl_dyn-array i64))
     (map-dirty-log (__tl_dyn-array i32))
     (map-ready (__tl_dyn-array bool))
     (reset-generation (__tl_dyn-array i64))
@@ -1411,6 +1467,7 @@
     (map-hash-slots (__tl_dyn-array i64))
     (generated-map-id-slots (__tl_dyn-array InternSlotId))
     (generated-map-hash-slots (__tl_dyn-array i64))
+    (generated-canonical-words (__tl_dyn-array i64))
     (map-dirty-log (__tl_dyn-array i32))
     (map-ready (__tl_dyn-array bool))
     (reset-generation (__tl_dyn-array i64))
@@ -1435,6 +1492,7 @@
   [map-hash-slots : Expr]
   [generated-map-id-slots : Expr]
   [generated-map-hash-slots : Expr]
+  [generated-canonical-words : Expr]
   [map-dirty-log : Expr]
   [map-ready : Expr]
   [reset-generation : Expr]
@@ -1461,6 +1519,7 @@
       ,map-hash-slots
       ,generated-map-id-slots
       ,generated-map-hash-slots
+      ,generated-canonical-words
       ,map-dirty-log
       ,map-ready
       ,reset-generation
@@ -1487,6 +1546,7 @@
         ,map-hash-slots
         ,generated-map-id-slots
         ,generated-map-hash-slots
+        ,generated-canonical-words
         ,map-dirty-log
         ,map-ready
         ,reset-generation
@@ -1642,6 +1702,7 @@
       (__tl_make-array i64 (intern-capacity))
       (__tl_make-array InternSlotId intern-generated-map-capacity)
       (__tl_make-array i64 intern-generated-map-capacity)
+      (__tl_make-array i64 (intern-generated-canonical-word-count))
       (__tl_make-array i32 (intern-map-dirty-log-length))
       map-ready
       reset-generation
@@ -1703,6 +1764,7 @@
       (intern-global-shared-view intern-map-hash-slots)
       (intern-global-shared-view intern-generated-map-id-slots)
       (intern-global-shared-view intern-generated-map-hash-slots)
+      (intern-global-shared-view intern-generated-canonical-words)
       (intern-global-shared-view intern-map-dirty-log)
       map-ready
       reset-generation
@@ -1822,10 +1884,10 @@
     state.map-id-slots
     state.map-dirty-log
     (intern-map-dirty-source-base))
-  (intern-map-dirty-clear!
+  (intern-generated-map-dirty-clear!
     state.generated-map-id-slots
     state.map-dirty-log
-    (intern-map-dirty-generated-base)))
+    state.generated-canonical-words))
 
 (define (intern-compat-state-map-insert-existing-from!
   [state : (&mut state InternCompatState)]
@@ -2441,6 +2503,7 @@
       (set! intern-map-hash-slots state.map-hash-slots)
       (set! intern-generated-map-id-slots state.generated-map-id-slots)
       (set! intern-generated-map-hash-slots state.generated-map-hash-slots)
+      (set! intern-generated-canonical-words state.generated-canonical-words)
       (set! intern-map-dirty-log state.map-dirty-log)
       (set! intern-map-ready (array-ref state.map-ready 0))
       (set! intern-reset-generation (array-ref state.reset-generation 0))
@@ -2642,8 +2705,9 @@
       unit)))
 
 ;; These rows report reserved payload bytes for the nine fixed record columns
-;; and the two fixed map columns. Dynamic-array headers are owner metadata, not
-;; capacity-proportional storage, so they are deliberately excluded.
+;; and the two fixed map columns, plus the canonical map's reverse bitmap.
+;; Dynamic-array headers are owner metadata, not capacity-proportional storage,
+;; so they are deliberately excluded.
 (cfg
   (any compile-profile test)
   (define (intern-profile-record-reserved-bytes) : i64
@@ -2698,7 +2762,11 @@
     (intern-profile-set!
       metrics-address
       intern-profile-canonical-map-reserved-bytes-metric
-      (intern-profile-map-reserved-bytes intern-generated-map-capacity))))
+      (+
+        (intern-profile-map-reserved-bytes intern-generated-map-capacity)
+        (*
+          (intern-generated-canonical-word-count)
+          (comptime (size-of (type i64))))))))
 
 (cfg
   (any compile-profile test)
@@ -3183,6 +3251,9 @@
                 (array-ref state.generated-map-id-slots cursor)
                 (intern-id-slot-encode id))
               (set! (array-ref state.generated-map-hash-slots cursor) hash)
+              (intern-generated-canonical-mark!
+                state.generated-canonical-words
+                id)
               (cfg
                 (any compile-profile test)
                 (begin
@@ -3497,15 +3568,14 @@
     (- (- (intern-capacity) 1) index)))
 
 (define (intern-generated-canonical-id-at? [id : i64]) : bool
-  (for [index (iterator.range 0 intern-generated-map-capacity)]
-    (let
-      [stored : InternSlotId (array-ref intern-generated-map-id-slots index)]
-      (when
-        (and
-          (not (intern-id-slot-empty? stored))
-          (= (intern-id-slot-decode stored) id))
-        (return true))))
-  false)
+  (and
+    (intern-renderable-id? id)
+    (not
+      (=
+        (bit-and
+          (array-ref intern-generated-canonical-words (shr id 6))
+          (shl 1 (bit-and id 63)))
+        0))))
 
 (define (intern-generated-canonical-id? [id : i64]) : bool
   (and (intern-generated-id-active? id) (intern-generated-canonical-id-at? id)))
@@ -4065,6 +4135,9 @@
                 (array-ref intern-generated-map-id-slots cursor)
                 (intern-id-slot-encode id))
               (set! (array-ref intern-generated-map-hash-slots cursor) hash)
+              (intern-generated-canonical-mark!
+                intern-generated-canonical-words
+                id)
               (cfg
                 (any compile-profile test)
                 (begin
@@ -4407,10 +4480,10 @@
     intern-map-id-slots
     intern-map-dirty-log
     (intern-map-dirty-source-base))
-  (intern-map-dirty-clear!
+  (intern-generated-map-dirty-clear!
     intern-generated-map-id-slots
     intern-map-dirty-log
-    (intern-map-dirty-generated-base)))
+    intern-generated-canonical-words))
 
 (define (intern-reset-name-cache!) : unit
   (set! intern-name-cache-ready false))

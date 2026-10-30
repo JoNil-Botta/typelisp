@@ -82925,10 +82925,14 @@ return 0" true)
       blocks)))
 
 (define (opt-fill-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (opt.opt-loop-call-function opt.opt-fill-call-try-rewrite (& func)))
+  (opt.opt-verify-at
+    "fill_call"
+    (opt.opt-loop-call-function opt.opt-fill-call-try-rewrite (& func))))
 
 (define (opt-copy-call-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
-  (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func)))
+  (opt.opt-verify-at
+    "copy_call"
+    (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func))))
 
 ;; Standalone driver for tests and ad-hoc runs: builds its own CFG context and
 ;; keeps the defensive entry verify.
@@ -84526,7 +84530,7 @@ return 0" true)
     42
     "compiler-optimize-global-cell-self-test")
   (test.assert-i64-eq
-    (opt.opt-verify-at "fill_call" (compiler-optimize-fill-call-self-test))
+    (compiler-optimize-fill-call-self-test)
     42
     "compiler-optimize-fill-call-self-test")
   (test.assert-i64-eq
@@ -84538,7 +84542,7 @@ return 0" true)
     42
     "compiler-optimize-loop-call-entry-proof-self-test")
   (test.assert-i64-eq
-    (opt.opt-verify-at "copy_call" (compiler-optimize-copy-call-self-test))
+    (compiler-optimize-copy-call-self-test)
     42
     "compiler-optimize-copy-call-self-test")
   (test.assert-i64-eq
@@ -84945,9 +84949,38 @@ return
       (test.assert-true
         (> (opt.opt-function-frame state.func) 11)
         "rotation mutable SIMD route actually rewrote")))
+  ;; Exercise the generic public loop-call driver separately from its copy
+  ;; and fill callback labels, and require an actual committed rewrite.
+  (let
+    [func
+      (opt-cc-test-function
+        "while_body.1__bce_fast"
+        "while_body.1__bce_guard"
+        (opt-cc-test-byte)
+        (opt-cc-test-byte)
+        (opt-cc-test-byte)
+        (opt-cc-test-loaded)
+        (opt-cc-test-bound-var)
+        false
+        1
+        false
+        false
+        false
+        false)]
+    [out
+      (opt.opt-verify-at
+        "loop_call"
+        (opt.opt-loop-call-function opt.opt-copy-call-try-rewrite (& func)))]
+    (test.assert-true
+      (not
+        (opt.opt-function-eq
+          (ast.ast-node-pool-reader-type-segment-bases)
+          func
+          out))
+      "generic loop-call driver actually rewrote"))
   (opt.opt-verify-test-stop!)
   (let
-    [expected : (Array String 63)
+    [expected : (Array String 64)
       (array
         "entry.bounds_dom"
         "entry.loop_cluster"
@@ -85011,7 +85044,8 @@ return
         "entry.unroll_verified"
         "final.entry.unroll_simd"
         "final.unroll_simd"
-        "final.rotation")]
+        "final.rotation"
+        "unroll_mb")]
     (for [i (iterator.range 0 (array-length expected))]
       (test.assert-true
         (opt.opt-verify-test-seen? (& (array-ref expected i)))
@@ -85115,3 +85149,36 @@ return
         (test.assert-true
           (string.eq actual (array-ref expected i))
           (str_cat.str-cat "base final-verifier golden " (string.int->string i)))))))
+
+;; These failures must come from optimizer instruction-proof dispatch, after
+;; SSA admission, not from calling the storage proof helper directly.
+(test
+  full-verifier-marked-dispatch-errors
+  (let
+    [cases : (Array String 3)
+      (array
+        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof() -> unit vars 5 {\nentry:\n%0 = alloc SretValue\n%1 = alloc SretValue\n%2 = alloc SretValue\n%3 = addr_of %2 storage 3\n%4 = call make([sret arg 0] %3, 0) : u64\nreturn\n}"
+        "function @proof(cb=%0:(CFunc non-null (-> SretValue))) -> unit vars 4 {\nentry:\n%1 = alloc i64\n%2 = addr_of %1 storage 1\n%3 = call* %0([sret arg 0] %2) : u64\nreturn\n}"
+        "function @proof(cb=%0:u64) -> unit vars 4 {\nentry:\n%1 = alloc i64\n%2 = addr_of %1 storage 1\n%3 = call_c* %0([sret arg 0] %2) : u64\nreturn\n}")]
+    [expected : (Array String 3)
+      (array
+        "function @proof: block entry instruction 4: optimizer verify: sret physical argument count differs from callee ABI"
+        "function @proof: block entry instruction 2: optimizer verify: CFunc sret callee uses the internal calling convention"
+        "function @proof: block entry instruction 2: optimizer verify: indirect C sret callee lacks a CFunc signature")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [program
+          (opt-tailrec-array-authorize
+            (ast.ast-node-pool-reader-context-current)
+            (irt.program (clone (array-ref cases i))))]
+        [actual : String
+          (match (opt.opt-verify-program (& program))
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq actual (array-ref expected i))
+          (str_cat.str-cat
+            "base marked-dispatch golden "
+            (string.int->string i)
+            ": "
+            (string.copy (& actual))))))))

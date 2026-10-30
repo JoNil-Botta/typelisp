@@ -11208,8 +11208,16 @@
       (match (& result)
         [(ResultCompilerOptimizeVerify.Ok)
           (when
-            (and opt-verify-test-active? opt-verify-test-post?)
-            (opt-verify-test-output! ,_func ,_context ,_final?))]
+            opt-verify-test-active?
+            (if opt-verify-test-post?
+              (opt-verify-test-output! ,_func ,_context ,_final?)
+              (when
+                (>= opt-verify-boundary-label 0)
+                (test.assert-true
+                  false
+                  (str_cat.str-cat
+                    "unlabeled verifier query in active stage: "
+                    (ir.compiler-ir-label-text opt-verify-boundary-label))))))]
         [_ unit])
       result)
     ,body))
@@ -70173,10 +70181,14 @@
                   (opt-cfg-entry-label blocks)
                   frame)
                   [(Result mb-blocks mb-frame mb-changed)
-                    (opt-function-ctx-commit
-                      (& func)
-                      (& context)
-                      (& (Result mb-blocks mb-frame mb-changed)))])))])])))
+                    (opt-verify-at
+                      "unroll_mb"
+                      (opt-verify-post
+                        "unroll_mb"
+                        (opt-function-ctx-commit
+                          (& func)
+                          (& context)
+                          (& (Result mb-blocks mb-frame mb-changed)))))])))])])))
 
 (define (opt-unroll-function-verified-with-context-result
   [type-segment-bases : i64]

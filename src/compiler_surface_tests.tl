@@ -2403,7 +2403,7 @@
             [bytes : (__tl_dyn-array u8)
               (byte_buf_core.byte-buf-builder-finish-array (& out))]
             [reader : codec.SurfaceAstReader
-              (codec.surface-ast-reader-new (& bytes) session remap)]
+              (codec.surface-ast-reader-new (& bytes) session (clone remap))]
             [_decoded : ast.AstCallableBinders
               (codec.surface-ast-read-callable-binders! (&mut reader))]
             (when

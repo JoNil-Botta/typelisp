@@ -1,12 +1,12 @@
 ;; Refs #9420, section 3: pointer stores change local storage.
 (import stdlib.io)
 
-(define BIG : i64
+(define wide-multiplier : i64
   4294967296)
 
 (define (main) : i64
   (let
-    [m : i64 BIG]
+    [m : i64 wide-multiplier]
     [pm : (MutPtr i64)
       (unsafe
         (ptr-addr-of m))]

@@ -134801,9 +134801,8 @@
             (if (opt-pure-call-callee-pure? call-memory name)
               (if (and
                 (opt-pure-call-scalar-type? ty)
-                (and
-                  (opt-pure-call-single-def? defs dst)
-                  (not (opt-value-tainted? (& (ir.CompilerIrValue.Var dst)))))
+                (opt-pure-call-single-def? defs dst)
+                (not (opt-value-tainted? (& (ir.CompilerIrValue.Var dst))))
                 (opt-pure-call-args-stable? defs env args))
                 (let
                   [found : i64 (opt-pure-call-table-find cur env name (& args))]

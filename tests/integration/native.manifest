@@ -1227,3 +1227,5 @@ byte_le_read_tail_trap|all|0,1,2|tests/integration/byte_le_read_tail_trap.tl|134
 byte_le_read_max_offset_trap|all|0,1,2|tests/integration/byte_le_read_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 byte_le_set_tail_trap|all|0,1,2|tests/integration/byte_le_set_tail_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 byte_le_set_max_offset_trap|all|0,1,2|tests/integration/byte_le_set_max_offset_trap.tl|134|-|-|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+lambda_capture_atomic_arena_alloc|all|0,1,2|tests/integration/lambda_capture_atomic_arena_alloc.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+lambda_capture_atomic_arena_destroy|all|0,1,2|tests/integration/lambda_capture_atomic_arena_destroy.tl|42|-|-|stdlib/arena.tl|-

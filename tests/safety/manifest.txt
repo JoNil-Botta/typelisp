@@ -2339,3 +2339,30 @@ legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref
 legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+# Refs #9503: a reference parameter that names an `:invalidate` brand carries
+# the arena region an `(in r T)` parameter has, so a binding shortened to a
+# body-local lifetime ends with the brand.
+invalidate_param_shortened_read_after_end_reject|check-fail|tests/safety/invalidate_param_shortened_read_after_end_reject.tl|tests/safety/invalidate_param_shortened_read_after_end_reject.tl:13:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_read_after_end_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_read_after_end_reject.tl|tests/safety/invalidate_param_shortened_read_after_end_reject.tl:13:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_unrelated_param_reject|check-fail|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl:15:12|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_unrelated_param_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl|tests/safety/invalidate_param_shortened_unrelated_param_reject.tl:15:12|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_nested_reject|check-fail|tests/safety/invalidate_param_shortened_nested_reject.tl|tests/safety/invalidate_param_shortened_nested_reject.tl:15:13|error[E0208]: typecheck: use of moved value `alias2`
+invalidate_param_shortened_nested_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_nested_reject.tl|tests/safety/invalidate_param_shortened_nested_reject.tl:15:13|error[E0208]: typecheck: use of moved value `alias2`
+invalidate_param_shortened_lambda_reject|check-fail|tests/safety/invalidate_param_shortened_lambda_reject.tl|tests/safety/invalidate_param_shortened_lambda_reject.tl:14:9|error[E0208]: typecheck: use of moved value `f`
+invalidate_param_shortened_lambda_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_lambda_reject.tl|tests/safety/invalidate_param_shortened_lambda_reject.tl:14:9|error[E0208]: typecheck: use of moved value `f`
+invalidate_param_shortened_read_before_end_ok|run-exit|tests/safety/invalidate_param_shortened_read_before_end_ok.tl|42|-
+invalidate_param_shortened_read_before_end_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_read_before_end_ok.tl|-|-
+# Known conservative rejections (#9503; #9464, #9256): the store and binding
+# rules for region-carrying values apply to these parameters as to `(in r T)`
+# ones.
+invalidate_param_shortened_store_assign_reject|check-fail|tests/safety/invalidate_param_shortened_store_assign_reject.tl|tests/safety/invalidate_param_shortened_store_assign_reject.tl:12:9|error[E0205]: typecheck: cannot store region-tagged value into assignment
+invalidate_param_shortened_store_assign_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_store_assign_reject.tl|tests/safety/invalidate_param_shortened_store_assign_reject.tl:12:9|error[E0205]: typecheck: cannot store region-tagged value into assignment
+invalidate_param_shortened_field_store_reject|check-fail|tests/safety/invalidate_param_shortened_field_store_reject.tl|tests/safety/invalidate_param_shortened_field_store_reject.tl:11:3|error[E0206]: typecheck: struct field assignment type mismatch
+invalidate_param_shortened_field_store_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_field_store_reject.tl|tests/safety/invalidate_param_shortened_field_store_reject.tl:11:3|error[E0206]: typecheck: struct field assignment type mismatch
+invalidate_param_shortened_rebind_reject|check-fail|tests/safety/invalidate_param_shortened_rebind_reject.tl|tests/safety/invalidate_param_shortened_rebind_reject.tl:8:3|error[E0210]: typecheck: assignment type mismatch
+invalidate_param_shortened_rebind_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_rebind_reject.tl|tests/safety/invalidate_param_shortened_rebind_reject.tl:8:3|error[E0210]: typecheck: assignment type mismatch
+# KNOWN OPEN, pre-existing and unsafe (accepted, reads destroyed storage):
+# tracked in #9503. A call result loses the region of a Copy reference argument,
+# so shortening `(id x)` drops the brand. This row must flip to check-fail when
+# call results keep provenance (D-C47 I2).
+invalidate_param_shortened_call_result_known_open|check-ok|tests/safety/invalidate_param_shortened_call_result_known_open.tl|-|-

@@ -2081,6 +2081,17 @@ constant fact naming such a var, as destination or source.
   switches on a tainted value, every loop is refused, so a definition read for
   a branch fact is the value that branch tested. Each transform installs the
   set for its own function before its first gate (#9420).
+- Div/rem safety, global multiply-to-shift and pure-call deduplication gate
+  individual rewrites and the value facts they consume. Operands, destinations,
+  copy roots and available call results must be outside the same taint closure.
+  A pre-inline call site's arguments and result are checked again before its
+  Mov/Phi seeds availability. Direct address-taken writes invalidate the call
+  cache. The tainted-branch rule still refuses all rewrite regions of such a
+  function. Gep offset splitting and induction refuse tainted natural loops,
+  with gep preheader synthesis gated too. Gep also rejects a candidate if any
+  affected Gep base is tainted, including uses outside the loop whose bases
+  would otherwise be read early in the preheader. Each pass installs its own
+  function's set before its first fact or rewrite gate (#9420).
 - One scan builds both, and allocates nothing for a function without an
   `addr_of`. The loop call cache keeps a separate scan.
 - Stack-only and scalar register plans both use

@@ -1,5 +1,5 @@
 ;; KNOWN OPEN, pre-existing and unsafe (accepted; reads destroyed storage at run
-;; time): tracked in #9503. A call result loses the region of a Copy reference
+;; time): tracked in #9508. A call result loses the region of a Copy reference
 ;; argument, and a reference parameter is not a place that loan tracking could
 ;; see, so shortening `(id x)` drops the brand. This row records current
 ;; behaviour, not correctness, and must flip to check-fail when call results

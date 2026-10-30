@@ -2352,17 +2352,30 @@ invalidate_param_shortened_lambda_reject|check-fail|tests/safety/invalidate_para
 invalidate_param_shortened_lambda_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_lambda_reject.tl|tests/safety/invalidate_param_shortened_lambda_reject.tl:14:9|error[E0208]: typecheck: use of moved value `f`
 invalidate_param_shortened_read_before_end_ok|run-exit|tests/safety/invalidate_param_shortened_read_before_end_ok.tl|42|-
 invalidate_param_shortened_read_before_end_ok_windows|check-ok-windows|tests/safety/invalidate_param_shortened_read_before_end_ok.tl|-|-
-# Known conservative rejections (#9503; #9464, #9256): the store and binding
-# rules for region-carrying values apply to these parameters as to `(in r T)`
-# ones.
+invalidate_param_shortened_two_brands_reject|check-fail|tests/safety/invalidate_param_shortened_two_brands_reject.tl|tests/safety/invalidate_param_shortened_two_brands_reject.tl:22:20|error[E0208]: typecheck: use of moved value `w`
+invalidate_param_shortened_two_brands_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_two_brands_reject.tl|tests/safety/invalidate_param_shortened_two_brands_reject.tl:22:20|error[E0208]: typecheck: use of moved value `w`
+# The `(:invalidate r T)` owner itself keeps its type, whatever T is.
+invalidate_param_aggregate_owner_ok|run-exit|tests/safety/invalidate_param_aggregate_owner_ok.tl|39|-
+invalidate_param_aggregate_owner_ok_windows|check-ok-windows|tests/safety/invalidate_param_aggregate_owner_ok.tl|-|-
+# Known conservative rejections (#9503; #9464, #9256): the end, store and
+# binding rules for region-carrying values apply to these parameters as to
+# `(in r T)` ones.
 invalidate_param_shortened_store_assign_reject|check-fail|tests/safety/invalidate_param_shortened_store_assign_reject.tl|tests/safety/invalidate_param_shortened_store_assign_reject.tl:12:9|error[E0205]: typecheck: cannot store region-tagged value into assignment
 invalidate_param_shortened_store_assign_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_store_assign_reject.tl|tests/safety/invalidate_param_shortened_store_assign_reject.tl:12:9|error[E0205]: typecheck: cannot store region-tagged value into assignment
 invalidate_param_shortened_field_store_reject|check-fail|tests/safety/invalidate_param_shortened_field_store_reject.tl|tests/safety/invalidate_param_shortened_field_store_reject.tl:11:3|error[E0206]: typecheck: struct field assignment type mismatch
 invalidate_param_shortened_field_store_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_field_store_reject.tl|tests/safety/invalidate_param_shortened_field_store_reject.tl:11:3|error[E0206]: typecheck: struct field assignment type mismatch
 invalidate_param_shortened_rebind_reject|check-fail|tests/safety/invalidate_param_shortened_rebind_reject.tl|tests/safety/invalidate_param_shortened_rebind_reject.tl:8:3|error[E0210]: typecheck: assignment type mismatch
 invalidate_param_shortened_rebind_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_rebind_reject.tl|tests/safety/invalidate_param_shortened_rebind_reject.tl:8:3|error[E0210]: typecheck: assignment type mismatch
+invalidate_param_shortened_phantom_reject|check-fail|tests/safety/invalidate_param_shortened_phantom_reject.tl|tests/safety/invalidate_param_shortened_phantom_reject.tl:19:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_shortened_phantom_reject_windows|check-fail-windows|tests/safety/invalidate_param_shortened_phantom_reject.tl|tests/safety/invalidate_param_shortened_phantom_reject.tl:19:9|error[E0208]: typecheck: use of moved value `alias`
+invalidate_param_view_borrow_reject|check-fail|tests/safety/invalidate_param_view_borrow_reject.tl|tests/safety/invalidate_param_view_borrow_reject.tl:19:7|error[E0207]: typecheck: cannot assign to borrowed place `v`
+invalidate_param_view_borrow_reject_windows|check-fail-windows|tests/safety/invalidate_param_view_borrow_reject.tl|tests/safety/invalidate_param_view_borrow_reject.tl:19:7|error[E0207]: typecheck: cannot assign to borrowed place `v`
 # KNOWN OPEN, pre-existing and unsafe (accepted, reads destroyed storage):
-# tracked in #9503. A call result loses the region of a Copy reference argument,
-# so shortening `(id x)` drops the brand. This row must flip to check-fail when
-# call results keep provenance (D-C47 I2).
+# tracked in #9508. A call result, a tuple or field projection, or a
+# constructor loses the region of a Copy reference, so a body-local lifetime
+# then drops the brand. These rows must flip to check-fail when such values
+# keep provenance (D-C47 I2).
 invalidate_param_shortened_call_result_known_open|check-ok|tests/safety/invalidate_param_shortened_call_result_known_open.tl|-|-
+invalidate_param_shortened_tuple_projection_known_open|check-ok|tests/safety/invalidate_param_shortened_tuple_projection_known_open.tl|-|-
+invalidate_param_shortened_field_projection_known_open|check-ok|tests/safety/invalidate_param_shortened_field_projection_known_open.tl|-|-
+invalidate_param_shortened_constructor_known_open|check-ok|tests/safety/invalidate_param_shortened_constructor_known_open.tl|-|-

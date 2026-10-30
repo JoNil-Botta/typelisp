@@ -21902,6 +21902,8 @@
       (set! (array-ref scan.marks src) true)
       (opt_dense_i64_vec.push-ref! (&mut scan.ids) src))))
 
+;; Generic-visitor reference for the collector differential test only.
+;; Integrated pass walks call scan-note! directly.
 (define (opt-function-addr-taken-scan-instr!
   [scan : (&mut scan OptFunctionAddrTakenScan)]
   [instr : ir.CompilerIrInstr]) : unit
@@ -21911,7 +21913,7 @@
 
 ;; Standalone collection only needs the AddrOf tag and source. Borrowing each
 ;; instruction avoids the generic visitor's value transfer on the no-address
-;; path; integrated pass walks still use scan-instr! above.
+;; path.
 (define (opt-function-addr-taken-scan-blocks!
   [scan : (&mut scan OptFunctionAddrTakenScan)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : unit

@@ -8423,14 +8423,17 @@
                   (tc-global-shared-view got)
                   (tc-global-shared-view want))
                   [(TcInferredTypeMatch.Compatible actual)
-                    (tc-contextual-join-type
-                      ctx
-                      env
-                      (tc-global-shared-view want)
-                      (if (= index 0)
-                        want
-                        (tc-global-shared-view merged))
-                      actual)]
+                    (let
+                      [previous : ast.AstType
+                        (if (= index 0)
+                          (tc-global-shared-view want)
+                          (tc-global-shared-view merged))]
+                      (tc-contextual-join-type
+                        ctx
+                        env
+                        (tc-global-shared-view want)
+                        previous
+                        actual))]
                   [(TcInferredTypeMatch.Mismatch _)
                     (ResultTcType.Err
                       "typecheck: match arm result type mismatch")])]
@@ -51952,22 +51955,25 @@
           ty))]
     [_ ty]))
 
-(define (tc-contextual-join-type
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [expected : ast.AstType]
-  [a : ast.AstType]
-  [b : ast.AstType]) : ResultTcType
-  (if (or
-    (tc-type-contains-region-tag? (tc-global-shared-view a))
-    (tc-type-contains-region-tag? (tc-global-shared-view b)))
+;; Both branch arguments are local places. Keep the
+;; negative guard at the call site, so an ordinary join constructs its result
+;; directly without entering the provenance helper's frame.
+(defmacro (tc-contextual-join-type
+  [ctx : Expr]
+  [env : Expr]
+  [expected : Expr]
+  [a : Expr]
+  [b : Expr]) : Expr
+  `(if (or
+    (tc-type-contains-region-tag? (tc-global-shared-view ,a))
+    (tc-type-contains-region-tag? (tc-global-shared-view ,b)))
     (tc-contextual-join-region-type
-      ctx
-      env
-      expected
-      (tc-contextual-join-value-type ctx a)
-      (tc-contextual-join-value-type ctx b))
-    (Ok expected)))
+      ,ctx
+      ,env
+      ,expected
+      (tc-contextual-join-value-type ,ctx (tc-global-shared-view ,a))
+      (tc-contextual-join-value-type ,ctx (tc-global-shared-view ,b)))
+    (ResultTcType.Ok ,expected)))
 
 (define (tc-contextual-join-region-type
   [ctx : TcContext]
@@ -53411,8 +53417,8 @@
                               ctx
                               env
                               want
-                              (tc-global-shared-view then-ty)
-                              (tc-global-shared-view else-ty))
+                              then-ty
+                              else-ty)
                             (tc-merge-branch-type
                               ctx
                               env

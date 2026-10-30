@@ -1,6 +1,9 @@
-;; Refs #9503: a parameter that names two invalidated brands keeps a region
-;; after a whole-value shortening that drops one of them, so a read after
-;; either end is rejected.
+;; KNOWN OPEN, pre-existing and unsafe (accepted; reads destroyed storage at run
+;; time): tracked in #9503. Only reference parameters carry the arena region of
+;; an invalidated brand, so a nominal parameter shortened as a whole to a
+;; body-local lifetime drops the brand it no longer names, as on main. This row
+;; records current behaviour, not correctness, and must flip to check-fail when
+;; nominal parameters keep provenance (D-C47 I2).
 (import stdlib.arena)
 
 (defstruct Pair2

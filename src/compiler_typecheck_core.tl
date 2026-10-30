@@ -49455,13 +49455,13 @@
     out))
 
 ;; A brand that this parameter list invalidates (`(:invalidate r T)`) can end in
-;; the body, so storage reached through another parameter whose type names `r`
-;; is that arena's storage. Such a parameter is bound with the region tag
+;; the body, so storage reached through a reference parameter whose type names
+;; `r` is that arena's storage. Such a reference is bound with the region tag
 ;; `(in r T)` gives it: provenance stays on every value bound or captured from
 ;; it, including one shortened to a body-local lifetime, and the existing end
 ;; operator and store rules apply as they do to `(in r T)` (#9503, D-C47 I2).
-;; Projections and call results drop it, as for `(in r T)`. The owner keeps its
-;; type: the `(:invalidate r T)` parameter itself (`param-ty`) and an arena.
+;; Projections and call results drop it, as for `(in r T)` (#9508). The owner
+;; (`param-ty`) and every parameter that is not a reference keep their type.
 (define (tc-param-with-invalidated-brand-region
   [params : (& params ast.AstParamList)]
   [param-ty : (& param-ty ast.AstType)]
@@ -49469,6 +49469,11 @@
   (match param-ty
     [(Invalidate _ _) (return ty)]
     [_ unit])
+  (unless
+    (match (& ty)
+      [(or (Ref _ _) (MutRef _ _)) true]
+      [_ false])
+    (return ty))
   (let
     [pairs : ast.AstLifetimeList (tc-param-list-invalidate-pairs params)]
     [index : i64 0]
@@ -49482,13 +49487,7 @@
             (ast.ast-lifetime-fallback))]
         (when (tc-type-names-lifetime? (& ty) lifetime) (set! brand lifetime)))
       (+= index 2))
-    (if (or
-      (< brand 0)
-      (match (& ty)
-        [(or (Struct name) (StructArgs name _))
-          (tc-arena-nominal-name-id? name)]
-        [(Region name _) (= name brand)]
-        [_ false]))
+    (if (< brand 0)
       ty
       (ast.ast-ty-region brand (& ty)))))
 

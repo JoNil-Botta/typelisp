@@ -1,7 +1,7 @@
-;; Refs #9503: an aggregate `(:invalidate r T)` owner keeps its own type; only
-;; the other parameters that name `r` get the arena region. Forwarding the owner
-;; to another `:invalidate` parameter, `in-arena` on its arena and reads of its
-;; fields before the end are accepted, as on main.
+;; Refs #9503: main-parity control. Only reference parameters get the arena
+;; region of an invalidated brand, so an aggregate `(:invalidate r T)` owner
+;; keeps its type: forwarding it to another `:invalidate` parameter, `in-arena`
+;; on its arena and reads of its fields before the end are accepted, as on main.
 (import stdlib.arena)
 (import stdlib.string)
 

@@ -128208,6 +128208,44 @@
           (+= index 1))
         subst)]))
 
+;; Renaming one side's owned binders onto the other's is only sound when no
+;; renamed identity already occurs free on the other side: inside `f`'s body,
+;; `(-> (& b i64) (& a i64))` keeps `f`'s binder `a` free, and is not the type
+;; of `f` itself. Free names exclude the signature's own binders and any nested
+;; callable's owned binders.
+(define (tc-callable-binders-captured?
+  [owned : (& owned ast.AstLifetimeList)]
+  [signature : (& signature ast.AstFunctionSignature)]) : bool
+  (when (ast.ast-lifetime-list-empty? owned) (return false))
+  (let
+    [free : TcNameIdList
+      (tc-name-id-list-difference
+        (tc-type-collect-regions-into
+          (& (ast.ty-node-get signature.result))
+          (tc-type-list-collect-regions (& signature.params) TcNameIdList.Nil))
+        (match signature.binders
+          [(ast.AstCallableBinders.Resolved bound)
+            (tc-lifetime-list-to-name-id-list-into (& bound) TcNameIdList.Nil)]
+          [_ TcNameIdList.Nil]))]
+    [index : i64 0]
+    [captured : bool false]
+    (while (and (not captured) (< index (ast.ast-lifetime-list-len owned)))
+      (when
+        (tc-name-id-list-contains
+          free
+          (ast.ast-lifetime-list-get owned index -1))
+        (set! captured true))
+      (+= index 1))
+    captured))
+
+(define (tc-callable-signature-captures?
+  [owner : (& owner ast.AstFunctionSignature)]
+  [other : (& other ast.AstFunctionSignature)]) : bool
+  (match owner.binders
+    [(ast.AstCallableBinders.Resolved owned)
+      (tc-callable-binders-captured? (& owned) other)]
+    [_ false]))
+
 (define (tc-callable-alpha-eq?
   [left : ast.AstFunctionSignature]
   [right : ast.AstFunctionSignature]) : bool
@@ -128222,6 +128260,11 @@
         (tc-global-shared-view right.params)
         ast.ast-type-id-same?))
     (return true))
+  (when
+    (or
+      (tc-callable-signature-captures? (& left) (& right))
+      (tc-callable-signature-captures? (& right) (& left)))
+    (return false))
   (let
     [rename : TcLifetimeSubst TcLifetimeSubst.Nil]
     [compatible : bool

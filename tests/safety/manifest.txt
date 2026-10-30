@@ -2416,3 +2416,10 @@ callable_scoped_n2e_result_callback_elided_ok|check-ok|tests/safety/callable_sco
 callable_scoped_n2e_result_callback_elided_ok_windows|check-ok-windows|tests/safety/callable_scoped_n2e_result_callback_elided_ok.tl|-|-
 callable_scoped_n2_result_callback_escape_reject|check-fail|tests/safety/callable_scoped_n2_result_callback_escape_reject.tl|tests/safety/callable_scoped_n2_result_callback_escape_reject.tl:2:3|error[E0205]: typecheck: reference value would escape lexical scope
 callable_scoped_n2_result_callback_escape_reject_windows|check-fail-windows|tests/safety/callable_scoped_n2_result_callback_escape_reject.tl|tests/safety/callable_scoped_n2_result_callback_escape_reject.tl:2:3|error[E0205]: typecheck: reference value would escape lexical scope
+
+# Refs #9098: callable alpha-equivalence is capture-avoiding; a local callable
+# whose result keeps the enclosing binder free is not the function itself.
+callable_alpha_capture_join_reject|check-fail|tests/safety/callable_alpha_capture_join_reject.tl|tests/safety/callable_alpha_capture_join_reject.tl:10:5|error[E0205]: typecheck: reference value would escape lexical scope
+callable_alpha_capture_join_reject_windows|check-fail-windows|tests/safety/callable_alpha_capture_join_reject.tl|tests/safety/callable_alpha_capture_join_reject.tl:10:5|error[E0205]: typecheck: reference value would escape lexical scope
+callable_alpha_capture_cond_reject|check-fail|tests/safety/callable_alpha_capture_cond_reject.tl|tests/safety/callable_alpha_capture_cond_reject.tl:10:5|error[E0205]: typecheck: reference value would escape lexical scope
+callable_alpha_capture_cond_reject_windows|check-fail-windows|tests/safety/callable_alpha_capture_cond_reject.tl|tests/safety/callable_alpha_capture_cond_reject.tl:10:5|error[E0205]: typecheck: reference value would escape lexical scope

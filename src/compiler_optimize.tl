@@ -21955,7 +21955,11 @@
       [(Some dst) (opt-addr-taken-var? (& opt-function-addr-taken.marks) dst)]
       [(None) false])))
 
-;; The loop transforms' address-taken gate (#9420). BCE versioning and its
+;; The value-fact and loop transforms' address-taken gate (#9420). Div/rem
+;; safety, global multiply-to-shift and pure-call dedupe gate whole functions:
+;; their fact/copy/availability tables span all blocks (including inline sites).
+;; Gep offset splitting and induction gate natural loops, including preheader
+;; preparation, using the same closure and branch rule below. BCE versioning and its
 ;; clone-free hoist and bound tightening, ubound, unrolling, fill/copy-call
 ;; recognition and LFTR prove facts about the values a loop reads and the
 ;; values those were computed from. A store through a pointer can change an
@@ -22120,6 +22124,22 @@
 (define (opt-loop-block-tainted? [block : (& block ir.CompilerIrBlock)]) : bool
   (match block
     [(Block _ instrs) (opt-loop-instrs-tainted? (& instrs))]))
+
+;; Whole-function region for passes whose fact tables span all blocks.
+(define (opt-value-blocks-tainted?
+  [remaining : (& remaining (Slice ir.CompilerIrBlock))]) : bool
+  (match remaining
+    [(slice) false]
+    [(slice block & rest)
+      (or (opt-loop-block-tainted? block) (opt-value-blocks-tainted? rest))]))
+
+(define (opt-value-function-tainted?
+  [frame : i64]
+  [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
+  (opt-loop-taint-install! frame blocks)
+  (and
+    (> (array-length opt-loop-taint) 0)
+    (opt-value-blocks-tainted? (ir.compiler-ir-block-list-view blocks))))
 
 (define (opt-loop-tainted-from?
   [remaining : (& remaining (Slice ir.CompilerIrBlock))]
@@ -33538,6 +33558,13 @@
   [blocks : ir.CompilerIrBlockList]
   [frame : i64]
   [loop : (& OptNaturalLoop)]) : OptInductionApplyResult
+  (when
+    (opt-loop-tainted?
+      (& blocks)
+      (opt-label-add
+        (opt-natural-loop-body loop)
+        (opt-natural-loop-header loop)))
+    (return (Result blocks frame false)))
   (match (opt-natural-loop-preheader loop)
     [(Some preheader)
       (let
@@ -33664,6 +33691,10 @@
             (opt-cfg-natural-loops-with-context
               (compiler-opt-global-shared-view blocks)
               context)]
+          (opt-loop-taint-install-for-loops!
+            frame
+            (& blocks)
+            (opt_natural_loop_vec.view natural-loops))
           (opt-induction-apply-loops
             type-segment-bases
             (__tl-project-field (deref context) index)
@@ -59305,6 +59336,7 @@
   (opt-blocks-any? blocks opt-divrem-instr-has-divmod?))
 
 (define (opt-divrem-safety-blocks-with-context
+  [frame : i64]
   [type-segment-bases : i64]
   [representations : (& ir.CompilerIrRepresentationIndex)]
   [context : OptCfgContext]
@@ -59314,32 +59346,34 @@
     ;; No Div/Mod op anywhere: every rewrite is identity, so the pass output
     ;; equals the input; skip the SSA facts build and the per-block copies.
     blocks
-    (let
-      [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
-      [count : i64 (opt-cfg-index-block-count index)]
-      [ssa-facts : OptSsaFacts
-        (opt-ssa-facts-from-function-with-representations
+    (if (opt-value-function-tainted? frame (& blocks))
+      blocks
+      (let
+        [index : OptCfgIndex (compiler-opt-global-shared-view context.index)]
+        [count : i64 (opt-cfg-index-block-count index)]
+        [ssa-facts : OptSsaFacts
+          (opt-ssa-facts-from-function-with-representations
+            type-segment-bases
+            representations
+            params
+            blocks)]
+        [types : OptSsaVarTypes
+          (match ssa-facts
+            [(Facts _ _ fact-types) fact-types])]
+        [facts : (__tl_dyn-array OptDivRemFacts)
+          (__tl_make-array OptDivRemFacts count)]
+        [out : (__tl_dyn-array OptDivRemBlockResult)
+          (__tl_make-array OptDivRemBlockResult count)]
+        (opt-cfg-index-refresh-blocks! (& index) blocks)
+        (opt-divrem-process-rpo!
           type-segment-bases
-          representations
-          params
-          blocks)]
-      [types : OptSsaVarTypes
-        (match ssa-facts
-          [(Facts _ _ fact-types) fact-types])]
-      [facts : (__tl_dyn-array OptDivRemFacts)
-        (__tl_make-array OptDivRemFacts count)]
-      [out : (__tl_dyn-array OptDivRemBlockResult)
-        (__tl_make-array OptDivRemBlockResult count)]
-      (opt-cfg-index-refresh-blocks! (& index) blocks)
-      (opt-divrem-process-rpo!
-        type-segment-bases
-        context
-        blocks
-        types
-        facts
-        (&mut out)
-        0)
-      (opt-divrem-materialize-blocks context (& out) (& blocks)))))
+          context
+          blocks
+          types
+          facts
+          (&mut out)
+          0)
+        (opt-divrem-materialize-blocks context (& out) (& blocks))))))
 
 ;; Program facts for function-scope global-cell invariance (the "global_cell"
 ;; pass): which globals can have their cell loaded once at a function's entry
@@ -88603,13 +88637,20 @@
             poison
             def-block)]
         [(No)
-          (if (opt-gep-offset-loop-has-candidate?
-            loop
-            blocks
-            uses
-            gep-uses
-            poison
-            def-block)
+          (if (and
+            (not
+              (opt-loop-tainted?
+                (& blocks)
+                (opt-label-add
+                  (opt-natural-loop-body loop)
+                  (opt-natural-loop-header loop))))
+            (opt-gep-offset-loop-has-candidate?
+              loop
+              blocks
+              uses
+              gep-uses
+              poison
+              def-block))
             (match (opt-loop-preheaders-synthesize-loop
               (compiler-opt-global-shared-view blocks)
               (owned_view.compiler-owned-reference-shared-view context)
@@ -89138,6 +89179,13 @@
   [gep-index : (&mut gep-index (__tl_dyn-array i64))]
   [cell : (&mut cell (__tl_dyn-array i64))]
   [acc : OptGepOffsetDerivedList]) : OptGepOffsetDerivedList
+  (when
+    (opt-loop-tainted?
+      blocks
+      (opt-label-add
+        (opt-natural-loop-body loop)
+        (opt-natural-loop-header loop)))
+    (return acc))
   (match (opt-natural-loop-preheader loop)
     [(No) acc]
     [(Some preheader)
@@ -89482,6 +89530,7 @@
   [func : (& ir.CompilerIrFunction)]) : OptFunctionCtxResult
   (match (owned_view.compiler-owned-reference-shared-view func)
     [(Function _ _ _ frame blocks _)
+      (opt-loop-taint-install! frame (& blocks))
       (opt-loop-function-rewrite
         "gep_offset"
         (owned_view.compiler-owned-reference-shared-view func)
@@ -102854,6 +102903,7 @@
           (opt-pass-with-blocks
             (&
               (opt-divrem-safety-blocks-with-context
+                (opt-pass-frame s)
                 type-segment-bases
                 (& summaries.representations)
                 (opt-pass-ctx s)
@@ -121055,6 +121105,9 @@
     func
     (match func
       [(Function name params ret-ty frame blocks function-abi)
+        (when
+          (opt-value-function-tainted? frame (& blocks))
+          (return (Function name params ret-ty frame blocks function-abi)))
         (let
           [copies : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 8)]
           [counts : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 64)]
@@ -135693,6 +135746,8 @@
         2)
         func
         (let
+          [_taint : unit
+            (when (opt-value-function-tainted? frame (& blocks)) (return func))]
           [index : OptCfgIndex (opt-cfg-index-build (& blocks))]
           [count : i64 (array-length index.labels)]
           [exits : (__tl_dyn-array OptPureCallTable)

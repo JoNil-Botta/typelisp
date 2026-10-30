@@ -82918,6 +82918,11 @@ return 0" true)
     [params : ir.CompilerIrParamSeq
       (owned_view.compiler-owned-reference-shared-view params)]
     (opt.opt-divrem-safety-blocks-with-context
+      (+
+        1
+        (opt.opt-sccp-max-var-blocks
+          (& blocks)
+          (opt.opt-sccp-max-var-params (& params) -1)))
       type-segment-bases
       (& (ir.compiler-ir-representation-index-empty))
       (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))

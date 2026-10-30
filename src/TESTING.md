@@ -3267,3 +3267,11 @@ native integration corpus runs all optimization levels on both hosts, and
 the target-parity corpus compares IR at opt0/1/2 for Linux and Windows. Wide
 constants must use register materialization, while representable constants
 may use the x86 signed-32-bit displacement field.
+
+`src/tests/value_addr_taken.tl` covers #9420 sections 2-6 with direct pass
+fixtures: div/rem branch facts, wide global multiply copies, pure-call copy
+roots, gep offset preheaders and plans, and induction support. Keep ordinary
+controls, tainted snapshots, unrelated storage, tainted outside branches and
+fresh per-entry installation. The corresponding `divrem_addr_taken`,
+`mul_shift_addr_taken`, `pure_call_addr_taken`, `gep_offset_addr_taken` and
+`induction_addr_taken` native rows run at opt0/1/2 on Linux and Windows.

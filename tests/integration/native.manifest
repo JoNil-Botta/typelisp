@@ -1231,3 +1231,8 @@ lambda_capture_atomic_arena_alloc|all|0,1,2|tests/integration/lambda_capture_ato
 lambda_capture_atomic_arena_destroy|all|0,1,2|tests/integration/lambda_capture_atomic_arena_destroy.tl|42|-|-|stdlib/arena.tl|-
 lambda_capture_lifetime_enum|all|0,1,2|tests/integration/lambda_capture_lifetime_enum.tl|42|-|-|-|-
 lambda_capture_lifetime_enum_variants|all|0,1,2|tests/integration/lambda_capture_lifetime_enum_variants.tl|42|-|-|stdlib/string.tl|-
+divrem_addr_taken|all|0,1,2|tests/integration/divrem_addr_taken.tl|135|-|-|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:14:12: integer division or remainder error: dividend=10 divisor=0\n
+mul_shift_addr_taken|all|0,1,2|tests/integration/mul_shift_addr_taken.tl|3|-|-|stdlib/io.tl stdlib/string.tl|-
+pure_call_addr_taken|all|0,1,2|tests/integration/pure_call_addr_taken.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
+gep_offset_addr_taken|all|0,1,2|tests/integration/gep_offset_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+induction_addr_taken|all|0,1,2|tests/integration/induction_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-

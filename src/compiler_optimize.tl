@@ -113323,6 +113323,7 @@
 ;; empties the accepted and scan tables, returns the tier to scan mode and
 ;; refunds the per-caller verdict allowance.
 (define (opt-inline-checked-caller-begin!) : unit
+  (opt-inline-price-memo-clear!)
   (set! opt-inline-checked-accepted-count 0)
   (set! opt-inline-checked-position-refused? false)
   (set! opt-inline-checked-scan-count 0)
@@ -114280,6 +114281,122 @@
     (opt-inline-checked-clause-admits? clause)))
 
 ;; --- pricing one function's plan --------------------------------------------
+;; Trial bodies live in rewindable scratch. Keep immutable snapshots in a
+;; separate arena, only for the current caller (including its rescans). The
+;; metadata array is process storage, like the callee memo above; count zero
+;; invalidates its snapshots BEFORE their arena is reset or destroyed.
+;; DELIBERATE-RAW (#6620): one lazy arena, enabled by the inline-stage entry and
+;; released at its exit. No allocation plan or assignment table is retained.
+(defstruct OptInlinePriceMemoEntry
+  (func ir.CompilerIrFunction)
+  (fingerprint i64)
+  (offset i64)
+  (type-bases i64)
+  (cost i64))
+
+(define opt-inline-price-memo-active? : bool
+  false)
+(define opt-inline-price-memo-arena : i64
+  0)
+(define opt-inline-price-memo-mark : i64
+  0)
+(define opt-inline-price-memo-count : i64
+  0)
+(define opt-inline-price-memo-entries : (__tl_dyn-array OptInlinePriceMemoEntry)
+  (__tl_make-array OptInlinePriceMemoEntry 64))
+
+(define (opt-inline-price-memo-clear!) : unit
+  (set! opt-inline-price-memo-count 0)
+  (when
+    (not (= opt-inline-price-memo-arena 0))
+    (let
+      [outer : i64 (arena.tl_arena_current)]
+      (unsafe
+        (arena.tl_arena_set opt-inline-price-memo-arena)
+        (arena.tl_region_reset opt-inline-price-memo-mark)
+        (arena.tl_arena_set outer)))))
+
+(define (opt-inline-price-memo-release!) : unit
+  (set! opt-inline-price-memo-active? false)
+  (set! opt-inline-price-memo-count 0)
+  (when
+    (not (= opt-inline-price-memo-arena 0))
+    (unsafe
+      (arena.tl_arena_destroy opt-inline-price-memo-arena)))
+  (set! opt-inline-price-memo-arena 0)
+  (set! opt-inline-price-memo-mark 0))
+
+(define (opt-inline-price-memo-begin!) : unit
+  (opt-inline-price-memo-release!)
+  (set! opt-inline-price-memo-active? true))
+
+(define (opt-inline-price-memo-fingerprint [func : (& ir.CompilerIrFunction)]) : i64
+  ;; Equal functions have equal merge shapes. This only selects a bucket:
+  ;; different instructions, types or ABI still require full equality below.
+  (hash.combine
+    (opt-symbol-hash (opt-function-name func))
+    (hash.i64 (opt-merge-shape func))))
+
+(define (opt-inline-price-memo-lookup
+  [type-segment-bases : i64]
+  [func : (& ir.CompilerIrFunction)]
+  [offset : i64]
+  [fingerprint : i64]) : i64
+  (when
+    opt-inline-price-memo-active?
+    (for [i (iterator.range 0 opt-inline-price-memo-count)]
+      (match (& (array-ref opt-inline-price-memo-entries i))
+        [(fields
+            [snapshot func]
+            [key fingerprint]
+            [depth offset]
+            [bases type-bases]
+            cost)
+          (when
+            (and
+              (= key fingerprint)
+              (= depth offset)
+              (= bases type-segment-bases)
+              (opt-function-eq type-segment-bases snapshot func))
+            (return cost))])))
+  -1)
+
+(define (opt-inline-price-memo-record!
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : (& ir.CompilerIrFunction)]
+  [offset : i64]
+  [fingerprint : i64]
+  [cost : i64]) : unit
+  ;; A full table only forgoes reuse. It never changes a verdict or its fuel.
+  (when
+    (and
+      opt-inline-price-memo-active?
+      (<
+        opt-inline-price-memo-count
+        (array-length opt-inline-price-memo-entries)))
+    (let
+      [outer : i64 (arena.tl_arena_current)]
+      (when
+        (= opt-inline-price-memo-arena 0)
+        (set! opt-inline-price-memo-arena (arena.tl_arena_make))
+        (unsafe
+          (arena.tl_arena_set opt-inline-price-memo-arena))
+        (set! opt-inline-price-memo-mark (arena.tl_region_mark)))
+      (unsafe
+        (arena.tl_arena_set opt-inline-price-memo-arena))
+      (set!
+        (array-ref opt-inline-price-memo-entries opt-inline-price-memo-count)
+        (OptInlinePriceMemoEntry
+          (ir.compiler-ir-clone-function pools func)
+          fingerprint
+          offset
+          type-segment-bases
+          cost))
+      (unsafe
+        (arena.tl_arena_set outer))
+      (+= opt-inline-price-memo-count 1))))
+
 (define (opt-inline-checked-weighted-instrs-from
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [offset : i64]
@@ -114416,6 +114533,45 @@
 ;; and would push throwaway generations into the `--dump-ir` buffer, which is
 ;; what scripts/verify-ir-observability.sh reads.
 (define (opt-inline-checked-plan-cost-at
+  [pools : ast.AstNodePoolContext]
+  [type-segment-bases : i64]
+  [func : (& ir.CompilerIrFunction)]
+  [offset : i64]
+  [entry-weight : i64]) : i64
+  (let
+    [fingerprint : i64
+      (if opt-inline-price-memo-active?
+        (opt-inline-price-memo-fingerprint func)
+        0)]
+    [cached : i64
+      (opt-inline-price-memo-lookup type-segment-bases func offset fingerprint)]
+    (if (>= cached 0)
+      (begin
+        ;; A full price leaves these scalar postconditions even when its
+        ;; temporary analyses are discarded. Preserve them on the hit path.
+        (compiler-opt-debug-set-suppressed! false)
+        (reg.compiler-reg-suppress-program-maps! false)
+        (reg.compiler-reg-trace-set-suppressed! false)
+        (reg.compiler-reg-block-weights-set-frequency! true)
+        cached)
+      (let
+        [cost : i64
+          (opt-inline-checked-plan-cost-uncached-at
+            pools
+            type-segment-bases
+            func
+            offset
+            entry-weight)]
+        (opt-inline-price-memo-record!
+          pools
+          type-segment-bases
+          func
+          offset
+          fingerprint
+          cost)
+        cost))))
+
+(define (opt-inline-checked-plan-cost-uncached-at
   [pools : ast.AstNodePoolContext]
   [type-segment-bases : i64]
   [func : (& ir.CompilerIrFunction)]
@@ -117735,6 +117891,7 @@
                 (compiler-opt-global-shared-view current-spans)
                 (& next-spans)))])
         (opt-inline-caller-walk-unpublish!)
+        (opt-inline-price-memo-clear!)
         (arena.rewind-safe! phase)
         ;; The slot's caller phase is complete: its body is placed and
         ;; published, its spans escaped and its scratch rewound. Only now may
@@ -117790,6 +117947,7 @@
           graph
           scc-result
           (& (opt-inline-slot-order scc-result)))]
+      [_begin-price-memo : unit (opt-inline-price-memo-begin!)]
       [_begin-checked : unit (opt-inline-checked-program-begin!)]
       [next-spans : ir.CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans
@@ -117806,6 +117964,7 @@
       (opt-inline-owned-state-reset! true)
       (opt-pure-call-inline-memory-reset!)
       (opt-inline-callee-cost-reset!)
+      (opt-inline-price-memo-release!)
       out)))
 
 (define (opt-function-seq-defines-from?

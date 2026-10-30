@@ -392,6 +392,14 @@ observability gate compares cold and repeated batch assembly for
 target ABIs. An invalid middle entry must retain its source diagnostic and
 stop before later output is emitted.
 
+`checked-price-memo-key-and-lifetime` covers full equality after a structural
+bucket collision, offset/type-context separation, deep snapshots after input
+arena destruction, caller reset and stage release. The companion
+`checked-price-memo-postconditions-and-full-fallback` checks the scalar state
+left by a cache hit and unchanged full pricing when the metadata table fills.
+The memo retains prices only within one caller and its rescan generations;
+the existing callee memo keeps its independent input-retirement coverage.
+
 `arena_branded_operands.tl` runs arithmetic, conditions, nested constructors,
 aliases, stored holders and allocation scopes at opt0/1/2 on both hosts. The
 public check/compile

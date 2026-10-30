@@ -1,6 +1,7 @@
 ;; compiler_optimize_tests.tl - Selfhost optimizer fixtures split from production.
 (import stdlib.iterator)
 (import compiler_optimize as opt)
+(import compiler_regalloc as reg)
 (import compiler_optimize.opt-natural-loop-work-empty-slots)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import compiler_ir_types as ir)
@@ -4419,6 +4420,134 @@
 (test
   optimizer-input-retirement-explicit-pool-nested-types
   (opt-test-input-retirement-pools))
+
+(define (opt-test-price-memo-function [value : i64]) : ir.CompilerIrFunction
+  (irt.func
+    (str_cat.str-cat
+      "function @price_memo(input=%0:i64) -> i64 vars 1 {\nentry:\nreturn "
+      (string.int->string value)
+      "\n}")))
+
+(test
+  checked-price-memo-key-and-lifetime
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [probe : ir.CompilerIrFunction (opt-test-price-memo-function 41)]
+    [different : ir.CompilerIrFunction (opt-test-price-memo-function 42)]
+    [fingerprint : i64 (opt.opt-inline-price-memo-fingerprint (& probe))]
+    [scratch : arena.Arena (arena.make)]
+    (opt.opt-inline-price-memo-begin!)
+    (in-arena
+      scratch
+      (let
+        [temporary : ir.CompilerIrFunction (opt-test-price-memo-function 41)]
+        (opt.opt-inline-price-memo-record!
+          pools
+          bases
+          (& temporary)
+          0
+          fingerprint
+          37)))
+    (arena.destroy-safe! scratch)
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-lookup bases (& probe) 0 fingerprint)
+      37
+      "the snapshot survives its input arena")
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-fingerprint (& different))
+      fingerprint
+      "different literals deliberately share the structural bucket")
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-lookup bases (& different) 0 fingerprint)
+      -1
+      "a bucket hit still compares the whole function")
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-lookup bases (& probe) 1 fingerprint)
+      -1
+      "offset is part of the key")
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-lookup 0 (& probe) 0 fingerprint)
+      -1
+      "type context is checked before structural type reads")
+    (opt.opt-inline-checked-caller-begin!)
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-lookup bases (& probe) 0 fingerprint)
+      -1
+      "a new caller cannot reuse the preceding caller")
+    (opt.opt-inline-price-memo-record! pools bases (& probe) 0 fingerprint 39)
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-lookup bases (& probe) 0 fingerprint)
+      39
+      "the arena and metadata can be reused after reset")
+    (opt.opt-inline-price-memo-release!)
+    (test.assert-i64-eq
+      opt.opt-inline-price-memo-arena
+      0
+      "stage storage released")
+    (test.assert-i64-eq
+      (opt.opt-inline-price-memo-lookup bases (& probe) 0 fingerprint)
+      -1
+      "stage exit disables every entry")
+    (opt.opt-inline-price-memo-begin!)
+    (test.assert-i64-eq
+      opt.opt-inline-price-memo-count
+      0
+      "the next stage starts empty")
+    (opt.opt-inline-price-memo-release!)))
+
+(test
+  checked-price-memo-postconditions-and-full-fallback
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [probe : ir.CompilerIrFunction (opt-test-price-memo-function 41)]
+    [fingerprint : i64 (opt.opt-inline-price-memo-fingerprint (& probe))]
+    [saved-verify : bool opt.compiler-opt-debug-verify-ir]
+    [saved-rbp : bool reg.compiler-reg-rbp-pool-enabled]
+    (opt.opt-inline-price-memo-begin!)
+    (opt.opt-inline-price-memo-record! pools bases (& probe) 0 fingerprint 37)
+    (opt.compiler-opt-debug-set-suppressed! true)
+    (reg.compiler-reg-suppress-program-maps! true)
+    (reg.compiler-reg-trace-set-suppressed! true)
+    (reg.compiler-reg-block-weights-set-frequency! false)
+    (test.assert-i64-eq
+      (opt.opt-inline-checked-plan-cost-at pools bases (& probe) 0 99)
+      37
+      "a hit returns only its stored price; entry weight remains unused")
+    (test.assert-true
+      (and
+        (not opt.compiler-opt-debug-suppressed?)
+        (not reg.compiler-reg-program-maps-suppressed?)
+        (not reg.compiler-reg-trace-suppressed?)
+        reg.compiler-reg-block-weights-frequency?
+        (= opt.compiler-opt-debug-verify-ir saved-verify)
+        (= reg.compiler-reg-rbp-pool-enabled saved-rbp))
+      "a hit preserves the full price's scalar postconditions")
+    (opt.opt-inline-price-memo-clear!)
+    (for [i (iterator.range 0 64)]
+      (let
+        [func : ir.CompilerIrFunction (opt-test-price-memo-function i)]
+        (opt.opt-inline-price-memo-record!
+          pools
+          bases
+          (& func)
+          0
+          fingerprint
+          (+ 100 i))))
+    (let
+      [miss : ir.CompilerIrFunction (opt-test-price-memo-function 1000)]
+      [expected : i64
+        (opt.opt-inline-checked-plan-cost-uncached-at pools bases (& miss) 0 1)]
+      (test.assert-i64-eq
+        (opt.opt-inline-checked-plan-cost-at pools bases (& miss) 0 1)
+        expected
+        "a full table falls back to the unchanged full price")
+      (test.assert-i64-eq
+        opt.opt-inline-price-memo-count
+        64
+        "no overflow entry"))
+    (opt.opt-inline-price-memo-release!)))
 
 ;; Each caller's phase escapes only the span rows its own rewrite added
 ;; (#8362), so the spans table grows linearly in the number of rewritten

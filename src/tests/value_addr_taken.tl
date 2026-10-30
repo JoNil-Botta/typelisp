@@ -69,7 +69,7 @@
             (ast.ast-node-pool-reader-type-segment-bases)
             (& (ir.compiler-ir-representation-index-empty))
             (opt.opt-cfg-context-build
-              (opt.compiler-opt-global-shared-view blocks))
+              (opt.opt-bool-branch-clone-blocks (& blocks)))
             (& params)
             blocks)]
         (Function name params ret frame next abi))]))
@@ -296,9 +296,9 @@
       [out
         (opt.opt-gep-offset-prepare-preheaders
           (ast.ast-node-pool-reader-type-segment-bases)
-          (opt.compiler-opt-global-shared-view blocks)
+          (opt.opt-bool-branch-clone-blocks (& blocks))
           (opt.opt-cfg-context-build
-            (opt.compiler-opt-global-shared-view blocks))
+            (opt.opt-bool-branch-clone-blocks (& blocks)))
           24
           8
           false)]

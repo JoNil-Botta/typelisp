@@ -2339,3 +2339,22 @@ legacy_box_get_store_ref_reject|check-fail|tests/safety/legacy_box_get_store_ref
 legacy_box_get_mut_box_reject|check-fail|tests/safety/legacy_box_get_mut_box_reject.tl|tests/safety/legacy_box_get_mut_box_reject.tl:5:30|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_nested_match_reject|check-fail|tests/safety/legacy_box_get_nested_match_reject.tl|tests/safety/legacy_box_get_nested_match_reject.tl:12:24|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
 legacy_box_get_ref_match_clone_reject|check-fail|tests/safety/legacy_box_get_ref_match_clone_reject.tl|tests/safety/legacy_box_get_ref_match_clone_reject.tl:16:42|legacy box-get/__tl-box-place borrow requires an owned Box receiver, not a reference
+
+# Active arena stack and contextual cleanup provenance (Refs #9502 Refs #9493).
+arena_end_nested_activation_destroy_reject|check-fail|tests/safety/arena_end_nested_activation_destroy_reject.tl|-|cannot run inside the arena it destroys
+arena_end_nested_activation_invalidate_reject|check-fail|tests/safety/arena_end_nested_activation_invalidate_reject.tl|-|cannot run inside the arena it destroys
+arena_end_nested_marks_reject|check-fail|tests/safety/arena_end_nested_marks_reject.tl|-|cannot run inside the arena it destroys
+arena_end_enclosing_activation_reject|check-fail|tests/safety/arena_end_enclosing_activation_reject.tl|-|cannot run inside the arena it destroys
+arena_end_lambda_activation_reject|check-fail|tests/safety/arena_end_lambda_activation_reject.tl|-|cannot run inside the arena it destroys
+arena_end_branded_alias_reject|check-fail|tests/safety/arena_end_branded_alias_reject.tl|-|cannot run inside the arena it destroys
+arena_end_atomic_alias_reject|check-fail|tests/safety/arena_end_atomic_alias_reject.tl|-|cannot run inside the arena it destroys
+with_owner_if_destroy_reject|check-fail|tests/safety/with_owner_if_destroy_reject.tl|-|while `with` cleanup owner
+with_owner_if_rewind_reject|check-fail|tests/safety/with_owner_if_rewind_reject.tl|-|while `with` cleanup owner
+with_owner_if_invalidate_reject|check-fail|tests/safety/with_owner_if_invalidate_reject.tl|-|while `with` cleanup owner
+with_owner_if_first_arena_reject|check-fail|tests/safety/with_owner_if_first_arena_reject.tl|-|while `with` cleanup owner
+with_owner_if_second_arena_reject|check-fail|tests/safety/with_owner_if_second_arena_reject.tl|-|while `with` cleanup owner
+with_owner_match_destroy_reject|check-fail|tests/safety/with_owner_match_destroy_reject.tl|-|while `with` cleanup owner
+with_owner_match_rewind_reject|check-fail|tests/safety/with_owner_match_rewind_reject.tl|-|while `with` cleanup owner
+with_owner_match_invalidate_reject|check-fail|tests/safety/with_owner_match_invalidate_reject.tl|-|while `with` cleanup owner
+with_owner_match_first_arena_reject|check-fail|tests/safety/with_owner_match_first_arena_reject.tl|-|while `with` cleanup owner
+with_owner_match_second_arena_reject|check-fail|tests/safety/with_owner_match_second_arena_reject.tl|-|while `with` cleanup owner

@@ -131,3 +131,29 @@ run compile "{{root}}/tests/integration/arena_invalidate_with_owner.tl" --target
 exit 0
 stdout contains Wrote {{native-dir}}/accepted.s
 stderr empty
+
+# The active target may be hidden by another region, and contextual joins
+# retain every allocation owner (Refs #9502 Refs #9493).
+case arena-end-enclosing-stack-and-contextual-owner-reject
+each arena_end_nested_activation_destroy_reject arena_end_nested_activation_invalidate_reject arena_end_nested_marks_reject arena_end_enclosing_activation_reject arena_end_lambda_activation_reject arena_end_branded_alias_reject arena_end_atomic_alias_reject with_owner_if_destroy_reject with_owner_if_rewind_reject with_owner_if_invalidate_reject with_owner_if_first_arena_reject with_owner_if_second_arena_reject with_owner_match_destroy_reject with_owner_match_rewind_reject with_owner_match_invalidate_reject with_owner_match_first_arena_reject with_owner_match_second_arena_reject
+run check "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+exit 1
+stdout empty
+stderr contains error[E0212]:
+stderr not-contains __tl_tc_
+stderr not-contains arena-brand/
+run compile "{{root}}/tests/safety/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/rejected.s"
+exit 1
+stdout empty
+stderr contains error[E0212]:
+stderr not-contains __tl_tc_
+stderr not-contains arena-brand/
+
+case arena-end-off-stack-and-contextual-owner-accepted
+each arena_end_off_stack_owner arena_end_shadowed_owner arena_with_if_cleanup_before_end arena_with_if_two_owner_cleanup arena_with_match_cleanup_before_end arena_with_match_two_owner_cleanup copy_enum_contextual_return
+run check "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --stdlib-root "{{root}}/stdlib"
+stdout contains Type checking passed!
+stderr empty
+run compile "{{root}}/tests/integration/{{each}}.tl" --target {{target}} --opt-level {{opt}} --stdlib-root "{{root}}/stdlib" -o "{{dir}}/accepted.s"
+stdout contains Wrote
+stderr empty

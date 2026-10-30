@@ -1236,3 +1236,13 @@ mul_shift_addr_taken|all|0,1,2|tests/integration/mul_shift_addr_taken.tl|3|-|-|s
 pure_call_addr_taken|all|0,1,2|tests/integration/pure_call_addr_taken.tl|44|-|-|stdlib/io.tl stdlib/string.tl|-
 gep_offset_addr_taken|all|0,1,2|tests/integration/gep_offset_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 induction_addr_taken|all|0,1,2|tests/integration/induction_addr_taken.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+
+# Active-stack identities and contextual join run-42 twins (Refs #9502 Refs #9493).
+arena_end_off_stack_owner|all|0,1,2|tests/integration/arena_end_off_stack_owner.tl|42|-|-|-|-
+arena_end_shadowed_owner|all|0,1,2|tests/integration/arena_end_shadowed_owner.tl|42|-|-|-|-
+arena_with_if_cleanup_before_end|all|0,1,2|tests/integration/arena_with_if_cleanup_before_end.tl|42|-|-|-|-
+arena_with_if_two_owner_cleanup|all|0,1,2|tests/integration/arena_with_if_two_owner_cleanup.tl|42|-|-|-|-
+arena_with_match_cleanup_before_end|all|0,1,2|tests/integration/arena_with_match_cleanup_before_end.tl|42|-|-|-|-
+arena_with_match_two_owner_cleanup|all|0,1,2|tests/integration/arena_with_match_two_owner_cleanup.tl|42|-|-|-|-
+copy_enum_contextual_return|all|0,1,2|tests/integration/copy_enum_contextual_return.tl|42|-|-|-|-
+copy_view_binder_value|all|0,1,2|tests/safety/copy_view_binder_value_ok.tl|42|-|-|-|-

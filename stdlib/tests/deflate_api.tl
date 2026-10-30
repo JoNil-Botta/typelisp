@@ -1,6 +1,5 @@
 (import stdlib.compress.deflate)
 (import stdlib.byte_buf)
-(import stdlib.string)
 (import stdlib.test)
 (import stdlib.iterator)
 (import stdlib.profile)

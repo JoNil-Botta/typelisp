@@ -1243,3 +1243,4 @@ callable_binders_transport|all|0,1,2|tests/integration/callable_binders_transpor
 callable_binders_generic_result_native|all|0,1,2|tests/integration/callable_binders_generic_result_native.tl|42|-|-|-|-
 callable_binders_named_owned_repeat_native|all|0,1,2|tests/integration/callable_binders_named_owned_repeat_native.tl|42|-|-|-|-
 callable_binders_named_independent_dotted|all|0,1,2|tests/integration/callable_binders_named_independent_dotted.tl|42|-|-|-|-
+callable_binders_tail_forwarding_native|all|0,1,2|tests/integration/callable_binders_tail_forwarding_native.tl|42|-|-|stdlib/io.tl|-

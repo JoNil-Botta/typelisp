@@ -128314,11 +128314,34 @@
         (tc-global-shared-view right.params)
         ast.ast-type-id-same?))
     (return true))
-  (when
-    (or
-      (tc-callable-signature-captures? (& left) (& right))
-      (tc-callable-signature-captures? (& right) (& left)))
-    (return false))
+  ;; The capture check only reads nodes the two signatures already reach, and
+  ;; the structural comparison only appends to the hash-consed pool, so either
+  ;; order gives the same answer. The structural comparison goes first because
+  ;; it rejects most pairs.
+  (and
+    (tc-callable-renamed-eq? (& left) (& right))
+    (not (tc-callable-signature-captures? (& left) (& right)))
+    (not (tc-callable-signature-captures? (& right) (& left)))))
+
+;; `tc-type-list-eq` of `left` against `right` renamed by `rename`, read
+;; through borrows so the caller keeps both signatures.
+(define (tc-type-list-renamed-eq?
+  [rename : TcLifetimeSubst]
+  [left : (& left ast.AstTypeList)]
+  [right : (& right ast.AstTypeList)]) : bool
+  (let
+    [renamed : ast.AstTypeList
+      (ast.ast-type-list-with-capacity (ast.ast-type-list-len right))]
+    (tc-lifetime-subst-type-list-into rename right (&mut renamed) 0)
+    (and
+      (= (ast.ast-type-list-len left) (ast.ast-type-list-len (& renamed)))
+      (tc-type-list-eq-at? left (& renamed) 0))))
+
+;; The structural half of `tc-callable-alpha-eq?`: rename `right`'s owned
+;; binders onto `left`'s by position, then compare the signatures.
+(define (tc-callable-renamed-eq?
+  [left : (& left ast.AstFunctionSignature)]
+  [right : (& right ast.AstFunctionSignature)]) : bool
   (let
     [rename : TcLifetimeSubst TcLifetimeSubst.Nil]
     [compatible : bool
@@ -128348,9 +128371,7 @@
             [_ false])])]
     (and
       compatible
-      (tc-type-list-eq
-        left.params
-        (tc-lifetime-subst-type-list rename right.params))
+      (tc-type-list-renamed-eq? rename (& left.params) (& right.params))
       (tc-type-eq
         (ast.ty-node-get left.result)
         (tc-lifetime-subst-type rename (ast.ty-node-get right.result))))))

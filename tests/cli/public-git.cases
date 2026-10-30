@@ -241,3 +241,176 @@ exec "{{dir}}/r/target/release/canonical_root{{exe}}"
 exit 42
 stdout empty
 stderr empty
+
+# String-source admission and unchanged source-form controls, Refs #8191.
+
+case g8
+each short upper nonhex ref n39 n41 empty space multi
+sh case "{{each}}" in short) CCV_bad=abc123 ;; upper) CCV_bad=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA ;; nonhex) CCV_bad=gggggggggggggggggggggggggggggggggggggggg ;; ref) CCV_bad=main ;; n39) CCV_bad=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;; n41) CCV_bad=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;; empty) CCV_bad= ;; space) CCV_bad=" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa " ;; multi) CCV_bad='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' ;; esac
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x r/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote "https://github.com/a/b.git#rev={{bad}}")))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains /typelisp.pkg:6:13
+stderr contains dependency `remote` rev must be a full lowercase hexadecimal object ID
+stderr contains use tag/branch or the full object ID
+test ! -f "{{dir}}/git.log"
+test ! -d "{{dir}}/r/target"
+
+case g9
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x r/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote "https://github.com/a/b.git#rev=main")))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+file r/target/typelisp/git-deps/remote/typelisp.pkg
+(package (name "pin_dep") (version "0.1.0") (kind staticlib))
+end-file
+file r/target/typelisp/git-deps/remote/src/lib.tl
+(define (answer) : i64 42)
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains /typelisp.pkg:6:13
+stderr contains dependency `remote` rev must be a full lowercase hexadecimal object ID
+test ! -f "{{dir}}/git.log"
+test ! -f "{{dir}}/r/typelisp.lock"
+
+
+case ga
+each sha1 sha256
+sh case "{{each}}" in sha1) CCV_rev=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ;; sha256) CCV_rev=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef ;; esac
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x r/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote "https://github.com/a/b.git#rev={{rev}}")))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_HEAD="  {{rev}}  " "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in file {{dir}}/r/typelisp.lock
+contains (commit "{{rev}}"))
+sh CCV_meta=$(find "{{dir}}/r/target/typelisp/cache" -name typelisp-cache-entry.txt)
+test -f "{{meta}}"
+in file {{meta}}
+contains commit={{rev}}
+sh CCV_marker=$(find "{{dir}}/r/target/typelisp/cache" -name .typelisp-cache-complete)
+test -f "{{marker}}"
+step offline-complete-hit
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git-offline.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+stderr empty
+test ! -f "{{dir}}/git-offline.log"
+exec "{{dir}}/r/target/release/canonical_root{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
+
+case gb
+each tag branch
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x r/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote "https://github.com/a/b.git#{{each}}=stable")))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_HEAD="  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  " "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in file {{dir}}/r/typelisp.lock
+contains (pin ({{each}} "stable"))
+contains (commit "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+
+
+case gc
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file r/typelisp.pkg
+(package (name "local_control") (version "1") (kind bin) (dependencies (remote "v#rev=main")))
+end-file
+file r/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+file r/v#rev=main/typelisp.pkg
+(package (name "pin_local") (version "1") (kind staticlib))
+end-file
+file r/v#rev=main/src/lib.tl
+(define (answer) : i64 42)
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+test ! -f "{{dir}}/git.log"
+exec "{{dir}}/r/target/release/local_control{{exe}}"
+exit 42
+stdout empty
+stderr empty
+
+
+case gd
+each explicit inferred
+sh case "{{each}}" in explicit) CCV_kind="(kind staticlib)" ;; inferred) CCV_kind= ;; esac
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x r/typelisp.pkg
+(package
+  (name "raw_library")
+  (version "1")
+  {{kind}}
+  (dependencies
+    (remote "https://github.com/a/b.git#rev=main")))
+end-file
+file r/src/lib.tl
+(define (answer) : i64 42)
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/r/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains library package `raw_library` cannot declare normal dependency `remote`
+stderr not-contains rev must be a full lowercase
+test ! -f "{{dir}}/git.log"
+test ! -d "{{dir}}/r/target"

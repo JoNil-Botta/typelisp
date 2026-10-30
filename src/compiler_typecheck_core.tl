@@ -11345,7 +11345,9 @@
               env
               (tc-global-shared-view arg)
               owner-ty)
-              [(or (TcArenaDestroyOwnerId.Bare id) (TcArenaDestroyOwnerId.Branded id)) id]
+              [(or (TcArenaDestroyOwnerId.Bare id)
+                   (TcArenaDestroyOwnerId.Branded id))
+                id]
               [(TcArenaDestroyOwnerId.No) -1])]
           [(ResultTcType.Err _) -1])
         -1)]
@@ -36277,9 +36279,13 @@
   (if (= key (tc-region-marker-id))
     (match ty
       [(or (Var region) (Region region _))
-        (if (tc-arena-region-owned-by-id? env owner region) 1 0)]
+        (if (tc-arena-region-owned-by-id? env owner region)
+          1
+          0)]
       [_ 0])
-    (if (and bare-binding? (= key owner) (tc-arena-type? ctx ty)) -1 0)))
+    (if (and bare-binding? (= key owner) (tc-arena-type? ctx ty))
+      -1
+      0)))
 
 (define (tc-arena-activation-persistent?
   [ctx : TcContext]
@@ -36289,10 +36295,12 @@
   [bare-binding? : bool]) : bool
   (match (tc-type-env-marker-step env)
     [(Done) false]
-    [(Cache rest) (tc-arena-activation-persistent? ctx root rest owner bare-binding?)]
+    [(Cache rest)
+      (tc-arena-activation-persistent? ctx root rest owner bare-binding?)]
     [(Bind key ty rest)
       (let
-        [entry : i64 (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
+        [entry : i64
+          (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
         (if (= entry 0)
           (tc-arena-activation-persistent? ctx root rest owner bare-binding?)
           (> entry 0)))]))
@@ -36307,12 +36315,23 @@
   (match (tc-type-env-scoped-marker-step cursor)
     [(Done)
       (tc-arena-activation-persistent?
-        ctx root (tc-type-env-marker-start persistent) owner bare-binding?)]
+        ctx
+        root
+        (tc-type-env-marker-start persistent)
+        owner
+        bare-binding?)]
     [(Bind key ty rest)
       (let
-        [entry : i64 (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
+        [entry : i64
+          (tc-arena-activation-entry ctx root owner bare-binding? key ty)]
         (if (= entry 0)
-          (tc-arena-activation-scoped? ctx root persistent rest owner bare-binding?)
+          (tc-arena-activation-scoped?
+            ctx
+            root
+            persistent
+            rest
+            owner
+            bare-binding?)
           (> entry 0)))]))
 
 (define (tc-active-region-owned-by-arena-id?
@@ -36322,14 +36341,21 @@
   [bare-binding? : bool]) : bool
   (if (tc-type-env-scoped-runtime-active? env)
     (let
-      [carrier : TcTypeEnvScopedCarrier (tc-type-env-scoped-runtime-current env)]
+      [carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-runtime-current env)]
       (tc-arena-activation-scoped?
-        ctx env
+        ctx
+        env
         (tc-type-env-scoped-carrier-persistent (tc-global-shared-view carrier))
         (tc-type-env-scoped-carrier-marker-cursor carrier)
-        owner bare-binding?))
+        owner
+        bare-binding?))
     (tc-arena-activation-persistent?
-      ctx env (tc-type-env-marker-start env) owner bare-binding?)))
+      ctx
+      env
+      (tc-type-env-marker-start env)
+      owner
+      bare-binding?)))
 
 (define (tc-cleanup-owner-marker-for?
   [key : i64]
@@ -60996,7 +61022,11 @@
               [(Some _)
                 (match (tc-arena-phase-token-owner-active env pid)
                   [(Some owner)
-                    (if (tc-active-region-owned-by-arena-id? ctx env owner false)
+                    (if (tc-active-region-owned-by-arena-id?
+                      ctx
+                      env
+                      owner
+                      false)
                       (Err
                         (tc-locate-error-at-expr
                           (tc-context-expr-bases ctx)
@@ -61101,7 +61131,9 @@
           (tc-global-shared-view owner-expr)
           owner-ty)]
       [bare-binding? : bool
-        (match owner-id [(Bare _) true] [_ false])]
+        (match owner-id
+          [(Bare _) true]
+          [_ false])]
       (match owner-id
         [(or (Bare oid) (Branded oid))
           (if (tc-active-region-owned-by-arena-id? ctx env oid bare-binding?)

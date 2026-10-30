@@ -13,7 +13,8 @@
   (h (Holder q))
   (t i64))
 
-(define (get [o : (& o (Out q))] [fallback : (Holder q)] [flag : bool]) : (Holder q)
+(define (get [o : (& o (Out q))] [fallback : (Holder q)] [flag : bool]) : (Holder
+    q)
   (match flag
     [true o.h]
     [false fallback]))

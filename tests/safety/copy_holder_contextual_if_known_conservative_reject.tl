@@ -13,8 +13,11 @@
   (h (Holder q))
   (t i64))
 
-(define (get [o : (& o (Out q))] [fallback : (Holder q)] [flag : bool]) : (Holder q)
-  (if flag o.h fallback))
+(define (get [o : (& o (Out q))] [fallback : (Holder q)] [flag : bool]) : (Holder
+    q)
+  (if flag
+    o.h
+    fallback))
 
 (define (main) : i64
   (let

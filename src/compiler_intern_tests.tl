@@ -811,6 +811,11 @@
             (array-ref state.generated-map-id-slots index))
           0)
         (set! ok false)))
+    (for [index
+      (iterator.range 0 (array-length state.generated-canonical-words))]
+      (unless
+        (= (array-ref state.generated-canonical-words index) 0)
+        (set! ok false)))
     ok))
 
 ;; Every seventh spelling is module-qualified and every fifth dotted, so
@@ -918,6 +923,73 @@
       advanced?
       stale-ok?
       global-ok?)))
+
+(define (intern-generated-canonical-membership-tests-ok?) : bool
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [canonical-id : i64
+      (ci.intern-compat-state-generated-canonical-name
+        (&mut state-a)
+        "canonical-membership")]
+    [opaque-id : i64
+      (ci.intern-compat-state-generated-name (&mut state-b) "opaque-membership")]
+    [ok : bool (= canonical-id opaque-id)]
+    ;; Equal raw ids in different maps must not share canonical membership.
+    (ci.intern-compat-state-install! state-b)
+    (when (ci.intern-generated-canonical-id? opaque-id) (set! ok false))
+    (ci.intern-compat-state-install! state-a)
+    (unless (ci.intern-generated-canonical-id? canonical-id) (set! ok false))
+    (when
+      (or
+        (ci.intern-generated-canonical-id? (ci.intern "ordinary-source"))
+        (ci.intern-generated-canonical-id-at? -1)
+        (ci.intern-generated-canonical-id-at? (ci.intern-capacity))
+        (ci.intern-generated-canonical-id-at? 9223372036854775807))
+      (set! ok false))
+    ;; Descending ids exercise bit 63 and both sides of two word boundaries.
+    (for [index (iterator.range 0 130)]
+      (let
+        [name : String
+          (str_cat.str-cat "membership-" (string.int->string index))]
+        [canonical? : bool (= (% index 3) 0)]
+        [id : i64
+          (if canonical?
+            (ci.intern-generated-canonical-name name)
+            (ci.intern-generated-name (& name)))]
+        (unless
+          (= (ci.intern-generated-canonical-id? id) canonical?)
+          (set! ok false))))
+    (let
+      [captured : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+      [late-id : i64 (ci.intern-generated-canonical-name "after-capture")]
+      ;; The captured cursor predates late-id, but its shared map log includes
+      ;; that insert. Reset through the alias must clear every membership bit.
+      (ci.intern-compat-state-reset-to! (&mut captured) 0)
+      (when (ci.intern-generated-canonical-id? late-id) (set! ok false))
+      (for [offset (iterator.range 0 132)]
+        (when
+          (ci.intern-generated-canonical-id-at?
+            (- (- (ci.intern-capacity) 1) offset))
+          (set! ok false)))
+      (ci.intern-compat-state-install! captured)
+      (let
+        [reused-opaque : i64 (ci.intern-generated-name "reused-opaque")]
+        [reused-canonical : i64
+          (ci.intern-generated-canonical-name "reused-canonical")]
+        (unless
+          (and
+            (= reused-opaque canonical-id)
+            (not (ci.intern-generated-canonical-id? reused-opaque))
+            (ci.intern-generated-canonical-id? reused-canonical))
+          (set! ok false))
+        (ci.intern-reset!)
+        (when
+          (ci.intern-generated-canonical-id-at? reused-canonical)
+          (set! ok false))))
+    (ci.intern-compat-state-install! installed)
+    ok))
 
 (define (intern-persistent-floor-reset-tests-ok?) : bool
   (ci.intern-reset!)
@@ -1427,6 +1499,7 @@
         (= (ci.intern-first-dot dotted) 5)
         (intern-slice-tests-ok?)
         (intern-generated-name-tests-ok?)
+        (intern-generated-canonical-membership-tests-ok?)
         (intern-persistent-arena-tests-ok?)
         (intern-compat-state-persistent-arena-growth-tests-ok?)
         (intern-structural-generation-tests-ok?)

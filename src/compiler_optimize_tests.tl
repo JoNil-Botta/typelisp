@@ -84896,9 +84896,58 @@ return
         false
         func)]
     unit)
+  ;; Split the existing mutable map's header from its body so the real
+  ;; rotation stage, rather than the already-rotated defensive route, must
+  ;; expose the gang and run its accepted final-contract post check.
+  (let
+    [original-blocks (opt-unroll-mutable-map-test-blocks 0)]
+    [body : ir.CompilerIrInstrSeq
+      (match (opt.opt-cfg-find-block
+        original-blocks
+        (ir.compiler-ir-label "body"))
+        [(Some (Block _ instrs)) instrs]
+        [_ (ir.compiler-ir-instr-seq-empty)])]
+    [builder (ir.compiler-ir-instr-builder-with-capacity 7)]
+    (for [i (iterator.range 0 6)]
+      (ir.compiler-ir-instr-builder-push!
+        (&mut builder)
+        (ir.compiler-ir-instr-seq-ref body i)))
+    (ir.compiler-ir-instr-builder-push!
+      (&mut builder)
+      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header")))
+    (let
+      [func : ir.CompilerIrFunction
+        (Function
+          (opt-test-symbol "verify_rotation_final")
+          (opt-unroll-mutable-map-test-params)
+          (I64)
+          11
+          (ir.compiler-ir-blocks-with-tail
+            (irt.blocks "exit:\nreturn 0")
+            (irt.block "entry:\n%4 = mov 0 : i64\njump header")
+            (irt.block
+              "header:\n%5 = add %4, 4 : i64\n%6 = le %5, %0 : i64\nbranch %6, body, exit")
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "body")
+              (ir.compiler-ir-instr-builder-to-seq builder)))
+          Ordinary)]
+      [state
+        (opt.opt-verify-at
+          "rotation"
+          (opt.opt-pass-rotation
+            (ast.ast-node-pool-reader-context-current)
+            (opt.opt-pass-state
+              (ast.ast-node-pool-reader-type-segment-bases)
+              (profile_state.compiler-profile-state-new)
+              false
+              func
+              false)))]
+      (test.assert-true
+        (> (opt.opt-function-frame state.func) 11)
+        "rotation mutable SIMD route actually rewrote")))
   (opt.opt-verify-test-stop!)
   (let
-    [expected : (Array String 60)
+    [expected : (Array String 63)
       (array
         "entry.bounds_dom"
         "entry.loop_cluster"
@@ -84959,7 +85008,10 @@ return
         "phi_cmp_fold"
         "uniform_phi"
         "switch"
-        "entry.unroll_verified")]
+        "entry.unroll_verified"
+        "final.entry.unroll_simd"
+        "final.unroll_simd"
+        "final.rotation")]
     (for [i (iterator.range 0 (array-length expected))]
       (test.assert-true
         (opt.opt-verify-test-seen? (& (array-ref expected i)))
@@ -85026,3 +85078,40 @@ return
         (test.assert-true
           (string.eq actual (array-ref expected i))
           (str_cat.str-cat "full-verifier branch " (string.int->string i)))))))
+
+;; Base final/backend verifier goldens. Non-SSA definition failures deliberately
+;; admit structurally valid bodies; SSA-shaped bodies retain located use errors.
+(test
+  final-verifier-boundary-contract
+  (let
+    [cases : (Array String 8)
+      (array
+        "function @final() -> unit vars 1 {\nentry:\n%0 = mov 0 : i64\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 1 {\nentry:\n%1 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 2 {\nentry:\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 1 {\nentry:\n%0 = mov 0 : i64\n%0 = mov %1 : i64\njump missing\n}"
+        "function @final() -> unit vars 1 {\nentry:\njump missing\nentry:\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 0 {\nentry:\nreturn\n}"
+        "function @final(p=%0:i64) -> unit vars 1 {\nentry:\n%0 = mov %1 : i64\nreturn\n}"
+        "function @final() -> unit vars 4 {\nentry:\n%0 = mov %1 : i64\n%2 = mov %3 : i64\nreturn\n}")]
+    [expected : (Array String 8)
+      (array
+        "Ok"
+        "Ok"
+        "block entry instruction 0: optimizer verify: use before definition"
+        "optimizer verify: unknown successor label"
+        "optimizer verify: duplicate block label"
+        "Ok"
+        "Ok"
+        "block entry instruction 0: optimizer verify: use before definition")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [func (irt.func (clone (array-ref cases i)))]
+        [verdict (opt.opt-verify-final-function (& func))]
+        [actual : String
+          (match verdict
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq actual (array-ref expected i))
+          (str_cat.str-cat "base final-verifier golden " (string.int->string i)))))))

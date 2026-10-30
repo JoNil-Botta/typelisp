@@ -11199,14 +11199,17 @@
 (defmacro (opt-verify-test-result
   [_func : Expr]
   [_context : Expr]
+  [_final? : Expr]
   [body : Expr]) : Expr
   `(cfg
     test
     (let
-      [result ,body]
+      [result : ResultCompilerOptimizeVerify ,body]
       (match (& result)
         [(ResultCompilerOptimizeVerify.Ok)
-          (opt-verify-test-output! ,_func ,_context)]
+          (when
+            (and opt-verify-test-active? opt-verify-test-post?)
+            (opt-verify-test-output! ,_func ,_context ,_final?))]
         [_ unit])
       result)
     ,body))
@@ -12776,16 +12779,23 @@
   test
   (define (opt-verify-test-output!
     [func : (& ir.CompilerIrFunction)]
-    [context : (& OptCfgContext)]) : unit
+    [context : (& OptCfgContext)]
+    [final? : bool]) : unit
     (when
       (and opt-verify-test-active? opt-verify-test-post?)
-      (opt-verify-test-pass!
-        context
-        (&
+      (let
+        [name : String
           (if (< opt-verify-boundary-label 0)
             "standalone"
-            (ir.compiler-ir-label-text opt-verify-boundary-label)))
-        func))))
+            (ir.compiler-ir-label-text opt-verify-boundary-label))]
+        (opt-verify-test-pass!
+          context
+          (&
+            (if final?
+              (str_cat.str-cat "final." (string.copy (& name)))
+              name))
+          func
+          final?)))))
 
 (cfg
   test
@@ -12798,22 +12808,7 @@
 
 (cfg
   test
-  (define (opt-verify-test-results-equal?
-    [a : ResultCompilerOptimizeVerify]
-    [b : ResultCompilerOptimizeVerify]) : bool
-    (match a
-      [(Ok)
-        (match b
-          [(Ok) true]
-          [_ false])]
-      [(Err reason)
-        (match b
-          [(Err other) (string.eq reason other)]
-          [_ false])])))
-
-(cfg
-  test
-  (define (opt-verify-test-unused-label [index : (& OptCfgIndex)]) : i64
+  (define (opt-verify-test-unused-label [index : (& OptCfgIndex)] [skip : i64]) : i64
     (let
       [serial : i64 0]
       (while true
@@ -12825,8 +12820,9 @@
                   "__verify_mutation_"
                   (string.int->string serial))))]
           (match (opt-cfg-index-id index label)
-            [(None) (return label)]
-            [_ (+= serial 1)]))))
+            [(None) (unless (= label skip) (return label))]
+            [_ unit])
+          (+= serial 1))))
     (ir.compiler-ir-label-none)))
 
 (cfg
@@ -12854,9 +12850,10 @@
         (ir.compiler-ir-block-builder-with-capacity (+ seq.len 1))]
       [instrs : ir.CompilerIrInstrBuilder
         (ir.compiler-ir-instr-builder-with-capacity 2)]
-      [fresh : i64 (opt-verify-test-unused-label (& context.index))]
+      [fresh : i64 (opt-verify-test-unused-label (& context.index) -1)]
+      [missing : i64 (opt-verify-test-unused-label (& context.index) fresh)]
       [label : i64
-        (if (and (= kind 0) (> seq.len 0))
+        (if (and (or (= kind 0) (= kind 6)) (> seq.len 0))
           (opt-cfg-index-label (& context.index) 0)
           fresh)]
       (for [i (iterator.range 0 seq.len)]
@@ -12864,16 +12861,24 @@
           (&mut builder)
           (ir.compiler-ir-block-seq-ref seq i)))
       (cond
-        [(= kind 0)
+        [(or (= kind 0) (= kind 5) (= kind 6))
           (ir.compiler-ir-instr-builder-push!
             (&mut instrs)
-            (if (= seq.len 0)
-              (Jump (- fresh 1))
+            (if (or (= seq.len 0) (= kind 5) (= kind 6))
+              (Jump missing)
               (Return (No))))]
         [(= kind 1)
           (ir.compiler-ir-instr-builder-push!
             (&mut instrs)
             (Mov (opt-verify-test-defined-var func) (I64 0) (I64)))
+          (ir.compiler-ir-instr-builder-push! (&mut instrs) (Return (No)))]
+        [(= kind 7)
+          (ir.compiler-ir-instr-builder-push!
+            (&mut instrs)
+            (Mov
+              (opt-function-frame func)
+              (Var (opt-function-frame func))
+              (I64)))
           (ir.compiler-ir-instr-builder-push! (&mut instrs) (Return (No)))]
         [(or (= kind 3) (= kind 4))
           (ir.compiler-ir-instr-builder-push!
@@ -12904,22 +12909,39 @@
   (define (opt-verify-test-pass!
     [context : (& context OptCfgContext)]
     [name : (& str)]
-    [func : (& ir.CompilerIrFunction)]) : unit
+    [func : (& ir.CompilerIrFunction)]
+    [final? : bool]) : unit
     (unless opt-verify-test-active? (return unit))
     (when (opt-verify-test-seen? name) (return unit))
     (set! opt-verify-test-active? false)
-    (for [kind (iterator.range 0 5)]
+    (when
+      final?
+      (match func
+        [(Function _ params _ vars blocks _)
+          (test.assert-true
+            (not (opt-verify-single-defs? (& params) vars blocks))
+            "final unroller boundary exercises non-SSA acceptance")]))
+    (for [kind
+      (iterator.range
+        0
+        (if final?
+          8
+          5))]
       (let
         [mutant : ir.CompilerIrFunction
           (opt-verify-test-mutant func context kind)]
         [verdict : ResultCompilerOptimizeVerify
-          (opt-verify-function (& mutant))]
+          (if final?
+            (opt-verify-final-function (& mutant))
+            (opt-verify-function (& mutant)))]
         [expected : String
           (cond
-            [(= kind 0)
+            [(or (= kind 0) (= kind 6))
               (if (= (opt-cfg-index-block-count (& context.index)) 0)
                 "optimizer verify: unknown successor label"
                 "optimizer verify: duplicate block label")]
+            [(= kind 5) "optimizer verify: unknown successor label"]
+            [final? "Ok"]
             [(= kind 1) "optimizer verify: duplicate var definition"]
             [(= kind 3)
               "optimizer verify: runtime-global marker used as an instruction value"]
@@ -12927,7 +12949,7 @@
         (test.assert-true
           (match verdict
             [(Err reason) (string.eq reason expected)]
-            [_ false])
+            [(Ok) (string.eq expected "Ok")])
           (str_cat.str-cat "full-verifier pass mutation: " (string.copy name)))))
     (test.assert-true
       (< opt-verify-test-pass-count (array-length opt-verify-test-passes))
@@ -12944,6 +12966,7 @@
   (opt-verify-test-result
     func
     context
+    false
     (let
       [func : ir.CompilerIrFunction
         (owned_view.compiler-owned-reference-shared-view func)]
@@ -12977,20 +13000,27 @@
         (opt-verify-function-with-context func context))]))
 
 (define (opt-verify-final-function [func : (& func ir.CompilerIrFunction)]) : ResultCompilerOptimizeVerify
-  (match (owned_view.compiler-owned-reference-shared-view func)
-    [(Function _ params _ vars blocks _)
-      (let
-        [context : OptCfgContext
-          (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
-        [_ (try (opt-verify-structure context))]
-        ;; Final backend IR is not required to be SSA. Apply dominance/use
-        ;; checks when it is SSA-shaped; otherwise the structural CFG checks
-        ;; are the valid final-IR contract. The SSA-shape decision and the
-        ;; index the dominance checks read are one derivation.
-        (match (opt-var-defs-index-checked (& params) vars blocks)
-          [(Index defs)
-            (opt-verify-final-function-body-with-defs (& defs) func (& context))]
-          [(Duplicate) (Ok)]))]))
+  (opt-verify-test-result
+    func
+    (& (opt-cfg-context-build (opt-function-blocks func)))
+    true
+    (match (owned_view.compiler-owned-reference-shared-view func)
+      [(Function _ params _ vars blocks _)
+        (let
+          [context : OptCfgContext
+            (opt-cfg-context-build (compiler-opt-global-shared-view blocks))]
+          [_ (try (opt-verify-structure context))]
+          ;; Final backend IR is not required to be SSA. Apply dominance/use
+          ;; checks when it is SSA-shaped; otherwise the structural CFG checks
+          ;; are the valid final-IR contract. The SSA-shape decision and the
+          ;; index the dominance checks read are one derivation.
+          (match (opt-var-defs-index-checked (& params) vars blocks)
+            [(Index defs)
+              (opt-verify-final-function-body-with-defs
+                (& defs)
+                func
+                (& context))]
+            [(Duplicate) (Ok)]))])))
 
 (define (opt-verify-function-seq-from
   [functions : (& ir.CompilerIrFunctionSeq)]) : ResultCompilerOptimizeVerify
@@ -70013,7 +70043,9 @@
               ;; verifier contract is therefore the final/backend structural
               ;; contract; the exact local shape checks above establish the
               ;; dataflow used by the rewrite.
-              (match (opt-verify-final-function next)
+              (match (opt-verify-post
+                "unroll_simd"
+                (opt-verify-final-function next))
                 [(Ok) (Result next next-context)]
                 [(Err _) (Result func context)]))
             (Result func context))])]))
@@ -70053,7 +70085,13 @@
               ;; the exact SIMD shape through the backend IR contract.
               (if (and
                 (not (opt-verify-single-defs? (& params) frame prescan-blocks))
-                (opt-verify-ok? (& (opt-verify-final-function func))))
+                (opt-verify-ok?
+                  (&
+                    (opt-verify-at
+                      "entry.unroll_simd"
+                      (opt-verify-post
+                        "entry.unroll_simd"
+                        (opt-verify-final-function func))))))
                 (opt-unroll-simd-function-with-context-result
                   type-segment-bases
                   context

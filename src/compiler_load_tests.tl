@@ -3320,7 +3320,7 @@
 
 (define (compiler-load-manifest-github-deps-ok?) : bool
   (match (compiler-load-parse-manifest
-    "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"abc123\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
+    "(package (name \"github_demo\") (version \"1\") (kind \"bin\") (entry \"src/main.tl\") (dependencies (math (github \"JoNil-Botta/math\" (rev \"0123456789abcdef0123456789abcdef01234567\"))) (util (github \"github.com/JoNil-Botta/util.repo\" (tag \"v1.0.0\"))) (core \"../core\")))")
     [(Ok m)
       (let
         [deps : load.CompilerPkgDeps m.deps]
@@ -3334,7 +3334,7 @@
           (compiler-load-manifest-dep-path-is?
             (ast.ast-place-shared-view deps)
             "math"
-            "https://github.com/JoNil-Botta/math.git#rev=abc123")
+            "https://github.com/JoNil-Botta/math.git#rev=0123456789abcdef0123456789abcdef01234567")
           (compiler-load-manifest-dep-path-is?
             (ast.ast-place-shared-view deps)
             "util"
@@ -3640,7 +3640,7 @@
       "manifest dependency `math` github pin must be rev, tag, or branch")
     (compiler-load-manifest-rejects?
       "(package (name \"x\") (version \"1\") (kind \"bin\") (entry \"e.tl\") (dependencies (math (github \"owner/repo\" (rev \"\")))))"
-      "manifest dependency `math` github pin must not be empty")))
+      "manifest dependency `math` rev must be a full lowercase hexadecimal object ID (40 or 64 digits); use tag/branch or the full object ID")))
 
 (define (compiler-load-pkg-manifest-validation-ok?) : bool
   (and

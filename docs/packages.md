@@ -22,7 +22,7 @@ Local packages are described by a std-only S-expression manifest named
   (kind bin)
   (dependencies
     (math "../math")
-    (lint (github "JoNil-Botta/typelisp-lint" (rev "abc123"))))
+    (lint (github "JoNil-Botta/typelisp-lint" (rev "0123456789abcdef0123456789abcdef01234567"))))
   (link
     (libraries "raylib")
     (search-paths "vendor/raylib/lib")
@@ -39,6 +39,12 @@ build-host image `<name>.tlci`, beside the runtime artifact but independent of
 its selected runtime target. `kind "bin"` builds the executable; `kind
 "staticlib"` builds the archive. When both are omitted, `bin` is inferred from
 `src/main.tl` and `staticlib` from `src/lib.tl`.
+
+GitHub `rev` pins must be full lowercase hexadecimal object IDs (40 digits for
+SHA-1, or 64 for SHA-256). Use `tag` or `branch` for a named ref. Lock commits
+use the same format, and a newly fetched checkout must report the expected
+canonical HEAD before the package cache is marked complete. Valid complete
+cache hits require no Git process.
 
 Normal TypeLisp package dependencies belong to executable roots. A `staticlib`
 must be dependency-free: if it declares `(dependencies ...)`, validation stops

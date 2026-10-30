@@ -4015,7 +4015,7 @@ Example:
   (kind bin)
   (dependencies
     (math "../math")
-    (lint (github "JoNil-Botta/typelisp-lint" (rev "abc123")))))
+    (lint (github "JoNil-Botta/typelisp-lint" (rev "0123456789abcdef0123456789abcdef01234567")))))
 ```
 
 - `name` and `version` are required string fields.
@@ -4033,16 +4033,19 @@ Example:
 - `dependencies` is optional for `bin` packages. Each entry has an alias
   symbol and either a string root path,
   `(alias "relative/or/absolute/path")`, or a GitHub shorthand source,
-  `(alias (github "owner/repo" (rev "commit")))`. A `staticlib` package must
+  `(alias (github "owner/repo" (rev "0123456789abcdef0123456789abcdef01234567")))`. A `staticlib` package must
   not declare normal TypeLisp package dependencies. Its manifest is rejected
   at the first dependency alias, before any path or Git source is resolved,
   fetched, built, or loaded. The diagnostic names the library and alias and
   directs the author to declare the dependency in the consuming executable,
   remove or combine the library dependency, or use `link` for native inputs.
 - GitHub shorthand also accepts `github.com/owner/repo` addresses. It requires
-  exactly one non-empty `rev`, `tag`, or `branch` string pin and normalizes to
+  exactly one non-empty `rev`, `tag`, or `branch` string pin. A `rev` must be
+  a full lowercase hexadecimal object ID (40 digits for SHA-1, or 64 for
+  SHA-256); abbreviations and ref names require `tag` or `branch` instead.
+  It normalizes to
   a git remote URL with a pin fragment such as
-  `https://github.com/owner/repo.git#rev=commit`.
+  `https://github.com/owner/repo.git#rev=0123456789abcdef0123456789abcdef01234567`.
 - Dependency aliases use the same character rules as package names: ASCII
   letters, digits, `-`, and `_`. Duplicate aliases are rejected.
 - Relative dependency paths are resolved relative to the manifest directory;
@@ -4067,7 +4070,11 @@ Example:
   ```
 
   Each dependency records the manifest alias, normalized URL, original pin
-  kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. Duplicate
+  kind/value (`rev`, `tag`, or `branch`), and exact resolved commit. A lock
+  commit must use the same full lowercase object-ID format; invalid commits
+  are rejected before cache lookup or Git execution. Staged checkouts must
+  report that exact canonical HEAD before cache metadata or completion is
+  published. Tag/branch HEAD output is validated before lock construction. Duplicate
   aliases, duplicate fields, missing required fields, malformed entries,
   non-string values, and unknown versions are rejected; emitters write stable,
   human-readable entries sorted by alias. Package builds load `typelisp.lock`

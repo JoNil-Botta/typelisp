@@ -38,6 +38,7 @@
 (import tlci_loader as tlci_loader_support)
 (import compiler_owned_view as owned_view)
 (import compiler_source_overlay as source_overlay)
+(import package_cache_core)
 
 (defmacro (compiler-load-global-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -14533,7 +14534,9 @@
           [(slice (Str pin-value-id _))
             (let
               [pin-value : String (ci.intern-id-str pin-value-id)]
-              (if (string.eq pin-value "")
+              (if (and
+                (string.eq pin-value "")
+                (not (string.eq (compiler-load-symbol-text pin-kind) "rev")))
                 (Err
                   (str_cat.str-cat
                     "manifest dependency `"
@@ -15237,6 +15240,93 @@
           (compiler-load-manifest-first-dependency-field-span fields fallback))]
       [_ fallback])))
 
+(define (compiler-load-manifest-rev-error
+  [path : String]
+  [alias : ci.InternSyntaxId]
+  [span : token.SourceSpan]) : ResultCompilerPkgManifestDiagnostic
+  (Err
+    (box
+      (cdiag.compiler-diagnostic-from-span
+        path
+        span
+        (str_cat.str-cat
+          "manifest dependency `"
+          (compiler-load-symbol-text alias)
+          "` rev must be a full lowercase hexadecimal object ID (40 or 64 digits); use tag/branch or the full object ID")))))
+
+;; This runs only after structural parsing and the library-dependency rule.
+;; Keep the pin's source span instead of reporting the whole manifest.
+(define (compiler-load-manifest-validate-rev-entries
+  [path : String]
+  [entries : (& program (Slice reader.SpannedSexpr))]
+  [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
+  (match entries
+    [(slice entry & rest)
+      (match (reader.spanned-sexpr-view entry)
+        [(List (slice (Sym alias _) source) _)
+          (match (reader.spanned-sexpr-view source)
+            [(Str value span)
+              (let
+                [text : String (ci.intern-id-str value)]
+                (when
+                  (compiler-load-github-dependency-path? (& text))
+                  (let
+                    [hash : i64
+                      (string.index-of-byte (& text) 0 (cast '#' : u8))]
+                    (when
+                      (and
+                        (>= hash 0)
+                        (compiler-load-string-prefix-at? (& text) "#rev=" hash)
+                        (not
+                          (package_cache_core.package-cache-canonical-commit?
+                            (&
+                              (string.substring
+                                (& text)
+                                (+ hash 5)
+                                (- (string.string-length (& text)) (+ hash 5)))))))
+                      (return
+                        (compiler-load-manifest-rev-error path alias span))))))]
+            [(List (slice (Sym head _) (Str _ _) pin) _)
+              (when
+                (string.eq (compiler-load-symbol-text head) "github")
+                (match (reader.spanned-sexpr-view pin)
+                  [(List (slice (Sym kind _) (Str value _)) span)
+                    (when
+                      (and
+                        (string.eq (compiler-load-symbol-text kind) "rev")
+                        (not
+                          (package_cache_core.package-cache-canonical-commit?
+                            (& (ci.intern-id-str value)))))
+                      (return
+                        (compiler-load-manifest-rev-error path alias span)))]
+                  [_ unit]))]
+            [_ unit])]
+        [_ unit])
+      (compiler-load-manifest-validate-rev-entries path rest manifest)]
+    [_ (Ok manifest)]))
+
+(define (compiler-load-manifest-validate-rev-fields
+  [path : String]
+  [fields : reader.SpannedSexpr]
+  [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
+  (match (reader.spanned-sexpr-view fields)
+    [(List (slice field & _) _)
+      (match (reader.spanned-sexpr-view field)
+        [(List (slice (Sym name _) & entries) _)
+          (when
+            (string.eq (compiler-load-symbol-text name) "dependencies")
+            (return
+              (compiler-load-manifest-validate-rev-entries
+                path
+                entries
+                manifest)))]
+        [_ unit])
+      (compiler-load-manifest-validate-rev-fields
+        path
+        (reader.spanned-sexpr-drop fields 1)
+        manifest)]
+    [_ (Ok manifest)]))
+
 ;: Enforce dependency-free library artifacts after kind inference and attach
 ;: the diagnostic to the forbidden alias rather than the whole manifest.
 (define (compiler-load-manifest-validate-library-dependencies
@@ -15244,7 +15334,11 @@
   [form : reader.SpannedSexpr]
   [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
   (match (compiler-pkg-manifest-first-library-dependency (& manifest))
-    [(NoDependency) (Ok manifest)]
+    [(NoDependency)
+      (compiler-load-manifest-validate-rev-fields
+        path
+        (reader.spanned-sexpr-drop form 1)
+        manifest)]
     [(Dependency dep)
       (Err
         (box

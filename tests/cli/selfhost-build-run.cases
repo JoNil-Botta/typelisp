@@ -470,7 +470,7 @@ file root/typelisp.pkg
   (version "0.1.0")
   (kind bin)
   (dependencies
-    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "abc123")))))
+    (remote (github "JoNil-Botta/typelisp-test-dep" (rev "0123456789abcdef0123456789abcdef01234567")))))
 end-file
 file root/src/main.tl
 (import remote.src.lib as remote)

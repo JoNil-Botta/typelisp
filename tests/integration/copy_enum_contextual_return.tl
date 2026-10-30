@@ -1,4 +1,8 @@
 ;; Refs #9502 Refs #9493. Copy reads drop an incidental container view at a contextual join.
+(defenum Pick
+  (A)
+  (B))
+
 (defstruct Picks
   (slots (__tl_dyn-array Pick))
   (len i64))

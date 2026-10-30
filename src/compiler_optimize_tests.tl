@@ -85182,3 +85182,33 @@ return
             (string.int->string i)
             ": "
             (string.copy (& actual))))))))
+
+;; The only storage obligation in each non-SSA caller is its marked call.
+;; No AddrOf or hidden-return ABI may mask the needs-proof? arm under test.
+(test
+  full-verifier-marked-only-obligations
+  (let
+    [cases : (Array String 3)
+      (array
+        "function @make(output=%0:u64) -> u64 vars 1 abi return-storage internal-trailing arg 0 bytes 24 output SretValue result u64 params (u64) source (-> SretValue) {\nentry:\nreturn %0\n}\nfunction @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call make([sret arg 0] %0) : u64\nreturn\n}"
+        "function @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call* %1([sret arg 0] %0) : u64\nreturn\n}"
+        "function @proof(p=%0:u64, cb=%1:u64) -> unit vars 4 {\nentry:\n%2 = mov 0 : i64\n%2 = mov 1 : i64\n%3 = call_c* %1([sret arg 0] %0) : u64\nreturn\n}")]
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [program
+          (opt-tailrec-array-authorize
+            (ast.ast-node-pool-reader-context-current)
+            (irt.program (clone (array-ref cases i))))]
+        [actual : String
+          (match (opt.opt-verify-program (& program))
+            [(opt.ResultCompilerOptimizeVerify.Ok) "Ok"]
+            [(opt.ResultCompilerOptimizeVerify.Err reason) reason])]
+        (test.assert-true
+          (string.eq
+            actual
+            "function @proof: block entry instruction 2: optimizer verify: sret argument is not a proven inline output range")
+          (str_cat.str-cat
+            "base marked-only obligation "
+            (string.int->string i)
+            ": "
+            (string.copy (& actual))))))))

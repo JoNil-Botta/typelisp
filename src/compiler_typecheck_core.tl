@@ -50757,8 +50757,11 @@
       (Err "typecheck: duplicate defdispatch ISA variant")
       (tc-dispatch-variant-signatures ctx name variants No))))
 
+;; The table lives in the job owner arena, so it stays live across a batch's
+;; entries and counts toward the batch's 4 MiB live-baseline drift bound. Each
+;; 120-byte entry costs that drift: 512 entries add 61,440 bytes.
 (define tc-decl-contract-memo-capacity : i64
-  4096)
+  512)
 
 (define (tc-decl-contract-memo-storage-ensure!
   [state : TcTypeResolutionCacheState]) : unit

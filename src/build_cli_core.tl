@@ -1167,9 +1167,33 @@
           (build-git-dep-error alias "git rev-parse")
           (build-git-rev-parse-command root)))]
     [commit : String (build-trim-command-output output)]
-    (if (= (string.string-length commit) 0)
-      (Err (build-git-dep-error alias "resolved commit is empty"))
-      (Ok commit))))
+    (if (package_cache_core.package-cache-canonical-commit? (& commit))
+      (Ok commit)
+      (Err
+        (build-git-dep-error
+          alias
+          (str_cat.str-cat
+            "git rev-parse HEAD reported non-canonical commit `"
+            commit
+            "`; expected a full lowercase hexadecimal object ID (40 or 64 digits)"))))))
+
+(define (build-verify-git-head
+  [alias : String]
+  [root : String]
+  [expected : (& expected str)]) : ResultBuildString
+  (let
+    [observed (try (build-resolve-git-head (string.copy (& alias)) root))]
+    (if (string.eq (& observed) expected)
+      (Ok observed)
+      (Err
+        (build-git-dep-error
+          alias
+          (str_cat.str-cat
+            "checkout commit mismatch: expected `"
+            (string.copy expected)
+            "`, observed `"
+            observed
+            "`"))))))
 
 (define (build-absolute-dep-root [manifest-dir : String] [dep-root : String]) : String
   (load.compiler-load-normalize-path
@@ -1414,10 +1438,10 @@
           (let
             [_
               (try
-                (build-run-captured
-                  (build-git-dep-error alias "git rev-parse")
-                  (build-git-rev-parse-command
-                    (owned_view.compiler-owned-shared-view staged-path))))]
+                (build-verify-git-head
+                  (string.copy (& alias))
+                  (string.copy (& staged-path))
+                  (& key.commit)))]
             (if (not
               (io.file-exists?
                 (build-package-cache-manifest-path (& staged-path))))
@@ -1579,9 +1603,7 @@
             (let
               [_
                 (try
-                  (build-run-captured
-                    (build-git-dep-error alias "git rev-parse")
-                    (build-git-rev-parse-command root)))]
+                  (build-resolve-git-head (string.copy (& alias)) root))]
               (if (io.file-exists? manifest-path)
                 (Ok (build-github-dep-relative-root alias))
                 (Err

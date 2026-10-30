@@ -46,6 +46,19 @@
 (define package-cache-complete-marker-name : String
   ".typelisp-cache-complete")
 
+;; Exact Git object IDs are lowercase SHA-1 or SHA-256 hex, never ref names
+;; or abbreviations. Admission and checked-out HEADs use the same contract.
+(define (package-cache-canonical-commit? [commit : (& commit str)]) : bool
+  (let
+    [n : i64 (string.string-length commit)]
+    (when (not (or (= n 40) (= n 64))) (return false))
+    (for [i (iterator.range 0 n)]
+      (let
+        [c : char (string.string-ref commit i)]
+        (when (not (or (and (>= c '0') (<= c '9')) (and (>= c 'a') (<= c 'f'))))
+          (return false))))
+    true))
+
 (define (package-cache-pin-kind-name [kind : PackageCachePinKind]) : String
   (match kind
     [(Rev) "rev"]

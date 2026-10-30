@@ -1,0 +1,237 @@
+# Canonical host-Git commits, Refs #8191. The native fake Git works on both hosts.
+do none
+target -
+opt -
+file git-stub.tl
+(import stdlib.io)
+(import stdlib.fs)
+(import stdlib.env)
+(import stdlib.string)
+(import stdlib.byte_buf)
+(define (write-text [path : String] [text : String]) : unit
+  (io.write-file (& path) (byte_buf.str-as-bytes (& text))))
+(define (main) : i64
+  (let [log : String (env.var-value "TYPELISP_TEST_GIT_LOG")]
+    (write-text log "git called\n")
+    (when (env.var-exists? "TYPELISP_TEST_GIT_FAIL") (return 91))
+    (when (= (io.arg-count) 6)
+      (when (string.eq (io.arg 3) "clone")
+        (let [root : String (io.arg 5)]
+          (when (not (= (fs.mkdir-status (& root)) 0)) (io.panic "fake Git directory creation failed"))
+          (when (not (= (fs.mkdir-status (& (fs.path-join-owned-pair (string.copy (& root)) "src"))) 0)) (io.panic "fake Git directory creation failed"))
+          (when (not (= (fs.mkdir-status (& (fs.path-join-owned-pair (string.copy (& root)) ".git"))) 0)) (io.panic "fake Git directory creation failed"))
+          (write-text (fs.path-join-owned-pair (string.copy (& root)) "typelisp.pkg")
+            "(package (name \"canonical_remote\") (version \"0.1.0\") (kind staticlib))\n")
+          (write-text (fs.path-join-owned-pair root "src/lib.tl")
+            "(define (answer) : i64 42)\n")
+          (return 0))))
+    (when (> (io.arg-count) 5)
+      (when (string.eq (io.arg 5) "checkout") (return 0))
+      (when (string.eq (io.arg 5) "rev-parse")
+        (let [head : String (env.var-value "TYPELISP_TEST_GIT_HEAD")]
+          (io.println "{}" (if (string.eq head "empty") "" head))
+          (return 0))))
+    90))
+end-file
+
+case package-commit-manifest-invalid
+each abc123 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gggggggggggggggggggggggggggggggggggggggg main aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x root/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" (rev "{{each}}")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains /typelisp.pkg:6:27
+stderr contains dependency `remote` rev must be a full lowercase hexadecimal object ID
+stderr contains use tag/branch or the full object ID
+test ! -f "{{dir}}/git.log"
+test ! -d "{{dir}}/root/target"
+file root/typelisp.pkg
+(package (name "empty_rev") (version "0.1.0") (kind bin) (dependencies (remote (github "a/b" (rev "")))))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stderr contains dependency `remote` rev must be a full lowercase hexadecimal object ID
+test ! -f "{{dir}}/git.log"
+
+case package-commit-lock-invalid
+each abc123 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gggggggggggggggggggggggggggggggggggggggg
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x root/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" (branch "main")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+file -x root/typelisp.lock
+(typelisp-lock (version "v1") (dependencies (dependency (alias "remote") (url "https://github.com/a/b.git") (pin (branch "main")) (commit "{{each}}"))))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains package-lock: dependency `remote` commit must be a full lowercase hexadecimal object ID
+test ! -f "{{dir}}/git.log"
+test ! -d "{{dir}}/root/target"
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+exit 1
+stdout empty
+stderr contains package-lock: dependency `remote` commit must be a full lowercase hexadecimal object ID
+test ! -f "{{dir}}/git.log"
+test ! -d "{{dir}}/root/target"
+
+case package-commit-staged-mismatch
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x root/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" (rev "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_HEAD="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains checkout commit mismatch: expected `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`, observed `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`
+test -f "{{dir}}/git.log"
+test ! -f "{{dir}}/root/typelisp.lock"
+sh CCV_published=$(find "{{dir}}/root" -name .typelisp-cache-complete -o -name typelisp-cache-entry.txt)
+test -z "{{published}}"
+
+case package-commit-staged-noncanonical
+each abc123 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA gggggggggggggggggggggggggggggggggggggggg empty
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x root/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" (rev "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_HEAD="{{each}}" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains git rev-parse HEAD reported non-canonical commit
+test -f "{{dir}}/git.log"
+test ! -f "{{dir}}/root/typelisp.lock"
+sh CCV_published=$(find "{{dir}}/root" -name .typelisp-cache-complete -o -name typelisp-cache-entry.txt)
+test -z "{{published}}"
+
+case package-commit-tag-branch-invalid
+each tag branch
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x root/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" ({{each}} "stable")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_HEAD="abc123" "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+exit 1
+stdout empty
+stderr contains git rev-parse HEAD reported non-canonical commit `abc123`
+test -f "{{dir}}/git.log"
+test ! -f "{{dir}}/root/typelisp.lock"
+sh CCV_published=$(find "{{dir}}/root" -name .typelisp-cache-complete -o -name typelisp-cache-entry.txt)
+test -z "{{published}}"
+
+case package-commit-tag-branch-canonical
+each tag branch
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x root/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" ({{each}} "stable")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_HEAD="  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  " "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in file {{dir}}/root/typelisp.lock
+contains (pin ({{each}} "stable"))
+contains (commit "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+
+case package-commit-full-rev-offline
+each aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+sh mkdir -p "{{dir}}/bin"
+run build "{{work}}/git-stub.tl" --target {{host-target}} --opt-level 0 -o "{{dir}}/bin/git{{exe}}"
+stderr empty
+file -x root/typelisp.pkg
+(package
+  (name "canonical_root")
+  (version "0.1.0")
+  (kind bin)
+  (dependencies
+    (remote (github "a/b" (rev "{{each}}")))))
+end-file
+file root/src/main.tl
+(import remote.src.lib as remote)
+(define (main) : i64 (remote.answer))
+end-file
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git.log" TYPELISP_TEST_GIT_HEAD="  {{each}}  " "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0
+stderr empty
+in file {{dir}}/root/typelisp.lock
+contains (commit "{{each}}"))
+sh CCV_meta=$(find "{{dir}}/root/target/typelisp/cache" -name typelisp-cache-entry.txt)
+test -f "{{meta}}"
+in file {{meta}}
+contains commit={{each}}
+sh CCV_marker=$(find "{{dir}}/root/target/typelisp/cache" -name .typelisp-cache-complete)
+test -f "{{marker}}"
+step offline-complete-hit
+exec env PATH="{{dir}}/bin:$PATH" TYPELISP_TEST_GIT_LOG="{{native-dir}}/git-offline.log" TYPELISP_TEST_GIT_FAIL=1 "{{compiler}}" build --manifest-path "{{dir}}/root/typelisp.pkg" --target {{host-target}} --opt-level 0 --locked
+stderr empty
+test ! -f "{{dir}}/git-offline.log"
+exec "{{dir}}/root/target/release/canonical_root{{exe}}"
+exit 42
+stdout empty
+stderr empty

@@ -286,6 +286,21 @@
     (io.panic "package-cache: self-test mismatch")))
 
 (test
+  package-cache-canonical-commits
+  (if (and
+    (cache.package-cache-canonical-commit? "0123456789abcdef0123456789abcdef01234567")
+    (cache.package-cache-canonical-commit? "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    (not (cache.package-cache-canonical-commit? ""))
+    (not (cache.package-cache-canonical-commit? "main"))
+    (not (cache.package-cache-canonical-commit? "0123456789abcdef0123456789abcdef0123456"))
+    (not (cache.package-cache-canonical-commit? "0123456789abcdef0123456789abcdef012345678"))
+    (not (cache.package-cache-canonical-commit? "0123456789ABCDEF0123456789abcdef01234567"))
+    (not (cache.package-cache-canonical-commit? "g123456789abcdef0123456789abcdef01234567"))
+    (not (cache.package-cache-canonical-commit? "0123456789abcdef0123456789abcdef01234567\n")))
+    unit
+    (io.panic "package-cache: canonical commit admission mismatch")))
+
+(test
   package-cache-parse-key-and-paths
   (if (package-cache-pure-self-test-ok?)
     unit

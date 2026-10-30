@@ -300,8 +300,12 @@
             "package-lock: dependency alias may only contain ASCII letters, digits, '-' and '_'")]
         [(string.eq url "")
           (Err "package-lock: dependency url must not be empty")]
-        [(string.eq commit "")
-          (Err "package-lock: dependency commit must not be empty")]
+        [(not (package_cache_core.package-cache-canonical-commit? (& commit)))
+          (Err
+            (str_cat.str-cat
+              "package-lock: dependency `"
+              alias
+              "` commit must be a full lowercase hexadecimal object ID (40 or 64 digits)"))]
         [else (Ok (PackageLockEntry alias url pin-kind pin-value commit))])]
     [(slice field & rest)
       (match (reader.sexpr-view field)

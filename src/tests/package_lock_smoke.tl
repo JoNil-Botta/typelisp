@@ -15,7 +15,7 @@
 (cfg
   test
   (define (package-lock-growth-source) : String
-    "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"foxtrot\") (url \"u\") (pin (rev \"f\")) (commit \"f\")) (dependency (alias \"alpha\") (url \"u\") (pin (rev \"a\")) (commit \"a\")) (dependency (alias \"echo\") (url \"u\") (pin (rev \"e\")) (commit \"e\")) (dependency (alias \"bravo\") (url \"u\") (pin (rev \"b\")) (commit \"b\")) (dependency (alias \"delta\") (url \"u\") (pin (rev \"d\")) (commit \"d\")) (dependency (alias \"charlie\") (url \"u\") (pin (rev \"c\")) (commit \"c\"))))"))
+    "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"foxtrot\") (url \"u\") (pin (rev \"f\")) (commit \"ffffffffffffffffffffffffffffffffffffffff\")) (dependency (alias \"alpha\") (url \"u\") (pin (rev \"a\")) (commit \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\")) (dependency (alias \"echo\") (url \"u\") (pin (rev \"e\")) (commit \"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\")) (dependency (alias \"bravo\") (url \"u\") (pin (rev \"b\")) (commit \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\")) (dependency (alias \"delta\") (url \"u\") (pin (rev \"d\")) (commit \"dddddddddddddddddddddddddddddddddddddddd\")) (dependency (alias \"charlie\") (url \"u\") (pin (rev \"c\")) (commit \"cccccccccccccccccccccccccccccccccccccccc\"))))"))
 
 (define (package-lock-expected-emitted) : String
   (str_cat.str-cat
@@ -133,22 +133,43 @@
     [(Err message) (string.eq message expected)]
     [(Ok _) false]))
 
+(define (package-lock-commit-admitted? [commit : String]) : bool
+  (match (package_lock_core.package-lock-parse
+    (& (str_cat.str-cat
+      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"remote\") (url \"u\") (pin (branch \"main\")) (commit \""
+      commit
+      "\"))))")))
+    [(Ok _) true]
+    [(Err _) false]))
+
+(test
+  package-lock-canonical-commits
+  (if (and
+    (package-lock-commit-admitted? "0123456789abcdef0123456789abcdef01234567")
+    (package-lock-commit-admitted? "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    (not (package-lock-commit-admitted? ""))
+    (not (package-lock-commit-admitted? "abc123"))
+    (not (package-lock-commit-admitted? "0123456789ABCDEF0123456789abcdef01234567"))
+    (not (package-lock-commit-admitted? "g123456789abcdef0123456789abcdef01234567")))
+    unit
+    (io.panic "package-lock: canonical commit admission mismatch")))
+
 (define (package-lock-rejections-ok?) : bool
   (and
     (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"dup\") (url \"u\") (pin (rev \"a\")) (commit \"a\")) (dependency (alias \"dup\") (url \"u\") (pin (tag \"v1\")) (commit \"b\"))))"
+      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"dup\") (url \"u\") (pin (rev \"a\")) (commit \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\")) (dependency (alias \"dup\") (url \"u\") (pin (tag \"v1\")) (commit \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"))))"
       "package-lock: duplicate dependency alias `dup`")
     (package-lock-parse-rejects?
       "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (rev \"a\")))))"
       "package-lock: dependency missing required field `commit`")
     (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias a) (url \"u\") (pin (rev \"a\")) (commit \"a\"))))"
+      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias a) (url \"u\") (pin (rev \"a\")) (commit \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"))))"
       "package-lock: field `alias` must have a string value")
     (package-lock-parse-rejects?
       "(typelisp-lock (version \"v2\") (dependencies))"
       "package-lock: unsupported version `v2`")
     (package-lock-parse-rejects?
-      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (sha \"a\")) (commit \"a\"))))"
+      "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"a\") (url \"u\") (pin (sha \"a\")) (commit \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"))))"
       "package-lock: pin kind must be `rev`, `tag`, or `branch`")))
 
 (cfg
